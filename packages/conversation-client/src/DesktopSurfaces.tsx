@@ -147,6 +147,29 @@ export interface PinnedLiveSurfaceProps {
 
 /** How long a claim is held before it is refreshed. Shorter than the server's lease on purpose. */
 const CLAIM_REFRESH_MS = 30_000;
+/**
+ * How often a frame whose bindings call a package service re-reads whether they can run.
+ *
+ * A service can stop between two clicks, and a widget that learns it only when pressed shows a button that fails.
+ * Only a frame with such a binding polls, and only while it is on screen.
+ */
+const SERVICE_AVAILABILITY_MS = 5_000;
+
+/**
+ * The new read, keeping the frame URL the surface already mounted when the document is the same.
+ *
+ * The URL carries a grant minted per read, so it differs every time; handing the new one to the frame would reload a
+ * running widget — and lose its view state — merely because availability was re-read.
+ */
+function keepMountedFrame(
+  previous: LiveWidgetResponse | IsolatedFrameLiveResponse | undefined,
+  next: LiveWidgetResponse | IsolatedFrameLiveResponse,
+): LiveWidgetResponse | IsolatedFrameLiveResponse {
+  if (previous?.kind !== "isolated-frame" || next.kind !== "isolated-frame") return next;
+  if (previous.frame === null || next.frame === null) return next;
+  if (previous.frame.document === undefined || previous.frame.document !== next.frame.document) return next;
+  return { ...next, frame: { ...next.frame, url: previous.frame.url } };
+}
 
 /**
  * The live view of a pinned instance.
@@ -243,7 +266,7 @@ export function PinnedLiveSurface({
   const load = useCallback(async (): Promise<void> => {
     try {
       const resolved = await client.liveWidget(conversationId, instanceId);
-      setLive(resolved);
+      setLive((previous) => keepMountedFrame(previous, resolved));
     } catch (cause) {
       setNotice(cause instanceof Error ? cause.message : String(cause));
       setOwnership("error");
@@ -314,6 +337,14 @@ export function PinnedLiveSurface({
       void client.releaseLiveOwner(conversationId, instanceId, ownerToken.current).catch(() => undefined);
     };
   }, [client, conversationId, instanceId, inView, load]);
+
+  const watchesServices =
+    inView && live?.kind === "isolated-frame" && live.bindings.some((entry) => entry.available !== undefined);
+  useEffect(() => {
+    if (!watchesServices) return;
+    const timer = setInterval(() => void load(), SERVICE_AVAILABILITY_MS);
+    return () => clearInterval(timer);
+  }, [watchesServices, load]);
 
   /*
    * Escape closes the expanded view, from anywhere inside it.
@@ -593,6 +624,17 @@ export function PinnedLiveSurface({
           brokeredCapabilities={frame.grantedCapabilities}
           allowedOrigins={frame.allowedOrigins}
           knownActionBindings={live.bindings.map((entry) => entry.actionBindingId)}
+          actionAvailability={live.bindings.flatMap((entry) =>
+            entry.available === undefined
+              ? []
+              : [
+                  {
+                    actionBindingId: entry.actionBindingId,
+                    available: entry.available,
+                    ...(entry.unavailableReason === undefined ? {} : { reason: entry.unavailableReason }),
+                  },
+                ],
+          )}
           revision={live.revision}
           /*
            * The frame asks; this authorizes and performs. Every invocation goes through the same route a click in
@@ -610,15 +652,30 @@ export function PinnedLiveSurface({
               if (binding === undefined) {
                 return { status: "refused", message: t("shell.live.actionUnbound") };
               }
-              await client.invokeAction(conversationId, instanceId, {
+              const result = await client.invokeAction(conversationId, instanceId, {
                 actionBindingId: intent.actionBindingId,
                 expectedRevision: intent.expectedRevision,
                 expectedBindingDigest: binding.bindingDigest,
                 input: intent.input,
                 invocationId: intent.invocationId,
               });
-              return { status: "accepted", message: t("shell.live.actionSent") };
+              // The conversation is where an approval card, or anything else the action said, appears.
+              onTimeline(result.timeline);
+              if (result.approvalRequired !== undefined) {
+                /*
+                 * Nothing ran yet, so the widget is not told it succeeded: the outcome waits on the person, on a card
+                 * the host drew in the conversation and the frame cannot reach.
+                 */
+                return { status: "uncertain", message: t("shell.live.actionAwaitingApproval") };
+              }
+              return {
+                status: "accepted",
+                message: t("shell.live.actionSent"),
+                ...(result.output === undefined ? {} : { output: result.output }),
+              };
             } catch (cause) {
+              // A refusal may be the service having stopped; re-reading shows why without waiting for the next poll.
+              void load();
               return {
                 status: "refused",
                 message: cause instanceof Error ? cause.message : t("shell.live.actionRefusedGeneric"),

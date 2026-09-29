@@ -381,20 +381,34 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         return { ok: false, say: "Widget đang mở không còn hành động đó nữa. Bạn mở lại rồi thử lại giúp tôi nhé." };
       }
 
-      const result = invokeWidgetAction(deps.services, {
-        conversationId,
-        principalId: deps.services.runtime.identity.ownerPrincipalId,
-        instanceId,
-        actionBindingId: action.actionBindingId,
-        expectedRevision: target.revision,
-        expectedBindingDigest: target.bindingDigest,
-        // What the words implied. Empty when the person named the action without saying what it should do, and the
-        // widget's own contract then answers that it wanted an argument - which is better than this guessing a period.
-        input: action.args,
-        invocationId: `inv_${randomUUID()}`,
-      });
+      const result = await invokeWidgetAction(
+        deps.services,
+        {
+          conversationId,
+          principalId: deps.services.runtime.identity.ownerPrincipalId,
+          instanceId,
+          actionBindingId: action.actionBindingId,
+          expectedRevision: target.revision,
+          expectedBindingDigest: target.bindingDigest,
+          // What the words implied. Empty when the person named the action without saying what it should do, and the
+          // widget's own contract then answers that it wanted an argument - which is better than this guessing a period.
+          input: action.args,
+          invocationId: `inv_${randomUUID()}`,
+        },
+        "voice",
+      );
 
       if (!result.ok) return { ok: false, say: `Không thực hiện được: ${result.message}` };
+      if (result.status === 202) {
+        // The policy asked. The card is in the conversation; saying "done" here would be claiming something that has
+        // not happened, and the person answers the card, not this sentence.
+        return {
+          ok: true,
+          instanceId,
+          revision: target.revision,
+          say: `${action.label} cần bạn duyệt trước. Tôi đã đặt thẻ duyệt trong cuộc trò chuyện.`,
+        };
+      }
       const landedOn = typeof result.body.revision === "number" ? result.body.revision : target.revision;
       return { ok: true, instanceId, revision: landedOn, say: `Đã ${action.label}.` };
     },

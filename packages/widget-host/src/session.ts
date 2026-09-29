@@ -60,6 +60,15 @@ export type FrameStateOutcome =
 export interface FrameActionOutcome {
   status: "accepted" | "refused" | "failed" | "uncertain";
   message: string;
+  /** What a service capability answered, when the binding called one and it ran. */
+  output?: string | undefined;
+}
+
+/** Whether one service-backed binding can run right now, with the registry's reason when it cannot. */
+export interface FrameActionAvailability {
+  actionBindingId: string;
+  available: boolean;
+  reason?: string | undefined;
 }
 
 export interface FrameSessionInput {
@@ -122,6 +131,14 @@ export interface FrameSession {
   init(): Extract<HostToWidgetMessage, { kind: "init" }>;
   accept(event: { data: unknown; sourceMatchesExpectedWindow: boolean }): FrameAcceptance;
   suspend(reason: string): void;
+  /**
+   * Tell the frame which of its service-backed bindings can run right now.
+   *
+   * Held until the frame is initialized and sent only when the answer changed, so a host can call this on every read
+   * of the node without the widget hearing the same thing twice. An empty list is never sent: a widget with no
+   * service-backed binding has nothing to be told.
+   */
+  announceActions(actions: readonly FrameActionAvailability[]): void;
   dispose(): void;
   status(): "awaiting-init" | "ready" | "suspended" | "disposed";
   /** What the frame said, in order. What a session records is what it is willing to be held to. */
@@ -155,6 +172,34 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
     Object.fromEntries(Object.entries(state).filter(([key]) => ephemeral.has(key)));
   let messages = 0;
   let status: "awaiting-init" | "ready" | "suspended" | "disposed" = "awaiting-init";
+  let availability: readonly FrameActionAvailability[] = [];
+  let announced = "";
+  const postActions = (): void => {
+    if (availability.length === 0) return;
+    const key = JSON.stringify(availability);
+    if (key === announced) return;
+    announced = key;
+    input.post({
+      kind: "actions",
+      nonce: input.nonce,
+      actions: availability.slice(0, 64).map((entry) => ({
+        actionBindingId: entry.actionBindingId,
+        available: entry.available,
+        ...(entry.reason === undefined || entry.reason === "" ? {} : { reason: entry.reason.slice(0, 600) }),
+      })),
+    });
+  };
+  /** An action result, carrying the service's answer only when there is one, so an older runtime still parses it. */
+  const postResult = (actionBindingId: string, outcome: FrameActionOutcome): void => {
+    input.post({
+      kind: "action-result",
+      nonce: input.nonce,
+      actionBindingId,
+      status: outcome.status,
+      message: outcome.message,
+      ...(outcome.output === undefined ? {} : { output: outcome.output.slice(0, 16_000) }),
+    });
+  };
 
   const refuse = (code: FrameRefusal, message: string): FrameAcceptance => {
     refusals.push(code);
@@ -177,6 +222,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
     };
     input.post(message);
     status = "ready";
+    postActions();
     return message;
   };
 
@@ -277,13 +323,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
            * The same click twice. Returning the first outcome rather than running it again is what makes a double
            * click one effect; re-running would be the host doing an effect twice because a pointer bounced.
            */
-          input.post({
-            kind: "action-result",
-            nonce: input.nonce,
-            actionBindingId: message.actionBindingId,
-            status: seen.status,
-            message: seen.message,
-          });
+          postResult(message.actionBindingId, seen);
           return { ok: true, kind: "action.invoke", detail: "duplicate" };
         }
         if (!input.knownActionBindings.includes(message.actionBindingId)) {
@@ -300,13 +340,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
           })
           .then((outcome) => {
             invocations.set(message.invocationId, outcome);
-            input.post({
-              kind: "action-result",
-              nonce: input.nonce,
-              actionBindingId: message.actionBindingId,
-              status: outcome.status,
-              message: outcome.message,
-            });
+            postResult(message.actionBindingId, outcome);
           })
           .catch((error: unknown) => {
             const outcome: FrameActionOutcome = {
@@ -314,13 +348,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
               message: error instanceof Error ? error.message : "the action failed",
             };
             invocations.set(message.invocationId, outcome);
-            input.post({
-              kind: "action-result",
-              nonce: input.nonce,
-              actionBindingId: message.actionBindingId,
-              status: outcome.status,
-              message: outcome.message,
-            });
+            postResult(message.actionBindingId, outcome);
           });
         transcript.push({ kind: "action.invoke", detail: message.actionBindingId });
         return { ok: true, kind: "action.invoke", detail: message.actionBindingId };
@@ -395,6 +423,13 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       status = "suspended";
       input.post({ kind: "suspend", nonce: input.nonce, reason });
       transcript.push({ kind: "suspend", detail: reason });
+    },
+
+    announceActions(actions) {
+      if (status === "disposed") return;
+      availability = actions;
+      // Before init there is no frame listening; `init` sends what was held.
+      if (status !== "awaiting-init") postActions();
     },
 
     dispose() {

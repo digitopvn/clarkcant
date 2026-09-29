@@ -1,5 +1,6 @@
 import {
   type ActionBinding,
+  type ActionProposal,
   type ActionInvocation,
   type CapabilityRef,
   type CompiledSection,
@@ -1381,6 +1382,162 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
       ...(pinId === undefined ? {} : { pinId }),
     };
   });
+}
+
+type InvokeProposal = Extract<ActionProposal, { kind: "invoke" }>;
+
+/**
+ * The arguments an `invoke` binding calls its capability with.
+ *
+ * The binding is the host's compiled record of what the action does, so what it fixed stays fixed: `args` and every
+ * `literal` field come from the binding, a `widget-state` field from the instance's own stored state, and only the
+ * fields the binding names as coming from the person or their selection are taken from the invocation. An invocation
+ * that sends any other field is refused rather than quietly dropped, because a frame that sends a field it was never
+ * given is either broken or probing, and neither should look like success.
+ */
+export function composeInvokeArgs(
+  proposal: InvokeProposal,
+  input: Record<string, unknown>,
+  state: Record<string, unknown>,
+): { ok: true; args: Record<string, unknown> } | { ok: false; message: string } {
+  const args: Record<string, unknown> = { ...proposal.args };
+  const fromInvocation = new Set<string>();
+  for (const binding of proposal.bindings ?? []) {
+    if (binding.source === "literal") {
+      args[binding.target] = binding.value;
+    } else if (binding.source === "widget-state") {
+      if (Object.hasOwn(state, binding.target)) args[binding.target] = state[binding.target];
+    } else {
+      fromInvocation.add(binding.target);
+      if (Object.hasOwn(input, binding.target)) args[binding.target] = input[binding.target];
+    }
+  }
+  const extra = Object.keys(input).filter((key) => !fromInvocation.has(key));
+  if (extra.length > 0) {
+    return { ok: false, message: `this action does not take ${extra.slice(0, 5).join(", ")}` };
+  }
+  return { ok: true, args };
+}
+
+interface InvokeRecord {
+  digest: string;
+  result:
+    | { kind: "done"; output: string }
+    | { kind: "approval-required"; approvalId: string };
+}
+
+export type InvokeActionCheck =
+  | { ok: false; code: MiniAppActionCode; message: string; currentRevision?: number }
+  | {
+      ok: true;
+      /** The same invocation arriving again: its first outcome, returned rather than repeated. */
+      duplicate: InvokeRecord["result"] | undefined;
+      instance: WidgetInstance;
+      binding: ActionBinding;
+      proposal: InvokeProposal;
+      args: Record<string, unknown>;
+      digest: string;
+    };
+
+/**
+ * Check a widget's `invoke` action before its capability is called.
+ *
+ * The same gate a view action passes — the instance's owner rather than the request's, the binding on this instance,
+ * one outcome per invocation id, and the revision and binding digest the person was shown — in the same order and for
+ * the same reasons (see `invokeMiniAppAction`). What it does not do is call anything: the capability runs in the
+ * runtime, behind the registry and the policy, and `recordInvokeAction` writes the outcome once it has one.
+ */
+export function checkInvokeAction(deps: WidgetDeps, request: MiniAppActionRequest): InvokeActionCheck {
+  const instance = getInstance(deps, request.instanceId);
+  if (instance === undefined) {
+    return { ok: false, code: "INSTANCE_UNKNOWN", message: `widget instance ${request.instanceId} does not exist` };
+  }
+  if (instance.ownerPrincipalId !== request.principalId) {
+    return { ok: false, code: "NOT_AUTHORIZED", message: "this instance belongs to another principal" };
+  }
+  const binding = getActionBinding(deps, request.actionBindingId);
+  if (binding === undefined || binding.instanceId !== instance.instanceId) {
+    return {
+      ok: false,
+      code: "ACTION_UNKNOWN",
+      message: `action binding ${request.actionBindingId} is not on this instance`,
+    };
+  }
+  if (binding.proposal.kind !== "invoke") {
+    return { ok: false, code: "UNSUPPORTED_ACTION", message: `a ${binding.proposal.kind} action is not an invoke action` };
+  }
+  const proposal = binding.proposal;
+
+  const digest = payloadDigest(
+    asJsonValue({
+      instanceId: request.instanceId,
+      actionBindingId: request.actionBindingId,
+      expectedRevision: request.expectedRevision,
+      expectedBindingDigest: request.expectedBindingDigest,
+      input: request.input,
+    }),
+  );
+  const row = oneRow<{ outcome: string }>(
+    deps.db,
+    "SELECT outcome FROM action_invocations WHERE invocation_id = ?",
+    request.invocationId,
+  );
+  if (row !== undefined) {
+    let prior: InvokeRecord | undefined;
+    try {
+      prior = JSON.parse(row.outcome) as InvokeRecord;
+    } catch {
+      prior = undefined;
+    }
+    if (prior?.digest !== digest || prior.result === undefined) {
+      return {
+        ok: false,
+        code: "INVOCATION_KEY_REUSED",
+        message: "the same invocation id was reused with different input; use a new id for a new operation",
+      };
+    }
+    return { ok: true, duplicate: prior.result, instance, binding, proposal, args: {}, digest };
+  }
+
+  const precheck = precheckInvocation(deps, request);
+  if (!precheck.ok) {
+    return {
+      ok: false,
+      code: precheck.code === "REVISION_MISMATCH" ? "REVISION_MISMATCH" : "BINDING_STALE",
+      message: precheck.message,
+      currentRevision: instance.revision,
+    };
+  }
+
+  const composed = composeInvokeArgs(proposal, request.input, readWidgetStateRow(deps.db, instance.instanceId)?.body ?? {});
+  if (!composed.ok) return { ok: false, code: "INVALID_INPUT", message: composed.message };
+  return { ok: true, duplicate: undefined, instance, binding, proposal, args: composed.args, digest };
+}
+
+/** Record what an `invoke` action came to, so the same invocation id arriving again gets this answer back. */
+export function recordInvokeAction(
+  deps: WidgetDeps,
+  input: {
+    invocationId: string;
+    actionBindingId: string;
+    instanceId: string;
+    digest: string;
+    result: InvokeRecord["result"];
+  },
+): void {
+  deps.db
+    .prepare(
+      `INSERT INTO action_invocations (invocation_id, action_binding_id, instance_id, outcome, recorded_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(invocation_id) DO NOTHING`,
+    )
+    .run(
+      input.invocationId,
+      input.actionBindingId,
+      input.instanceId,
+      toJson({ digest: input.digest, result: input.result }),
+      deps.now(),
+    );
 }
 
 function readDisplayMode(input: Record<string, unknown>): "compact" | "expanded" {

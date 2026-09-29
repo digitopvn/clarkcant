@@ -3,6 +3,7 @@ import {
   BRIDGE_VERSION,
   hostToWidgetSchema,
   widgetToHostSchema,
+  type ActionAvailability,
   type HostToWidgetMessage,
   type WidgetAuthorApi,
   type WidgetToHostMessage,
@@ -83,7 +84,9 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
   const disposeHandlers = new Set<() => void>();
   const propsHandlers = new Set<(props: Record<string, unknown>) => void>();
   const stateHandlers = new Set<(state: Record<string, unknown>, revision: number) => void>();
-  const actionWaiters = new Map<string, { resolve: (value: void) => void; reject: (error: Error) => void }>();
+  const actionWaiters = new Map<string, { resolve: (value: string | undefined) => void; reject: (error: Error) => void }>();
+  let availability: readonly ActionAvailability[] = [];
+  const availabilityHandlers = new Set<(availability: readonly ActionAvailability[]) => void>();
 
   const send = (message: unknown): void => {
     deps.endpoint.postMessage(message);
@@ -210,11 +213,17 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       return;
     }
 
+    if (message.kind === "actions") {
+      availability = message.actions;
+      for (const handler of availabilityHandlers) handler(availability);
+      return;
+    }
+
     // action-result
     const waiter = actionWaiters.get(message.actionBindingId);
     if (waiter === undefined) return;
     actionWaiters.delete(message.actionBindingId);
-    if (message.status === "accepted") waiter.resolve();
+    if (message.status === "accepted") waiter.resolve(message.output);
     else waiter.reject(new Error(message.message));
   };
 
@@ -272,7 +281,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     },
     actions: {
       invoke: (actionBindingId, input, invocationId) =>
-        new Promise<void>((resolve, reject) => {
+        new Promise<string | undefined>((resolve, reject) => {
           try {
             requireReady("gọi action");
           } catch (error) {
@@ -289,6 +298,10 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
             invocationId,
           });
         }),
+      availability: () => availability,
+      subscribe: (handler) => {
+        availabilityHandlers.add(handler);
+      },
     },
     capabilities: {
       request: (capabilityRef, justification) => {

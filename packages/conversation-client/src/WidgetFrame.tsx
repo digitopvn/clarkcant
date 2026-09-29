@@ -11,6 +11,7 @@ import { type ReactElement, useEffect, useRef, useState } from "react";
  */
 import {
   createFrameSession,
+  type FrameActionAvailability,
   type FrameActionOutcome,
   type FrameSession,
   type FrameStateOutcome,
@@ -56,6 +57,8 @@ export interface WidgetFrameProps {
   allowedOrigins: readonly string[];
   /** The bindings this instance holds. The frame may name one of these and nothing else. */
   knownActionBindings: readonly string[];
+  /** Which service-backed bindings can run right now, as the node last said. Told to the frame when it changes. */
+  actionAvailability?: readonly FrameActionAvailability[];
   invokeAction: (input: {
     actionBindingId: string;
     input: Record<string, unknown>;
@@ -175,6 +178,15 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
      * are read from the ref above at the moment they are needed, so a busy parent can re-render all it likes.
      */
   }, [input.instanceId, input.url]);
+
+  /*
+   * What the node last said about the service-backed bindings, passed on as it changes. The session holds it until
+   * the frame is initialized and drops a repeat, so this can run on every read without the widget hearing it twice.
+   */
+  const availabilityKey = JSON.stringify(input.actionAvailability ?? []);
+  useEffect(() => {
+    session.current?.announceActions(latest.current.actionAvailability ?? []);
+  }, [availabilityKey, input.instanceId, input.url]);
 
   /**
    * The init message, sent when the document has loaded.

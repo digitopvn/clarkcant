@@ -40,16 +40,17 @@ Sau plan này:
 
 - P1/P2 của #198 (status, artifact, chart, calendar, timeline, map, …): thuộc phase 10.
 - Credential broker cho connector bên ngoài chạy trong service facet: chỉ ghi rõ là deferred, chưa implement.
-- Adapter container/VM cho service facet (`execution-supervisor` vẫn là `process-only`).
+- Containment bằng VM cho service facet. Service facet chạy trong container Docker/Podman (quyết định của chủ sản phẩm
+  trên #221); không có engine thì không chạy, không có fallback process-only.
 - Việc tiêm semantic state vào main agent: thuộc #195 (phase 05). Plan này chỉ công bố state graph ở dạng #195 dùng lại được.
 
 ## Các phase (mỗi phase là một sub-issue và một PR)
 
 | # | Phase | Phụ thuộc | Trạng thái |
 |---|---|---|---|
-| A | [Manifest chuẩn v2 cùng tương thích v1](phase-a-canonical-manifest.md) | — | pending |
-| B | [Service facet runtime và capability](phase-b-service-facet-runtime.md) | A | pending |
-| C | [Hợp đồng đầy đủ của `canvas.table@1`](phase-c-table-contract.md) | — | pending |
+| A | [Manifest chuẩn v2 cùng tương thích v1](phase-a-canonical-manifest.md) | — | done (#220, PR #227) |
+| B | [Service facet runtime và capability](phase-b-service-facet-runtime.md) | A | in-progress (#221) |
+| C | [Hợp đồng đầy đủ của `canvas.table@1`](phase-c-table-contract.md) | — | in-review (#222) |
 | D | [Action tổng quát `canvas.action@1`](phase-d-generic-action.md) | B (với invoke) | pending |
 | E | [Layout primitive và cây composition có giới hạn](phase-e-layout-composition-tree.md) | — | pending |
 | F | [Primitive input, choice, search, form và list](phase-f-input-primitives.md) | E | pending |

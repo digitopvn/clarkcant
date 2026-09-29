@@ -25,8 +25,18 @@ export interface StdioMcpTransportOptions {
   command: string;
   args?: readonly string[];
   env?: Record<string, string>;
+  /**
+   * Whether the server also gets this process's environment. Defaults to true, for a server a person configured by
+   * hand; a host that runs code it did not write passes false and names in `env` exactly what the server may see.
+   */
+  inheritEnv?: boolean;
   /** Per-request ceiling. Defaults to 15 seconds. */
   requestTimeoutMs?: number;
+  /**
+   * Told once when the server goes away on its own, with the same reason every pending request was rejected with.
+   * Not called for close(): a caller that closed the server already knows.
+   */
+  onExit?: (reason: Error) => void;
 }
 
 export interface ServerHandshake {
@@ -54,6 +64,7 @@ export class StdioMcpTransport implements McpTransport {
   readonly #pending = new Map<number, Pending>();
   #handshake: ServerHandshake | undefined;
   #closed = false;
+  #exited = false;
 
   constructor(options: StdioMcpTransportOptions) {
     this.#options = options;
@@ -83,7 +94,9 @@ export class StdioMcpTransport implements McpTransport {
 
     const child = spawn(this.#options.command, [...(this.#options.args ?? [])], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...(this.#options.env ?? {}) },
+      env: { ...(this.#options.inheritEnv === false ? {} : process.env), ...(this.#options.env ?? {}) },
+      // A server is a background process; on Windows it must not flash a console window at the person.
+      windowsHide: true,
     });
     this.#child = child;
 
@@ -95,8 +108,10 @@ export class StdioMcpTransport implements McpTransport {
     });
 
     // A dead server cannot answer, so nothing may stay pending.
-    child.on("exit", (code, signal) => this.#failAll(this.#exitReason(code, signal)));
-    child.on("error", (error) => this.#failAll(new Error(`mcp server failed to start: ${error.message}`)));
+    child.on("exit", (code, signal) => this.#gone(this.#exitReason(code, signal)));
+    child.on("error", (error) => this.#gone(new Error(`mcp server failed to start: ${error.message}`)));
+    // Writing to a server that has just died raises on stdin rather than on the process; the exit reports it.
+    child.stdin.on("error", () => undefined);
 
     const result = (await this.#request("initialize", {
       protocolVersion: "2025-06-18",
@@ -144,8 +159,22 @@ export class StdioMcpTransport implements McpTransport {
     return tools;
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<{ content: string }> {
-    const result = (await this.#request("tools/call", { name, arguments: args })) as {
+  /** Whether the server still answers. The protocol's own liveness check, bounded by the request ceiling. */
+  async ping(): Promise<void> {
+    await this.#request("ping", {});
+  }
+
+  /** Whether the process is still running and has not been closed. */
+  get running(): boolean {
+    return this.#child !== undefined && !this.#closed && !this.#exited;
+  }
+
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    options: { timeoutMs?: number } = {},
+  ): Promise<{ content: string }> {
+    const result = (await this.#request("tools/call", { name, arguments: args }, options.timeoutMs)) as {
       content?: { type?: string; text?: string }[];
       isError?: boolean;
     };
@@ -171,6 +200,10 @@ export class StdioMcpTransport implements McpTransport {
     this.#child = undefined;
     if (!child) return;
     this.#failAll(new Error(`mcp server ${this.#options.serverId} was closed`));
+    if (this.#exited) return;
+    // End of input is the protocol's own way to ask a stdio server to stop, and the only one that reaches a server
+    // behind a launcher such as a container engine's command line.
+    child.stdin.end();
     child.kill();
     // Give the process a moment to exit on its own before it is killed outright.
     await new Promise<void>((resolve) => {
@@ -190,6 +223,13 @@ export class StdioMcpTransport implements McpTransport {
     return new Error(
       `mcp server ${this.#options.serverId} exited with ${code === null ? `signal ${String(signal)}` : `code ${code}`}${detail.length > 0 ? `: ${detail}` : ""}`,
     );
+  }
+
+  #gone(reason: Error): void {
+    if (this.#exited) return;
+    this.#exited = true;
+    this.#failAll(reason);
+    if (!this.#closed) this.#options.onExit?.(reason);
   }
 
   #failAll(error: Error): void {
@@ -240,7 +280,7 @@ export class StdioMcpTransport implements McpTransport {
 
   #write(payload: Record<string, unknown>): void {
     const child = this.#child;
-    if (!child || this.#closed) {
+    if (!child || this.#closed || this.#exited) {
       throw new Error(`mcp server ${this.#options.serverId} is not running`);
     }
     child.stdin.write(`${JSON.stringify(payload)}\n`);
@@ -250,10 +290,10 @@ export class StdioMcpTransport implements McpTransport {
     this.#write({ jsonrpc: "2.0", method, params });
   }
 
-  #request(method: string, params: Record<string, unknown>): Promise<unknown> {
+  #request(method: string, params: Record<string, unknown>, timeoutOverrideMs?: number): Promise<unknown> {
     const id = this.#nextId;
     this.#nextId += 1;
-    const timeoutMs = this.#options.requestTimeoutMs ?? 15_000;
+    const timeoutMs = timeoutOverrideMs ?? this.#options.requestTimeoutMs ?? 15_000;
 
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {

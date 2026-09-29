@@ -70,6 +70,29 @@ const INSTALL_APPROVAL_TTL_MS = 10 * 60 * 1000;
 export interface PackageInstallDeps {
   runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string }; dataDir: string };
   conductor: { newId: (prefix: string) => string };
+  /**
+   * Told once a different generation is active, so the package services that run follow what is installed.
+   *
+   * Not awaited: a service's image can take minutes to fetch, and an install is done when its generation is recorded.
+   */
+  packagesChanged?: () => void;
+}
+
+/** The node's own install deps, with its service host told whenever what is installed changes. */
+export function packageInstallDepsOf(services: {
+  runtime: PackageInstallDeps["runtime"];
+  conductor: PackageInstallDeps["conductor"];
+  serviceHost?: { reconcile(): Promise<void> } | undefined;
+}): PackageInstallDeps {
+  return {
+    runtime: services.runtime,
+    conductor: services.conductor,
+    packagesChanged: () => {
+      void services.serviceHost?.reconcile().catch((cause: unknown) => {
+        process.stderr.write(`services: could not follow the package change: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+      });
+    },
+  };
 }
 
 /** The install request, already parsed: the route owns reading the body. */
@@ -533,6 +556,7 @@ export async function installPackage(
   });
 
   if (!outcome.ok) return { kind: "refused", status: 400, code: outcome.code, message: outcome.message };
+  deps.packagesChanged?.();
   return {
     kind: "installed",
     packageId: entry.packageId,

@@ -1,5 +1,7 @@
+import { join } from "node:path";
+
 import { type Instant } from "@clarkcant/contracts";
-import { type CoordinationDeps, readExecutionPolicy } from "@clarkcant/core";
+import { type CoordinationDeps, directoryIndexPath, readDirectoryIndex, readExecutionPolicy } from "@clarkcant/core";
 import { appendAuditEvent } from "@clarkcant/storage";
 
 import { DEFAULT_NARROWING } from "../autonomy-settings.ts";
@@ -16,6 +18,8 @@ import { tryRecordNodeNotice, workerSettledNotice } from "../notices.ts";
 import { appendHostReply } from "../routes/conversations.ts";
 import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
+import { detectServiceEngine } from "../service-container.ts";
+import { createServiceHost, engineContainers, packageRootFrom } from "../service-host.ts";
 import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import type { NodeWork } from "./work-bootstrap.ts";
@@ -298,6 +302,31 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    * route would race against.
    */
   deps.services.expirySweep = startExpiryNoticeSweep(deps.services);
+
+  /*
+   * Installed packages' service facets, each in a container.
+   *
+   * On every node, fixture or not: a node with no package that declares a service asks no engine anything, and a
+   * browser journey that installs one is exercising exactly this path. Started after the node is listening and never
+   * awaited, because the first image fetch can take minutes; until a service answers, its capabilities read as
+   * starting, and without an engine they read as needing one.
+   */
+  const services = deps.services;
+  services.serviceHost = createServiceHost({
+    registry: { db: services.runtime.db, nodeId: services.runtime.identity.nodeId },
+    dataDir: services.runtime.dataDir,
+    engine: () => detectServiceEngine(),
+    // The listing is read at each change rather than captured, so a directory edited while the node runs is followed.
+    packageRoot: (generation) => {
+      const index = readDirectoryIndex(directoryIndexPath(process.env));
+      if (index.kind !== "configured") return undefined;
+      return packageRootFrom(index.entries, join(services.runtime.dataDir, "package-cache"))(generation);
+    },
+    containers: engineContainers,
+  });
+  void services.serviceHost.reconcile().catch((cause: unknown) => {
+    process.stderr.write(`services: not started — ${cause instanceof Error ? cause.message : String(cause)}\n`);
+  });
 
   if (sessionFixture) {
     process.stderr.write(

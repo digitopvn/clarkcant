@@ -162,6 +162,8 @@ export function changePackage(
   if (!outcome.ok) {
     return { kind: "refused", status: REFUSAL_STATUS[outcome.code], code: outcome.code, message: outcome.message };
   }
+  // An uninstalled package's services stop, a restored or rolled-back one's start from the generation now active.
+  deps.packagesChanged?.();
   recordEffectExecution(
     { db: deps.runtime.db, nodeId: deps.runtime.identity.nodeId, now: nowInstant, newId: deps.conductor.newId },
     {

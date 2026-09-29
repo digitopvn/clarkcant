@@ -19,7 +19,12 @@ import {
 } from "@clarkcant/core";
 import { type Database } from "@clarkcant/storage";
 
-import { decideInstallCapabilityApproval, installPackage, listPendingCapabilityApprovals } from "../application/package-install.ts";
+import {
+  decideInstallCapabilityApproval,
+  installPackage,
+  listPendingCapabilityApprovals,
+  packageInstallDepsOf,
+} from "../application/package-install.ts";
 import { changePackage } from "../application/package-lifecycle.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
@@ -35,6 +40,7 @@ export interface PackageRouteDeps {
   services: {
     runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string }; dataDir: string };
     conductor: { newId: (prefix: string) => string };
+    serviceHost?: { reconcile(): Promise<void> } | undefined;
   };
   request: GatewayRequest;
   segments: string[];
@@ -78,7 +84,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
     } catch {
       return fail(400, "INVALID_SCHEMA", "the package id in the path is not valid percent-encoding");
     }
-    const outcome = changePackage({ runtime, conductor: services.conductor }, { action: segments[2], packageId, source: "click" });
+    const outcome = changePackage(packageInstallDepsOf(services), { action: segments[2], packageId, source: "click" });
     if (outcome.kind === "refused") return fail(outcome.status, outcome.code, outcome.message);
     const { kind: _kind, ...changed } = outcome;
     return json(200, changed);
@@ -184,7 +190,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
       return fail(400, "INVALID_SCHEMA", "an install request needs the package id and the version it is installing");
     }
     const outcome = await installPackage(
-      { runtime, conductor: services.conductor },
+      packageInstallDepsOf(services),
       {
         packageId,
         version,

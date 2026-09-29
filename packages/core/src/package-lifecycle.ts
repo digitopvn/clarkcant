@@ -324,3 +324,12 @@ export function activePackageVersions(deps: Pick<InstallDeps, "db" | "nodeId">):
   );
   return new Set(rows.map((row) => `${row.package_id}@${row.version}`));
 }
+
+/** Every active generation on this node, as recorded: what is running now, with what it was granted. */
+export function activeGenerations(deps: Pick<InstallDeps, "db" | "nodeId">): PackageGeneration[] {
+  return allRows<{ document: string }>(
+    deps.db,
+    "SELECT document FROM package_generations WHERE node_id = ? AND superseded_at IS NULL ORDER BY package_id",
+    deps.nodeId,
+  ).map((row) => parseJson<PackageGeneration>(row.document, "package_generations.document"));
+}

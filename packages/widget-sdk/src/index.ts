@@ -73,6 +73,33 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
     actionBindingId: z.string().min(1).max(128),
     status: z.enum(["accepted", "refused", "failed", "uncertain"]),
     message: z.string().min(1).max(1000),
+    /**
+     * What a service capability answered, when the binding called one and it ran.
+     *
+     * Optional and sent only when there is an answer, so a runtime older than this field — which only ever held
+     * bindings that have none — still parses every result it is sent.
+     */
+    output: z.string().max(16_000).optional(),
+  }),
+  /**
+   * Which of this frame's service-backed bindings can run right now, and why not when one cannot.
+   *
+   * Sent after the frame is ready and again whenever the answer changes, so a widget can disable a button and say
+   * why — the registry's reason, not a guess — while the rest of it keeps working. Sent only for bindings that call a
+   * service capability, so a widget without one never receives it.
+   */
+  z.strictObject({
+    kind: z.literal("actions"),
+    nonce: z.string().min(16).max(200),
+    actions: z
+      .array(
+        z.strictObject({
+          actionBindingId: z.string().min(1).max(128),
+          available: z.boolean(),
+          reason: z.string().min(1).max(600).optional(),
+        }),
+      )
+      .max(64),
   }),
   z.strictObject({
     kind: z.literal("suspend"),
@@ -176,6 +203,13 @@ export function acceptBridgeMessage(input: {
  * Author-facing descriptors
  * ------------------------------------------------------------------ */
 
+/** Whether one service-backed binding can run right now, as the host last reported it. */
+export interface ActionAvailability {
+  actionBindingId: string;
+  available: boolean;
+  reason?: string | undefined;
+}
+
 export interface WidgetAuthorApi {
   props: {
     read(): Record<string, unknown>;
@@ -195,7 +229,17 @@ export interface WidgetAuthorApi {
     subscribe(handler: (state: Record<string, unknown>, revision: number) => void): void;
   };
   events: { emit(name: string, payload: Record<string, unknown>): void };
-  actions: { invoke(actionBindingId: string, input: Record<string, unknown>, invocationId: string): Promise<void> };
+  actions: {
+    /**
+     * Resolves when the host accepted the action — with what the service answered, when the binding called a service
+     * capability — and rejects with the host's reason otherwise, including "waiting for your approval".
+     */
+    invoke(actionBindingId: string, input: Record<string, unknown>, invocationId: string): Promise<string | undefined>;
+    /** The service-backed bindings the host has said cannot run right now, with the reason. Empty until it says. */
+    availability(): readonly ActionAvailability[];
+    /** Called whenever the host reports a change in which service-backed bindings can run. */
+    subscribe(handler: (availability: readonly ActionAvailability[]) => void): void;
+  };
   capabilities: { request(capabilityRef: string, justification: string): Promise<void> };
   host: {
     focus(): void;

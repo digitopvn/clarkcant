@@ -4,12 +4,12 @@
  *
  * Written for the transport tests, so the transport is verified against a real process speaking
  * the real protocol rather than against a mock that agrees with whatever the transport does. It
- * implements exactly enough to be a server: initialize, tools/list, tools/call, plus two failure
+ * implements exactly enough to be a server: initialize, ping, tools/list, tools/call, plus the failure
  * modes a client has to survive.
  *
  * Behaviour chosen by `MCP_FIXTURE_MODE`:
  *   (unset)   normal
- *   "hang"    accepts initialize, then never answers tools/list
+ *   "hang"    accepts initialize, then never answers tools/list or ping
  *   "crash"   accepts initialize, then exits when a tool is called
  *   "banner"  prints a non-JSON line to stdout before the protocol starts
  *   "malformed" returns a tool object that does not match the protocol shape
@@ -65,6 +65,12 @@ function handle(request) {
         capabilities: { tools: { listChanged: false } },
       },
     });
+    return;
+  }
+
+  if (method === "ping") {
+    if (MODE === "hang") return;
+    send({ jsonrpc: "2.0", id, result: {} });
     return;
   }
 
