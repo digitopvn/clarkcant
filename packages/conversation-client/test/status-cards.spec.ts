@@ -47,6 +47,15 @@ describe("status cards", () => {
     }
   });
 
+  it("names each tone for what it is, and says whose words a card shows, in both languages", () => {
+    expect(MESSAGES_VI["widgets.status.tone.neutral" as MessageKey]).toBe("Ghi chú");
+    expect(MESSAGES_VI["widgets.status.tone.info" as MessageKey]).toBe("Thông tin");
+    expect(MESSAGES_EN["widgets.status.statedAt" as MessageKey]).toBe("As Clark stated at {time}");
+    expect(MESSAGES_VI["widgets.status.statedAt" as MessageKey]).toBe("Theo Clark lúc {time}");
+    expect(MESSAGES_EN["widgets.status.stated" as MessageKey]).toBe("As Clark stated");
+    expect(MESSAGES_VI["widgets.status.stated" as MessageKey]).toBe("Theo lời Clark");
+  });
+
   it("draws no freshness badge and no control on any of the three", () => {
     for (const name of RENDERERS) {
       const body = functionBody("renderers.tsx", name);
