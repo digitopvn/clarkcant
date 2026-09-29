@@ -309,7 +309,8 @@ export function automationCapabilityFor(action: Extract<IntentAction, { kind: "t
 }
 
 /** A usable node for the capability, this node first. */
-function chooseCapability(deps: TaskServiceDeps, capabilityRef: CapabilityRef): { executionNodeId: string } | undefined {
+/** A usable capability a task can be handed to, this node's own first. */
+export function chooseCapability(deps: TaskServiceDeps, capabilityRef: CapabilityRef): { executionNodeId: string } | undefined {
   const usable = listCapabilitySummaries(deps, { usableOnly: true, taskRunnersOnly: true }).filter(
     (summary) => summary.ref === capabilityRef,
   );

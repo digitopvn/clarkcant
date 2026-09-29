@@ -1,7 +1,16 @@
 import type { Instant, PeerEnvelope } from "@clarkcant/contracts";
 
 import { readOriginRemote } from "./automation-service.ts";
-import { type DelegationDeps, receiveCancel, receiveDelegate, receiveResult, reportDelegatedOutcome, settleUndelivered } from "./delegation.ts";
+import {
+  type DelegationDeps,
+  receiveCancel,
+  receiveDelegate,
+  receiveResult,
+  receiveStatus,
+  reportDelegatedOutcome,
+  reportDelegatedStatus,
+  settleUndelivered,
+} from "./delegation.ts";
 import type { DeadLetter } from "./peer-transport.ts";
 import { tryRecordNodeNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
@@ -70,6 +79,32 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
       ),
     cancel: (envelope: PeerEnvelope) =>
       answered(receiveCancel({ ...deps, ...(services.taskDispatch === undefined ? {} : { taskDispatch: services.taskDispatch }) }, envelope)),
+    // Nothing is sent back for this one, so the outbox is not woken.
+    status: (envelope: PeerEnvelope) =>
+      receiveStatus(
+        {
+          db: runtime.db,
+          nodeId: runtime.identity.nodeId,
+          tell: ({ taskId, conversationId, text, about, waiting }) => {
+            const at = now();
+            appendHostReply(services, { conversationId, text, at });
+            // In the inbox too, for a person not looking at the conversation: the task is waiting on someone else.
+            if (!waiting) return;
+            tryRecordNodeNotice(services, {
+              sourceKind: "automation",
+              category: "alert",
+              severity: "info",
+              title: "Việc đang chờ chủ máy kia duyệt",
+              body: text,
+              conversationId,
+              subject: { kind: "task", taskId, conversationId },
+              dedupKey: `delegation-status:${about}`,
+              at,
+            });
+          },
+        },
+        envelope,
+      ),
   };
 }
 
@@ -98,5 +133,34 @@ export function settleUndeliveredTasks(services: NodeServices, now: () => Instan
       { db: runtime.db, nodeId: runtime.identity.nodeId, now, conductor, onSettled: taskDispatchReports(services).onSettled },
       letter,
     );
+  };
+}
+/**
+ * Tell the peer that handed a task over what this node's owner decided about the approval it waited for.
+ *
+ * Allowed, it goes on and the peer hears so. Refused or left until it expired, it ended here before its worker did
+ * anything, and the peer's own task settles on that answer instead of waiting for one that never comes. Nothing for a
+ * task no peer handed over.
+ */
+export function answerApprovalDecision(
+  services: Pick<NodeServices, "runtime" | "conductor" | "peerDelivery">,
+  now: () => Instant,
+): (taskId: string, decision: "granted" | "denied" | "expired") => void {
+  return (taskId, decision) => {
+    const { runtime, conductor } = services;
+    const deps: DelegationDeps = { db: runtime.db, identity: runtime.identity, now, newId: conductor.newId };
+    const told =
+      decision === "granted"
+        ? reportDelegatedStatus(deps, { taskId, state: "running", message: "chủ của node này đã duyệt" })
+        : reportDelegatedOutcome(deps, {
+            taskId,
+            outcome: "failed",
+            ran: false,
+            message:
+              decision === "denied"
+                ? "chủ của node này đã từ chối việc cần duyệt, nên không có gì được chạy"
+                : "yêu cầu duyệt đã hết hạn mà chủ của node này chưa quyết định, nên không có gì được chạy",
+          });
+    if (told) services.peerDelivery?.kick();
   };
 }

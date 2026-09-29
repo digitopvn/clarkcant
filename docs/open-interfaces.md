@@ -136,7 +136,12 @@ A standing request's task can also run on a paired node. That is set up in conve
 sending node's owner names the peer as the task's executor, and the receiving node's owner says what that peer may run
 there (folders, repositories, effects). The nodes exchange the grant, the hand-over (`delegate`), its answer
 (`result`) and a stop (`cancel.request`) as NodeLink messages; the receiver runs the task only within both, and each
-owner hears the outcome in their own conversation.
+owner hears the outcome in their own conversation. While the task waits for the receiving owner's approval, the
+receiver says so with `status` (`taskState` `waiting_approval`, then `running` once allowed), and the sender's owner
+is told without being offered the decision. Pausing or removing the automation withdraws its own grant with
+`revoke` (`grantId`, `reason`), which only the grant's sender can send. A per-run time limit given when the automation
+is set up (`maxMinutesPerRun`) travels as the grant's `budget.maxWallClockMs`, and the receiver stops a run when it
+runs out; a grant's `maxRuns` and `maxTokens` are held the same way.
 
 A message can carry what the person picked after `/` or `@` in the composer as `references`: `{ "version": 1,
 "items": [...] }`, at most 8, each one of `skill { skillId, source, revision }`, `project { projectId }`,

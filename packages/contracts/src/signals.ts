@@ -114,6 +114,12 @@ export const intentActionSchema = z.discriminatedUnion("kind", [
        * are that node's, and it runs the task only within what its own owner allows this node.
        */
       executor: z.string().min(1).max(128).optional(),
+      /**
+       * The grant this node's owner wrote for the executor when the automation was set up. Its runs go under that grant
+       * and no other, and it is withdrawn when the automation is paused or removed. Absent on an automation set up before
+       * grants were recorded, whose runs go under any live grant that covers them.
+       */
+      grantId: z.string().min(1).max(128).optional(),
     })
     .strict(),
   z.object({ kind: z.literal("remind"), message: z.string().min(1).max(2000) }).strict(),

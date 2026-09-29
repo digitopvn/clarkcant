@@ -14,6 +14,7 @@ import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
 import { startAutomationService } from "../automation-service.ts";
+import { resumeTasksWaitingOnCapability } from "../capability-waiters.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
 import { createGithubPolling } from "../github-polling.ts";
 import { startPeerDelivery } from "../peer-signals.ts";
@@ -448,6 +449,13 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
             ? "project-work pack: loaded; a run demonstrated something\n"
             : `project-work pack: loaded; ${outcome.readiness.blockedReason ?? "no run demonstrated anything"}\n`,
         );
+        // A task asked for while the pack was still loading has been waiting on it; it goes ahead now, once. This runs
+        // after the entry point's recovery, which is synchronous after wiring, so a resumed task is never the one
+        // recovery calls uncertain.
+        const resumed = resumeTasksWaitingOnCapability(deps.services);
+        if (resumed.length > 0) {
+          process.stderr.write(`resumed ${String(resumed.length)} task(s) that were waiting on the pack\n`);
+        }
       })
       .catch((cause: unknown) => {
         process.stderr.write(

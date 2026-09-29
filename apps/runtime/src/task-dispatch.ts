@@ -30,7 +30,13 @@ import {
   type TaskServiceDeps,
   type PolicyDecision,
 } from "@clarkcant/core";
-import { ensureManagedWorktree, removeManagedWorktree, workerCapabilitiesFor, type ManagedWorktree } from "@clarkcant/project-work";
+import {
+  ensureManagedWorktree,
+  removeEmptyTaskFolder,
+  removeManagedWorktree,
+  workerCapabilitiesFor,
+  type ManagedWorktree,
+} from "@clarkcant/project-work";
 import { getTask, oneRow, type Database } from "@clarkcant/storage";
 
 import type { CommandToolDeps } from "./node-tools.ts";
@@ -99,6 +105,8 @@ export interface TaskDispatcherDeps {
     conversationId: string;
     approvalId: string;
     message: string;
+    /** Only the effect waiting for a decision, without what the owner is told about deciding it. */
+    effect: string;
   }) => void;
   at?: () => Instant;
   /** Injected so a test can substitute a fake worker without spawning a real process. */
@@ -496,6 +504,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             conversationId: task.conversationId,
             approvalId: approval.approvalId,
             message: parkedReason,
+            effect: effectDescription,
           });
           return;
         }
@@ -526,6 +535,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           : await ensureManagedWorktree({ repoPath: repository, worktreesDir: deps.worktreesDir(), taskId: job.taskId });
       if (!made.ok) {
         releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        // The repositories before this one already have their worktree. None was worked in, so a clean one goes now
+        // rather than at the next boot; the branch stays, with anything an earlier run of the task committed.
+        await takeAwayWorktrees(job.taskId, task.conversationId, worktrees);
         await refuse(job, `refused: ${made.message}; the worker was never started`);
         return;
       }
@@ -672,18 +684,18 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       if (wallClockTimer !== undefined) clearTimeout(wallClockTimer);
       liveChildren.delete(runId);
       releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
-      // What the task committed stays on its branch; a worktree with uncommitted changes is kept and said so.
-      for (const worktree of worktrees) {
-        const removed = await removeManagedWorktree({ repoPath: worktree.repoPath, path: worktree.path });
-        if (!removed.removed) {
-          deps.onWorktreeKept?.({
-            taskId: job.taskId,
-            conversationId: task.conversationId,
-            path: worktree.path,
-            branch: worktree.branch,
-          });
-        }
-      }
+      await takeAwayWorktrees(job.taskId, task.conversationId, worktrees);
+    }
+  }
+
+  /** What the task committed stays on its branch; a worktree with uncommitted changes is kept and said so. */
+  async function takeAwayWorktrees(taskId: string, conversationId: string, worktrees: readonly ManagedWorktree[]): Promise<void> {
+    for (const worktree of worktrees) {
+      const removed = await removeManagedWorktree({ repoPath: worktree.repoPath, path: worktree.path });
+      if (!removed.removed) deps.onWorktreeKept?.({ taskId, conversationId, path: worktree.path, branch: worktree.branch });
+    }
+    if (worktrees.length > 0 && deps.worktreesDir !== undefined) {
+      await removeEmptyTaskFolder({ worktreesDir: deps.worktreesDir(), taskId });
     }
   }
 

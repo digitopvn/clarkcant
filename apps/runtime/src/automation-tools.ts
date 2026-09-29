@@ -29,6 +29,7 @@ import {
 } from "@clarkcant/signal-sources";
 import {
   type Database,
+  getGrant,
   getPeer,
   getSecretMetadata,
   getSignalPollState,
@@ -39,7 +40,7 @@ import {
   secretBackendFor,
 } from "@clarkcant/storage";
 
-import { TASK_GRANT_LIFETIME_MS, taskGrant, writeGrant } from "./delegation.ts";
+import { TASK_GRANT_LIFETIME_MS, taskGrant, withdrawGrant, writeGrant } from "./delegation.ts";
 import { polledGithubRepositories } from "./github-polling.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { GITHUB_SELF_LOGINS_PREFERENCE, GITHUB_SIGNAL_PATH, githubSelfLogins } from "./routes/github-signals.ts";
@@ -243,6 +244,19 @@ function readAction(
   };
 }
 
+/** A day: longer than any one run should take, and what a person means by "no limit" in minutes. */
+const MAX_MINUTES_PER_RUN = 24 * 60;
+
+/** A per-run time limit, which only a task another node runs carries: that node stops the run when it is up. */
+function readMaxMinutes(value: unknown, handedOver: boolean): { ok: true; ms?: number } | { ok: false; text: string } {
+  if (value === undefined) return { ok: true };
+  if (!handedOver) return { ok: false, text: "maxMinutesPerRun is for a task another node runs (executor)" };
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_MINUTES_PER_RUN) {
+    return { ok: false, text: `maxMinutesPerRun is a whole number of minutes from 1 to ${String(MAX_MINUTES_PER_RUN)}` };
+  }
+  return { ok: true, ms: value * 60_000 };
+}
+
 function confirmedPeer(db: Database, peerNodeId: string): boolean {
   const peer = getPeer(db, peerNodeId);
   return peer !== undefined && peer.trustedAt !== null && peer.revokedAt === null;
@@ -379,10 +393,21 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
   const fingerprint = deps.fingerprint;
   const grantExpiry = (): Instant => new Date(Date.parse(deps.now()) + TASK_GRANT_LIFETIME_MS).toISOString() as Instant;
 
-  /** Hand a task automation to a paired node: the grant this node's owner writes for it, sent to it now. */
+  const delegationDeps = () => ({
+    db: deps.db,
+    identity: { nodeId: deps.nodeId, ownerPrincipalId: owner, fingerprint: fingerprint ?? "" },
+    now: deps.now,
+    newId: deps.newId,
+  });
+
+  /**
+   * Hand a task automation to a paired node: the grant this node's owner writes for it, sent to it now. The grant is
+   * the automation's own, so pausing or removing it withdraws exactly that grant.
+   */
   const handOver = (
     action: Extract<IntentAction, { kind: "task" }> & { executor: string },
-  ): { ok: true; send: () => boolean } | { ok: false; text: string } => {
+    maxWallClockMs: number | undefined,
+  ): { ok: true; grantId: string; send: () => boolean } | { ok: false; text: string } => {
     if (deps.principalId !== owner) return { ok: false, text: "only this node's owner can hand work to another node" };
     if (fingerprint === undefined) return { ok: false, text: "this node cannot hand work to another node from here" };
     if (!confirmedPeer(deps.db, action.executor)) {
@@ -396,10 +421,12 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
       resources: action.resources,
       allowedCategories: action.allowedCategories,
       expiresAt: grantExpiry(),
+      ...(maxWallClockMs === undefined ? {} : { maxWallClockMs }),
     });
     if (!built.ok) return { ok: false, text: `that cannot be handed over: ${built.message}` };
     return {
       ok: true,
+      grantId: built.grant.grantId,
       send: () => {
         const identity = { nodeId: deps.nodeId, ownerPrincipalId: owner, fingerprint };
         const written = writeGrant({ db: deps.db, identity, now: deps.now, newId: deps.newId }, built.grant);
@@ -451,6 +478,12 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
             type: "string",
             description: "For task: the node id of a paired node that runs it instead of this one. Omit to run it here.",
           },
+          maxMinutesPerRun: {
+            type: "integer",
+            minimum: 1,
+            maximum: MAX_MINUTES_PER_RUN,
+            description: "With executor: the longest one run may take on that node, when the user gives a limit.",
+          },
           allowedEffects: {
             type: "array",
             items: { type: "string", enum: [...GIVABLE_EFFECTS] },
@@ -483,7 +516,9 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         const action = readAction(params, ownedResources(deps.ownedRoots()));
         if (!action.ok) return { text: action.text };
         const task = action.action.kind === "task" ? action.action : undefined;
-        const handed = task?.executor === undefined ? undefined : handOver({ ...task, executor: task.executor });
+        const minutes = readMaxMinutes(params.maxMinutesPerRun, task?.executor !== undefined);
+        if (!minutes.ok) return { text: minutes.text };
+        const handed = task?.executor === undefined ? undefined : handOver({ ...task, executor: task.executor }, minutes.ms);
         if (handed !== undefined && !handed.ok) return { text: handed.text };
         const remembered = rememberSelfLogins(deps, params.githubSelfLogins);
         if (!remembered.ok) return { text: remembered.text };
@@ -493,7 +528,7 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
           summary,
           ...(schedule.schedule === undefined ? { topic } : { schedule: schedule.schedule }),
           match: match.match,
-          do: action.action,
+          do: task === undefined || handed === undefined ? action.action : { ...task, grantId: handed.grantId },
           allowSelfTriggered: params.allowSelfTriggered === true,
         } as Parameters<typeof createAutomation>[1]);
         if (!created.ok) return { text: `Not set up: ${created.message}` };
@@ -564,21 +599,40 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         }
         const newGoal = typeof params.goal === "string" ? params.goal.trim() : "";
         const newMessage = typeof params.message === "string" ? params.message.trim() : "";
+        const current = listAutomations({ db: deps.db }, deps.principalId).find((entry) => entry.intent.intentId === intentId)?.intent;
         if (newGoal !== "" || newMessage !== "") {
-          const current = listAutomations({ db: deps.db }, deps.principalId).find((entry) => entry.intent.intentId === intentId);
           if (current === undefined) return { text: `There is no automation ${intentId}.` };
-          const action = current.intent.do;
+          const action = current.do;
           if (action.kind === "task" && newGoal !== "") change.do = { ...action, goal: newGoal };
           else if (action.kind === "remind" && newMessage !== "") change.do = { ...action, message: newMessage };
           else return { text: action.kind === "task" ? "a task automation is edited with goal" : "a reminder is edited with message" };
         }
         if (Object.keys(change).length === 0) return { text: "Nothing to change: pass change, summary, match, goal or message." };
+
+        // A task another node runs goes under its own grant: paused or removed, that grant is withdrawn on both nodes;
+        // resumed, a new one is written, with the same limits, since a withdrawn grant is never live again.
+        const handedTask = current?.do.kind === "task" && current.do.executor !== undefined ? { ...current.do, executor: current.do.executor } : undefined;
+        const resuming = handedTask !== undefined && change.state === "active" && current?.state === "paused";
+        const regranted = resuming
+          ? handOver(handedTask, handedTask.grantId === undefined ? undefined : getGrant(deps.db, handedTask.grantId)?.budget?.maxWallClockMs)
+          : undefined;
+        if (regranted !== undefined && !regranted.ok) return { text: `Not resumed: ${regranted.text}` };
+        if (regranted !== undefined) change.do = { ...(change.do ?? handedTask), grantId: regranted.grantId } as IntentAction;
+
         const updated = updateAutomation({ db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.newId }, {
           intentId,
           principalId: deps.principalId,
           change,
         });
         if (!updated.ok) return { text: `Not changed: ${updated.message}` };
+        if (regranted !== undefined && !regranted.send()) {
+          updateAutomation(serviceDeps, { intentId, principalId: deps.principalId, change: { state: "paused" } });
+          return { text: `Not resumed: ${handedTask?.executor ?? ""} can no longer be handed work, so it stays paused.` };
+        }
+        if (handedTask?.grantId !== undefined && (updated.intent.state === "paused" || updated.intent.state === "removed")) {
+          const reason = updated.intent.state === "removed" ? "the automation it was written for was removed" : "the automation it was written for was paused";
+          if (withdrawGrant(delegationDeps(), handedTask.grantId, reason)) deps.kickDelivery?.();
+        }
         deps.kick?.();
         return {
           text:

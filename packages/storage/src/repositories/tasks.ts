@@ -121,6 +121,16 @@ export function getTask(db: Database, taskId: string): TaskRecord | undefined {
   };
 }
 
+/** How many tasks a peer has handed this node under one grant, which is what a grant's run budget counts. */
+export function countDelegatedTasks(db: Database, delegationId: string): number {
+  const row = oneRow<{ count: number }>(
+    db,
+    "SELECT COUNT(*) AS count FROM tasks WHERE json_extract(origin, '$.kind') = 'delegated' AND json_extract(origin, '$.delegationId') = ?",
+    delegationId,
+  );
+  return Number(row?.count ?? 0);
+}
+
 export function listActiveTasks(db: Database, conversationId: string): TaskRecord[] {
   const rows = allRows<{ task_id: string }>(
     db,
@@ -128,6 +138,18 @@ export function listActiveTasks(db: Database, conversationId: string): TaskRecor
       WHERE conversation_id = ? AND state NOT IN ('succeeded','failed','cancelled')
       ORDER BY updated_at DESC`,
     conversationId,
+  );
+  return rows.map((row) => getTask(db, row.task_id)).filter((task): task is TaskRecord => task !== undefined);
+}
+
+/** The tasks this node homes that are parked on a capability, oldest first. */
+export function listTasksWaitingOnCapability(db: Database, homeNodeId: string): TaskRecord[] {
+  const rows = allRows<{ task_id: string }>(
+    db,
+    `SELECT task_id FROM tasks
+      WHERE home_node_id = ? AND state = 'waiting_capability'
+      ORDER BY created_at, task_id`,
+    homeNodeId,
   );
   return rows.map((row) => getTask(db, row.task_id)).filter((task): task is TaskRecord => task !== undefined);
 }

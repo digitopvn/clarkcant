@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant, type MessageRecord } from "@clarkcant/contracts";
 import { registerCapability } from "@clarkcant/core";
-import { CONTROLLED_CODE_TASK, managedBranchFor } from "@clarkcant/project-work";
+import { CONTROLLED_CODE_TASK, managedBranchFor, managedWorktreePath } from "@clarkcant/project-work";
 import { allRows, appendAuditEvent, listAuditEvents, parseJson, type AuditKind, type AuditOutcome } from "@clarkcant/storage";
 
 import { createAutomationTools } from "../src/automation-tools.ts";
@@ -415,7 +415,7 @@ describe("a labelled issue becomes a draft pull request", () => {
   }, 120_000);
 
   it("reports a failing test as not done, and pushes nothing", async () => {
-    const { conversationId, bare } = await setUp("node --test --test-name-pattern=nothing-matches-this && node -e \"process.exit(3)\"");
+    const { conversationId, checkout, bare } = await setUp("node --test --test-name-pattern=nothing-matches-this && node -e \"process.exit(3)\"");
     await labelIssue();
 
     const taskId = await waitUntil(taskIdOfRun, 10_000);
@@ -430,8 +430,9 @@ describe("a labelled issue becomes a draft pull request", () => {
     expect(ghCalls()).toEqual([]);
     // The fix it wrote was never committed, so its worktree is kept, and the person is told where.
     const kept = await waitUntil(() => assistantTexts(conversationId).find((text) => text.startsWith(`Task ${taskId} để lại`)), 10_000);
-    expect(kept).toContain(join(dir, "worktrees", taskId));
-    expect(readFileSync(join(dir, "worktrees", taskId, "greet.mjs"), "utf8")).toContain("Hello, ${name}");
+    const worktree = managedWorktreePath(join(dir, "worktrees"), taskId, checkout);
+    expect(kept).toContain(worktree);
+    expect(readFileSync(join(worktree, "greet.mjs"), "utf8")).toContain("Hello, ${name}");
   }, 120_000);
 
   it("stops the command it is running when the task is stopped, and says it stopped", async () => {
