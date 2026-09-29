@@ -14,6 +14,7 @@ import {
   type Signal,
   type TaskRecord,
   type TaskResource,
+  capabilityRefSchema,
   checkGrant,
   delegationBriefSchema,
   delegationResultSchema,
@@ -460,20 +461,24 @@ export function reportDelegatedOutcome(
 }
 
 /** The states a peer is told about while a task it handed over is still open here. */
-export type DelegatedStatus = "waiting_approval" | "running";
+export type DelegatedStatus = "waiting_approval" | "waiting_capability" | "running";
 
 /**
- * Tell the peer that handed a task over that it now waits for this node's owner, or goes on after they allowed it.
+ * Tell the peer that handed a task over that it now waits — for this node's owner, or for a capability this node cannot
+ * run yet — or goes on after that.
  *
  * Only a fact about this node: the peer's owner hears it, and can stop the task, but the decision stays with this node's
- * owner. Nothing for a task no peer handed over.
+ * owner. `capabilityRef` names the capability waited for, or the one that became usable; that news goes only to a peer
+ * that said it reads it (`capabilities`), since an older build would take "running" for its owner's approval. Nothing
+ * for a task no peer handed over.
  */
 export function reportDelegatedStatus(
   deps: DelegationDeps,
-  input: { taskId: string; state: DelegatedStatus; message: string },
+  input: { taskId: string; state: DelegatedStatus; message: string; capabilityRef?: string },
 ): boolean {
   const task = getTask(deps.db, input.taskId);
   if (task?.origin?.kind !== "delegated") return false;
+  if (input.capabilityRef !== undefined && !hearsCapabilityWaits(deps.db, task.origin.peerNodeId)) return false;
   sendEnvelope(deps, {
     protocol: "agent.nodelink",
     version: 1,
@@ -485,7 +490,12 @@ export function reportDelegatedStatus(
     taskId: task.taskId,
     sourceSequence: nextOutboundSequence(deps.db, task.origin.peerNodeId),
     sentAt: deps.now(),
-    payload: { taskState: input.state, taskRevision: task.revision, message: input.message.slice(0, 500) },
+    payload: {
+      taskState: input.state,
+      taskRevision: task.revision,
+      message: input.message.slice(0, 500),
+      ...(input.capabilityRef === undefined ? {} : { capabilityRef: input.capabilityRef }),
+    },
   });
   return true;
 }
@@ -493,8 +503,11 @@ export function reportDelegatedStatus(
 export interface StatusReceiveDeps {
   db: Database;
   nodeId: string;
-  /** Tell this node's owner, in the task's conversation and the inbox. `about` makes the same news one notice. */
-  tell: (input: { taskId: string; conversationId: string; text: string; about: string; waiting: boolean }) => void;
+  /**
+   * Tell this node's owner, in the task's conversation and — while it waits — the inbox, under `title`. `about` makes the
+   * same news one notice.
+   */
+  tell: (input: { taskId: string; conversationId: string; text: string; about: string; waiting: boolean; title: string }) => void;
 }
 
 /**
@@ -516,6 +529,9 @@ export function receiveStatus(
   const revision = envelope.payload["taskRevision"];
   const peer = envelope.senderNodeId;
   const about = `${task.taskId}:${String(state)}:${typeof revision === "number" ? String(revision) : "?"}`;
+  // The capability the peer names, read as a capability ref and nothing else: the peer's words are shown here.
+  const named = capabilityRefSchema.safeParse(envelope.payload["capabilityRef"]);
+  const capability = named.success ? named.data : undefined;
   if (state === "waiting_approval") {
     const why = typeof envelope.payload["message"] === "string" ? quotedPeerText(envelope.payload["message"]) : "";
     deps.tell({
@@ -526,6 +542,20 @@ export function receiveStatus(
         `Chỉ họ quyết định được; nếu họ duyệt, việc tiếp tục ở đó. Bạn vẫn có thể dừng nó từ đây.`,
       about,
       waiting: true,
+      title: "Việc đang chờ chủ máy kia duyệt",
+    });
+    return { accepted: true, told: true };
+  }
+  if (state === "waiting_capability" && capability !== undefined) {
+    deps.tell({
+      taskId: task.taskId,
+      conversationId: task.conversationId,
+      text:
+        `Task ${task.taskId} đã tới ${peer} nhưng chưa chạy: ${peer} chưa chạy được ${capability} lúc này. ` +
+        `Việc được giữ ở đó và tự chạy khi ${capability} dùng được trên ${peer}; bạn vẫn có thể dừng nó từ đây.`,
+      about,
+      waiting: true,
+      title: "Việc đang chờ máy kia sẵn sàng",
     });
     return { accepted: true, told: true };
   }
@@ -533,9 +563,13 @@ export function receiveStatus(
     deps.tell({
       taskId: task.taskId,
       conversationId: task.conversationId,
-      text: `Chủ của ${peer} đã duyệt; task ${task.taskId} tiếp tục chạy trên ${peer}.`,
+      text:
+        capability === undefined
+          ? `Chủ của ${peer} đã duyệt; task ${task.taskId} tiếp tục chạy trên ${peer}.`
+          : `${capability} đã dùng được trên ${peer}; task ${task.taskId} bắt đầu chạy ở đó.`,
       about,
       waiting: false,
+      title: "",
     });
     return { accepted: true, told: true };
   }
@@ -596,9 +630,10 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
     if (existing.state === "queued") {
       const capabilityRef = automationCapabilityFor({ kind: "task", goal: existing.goal, resources: existing.resources ?? [], allowedCategories: [] });
       const coordination = { db: deps.db, nodeId: deps.identity.nodeId, now: deps.now, newId: deps.newId };
-      const started = startTaskHere(coordination, taskId, capabilityRef);
+      const started = startTaskHere(coordination, taskId, capabilityRef, { park: hearsCapabilityWaits(deps.db, peer) });
       if (!started.ok) return refuse(deps, peer, taskId, started.reason);
-      setImmediate(() => deps.startTask(taskId, capabilityRef));
+      if (started.parked) reportWaitingForCapability(deps, taskId, capabilityRef);
+      else setImmediate(() => deps.startTask(taskId, capabilityRef));
     }
     return { accepted: true, taskId, duplicate: true };
   }
@@ -691,13 +726,43 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
           },
         }),
   });
-  const started = startTaskHere(coordination, taskId, capabilityRef);
+  const started = startTaskHere(coordination, taskId, capabilityRef, { park: hearsCapabilityWaits(deps.db, peer) });
   if (!started.ok) return refuse(deps, peer, taskId, started.reason);
 
+  if (started.parked) {
+    // Kept here, not refused: it goes on by itself once this node can run it, and the peer hears at once that it waits.
+    deps.tell(
+      `${peer} giao việc ${summary} (task ${taskId}), nhưng máy này chưa chạy được ${capabilityRef} lúc này. ` +
+        "Việc được giữ và tự chạy trong phạm vi bạn đã cho phép khi nó dùng được.",
+      about,
+      allowance.conversationId,
+    );
+    reportWaitingForCapability(deps, taskId, capabilityRef);
+    return { accepted: true, taskId, duplicate: false };
+  }
   deps.tell(`${peer} giao việc ${summary} (task ${taskId}); nó đang chạy trên máy này trong phạm vi bạn đã cho phép.`, about, allowance.conversationId);
   // After this answer is recorded, so a node that stops first finds the task and the boot calls it uncertain.
   setImmediate(() => deps.startTask(taskId, capabilityRef));
   return { accepted: true, taskId, duplicate: false };
+}
+
+/**
+ * Whether a peer reads that a task it handed over waits here for a capability. One that does not — a build from before
+ * it — would never hear it, so its hand-over is refused at once instead, as it always was, rather than kept waiting
+ * without a word.
+ */
+function hearsCapabilityWaits(db: Database, peerNodeId: string): boolean {
+  return (getPeer(db, peerNodeId)?.features ?? []).includes("capabilities");
+}
+
+/** Tell the peer that handed a task over that it waits here for a capability this node cannot run yet. */
+function reportWaitingForCapability(deps: DelegationDeps, taskId: string, capabilityRef: CapabilityRef): void {
+  reportDelegatedStatus(deps, {
+    taskId,
+    state: "waiting_capability",
+    message: `this node cannot run ${capabilityRef} right now; the task waits here and runs once it can`,
+    capabilityRef,
+  });
 }
 
 /**

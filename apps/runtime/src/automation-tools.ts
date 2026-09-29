@@ -11,6 +11,7 @@ import type {
 } from "@clarkcant/contracts";
 import {
   type AutomationChange,
+  automationCapabilityFor,
   createAutomation,
   listAutomations,
   updateAutomation,
@@ -42,6 +43,7 @@ import {
 
 import { TASK_GRANT_LIFETIME_MS, taskGrant, withdrawGrant, writeGrant } from "./delegation.ts";
 import { polledGithubRepositories } from "./github-polling.ts";
+import { type PeerCapabilityAnswer, capabilityWarning, describePeerCapabilities } from "./peer-capabilities.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { GITHUB_SELF_LOGINS_PREFERENCE, GITHUB_SIGNAL_PATH, githubSelfLogins } from "./routes/github-signals.ts";
 import { WEBHOOK_SIGNAL_PATH_PREFIX } from "./routes/webhook-signals.ts";
@@ -75,6 +77,8 @@ export interface AutomationToolDeps {
   kickDelivery?: () => void;
   /** This node's key fingerprint, which a grant it sends is confirmed under. Absent, no work is handed to a peer. */
   fingerprint?: string;
+  /** Ask a paired node what it can run for this one. Absent, nothing is asked and nothing is said about it. */
+  peerCapabilities?: (peerNodeId: string) => Promise<PeerCapabilityAnswer>;
 }
 
 const GIVABLE_EFFECTS: readonly EffectCategory[] = ["read", "local-write", "external-write", "communication"];
@@ -538,11 +542,17 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
           return { text: `Not set up: ${task?.executor ?? ""} can no longer be handed work.` };
         }
         deps.kick?.();
+        // Whether that node can run what the task needs for this one, as it says now; its own check at each hand-over
+        // decides, so this warns rather than refuses.
+        const ready =
+          task?.executor === undefined || deps.peerCapabilities === undefined
+            ? ""
+            : `\n${capabilityWarning(task.executor, automationCapabilityFor(task), await deps.peerCapabilities(task.executor))}`;
         const there =
           task?.executor === undefined
             ? ""
             : `\nIt runs on ${task.executor}, which runs it only within what its owner allows this node; until they allow ` +
-              `${describePlaces(task.resources)} there, each run is refused on that node and said here.`;
+              `${describePlaces(task.resources)} there, each run is refused on that node and said here.${ready}`;
         const setUp = `Set up. It reports in this conversation.${there}\n${describe(created.intent, [])}`;
         if (created.intent.when.topic.startsWith("github.")) return { text: `${setUp}\n${githubSetup(deps, created.intent)}` };
         const webhookSource = webhookSourceOfTopic(created.intent.when.topic);
@@ -646,17 +656,24 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
       name: "list_peers",
       label: "Xem các node đã ghép đôi",
       description:
-        "List the user's other nodes this one is paired with, by node id, and what each may run here. Use it before " +
-        "handing a task automation to one (create_automation executor) or letting one run work here (allow_peer_tasks).",
+        "List the user's other nodes this one is paired with, by node id, what each may run here, and what each says it " +
+        "can run for this node now. Use it before handing a task automation to one (create_automation executor) or " +
+        "letting one run work here (allow_peer_tasks).",
       parameters: { type: "object", additionalProperties: false, properties: {} },
-      promptSnippet: "list_peers — the paired nodes, and what each may run here",
+      promptSnippet: "list_peers — the paired nodes, what each may run here, and what each can run for this one",
       execute: async (): Promise<{ text: string }> => {
         const at = deps.now();
         const peers = listPeers(deps.db).filter((peer) => peer.trustedAt !== null && peer.revokedAt === null);
         if (peers.length === 0) return { text: "This node is not paired with any other node." };
+        // Asked together, so one slow node costs the listing one wait rather than one each.
+        const there = await Promise.all(
+          peers.map(async (peer) =>
+            deps.peerCapabilities === undefined ? "" : ` · ${describePeerCapabilities(await deps.peerCapabilities(peer.peerNodeId))}`,
+          ),
+        );
         return {
           text: peers
-            .map((peer) => {
+            .map((peer, index) => {
               const allowance = livePeerAllowance(deps.db, peer.peerNodeId, at);
               const here =
                 allowance === undefined
@@ -664,7 +681,7 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
                   : `may run work here in ${allowance.grant.resources
                       .map((resource) => `${resource.resourceId} (${resource.kind === "repository" ? "repository" : resource.access})`)
                       .join(", ")}, may ${(allowance.grant.allowedEffectCategories ?? []).join(", ") || "only read"}`;
-              return `- ${peer.peerNodeId} · fingerprint ${peer.fingerprint} · ${here}`;
+              return `- ${peer.peerNodeId} · fingerprint ${peer.fingerprint} · ${here}${there[index] ?? ""}`;
             })
             .join("\n"),
         };

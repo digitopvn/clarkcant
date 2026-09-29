@@ -110,7 +110,7 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
         {
           db: runtime.db,
           nodeId: runtime.identity.nodeId,
-          tell: ({ taskId, conversationId, text, about, waiting }) => {
+          tell: ({ taskId, conversationId, text, about, waiting, title }) => {
             const at = now();
             appendHostReply(services, { conversationId, text, at });
             // Allowed there: it no longer waits, so the inbox stops saying it does.
@@ -118,12 +118,12 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
               clearWaitingNotice(services, taskId, at);
               return;
             }
-            // In the inbox too, for a person not looking at the conversation: the task is waiting on someone else.
+            // In the inbox too, for a person not looking at the conversation: the task is waiting on the other node.
             tryRecordNodeNotice(services, {
               sourceKind: "automation",
               category: "alert",
               severity: "info",
-              title: "Việc đang chờ chủ máy kia duyệt",
+              title,
               body: text,
               conversationId,
               subject: { kind: "task", taskId, conversationId },

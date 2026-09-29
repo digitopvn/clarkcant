@@ -241,7 +241,7 @@ describe("a paired Clark's notice", () => {
     });
     const replayed = (await replay.json()) as { status: string; features: unknown; label: unknown };
     // Every acknowledgement says what B takes and what it calls itself.
-    expect(replayed).toMatchObject({ status: "duplicate", features: ["notice", "skip"], label: "laptop" });
+    expect(replayed).toMatchObject({ status: "duplicate", features: ["notice", "skip", "capabilities"], label: "laptop" });
 
     // The same notice under new envelopes: B keys it by the sender and the sender's own key, so it is still one row.
     for (let again = 0; again < 3; again += 1) {
@@ -398,7 +398,7 @@ describe("a paired Clark's notice", () => {
 
     // Anything A delivers is answered with what B takes and what it calls itself.
     await introduce(a, b);
-    expect(getPeer(a.services.runtime.db, peerB)).toMatchObject({ features: ["notice", "skip"], label: "laptop" });
+    expect(getPeer(a.services.runtime.db, peerB)).toMatchObject({ features: ["notice", "skip", "capabilities"], label: "laptop" });
     expect((await call(a, `/peers/${peerB}/notices`, { body: { id: "2", title: "Xin chào" }, token: a.token })).status).toBe(202);
     await waitUntil(() => fromPeer(b).length === 1 && pendingOutbox(a.services.runtime.db).length === 0, "the notice on B");
 

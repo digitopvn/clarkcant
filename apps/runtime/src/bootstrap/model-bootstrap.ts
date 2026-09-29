@@ -18,6 +18,7 @@ import { filterBackgroundCandidates, routeBackgroundModel } from "../model-route
 import { type ModelTurn, type ViewDescriptor, createModelTurn } from "../model-turn.ts";
 import type { Runtime } from "../node.ts";
 import { createNodeTools, type CommandToolDeps } from "../node-tools.ts";
+import { askPeerCapabilities } from "../peer-capabilities.ts";
 import { type ProjectFinderDeps, resolveProject } from "../project-finder.ts";
 import { ownedResources } from "../preflight.ts";
 import type { RequestSecretDeps } from "../request-secret.ts";
@@ -313,6 +314,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           kick: () => deps.services().automation?.kick(),
           kickDelivery: () => deps.services().peerDelivery?.kick(),
           fingerprint: deps.services().runtime.identity.fingerprint,
+          peerCapabilities: (peerNodeId) => askPeerCapabilities(deps.services().runtime, peerNodeId),
         },
         // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
         packages: {

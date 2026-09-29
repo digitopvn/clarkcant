@@ -123,8 +123,12 @@ function skipListsInOrder(skip: PeerSkip): boolean {
  * What a node says it takes beyond the envelopes every build understands, so a peer sends a newer kind only to a node
  * that reads it. A closed list: a value this build does not know is dropped, never stored, so a peer cannot write
  * arbitrary words into this node's peer row by advertising them.
+ *
+ * `capabilities`: the node answers `GET /peers/capabilities` with what it can run for the asking peer, and says in a
+ * `status` when a task handed to it waits for a capability (`waiting_capability`) and when it goes on (`running`, with
+ * the capability named).
  */
-export const peerFeatureSchema = z.enum(["notice", "skip"]);
+export const peerFeatureSchema = z.enum(["notice", "skip", "capabilities"]);
 export type PeerFeature = z.infer<typeof peerFeatureSchema>;
 /** Every feature this build takes, in the order it advertises them. */
 export const PEER_FEATURES: readonly PeerFeature[] = peerFeatureSchema.options;

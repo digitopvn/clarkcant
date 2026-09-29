@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { capabilityRefSchema } from "./grants.ts";
 import { effectCategorySchema } from "./primitives.ts";
 import { signalTopicSchema } from "./signals.ts";
 import { taskResourceSchema } from "./tasks.ts";
@@ -54,3 +55,26 @@ export const delegationResultSchema = z.strictObject({
   }),
 });
 export type DelegationResult = z.infer<typeof delegationResultSchema>;
+
+/** The version of the capability summary a node answers `GET /peers/capabilities` with. */
+export const PEER_CAPABILITY_SUMMARY_VERSION = 1;
+/** The most capability refs one summary lists. An allowance names a handful; anything past this is not a summary. */
+export const PEER_CAPABILITY_SUMMARY_MAX = 32;
+
+/**
+ * What a paired node says it can run for the peer asking, right now.
+ *
+ * Only inside what its owner allows that peer: `allowed` says whether there is a live allowance at all, and
+ * `capabilities` lists the capability refs that allowance covers, each with whether this node can run it now. Nothing
+ * else — no folders, no other capability, no reason text — so a peer learns no more about the node than its owner gave
+ * it. Strict, so a node that adds anything is refused whole rather than read in part. A snapshot: the node checks again
+ * when a task is handed over, and that check is the one that decides.
+ */
+export const peerCapabilitySummarySchema = z.strictObject({
+  version: z.literal(PEER_CAPABILITY_SUMMARY_VERSION),
+  allowed: z.boolean(),
+  capabilities: z
+    .array(z.strictObject({ ref: capabilityRefSchema, ready: z.boolean() }))
+    .max(PEER_CAPABILITY_SUMMARY_MAX),
+});
+export type PeerCapabilitySummary = z.infer<typeof peerCapabilitySummarySchema>;
