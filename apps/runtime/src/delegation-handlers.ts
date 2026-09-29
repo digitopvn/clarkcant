@@ -1,7 +1,8 @@
 import type { Instant, PeerEnvelope } from "@clarkcant/contracts";
 
 import { readOriginRemote } from "./automation-service.ts";
-import { type DelegationDeps, receiveCancel, receiveDelegate, receiveResult, reportDelegatedOutcome } from "./delegation.ts";
+import { type DelegationDeps, receiveCancel, receiveDelegate, receiveResult, reportDelegatedOutcome, settleUndelivered } from "./delegation.ts";
+import type { DeadLetter } from "./peer-transport.ts";
 import { tryRecordNodeNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { DelegationHandlers } from "./routes/peers.ts";
@@ -14,17 +15,12 @@ import { taskDispatchReports } from "./task-reporting.ts";
  * Every answer queues an envelope back, so the outbox is woken after each one rather than on its next round.
  */
 
-/** Per node, the tasks whose answer is being settled right now, across requests. */
-const settlingByNode = new WeakMap<object, Set<string>>();
-
 export function peerDelegationHandlers(services: NodeServices, now: () => Instant): DelegationHandlers {
   const { runtime, conductor } = services;
-  const settling = settlingByNode.get(runtime.db) ?? new Set<string>();
-  settlingByNode.set(runtime.db, settling);
   const deps: DelegationDeps = { db: runtime.db, identity: runtime.identity, now, newId: conductor.newId };
   const kick = (): void => services.peerDelivery?.kick();
 
-  const tell = (text: string, conversationId?: string): void => {
+  const tell = (text: string, about: string, conversationId?: string): void => {
     const at = now();
     if (conversationId !== undefined) appendHostReply(services, { conversationId, text, at });
     tryRecordNodeNotice(services, {
@@ -34,7 +30,7 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
       title: "Việc một node khác giao",
       body: text,
       ...(conversationId === undefined ? {} : { conversationId }),
-      dedupKey: `delegation:${conductor.newId("say")}`,
+      dedupKey: `delegation:${about}`,
       at,
     });
   };
@@ -68,12 +64,12 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
             now,
             conductor,
             onSettled: taskDispatchReports(services).onSettled,
-            settling,
           },
           envelope,
         ),
       ),
-    cancel: (envelope: PeerEnvelope) => answered(receiveCancel(deps, envelope)),
+    cancel: (envelope: PeerEnvelope) =>
+      answered(receiveCancel({ ...deps, ...(services.taskDispatch === undefined ? {} : { taskDispatch: services.taskDispatch }) }, envelope)),
   };
 }
 
@@ -87,5 +83,20 @@ export function answerUncertain(services: NodeServices, now: () => Instant): (ta
     const { runtime, conductor } = services;
     const deps: DelegationDeps = { db: runtime.db, identity: runtime.identity, now, newId: conductor.newId };
     if (reportDelegatedOutcome(deps, { taskId, outcome: "uncertain", message })) services.peerDelivery?.kick();
+  };
+}
+
+/**
+ * Settle the task a hand-over or a stop was about, when this node gave up delivering it to the peer.
+ *
+ * Without it the task waits for an answer the peer never had the chance to give.
+ */
+export function settleUndeliveredTasks(services: NodeServices, now: () => Instant): (letter: DeadLetter) => void {
+  return (letter) => {
+    const { runtime, conductor } = services;
+    settleUndelivered(
+      { db: runtime.db, nodeId: runtime.identity.nodeId, now, conductor, onSettled: taskDispatchReports(services).onSettled },
+      letter,
+    );
   };
 }

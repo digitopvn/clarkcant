@@ -1,6 +1,6 @@
 import { type Instant, type PeerEnvelope, peerEnvelopeSchema } from "@clarkcant/contracts";
 import { recordAcknowledgement, recordTransmissionAttempt, sendEnvelope } from "@clarkcant/node-link";
-import { type Database, type PeerRecord, markOutboxFailed, pendingOutbox } from "@clarkcant/storage";
+import { type Database, type PeerRecord, deadLetterOutbox, markOutboxFailed, pendingOutbox } from "@clarkcant/storage";
 
 import type { NodeIdentity } from "./node.ts";
 import { outboundPeerToken } from "./peers.ts";
@@ -50,7 +50,21 @@ export interface DeliveryOutcome {
    * (every existing caller, until a peer actually goes dark for long enough) sees exactly the shape it
    * saw before this field existed.
    */
-  deadLettered?: { messageId: string; peerNodeId: string }[];
+  deadLettered?: DeadLetter[];
+}
+
+/**
+ * A message given up on, with what it was about: the task it concerned is waiting for it, and has to be told.
+ *
+ * `refusedByPeer` says the peer answered and turned it down (or the pairing was revoked), so it never acted on it; a
+ * message that only never got an answer may have been acted on.
+ */
+export interface DeadLetter {
+  messageId: string;
+  peerNodeId: string;
+  kind: PeerEnvelope["kind"];
+  taskId?: string;
+  refusedByPeer: boolean;
 }
 
 /**
@@ -112,7 +126,16 @@ export async function deliverPending(
   options: { only?: string } = {},
 ): Promise<DeliveryOutcome> {
   const outcome: DeliveryOutcome = { attempted: 0, acknowledged: 0, refused: [] };
-  const deadLettered: { messageId: string; peerNodeId: string }[] = [];
+  const deadLettered: DeadLetter[] = [];
+  const gaveUp = (envelope: PeerEnvelope, refusedByPeer: boolean): void => {
+    deadLettered.push({
+      messageId: envelope.messageId,
+      peerNodeId: envelope.recipientNodeId,
+      kind: envelope.kind,
+      ...(envelope.taskId === undefined ? {} : { taskId: envelope.taskId }),
+      refusedByPeer,
+    });
+  };
   const send = deps.fetchImpl ?? fetch;
 
   const queued: PeerEnvelope[] = [];
@@ -130,7 +153,14 @@ export async function deliverPending(
 
   for (const envelope of queued.slice(0, deps.batchSize ?? 20)) {
     const peer = deps.peerFor(envelope.recipientNodeId);
-    if (peer === undefined || peer.revokedAt !== null || peer.trustedAt === null) {
+    if (peer !== undefined && peer.revokedAt !== null) {
+      // Never deliverable: the pairing is over, so the message is given up on now rather than held for ever.
+      outcome.refused.push({ messageId: envelope.messageId, reason: "the pairing with the recipient was revoked" });
+      deadLetterOutbox(deps.db, envelope.messageId, deps.now(), "the pairing with the recipient was revoked");
+      gaveUp(envelope, true);
+      continue;
+    }
+    if (peer === undefined || peer.trustedAt === null) {
       // Refused rather than held: a message to a peer nobody confirmed is not waiting for a
       // confirmation, it is a message this node should not be sending.
       outcome.refused.push({ messageId: envelope.messageId, reason: "the recipient is not a confirmed peer" });
@@ -155,9 +185,8 @@ export async function deliverPending(
         const reason = `the peer answered ${response.status}`;
         outcome.refused.push({ messageId: envelope.messageId, reason });
         const failure = markOutboxFailed(deps.db, envelope.messageId, deps.now(), sanitizeDeliveryError(reason));
-        if (failure.status === "dead-lettered") {
-          deadLettered.push({ messageId: envelope.messageId, peerNodeId: envelope.recipientNodeId });
-        }
+        // A 4xx is the peer refusing the message itself; anything else is a peer that could not answer.
+        if (failure.status === "dead-lettered") gaveUp(envelope, response.status >= 400 && response.status < 500);
         continue;
       }
       recordAcknowledgement(deps, envelope.messageId);
@@ -166,9 +195,7 @@ export async function deliverPending(
       const reason = cause instanceof Error ? cause.message : "delivery failed";
       outcome.refused.push({ messageId: envelope.messageId, reason });
       const failure = markOutboxFailed(deps.db, envelope.messageId, deps.now(), sanitizeDeliveryError(reason));
-      if (failure.status === "dead-lettered") {
-        deadLettered.push({ messageId: envelope.messageId, peerNodeId: envelope.recipientNodeId });
-      }
+      if (failure.status === "dead-lettered") gaveUp(envelope, false);
     }
   }
 

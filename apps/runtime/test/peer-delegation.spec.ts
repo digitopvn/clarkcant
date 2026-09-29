@@ -1,18 +1,19 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Instant, MessageRecord, PeerEnvelope, TaskRecord } from "@clarkcant/contracts";
-import { registerCapability } from "@clarkcant/core";
+import { createTask, registerCapability, startTaskHere } from "@clarkcant/core";
 import { sendEnvelope } from "@clarkcant/node-link";
 import { CONTROLLED_CODE_TASK } from "@clarkcant/project-work";
-import { allRows, getGrant, getTask, nextOutboundSequence, parseJson, pendingOutbox } from "@clarkcant/storage";
+import { allRows, getGrant, getTask, nextOutboundSequence, parseJson, pendingOutbox, revokeGrant } from "@clarkcant/storage";
 
 import { createAutomationTools } from "../src/automation-tools.ts";
 import { startAutomationService } from "../src/automation-service.ts";
 import { queueResult } from "../src/delegation.ts";
-import { answerUncertain } from "../src/delegation-handlers.ts";
+import { answerUncertain, settleUndeliveredTasks } from "../src/delegation-handlers.ts";
 import { startPeerDelivery } from "../src/peer-signals.ts";
 import { createTaskDispatcher } from "../src/task-dispatch.ts";
 import { taskDispatchReports } from "../src/task-reporting.ts";
@@ -34,8 +35,29 @@ const nodes = liveNodes();
 
 afterEach(async () => {
   watched.splice(0);
+  for (const child of workers.splice(0)) if (child.exitCode === null && child.signalCode === null) child.kill();
   await nodes.stopAll();
 });
+
+/** The worker processes the stoppable runner started, so a test can see they ended and none outlives it. */
+const workers: ChildProcess[] = [];
+
+/**
+ * A worker that keeps working until it is stopped: a real process, handed to the dispatcher the way a real worker is,
+ * whose run ends only when that process does.
+ */
+function stoppableWorker(options: Parameters<typeof runWorkerProcess>[0]): Promise<never> {
+  return new Promise((_, reject) => {
+    const child = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], {
+      stdio: "ignore",
+      detached: process.platform !== "win32",
+      windowsHide: true,
+    });
+    workers.push(child);
+    child.once("exit", () => reject(new Error("the worker ended")));
+    options.onChild?.(child);
+  });
+}
 
 interface Clark extends LiveNode {
   /** A folder this node owns, where work handed to it may run. */
@@ -59,7 +81,7 @@ function writeScript(dir: string): string {
 }
 
 /** A node as `wireRuntime` starts it: its automation service, its delivery pass, and a dispatcher with a worker. */
-async function startClark(label: string, options: { hang?: boolean } = {}): Promise<Clark> {
+async function startClark(label: string, options: { hang?: boolean; stoppable?: boolean } = {}): Promise<Clark> {
   let root = "";
   const node = await nodes.start(label, (services) => {
     root = join(services.runtime.dataDir, "work");
@@ -86,9 +108,15 @@ async function startClark(label: string, options: { hang?: boolean } = {}): Prom
       ...taskDispatchReports(services),
       timeoutMs: 60_000,
       // A worker that never answers stands for a node that stopped while the task ran.
-      runWorker: options.hang === true ? () => new Promise<never>(() => undefined) : (worker) => runWorkerProcess({ ...worker, scriptPath: script }),
+      runWorker:
+        options.hang === true
+          ? () => new Promise<never>(() => undefined)
+          : options.stoppable === true
+            ? stoppableWorker
+            : (worker) => runWorkerProcess({ ...worker, scriptPath: script }),
     });
     services.conductor.runTask = (input) => dispatcher.dispatch(input);
+    services.taskDispatch = dispatcher;
   });
   watched.push(node);
   return { ...node, root };
@@ -306,6 +334,109 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
     expect(said(a, onA).some((text) => text.startsWith("Đã hủy (task"))).toBe(true);
   });
 
+  it("stops a worker already running on the other node when the sender stops the task", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop", { stoppable: true });
+    await pair(a, b);
+    const onA = await conversation(a, "Ghi chú");
+    const onB = await conversation(b, "Máy bàn");
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+    await signal(a, "note-1");
+    await waitUntil(() => workers.length === 1, "B's worker to start");
+    const [worker] = workers;
+
+    const [home] = tasksOn(a);
+    const stopped = await call(a, `/tasks/${String(home?.taskId)}/cancel`, { token: a.token });
+    expect(stopped.body).toMatchObject({ confirmed: false });
+
+    // B does not call it stopped while its worker still runs: the worker is ended, and its end confirms the stop.
+    await waitUntil(() => worker?.exitCode !== null || worker?.signalCode !== null, "B's worker to be stopped");
+    await waitUntil(() => getTask(a.services.runtime.db, String(home?.taskId))?.state === "cancelled", "A's task to be stopped");
+    expect(tasksOn(b)[0]?.state).toBe("cancelled");
+    expect(said(a, onA).some((text) => text.startsWith("Đã hủy (task"))).toBe(true);
+  });
+
+  it("stops a worker running here when this node's owner stops the task", async () => {
+    const b = await startClark("laptop", { stoppable: true });
+    const onB = await conversation(b, "Việc ở đây");
+    const at = () => new Date().toISOString() as Instant;
+    const task = createTask(
+      { db: b.services.runtime.db, nodeId: identityOf(b).nodeId, now: at, newId: b.services.conductor.newId },
+      {
+        conversationId: onB as TaskRecord["conversationId"],
+        goal: "Keep working until stopped.",
+        principal: { principalId: identityOf(b).ownerPrincipalId as never, kind: "user", nodeId: identityOf(b).nodeId as never },
+      },
+    );
+    const coordination = { db: b.services.runtime.db, nodeId: identityOf(b).nodeId, now: at, newId: b.services.conductor.newId };
+    expect(startTaskHere(coordination, task.taskId, CONTROLLED_CODE_TASK.ref)).toEqual({ ok: true });
+    b.services.conductor.runTask?.({ taskId: task.taskId, capabilityRef: CONTROLLED_CODE_TASK.ref, executionNodeId: identityOf(b).nodeId });
+    await waitUntil(() => workers.length === 1, "the worker to start");
+
+    const stopped = await call(b, `/tasks/${task.taskId}/cancel`, { token: b.token });
+    // Not confirmed by the request: the worker is still running when it is answered.
+    expect(stopped.body).toMatchObject({ confirmed: false, state: "cancel_requested" });
+    await waitUntil(() => getTask(b.services.runtime.db, task.taskId)?.state === "cancelled", "the task to be stopped");
+    expect(workers[0]?.exitCode !== null || workers[0]?.signalCode !== null).toBe(true);
+  });
+
+  it("answers a hand-over under a grant no longer live with why it does not run", async () => {
+    const { a, b, onA, onB } = await desks();
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+    revokeGrant(b.services.runtime.db, getGrantIdFor(a, b), new Date().toISOString() as Instant);
+
+    await signal(a, "note-1");
+
+    await waitUntil(() => said(a, onA).some((text) => text.startsWith("Không xong (task")), "A to hear it did not run");
+    expect(said(a, onA).find((text) => text.startsWith("Không xong (task"))).toContain("the grant this hand-over names was revoked");
+    expect(tasksOn(b)).toEqual([]);
+  });
+
+  it("settles the sender's task when a hand-over or a stop could not be delivered", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop", { hang: true });
+    await pair(a, b);
+    const onA = await conversation(a, "Ghi chú");
+    const onB = await conversation(b, "Máy bàn");
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+    await signal(a, "note-1");
+    await signal(a, "note-2");
+    await waitUntil(() => tasksOn(a).filter((task) => task.state === "running").length === 2, "both tasks to be running on B");
+    const [refused, unanswered] = tasksOn(a);
+    const settle = settleUndeliveredTasks(a.services, () => new Date().toISOString() as Instant);
+    const peerNodeId = identityOf(b).nodeId;
+
+    // The peer turned the hand-over down, so it never ran there: the task failed.
+    settle({ messageId: "msg_refused", peerNodeId, kind: "delegate", taskId: String(refused?.taskId), refusedByPeer: true });
+    expect(getTask(a.services.runtime.db, String(refused?.taskId))?.state).toBe("failed");
+    expect(said(a, onA).some((text) => text.startsWith(`Không xong (task ${String(refused?.taskId)})`) && text.includes("từ chối"))).toBe(true);
+
+    // A stop nobody answered may not have stopped anything: the outcome is unknown, and said so.
+    const stopped = await call(a, `/tasks/${String(unanswered?.taskId)}/cancel`, { token: a.token });
+    expect(stopped.body).toMatchObject({ confirmed: false });
+    settle({ messageId: "msg_lost", peerNodeId, kind: "cancel.request", taskId: String(unanswered?.taskId), refusedByPeer: false });
+    expect(getTask(a.services.runtime.db, String(unanswered?.taskId))?.state).toBe("uncertain");
+    expect(said(a, onA).some((text) => text.includes(`(task ${String(unanswered?.taskId)})`) && text.includes("yêu cầu dừng"))).toBe(true);
+
+    // A letter about a task already settled, or one some other node was running, changes nothing.
+    settle({ messageId: "msg_again", peerNodeId, kind: "delegate", taskId: String(refused?.taskId), refusedByPeer: false });
+    expect(getTask(a.services.runtime.db, String(refused?.taskId))?.state).toBe("failed");
+  });
   it("tells the sender its outcome is unknown when the node running it restarted part-way", async () => {
     const a = await startClark("desk");
     const b = await startClark("laptop", { hang: true });

@@ -9,10 +9,12 @@ import type {
   Principal,
   TaskId,
 } from "@clarkcant/contracts";
+import { isTerminal } from "@clarkcant/contracts";
 import {
   acquireLease,
   applyTaskEvent,
   approvalAuthorizes,
+  cancelTask,
   decideApproval,
   decideExecution,
   executionIntentOf,
@@ -22,8 +24,10 @@ import {
   releaseLease,
   requestApproval,
   runDispatchedTask,
+  type CancelTaskResult,
   type ConductorDeps,
   type CoordinationDeps,
+  type TaskServiceDeps,
   type PolicyDecision,
 } from "@clarkcant/core";
 import { ensureManagedWorktree, removeManagedWorktree, workerCapabilitiesFor, type ManagedWorktree } from "@clarkcant/project-work";
@@ -150,8 +154,13 @@ export interface TaskDispatcher {
    * queued with a reason. Returns how many workers were stopped.
    */
   stopAll(): number;
-  /** Stop one task's worker, or take it out of the queue. Answers whether there was one to stop. */
+  /**
+   * Stop one task's worker, or take it out of the queue. Answers whether there was one to stop. A task admitted whose
+   * worker has not started yet is marked, so the worker is stopped the moment it exists rather than left to run.
+   */
   stop(taskId: string): boolean;
+  /** Whether this dispatcher holds the task, queued or admitted: its stop is then this dispatcher's to confirm. */
+  holds(taskId: string): boolean;
   /** Running and queued tasks, as the node's work list shows them. */
   work(): WorkView[];
   runningCount(): number;
@@ -281,6 +290,19 @@ export function settlingEvidence<T extends { verdict: string }>(evidence: readon
  * A closure rather than a class, matching every other seam in this app: the state it owns — the
  * queue and the live children — has no reason to be reachable from outside the functions below.
  */
+/**
+ * Ask a task to stop, and stop the worker this node runs for it.
+ *
+ * The one stop for a person on this node and for the peer that handed the task over. A task this dispatcher holds is
+ * not confirmed stopped here: its worker is ended, and the run's own settle confirms the stop or says what it finished.
+ */
+export function stopTask(coordination: TaskServiceDeps, dispatcher: TaskDispatcher | undefined, taskId: string): CancelTaskResult {
+  const held = dispatcher?.holds(taskId) === true;
+  const outcome = cancelTask(coordination, taskId, { executingHere: held });
+  if (outcome.ok && outcome.changed && held) dispatcher?.stop(taskId);
+  return outcome;
+}
+
 export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
   const at = deps.at ?? ((): Instant => new Date().toISOString() as Instant);
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
@@ -329,7 +351,12 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
   async function runOne(job: QueuedRun): Promise<void> {
     const task = getTask(deps.conductor.db, job.taskId);
-    if (task === undefined) return;
+    if (task === undefined || isTerminal(task.state)) return;
+    // Asked to stop while it waited for a slot: it never gets a worker, and the stop is confirmed by the refusal.
+    if (task.state === "cancel_requested") {
+      await refuse(job, "stopped before a worker was started for it");
+      return;
+    }
     active.set(job.taskId, { startedAt: at() });
     try {
       await runAdmitted(job, task);
@@ -567,6 +594,11 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             }),
         onChild: (child) => {
           liveChildren.set(runId, { taskId: job.taskId, child });
+          // A stop that arrived while the run was being prepared ends the worker as soon as it exists.
+          if (stopping.has(job.taskId)) {
+            void stopTree(child);
+            stopCommandsForTask(job.taskId);
+          }
           journal((j) =>
             j.taskStarted({
               workId: job.taskId,
@@ -727,6 +759,8 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     },
     stopAll() {
       const stopped = liveChildren.size;
+      // Admitted and still being prepared: its worker is stopped as soon as it exists.
+      for (const taskId of active.keys()) stopping.add(taskId);
       for (const { taskId, child } of liveChildren.values()) {
         stopping.add(taskId);
         void stopTree(child);
@@ -744,17 +778,18 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         if (job !== undefined) void refuse(job, "stopped before a worker was started for it");
         return true;
       }
-      let found = false;
+      if (!active.has(taskId)) return false;
+      stopping.add(taskId);
       for (const entry of liveChildren.values()) {
-        if (entry.taskId !== taskId) continue;
-        stopping.add(taskId);
-        void stopTree(entry.child);
-        found = true;
+        if (entry.taskId === taskId) void stopTree(entry.child);
       }
       // The commands its worker asked the host to run are the task's too, and a stop that left them running would
       // leave the effect the person meant to end still happening.
-      if (found) stopCommandsForTask(taskId);
-      return found;
+      stopCommandsForTask(taskId);
+      return true;
+    },
+    holds(taskId) {
+      return active.has(taskId) || queue.some((job) => job.taskId === taskId);
     },
     work() {
       const view = (taskId: string, state: "running" | "queued", startedAt: string, position?: number): WorkView => {

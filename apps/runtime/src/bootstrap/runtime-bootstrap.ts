@@ -16,6 +16,7 @@ import { refreshProjectIndex } from "../project-finder.ts";
 import { startAutomationService } from "../automation-service.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
 import { startPeerDelivery } from "../peer-signals.ts";
+import { settleUndeliveredTasks } from "../delegation-handlers.ts";
 import { taskDispatchReports } from "../task-reporting.ts";
 import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
@@ -290,11 +291,12 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    * What carries queued envelopes to paired nodes. A node that has paired with nothing finds nothing to send, and one
    * that queued something before it stopped sends it on the first pass.
    */
-  deps.services.peerDelivery = startPeerDelivery({
-    db: deps.services.runtime.db,
-    identity: deps.services.runtime.identity,
-    now: () => new Date().toISOString() as Instant,
-  });
+  const deliveryNow = (): Instant => new Date().toISOString() as Instant;
+  deps.services.peerDelivery = startPeerDelivery(
+    { db: deps.services.runtime.db, identity: deps.services.runtime.identity, now: deliveryNow },
+    // A hand-over or a stop given up on settles the task that waited on it.
+    { onDeadLettered: settleUndeliveredTasks(deps.services, deliveryNow) },
+  );
   deps.services.peerDelivery.kick();
 
   /*

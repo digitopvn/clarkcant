@@ -1,3 +1,5 @@
+import { isAbsolute, resolve } from "node:path";
+
 import {
   type CapabilityRef,
   type DelegationBrief,
@@ -18,14 +20,14 @@ import {
   grantSchema,
   intersectGrants,
   isTerminal,
+  taskIdSchema,
 } from "@clarkcant/contracts";
 import {
   type ConductorDeps,
   applyTaskEvent,
   automationCapabilityFor,
-  cancelTask,
   createTask,
-  runDispatchedTask,
+  settleDispatchedTask,
   startTaskHere,
 } from "@clarkcant/core";
 import { sendEnvelope } from "@clarkcant/node-link";
@@ -43,6 +45,7 @@ import {
 
 import { repositoryBindingRefusal, triggerBrief } from "./automation-service.ts";
 import type { NodeIdentity } from "./node.ts";
+import { type TaskDispatcher, stopTask } from "./task-dispatch.ts";
 
 /**
  * Handing a task to a paired Clark, and hearing back.
@@ -240,8 +243,6 @@ export interface ResultReceiveDeps {
   conductor: ConductorDeps;
   /** How a settled task is told, the same as one this node ran. */
   onSettled: (input: { taskId: string; conversationId: string; outcome: "succeeded" | "failed" | "uncertain" | "cancelled"; message: string }) => void;
-  /** Tasks whose answer is being settled right now, so a second copy of it is not settled twice. */
-  settling: Set<string>;
 }
 
 /**
@@ -261,7 +262,7 @@ export function receiveResult(
   if (task === undefined || task.homeNodeId !== deps.nodeId || task.executionNodeId !== envelope.senderNodeId) {
     return { accepted: false, reason: "this node handed that peer no such task" };
   }
-  if (isTerminal(task.state) || deps.settling.has(task.taskId)) return { accepted: true, duplicate: true };
+  if (isTerminal(task.state)) return { accepted: true, duplicate: true };
 
   const peer = envelope.senderNodeId;
   const said = result.ran ? `trên ${peer}: ${result.message}` : `${peer} không chạy việc này: ${result.message}`;
@@ -294,22 +295,54 @@ export function receiveResult(
     }
   }
 
-  deps.settling.add(task.taskId);
-  void runDispatchedTask(deps.conductor, {
-    taskId: task.taskId,
-    collectEvidence: async () => ({ kind: "api-receipt", summary: said.slice(0, 1000), verified: result.outcome === "succeeded" }),
-  })
-    .then((settled) => {
-      // The peer's own outcome is what a person hears when it did not succeed there: "cancelled" on the peer is not a
-      // failure of this node's.
-      const outcome = settled.outcome === "succeeded" || result.outcome === "succeeded" ? settled.outcome : result.outcome;
-      deps.onSettled({ taskId: task.taskId, conversationId: task.conversationId, outcome, message: said });
-    })
-    .catch((cause: unknown) => {
-      process.stderr.write(`delegation: could not settle ${task.taskId} (${cause instanceof Error ? cause.message : String(cause)})\n`);
-    })
-    .finally(() => deps.settling.delete(task.taskId));
+  // Settled before this answer is acknowledged, so a node that stops right after it has already recorded the outcome,
+  // and a second copy of the answer finds the task ended.
+  const settled = settleDispatchedTask(deps.conductor, task.taskId, {
+    kind: "api-receipt",
+    summary: said.slice(0, 1000),
+    verified: result.outcome === "succeeded",
+  });
+  deps.onSettled({ taskId: task.taskId, conversationId: task.conversationId, outcome: settled.outcome, message: said });
   return { accepted: true, duplicate: false };
+}
+
+/**
+ * A hand-over or a stop this node gave up delivering: the task that waits on it is settled here, since no answer comes.
+ *
+ * A hand-over the peer refused was never run there, so the task failed. One nobody answered may have been run, and a
+ * stop that never arrived may not have stopped anything: both are outcomes nobody here can vouch for, and are called
+ * that. Anything else, or a task already settled, is left alone. Answers whether a task was settled.
+ */
+export function settleUndelivered(
+  deps: ResultReceiveDeps,
+  letter: { peerNodeId: string; kind: PeerEnvelope["kind"]; taskId?: string; refusedByPeer: boolean },
+): boolean {
+  if (letter.kind !== "delegate" && letter.kind !== "cancel.request") return false;
+  const task = letter.taskId === undefined ? undefined : getTask(deps.db, letter.taskId);
+  if (task === undefined || task.homeNodeId !== deps.nodeId || task.executionNodeId !== letter.peerNodeId || isTerminal(task.state)) {
+    return false;
+  }
+  const coordination = { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.conductor.newId };
+  const peer = letter.peerNodeId;
+  let settled: { outcome: "succeeded" | "failed" | "uncertain" | "cancelled"; message: string } | undefined;
+
+  if (letter.kind === "delegate" && letter.refusedByPeer) {
+    const message = `${peer} từ chối nhận việc này nên nó không chạy ở đó`;
+    if (task.state === "cancel_requested") {
+      if (applyTaskEvent(coordination, task.taskId, "cancel.confirmed").ok) settled = { outcome: "cancelled", message };
+    } else {
+      settled = settleDispatchedTask(deps.conductor, task.taskId, { kind: "api-receipt", summary: message, verified: false });
+    }
+  } else {
+    const message =
+      letter.kind === "delegate"
+        ? `không gửi được việc này tới ${peer} sau nhiều lần thử; không rõ nó đã chạy ở đó hay chưa`
+        : `không gửi được yêu cầu dừng tới ${peer} sau nhiều lần thử; không rõ việc ở đó đã dừng hay chưa`;
+    if (applyTaskEvent(coordination, task.taskId, "effect.unknown").ok) settled = { outcome: "uncertain", message };
+  }
+  if (settled === undefined) return false;
+  deps.onSettled({ taskId: task.taskId, conversationId: task.conversationId, outcome: settled.outcome, message: settled.message });
+  return true;
 }
 
 /* ------------------------------------------------------------------ *
@@ -358,8 +391,11 @@ export interface DelegateReceiveDeps extends DelegationDeps {
   readRemote: (path: string) => string | undefined;
   /** Hand an acknowledged task to this node's dispatcher. Called after the envelope is recorded. */
   startTask: (taskId: string, capabilityRef: CapabilityRef) => void;
-  /** Tell this node's owner something about a peer's request, where they set up what it may do, or in the inbox. */
-  tell: (text: string, conversationId?: string) => void;
+  /**
+   * Tell this node's owner something about a peer's request, where they set up what it may do, or in the inbox. `about`
+   * names the hand-over, so the same one told twice is one notice.
+   */
+  tell: (text: string, about: string, conversationId?: string) => void;
 }
 
 export type DelegateOutcome = { accepted: true; taskId: string; duplicate: boolean } | { accepted: false; reason: string };
@@ -372,21 +408,34 @@ export type DelegateOutcome = { accepted: true; taskId: string; duplicate: boole
  */
 export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelope): DelegateOutcome {
   const peer = envelope.senderNodeId;
-  const taskId = envelope.taskId;
-  if (taskId === undefined) return { accepted: false, reason: "a hand-over has to name the task" };
+  const named = taskIdSchema.safeParse(envelope.taskId);
+  // Nothing is answered for an id this node would not use: the answer would carry it back.
+  if (!named.success) return { accepted: false, reason: "a hand-over has to name the task by a task id" };
+  const taskId: string = named.data;
+  const about = `${peer}:${taskId}`;
 
   const existing = getTask(deps.db, taskId);
   if (existing !== undefined) {
-    // The same hand-over again, under any message id: the task it made is the answer.
-    if (existing.origin?.kind === "delegated" && existing.origin.peerNodeId === peer) {
-      return { accepted: true, taskId, duplicate: true };
+    if (existing.origin?.kind !== "delegated" || existing.origin.peerNodeId !== peer) {
+      return refuse(deps, peer, taskId, "a task with that id already exists here");
     }
-    return refuse(deps, peer, taskId, "a task with that id already exists here");
+    // The same hand-over again, under any message id: the task it made is the answer. A node that stopped between
+    // recording the task and starting it hears it again because its answer was never sent, and starts it now.
+    if (existing.state === "queued") {
+      const capabilityRef = automationCapabilityFor({ kind: "task", goal: existing.goal, resources: existing.resources ?? [], allowedCategories: [] });
+      const coordination = { db: deps.db, nodeId: deps.identity.nodeId, now: deps.now, newId: deps.newId };
+      const started = startTaskHere(coordination, taskId, capabilityRef);
+      if (!started.ok) return refuse(deps, peer, taskId, started.reason);
+      setImmediate(() => deps.startTask(taskId, capabilityRef));
+    }
+    return { accepted: true, taskId, duplicate: true };
   }
 
   const read = delegationBriefSchema.safeParse(envelope.payload["taskBrief"]);
   if (!read.success) return refuse(deps, peer, taskId, "the hand-over is not one this node can read");
   const brief = read.data;
+  // Written by the peer: shown to this node's owner only as a quoted line, never as text of this node's own.
+  const summary = quotedPeerText(brief.summary);
 
   const at = deps.now();
   // The grant as it arrived and was checked then, never a copy in this envelope.
@@ -394,18 +443,24 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
   if (grant === undefined || grant.senderNodeId !== peer || grant.receiverNodeId !== deps.identity.nodeId) {
     return refuse(deps, peer, taskId, "this node holds no grant from that peer under that id");
   }
+  if (grant.revokedAt !== undefined || Date.parse(at) >= Date.parse(grant.expiresAt)) {
+    return refuse(deps, peer, taskId, grant.revokedAt !== undefined ? "the grant this hand-over names was revoked" : "the grant this hand-over names has expired");
+  }
   const allowance = livePeerAllowance(deps.db, peer, at);
   if (allowance === undefined) {
     deps.tell(
-      `${peer} muốn chạy việc "${brief.summary}" trên máy này, nhưng bạn chưa cho phép node đó chạy việc ở đây nên việc không chạy. ` +
+      `${peer} muốn chạy việc ${summary} trên máy này, nhưng bạn chưa cho phép node đó chạy việc ở đây nên việc không chạy. ` +
         "Nếu muốn, hãy nói với Clark những thư mục và quyền node đó được dùng.",
+      about,
     );
     return refuse(deps, peer, taskId, "this node's owner has not allowed that peer to run tasks here");
   }
 
   const effective = intersectGrants(grant, { ...allowance.grant, grantId: grant.grantId });
-  const capabilityRef = automationCapabilityFor({ kind: "task", goal: brief.goal, resources: brief.resources, allowedCategories: [] });
-  for (const resource of brief.resources) {
+  const resources = localResources(brief.resources, effective);
+  if (!resources.ok) return refuse(deps, peer, taskId, resources.reason);
+  const capabilityRef = automationCapabilityFor({ kind: "task", goal: brief.goal, resources: resources.resources, allowedCategories: [] });
+  for (const resource of resources.resources) {
     const check = checkGrant(effective, {
       capabilityRef,
       at,
@@ -414,7 +469,7 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
       delegationDepth: 0,
     });
     if (!check.allowed) {
-      deps.tell(`${peer} muốn chạy việc "${brief.summary}" ở ${resource.path}, ngoài những gì bạn cho node đó, nên việc không chạy.`, allowance.conversationId);
+      deps.tell(`${peer} muốn chạy việc ${summary} ở ${resource.path}, ngoài những gì bạn cho node đó, nên việc không chạy.`, about, allowance.conversationId);
       return refuse(deps, peer, taskId, `${resource.path}: ${check.message}`);
     }
   }
@@ -427,7 +482,7 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
           topic: brief.trigger.topic,
           ...(brief.trigger.subject === undefined ? {} : { subject: brief.trigger.subject }),
         };
-  const repositories = brief.resources.flatMap((resource) => (resource.kind === "repository" ? [resource.path] : []));
+  const repositories = resources.resources.flatMap((resource) => (resource.kind === "repository" ? [resource.path] : []));
   const refusal = repositoryBindingRefusal(trigger, repositories, deps.readRemote);
   if (refusal !== undefined) return refuse(deps, peer, taskId, refusal);
 
@@ -447,15 +502,41 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
     goal: (told === undefined ? brief.goal : `${brief.goal}\n\n${told}`).slice(0, 4000),
     principal,
     origin: { kind: "delegated", principalId: grant.ownerPrincipalId, peerNodeId: peer, delegationId: grant.grantId, allowedCategories },
-    resources: brief.resources,
+    resources: resources.resources,
   });
   const started = startTaskHere(coordination, taskId, capabilityRef);
   if (!started.ok) return refuse(deps, peer, taskId, started.reason);
 
-  deps.tell(`${peer} giao việc "${brief.summary}" (task ${taskId}); nó đang chạy trên máy này trong phạm vi bạn đã cho phép.`, allowance.conversationId);
+  deps.tell(`${peer} giao việc ${summary} (task ${taskId}); nó đang chạy trên máy này trong phạm vi bạn đã cho phép.`, about, allowance.conversationId);
   // After this answer is recorded, so a node that stops first finds the task and the boot calls it uncertain.
   setImmediate(() => deps.startTask(taskId, capabilityRef));
   return { accepted: true, taskId, duplicate: false };
+}
+
+/**
+ * The peer's paths as this machine names them: absolute, resolved, and spelled the way this node's owner allowed them
+ * where the filesystem does not tell case apart, so the grant's exact match compares the same folder.
+ */
+function localResources(
+  resources: readonly TaskResource[],
+  grant: Grant,
+): { ok: true; resources: TaskResource[] } | { ok: false; reason: string } {
+  const caseless = process.platform === "win32" || process.platform === "darwin";
+  const same = (a: string, b: string): boolean => (caseless ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const local: TaskResource[] = [];
+  for (const resource of resources) {
+    if (!isAbsolute(resource.path)) return { ok: false, reason: `${resource.path} is not an absolute path on this node` };
+    const path = resolve(resource.path);
+    const allowed = grant.resources.find((entry) => entry.kind === resource.kind && same(entry.resourceId, path));
+    local.push({ ...resource, path: allowed?.resourceId ?? path });
+  }
+  return { ok: true, resources: local };
+}
+
+/** A peer's own words, as one quoted line: no line breaks or control characters, and not longer than a notice needs. */
+function quotedPeerText(text: string): string {
+  const line = text.replace(/\p{Cc}+/gu, " ").replace(/\s+/gu, " ").replaceAll('"', "'").trim().slice(0, 160);
+  return `"${line}"`;
 }
 
 function refuse(deps: DelegationDeps, peer: string, taskId: string, reason: string): DelegateOutcome {
@@ -468,14 +549,15 @@ function refuse(deps: DelegationDeps, peer: string, taskId: string, reason: stri
  * only for a task it handed over.
  */
 export function receiveCancel(
-  deps: DelegationDeps,
+  deps: DelegationDeps & { taskDispatch?: TaskDispatcher },
   envelope: PeerEnvelope,
 ): { accepted: true; confirmed: boolean } | { accepted: false; reason: string } {
   const task = envelope.taskId === undefined ? undefined : getTask(deps.db, envelope.taskId);
   if (task?.origin?.kind !== "delegated" || task.origin.peerNodeId !== envelope.senderNodeId) {
     return { accepted: false, reason: "that peer handed this node no such task" };
   }
-  const outcome = cancelTask({ db: deps.db, nodeId: deps.identity.nodeId, now: deps.now, newId: deps.newId }, task.taskId);
+  // The worker this node runs for it is stopped, and its run answers the peer when it settles.
+  const outcome = stopTask({ db: deps.db, nodeId: deps.identity.nodeId, now: deps.now, newId: deps.newId }, deps.taskDispatch, task.taskId);
   if (!outcome.ok) return { accepted: false, reason: outcome.message };
   // A task nothing was running for stops at once, and the peer hears it here; a running one is answered when it settles.
   if (outcome.confirmed) queueResult(deps, envelope.senderNodeId, task.taskId, { outcome: "cancelled", message: "đã dừng theo yêu cầu", ran: true });

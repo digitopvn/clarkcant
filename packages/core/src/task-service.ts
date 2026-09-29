@@ -516,7 +516,15 @@ export type CancelTaskResult =
   | { ok: true; task: TaskRecord; changed: boolean; confirmed: boolean }
   | { ok: false; code: "ILLEGAL_TRANSITION"; message: string; confirmed: false };
 
-export function cancelTask(deps: TaskServiceDeps, taskId: string): CancelTaskResult {
+export function cancelTask(
+  deps: TaskServiceDeps,
+  taskId: string,
+  /**
+   * Whether a worker on this node holds the task right now. A task run here carries no run id, so the caller that owns
+   * the worker says so; the stop is then that worker's to confirm, as it would be for a peer's.
+   */
+  options: { executingHere?: boolean } = {},
+): CancelTaskResult {
   const before = getTask(deps.db, taskId);
   const requested = applyTaskEvent(deps, taskId, "cancel.requested");
   if (!requested.ok) return { ok: false, code: requested.code, message: requested.message, confirmed: false };
@@ -540,7 +548,7 @@ export function cancelTask(deps: TaskServiceDeps, taskId: string): CancelTaskRes
    * node and nothing executing on it — waiting for a confirmation that can never come would leave
    * the user reading "still stopping" about work that already stopped.
    */
-  const nothingRunning = requested.task.activeRunId === undefined;
+  const nothingRunning = requested.task.activeRunId === undefined && options.executingHere !== true;
   if (!nothingRunning) {
     notifyExecutingPeer(deps, requested.task);
     return { ok: true, task: requested.task, changed: true, confirmed: false };

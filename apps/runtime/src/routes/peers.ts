@@ -6,7 +6,7 @@ import {
   checkArtifactAcceptance,
   grantSchema,
 } from "@clarkcant/contracts";
-import { type Database, type JsonValue, activeGrants, getGrant, upsertGrant } from "@clarkcant/storage";
+import { type Database, type JsonValue, activeGrants, getGrant, grantIdsFrom, upsertGrant } from "@clarkcant/storage";
 import { type PeerGatewayDeps, receiveEnvelope } from "@clarkcant/node-link";
 
 import { extensionForMimeType, fetchArtifactFromPeer } from "../artifact-transfer.ts";
@@ -161,8 +161,8 @@ function peerHandler(
     }
 
     if (envelope.kind === "delegate") {
-      // The delegation id is the grant id, and the validator has already refused this envelope unless that grant is
-      // live for this sender. What runs is decided against that grant and this node's owner's allowance, never here.
+      // The delegation id is the grant id, and the validator has already refused this envelope unless that sender gave
+      // it. Whether it is still live, and what runs, is decided against that grant and this node's owner's allowance.
       if (delegation === undefined) return { accepted: false, reason: "this node takes no work from peers" };
       return delegation.delegate(envelope);
     }
@@ -225,8 +225,8 @@ function acceptancePolicy(
 /**
  * The inbound half of the peer gateway, for one peer.
  *
- * `knownDelegationIds` is read from the live grants from that sender, which is what makes a delegate
- * envelope naming an unknown delegation a refusal rather than a guess.
+ * `knownDelegationIds` is every grant that sender gave, which is what makes a delegate envelope naming an unknown
+ * delegation a refusal rather than a guess; one under a grant no longer live is answered by the hand-over handler.
  */
 /** The artifact an accepted offer named, or nothing when this envelope is not one this node took. */
 function acceptedArtifactOffer(
@@ -294,7 +294,9 @@ function peerGateway(
     // The window the contract's own negotiation test uses; a peer outside it is refused rather than
     // silently downgraded (T11).
     supportedVersions: { min: 1, max: 2 },
-    knownDelegationIds: new Set(activeGrants(pairing.db, peerNodeId, pairing.now()).map((grant) => grant.grantId)),
+    // Every grant that peer gave, live or not: the hand-over handler answers one under an expired or revoked grant with
+    // why it does not run, so the peer's task ends instead of waiting on a message refused unheard.
+    knownDelegationIds: grantIdsFrom(pairing.db, peerNodeId),
     handler: peerHandler(pairing, onSignal, delegation),
   };
 }

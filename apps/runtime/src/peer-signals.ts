@@ -10,7 +10,7 @@ import { sendEnvelope } from "@clarkcant/node-link";
 import { type Database, getPeer, nextOutboundSequence } from "@clarkcant/storage";
 
 import type { NodeIdentity } from "./node.ts";
-import { type PeerTransportDeps, deliverPending } from "./peer-transport.ts";
+import { type DeadLetter, type PeerTransportDeps, deliverPending } from "./peer-transport.ts";
 
 /**
  * Signals between paired nodes: something that happened on one Clark, for the other's standing requests to answer.
@@ -160,7 +160,12 @@ const DEFAULT_DELIVERY_INTERVAL_MS = 30_000;
  */
 export function startPeerDelivery(
   deps: Omit<PeerTransportDeps, "peerFor">,
-  options: { intervalMs?: number; log?: (line: string) => void } = {},
+  options: {
+    intervalMs?: number;
+    log?: (line: string) => void;
+    /** Told about each message given up on, so what waited on it is settled rather than left waiting. */
+    onDeadLettered?: (letter: DeadLetter) => void;
+  } = {},
 ): PeerDelivery {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`));
   let stopped = false;
@@ -179,7 +184,16 @@ export function startPeerDelivery(
         again = false;
         const outcome = await deliverPending({ ...deps, peerFor: (peerNodeId) => getPeer(deps.db, peerNodeId) });
         for (const dead of outcome.deadLettered ?? []) {
-          log(`nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId} after repeated failures`);
+          log(
+            dead.refusedByPeer
+              ? `nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId}; the peer refused it`
+              : `nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId} after repeated failures`,
+          );
+          try {
+            options.onDeadLettered?.(dead);
+          } catch (cause) {
+            log(`nodelink: could not settle what ${dead.messageId} was about (${cause instanceof Error ? cause.message : String(cause)})`);
+          }
         }
       } while (again && !stopped);
     } catch (cause) {
