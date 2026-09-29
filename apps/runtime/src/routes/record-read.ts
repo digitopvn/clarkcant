@@ -1,4 +1,6 @@
-import { getArtifact, getDatasetForPrincipal } from "@clarkcant/storage";
+import { getArtifact, getBrokerArtifact, getDatasetForPrincipal } from "@clarkcant/storage";
+
+import { artifactRefFromRecord } from "../artifact-broker.ts";
 
 import { type NodeServices } from "../services.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json } from "./http.ts";
@@ -53,7 +55,9 @@ export function handleRecordReadRoutes(deps: RecordReadRouteDeps): GatewayRespon
   if (segments.length === 2 && segments[0] === "artifacts" && request.method === "GET") {
     const artifactId = decodeURIComponent(segments[1] ?? "");
     const artifact = getArtifact(runtime.db, artifactId);
-    if (artifact === undefined) {
+    // A file a widget holds is a principal's own: somebody else's answers exactly as a missing one does.
+    const brokered = getBrokerArtifact(runtime.db, artifactId);
+    if (artifact === undefined || (brokered !== undefined && brokered.ownerPrincipalId !== runtime.identity.ownerPrincipalId)) {
       return fail(404, "ARTIFACT_NOT_FOUND", "Không có artifact nào với id này trên node.", { artifactId });
     }
     return json(200, {
@@ -68,6 +72,8 @@ export function handleRecordReadRoutes(deps: RecordReadRouteDeps): GatewayRespon
         // ISO instants compare correctly as strings, and both sides are UTC.
         expired: artifact.expiresAt !== undefined && artifact.expiresAt <= deps.at(),
       },
+      // A widget's file also answers with the ref every other surface uses for it.
+      ...(brokered === undefined ? {} : { artifactRef: artifactRefFromRecord(brokered) }),
     });
   }
 

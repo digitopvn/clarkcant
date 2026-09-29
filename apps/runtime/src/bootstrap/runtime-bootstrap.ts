@@ -15,6 +15,7 @@ import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
 import { startAutomationService } from "../automation-service.ts";
 import { resumeTasksWaitingOnCapability } from "../capability-waiters.ts";
+import { startArtifactSweep } from "../artifact-broker.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
 import { createGithubPolling } from "../github-polling.ts";
 import { tellNoticeTurnedDown } from "../peer-notices.ts";
@@ -304,6 +305,9 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    * route would race against.
    */
   deps.services.expirySweep = startExpiryNoticeSweep(deps.services);
+
+  // Working artifacts a widget never finalized, removed with their staged bytes once their time runs out.
+  deps.services.artifactSweep = startArtifactSweep({ db: deps.services.runtime.db, dataDir: deps.services.runtime.dataDir });
 
   /*
    * Standing requests: "from now on, when X happens, do Y". Started after the dispatcher above so a run it starts has a

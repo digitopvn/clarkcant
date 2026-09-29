@@ -1020,7 +1020,12 @@ export const DIFF: WidgetDefinition = {
   datasetRefs: [],
 };
 
-/** A file named and described: its name, type, size and where it came from. No link, no open, no download. */
+/**
+ * A file named and described: its name, type, size and where it came from.
+ *
+ * With `artifactRef`, the file is one the node holds, and the host offers Open and Save As for it — host chrome, checked
+ * by the node on every use. Without one, the card has no link, no open and no download, and says so.
+ */
 export const FILE: WidgetDefinition = {
   id: "canvas.file@1",
   version: "1.0.0",
@@ -1036,12 +1041,27 @@ export const FILE: WidgetDefinition = {
       source: oneLineProp(200),
       path: oneLineProp(500, 1),
       summary: { type: "string", maxLength: 500 },
+      artifactRef: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          v: { const: 1 },
+          artifactId: { type: "string", maxLength: 128, pattern: "^art_[A-Za-z0-9_-]{1,120}$" },
+          kind: { enum: ["attachment", "working", "finalized", "external"] },
+          mimeType: { type: "string", minLength: 3, maxLength: 120 },
+          sizeBytes: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          name: { type: "string", minLength: 1, maxLength: 200 },
+          digest: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
+        },
+        required: ["v", "artifactId", "kind", "mimeType", "sizeBytes", "name"],
+      },
     },
     required: ["name"],
   },
   eventSchemas: {},
   sizing: { compact: true, expanded: true, minHeight: 72 },
-  semanticDescription: "A file the model names and describes: its name, type, size and source, with no link to open it",
+  semanticDescription:
+    "A file the model names and describes: its name, type, size and source; with an artifactRef, the person can open it or save it",
   requestedCapabilities: [],
   textFallback: "A file appears as text: its name, type, size and source.",
   effectCategories: ["read"],

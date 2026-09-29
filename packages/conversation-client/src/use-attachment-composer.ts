@@ -36,6 +36,12 @@ export interface AttachmentComposerState {
    * and one uploaded into nothing could never be sent.
    */
   addFiles: (files: readonly File[]) => Promise<void>;
+  /**
+   * Put a file the node already stores as an attachment of this conversation into the composer — a widget's finalized
+   * artifact, attached through the broker. A ready chip, because the bytes are stored; the person still decides
+   * whether the message carries it, and can remove it like any other chip.
+   */
+  addStored: (attachment: { attachmentId: string; filename: string; mime: string; sizeBytes: number }) => void;
 }
 
 export interface AttachmentComposerDeps {
@@ -133,5 +139,30 @@ export function useAttachmentComposer({
     [chips.length, client, conversationId, onConversationCreated, onErrorCleared, t],
   );
 
-  return { chips, dispatchChips, dragging, setDragging, addFiles };
+  const addStored = useCallback(
+    (attachment: { attachmentId: string; filename: string; mime: string; sizeBytes: number }) => {
+      onErrorCleared();
+      const chip: AttachmentChip = {
+        id: `chip_${Date.now()}_${attachment.attachmentId}`,
+        filename: attachment.filename,
+        mime: attachment.mime,
+        sizeBytes: attachment.sizeBytes,
+        state: "checking",
+      };
+      dispatchChips({ type: "add", chips: [chip] });
+      // The same ceiling a picked file meets: a message carries at most this many, however they arrived.
+      if (chips.filter((entry) => entry.state !== "failed").length >= ATTACHMENT_LIMITS.maxPerMessage) {
+        dispatchChips({
+          type: "failed",
+          id: chip.id,
+          reason: t("shell.attachment.tooMany").replace("{max}", String(ATTACHMENT_LIMITS.maxPerMessage)),
+        });
+        return;
+      }
+      dispatchChips({ type: "stored", id: chip.id, attachmentId: attachment.attachmentId });
+    },
+    [chips, onErrorCleared, t],
+  );
+
+  return { chips, dispatchChips, dragging, setDragging, addFiles, addStored };
 }

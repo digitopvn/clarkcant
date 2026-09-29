@@ -24,6 +24,10 @@ import type {
 import {
   COMPOSER_SURFACE_HEADER,
   appIntentDecisionSchema,
+  artifactRefSchema,
+  attachmentRefSchema,
+  type ArtifactRef,
+  type AttachmentRef,
   composerSuggestionsResponseSchema,
   effectReconcileResponseSchema,
   parseSseChunk,
@@ -1689,6 +1693,143 @@ export class GatewayClient {
     return URL.createObjectURL(blob);
   }
 
+  /*
+   * Artifacts: files a widget works with, through the node's broker.
+   *
+   * Every answer is parsed rather than trusted, and every call names the instance the grant belongs to: the node checks
+   * the grant again on each one, so none of these is a permission this client holds. No path is ever sent or received.
+   */
+
+  #artifactPath(conversationId: string, instanceId: string, rest = ""): string {
+    return `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/artifacts${rest}`;
+  }
+
+  #artifactRef(body: { artifactRef?: unknown }): ArtifactRef {
+    const parsed = artifactRefSchema.safeParse(body.artifactRef);
+    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable artifact reference");
+    return parsed.data;
+  }
+
+  /** Store a file the person chose in host chrome, granted to this instance to read. Person-only on the node. */
+  async pickArtifact(input: {
+    conversationId: string;
+    instanceId: string;
+    accept: readonly string[];
+    name: string;
+    mimeType: string;
+    contentBase64: string;
+  }): Promise<ArtifactRef> {
+    const { conversationId, instanceId, ...body } = input;
+    return this.#artifactRef(await this.#call("POST", this.#artifactPath(conversationId, instanceId, "/pick"), body));
+  }
+
+  /** An artifact as this instance may see it: refused when its grant is missing, expired or revoked. */
+  async describeWidgetArtifact(conversationId: string, instanceId: string, artifactId: string): Promise<ArtifactRef> {
+    return this.#artifactRef(await this.#call("GET", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}`)));
+  }
+
+  async createArtifact(conversationId: string, instanceId: string, input: { mimeType: string; name?: string }): Promise<ArtifactRef> {
+    return this.#artifactRef(await this.#call("POST", this.#artifactPath(conversationId, instanceId), input));
+  }
+
+  async readArtifactRange(
+    conversationId: string,
+    instanceId: string,
+    artifactId: string,
+    range: { offset: number; length: number },
+  ): Promise<{ artifactRef: ArtifactRef; contentBase64: string; eof: boolean }> {
+    const query = `?offset=${String(range.offset)}&length=${String(range.length)}`;
+    const body = await this.#call<{ artifactRef?: unknown; contentBase64?: unknown; eof?: unknown }>(
+      "GET",
+      this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/content${query}`),
+    );
+    if (typeof body.contentBase64 !== "string" || typeof body.eof !== "boolean") {
+      throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered a read without its bytes");
+    }
+    return { artifactRef: this.#artifactRef(body), contentBase64: body.contentBase64, eof: body.eof };
+  }
+
+  async writeArtifactChunk(
+    conversationId: string,
+    instanceId: string,
+    artifactId: string,
+    chunk: { offset: number; contentBase64: string },
+  ): Promise<ArtifactRef> {
+    return this.#artifactRef(
+      await this.#call("POST", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/chunks`), chunk),
+    );
+  }
+
+  async finalizeArtifact(conversationId: string, instanceId: string, artifactId: string): Promise<ArtifactRef> {
+    return this.#artifactRef(
+      await this.#call("POST", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/finalize`), {}),
+    );
+  }
+
+  /** Make a finalized artifact an attachment of the conversation. The person still decides whether to send it. */
+  async attachArtifact(
+    conversationId: string,
+    instanceId: string,
+    artifactId: string,
+  ): Promise<{ artifactRef: ArtifactRef; attachmentRef: AttachmentRef }> {
+    const body = await this.#call<{ artifactRef?: unknown; attachmentRef?: unknown }>(
+      "POST",
+      this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/attach`),
+      {},
+    );
+    const attachment = attachmentRefSchema.safeParse(body.attachmentRef);
+    if (!attachment.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node attached the file but returned no attachment");
+    return { artifactRef: this.#artifactRef(body), attachmentRef: attachment.data };
+  }
+
+  /** What the node holds for an artifact this principal owns: its reference, never where its bytes are. */
+  async describeArtifact(artifactId: string): Promise<ArtifactRef> {
+    return this.#artifactRef(await this.#call("GET", `/artifacts/${encodeURIComponent(artifactId)}`));
+  }
+
+  /**
+   * A finalized artifact's bytes, for the person to look at in host chrome.
+   *
+   * A blob rather than a URL for the same reason as `attachmentObjectUrl`: the route needs the bearer token.
+   */
+  async artifactContent(artifactId: string): Promise<Blob> {
+    const response = await this.#fetch(`${this.#baseUrl}/artifacts/${encodeURIComponent(artifactId)}/content`, {
+      headers: { authorization: `Bearer ${this.#token}` },
+    });
+    if (!response.ok) throw await this.#binaryRefusal(response, "ARTIFACT_UNAVAILABLE", "that file could not be read");
+    return response.blob();
+  }
+
+  /**
+   * Export a finalized artifact for the person to save. Person-only on the node, and refused on every relay.
+   *
+   * The name the file is saved under is the one the node settled on, read from the response.
+   */
+  async exportArtifact(artifactId: string, suggestedName?: string): Promise<{ blob: Blob; filename: string }> {
+    const response = await this.#fetch(`${this.#baseUrl}/artifacts/${encodeURIComponent(artifactId)}/export`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify(suggestedName === undefined ? {} : { suggestedName }),
+    });
+    if (!response.ok) throw await this.#binaryRefusal(response, "ARTIFACT_EXPORT_FAILED", "that file could not be exported");
+    return {
+      blob: await response.blob(),
+      filename: attachmentFilename(response.headers.get("content-disposition")) ?? suggestedName ?? "file",
+    };
+  }
+
+  async #binaryRefusal(response: Response, fallbackCode: string, fallbackMessage: string): Promise<GatewayError> {
+    let code = fallbackCode;
+    let message = fallbackMessage;
+    try {
+      const parsed = (await response.json()) as { code?: unknown; message?: unknown };
+      if (typeof parsed.code === "string") code = parsed.code;
+      if (typeof parsed.message === "string") message = parsed.message;
+    } catch {
+      // A refusal without a JSON body keeps the fallback code and sentence.
+    }
+    return new GatewayError(response.status, code, message);
+  }
   /**
    * Object URL for the frame a session card was captured at.
    *

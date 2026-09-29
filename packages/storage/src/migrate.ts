@@ -1522,6 +1522,49 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 38,
+    name: "artifact_refs_and_grants",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The artifacts table from migration 5 becomes the one artifact store: a peer's received file (NodeLink) and a
+        -- widget's file (the ArtifactRef broker) are rows in the same table, read through the same repository, with their
+        -- bytes in the same blob store. Every column added here is NULL for a row written before it, which is how a
+        -- peer artifact reads: no owner, no kind, and so never reachable through a widget's ref.
+        --
+        -- kind is attachment | working | finalized | external; state is writable | sealed. A working artifact's
+        -- digest is '' and blob_path is NULL until it is finalized: its bytes are in the staging file named by
+        -- staging_ref, which is a file name inside the blob store's staging directory and never a path.
+        -- display_name is a file name the person or the widget chose, checked not to be a path. conversation_id is what
+        -- the artifact's lifetime follows; instance_id is the widget instance that created or received it.
+        ALTER TABLE artifacts ADD COLUMN owner_principal_id TEXT;
+        ALTER TABLE artifacts ADD COLUMN kind TEXT;
+        ALTER TABLE artifacts ADD COLUMN state TEXT;
+        ALTER TABLE artifacts ADD COLUMN conversation_id TEXT;
+        ALTER TABLE artifacts ADD COLUMN instance_id TEXT;
+        ALTER TABLE artifacts ADD COLUMN display_name TEXT;
+        ALTER TABLE artifacts ADD COLUMN staging_ref TEXT;
+        CREATE INDEX idx_artifacts_conversation ON artifacts(conversation_id);
+        CREATE INDEX idx_artifacts_owner ON artifacts(owner_principal_id);
+
+        -- One widget instance's permission to use one artifact. A ref is a pointer; this row is the permission, and
+        -- the host re-reads it on every use. access is read | write. revoked_at is kept rather than the row deleted,
+        -- so a revoked widget is told "revoked" and not "never granted".
+        CREATE TABLE artifact_grants (
+          artifact_id   TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
+          instance_id   TEXT NOT NULL,
+          principal_id  TEXT NOT NULL,
+          access        TEXT NOT NULL,
+          created_at    TEXT NOT NULL,
+          expires_at    TEXT NOT NULL,
+          revoked_at    TEXT,
+          PRIMARY KEY (artifact_id, instance_id)
+        );
+        CREATE INDEX idx_artifact_grants_expiry ON artifact_grants(expires_at);
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

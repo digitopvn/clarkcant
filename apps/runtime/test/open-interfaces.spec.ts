@@ -363,6 +363,10 @@ describe("WebSocket gateway", () => {
       // Saying an unknown effect took effect would let an AI client clear its own task's uncertainty.
       "/effects/eff_x/reconcile",
       "//effects//eff_x/reconcile/",
+      // Save As writes an artifact onto the person's machine; picking a file grants a widget bytes. Both the person's.
+      "/artifacts/art_x/export",
+      "//artifacts//art_x/export/",
+      "/conversations/conv_x/widgets/winst_x/artifacts/pick",
     ];
     for (const [index, path] of decisions.entries()) {
       client.send({ type: "request", id: index, method: "POST", path, body: {} });

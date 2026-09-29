@@ -499,3 +499,190 @@ describe("which service-backed actions can run", () => {
     expect(posted.filter((message) => message.kind === "actions")).toHaveLength(0);
   });
 });
+
+describe("the artifacts@1 extension", () => {
+  const REF = {
+    v: 1 as const,
+    artifactId: "art_one",
+    kind: "finalized" as const,
+    name: "ghi-chu.txt",
+    mimeType: "text/plain",
+    sizeBytes: 5,
+  };
+  const read = (requestId: string, artifactId = "art_one") =>
+    fromFrame({ kind: "artifact.request", requestId, request: { op: "read", artifactId, offset: 0, length: 5 } });
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("is advertised only when the host has a broker to hand requests to", () => {
+    expect(makeSession().session.init().extensions).toBeUndefined();
+    const { session } = makeSession({ artifacts: async () => ({ status: "cancelled" }) });
+    expect(session.init().extensions).toEqual(["artifacts@1"]);
+  });
+
+  it("refuses a request the host did not offer, and still answers it so the widget is not left waiting", () => {
+    const { session, posted } = makeSession();
+    session.init();
+
+    const result = session.accept(read("artreq-1"));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("EXTENSION_NOT_OFFERED");
+    expect(posted.at(-1)).toMatchObject({ kind: "artifact-result", requestId: "artreq-1", status: "refused" });
+  });
+
+  it("hands the typed request to the broker and posts its answer back under the same id", async () => {
+    const seen: unknown[] = [];
+    const { session, posted } = makeSession({
+      artifacts: async (request) => {
+        seen.push(request);
+        return { status: "ok", ref: REF, chunkBase64: "aGVsbG8=", eof: true };
+      },
+    });
+    session.init();
+
+    const result = session.accept(read("artreq-2"));
+    await flush();
+
+    expect(result).toMatchObject({ ok: true, kind: "artifact.request", detail: "read art_one" });
+    expect(seen).toEqual([{ op: "read", artifactId: "art_one", offset: 0, length: 5 }]);
+    expect(posted.at(-1)).toEqual({
+      kind: "artifact-result",
+      nonce: NONCE,
+      requestId: "artreq-2",
+      status: "ok",
+      ref: REF,
+      chunkBase64: "aGVsbG8=",
+      eof: true,
+    });
+  });
+
+  it("records the operation and the id, never the name or type the widget asked with", async () => {
+    const { session } = makeSession({ artifacts: async () => ({ status: "cancelled" }) });
+    session.init();
+
+    session.accept(
+      fromFrame({
+        kind: "artifact.request",
+        requestId: "artreq-3",
+        request: { op: "export", artifactId: "art_one", suggestedName: "bao-cao-bi-mat.csv" },
+      }),
+    );
+    session.accept(fromFrame({ kind: "artifact.request", requestId: "artreq-4", request: { op: "pick", accept: ["text/csv"] } }));
+    await flush();
+
+    const recorded = JSON.stringify(session.transcript());
+    expect(recorded).toContain("export art_one");
+    expect(recorded).not.toContain("bao-cao-bi-mat");
+    expect(recorded).not.toContain("text/csv");
+  });
+
+  it("turns a broker failure into a refusal the widget can read", async () => {
+    const { session, posted } = makeSession({
+      artifacts: async () => {
+        throw new Error("the node is not reachable");
+      },
+    });
+    session.init();
+
+    session.accept(read("artreq-5"));
+    await flush();
+
+    expect(posted.at(-1)).toMatchObject({
+      kind: "artifact-result",
+      requestId: "artreq-5",
+      status: "refused",
+      code: "ARTIFACT_UNAVAILABLE",
+      message: "the node is not reachable",
+    });
+  });
+
+  it("bounds how many requests may wait at once, and refuses a duplicate id that is still waiting", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { session, posted } = makeSession({
+      maxArtifactInFlight: 2,
+      artifacts: async () => {
+        await gate;
+        return { status: "ok", ref: REF };
+      },
+    });
+    session.init();
+
+    expect(session.accept(read("artreq-a")).ok).toBe(true);
+    const duplicate = session.accept(read("artreq-a"));
+    expect(session.accept(read("artreq-b")).ok).toBe(true);
+    const third = session.accept(read("artreq-c"));
+
+    expect(duplicate.ok).toBe(false);
+    if (!duplicate.ok) expect(duplicate.code).toBe("ARTIFACT_BUSY");
+    expect(third.ok).toBe(false);
+    if (!third.ok) expect(third.code).toBe("ARTIFACT_BUSY");
+    expect(posted.filter((message) => message.kind === "artifact-result" && message.requestId === "artreq-c")).toHaveLength(1);
+
+    release();
+    await flush();
+    // Once answered, the slots are free again.
+    expect(session.accept(read("artreq-d")).ok).toBe(true);
+  });
+
+  it("counts artifact requests apart from other messages, and stops a frame that keeps asking", async () => {
+    const { session } = makeSession({
+      maxMessages: 1,
+      maxArtifactRequests: 2,
+      artifacts: async () => ({ status: "ok", ref: REF }),
+    });
+    session.init();
+
+    expect(session.accept(read("artreq-1")).ok).toBe(true);
+    await flush();
+    expect(session.accept(read("artreq-2")).ok).toBe(true);
+    await flush();
+    const third = session.accept(read("artreq-3"));
+
+    expect(third.ok).toBe(false);
+    if (!third.ok) expect(third.code).toBe("ARTIFACT_BUDGET_EXCEEDED");
+    // The one ordinary message the budget allows is still there: a file does not spend the frame's other budget.
+    expect(session.accept(fromFrame({ kind: "event", name: "x", payload: {} })).ok).toBe(true);
+  });
+
+  it("lets one chunk through under its own ceiling, and still bounds it", () => {
+    const { session } = makeSession({ maxArtifactMessageBytes: 4096, artifacts: async () => ({ status: "ok" }) });
+    session.init();
+    const write = (chunk: string) =>
+      fromFrame({
+        kind: "artifact.request",
+        requestId: `artreq-${String(chunk.length)}`,
+        request: { op: "write", artifactId: "art_one", offset: 0, chunkBase64: chunk },
+      });
+
+    // Larger than the ordinary 64 KiB default would matter for; here the point is the artifact ceiling applies.
+    expect(session.accept(write("A".repeat(2000))).ok).toBe(true);
+    const tooBig = session.accept(write("A".repeat(8000)));
+    expect(tooBig.ok).toBe(false);
+    if (!tooBig.ok) expect(tooBig.code).toBe("TOO_LARGE");
+  });
+
+  it("does not answer after the frame is gone", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { session, posted } = makeSession({
+      artifacts: async () => {
+        await gate;
+        return { status: "ok", ref: REF };
+      },
+    });
+    session.init();
+    session.accept(read("artreq-late"));
+    session.dispose();
+    const before = posted.length;
+
+    release();
+    await flush();
+
+    expect(posted.length).toBe(before);
+  });
+});

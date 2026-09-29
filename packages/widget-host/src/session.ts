@@ -1,8 +1,11 @@
 import type { SemanticProposal } from "@clarkcant/contracts";
 import {
+  ARTIFACTS_EXTENSION,
   BRIDGE_PROTOCOL,
   BRIDGE_VERSION,
   acceptBridgeMessage,
+  type ArtifactRef as WireArtifactRef,
+  type ArtifactRequest,
   type HostToWidgetMessage,
   type WidgetToHostMessage,
 } from "@clarkcant/widget-sdk";
@@ -40,7 +43,23 @@ export type FrameRefusal =
   | "STALE_REVISION"
   | "CAPABILITY_NOT_BROKERED"
   | "ACTION_UNKNOWN"
+  | "EXTENSION_NOT_OFFERED"
+  | "ARTIFACT_BUSY"
+  | "ARTIFACT_BUDGET_EXCEEDED"
   | "DISPOSED";
+
+/**
+ * What the host answered one artifact request with.
+ *
+ * `cancelled` is the person saying no in host chrome; `refused` carries the node's code and sentence.
+ */
+export type FrameArtifactOutcome =
+  | { status: "ok"; ref?: WireArtifactRef | undefined; chunkBase64?: string | undefined; eof?: boolean | undefined }
+  | { status: "refused"; code: string; message: string }
+  | { status: "cancelled"; message?: string | undefined };
+
+/** The host's side of `artifacts@1`: one call per request, each re-checked by the node against this frame's grant. */
+export type FrameArtifactBroker = (request: ArtifactRequest) => Promise<FrameArtifactOutcome>;
 
 export type FrameAcceptance =
   | { ok: true; kind: WidgetToHostMessage["kind"]; detail?: string }
@@ -129,9 +148,24 @@ export interface FrameSessionInput {
     openExternal: (url: string) => void;
   };
   post: (message: HostToWidgetMessage) => void;
+  /**
+   * The `artifacts@1` extension. Given, it is advertised in `init` and each request is handed here; absent (a host
+   * that has no broker, an older dev host), it is not advertised and a request is refused with an answer, so the
+   * widget is never left waiting.
+   */
+  artifacts?: FrameArtifactBroker;
   /** Overridable so a test can drive the budget without sending thousands of messages. */
   maxMessageBytes?: number;
   maxMessages?: number;
+  /**
+   * The ceiling for one artifact request, which carries up to one 256 KiB chunk as base64 and is therefore larger
+   * than every other message. Applied only to a message that says it is one, and the schema still bounds the chunk.
+   */
+  maxArtifactMessageBytes?: number;
+  /** Artifact requests a frame may make, counted apart from `maxMessages`: a 25 MiB file is a hundred chunks. */
+  maxArtifactRequests?: number;
+  /** Artifact requests a frame may have unanswered at once. */
+  maxArtifactInFlight?: number;
 }
 
 export interface FrameSession {
@@ -161,6 +195,11 @@ function pickEphemeral(patch: Record<string, unknown>, keys: ReadonlySet<string>
 export function createFrameSession(input: FrameSessionInput): FrameSession {
   const maxMessageBytes = input.maxMessageBytes ?? 64 * 1024;
   const maxMessages = input.maxMessages ?? 200;
+  const maxArtifactMessageBytes = input.maxArtifactMessageBytes ?? 512 * 1024;
+  const maxArtifactRequests = input.maxArtifactRequests ?? 2000;
+  const maxArtifactInFlight = input.maxArtifactInFlight ?? 4;
+  let artifactRequests = 0;
+  const artifactsInFlight = new Set<string>();
   const transcript: { kind: string; detail: string }[] = [];
   const refusals: FrameRefusal[] = [];
   /**
@@ -217,6 +256,28 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
     return { ok: false, code, message };
   };
 
+  /** Answer one artifact request, bounded as the bridge bounds it so the frame's schema accepts the answer. */
+  const postArtifactResult = (requestId: string, outcome: FrameArtifactOutcome): void => {
+    if (status === "disposed") return;
+    const base = { kind: "artifact-result" as const, nonce: input.nonce, requestId, status: outcome.status };
+    if (outcome.status === "ok") {
+      input.post({
+        ...base,
+        ...(outcome.ref === undefined ? {} : { ref: outcome.ref }),
+        ...(outcome.chunkBase64 === undefined ? {} : { chunkBase64: outcome.chunkBase64 }),
+        ...(outcome.eof === undefined ? {} : { eof: outcome.eof }),
+      });
+    } else if (outcome.status === "refused") {
+      input.post({
+        ...base,
+        code: (outcome.code === "" ? "ARTIFACT_REFUSED" : outcome.code).slice(0, 60),
+        message: (outcome.message === "" ? "refused" : outcome.message).slice(0, 600),
+      });
+    } else {
+      input.post({ ...base, ...(outcome.message === undefined || outcome.message === "" ? {} : { message: outcome.message.slice(0, 600) }) });
+    }
+  };
+
   const init = (): Extract<HostToWidgetMessage, { kind: "init" }> => {
     const message: Extract<HostToWidgetMessage, { kind: "init" }> = {
       kind: "init",
@@ -230,6 +291,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       stateRevision,
       brokeredCapabilities: [...input.brokeredCapabilities],
       allowedOrigins: [...input.allowedOrigins],
+      ...(input.artifacts === undefined ? {} : { extensions: [ARTIFACTS_EXTENSION] }),
     };
     input.post(message);
     status = "ready";
@@ -387,6 +449,47 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         return { ok: true, kind: "host.request", detail: message.request };
       }
 
+      case "artifact.request": {
+        const { requestId, request } = message;
+        /*
+         * Every refusal here is also answered, because the widget's promise is waiting on this request id; a refusal
+         * recorded only on the host side would leave it waiting for good.
+         */
+        const turnAway = (code: FrameRefusal, reason: string): FrameAcceptance => {
+          postArtifactResult(requestId, { status: "refused", code, message: reason });
+          return refuse(code, reason);
+        };
+        if (input.artifacts === undefined) {
+          return turnAway("EXTENSION_NOT_OFFERED", `${ARTIFACTS_EXTENSION} is not offered to this frame`);
+        }
+        if (artifactsInFlight.has(requestId)) {
+          return turnAway("ARTIFACT_BUSY", "a request with that id is still being answered");
+        }
+        if (artifactsInFlight.size >= maxArtifactInFlight) {
+          return turnAway("ARTIFACT_BUSY", `at most ${String(maxArtifactInFlight)} file requests may wait at once`);
+        }
+        artifactRequests += 1;
+        if (artifactRequests > maxArtifactRequests) {
+          return turnAway("ARTIFACT_BUDGET_EXCEEDED", `frame made more than ${String(maxArtifactRequests)} file requests`);
+        }
+        artifactsInFlight.add(requestId);
+        // What is recorded is the operation and the artifact id: never a name, a type the person chose, or bytes.
+        const detail = "artifactId" in request ? `${request.op} ${request.artifactId}` : request.op;
+        transcript.push({ kind: "artifact.request", detail });
+        void input
+          .artifacts(request)
+          .then((outcome) => postArtifactResult(requestId, outcome))
+          .catch((error: unknown) => {
+            postArtifactResult(requestId, {
+              status: "refused",
+              code: "ARTIFACT_UNAVAILABLE",
+              message: error instanceof Error && error.message !== "" ? error.message : "the file request could not be completed",
+            });
+          })
+          .finally(() => artifactsInFlight.delete(requestId));
+        return { ok: true, kind: "artifact.request", detail };
+      }
+
       case "semantic.publish":
         // Published for a reader who cannot see the widget, and for the next model turn and voice to know what it shows.
         // Handed on as a proposal: the node bounds and cleans it, and adds the actions from its own bindings.
@@ -416,12 +519,22 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       } catch {
         return refuse("SCHEMA_INVALID", "the message could not be serialised");
       }
-      if (bytes > maxMessageBytes) {
-        return refuse("TOO_LARGE", `message of ${String(bytes)} bytes exceeds ${String(maxMessageBytes)}`);
+      /*
+       * An artifact request may carry one chunk, so it has its own, larger ceiling and its own count. Which ceiling
+       * applies is read from the message's own `kind` before it is parsed — a claim, but a harmless one: a message that
+       * says it is an artifact request and is not fails the schema below, and the larger ceiling is still a bound.
+       */
+      const claimsArtifact =
+        typeof event.data === "object" && event.data !== null && (event.data as { kind?: unknown }).kind === "artifact.request";
+      const ceiling = claimsArtifact ? maxArtifactMessageBytes : maxMessageBytes;
+      if (bytes > ceiling) {
+        return refuse("TOO_LARGE", `message of ${String(bytes)} bytes exceeds ${String(ceiling)}`);
       }
-      messages += 1;
-      if (messages > maxMessages) {
-        return refuse("MESSAGE_BUDGET_EXCEEDED", `frame sent more than ${String(maxMessages)} messages`);
+      if (!claimsArtifact) {
+        messages += 1;
+        if (messages > maxMessages) {
+          return refuse("MESSAGE_BUDGET_EXCEEDED", `frame sent more than ${String(maxMessages)} messages`);
+        }
       }
 
       const accepted = acceptBridgeMessage({

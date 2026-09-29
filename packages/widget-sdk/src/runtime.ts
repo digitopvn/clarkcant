@@ -1,9 +1,14 @@
 import {
+  ARTIFACT_BRIDGE_LIMITS,
+  ARTIFACTS_EXTENSION,
   BRIDGE_PROTOCOL,
   BRIDGE_VERSION,
+  artifactRequestSchema,
   hostToWidgetSchema,
   widgetToHostSchema,
   type ActionAvailability,
+  type ArtifactRef,
+  type ArtifactRequest,
   type HostToWidgetMessage,
   type WidgetAuthorApi,
   type WidgetToHostMessage,
@@ -91,6 +96,17 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
   >();
   let availability: readonly ActionAvailability[] = [];
   const availabilityHandlers = new Set<(availability: readonly ActionAvailability[]) => void>();
+  /** Extensions the host offered in `init`. A call into one it did not offer is refused here, never sent. */
+  let extensions = new Set<string>();
+  /** Artifact requests waiting for their answer, keyed by the request id this runtime minted. */
+  const artifactWaiters = new Map<string, { resolve: (result: ArtifactResult) => void; reject: (error: Error) => void }>();
+  let artifactRequests = 0;
+  /**
+   * Writes to one artifact, chained so they reach the host in order and each names the offset the last one left.
+   * Two chunks in flight at once would both name the same offset, and the host would refuse the second.
+   */
+  const writeChains = new Map<string, Promise<unknown>>();
+  const knownSizes = new Map<string, number>();
 
   const send = (message: unknown): void => {
     deps.endpoint.postMessage(message);
@@ -121,6 +137,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     if (message.revision !== undefined) revision = message.revision;
     if (message.stateRevision !== undefined) stateRevision = message.stateRevision;
     brokered = new Set(message.brokeredCapabilities);
+    extensions = new Set(message.extensions ?? []);
     status = "ready";
     send({ kind: "ready", nonce });
     for (const handler of mountHandlers) handler();
@@ -213,6 +230,10 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       actionWaiters.clear();
       pendingWrite?.reject(new Error("widget runtime: the host disposed the frame before the write was committed"));
       pendingWrite = undefined;
+      for (const waiter of artifactWaiters.values()) {
+        waiter.reject(new Error("widget runtime: the host disposed the frame before the file request answered"));
+      }
+      artifactWaiters.clear();
       deps.endpoint.removeEventListener("message", handleMessage);
       return;
     }
@@ -220,6 +241,14 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     if (message.kind === "actions") {
       availability = message.actions;
       for (const handler of availabilityHandlers) handler(availability);
+      return;
+    }
+
+    if (message.kind === "artifact-result") {
+      const waiter = artifactWaiters.get(message.requestId);
+      if (waiter === undefined) return;
+      artifactWaiters.delete(message.requestId);
+      waiter.resolve(message);
       return;
     }
 
@@ -240,6 +269,39 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
   const requireReady = (what: string): void => {
     if (status === "disposed") throw new Error(`widget runtime: frame đã dispose, không ${what} được nữa`);
     if (status === "awaiting-init") throw new Error(`widget runtime: chưa init nên không ${what} được`);
+  };
+
+  /** Send one artifact request and wait for its answer. Refused locally when the host did not offer the extension. */
+  const artifactRequest = (request: ArtifactRequest): Promise<ArtifactResult> =>
+    new Promise<ArtifactResult>((resolve, reject) => {
+      try {
+        requireReady("dùng artifacts");
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      if (!extensions.has(ARTIFACTS_EXTENSION)) {
+        reject(new Error(`widget runtime: host không mở ${ARTIFACTS_EXTENSION} cho frame này`));
+        return;
+      }
+      // Checked before it is sent, so a bug in the widget is reported to the widget rather than refused out of sight.
+      const parsed = artifactRequestSchema.safeParse(request);
+      if (!parsed.success) {
+        reject(new Error(`widget runtime: yêu cầu artifact không hợp lệ: ${parsed.error.issues[0]?.message ?? "sai dạng"}`));
+        return;
+      }
+      artifactRequests += 1;
+      const requestId = `artreq-${String(artifactRequests)}`;
+      artifactWaiters.set(requestId, { resolve, reject });
+      send({ kind: "artifact.request", nonce: speakingNonce(), requestId, request: parsed.data });
+    });
+
+  /** An answer that must be `ok`, with a ref. A refusal becomes an error that names the host's code first. */
+  const expectRef = (result: ArtifactResult): ArtifactRef => {
+    if (result.status !== "ok") throw artifactError(result);
+    if (result.ref === undefined) throw new Error("widget runtime: host trả lời mà không kèm artifact");
+    knownSizes.set(result.ref.artifactId, result.ref.sizeBytes);
+    return result.ref;
   };
 
   const api: WidgetAuthorApi = {
@@ -359,6 +421,66 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         });
       },
     },
+    artifacts: {
+      available: () => extensions.has(ARTIFACTS_EXTENSION),
+      pick: async (options) => {
+        const result = await artifactRequest({ op: "pick", accept: [...(options?.accept ?? [])] });
+        // The person closing the picker is an answer, not a failure.
+        if (result.status === "cancelled") return undefined;
+        return expectRef(result);
+      },
+      read: async (ref, range) => {
+        const result = await artifactRequest({ op: "read", artifactId: ref.artifactId, offset: range.offset, length: range.length });
+        if (result.status !== "ok") throw artifactError(result);
+        return { bytes: fromBase64(result.chunkBase64 ?? ""), eof: result.eof ?? true };
+      },
+      create: async (options) =>
+        expectRef(
+          await artifactRequest({
+            op: "create",
+            mimeType: options.mimeType,
+            ...(options.name === undefined ? {} : { name: options.name }),
+          }),
+        ),
+      write: (ref, chunk) => {
+        if (chunk.byteLength > ARTIFACT_BRIDGE_LIMITS.chunkBytes) {
+          return Promise.reject(
+            new Error(`widget runtime: một lần ghi tối đa ${String(ARTIFACT_BRIDGE_LIMITS.chunkBytes)} byte; hãy chia nhỏ`),
+          );
+        }
+        const previous = writeChains.get(ref.artifactId) ?? Promise.resolve();
+        // A failed write does not block the next one: it names the offset the host last confirmed.
+        const next = previous
+          .catch(() => undefined)
+          .then(async () =>
+            expectRef(
+              await artifactRequest({
+                op: "write",
+                artifactId: ref.artifactId,
+                offset: knownSizes.get(ref.artifactId) ?? ref.sizeBytes,
+                chunkBase64: toBase64(chunk),
+              }),
+            ),
+          );
+        writeChains.set(ref.artifactId, next);
+        return next;
+      },
+      finalize: async (ref) => {
+        // After every write this frame sent to it, so the bytes fixed are the bytes written.
+        await (writeChains.get(ref.artifactId) ?? Promise.resolve()).catch(() => undefined);
+        return expectRef(await artifactRequest({ op: "finalize", artifactId: ref.artifactId }));
+      },
+      export: async (ref, options) => {
+        const result = await artifactRequest({ op: "export", artifactId: ref.artifactId, suggestedName: options.suggestedName });
+        if (result.status === "cancelled") return false;
+        if (result.status !== "ok") throw artifactError(result);
+        return true;
+      },
+      attachToConversation: async (ref) => {
+        const result = await artifactRequest({ op: "attach", artifactId: ref.artifactId });
+        if (result.status !== "ok") throw artifactError(result);
+      },
+    },
     lifecycle: {
       onMount: (handler) => mountHandlers.add(handler),
       onSuspend: (handler) => suspendHandlers.add(handler),
@@ -386,4 +508,27 @@ export function readyMessage(nonce: string): Extract<WidgetToHostMessage, { kind
   const parsed = widgetToHostSchema.parse({ kind: "ready", nonce });
   if (parsed.kind !== "ready") throw new Error("expected a ready message from the bridge schema");
   return parsed;
+}
+
+type ArtifactResult = Extract<HostToWidgetMessage, { kind: "artifact-result" }>;
+
+function artifactError(result: ArtifactResult): Error {
+  const code = result.code ?? (result.status === "cancelled" ? "CANCELLED" : "ARTIFACT_REFUSED");
+  return new Error(`${code}: ${result.message ?? "host từ chối yêu cầu artifact"}`);
+}
+
+/** Base64 without `Buffer`, which a widget running in a browser frame does not have. */
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < bytes.byteLength; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function fromBase64(text: string): Uint8Array {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }

@@ -291,6 +291,8 @@ capabilities.request(requestedCapability)  # opens host consent, not grants itse
 host.focus / host.resize(request) / host.requestPin
 host.openExternal(approvedUrl)
 semantic.publish(summary, selectedIds, values?)  # a proposal; actions come from the instance's bindings
+artifacts.pick / read / create / write / finalize  # files by reference (artifacts@1), re-checked on every use
+artifacts.export / attachToConversation  # the host's Save As and the composer; the person decides
 lifecycle.onMount / onSuspend / onResume / onDispose
 ```
 
@@ -317,6 +319,8 @@ The CSP defines connect/resource/frame domains according to the consented packag
 Host-owned frame chrome shows app/source/account, permission controls and close/stop outside the iframe's control. Embedded UI can draw a fake approval, but it cannot mint a record; the user must be able to tell host consent apart by consistent chrome/placement.
 
 Unsafe HTML/SVG/Markdown is sanitized; Mermaid gets a strict wrapper and a worker timeout; no script callbacks from agent props. Datasets/attachments go through opaque refs, with no arbitrary paths, executable URLs, SQL or CSS property injection.
+
+Files follow the same rule (`artifacts@1`, [widget-development.md §10.1](widget-development.md#101-files-by-reference-artifacts1)). An isolated widget holds an `ArtifactRef`, never a path. The ref is a pointer, not a permission: the node re-checks every read, write, export and attach against the owner, the instance's expiring and revocable grant, and the artifact's state. Picking a file and saving a copy are host chrome outside the frame. On the desktop they use native dialogs; on the web they use a file input and a download. Replacing the original file is desktop-only. The bytes go through the attachment pipeline's type sniffing, allowlist, size ceiling and quota, and chunks are bounded at 256 KiB. A widget that could draw its own "choose a file" button inside the frame still gets nothing until the person answers the host's prompt.
 
 ## 9. Frontend credentials: an exception that must be designed correctly
 

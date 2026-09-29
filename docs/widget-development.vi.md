@@ -694,7 +694,7 @@ thẻ này là thẻ catalog mà model đặt bên cạnh chúng.
 | --- | --- | --- |
 | `canvas.code@1` | Một khối mã có số dòng, được tô màu, và một nút sao chép. | `show_view` với `props.code` (tối đa 20.000 ký tự và 400 dòng), và tuỳ chọn `path`, `language`, `startLine` (số của dòng đầu tiên, khi là một đoạn trích) và `truncated`. Khi không có `language`, thẻ lấy nó từ phần mở rộng của đường dẫn. |
 | `canvas.diff@1` | Một bản diff dạng unified: các hunk của từng tệp, mỗi dòng có số dòng cũ, số dòng mới và một dấu. | `show_view` với `props.files` (1–20). Mỗi tệp có `path`, `oldPath` tuỳ chọn khi đổi tên, và các hunk (1–20 mỗi tệp) gồm `oldStart`, `newStart`, `section` tuỳ chọn, và `lines` dạng `{ kind: "add" \| "remove" \| "context", text }`. Tổng cộng tối đa 600 dòng và 40.000 ký tự, mỗi dòng tối đa 1.000 ký tự. |
-| `canvas.file@1` | Một tệp, được nêu tên và mô tả. | `show_view` với `props.name`, và tuỳ chọn `mediaType` (`type/subtype`), `sizeBytes`, `source` (bằng lời), `path` (dạng chữ) và `summary`. |
+| `canvas.file@1` | Một tệp, được nêu tên và mô tả. | `show_view` với `props.name`, và tuỳ chọn `mediaType` (`type/subtype`), `sizeBytes`, `source` (bằng lời), `path` (dạng chữ), `summary` và `artifactRef`, tức nguyên `ArtifactRef` của một tệp mà node đang giữ (§10.1). |
 
 Node bảo đảm:
 
@@ -750,8 +750,14 @@ Trang làm gì:
 - Trong diff, mỗi dòng được phân biệt bằng dấu và nền, không chỉ bằng màu. Trình đọc màn hình nghe loại và số của mỗi
   dòng bằng lời ("Thêm, dòng mới 41:") trước nội dung dòng; các dấu và số mà nó sẽ đọc từng ký tự một được ẩn khỏi nó.
   Tệp đổi tên có ghi tên cũ.
-- Thẻ tệp không có liên kết, không có nút mở, không có nút tải về. Nó nói điều đó bằng lời, thay vì vẽ một nút không
-  làm gì.
+- Thẻ tệp không có `artifactRef` thì không có liên kết, không có nút mở, không có nút tải về. Nó nói điều đó bằng
+  lời, thay vì vẽ một nút không làm gì.
+- Thẻ tệp có `artifactRef` thì có **Mở** và **Lưu thành…**. Mở lấy các byte từ node với tư cách người dùng và xem
+  trước ngay trong thẻ: chữ và JSON tới 64 KB, kèm một dòng ghi chú khi còn nhiều hơn, và ảnh. Các kiểu khác thì thẻ
+  nói là không xem trước được. Bản xem trước tin kiểu do node ghi nhận, không bao giờ tin lời của thẻ. Lưu thành… là
+  của chính host (§10.1). Node kiểm tra lại ref ở mỗi lần mở và mỗi lần lưu. Nó từ chối một artifact thuộc principal
+  khác, hoặc một artifact còn đang được ghi, và thẻ hiện lý do. Ở nơi thẻ không gọi được node với tư cách người dùng,
+  như bản xem trước trong thư viện hay một cửa sổ tách riêng, thẻ nói rằng không mở được tệp ở đó.
 - Khi có `truncated`, thẻ nói rằng đây không phải toàn bộ mã hay toàn bộ diff.
 
 Kiểm thử: [artifact-viewers.spec.ts](../packages/contracts/test/artifact-viewers.spec.ts) cho các quy tắc,
@@ -1047,6 +1053,15 @@ Author-facing target:
 
     semantic.publish(summary, selectedIds, values?)
 
+    artifacts.available()
+    artifacts.pick({ accept? })
+    artifacts.read(ref, { offset, length })
+    artifacts.create({ mimeType, name? })
+    artifacts.write(ref, chunk)
+    artifacts.finalize(ref)
+    artifacts.export(ref, { suggestedName })
+    artifacts.attachToConversation(ref)
+
     lifecycle.onMount()
     lifecycle.onSuspend()
     lifecycle.onResume()
@@ -1079,6 +1094,83 @@ Không expose:
 - installAnything;
 - registerSidebar;
 - arbitrary host window access.
+
+### 10.1 Tệp theo tham chiếu (`artifacts@1`)
+
+Một widget chạy trong frame riêng có thể làm việc với tệp mà không bao giờ cầm một tệp nào. Nó chỉ giữ một
+`ArtifactRef`:
+
+    { "v": 1, "artifactId": "art_…", "kind": "external", "mimeType": "text/plain",
+      "sizeBytes": 302420, "name": "bao-cao.txt", "digest": "sha256:…" }
+
+Một ref cho biết tệp là gì: loại, kiểu, kích thước, tên hiển thị và, khi các byte đã cố định, digest của chúng. Nó
+không bao giờ cho biết tệp nằm ở đâu. Không ref, message qua bridge, prop, state, dòng log hay prompt nào mang
+đường dẫn, tên tệp tạm hay thư mục mà tệp được chọn nằm trong đó. **Ref là con trỏ, không phải quyền.** Node kiểm tra
+lại mỗi lần dùng: chủ sở hữu, grant của instance này, grant đã hết hạn hay bị thu hồi chưa, và trạng thái của chính
+artifact. Một ref bị chép sang widget khác, hoặc sang yêu cầu của principal khác, sẽ bị từ chối ở đó kèm lý do.
+Hợp đồng nằm ở [artifacts.ts](../packages/contracts/src/artifacts.ts).
+
+Extension này được đưa ra trong `init.extensions` của bridge. `artifacts.available()` cho biết host này có đưa ra nó
+hay không, và khi không thì mọi lời gọi đều bị từ chối ngay trong frame. Host đưa nó cho mọi frame cách ly trong một
+cuộc trò chuyện.
+
+| Loại | Là gì | Được làm gì với nó |
+| --- | --- | --- |
+| `external` | Bản chụp một tệp người dùng đã chọn qua giao diện của host. | Đọc. Đã niêm phong, có digest. |
+| `working` | Các byte mà instance này đang ghi. | Chỉ instance đã tạo nó được ghi, theo đúng thứ tự. Hết hạn 24 giờ sau lần ghi cuối nếu chưa cố định. |
+| `finalized` | Một artifact `working` mà các byte đã được cố định. | Đọc, lưu ra, đính kèm. Được giữ lâu bằng cuộc trò chuyện của nó. |
+| `attachment` | Dành sẵn cho một tệp người dùng đã đính kèm, được giao cho widget. Chưa có luồng nào của host tạo ra loại này. | – |
+
+Mỗi lời gọi làm gì:
+
+- `pick({ accept })` xin người dùng chọn một tệp. Widget không tự mở hộp thoại; host vẽ lời nhắc của riêng nó, bên
+  ngoài frame. Lời nhắc nêu tên widget, nói rằng widget chỉ nhận được tệp đã chọn chứ không bao giờ biết tệp nằm ở
+  đâu, và liệt kê các kiểu được nhận. Esc hoặc Huỷ trả về `undefined`. Trên desktop, lời nhắc mở hộp thoại chọn tệp
+  của hệ điều hành; trên web, nó mở ô chọn tệp của trình duyệt. Node xác định kiểu từ chính các byte, đối chiếu với
+  `accept`, và áp dụng các quy tắc đính kèm: kiểu nằm trong danh sách cho phép, tối đa 25 MiB một tệp, và hạn mức
+  của principal.
+- `read(ref, { offset, length })` đọc một đoạn tối đa 256 KiB và cho biết đã tới cuối tệp chưa. Tệp lớn hơn thì phải
+  đọc nhiều lần.
+- `create({ mimeType, name? })` bắt đầu một artifact `working` thuộc kiểu mà luồng đính kèm chấp nhận.
+  `write(ref, chunk)` ghi nối thêm tối đa 256 KiB. Mỗi lần ghi phải bắt đầu đúng chỗ artifact đang kết thúc, nên một
+  đoạn gửi hai lần hoặc sai thứ tự sẽ bị từ chối (`ARTIFACT_OFFSET_MISMATCH`) chứ không bị lưu hai lần. Mỗi lần ghi
+  kéo dài thời hạn của artifact và grant của instance đang ghi.
+- `finalize(ref)` cố định các byte. Node dò các byte đối chiếu với kiểu đã khai báo. Nếu không khớp, node từ chối với
+  `ARTIFACT_TYPE_MISMATCH` và để artifact vẫn ghi được, để widget sửa lại.
+- `export(ref, { suggestedName })` xin người dùng lưu một bản sao, bằng lời nhắc Lưu thành… của chính host, và trả về
+  việc họ có lưu hay không. Desktop dùng hộp thoại lưu của hệ điều hành. Khi widget lưu ra một tệp mà frame này đã
+  chọn trên desktop, lời nhắc còn cho phép ghi đè lên tệp gốc; đường dẫn đứng sau vẫn nằm trong main process của
+  desktop. Web tải xuống một bản sao và nói rằng ghi đè tệp gốc là tính năng của desktop.
+- `attachToConversation(ref)` đưa một artifact đã cố định vào luồng đính kèm. Các byte được dò kiểu lại, danh sách
+  cho phép, kích thước và hạn mức được kiểm tra lại. Kết quả là một chip sẵn sàng trong ô soạn tin, người dùng gửi nó
+  cùng tin nhắn kế tiếp như mọi tệp họ tự đính kèm. Model sau đó đọc nó theo đúng cách đó.
+
+Lời từ chối reject kèm mã của host đứng trước (`ARTIFACT_GRANT_EXPIRED: …`). Danh sách mã nằm trong
+`ARTIFACT_REFUSAL_CODES`. Chọn tệp và lưu tệp là hành động của người dùng: node từ chối chúng trên các bề mặt máy
+([open-interfaces.vi.md](open-interfaces.vi.md)), và widget không làm được việc nào trong hai việc đó nếu không có lời nhắc
+của host.
+
+Node giữ những gì:
+
+- **Một kho và một hạn mức.** Các byte của artifact nằm trong kho blob của node, cũng là kho mà tệp đính kèm dùng.
+  Chúng được tính vào hạn mức đính kèm của principal (1 GiB). Một artifact đã đính kèm được tính một lần là artifact
+  và một lần là tệp đính kèm.
+- **Grant thuộc về một instance.** Grant kéo dài 24 giờ, và mỗi lần ghi làm mới nó. Có thể thu hồi grant bằng
+  `DELETE …/artifacts/{artifactId}/grant`.
+- **Lưu giữ.** Các artifact `working` hết hạn bị xoá mỗi 10 phút, và trước khi lưu một artifact mới. Artifact đã cố
+  định tồn tại lâu bằng cuộc trò chuyện của nó. Khi một cuộc trò chuyện được giải phóng, các artifact của nó cũng bị
+  xoá, cùng với những byte không còn tệp đính kèm nào dùng chung.
+
+Kiểm thử: [artifacts.spec.ts](../packages/contracts/test/artifacts.spec.ts) cho các quy tắc,
+[artifact-refs.spec.ts](../packages/storage/test/artifact-refs.spec.ts) cho phần lưu trữ,
+[artifact-broker.spec.ts](../apps/runtime/test/artifact-broker.spec.ts) cho node và các route,
+[runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) và
+[session.spec.ts](../packages/widget-host/test/session.spec.ts) cho bridge,
+[widget-artifacts.spec.ts](../packages/conversation-client/test/widget-artifacts.spec.ts) cho trang,
+[file-bridge.spec.ts](../apps/desktop/test/file-bridge.spec.ts) cho các hộp thoại của desktop, và hành trình trên
+trình duyệt [widget-artifacts.spec.ts](../apps/web/e2e/widget-artifacts.spec.ts). Hành trình đó chọn một tệp lớn hơn
+một đoạn, đọc nó trong hai đoạn, ghi và lưu một bản sao, đính kèm nó, rồi mở lại từ một thẻ tệp. Nó chạy ở cả hai
+giao diện và ở 390 px.
 
 ---
 
@@ -1243,6 +1335,16 @@ Local isolated host có:
 
 `clark widget dev [dir] [--port N] [--builtin <id>]`: không có `[dir]` thì lấy thư mục hiện tại, và
 `--builtin <id>` xem một widget của catalog trong **cùng** host đó thay vì một package trên đĩa — chi tiết ở 23.5.
+
+Với một package, dev host thực hiện bắt tay `init` thật của bridge. Nó gửi props của fixture đang chọn và đưa ra
+`artifacts@1` (§10.1). Control **File picker** của nó giả lập lựa chọn của người dùng. Control này liệt kê các tệp
+trong `fixtures/files/` của package, thêm một mục Huỷ, và lần `pick` kế tiếp trả về mục đang được chọn. Nó chỉ liệt kê
+những tệp mà node sẽ nhận: kiểu nằm trong danh sách cho phép, tên tệp đơn thuần, tối đa 25 MiB, và tối đa 32 tệp. Tệp
+nào bị bỏ qua thì được liệt kê kèm lý do. Nó trả lời `read`, `create`, `write`, `finalize`, `export` và `attach` với
+cùng các mã từ chối và cùng giới hạn 256 KiB như node. Widget nhận được tên trần, kiểu, kích thước và digest của tệp,
+không bao giờ biết tệp nằm ở đâu. Bản giả lập giữ mọi thứ trong bộ nhớ và quên hết khi dev host dừng. Nó không dò
+kiểu từ byte, và không ghi gì xuống đĩa. Một lần `export` hay `attach` chỉ được ghi vào nhật ký của shell, nên một
+bản phát hành vẫn phải được kiểm thử với Lưu thành… và ô soạn tin của một host thật.
 
 ### test
 

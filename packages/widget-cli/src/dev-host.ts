@@ -16,6 +16,7 @@ import {
   type DevShellAction,
   type DevShellState,
 } from "./dev-shell.ts";
+import { createDevArtifactBroker, readFixtureFiles, type DevArtifactEvent, type DevFixtureFile } from "./dev-artifacts.ts";
 import { openDevLeaseStore } from "./dev-lease.ts";
 
 /**
@@ -59,6 +60,8 @@ export interface DevHost {
   apply: (action: DevShellAction) => DevShellState;
   /** Reload notifications sent so far, so a test can prove the watcher fired without a browser. */
   reloads: () => number;
+  /** What the simulated `artifacts@1` did — picks, creates, finalizes, exports, attaches — by name and size only. */
+  artifactEvents: () => readonly DevArtifactEvent[];
   close: () => Promise<void>;
 }
 
@@ -187,6 +190,56 @@ window.addEventListener("message", (event) => {
 });
 
 /*
+ * The bridge handshake, for a package's frame: the init a host sends, with a nonce minted for this page, the props of
+ * the fixture on screen, the capabilities the simulator grants, and the artifacts@1 extension. Sent now and again on
+ * every frame load, with the same nonce, because the frame may have loaded before this script ran; a runtime takes
+ * the first and refuses the second as a duplicate, which is the behaviour the host relies on too.
+ */
+const frameElement = document.querySelector("[data-dev-frame]");
+const bridgeNonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+function sendInit() {
+  if (state.bridge !== true) return;
+  frameElement.contentWindow?.postMessage({
+    kind: "init",
+    protocol: "agent.widgetbridge",
+    version: 1,
+    instanceId: "dev-instance",
+    nonce: bridgeNonce,
+    props: state.props ?? {},
+    state: {},
+    revision: 0,
+    stateRevision: 0,
+    brokeredCapabilities: Object.entries(state.capabilities).filter(([, decision]) => decision === "granted").map(([ref]) => ref),
+    allowedOrigins: [],
+    extensions: ["artifacts@1"],
+  }, "*");
+}
+frameElement?.addEventListener("load", sendInit);
+sendInit();
+
+/*
+ * artifacts@1, answered by the dev host's simulated broker. Only this frame's messages with this page's nonce are
+ * relayed; the answer carries the same request id, as a host's does. The picker is the "File picker" control.
+ */
+window.addEventListener("message", async (event) => {
+  const data = event.data;
+  if (event.source !== frameElement?.contentWindow || !data || data.kind !== "artifact.request" || data.nonce !== bridgeNonce) return;
+  let outcome;
+  try {
+    const response = await fetch("/dev/api/artifacts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(data.request),
+    });
+    outcome = await response.json();
+  } catch (error) {
+    outcome = { status: "refused", code: "ARTIFACT_UNAVAILABLE", message: "the dev host did not answer: " + error.message };
+  }
+  frameElement.contentWindow?.postMessage({ kind: "artifact-result", nonce: bridgeNonce, requestId: data.requestId, ...outcome }, "*");
+  appendLog("artifacts " + String(data.request?.op) + " -> " + outcome.status + (outcome.code ? " " + outcome.code : ""));
+});
+
+/*
  * The live-owner lease, claimed by this window and released before a detached window claims it — the same
  * ordering apps/desktop's shell follows: the shell releases first, so there is never a moment with two owners.
  * Every claim/release here is a real HTTP call into the server's lease store (dev-lease.ts, over the same
@@ -256,6 +309,10 @@ interface ShellSource {
   requestedCapabilities: readonly string[];
   entryUrl: string;
   definition: { textFallback: string; semanticDescription: string };
+  /** Fixture name to its props, handed to the frame in the handshake. Empty for a catalog widget. */
+  fixtureProps: Record<string, Record<string, unknown>>;
+  /** Files in `fixtures/files/` the simulated picker offers. Empty for a catalog widget. */
+  files: readonly DevFixtureFile[];
 }
 
 /** The widget-cli package directory, which is Vite's root when the frame is a catalog widget. */
@@ -279,6 +336,8 @@ function packageSource(requested: string): ShellSource {
       textFallback: facet.definition.textFallback,
       semanticDescription: facet.definition.semanticDescription,
     },
+    fixtureProps: pkg.fixtures,
+    files: readFixtureFiles(root).files,
   };
 }
 
@@ -300,6 +359,9 @@ function catalogSource(definitionId: string): ShellSource {
       textFallback: target.entry.definition.textFallback,
       semanticDescription: target.entry.definition.semanticDescription,
     },
+    // A catalog widget is drawn by the production renderer, not by a bridge-speaking frame, so it has neither.
+    fixtureProps: {},
+    files: [],
   };
 }
 
@@ -338,7 +400,10 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
 
   const fixtures = source.fixtures;
   const capabilities = source.requestedCapabilities;
-  let state = initialState({ fixtures, requestedCapabilities: capabilities });
+  const files = source.files.map((file) => file.name);
+  let state = initialState({ fixtures, requestedCapabilities: capabilities, files });
+  // Read on every pick, so switching the shell's picker control changes what the next pick returns.
+  const artifacts = createDevArtifactBroker({ files: source.files, choosePick: () => state.pickFile });
   let reloadCount = 0;
   /*
    * One lease store per dev host process, over the same claimLiveOwner/releaseLiveOwner the runtime calls
@@ -367,8 +432,50 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
 
     if (path === "/dev/api/state") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ ...state, viewportWidths: { "narrow-320": 320, conversation: 480, compact: 720, expanded: 1024 } }));
+      response.end(
+        JSON.stringify({
+          ...state,
+          viewportWidths: { "narrow-320": 320, conversation: 480, compact: 720, expanded: 1024 },
+          // A package's frame speaks the bridge and is handed its fixture's props; a catalog frame is drawn directly.
+          bridge: root !== undefined,
+          props: source.fixtureProps[state.fixture] ?? {},
+        }),
+      );
       return;
+    }
+
+    /*
+     * The simulated artifacts@1 broker. `POST` answers one request exactly as a host would answer the frame; `GET`
+     * lists what it did, by name and size. Bounded like the other endpoints: one write chunk plus its envelope.
+     */
+    if (path === "/dev/api/artifacts") {
+      if (request.method === "GET") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ events: artifacts.events() }));
+        return;
+      }
+      if (request.method === "POST") {
+        let body = "";
+        request.on("data", (chunk: unknown) => {
+          body += String(chunk);
+          if (body.length > 400_000) request.destroy();
+        });
+        request.on("end", () => {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            response.writeHead(400, { "content-type": "application/json" });
+            response.end(JSON.stringify({ status: "refused", code: "SCHEMA_INVALID", message: "the request must be JSON" }));
+            return;
+          }
+          void artifacts.handle(parsed).then((outcome) => {
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify(outcome));
+          });
+        });
+        return;
+      }
     }
 
     if (path === "/dev/api/action" && request.method === "POST") {
@@ -382,7 +489,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       request.on("end", () => {
         try {
           const action = JSON.parse(body) as DevShellAction;
-          state = applyShellAction(state, action, { fixtures, capabilities });
+          state = applyShellAction(state, action, { fixtures, capabilities, files });
         } catch {
           // A malformed action leaves the state alone and is reported, rather than resetting the shell.
           response.writeHead(400, { "content-type": "application/json" });
@@ -514,6 +621,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
             requestedCapabilities: capabilities,
             entryUrl: source.entryUrl,
             definition: source.definition,
+            ...(root === undefined ? {} : { files }),
           },
           state,
         ),
@@ -589,10 +697,11 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     port,
     state: () => state,
     apply: (action) => {
-      state = applyShellAction(state, action, { fixtures, capabilities });
+      state = applyShellAction(state, action, { fixtures, capabilities, files });
       return state;
     },
     reloads: () => reloadCount,
+    artifactEvents: () => artifacts.events(),
     close: () =>
       new Promise<void>((done) => {
         watcher?.close();

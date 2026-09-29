@@ -291,6 +291,8 @@ capabilities.request(requestedCapability)  # opens host consent, not grants itse
 host.focus / host.resize(request) / host.requestPin
 host.openExternal(approvedUrl)
 semantic.publish(summary, selectedIds, values?)  # chỉ là đề xuất; action lấy từ binding của instance
+artifacts.pick / read / create / write / finalize  # tệp theo tham chiếu (artifacts@1), kiểm tra lại mỗi lần dùng
+artifacts.export / attachToConversation  # Lưu thành… của host và ô soạn tin; người dùng quyết định
 lifecycle.onMount / onSuspend / onResume / onDispose
 ```
 
@@ -317,6 +319,8 @@ CSP define connect/resource/frame domains theo package manifest đã consent. Ne
 Host-owned frame chrome hiển thị app/source/account, permission controls và close/stop ngoài quyền iframe. Embedded UI có thể vẽ hình giả approval, nhưng không mint record; user phải phân biệt host consent bằng chrome/placement nhất quán.
 
 Unsafe HTML/SVG/Markdown sanitize; Mermaid strict wrapper và worker timeout; no script callbacks from agent props. Dataset/attachments qua opaque refs, no arbitrary paths, executable URLs, SQL hay CSS property injection.
+
+Tệp cũng theo đúng quy tắc đó (`artifacts@1`, [widget-development.vi.md §10.1](widget-development.vi.md#101-tệp-theo-tham-chiếu-artifacts1)). Một widget cách ly giữ một `ArtifactRef`, không bao giờ giữ đường dẫn. Ref là con trỏ, không phải quyền: node kiểm tra lại mỗi lần đọc, ghi, lưu ra và đính kèm, đối chiếu với chủ sở hữu, grant của instance (có hạn và thu hồi được) và trạng thái của artifact. Chọn tệp và lưu bản sao là giao diện của host, nằm ngoài frame. Trên desktop, chúng dùng hộp thoại gốc của hệ điều hành; trên web, chúng dùng ô chọn tệp và một lượt tải xuống. Ghi đè tệp gốc chỉ có trên desktop. Các byte đi qua các bước dò kiểu, danh sách cho phép, giới hạn kích thước và hạn mức của luồng đính kèm, và mỗi đoạn tối đa 256 KiB. Một widget có thể tự vẽ nút "chọn tệp" trong frame, nhưng vẫn không nhận được gì cho tới khi người dùng trả lời lời nhắc của host.
 
 ## 9. Frontend credentials: ngoại lệ phải thiết kế đúng
 

@@ -5,12 +5,12 @@ import {
 } from "@clarkcant/contracts";
 import {
   type Database,
-  attachmentUsageForPrincipal,
   getAttachment,
   getConversation,
   insertAttachment,
 } from "@clarkcant/storage";
 
+import { storedBytesForPrincipal } from "../artifact-broker.ts";
 import { attachmentRefFromRecord } from "../attachments.ts";
 import { readBlob, sniffContentType, writeBlob } from "../blobs.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -87,7 +87,8 @@ export function handleAttachmentRoutes(deps: AttachmentRouteDeps): GatewayRespon
       filename,
       mime: sniffed.mime,
       sizeBytes: bytes.byteLength,
-      usedBytes: attachmentUsageForPrincipal(runtime.db, principalId),
+      // One quota for everything this principal stores: attachments and the files its widgets hold.
+      usedBytes: storedBytesForPrincipal(runtime.db, principalId),
     });
     if (!checked.ok) return fail(attachmentRefusalStatus(checked.code), checked.code, checked.message);
 

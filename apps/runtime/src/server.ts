@@ -36,9 +36,22 @@ export const GITHUB_WEBHOOK_BODY_LIMIT = 2 * 1024 * 1024;
  */
 export const SIGNED_WEBHOOK_BODY_LIMIT = 256 * 1024;
 
+/**
+ * 512 KiB for one chunk a widget writes: a 256 KiB chunk is about 342 KiB of base64, and the rest is the JSON around
+ * it. Well under the attachment ceiling on purpose — a chunk route that took 35 MiB would make the chunk bound a
+ * suggestion.
+ */
+export const ARTIFACT_CHUNK_BODY_LIMIT = 512 * 1024;
+
+const ARTIFACT_PICK_PATH = /^\/conversations\/[^/]+\/widgets\/[^/]+\/artifacts\/pick$/;
+const ARTIFACT_WIDGET_PATH = /^\/conversations\/[^/]+\/widgets\/[^/]+\/artifacts(\/|$)/;
+
 /** The paths with a body ceiling, and each ceiling. Everything else is read as it always was. */
 export function bodyLimitForPath(path: string): number | undefined {
   if (path === "/attachments") return ATTACHMENT_UPLOAD_BODY_LIMIT;
+  // A picked file is the size of an attachment; every other widget artifact call is at most one chunk.
+  if (ARTIFACT_PICK_PATH.test(path)) return ATTACHMENT_UPLOAD_BODY_LIMIT;
+  if (ARTIFACT_WIDGET_PATH.test(path)) return ARTIFACT_CHUNK_BODY_LIMIT;
   if (path === "/signals/github") return GITHUB_WEBHOOK_BODY_LIMIT;
   if (path.startsWith("/signals/webhook/")) return SIGNED_WEBHOOK_BODY_LIMIT;
   return undefined;

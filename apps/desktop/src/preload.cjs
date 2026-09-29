@@ -42,6 +42,17 @@ const bridge = {
   pickDirectory(input) {
     return ipcRenderer.invoke("desktop:pickDirectory", input);
   },
+  /**
+   * Opens the OS file dialog for a widget's pick. Answers with the file's bare name, type, bytes and an opaque
+   * handle — never its path — or `canceled`.
+   */
+  pickFile(input) {
+    return ipcRenderer.invoke("desktop:pickFile", input);
+  },
+  /** Save exported bytes: Save As, or back over a picked file named by its handle. Answers whether it was saved. */
+  saveFile(input) {
+    return ipcRenderer.invoke("desktop:saveFile", input);
+  },
   requestCredential(input) {
     return ipcRenderer.invoke("desktop:requestCredential", input);
   },

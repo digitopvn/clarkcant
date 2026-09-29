@@ -27,6 +27,15 @@ import { startSmokeNode } from "./smoke-node.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
+import { readFile, stat, writeFile } from "node:fs/promises";
+import { basename } from "node:path";
+import {
+  MAX_PICK_BYTES,
+  createFileHandles,
+  mimeForFileName,
+  reviewPickFileRequest,
+  reviewSaveFileRequest,
+} from "./file-bridge.mjs";
 
 import {
   contentSecurityPolicy,
@@ -160,10 +169,12 @@ const EXPECTED_BRIDGE_METHODS = Object.freeze([
   "onWidgetReattached",
   "openExternal",
   "pickDirectory",
+  "pickFile",
   "requestCredential",
   "resizeWindowPreset",
   "restoreWindow",
   "onWindowStateChanged",
+  "saveFile",
   "setCompactMode",
   "setFullScreen",
   "setKeepRunningOnWindowClose",
@@ -190,6 +201,9 @@ let windowMode;
  * doing something — never a growing history of every notification ever shown.
  */
 const activeNotifications = new Set();
+
+/** Files the person picked for a widget: handle to path, in this process only (`file-bridge.mjs`). */
+const fileHandles = createFileHandles();
 
 /** The work area of the display the window is on, so a compact window lands somewhere reachable. */
 function workAreaFor(window) {
@@ -431,6 +445,66 @@ function registerHandlers() {
     return { ok: true, canceled: false, path: outcome.filePaths[0] };
   });
 
+  /*
+   * A file for a widget, chosen by the person in the OS dialog.
+   *
+   * What goes back is the bare name, its type and its bytes — never the path. The renderer can ask to write back to
+   * this file later, and names it by the handle minted here; the path stays in `fileHandles`.
+   */
+  handle("desktop:pickFile", async (input) => {
+    const review = reviewPickFileRequest(input);
+    if (!review.allowed) return { ok: false, refused: review.reason };
+    const window = liveShellWindow();
+    if (window === undefined) return { ok: false, refused: "no window is available for the picker" };
+    const outcome = await dialog.showOpenDialog(window, {
+      title: review.title,
+      properties: ["openFile"],
+      ...(review.filters.length === 0 ? {} : { filters: review.filters }),
+    });
+    if (outcome.canceled || outcome.filePaths.length === 0) return { ok: true, canceled: true };
+    const chosen = outcome.filePaths[0];
+    const info = await stat(chosen);
+    if (!info.isFile()) return { ok: false, refused: "that is not a file" };
+    if (info.size > MAX_PICK_BYTES) return { ok: false, refused: `a file must be at most ${MAX_PICK_BYTES} bytes` };
+    const bytes = await readFile(chosen);
+    const name = basename(chosen);
+    return {
+      ok: true,
+      canceled: false,
+      file: { name, mimeType: mimeForFileName(name), contentBase64: bytes.toString("base64"), handle: fileHandles.remember(chosen) },
+    };
+  });
+
+  /*
+   * Save a file the person exported. Save As always asks where; writing back over a picked file asks first too, and
+   * names only the file's name in the question. Either way the answer is whether it was saved, not where.
+   */
+  handle("desktop:saveFile", async (input) => {
+    const review = reviewSaveFileRequest(input);
+    if (!review.allowed) return { ok: false, refused: review.reason };
+    const window = liveShellWindow();
+    if (window === undefined) return { ok: false, refused: "no window is available for Save As" };
+    let target;
+    if (review.replaceHandle !== undefined) {
+      target = fileHandles.pathFor(review.replaceHandle);
+      if (target === undefined) return { ok: false, refused: "that file is no longer known to this window; use Save As" };
+      const confirm = await dialog.showMessageBox(window, {
+        type: "question",
+        title: "Replace file",
+        message: `Replace ${basename(target)} with this version?`,
+        buttons: ["Cancel", "Replace"],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (confirm.response !== 1) return { ok: true, canceled: true };
+    } else {
+      const outcome = await dialog.showSaveDialog(window, { defaultPath: review.suggestedName });
+      if (outcome.canceled || outcome.filePath === undefined || outcome.filePath === "") return { ok: true, canceled: true };
+      target = outcome.filePath;
+    }
+    await writeFile(target, Buffer.from(input.contentBase64, "base64"));
+    return { ok: true, canceled: false, saved: true, name: basename(target) };
+  });
   handle("desktop:requestCredential", async (input) => {
     const review = reviewCredentialRequest(input);
     if (!review.allowed) return { ok: false, refused: review.reason };

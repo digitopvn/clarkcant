@@ -505,6 +505,7 @@ async function main(): Promise<void> {
     leaseSweeper.stop();
     runtimeHandles.stopUpdateChecks();
     services.expirySweep?.stop();
+    services.artifactSweep?.stop();
     effectNotices.stop();
     services.automation?.stop();
     services.peerDelivery?.stop();

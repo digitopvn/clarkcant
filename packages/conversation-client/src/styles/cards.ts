@@ -62,7 +62,34 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-widget-frame-failure button { cursor: pointer; font: inherit; min-height: 40px; padding: var(--cc-space-xs) var(--cc-space-md); border-radius: var(--cc-radius-button); border: 1px solid var(--cc-border); background: transparent; color: inherit; }
 .cc-widget-frame-failure button:hover { border-color: var(--cc-focus); background: var(--cc-elevated); }
 .cc-widget-frame-failure button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
-
+/*
+ * A widget's file request, answered in host chrome beside the frame. The widget cannot draw here: the buttons are the
+ * host's, and so is the file input they open. Nothing animates, so reduced motion needs no override.
+ */
+.cc-artifact-prompt {
+  position: relative; display: flex; flex-direction: column; gap: var(--cc-space-sm); min-width: 0; margin-top: var(--cc-space-sm);
+  padding: var(--cc-space-sm) var(--cc-space-md); border: 1px solid var(--cc-focus); border-radius: var(--cc-radius-card);
+  background: var(--cc-elevated); color: var(--cc-text); overflow-wrap: anywhere;
+}
+.cc-artifact-prompt[data-artifact-prompt="notice"] { border-color: var(--cc-border); background: transparent; }
+.cc-artifact-prompt p { margin: 0; }
+.cc-artifact-prompt-title { font-weight: 600; }
+.cc-artifact-prompt-detail { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-artifact-prompt-actions { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); }
+.cc-artifact-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cc-space-xs); }
+.cc-artifact-notice p { flex: 1 1 16ch; min-width: 0; }
+.cc-artifact-notice[data-tone="error"] p { color: var(--cc-danger); }
+.cc-artifact-notice p:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* The browser's own file input, opened by the host's button: kept in the page for the browser, out of the tab order. */
+.cc-artifact-file-input { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.cc-artifact-button, .cc-viewer-file-button {
+  cursor: pointer; font: inherit; min-height: 40px; padding: var(--cc-space-xs) var(--cc-space-md); border-radius: var(--cc-radius-button);
+  border: 1px solid var(--cc-border); background: transparent; color: inherit; max-width: 100%; overflow-wrap: anywhere;
+}
+.cc-artifact-button[data-primary="true"] { border-color: var(--cc-accent); font-weight: 600; }
+.cc-artifact-button:hover:not(:disabled), .cc-viewer-file-button:hover:not(:disabled) { border-color: var(--cc-focus); background: var(--cc-card); }
+.cc-artifact-button:focus-visible, .cc-viewer-file-button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-artifact-button:disabled, .cc-viewer-file-button:disabled { cursor: default; opacity: 0.6; }
 /* Tables */
 .cc-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .cc-table th, .cc-table td { text-align: left; padding: var(--cc-space-xs) var(--cc-space-sm); border-bottom: 1px solid var(--cc-border); }
@@ -304,7 +331,15 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-viewer-file-text { display: flex; flex-direction: column; gap: var(--cc-space-xs); min-width: 0; flex: 1 1 auto; }
 .cc-viewer-file-name { margin: 0; font-weight: 600; color: var(--cc-text); overflow-wrap: anywhere; }
 .cc-viewer-file-summary { margin: 0; font-size: var(--cc-text-body-sm); color: var(--cc-text-muted); overflow-wrap: anywhere; }
-.cc-viewer-facts {
+.cc-viewer-file-artifact { display: flex; flex-direction: column; gap: var(--cc-space-xs); min-width: 0; }
+.cc-viewer-file-actions { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); }
+.cc-viewer-file-preview {
+  margin: 0; max-block-size: 320px; overflow: auto; padding: var(--cc-space-sm); background: var(--cc-code);
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge); white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); color: var(--cc-text);
+}
+.cc-viewer-file-preview:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-viewer-file-image { display: block; max-inline-size: 100%; block-size: auto; max-block-size: 320px; border-radius: var(--cc-radius-badge); }.cc-viewer-facts {
   display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: var(--cc-space-xxs) var(--cc-space-md); margin: 0;
   font-size: var(--cc-text-body-sm);
 }

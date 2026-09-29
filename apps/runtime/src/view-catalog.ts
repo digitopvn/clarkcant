@@ -529,7 +529,9 @@ const ARTIFACT_VIEWER_NOTES: Readonly<Record<string, string>> = {
     `The card counts additions and removals itself.`,
   [FILE.id]:
     `props.name is the file's own name; optional props.mediaType (type/subtype), props.sizeBytes, props.source (where it came from, in words), ` +
-    `props.path (shown as text, never a URL), props.summary and props.title. The card has no link and cannot open or download the file.`,
+    `props.path (shown as text, never a URL), props.summary and props.title. Without props.artifactRef the card has no link and cannot ` +
+    `open or download the file. With props.artifactRef — the {"v":1,"artifactId":"art_…",…} reference a widget or tool gave you, ` +
+    `copied whole — the person can open the file or save it; the node checks each time that it is theirs.`,
 };
 
 /**

@@ -20,12 +20,20 @@ import {
 } from "@clarkcant/core";
 import { GALLERY, STATUS, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
 import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
-import { getNotification, listLocalImages, upsertArtifact, upsertDataset, upsertEffect } from "@clarkcant/storage";
+import {
+  getNotification,
+  listArtifactsForConversation,
+  listLocalImages,
+  upsertArtifact,
+  upsertDataset,
+  upsertEffect,
+} from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 
+import { artifactRefFromRecord } from "../artifact-broker.ts";
 import { createAskUserQuestionTool } from "../ask-user-question.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
@@ -683,6 +691,39 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * than apply; the code also holds a line separator, which must count as a line so the numbers stay beside their lines.
      * "bản diff xuống dòng" puts a line separator inside one diff line, which the host refuses.
      */
+    /*
+     * A file card for the file a widget last fixed in this conversation: the newest picked or finalized artifact the
+     * person owns here. The card carries the artifact's reference, not its bytes or a place, so opening and saving it go
+     * back to the node, which checks the owner again. With none, the reply says so rather than inventing a file.
+     */
+    if (/^(?:đặt|place)\s+(?:thẻ tệp của widget|widget file card)$/iu.test(input.text.trim())) {
+      const db = deps.services().runtime.db;
+      const record = listArtifactsForConversation(db, input.conversationId)
+        .filter((candidate) => candidate.state === "sealed" && candidate.ownerPrincipalId === input.principal.principalId)
+        .at(-1);
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.file@1");
+      if (record === undefined || view === undefined) {
+        const reply = "Fixture: cuộc trò chuyện này chưa có tệp nào của widget.";
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+      const artifactRef = artifactRefFromRecord(record);
+      const block = await view.build({
+        props: {
+          name: artifactRef.name,
+          mediaType: artifactRef.mimeType,
+          sizeBytes: artifactRef.sizeBytes,
+          source: "Widget tệp (fixture)",
+          artifactRef,
+        },
+        caption: "",
+        at: instantSchema.parse(new Date().toISOString()),
+        principal: input.principal as never,
+        messageId: input.messageId,
+        conversationId: input.conversationId,
+      });
+      return { text: "Fixture: thẻ tệp của widget (không phải model thật).", block };
+    }
+
     const viewer = /^(?:đặt|place)\s+(khối mã|khối mã ẩn|bản diff|bản diff sai|bản diff ẩn|bản diff xuống dòng|thẻ tệp)$/iu.exec(
       input.text.trim(),
     );
@@ -1648,6 +1689,49 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * the node resolves a definition to a package by reading that package's own `widget.json`, so a fixture that
      * disagreed with the file would describe a widget nothing can serve.
      */
+    /*
+     * A widget that holds files by reference, in its own frame: the journey for `artifacts@1`. Like the frame widget
+     * above, its definition agrees with the fixture package on disk (`apps/web/e2e/fixtures/artifact-widget`).
+     */
+    if (/widget tệp|file widget/i.test(input.text)) {
+      const definition = {
+        id: "com.example.artifact-widget.main@1",
+        version: "0.1.0",
+        renderer: "isolated-app" as const,
+        propsSchema: {
+          type: "object",
+          properties: { title: { type: "string", maxLength: 200 } },
+          required: ["title"],
+          additionalProperties: false,
+        },
+        eventSchemas: {},
+        stateSchema: { type: "object", properties: {}, additionalProperties: true },
+        stateVersion: 0,
+        semanticDescription: "A widget that picks, reads, writes and saves files through the host.",
+        requestedCapabilities: [],
+        sizing: { compact: true, expanded: true, minHeight: 240 },
+        textFallback: "Widget tệp: chọn, đọc, ghi và lưu tệp qua host; nội dung chưa xem được ở chế độ chỉ có chữ.",
+        effectCategories: [],
+        datasetRefs: [],
+      };
+      const instance = createInstance(deps.services().conductor, {
+        definition,
+        packageDigest: definitionDigest(definition),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Widget tệp (fixture)" },
+      });
+      const snapshot = captureSnapshot(deps.services().conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: một widget giữ tệp bằng tham chiếu, trong frame cách ly (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
     if (/widget cách ly|isolated widget/i.test(input.text)) {
       const definition = {
         id: "com.example.frame-widget.main@1",

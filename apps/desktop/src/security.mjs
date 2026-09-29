@@ -17,6 +17,12 @@ export const IPC_CHANNELS = Object.freeze([
   "desktop:openExternal",
   "desktop:notify",
   "desktop:pickDirectory",
+  /*
+   * A widget's file pick and Save As. Host-owned: the dialog is the OS's, what returns is a name and bytes, and a
+   * written-back file is named by a handle whose path stays in the main process.
+   */
+  "desktop:pickFile",
+  "desktop:saveFile",
   "desktop:requestCredential",
   "desktop:setKeepRunning",
   "desktop:getStatus",

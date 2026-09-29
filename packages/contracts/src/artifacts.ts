@@ -1,0 +1,295 @@
+import { z } from "zod";
+
+import { ATTACHMENT_LIMITS, ATTACHMENT_MIME_ALLOWLIST, looksLikePathOrUrl } from "./attachments.ts";
+import { artifactIdSchema, digestSchema } from "./primitives.ts";
+
+/**
+ * Artifact references: how a widget holds a file without holding a file.
+ *
+ * A widget that edits a document, exports a chart or reads a file the person chose never receives a path, a file
+ * handle or a URL. It receives an `ArtifactRef`: an opaque id plus the facts a widget needs to show and use the file
+ * (its kind, type, size, display name and, once the bytes are fixed, their digest). Three rules follow from that, and
+ * each exists because the obvious alternative leaks something:
+ *
+ * 1. **A ref is a pointer, not a permission.** Holding an id grants nothing. Every use is re-checked by the host
+ *    against the owner principal, the widget instance's grant, the grant's expiry and revocation, and the artifact's
+ *    own state (`decideArtifactAccess`). A ref copied into another widget, another principal's request or a prompt is
+ *    refused there with a reason.
+ * 2. **The host holds the location.** A file the person picked on their own machine is an `external` artifact: the
+ *    node keeps a snapshot of its bytes, and only the host's own chrome (the desktop shell) remembers where it came
+ *    from. Nothing in a ref, a bridge message, widget props, widget state, a log or a prompt can name that place.
+ * 3. **Bytes decide the type, and the attachment rules decide what is allowed.** The allowlist, the per-file ceiling
+ *    and the per-principal quota are the attachment pipeline's, reused rather than restated, so a file cannot become
+ *    acceptable by arriving through a widget instead of the composer.
+ */
+
+export const ARTIFACT_REF_VERSION = 1;
+
+/**
+ * Where an artifact came from, which decides what may be done with it.
+ *
+ * - `attachment`: a file the person attached to the conversation, handed to a widget. Reserved: no host flow produces
+ *   one yet, and a ref of this kind is described here so the wire shape does not change when one does.
+ * - `working`: bytes a widget is writing. Writable by the one instance that created it, expires unless finalized.
+ * - `finalized`: a working artifact whose bytes are now fixed. Immutable, carries a digest, and follows its
+ *   conversation's lifetime.
+ * - `external`: a snapshot of a file the person picked through host chrome. Immutable, carries a digest; where it was
+ *   read from is held by the host and never by the widget.
+ */
+export const artifactKindSchema = z.enum(["attachment", "working", "finalized", "external"]);
+export type ArtifactKind = z.infer<typeof artifactKindSchema>;
+
+/** Whether the bytes may still change. `writable` only for a `working` artifact. */
+export const artifactStateSchema = z.enum(["writable", "sealed"]);
+export type ArtifactState = z.infer<typeof artifactStateSchema>;
+
+export const ARTIFACT_LIMITS = Object.freeze({
+  /** One write through the bridge. 256 KiB of bytes, which base64 inflates to about 342 KiB of message. */
+  chunkBytes: 262_144,
+  /** One read through the bridge. The same bound as a write, for the same reason. */
+  maxReadBytes: 262_144,
+  /** One artifact. The attachment ceiling, so an artifact can always be attached. */
+  maxBytes: ATTACHMENT_LIMITS.maxBytes,
+  /** How long a working artifact lives after its last write, unless it is finalized. */
+  workingTtlMs: 24 * 60 * 60 * 1000,
+  /** How long a widget instance's grant lasts. A write extends the grant of the instance writing. */
+  grantTtlMs: 24 * 60 * 60 * 1000,
+  nameMaxChars: ATTACHMENT_LIMITS.filenameMaxChars,
+  /** Entries in a picker's accept list. */
+  maxAccept: 16,
+});
+
+/**
+ * Base64 characters a chunk may be.
+ *
+ * Exported so the bridge, the route and the host agree on the same bound without each recomputing it.
+ */
+export const ARTIFACT_CHUNK_BASE64_MAX = Math.ceil(ARTIFACT_LIMITS.chunkBytes / 3) * 4;
+
+/** A display name: a file name, never a path or a URL. */
+export const artifactNameSchema = z
+  .string()
+  .min(1)
+  .max(ARTIFACT_LIMITS.nameMaxChars)
+  .refine((value) => !looksLikePathOrUrl(value), { error: "must be a file name, not a path or a URL" });
+
+/** A MIME pattern a picker may ask for: `type/subtype` or `type/*`. */
+export const artifactAcceptSchema = z
+  .string()
+  .min(3)
+  .max(120)
+  .regex(/^[a-z][a-z0-9.+-]*\/(\*|[a-z0-9][a-z0-9.+-]*)$/, { error: "must be a MIME type such as text/plain or image/*" });
+
+export const artifactRefSchema = z
+  .strictObject({
+    v: z.literal(ARTIFACT_REF_VERSION),
+    artifactId: artifactIdSchema,
+    kind: artifactKindSchema,
+    mimeType: z.string().min(3).max(120),
+    sizeBytes: z.int().nonnegative(),
+    name: artifactNameSchema,
+    /** Present once the bytes are fixed, and only then: a writable artifact has no digest to promise. */
+    digest: digestSchema.optional(),
+  })
+  .superRefine((ref, context) => {
+    if (ref.kind === "working" && ref.digest !== undefined) {
+      context.addIssue({ code: "custom", path: ["digest"], message: "a working artifact has no digest yet" });
+    }
+    if (ref.kind !== "working" && ref.digest === undefined) {
+      context.addIssue({ code: "custom", path: ["digest"], message: `a ${ref.kind} artifact carries its digest` });
+    }
+  });
+export type ArtifactRef = z.infer<typeof artifactRefSchema>;
+
+/**
+ * Every reason the host refuses a use of a ref.
+ *
+ * Each names the thing that was wrong, because an author debugging a widget needs to know whether to ask the person
+ * again (expired grant), stop (revoked), or fix their code (range, chunk, type).
+ */
+export const ARTIFACT_REFUSAL_CODES = [
+  "ARTIFACT_NOT_FOUND",
+  "ARTIFACT_CROSS_PRINCIPAL",
+  "ARTIFACT_NOT_GRANTED",
+  "ARTIFACT_GRANT_EXPIRED",
+  "ARTIFACT_GRANT_REVOKED",
+  "ARTIFACT_EXPIRED",
+  "ARTIFACT_NOT_WRITABLE",
+  "ARTIFACT_NOT_FINALIZED",
+  "ARTIFACT_RANGE_INVALID",
+  "ARTIFACT_CHUNK_TOO_LARGE",
+  "ARTIFACT_OFFSET_MISMATCH",
+  "ARTIFACT_TOO_LARGE",
+  "ARTIFACT_QUOTA_EXCEEDED",
+  "ARTIFACT_TYPE_MISMATCH",
+  "ARTIFACT_TYPE_UNSUPPORTED",
+  "ARTIFACT_TYPE_NOT_ACCEPTED",
+  "ARTIFACT_NAME_NOT_ALLOWED",
+  "ARTIFACT_BYTES_MISSING",
+] as const;
+export type ArtifactRefusalCode = (typeof ARTIFACT_REFUSAL_CODES)[number];
+
+export type ArtifactRefusal = { ok: false; code: ArtifactRefusalCode; message: string };
+
+/** The HTTP status a refusal travels with, decided once rather than at each route. */
+export function artifactRefusalStatus(code: ArtifactRefusalCode): number {
+  switch (code) {
+    case "ARTIFACT_NOT_FOUND":
+      return 404;
+    case "ARTIFACT_CROSS_PRINCIPAL":
+    case "ARTIFACT_NOT_GRANTED":
+    case "ARTIFACT_GRANT_EXPIRED":
+    case "ARTIFACT_GRANT_REVOKED":
+      return 403;
+    case "ARTIFACT_EXPIRED":
+    case "ARTIFACT_BYTES_MISSING":
+      return 410;
+    case "ARTIFACT_NOT_WRITABLE":
+    case "ARTIFACT_NOT_FINALIZED":
+    case "ARTIFACT_OFFSET_MISMATCH":
+    case "ARTIFACT_QUOTA_EXCEEDED":
+      return 409;
+    case "ARTIFACT_TOO_LARGE":
+    case "ARTIFACT_CHUNK_TOO_LARGE":
+      return 413;
+    case "ARTIFACT_TYPE_MISMATCH":
+    case "ARTIFACT_TYPE_UNSUPPORTED":
+    case "ARTIFACT_TYPE_NOT_ACCEPTED":
+      return 415;
+    case "ARTIFACT_RANGE_INVALID":
+    case "ARTIFACT_NAME_NOT_ALLOWED":
+      return 400;
+  }
+}
+
+/** What the host knows about an artifact when it decides a use. */
+export interface ArtifactAccessSubject {
+  ownerPrincipalId: string;
+  state: ArtifactState;
+  /** ISO instant. Absent means it does not expire on its own. */
+  expiresAt?: string | undefined;
+}
+
+/** One widget instance's grant on one artifact. */
+export interface ArtifactGrantView {
+  instanceId: string;
+  principalId: string;
+  access: "read" | "write";
+  expiresAt: string;
+  revokedAt?: string | undefined;
+}
+
+/**
+ * Decide whether one widget instance may use one artifact now.
+ *
+ * Pure, and the only place the rule lives: the node calls it on every read, write, finalize, export request and
+ * attach, so a ref that was valid a minute ago is re-judged rather than remembered. The order is fixed and tested —
+ * whose it is first, then whether it still exists, then whether this instance was ever granted it, then whether that
+ * grant still stands — because the sentence a person or an author reads has to name the first thing that was wrong.
+ */
+export function decideArtifactAccess(input: {
+  principalId: string;
+  instanceId: string;
+  need: "read" | "write";
+  artifact: ArtifactAccessSubject | undefined;
+  grant: ArtifactGrantView | undefined;
+  nowMs: number;
+}): { ok: true } | ArtifactRefusal {
+  const { artifact, grant } = input;
+  if (artifact === undefined) {
+    return { ok: false, code: "ARTIFACT_NOT_FOUND", message: "that artifact is not on this node" };
+  }
+  if (artifact.ownerPrincipalId !== input.principalId) {
+    return { ok: false, code: "ARTIFACT_CROSS_PRINCIPAL", message: "that artifact belongs to another principal" };
+  }
+  if (artifact.expiresAt !== undefined && Date.parse(artifact.expiresAt) <= input.nowMs) {
+    return {
+      ok: false,
+      code: "ARTIFACT_EXPIRED",
+      message: "that working artifact expired before it was finalized; its bytes have been or will be removed",
+    };
+  }
+  if (grant === undefined || grant.instanceId !== input.instanceId) {
+    return { ok: false, code: "ARTIFACT_NOT_GRANTED", message: "this widget was never granted that artifact" };
+  }
+  if (grant.principalId !== input.principalId) {
+    return { ok: false, code: "ARTIFACT_CROSS_PRINCIPAL", message: "that grant was issued to another principal" };
+  }
+  if (grant.revokedAt !== undefined) {
+    return { ok: false, code: "ARTIFACT_GRANT_REVOKED", message: "this widget's access to that artifact was revoked" };
+  }
+  if (Date.parse(grant.expiresAt) <= input.nowMs) {
+    return {
+      ok: false,
+      code: "ARTIFACT_GRANT_EXPIRED",
+      message: "this widget's access to that artifact has expired; ask the person to choose the file again",
+    };
+  }
+  if (input.need === "write" && (grant.access !== "write" || artifact.state !== "writable")) {
+    return {
+      ok: false,
+      code: "ARTIFACT_NOT_WRITABLE",
+      message: "that artifact is not writable by this widget; create a working artifact to write new bytes",
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Bound one read.
+ *
+ * A length past the end is shortened rather than refused, so a reader can ask for a chunk and learn it reached the
+ * end; an offset past the end, a negative offset or an oversized length is refused, because it is a bug in the reader.
+ */
+export function checkArtifactRange(input: {
+  offset: unknown;
+  length: unknown;
+  sizeBytes: number;
+}): { ok: true; offset: number; length: number; eof: boolean } | ArtifactRefusal {
+  const { offset, length } = input;
+  if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0) {
+    return { ok: false, code: "ARTIFACT_RANGE_INVALID", message: "offset must be a non-negative integer" };
+  }
+  if (typeof length !== "number" || !Number.isInteger(length) || length < 1 || length > ARTIFACT_LIMITS.maxReadBytes) {
+    return {
+      ok: false,
+      code: "ARTIFACT_RANGE_INVALID",
+      message: `length must be an integer from 1 to ${ARTIFACT_LIMITS.maxReadBytes}`,
+    };
+  }
+  if (offset > input.sizeBytes) {
+    return {
+      ok: false,
+      code: "ARTIFACT_RANGE_INVALID",
+      message: `offset ${offset} is past the end of a ${input.sizeBytes} byte artifact`,
+    };
+  }
+  const available = Math.min(length, input.sizeBytes - offset);
+  return { ok: true, offset, length: available, eof: offset + available >= input.sizeBytes };
+}
+
+/** Whether a sniffed type satisfies a picker's accept list. An empty list accepts anything the allowlist does. */
+export function artifactAcceptMatches(accept: readonly string[], mimeType: string): boolean {
+  if (accept.length === 0) return true;
+  const [type] = mimeType.split("/");
+  return accept.some((pattern) => pattern === mimeType || (pattern.endsWith("/*") && pattern.slice(0, -2) === type));
+}
+
+/** The types a widget may create or pick: the attachment allowlist, so every artifact can be attached. */
+export const ARTIFACT_MIME_ALLOWLIST: readonly string[] = ATTACHMENT_MIME_ALLOWLIST;
+
+/** A default display name for a working artifact created without one. */
+export function defaultArtifactName(mimeType: string): string {
+  const extension: Record<string, string> = {
+    "text/plain": "txt",
+    "text/markdown": "md",
+    "text/csv": "csv",
+    "application/json": "json",
+    "application/pdf": "pdf",
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+  };
+  return `untitled.${extension[mimeType] ?? "bin"}`;
+}

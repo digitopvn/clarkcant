@@ -17,6 +17,73 @@ import { z } from "zod";
 export const BRIDGE_PROTOCOL = "agent.widgetbridge";
 export const BRIDGE_VERSION = 1;
 
+/* ------------------------------------------------------------------ *
+ * The artifacts extension
+ * ------------------------------------------------------------------ */
+
+/**
+ * Files a widget holds by reference: `artifacts@1`.
+ *
+ * An extension rather than a change to the bridge version, advertised in `init.extensions`, so a runtime older than it
+ * still handshakes with a host that offers it and a host without it is refused locally instead of answered never.
+ *
+ * The bounds repeat the host's (`ARTIFACT_LIMITS` in `@clarkcant/contracts`) rather than importing them, for the same
+ * reason as `semanticValuesSchema`: a widget bundle does not carry the host's contracts. The host re-checks every one.
+ *
+ * A ref is a pointer, not a permission: it names an artifact and says what it is, never where its bytes are, and the
+ * host re-checks this frame's grant on every use.
+ */
+export const ARTIFACTS_EXTENSION = "artifacts@1";
+
+export const ARTIFACT_BRIDGE_LIMITS = Object.freeze({
+  /** Bytes in one write, and in one read. */
+  chunkBytes: 262_144,
+  /** Base64 characters one chunk may take. */
+  chunkBase64Chars: Math.ceil(262_144 / 3) * 4,
+  /** Entries in a picker's accept list. */
+  maxAccept: 16,
+  nameMaxChars: 200,
+});
+
+const artifactIdWire = z.string().regex(/^art_[A-Za-z0-9_-]{1,120}$/);
+const acceptWire = z.string().regex(/^[a-z][a-z0-9.+-]*\/(\*|[a-z0-9][a-z0-9.+-]*)$/).max(120);
+const nameWire = z.string().min(1).max(ARTIFACT_BRIDGE_LIMITS.nameMaxChars);
+
+/** An artifact as a widget sees it. No path, no staging name, no place: what it is, not where it is. */
+export const artifactRefWireSchema = z.strictObject({
+  v: z.literal(1),
+  artifactId: artifactIdWire,
+  kind: z.enum(["attachment", "working", "finalized", "external"]),
+  mimeType: z.string().min(3).max(120),
+  sizeBytes: z.int().nonnegative(),
+  name: nameWire,
+  digest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
+});
+export type ArtifactRef = z.infer<typeof artifactRefWireSchema>;
+
+export const artifactRequestSchema = z.discriminatedUnion("op", [
+  /** Ask the person to choose a file. The host shows its own chrome; the widget learns only what the person picked. */
+  z.strictObject({ op: z.literal("pick"), accept: z.array(acceptWire).max(ARTIFACT_BRIDGE_LIMITS.maxAccept) }),
+  z.strictObject({
+    op: z.literal("read"),
+    artifactId: artifactIdWire,
+    offset: z.int().nonnegative(),
+    length: z.int().min(1).max(ARTIFACT_BRIDGE_LIMITS.chunkBytes),
+  }),
+  z.strictObject({ op: z.literal("create"), mimeType: z.string().min(3).max(120), name: nameWire.optional() }),
+  z.strictObject({
+    op: z.literal("write"),
+    artifactId: artifactIdWire,
+    offset: z.int().nonnegative(),
+    chunkBase64: z.string().max(ARTIFACT_BRIDGE_LIMITS.chunkBase64Chars),
+  }),
+  z.strictObject({ op: z.literal("finalize"), artifactId: artifactIdWire }),
+  /** Save As. The host's own dialog; the widget suggests a name and learns only whether the person saved. */
+  z.strictObject({ op: z.literal("export"), artifactId: artifactIdWire, suggestedName: nameWire }),
+  z.strictObject({ op: z.literal("attach"), artifactId: artifactIdWire }),
+]);
+export type ArtifactRequest = z.infer<typeof artifactRequestSchema>;
+
 export const hostToWidgetSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("init"),
@@ -45,6 +112,11 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
     brokeredCapabilities: z.array(z.string().min(1).max(160)).max(64),
     /** Origins this frame may reach. Enforced by CSP, declared here for the SDK. */
     allowedOrigins: z.array(z.string().min(1).max(300)).max(64),
+    /**
+     * Bridge extensions this host offers this frame, such as `artifacts@1`. Optional so a host older than extensions
+     * still handshakes; a runtime refuses an extension's calls locally when its name is absent.
+     */
+    extensions: z.array(z.string().min(1).max(60)).max(16).optional(),
   }),
   z.strictObject({
     kind: z.literal("props"),
@@ -112,6 +184,23 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
     reason: z.string().min(1).max(300),
   }),
   z.strictObject({ kind: z.literal("dispose"), nonce: z.string().min(16).max(200) }),
+  /**
+   * The answer to one `artifact.request`, matched by `requestId`.
+   *
+   * `cancelled` is the person saying no in host chrome — a picker closed, a Save As dismissed — and is not an error.
+   * `refused` carries the host's code and sentence, such as `ARTIFACT_GRANT_EXPIRED`.
+   */
+  z.strictObject({
+    kind: z.literal("artifact-result"),
+    nonce: z.string().min(16).max(200),
+    requestId: z.string().min(1).max(128),
+    status: z.enum(["ok", "refused", "cancelled"]),
+    code: z.string().min(1).max(60).optional(),
+    message: z.string().min(1).max(600).optional(),
+    ref: artifactRefWireSchema.optional(),
+    chunkBase64: z.string().max(ARTIFACT_BRIDGE_LIMITS.chunkBase64Chars).optional(),
+    eof: z.boolean().optional(),
+  }),
 ]);
 export type HostToWidgetMessage = z.infer<typeof hostToWidgetSchema>;
 
@@ -172,6 +261,13 @@ export const widgetToHostSchema = z.discriminatedUnion("kind", [
      * host before a model reads them; never actions, which are the host's bindings.
      */
     values: semanticValuesSchema.optional(),
+  }),
+  /** One call of the `artifacts@1` extension. Answered by an `artifact-result` with the same `requestId`. */
+  z.strictObject({
+    kind: z.literal("artifact.request"),
+    nonce: z.string().min(16).max(200),
+    requestId: z.string().min(1).max(128),
+    request: artifactRequestSchema,
   }),
 ]);
 export type WidgetToHostMessage = z.infer<typeof widgetToHostSchema>;
@@ -268,6 +364,28 @@ export interface WidgetAuthorApi {
     openExternal(approvedUrl: string): void;
   };
   semantic: { publish(summary: string, selectedIds: string[], values?: SemanticValues): void };
+  /**
+   * Files, by reference (`artifacts@1`). Every call rejects locally when the host did not offer the extension, and
+   * every refusal from the host rejects with its code first, such as `ARTIFACT_GRANT_REVOKED: …`.
+   */
+  artifacts: {
+    /** Whether the host offered the extension to this frame. */
+    available(): boolean;
+    /** Ask the person to choose a file. Resolves `undefined` when they close the picker without choosing. */
+    pick(options?: { accept?: readonly string[] }): Promise<ArtifactRef | undefined>;
+    /** One bounded range: at most 256 KiB. `eof` is true once the range reaches the end. */
+    read(ref: ArtifactRef, range: { offset: number; length: number }): Promise<{ bytes: Uint8Array; eof: boolean }>;
+    /** A new working artifact this frame may write. It expires unless it is written to or finalized. */
+    create(options: { mimeType: string; name?: string }): Promise<ArtifactRef>;
+    /** Append one chunk of at most 256 KiB. Writes to one artifact are sent in order, one at a time. */
+    write(ref: ArtifactRef, chunk: Uint8Array): Promise<ArtifactRef>;
+    /** Fix the bytes. The host checks they are what the artifact was created as. */
+    finalize(ref: ArtifactRef): Promise<ArtifactRef>;
+    /** Ask the person to save a copy. The host's own Save As; resolves whether they saved. */
+    export(ref: ArtifactRef, options: { suggestedName: string }): Promise<boolean>;
+    /** Offer a finalized artifact to the conversation. The person sends it with their next message. */
+    attachToConversation(ref: ArtifactRef): Promise<void>;
+  };
   lifecycle: {
     onMount(handler: () => void): void;
     onSuspend(handler: (reason: string) => void): void;
@@ -286,6 +404,10 @@ export const FORBIDDEN_API_SURFACE = [
   "installAnything",
   "registerSidebar",
   "grant",
+  // No filesystem inside a widget: a file reaches it as an artifact ref the host brokers, never as a path.
+  "fs",
+  "readFile",
+  "writeFile",
 ] as const;
 
 /**
