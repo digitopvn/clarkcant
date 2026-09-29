@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   type NormalizeResult,
+  SignalPollError,
   type SourceDelivery,
   createGithubPoller,
   githubRepositoryFromRemote,
@@ -238,5 +239,51 @@ describe("polling a repository GitHub cannot deliver to", () => {
     const fetch = (async () => new Response("{}", { status: 403 })) as unknown as typeof globalThis.fetch;
     const poller = createGithubPoller({ repository: "acme/widgets", fetch, selfLogins: [], now: () => NOW });
     await expect(poller.poll("1")).rejects.toThrow(/403/);
+  });
+
+  it("sends the previous tag back, and takes a 304 as nothing new without moving the cursor", async () => {
+    const sent: (string | undefined)[] = [];
+    let answer = (): Response =>
+      new Response(JSON.stringify(events(["100"])), { status: 200, headers: { etag: 'W/"one"', "x-poll-interval": "60" } });
+    const fetch = (async (_url: string, init?: { headers?: Record<string, string> }) => {
+      sent.push(init?.headers?.["if-none-match"]);
+      return answer();
+    }) as unknown as typeof globalThis.fetch;
+    const poller = createGithubPoller({ repository: "Codertocat/Hello-World", fetch, selfLogins: [], now: () => NOW });
+
+    const first = await poller.poll(undefined);
+    expect(first).toEqual({ signals: [], cursor: "100", etag: 'W/"one"', pollIntervalSeconds: 60 });
+
+    answer = () => new Response(null, { status: 304, headers: { "x-poll-interval": "90" } });
+    const second = await poller.poll(first.cursor, { etag: 'W/"one"' });
+    expect(second).toEqual({ signals: [], cursor: "100", etag: 'W/"one"', pollIntervalSeconds: 90 });
+    expect(sent).toEqual([undefined, 'W/"one"']);
+  });
+
+  it("tells a rate limit from a refusal, with when GitHub takes requests again", async () => {
+    let answer = (): Response =>
+      new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1790000000" } });
+    const fetch = (async () => answer()) as unknown as typeof globalThis.fetch;
+    const poller = createGithubPoller({ repository: "acme/widgets", fetch, selfLogins: [], now: () => NOW });
+
+    await expect(poller.poll("1")).rejects.toMatchObject({
+      name: "SignalPollError",
+      status: 403,
+      rateLimited: true,
+      retryAt: new Date(1_790_000_000_000).toISOString(),
+    });
+
+    answer = () => new Response("{}", { status: 429, headers: { "retry-after": "120" } });
+    await expect(poller.poll("1")).rejects.toMatchObject({
+      status: 429,
+      rateLimited: true,
+      retryAt: new Date(Date.parse(NOW) + 120_000).toISOString(),
+    });
+
+    // A private repository without a token is a 404, and nothing about it says to wait.
+    answer = () => new Response("{}", { status: 404 });
+    const refused = await poller.poll("1").catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(SignalPollError);
+    expect(refused).toMatchObject({ status: 404, rateLimited: false, retryAt: undefined });
   });
 });

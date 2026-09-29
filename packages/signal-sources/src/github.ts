@@ -4,6 +4,7 @@ import {
   type NormalizeContext,
   type NormalizeResult,
   type PollResult,
+  SignalPollError,
   type SignalPoller,
   type SignalSourceAdapter,
   type SourceDelivery,
@@ -31,6 +32,11 @@ export const GITHUB_PROVIDER = "github";
 export const GITHUB_WEBHOOK_SECRET_NAME = "github_webhook_secret";
 /** Who uses the secret, as the secret's metadata records consumers. */
 export const GITHUB_WEBHOOK_CONSUMER = "signals:github";
+/**
+ * The token Clark works on GitHub with: a coding task's `git push` and `gh`, and reading a private repository's events
+ * when the node polls instead of receiving the webhook.
+ */
+export const GITHUB_TOKEN_SECRET_NAME = "github_token";
 /** A body is text GitHub wrote; anything that could be a message someone typed is cut to this many characters. */
 const TEXT_LIMIT = 2_000;
 
@@ -450,11 +456,44 @@ function laterId(left: string | undefined, right: string): string {
   }
 }
 
+/** A header's whole-seconds value, or nothing when it is absent or not a number. */
+function seconds(value: string | null): number | undefined {
+  if (value === null || !/^\d+$/.test(value.trim())) return undefined;
+  return Number(value.trim());
+}
+
+/**
+ * GitHub declining to answer, as an error the caller can schedule by.
+ *
+ * A rate limit is `429`, or `403` with no requests left or a `Retry-After`; GitHub says when it will take requests again
+ * either as seconds to wait or as the epoch second the window resets. Anything else is a refusal of this repository,
+ * which is what a private repository looks like without a token: `404`, not `403`.
+ */
+function refusal(response: Response, repository: string, now: () => string): SignalPollError {
+  const status = response.status;
+  const retryAfter = seconds(response.headers.get("retry-after"));
+  const reset = seconds(response.headers.get("x-ratelimit-reset"));
+  const exhausted = response.headers.get("x-ratelimit-remaining")?.trim() === "0";
+  const rateLimited = status === 429 || (status === 403 && (exhausted || retryAfter !== undefined));
+  const message = `GitHub answered ${String(status)} for the events of ${repository}`;
+  if (!rateLimited) return new SignalPollError(message, status);
+  const retryAt =
+    retryAfter !== undefined
+      ? new Date(Date.parse(now()) + retryAfter * 1000).toISOString()
+      : reset !== undefined
+        ? new Date(reset * 1000).toISOString()
+        : undefined;
+  return new SignalPollError(`${message}: rate limited`, status, { rateLimited: true, ...(retryAt === undefined ? {} : { retryAt }) });
+}
+
 /**
  * Polling a repository's events, for a node GitHub cannot reach.
  *
  * The first poll only finds where "now" is: events from before a person set anything up are history, not signals. After
  * that, each poll returns the events newer than the cursor, oldest first.
+ *
+ * It asks the way GitHub asks pollers to: with the previous answer's `ETag`, so an unchanged list is a `304` that costs
+ * no rate limit, and it reports the `X-Poll-Interval` GitHub sets for the caller to wait at least that long.
  */
 export function createGithubPoller(options: GithubPollerOptions): SignalPoller {
   const apiBase = (options.apiBase ?? "https://api.github.com").replace(/\/+$/, "");
@@ -463,7 +502,7 @@ export function createGithubPoller(options: GithubPollerOptions): SignalPoller {
   const webHost = apiHost === "api.github.com" ? "github.com" : apiHost;
   return {
     provider: GITHUB_PROVIDER,
-    async poll(cursor): Promise<PollResult> {
+    async poll(cursor, pollOptions = {}): Promise<PollResult> {
       const [owner, name] = options.repository.split("/");
       if (owner === undefined || name === undefined || owner === "" || name === "") {
         throw new Error(`${options.repository} is not owner/name`);
@@ -473,9 +512,18 @@ export function createGithubPoller(options: GithubPollerOptions): SignalPoller {
           accept: "application/vnd.github+json",
           "x-github-api-version": "2022-11-28",
           ...(options.token === undefined ? {} : { authorization: `Bearer ${options.token}` }),
+          ...(pollOptions.etag === undefined ? {} : { "if-none-match": pollOptions.etag }),
         },
       });
-      if (!response.ok) throw new Error(`GitHub answered ${String(response.status)} for the events of ${options.repository}`);
+      const pollIntervalSeconds = seconds(response.headers.get("x-poll-interval"));
+      const etag = response.headers.get("etag") ?? pollOptions.etag;
+      const answered = {
+        ...(etag === undefined ? {} : { etag }),
+        ...(pollIntervalSeconds === undefined ? {} : { pollIntervalSeconds }),
+      };
+      // Nothing changed since the tag was given: nothing new, and the cursor stays where it was.
+      if (response.status === 304) return { signals: [], cursor, ...answered };
+      if (!response.ok) throw refusal(response, options.repository, options.now);
       const listed: unknown = await response.json();
       if (!Array.isArray(listed)) throw new Error(`GitHub's events for ${options.repository} were not a list`);
 
@@ -488,7 +536,7 @@ export function createGithubPoller(options: GithubPollerOptions): SignalPoller {
         next = laterId(next, id);
         if (cursor !== undefined && BigInt(id) > BigInt(cursor)) fresh.push({ id, event });
       }
-      if (cursor === undefined) return { signals: [], cursor: next };
+      if (cursor === undefined) return { signals: [], cursor: next, ...answered };
 
       fresh.sort((left, right) => (BigInt(left.id) < BigInt(right.id) ? -1 : 1));
       const signals: SignalInput[] = [];
@@ -508,7 +556,7 @@ export function createGithubPoller(options: GithubPollerOptions): SignalPoller {
         });
         if (normalized.kind === "signal") signals.push(normalized.signal);
       }
-      return { signals, cursor: next };
+      return { signals, cursor: next, ...answered };
     },
   };
 }

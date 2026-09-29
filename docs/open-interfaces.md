@@ -97,8 +97,19 @@ verified delivery becomes a signal — `github.issue.labeled|opened|edited`, `gi
 `subject.refs.repository`, deduplicated on `X-GitHub-Delivery`. What the node's own GitHub logins did (the
 `signals.github.selfLogins` preference) is marked self-generated and starts nothing unless an automation asked for it,
 and a task only starts in a local clone whose `origin` is the repository the signal is about. Bodies over 2 MiB are
-refused `413`. For a node GitHub cannot reach, `@clarkcant/signal-sources` also has a poller that reads a repository's
-events into the same signals; the node does not run it on a schedule yet.
+refused `413`.
+
+A node GitHub cannot reach polls instead, with nothing to set up. Each github.com repository an active `github.*`
+automation names with `subject.refs.repository` (`equals`, or each name of `in`) has its Events API listing read
+into the same signals — issues, pull requests and their comments; CI runs still need the webhook — deduplicated on the
+event id. A repository is polled at most every five minutes, or less often when GitHub's `X-Poll-Interval` says so,
+with `If-None-Match` so an unchanged listing is a `304`; a rate limit waits until GitHub's reset. The cursor and tag
+are stored per repository, so a restart goes on where it stopped and records each event once. A repository with a
+verified webhook delivery in the last 24 hours is not polled, and a node with no such automation makes no request. A
+public repository needs no token; a private one is read with `github_token` when the person stored it for the
+`signals:github` consumer. A refusal, or three failures in a row, leaves one inbox notice, and the repository is tried
+again with a growing wait (up to six hours) or at once when the token is stored again. Automations bound to another
+`subject.refs.host` are left to the webhook.
 
 Anything else that can sign a request delivers to `POST /signals/webhook/{source}`, also without the node's token. The
 person names the source when they set up a standing request on a `webhook.<source>.<what happened>` topic, and Clark
