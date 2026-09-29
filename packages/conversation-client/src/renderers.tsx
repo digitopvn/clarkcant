@@ -11,10 +11,22 @@ import {
 } from "react";
 
 import {
+  checkField,
+  checkFieldValue,
+  checkFields,
+  checkListItems,
   donutSlices,
+  emptyValueOf,
+  fieldFromProps,
+  type FormField,
+  isEmptyValue,
+  LIST_PAGE_SIZES,
+  listPage,
   monthGrid,
   normalizeTableSelectedIds,
   normalizeTableSelection,
+  parseFields,
+  parseListItems,
   tableView,
   type TableTotalFn,
 } from "@clarkcant/contracts";
@@ -1482,6 +1494,878 @@ function ActionButton({ props, onAction, state }: RendererProps): ReactElement {
 }
 
 /* ------------------------------------------------------------------ *
+ * Fields, forms, search and lists
+ * ------------------------------------------------------------------ */
+
+type Translate = (key: MessageKey) => string;
+
+/**
+ * The rule sentences `checkFieldValue` returns, said in the person's language.
+ *
+ * The page and the node share one set of rules and one set of sentences. The page translates the ones it knows and
+ * shows any other exactly as written, so a rule added to the contract is still explained rather than dropped.
+ */
+const FIELD_PROBLEM_KEYS: readonly (readonly [RegExp, MessageKey])[] = [
+  [/^required$/u, "widgets.field.required"],
+  [/^expected text$/u, "widgets.field.expectedText"],
+  [/^at most (\S+) characters$/u, "widgets.field.maxChars"],
+  [/^at least (\S+) characters$/u, "widgets.field.minChars"],
+  [/^expected a number$/u, "widgets.field.expectedNumber"],
+  [/^at least (\S+)$/u, "widgets.field.atLeast"],
+  [/^at most (\S+)$/u, "widgets.field.atMost"],
+  [/^in steps of (\S+)$/u, "widgets.field.step"],
+  [/^expected a date /u, "widgets.field.expectedDate"],
+  [/^expected a time /u, "widgets.field.expectedTime"],
+  [/^expected (?:only )?a start and an end date/u, "widgets.field.expectedRange"],
+  [/^the end comes before the start$/u, "widgets.field.rangeOrder"],
+  [/^expected one of the options$/u, "widgets.field.expectedOption"],
+  [/^expected options from the list$/u, "widgets.field.expectedOptions"],
+  [/^an option is chosen twice$/u, "widgets.field.chosenTwice"],
+  [/^expected on or off$/u, "widgets.field.expectedBoolean"],
+];
+
+export function fieldProblemText(t: Translate, problem: string): string {
+  for (const [pattern, key] of FIELD_PROBLEM_KEYS) {
+    const match = pattern.exec(problem);
+    if (match !== null) return t(key).replace("{n}", match[1] ?? "");
+  }
+  return problem;
+}
+
+function textOf(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+/** A multi-choice value in the order its options are offered, whatever order they were picked in. */
+function inOptionOrder(field: FormField, chosen: ReadonlySet<string>): string[] {
+  return (field.options ?? []).map((option) => option.value).filter((value) => chosen.has(value));
+}
+
+interface FieldControlProps {
+  field: FormField;
+  value: unknown;
+  onChange: (value: unknown) => void;
+  onBlur: () => void;
+  /** Already in the person's language. The caller decides when to show it: once the field was left, or a send was tried. */
+  error: string | undefined;
+  /** The id of what takes focus for this field: the control itself, or the first control of a group. */
+  controlId: string;
+  disabled: boolean;
+}
+
+/**
+ * One field, drawn with the control its kind calls for.
+ *
+ * Every control is a native element or a button, so a keyboard, a touch screen and a screen reader each get the
+ * platform's own behaviour. A group (radio buttons, check boxes, chips, a date range) is a `fieldset` whose legend is the
+ * label; any other control has its own `label`. The help and the problem are tied to the control with
+ * `aria-describedby`, and a field with a problem is `aria-invalid`, so the sentence under it is read out with it.
+ */
+function FieldControl({ field, value, onChange, onBlur, error, controlId, disabled }: FieldControlProps): ReactElement {
+  const t = useT();
+  const helpId = `${controlId}-help`;
+  const errorId = `${controlId}-error`;
+  const labelId = `${controlId}-label`;
+  const describedBy = [field.help === undefined ? "" : helpId, error === undefined ? "" : errorId]
+    .filter((id) => id !== "")
+    .join(" ");
+  const aria = {
+    "aria-describedby": describedBy === "" ? undefined : describedBy,
+    "aria-invalid": error === undefined ? undefined : true,
+  };
+  const label = (
+    <>
+      {field.label}
+      {field.required === true && (
+        <>
+          <span className="cc-field-required" aria-hidden="true">
+            {" *"}
+          </span>
+          <span className="cc-sr-only"> {t("widgets.field.requiredMark")}</span>
+        </>
+      )}
+    </>
+  );
+  const footer = (
+    <>
+      {field.help !== undefined && (
+        <p id={helpId} className="cc-field-help">
+          {field.help}
+        </p>
+      )}
+      {error !== undefined && (
+        <p id={errorId} className="cc-field-error" data-field-error={field.name}>
+          {error}
+        </p>
+      )}
+    </>
+  );
+  const options = field.options ?? [];
+  const chosen = new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+  const toggleChosen = (option: string): void => {
+    const next = new Set(chosen);
+    if (next.has(option)) next.delete(option);
+    else next.add(option);
+    onChange(inOptionOrder(field, next));
+  };
+  const labelled = (control: ReactNode): ReactElement => (
+    <div className="cc-field" data-field={field.name} data-field-kind={field.kind}>
+      <label className="cc-field-label" htmlFor={controlId}>
+        {label}
+      </label>
+      {control}
+      {footer}
+    </div>
+  );
+  const grouped = (control: ReactNode): ReactElement => (
+    <fieldset className="cc-field" data-field={field.name} data-field-kind={field.kind} disabled={disabled} {...aria}>
+      <legend className="cc-field-label">{label}</legend>
+      {control}
+      {footer}
+    </fieldset>
+  );
+  const blankToUndefined = (text: string): string | undefined => (text === "" ? undefined : text);
+
+  switch (field.kind) {
+    case "text":
+      return labelled(
+        field.multiline === true ? (
+          <textarea
+            id={controlId}
+            className="cc-field-input"
+            rows={3}
+            value={textOf(value)}
+            placeholder={field.placeholder}
+            disabled={disabled}
+            onChange={(event) => onChange(event.currentTarget.value)}
+            onBlur={onBlur}
+            {...aria}
+          />
+        ) : (
+          <input
+            id={controlId}
+            className="cc-field-input"
+            type="text"
+            value={textOf(value)}
+            placeholder={field.placeholder}
+            disabled={disabled}
+            onChange={(event) => onChange(event.currentTarget.value)}
+            onBlur={onBlur}
+            {...aria}
+          />
+        ),
+      );
+    case "number":
+      return labelled(
+        <input
+          id={controlId}
+          className="cc-field-input"
+          type="number"
+          inputMode="decimal"
+          min={field.min}
+          max={field.max}
+          step={field.step ?? "any"}
+          value={typeof value === "number" ? String(value) : textOf(value)}
+          placeholder={field.placeholder}
+          disabled={disabled}
+          onChange={(event) => {
+            const raw = event.currentTarget.value;
+            const parsed = Number(raw);
+            // Text that is not a number is kept as typed, so the rule can say so instead of the value vanishing.
+            onChange(raw === "" ? undefined : Number.isFinite(parsed) ? parsed : raw);
+          }}
+          onBlur={onBlur}
+          {...aria}
+        />,
+      );
+    case "slider": {
+      const set = typeof value === "number";
+      const shown = set ? String(value) : t("widgets.field.notSet");
+      // A range input always draws a thumb somewhere. Until the person moves it the value is unset, and says so, rather
+      // than the thumb's resting place being sent as if it had been chosen.
+      const adopt = (element: HTMLInputElement): void => {
+        if (!set) onChange(Number(element.value));
+      };
+      return labelled(
+        <div className="cc-field-slider">
+          <input
+            id={controlId}
+            type="range"
+            min={field.min}
+            max={field.max}
+            step={field.step ?? 1}
+            value={set ? value : (field.min ?? 0)}
+            aria-valuetext={shown}
+            disabled={disabled}
+            data-field-unset={set ? undefined : "true"}
+            onChange={(event) => onChange(Number(event.currentTarget.value))}
+            onClick={(event) => adopt(event.currentTarget)}
+            onKeyUp={(event) => adopt(event.currentTarget)}
+            onBlur={onBlur}
+            {...aria}
+          />
+          <output htmlFor={controlId} className="cc-field-output" data-field-output={field.name}>
+            {shown}
+          </output>
+        </div>,
+      );
+    }
+    case "date":
+    case "time":
+      return labelled(
+        <input
+          id={controlId}
+          className="cc-field-input"
+          type={field.kind}
+          value={textOf(value)}
+          disabled={disabled}
+          onChange={(event) => onChange(blankToUndefined(event.currentTarget.value))}
+          onBlur={onBlur}
+          {...aria}
+        />,
+      );
+    case "date-range": {
+      const range = recordOf(value);
+      const setRange = (patch: { start?: string; end?: string }): void => {
+        const next = { start: textOf(range.start), end: textOf(range.end), ...patch };
+        onChange(next.start === "" && next.end === "" ? undefined : next);
+      };
+      return grouped(
+        <div className="cc-field-range">
+          <label className="cc-field-range-part">
+            <span className="cc-field-help">{t("widgets.field.rangeStart")}</span>
+            <input
+              id={controlId}
+              className="cc-field-input"
+              type="date"
+              value={textOf(range.start)}
+              onChange={(event) => setRange({ start: event.currentTarget.value })}
+              onBlur={onBlur}
+              {...aria}
+            />
+          </label>
+          <label className="cc-field-range-part">
+            <span className="cc-field-help">{t("widgets.field.rangeEnd")}</span>
+            <input
+              className="cc-field-input"
+              type="date"
+              value={textOf(range.end)}
+              onChange={(event) => setRange({ end: event.currentTarget.value })}
+              onBlur={onBlur}
+              {...aria}
+            />
+          </label>
+        </div>,
+      );
+    }
+    case "select":
+      return labelled(
+        <select
+          id={controlId}
+          className="cc-field-input"
+          value={textOf(value)}
+          disabled={disabled}
+          onChange={(event) => onChange(blankToUndefined(event.currentTarget.value))}
+          onBlur={onBlur}
+          {...aria}
+        >
+          {/* Kept for a required field too: it is how the form says nothing is chosen yet. */}
+          <option value="">{t("widgets.field.choose")}</option>
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>,
+      );
+    case "radio":
+      return grouped(
+        <div className="cc-field-options">
+          {options.map((option, index) => (
+            <label key={option.value} className="cc-field-check">
+              <input
+                id={index === 0 ? controlId : undefined}
+                type="radio"
+                name={controlId}
+                value={option.value}
+                checked={value === option.value}
+                onChange={() => onChange(option.value)}
+                onBlur={onBlur}
+                {...aria}
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>,
+      );
+    case "multiselect":
+      return grouped(
+        <div className="cc-field-options">
+          {options.map((option, index) => (
+            <label key={option.value} className="cc-field-check">
+              <input
+                id={index === 0 ? controlId : undefined}
+                type="checkbox"
+                value={option.value}
+                checked={chosen.has(option.value)}
+                onChange={() => toggleChosen(option.value)}
+                onBlur={onBlur}
+                {...aria}
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>,
+      );
+    case "chips":
+      return grouped(
+        <div className="cc-field-chips">
+          {options.map((option, index) => (
+            <button
+              key={option.value}
+              id={index === 0 ? controlId : undefined}
+              type="button"
+              className="cc-field-chip"
+              aria-pressed={chosen.has(option.value)}
+              data-chip={option.value}
+              onClick={() => toggleChosen(option.value)}
+              onBlur={onBlur}
+              {...aria}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>,
+      );
+    case "checkbox":
+      return (
+        <div className="cc-field" data-field={field.name} data-field-kind={field.kind}>
+          <label className="cc-field-check">
+            <input
+              id={controlId}
+              type="checkbox"
+              checked={value === true}
+              disabled={disabled}
+              onChange={(event) => onChange(event.currentTarget.checked)}
+              onBlur={onBlur}
+              {...aria}
+            />
+            <span>{label}</span>
+          </label>
+          {footer}
+        </div>
+      );
+    case "toggle": {
+      const on = value === true;
+      return (
+        <div className="cc-field" data-field={field.name} data-field-kind={field.kind}>
+          <span className="cc-field-label" id={labelId}>
+            {label}
+          </span>
+          <button
+            id={controlId}
+            type="button"
+            role="switch"
+            className="cc-switch"
+            aria-checked={on}
+            aria-labelledby={labelId}
+            data-on={on ? "true" : "false"}
+            disabled={disabled}
+            onClick={() => onChange(!on)}
+            onBlur={onBlur}
+            {...aria}
+          >
+            <span className="cc-switch-track" aria-hidden="true">
+              <span className="cc-switch-thumb" />
+            </span>
+            <span aria-hidden="true">{on ? t("widgets.field.on") : t("widgets.field.off")}</span>
+          </button>
+          {footer}
+        </div>
+      );
+    }
+  }
+}
+
+/**
+ * A single choice or input on its own.
+ *
+ * It holds its value on the page and reports it as view state; it sends nothing anywhere, which is why a model is never
+ * offered one on its own. It is the same control a form draws for one field, shown by itself in the widget library.
+ */
+function StandaloneField({
+  props,
+  state,
+  onAction,
+  onStateChange,
+  event,
+  role,
+}: RendererProps & { event: "choice.change" | "input.change"; role: "choice" | "input" }): ReactElement {
+  const t = useT();
+  const controlId = useId();
+  const field = useMemo(() => {
+    const described = fieldFromProps(props);
+    return described !== undefined && checkField(described).length === 0 ? described : undefined;
+  }, [props]);
+  const [value, setValue] = useState<unknown>(() =>
+    state !== undefined && "value" in state ? state.value : (props.value ?? (field === undefined ? undefined : emptyValueOf(field))),
+  );
+  const [touched, setTouched] = useState(false);
+  if (field === undefined) {
+    return (
+      <Frame title={String(props.label ?? "")} dataset={undefined} role={role}>
+        <Unavailable reason={t("widgets.field.unreadable")} />
+      </Frame>
+    );
+  }
+  const problem = checkFieldValue(field, value);
+  return (
+    <div className="cc-card" data-widget-role={role}>
+      <div className="cc-card-body">
+        <FieldControl
+          field={field}
+          value={value}
+          controlId={controlId}
+          disabled={false}
+          error={touched && problem !== undefined ? fieldProblemText(t, problem) : undefined}
+          onBlur={() => setTouched(true)}
+          onChange={(next) => {
+            setValue(next);
+            onStateChange?.({ value: next });
+            // Only a value that fits is reported; one that does not is shown with its problem instead.
+            if (checkFieldValue(field, next) === undefined) onAction?.(event, { value: next });
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ChoiceControl(props: RendererProps): ReactElement {
+  return <StandaloneField {...props} event="choice.change" role="choice" />;
+}
+
+function InputControl(props: RendererProps): ReactElement {
+  return <StandaloneField {...props} event="input.change" role="input" />;
+}
+
+/** How long typing has to pause before a search settles. */
+export const SEARCH_SETTLE_MS = 250;
+
+/**
+ * A search box whose query is the view's current query.
+ *
+ * The query stays on the page: it settles a moment after typing pauses (at once on Enter, and Escape clears it) and is
+ * reported as view state, which a composed surface applies to its tables. Nothing is sent to the node or to Clark.
+ */
+function SearchBox({ props, state, onAction, onStateChange }: RendererProps): ReactElement {
+  const t = useT();
+  const inputId = useId();
+  const input = useRef<HTMLInputElement | null>(null);
+  const label = String(props.label ?? t("widgets.search.label"));
+  const placeholder = typeof props.placeholder === "string" && props.placeholder !== "" ? props.placeholder : t("widgets.table.searchPlaceholder");
+  const [text, setText] = useState(() => (typeof state?.query === "string" ? state.query : textOf(props.query)));
+  const sent = useRef(text);
+  // The latest callbacks, read when the query settles: a parent redrawing mid-pause must not restart the wait.
+  const report = useRef({ onAction, onStateChange });
+  report.current = { onAction, onStateChange };
+  const settle = useCallback((query: string): void => {
+    if (sent.current === query) return;
+    sent.current = query;
+    report.current.onStateChange?.({ query });
+    report.current.onAction?.("query.change", { query });
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => settle(text), SEARCH_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [settle, text]);
+
+  return (
+    <div className="cc-card" data-widget-role="search">
+      <div className="cc-card-body" role="search">
+        <label className="cc-field-label" htmlFor={inputId}>
+          {label}
+        </label>
+        <div className="cc-search-row">
+          <input
+            id={inputId}
+            ref={input}
+            type="search"
+            className="cc-field-input"
+            data-search-input="true"
+            value={text}
+            maxLength={200}
+            placeholder={placeholder}
+            onChange={(event) => setText(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                settle(text);
+              } else if (event.key === "Escape" && text !== "") {
+                event.preventDefault();
+                setText("");
+                settle("");
+              }
+            }}
+          />
+          {text !== "" && (
+            <button
+              type="button"
+              className="cc-action"
+              data-search-clear="true"
+              onClick={() => {
+                setText("");
+                settle("");
+                input.current?.focus();
+              }}
+            >
+              {t("widgets.search.clear")}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** What a host said about the one action a form or a list item sends to: running, its answer, or why it cannot run. */
+function actionStatus(state: Record<string, unknown> | undefined): {
+  pending: boolean;
+  message: string | undefined;
+  tone: "done" | "waiting" | "refused";
+  unavailableReason: string | undefined;
+} {
+  return {
+    pending: state?.pending === true,
+    message: typeof state?.message === "string" && state.message !== "" ? state.message : undefined,
+    tone: state?.tone === "refused" || state?.tone === "waiting" ? state.tone : "done",
+    unavailableReason: typeof state?.unavailableReason === "string" ? state.unavailableReason : undefined,
+  };
+}
+
+/**
+ * A form: fields a person fills in and sends to the one action the host bound to it.
+ *
+ * The draft is view state, kept by the host for the session and never sent until the person submits. Each field is
+ * checked as it is left and all of them on send, with the same rules the node applies again; a send with problems goes
+ * nowhere and moves focus to the first one. A refusal from the node leaves the draft exactly as it was. The form knows
+ * nothing about the action: it emits `submit` with its values, and the host decides, runs and answers.
+ */
+function FormView({ props, state, onAction, onStateChange }: RendererProps): ReactElement {
+  const t = useT();
+  const baseId = useId();
+  const fields = useMemo(() => {
+    const parsed = parseFields(props.fields);
+    return parsed !== undefined && checkFields(parsed).length === 0 ? parsed : undefined;
+  }, [props.fields]);
+  const [draft, setDraft] = useState<Record<string, unknown>>(() => {
+    const kept = recordOf(state?.draft);
+    return Object.fromEntries((fields ?? []).map((field) => [field.name, field.name in kept ? kept[field.name] : emptyValueOf(field)]));
+  });
+  const [left, setLeft] = useState<ReadonlySet<string>>(() => new Set());
+  const [attempted, setAttempted] = useState(false);
+  const [notice, setNotice] = useState<string | undefined>(undefined);
+
+  const title = typeof props.title === "string" && props.title !== "" ? props.title : t("widgets.form.title");
+  if (fields === undefined) {
+    return (
+      <Frame title={title} dataset={undefined} role="form">
+        <Unavailable reason={t("widgets.form.unreadable")} />
+      </Frame>
+    );
+  }
+
+  const submitLabel = String(props.submitLabel ?? "");
+  const description = typeof props.description === "string" && props.description !== "" ? props.description : undefined;
+  const { pending, message, tone, unavailableReason } = actionStatus(state);
+  const actionable = onAction !== undefined && unavailableReason === undefined;
+  const viewOnly = !actionable ? (unavailableReason ?? t("widgets.form.viewOnlyNotice")) : undefined;
+  const problems = new Map<string, string>();
+  for (const field of fields) {
+    const problem = checkFieldValue(field, draft[field.name]);
+    if (problem !== undefined) problems.set(field.name, problem);
+  }
+  const controlId = (name: string): string => `${baseId}-${name}`;
+  const said =
+    pending
+      ? t("widgets.action.pending")
+      : (notice ?? (message === undefined ? "" : tone === "refused" ? `${message} ${t("widgets.form.draftKept")}` : message));
+
+  return (
+    <Frame title={title} dataset={undefined} role="form">
+      <form
+        className="cc-form"
+        noValidate
+        aria-label={title}
+        data-form-actionable={actionable ? "true" : "false"}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!actionable || pending) return;
+          setAttempted(true);
+          const first = fields.find((field) => problems.has(field.name));
+          if (first !== undefined) {
+            setNotice(t("widgets.form.fixFields").replace("{count}", String(problems.size)));
+            document.getElementById(controlId(first.name))?.focus();
+            return;
+          }
+          setNotice(undefined);
+          // An empty optional field is left out rather than sent as nothing.
+          const values = Object.fromEntries(
+            fields.flatMap((field) => (isEmptyValue(draft[field.name]) ? [] : [[field.name, draft[field.name]]])),
+          );
+          onAction("submit", { values });
+        }}
+      >
+        {description !== undefined && <p className="cc-freshness">{description}</p>}
+        {viewOnly !== undefined && (
+          <p className="cc-freshness" data-form-unavailable="true">
+            {viewOnly}
+          </p>
+        )}
+        {fields.map((field) => {
+          const problem = problems.get(field.name);
+          const shown = problem !== undefined && (attempted || left.has(field.name));
+          return (
+            <FieldControl
+              key={field.name}
+              field={field}
+              value={draft[field.name]}
+              controlId={controlId(field.name)}
+              disabled={!actionable}
+              error={shown ? fieldProblemText(t, problem) : undefined}
+              onBlur={() => setLeft((current) => (current.has(field.name) ? current : new Set([...current, field.name])))}
+              onChange={(value) => {
+                const next = { ...draft, [field.name]: value };
+                setDraft(next);
+                setNotice(undefined);
+                onStateChange?.({ draft: next });
+              }}
+            />
+          );
+        })}
+        <div className="cc-form-foot">
+          {/* Polite, so what happened to a send is read out without taking focus from where the person is. */}
+          <p
+            className="cc-freshness"
+            role="status"
+            aria-live="polite"
+            data-form-result={pending ? "pending" : notice !== undefined ? "invalid" : message === undefined ? undefined : tone}
+          >
+            {said}
+          </p>
+          <button
+            type="submit"
+            className="cc-action"
+            data-emphasis="primary"
+            data-form-submit="true"
+            disabled={!actionable}
+            // aria-disabled while pending keeps focus on the button that was pressed; `disabled` would drop it.
+            aria-disabled={pending ? "true" : undefined}
+            aria-busy={pending ? "true" : undefined}
+          >
+            {submitLabel}
+          </button>
+        </div>
+      </form>
+    </Frame>
+  );
+}
+
+/**
+ * A list of items with stable ids.
+ *
+ * Selection and the page are view state; an item is named by its id in every event, so a redraw never moves a selection
+ * to a different item. With `itemActionLabel`, each item carries a button for the one action the host bound to the list;
+ * the button is live only when the host says the binding can run (`state.itemActionReady`), and otherwise the list says
+ * it is view-only rather than drawing buttons that do nothing.
+ */
+function ListView({ props, state, onAction, onStateChange }: RendererProps): ReactElement {
+  const t = useT();
+  const locale = useLocale();
+  const groupName = useId();
+  const title = typeof props.title === "string" && props.title !== "" ? props.title : t("widgets.list.title");
+  const items = useMemo(() => {
+    const parsed = parseListItems(props.items);
+    return parsed !== undefined && checkListItems(parsed).length === 0 ? parsed : undefined;
+  }, [props.items]);
+  const selection = props.selection === "single" || props.selection === "multi" ? props.selection : "none";
+  const pageSize = typeof props.pageSize === "number" ? props.pageSize : LIST_PAGE_SIZES.default;
+  const [page, setPage] = useState(() => (typeof state?.page === "number" ? state.page : 1));
+  const [selected, setSelected] = useState<string[]>(() =>
+    Array.isArray(state?.selected) ? state.selected.filter((id): id is string => typeof id === "string") : [],
+  );
+  const [pressed, setPressed] = useState<string | undefined>(undefined);
+
+  if (items === undefined) {
+    return (
+      <Frame title={title} dataset={undefined} role="list">
+        <p className="cc-freshness" data-list-state="error" style={{ margin: 0 }}>
+          {t("widgets.list.unreadable")}
+        </p>
+      </Frame>
+    );
+  }
+
+  const loading = state?.loading === true;
+  const { pending, message, tone, unavailableReason } = actionStatus(state);
+  const actionLabel = typeof props.itemActionLabel === "string" && props.itemActionLabel !== "" ? props.itemActionLabel : undefined;
+  const itemActionLive = actionLabel !== undefined && onAction !== undefined && state?.itemActionReady === true && unavailableReason === undefined;
+  const viewOnly =
+    actionLabel !== undefined && !itemActionLive ? (unavailableReason ?? t("widgets.list.viewOnlyNotice")) : undefined;
+  const ids = new Set(items.map((item) => item.id));
+  const current = selected.filter((id) => ids.has(id));
+  const shown = listPage(items, page, pageSize);
+  const count = (value: number): string => new Intl.NumberFormat(locale).format(value);
+  const pressedTitle = items.find((item) => item.id === pressed)?.title;
+
+  const select = (next: string[]): void => {
+    setSelected(next);
+    onStateChange?.({ selected: next });
+    onAction?.("selection.change", { selected: next });
+  };
+  const goTo = (next: number): void => {
+    setPage(next);
+    onStateChange?.({ page: next });
+  };
+
+  return (
+    <Frame title={title} dataset={undefined} role="list">
+      <>
+        {viewOnly !== undefined && (
+          <p className="cc-freshness" data-list-unavailable="true">
+            {viewOnly}
+          </p>
+        )}
+        {selection !== "none" && (
+          <div className="cc-table-toolbar">
+            <span className="cc-table-selected" role="status" data-list-selected-count={current.length}>
+              {current.length === 0 ? "" : t("widgets.list.selectedCount").replace("{count}", count(current.length))}
+            </span>
+            {current.length > 0 && (
+              <button type="button" className="cc-action" data-list-clear-selection="true" onClick={() => select([])}>
+                {t("widgets.table.clearSelection")}
+              </button>
+            )}
+          </div>
+        )}
+        {loading ? (
+          <p className="cc-freshness" data-list-state="loading" role="status" style={{ margin: 0 }}>
+            {t("widgets.list.loading")}
+          </p>
+        ) : items.length === 0 ? (
+          <p className="cc-freshness" data-list-state="empty" style={{ margin: 0 }}>
+            {typeof props.emptyText === "string" && props.emptyText !== "" ? props.emptyText : t("widgets.list.empty")}
+          </p>
+        ) : (
+          <ul className="cc-list" aria-label={title} data-list-state="ready">
+            {shown.rows.map((item) => {
+              const isSelected = current.includes(item.id);
+              const body = (
+                <span className="cc-list-text">
+                  <span className="cc-list-title">{item.title}</span>
+                  {item.subtitle !== undefined && item.subtitle !== "" && <span className="cc-list-subtitle">{item.subtitle}</span>}
+                </span>
+              );
+              return (
+                <li key={item.id} className="cc-list-item" data-list-item={item.id} data-selected={isSelected ? "true" : undefined}>
+                  {selection === "none" ? (
+                    <div className="cc-list-main">{body}</div>
+                  ) : (
+                    <label className="cc-list-main">
+                      <input
+                        type={selection === "multi" ? "checkbox" : "radio"}
+                        name={selection === "single" ? groupName : undefined}
+                        data-list-select={item.id}
+                        checked={isSelected}
+                        onChange={() =>
+                          select(
+                            selection === "single"
+                              ? [item.id]
+                              : isSelected
+                                ? current.filter((id) => id !== item.id)
+                                : [...current, item.id],
+                          )
+                        }
+                      />
+                      {body}
+                    </label>
+                  )}
+                  {item.meta !== undefined && item.meta !== "" && <span className="cc-list-meta">{item.meta}</span>}
+                  {itemActionLive && (
+                    <button
+                      type="button"
+                      className="cc-action"
+                      data-list-item-action={item.id}
+                      aria-label={`${actionLabel}: ${item.title}`}
+                      aria-disabled={pending ? "true" : undefined}
+                      aria-busy={pending && pressed === item.id ? "true" : undefined}
+                      onClick={() => {
+                        if (pending) return;
+                        setPressed(item.id);
+                        onAction("item.activate", { itemId: item.id });
+                      }}
+                    >
+                      {actionLabel}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {itemActionLive && (
+          <p className="cc-freshness" role="status" aria-live="polite" data-list-result={pending ? "pending" : message === undefined ? undefined : tone}>
+            {pending
+              ? t("widgets.action.pending")
+              : message === undefined
+                ? ""
+                : pressedTitle === undefined
+                  ? message
+                  : `${pressedTitle}: ${message}`}
+          </p>
+        )}
+        {shown.pageCount > 1 && !loading && (
+          <nav className="cc-table-pager" aria-label={t("widgets.list.pagination")}>
+            <button
+              type="button"
+              className="cc-action"
+              data-list-page="previous"
+              aria-disabled={shown.page <= 1}
+              onClick={() => {
+                if (shown.page > 1) goTo(shown.page - 1);
+              }}
+            >
+              {t("widgets.table.previousPage")}
+            </button>
+            <span className="cc-table-page-status" data-list-page-status="true" aria-live="polite">
+              {t("widgets.list.pageStatus")
+                .replace("{page}", count(shown.page))
+                .replace("{pageCount}", count(shown.pageCount))
+                .replace("{total}", count(shown.total))}
+            </span>
+            <button
+              type="button"
+              className="cc-action"
+              data-list-page="next"
+              aria-disabled={shown.page >= shown.pageCount}
+              onClick={() => {
+                if (shown.page < shown.pageCount) goTo(shown.page + 1);
+              }}
+            >
+              {t("widgets.table.nextPage")}
+            </button>
+          </nav>
+        )}
+      </>
+    </Frame>
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * Registry
  * ------------------------------------------------------------------ */
 
@@ -1508,6 +2392,11 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.video@1": LocalVideo,
   "canvas.cta@1": CallToAction,
   "canvas.action@1": ActionButton,
+  "canvas.choice@1": ChoiceControl,
+  "canvas.input@1": InputControl,
+  "canvas.search@1": SearchBox,
+  "canvas.form@1": FormView,
+  "canvas.list@1": ListView,
 };
 
 export function resolveRenderer(definitionId: string): CatalogRenderer | undefined {

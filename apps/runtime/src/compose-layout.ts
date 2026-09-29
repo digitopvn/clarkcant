@@ -12,6 +12,7 @@ import {
   checkLayout,
   describeLayout,
 } from "@clarkcant/contracts";
+import { primitivePropsProblems } from "@clarkcant/data-canvas";
 import { type CatalogRegistry, definitionDigest, validateProps } from "@clarkcant/widget-host";
 
 import {
@@ -67,6 +68,9 @@ const SLOT_BY_FAMILY: Readonly<Record<string, CompositionSlot>> = {
   tables: "table",
   calendar: "calendar",
   cta: "cta",
+  // A search box narrows the tables of the surface it sits in, on the page; a list shows the items the model wrote.
+  search: "search",
+  list: "list",
 };
 
 /** The widgets a layout leaf may name, for the model's instructions and for a refusal that lists them. */
@@ -268,6 +272,16 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
       problems.push(`${where} (${entry.definition.id}) has props that do not fit its schema: ${full.message}`);
       return undefined;
     }
+    const meaning = primitivePropsProblems(entry.definition.id, props);
+    if (meaning.length > 0) {
+      problems.push(`${where} (${entry.definition.id}) cannot be placed: ${meaning.join("; ")}`);
+      return undefined;
+    }
+    // A leaf binds no action, so a list inside a layout offers no item button: one would press nothing.
+    if (slot === "list" && props.itemActionLabel !== undefined) {
+      problems.push(`${where} (${entry.definition.id}) has an item action; a list whose items act is placed with its own show_view`);
+      return undefined;
+    }
 
     const count = (countBySlot.get(slot) ?? 0) + 1;
     countBySlot.set(slot, count);
@@ -314,6 +328,10 @@ function slotFor(definitionId: string, family: string, where: string, problems: 
     problems.push(
       `${where} names "${definitionId}"; a button is placed with its own show_view, where its action is compiled, not inside a layout`,
     );
+  } else if (family === "form") {
+    problems.push(`${where} names "${definitionId}"; a form is placed with its own show_view, where what it sends is bound, not inside a layout`);
+  } else if (family === "choice" || family === "input") {
+    problems.push(`${where} names "${definitionId}", which sends its value nowhere on its own; make it a field of a canvas.form@1`);
   } else if (family === "media") {
     problems.push(`${where} names "${definitionId}", and this node has no source for it yet; only an imported image can be placed`);
   } else {

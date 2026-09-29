@@ -57,7 +57,11 @@ const leaf = (widget: string, props: Record<string, unknown> = {}, label?: strin
   ...(label === undefined ? {} : { label }),
 });
 
-/** The tree from the issue, with the period selector standing in for Search until that widget exists. */
+/**
+ * A dashboard tree whose card holds the period selector beside a searchable table, so it also shows a region that binds
+ * its own action keeping that binding inside a tree. The issue's exact tree, with the search box, is compiled in
+ * `input-primitives.spec.ts`.
+ */
 const DASHBOARD = {
   kind: "grid",
   columns: 3,

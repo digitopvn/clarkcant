@@ -192,6 +192,89 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 /* "saved" stays muted: the save is optimistic until the host confirms it, so it is not shown as a success. */
 .cc-note-meta { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 
+/* Fields, forms, search and lists */
+/*
+ * Every field is at least 44 px tall so a thumb can hit it (a button grows to it on a touch screen, in the voice layer
+ * where its size is set), and every control shows the same focus ring. A problem is said in text under the field; the
+ * red border is a second signal, never the only one.
+ */
+.cc-form { display: flex; flex-direction: column; gap: var(--cc-space-md); margin: 0; }
+.cc-field { display: flex; flex-direction: column; gap: var(--cc-space-xxs); min-width: 0; margin: 0; padding: 0; border: none; }
+.cc-field-label { font-size: var(--cc-text-body-sm); font-weight: 600; color: var(--cc-text); padding: 0; }
+.cc-field-required { color: var(--cc-danger); }
+.cc-field-help { margin: 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-field-error { margin: 0; font-size: var(--cc-text-label); color: var(--cc-danger); }
+.cc-field-input {
+  width: 100%; min-width: 0; min-height: 44px; font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text);
+  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  padding: var(--cc-space-xs) var(--cc-space-sm);
+}
+textarea.cc-field-input { resize: vertical; line-height: var(--cc-leading-body-md); }
+.cc-field-input[aria-invalid="true"], .cc-field [aria-invalid="true"].cc-field-chip { border-color: var(--cc-danger); }
+.cc-field-input:focus-visible, .cc-field input:focus-visible, .cc-field-chip:focus-visible, .cc-switch:focus-visible {
+  outline: 2px solid var(--cc-focus); outline-offset: 2px;
+}
+.cc-field-input:disabled { color: var(--cc-text-tertiary); cursor: not-allowed; }
+.cc-field-slider { display: flex; align-items: center; gap: var(--cc-space-sm); min-height: 44px; }
+.cc-field-slider input { flex: 1; min-width: 0; accent-color: var(--cc-accent); }
+.cc-field-slider input[data-field-unset="true"] { opacity: 0.6; }
+.cc-field-output { min-width: 4ch; text-align: end; font-variant-numeric: tabular-nums; font-size: var(--cc-text-body-sm); }
+.cc-field-range { display: flex; flex-wrap: wrap; gap: var(--cc-space-sm); }
+.cc-field-range-part { flex: 1 1 140px; display: flex; flex-direction: column; gap: var(--cc-space-xxs); min-width: 0; }
+.cc-field-options { display: flex; flex-direction: column; gap: 0; }
+.cc-field-check { display: inline-flex; align-items: center; gap: var(--cc-space-sm); min-height: 44px; cursor: pointer; font-size: var(--cc-text-body-sm); }
+.cc-field-check input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--cc-accent); cursor: pointer; }
+.cc-field-chips { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); }
+.cc-field-chip {
+  min-height: 44px; padding: 0 var(--cc-space-md); font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text);
+  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-pill); cursor: pointer;
+  transition: background var(--cc-motion-micro), border-color var(--cc-motion-micro);
+}
+/* Pressed is said by a check mark as well as by colour. */
+.cc-field-chip[aria-pressed="true"] { background: var(--cc-accent); border-color: var(--cc-accent); color: var(--cc-on-accent); font-weight: 600; }
+/* The empty alternative keeps a screen reader from reading the mark out on top of "pressed". */
+.cc-field-chip[aria-pressed="true"]::before { content: "✓ "; content: "✓ " / ""; }
+.cc-field-chip:disabled { cursor: not-allowed; color: var(--cc-text-tertiary); }
+.cc-switch {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: var(--cc-space-sm); min-height: 44px; padding: 0;
+  font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text); background: none; border: none; cursor: pointer;
+}
+.cc-switch-track {
+  position: relative; width: 40px; height: 24px; flex: none; border-radius: var(--cc-radius-pill);
+  background: var(--cc-elevated); border: 1px solid var(--cc-border); transition: background var(--cc-motion-micro);
+}
+.cc-switch-thumb {
+  position: absolute; top: 3px; inset-inline-start: 3px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--cc-text-muted); transition: transform var(--cc-motion-micro), background var(--cc-motion-micro);
+}
+.cc-switch[data-on="true"] .cc-switch-track { background: var(--cc-accent); border-color: var(--cc-accent); }
+.cc-switch[data-on="true"] .cc-switch-thumb { background: var(--cc-on-accent); transform: translateX(16px); }
+[dir="rtl"] .cc-switch[data-on="true"] .cc-switch-thumb { transform: translateX(-16px); }
+.cc-switch:disabled { cursor: not-allowed; opacity: 0.6; }
+.cc-form-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--cc-space-sm); }
+.cc-form-foot > p { flex: 1 1 200px; margin: 0; }
+.cc-form-foot [data-form-result="refused"], .cc-form-foot [data-form-result="invalid"] { color: var(--cc-danger); }
+.cc-search-row { display: flex; gap: var(--cc-space-sm); align-items: center; }
+.cc-search-row .cc-action { flex: none; }
+/* The page draws its own clear button, which every browser shows the same way and a screen reader can name. */
+.cc-search-row input::-webkit-search-cancel-button { appearance: none; }
+.cc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.cc-list-item {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-xs) var(--cc-space-sm);
+  padding: var(--cc-space-xs) 0; border-bottom: 1px solid var(--cc-border);
+}
+.cc-list-item:last-child { border-bottom: none; }
+.cc-list-item[data-selected="true"] { background: color-mix(in oklab, var(--cc-accent) 10%, transparent); }
+.cc-list-main { flex: 1 1 180px; display: flex; align-items: center; gap: var(--cc-space-sm); min-width: 0; min-height: 44px; }
+label.cc-list-main { cursor: pointer; }
+.cc-list-main input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--cc-accent); cursor: pointer; }
+.cc-list-main input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-list-text { display: flex; flex-direction: column; min-width: 0; }
+.cc-list-title { font-size: var(--cc-text-body-sm); overflow-wrap: anywhere; }
+.cc-list-subtitle { font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-list-meta { font-size: var(--cc-text-label); color: var(--cc-text-muted); font-variant-numeric: tabular-nums; }
+.cc-list-item .cc-action { margin-inline-start: auto; }
+
 /* Pin shelf */
 .cc-pins {
   max-width: var(--cc-conversation-max-width); margin: 0 auto; width: 100%;

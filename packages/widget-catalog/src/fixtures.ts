@@ -291,6 +291,150 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       mode: "read-only",
     },
   ],
+  "canvas.choice@1": [
+    {
+      id: "choice.normal",
+      label: "Chip chọn nhiều",
+      props: {
+        label: "Kênh nhận tin",
+        kind: "chips",
+        help: "Chọn một hoặc vài kênh.",
+        options: [
+          { value: "email", label: "Email" },
+          { value: "chat", label: "Chat" },
+          { value: "sms", label: "SMS" },
+        ],
+        value: ["chat"],
+      },
+      mode: "interactive",
+    },
+    {
+      id: "choice.toggle",
+      label: "Công tắc",
+      props: { label: "Nhắc trước 10 phút", kind: "toggle", value: true },
+      mode: "interactive",
+    },
+    {
+      id: "choice.radio",
+      label: "Chọn một",
+      props: {
+        label: "Mức ưu tiên",
+        kind: "radio",
+        options: [
+          { value: "low", label: "Thấp" },
+          { value: "normal", label: "Bình thường" },
+          { value: "high", label: "Cao" },
+        ],
+      },
+      mode: "interactive",
+    },
+  ],
+  "canvas.input@1": [
+    {
+      id: "input.normal",
+      label: "Thanh trượt",
+      props: { label: "Thời lượng (phút)", kind: "slider", min: 15, max: 120, step: 15, value: 45 },
+      mode: "interactive",
+    },
+    {
+      id: "input.date-range",
+      label: "Khoảng ngày",
+      props: { label: "Khoảng ngày", kind: "date-range", value: { start: "2026-10-01", end: "2026-10-03" } },
+      mode: "interactive",
+    },
+    {
+      id: "input.text",
+      label: "Ô chữ",
+      props: { label: "Chủ đề", kind: "text", placeholder: "Ví dụ: rà soát quý", maxLength: 120 },
+      mode: "interactive",
+    },
+  ],
+  "canvas.search@1": [
+    {
+      id: "search.normal",
+      label: "Ô tìm kiếm",
+      props: { label: "Tìm trong bảng", placeholder: "Ngày, số việc…" },
+      mode: "interactive",
+    },
+    {
+      id: "search.query",
+      label: "Đang có truy vấn",
+      props: { label: "Tìm việc", query: "hoá đơn" },
+      mode: "interactive",
+    },
+  ],
+  "canvas.form@1": [
+    {
+      id: "form.normal",
+      label: "Biểu mẫu đặt lịch",
+      props: {
+        title: "Đặt lịch họp",
+        submitLabel: "Gửi cho Clark",
+        fields: [
+          { name: "topic", label: "Chủ đề", kind: "text", required: true, maxLength: 120 },
+          { name: "day", label: "Ngày", kind: "date", required: true },
+          { name: "minutes", label: "Thời lượng (phút)", kind: "slider", min: 15, max: 120, step: 15 },
+          {
+            name: "room",
+            label: "Phòng",
+            kind: "radio",
+            options: [
+              { value: "online", label: "Trực tuyến" },
+              { value: "hq", label: "Văn phòng" },
+            ],
+          },
+        ],
+      },
+      mode: "read-only",
+    },
+    {
+      id: "form.refused",
+      label: "Bị từ chối, bản nháp còn nguyên",
+      props: {
+        title: "Ghi chú nhanh",
+        submitLabel: "Lưu",
+        fields: [{ name: "body", label: "Nội dung", kind: "text", multiline: true, required: true }],
+      },
+      state: {
+        draft: { body: "Gọi lại cho khách trước thứ Sáu" },
+        message: "Dịch vụ ghi chú chưa sẵn sàng.",
+        tone: "refused",
+      },
+      mode: "read-only",
+    },
+  ],
+  "canvas.list@1": [
+    {
+      id: "list.normal",
+      label: "Danh sách nhiều trang",
+      props: {
+        title: "Việc chờ xử lý",
+        selection: "multi",
+        pageSize: 5,
+        items: Array.from({ length: 7 }, (_, index) => ({
+          id: `task-${String(index + 1)}`,
+          title: `Việc số ${String(index + 1)}`,
+          subtitle: index % 2 === 0 ? "Từ hộp thư" : "Từ lịch",
+          meta: `${String(index + 1)} ngày`,
+        })),
+      },
+      state: { selected: ["task-2"] },
+      mode: "read-only",
+    },
+    {
+      id: "list.empty",
+      label: "Danh sách trống",
+      props: { title: "Việc chờ xử lý", items: [], emptyText: "Không còn việc nào chờ." },
+      mode: "read-only",
+    },
+    {
+      id: "list.loading",
+      label: "Đang tải",
+      props: { title: "Việc chờ xử lý", items: [{ id: "task-1", title: "Việc số 1" }] },
+      state: { loading: true },
+      mode: "read-only",
+    },
+  ],
   "canvas.note@1": [
     {
       id: "note.normal",

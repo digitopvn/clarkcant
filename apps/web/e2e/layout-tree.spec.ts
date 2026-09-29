@@ -69,10 +69,10 @@ test("a grid of two tiles and a card is drawn as the tree says, and again from h
   const card = body.locator(":scope > [data-layout='card']");
   await expect(card).toHaveAttribute("data-layout-label", "Chi tiết theo ngày");
   await expect(card.getByRole("heading", { name: "Chi tiết theo ngày" })).toBeVisible();
-  // Inside the card, in the order the tree gives: the period selector above the table.
+  // Inside the card, in the order the tree gives: the search box above the table it narrows.
   const inCard = card.locator("[data-slot]");
   await expect(inCard).toHaveCount(2);
-  await expect(inCard.nth(0)).toHaveAttribute("data-slot", "filter");
+  await expect(inCard.nth(0)).toHaveAttribute("data-slot", "search");
   await expect(inCard.nth(1)).toHaveAttribute("data-slot", "table");
   // Side by side where the conversation has room, and never more columns than the tree asked for: a column narrower
   // than a region can be read at is dropped rather than drawn.

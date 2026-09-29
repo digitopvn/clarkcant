@@ -68,8 +68,17 @@ function toSurfaceViewFromSnapshot(captured: SnapshotPresentationResponse, revis
 type ExportStatus = "pending" | "failed" | "unavailable" | "done";
 
 const TABLE_DEFINITION_ID = "canvas.table@1";
-/** Buttons that act only through a host binding: without one they are drawn view-only, never as a live control. */
-const BOUND_BUTTON_DEFINITION_IDS = new Set(["canvas.cta@1", "canvas.action@1"]);
+const FORM_DEFINITION_ID = "canvas.form@1";
+const LIST_DEFINITION_ID = "canvas.list@1";
+/**
+ * Widgets that act only through a host binding: without one they are drawn view-only, never as a live control. A form
+ * is one of them, since sending is all it does.
+ */
+const BOUND_DEFINITION_IDS = new Set(["canvas.cta@1", "canvas.action@1", FORM_DEFINITION_ID]);
+/** Widgets whose view the page keeps for the session: a table's sort and page, a form's draft, a list's selection. */
+const LOCAL_VIEW_DEFINITION_IDS = new Set([TABLE_DEFINITION_ID, FORM_DEFINITION_ID, LIST_DEFINITION_ID]);
+/** The argument an agent-bound list item is sent under when the binding names none. */
+const DEFAULT_ITEM_KEY = "itemId";
 
 /** What a press of a bound button said, kept per instance for the session. */
 interface ActionRun {
@@ -158,11 +167,12 @@ export function useSurfaceRenderer({
   t,
 }: SurfaceRendererDeps): (input: SurfaceBlockRef) => ReactElement {
   /*
-   * A standalone table's view (sort, search, page, selection) is held here for the session: the node keeps no view
-   * state for a catalog widget, so this is what brings a remounted table back the way it was left. It is not
-   * persisted, and it is never sent anywhere except as the view an export writes.
+   * A standalone widget's view (a table's sort, search, page and selection; a form's draft; a list's page and
+   * selection) is held here for the session: the node keeps no view state for a catalog widget, so this is what brings
+   * a remounted widget back the way it was left. It is not persisted, and it is never sent anywhere except as the view
+   * an export writes or the values a person submits.
    */
-  const tableViews = useRef(new Map<string, Record<string, unknown>>());
+  const localViews = useRef(new Map<string, Record<string, unknown>>());
   const [exports, setExports] = useState<Record<string, ExportStatus>>({});
   const exportTable = useCallback(
     (conversation: string, instanceId: string, payload: Record<string, unknown>): void => {
@@ -187,11 +197,12 @@ export function useSurfaceRenderer({
    * A bound button's press goes to the same action route every surface uses, with the binding digest and instance
    * revision the timeline carried: the node checks both again, so a button drawn from an out-of-date timeline is
    * refused rather than running something the person did not see. A fresh id per press is what lets a double click be
-   * one effect without making a later, deliberate press a duplicate.
+   * one effect without making a later, deliberate press a duplicate. `input` is what a form or a list item sends: the
+   * node checks it against what the binding accepts before anything runs.
    */
   const [actionRuns, setActionRuns] = useState<Record<string, ActionRun>>({});
   const runAction = useCallback(
-    (conversation: string, instance: Timeline["instances"][number], action: TimelineAction): void => {
+    (conversation: string, instance: Timeline["instances"][number], action: TimelineAction, input: Record<string, unknown>): void => {
       const id = instance.instanceId;
       setActionRuns((current) => ({ ...current, [id]: { pending: true } }));
       void client
@@ -199,7 +210,7 @@ export function useSurfaceRenderer({
           actionBindingId: action.actionBindingId,
           expectedRevision: instance.revision,
           expectedBindingDigest: action.bindingDigest,
-          input: {},
+          input,
           invocationId: newInvocationId(),
         })
         .then((result) => {
@@ -307,22 +318,31 @@ export function useSurfaceRenderer({
       const resolved = typeof datasetRef === "string" ? datasets[datasetRef] : undefined;
       const dataset = resolved === undefined ? undefined : toRendererDataset(resolved);
       const isTable = definitionId === TABLE_DEFINITION_ID;
+      const isForm = definitionId === FORM_DEFINITION_ID;
+      const isList = definitionId === LIST_DEFINITION_ID;
       const exportStatus = exports[instance.instanceId];
-      // One button, one binding: `canvas.action@1` is made with exactly one, and the renderer never learns its kind.
+      // One widget, one binding: a button, a form and a list are each made with at most one, and neither the renderer
+      // nor this hook learns what it does.
       const boundAction = instance.actions?.[0];
-      const isBoundButton = BOUND_BUTTON_DEFINITION_IDS.has(definitionId);
+      const needsBinding = BOUND_DEFINITION_IDS.has(definitionId);
+      const sends = needsBinding || (isList && boundAction !== undefined);
       const actionRun = actionRuns[instance.instanceId];
-      const buttonState: Record<string, unknown> | undefined = !isBoundButton
-        ? undefined
-        : {
-            ...(actionRun?.pending === true ? { pending: true } : {}),
-            ...(actionRun?.message === undefined ? {} : { message: actionRun.message, tone: actionRun.tone }),
-            ...(boundAction !== undefined && !boundAction.available
-              ? { unavailableReason: reasonFor(t, boundAction.unavailableCode, boundAction.unavailableReason) }
-              : {}),
-          };
-      // A button with no binding, or no conversation to run it in, is drawn view-only instead of as a live control.
-      const buttonActionable = boundAction !== undefined && conversationId !== undefined;
+      // A widget with no binding, or no conversation to run it in, is drawn view-only instead of as a live control.
+      const actionReady = boundAction !== undefined && conversationId !== undefined;
+      const keepsView = LOCAL_VIEW_DEFINITION_IDS.has(definitionId);
+      const widgetState: Record<string, unknown> | undefined =
+        !keepsView && !sends
+          ? undefined
+          : {
+              ...(keepsView ? localViews.current.get(instance.instanceId) : {}),
+              ...(isTable && exportStatus !== undefined ? { exportStatus } : {}),
+              ...(sends && actionRun?.pending === true ? { pending: true } : {}),
+              ...(sends && actionRun?.message !== undefined ? { message: actionRun.message, tone: actionRun.tone } : {}),
+              ...(sends && boundAction !== undefined && !boundAction.available
+                ? { unavailableReason: reasonFor(t, boundAction.unavailableCode, boundAction.unavailableReason) }
+                : {}),
+              ...(isList && actionReady ? { itemActionReady: true } : {}),
+            };
 
       return (
         <div data-widget-instance={instance.instanceId} data-widget-definition={definitionId}>
@@ -345,17 +365,14 @@ export function useSurfaceRenderer({
               // this out made every picture widget show its text alternative while the bytes sat
               // unread on the node.
               imageUrl={imageUrl}
-              {...(isTable
+              {...(widgetState === undefined ? {} : { state: widgetState })}
+              {...(keepsView
                 ? {
-                    state: {
-                      ...tableViews.current.get(instance.instanceId),
-                      ...(exportStatus === undefined ? {} : { exportStatus }),
-                    },
                     onStateChange: (patch: Record<string, unknown>) => {
                       const id = instance.instanceId;
-                      tableViews.current.set(id, { ...tableViews.current.get(id), ...patch });
+                      localViews.current.set(id, { ...localViews.current.get(id), ...patch });
                       // "Downloaded" described the view that was exported; once the view changes it no longer does.
-                      if (exportStatus === "done") {
+                      if (isTable && exportStatus === "done") {
                         setExports((current) => {
                           if (current[id] !== "done") return current;
                           const { [id]: _done, ...rest } = current;
@@ -363,11 +380,10 @@ export function useSurfaceRenderer({
                         });
                       }
                     },
-                    canExport: conversationId !== undefined,
                   }
                 : {})}
-              {...(buttonState === undefined ? {} : { state: buttonState })}
-              {...(isBoundButton && !buttonActionable
+              {...(isTable ? { canExport: conversationId !== undefined } : {})}
+              {...(needsBinding && !actionReady
                 ? {}
                 : {
                     onAction: (action: string, payload: Record<string, unknown>) => {
@@ -376,8 +392,23 @@ export function useSurfaceRenderer({
                         if (exportStatus !== "pending") exportTable(conversationId, instance.instanceId, payload);
                         return;
                       }
-                      if (isBoundButton && action === "activate" && boundAction !== undefined && conversationId !== undefined) {
-                        if (actionRun?.pending !== true) runAction(conversationId, instance, boundAction);
+                      if (boundAction === undefined || conversationId === undefined || actionRun?.pending === true) return;
+                      if (needsBinding && !isForm && action === "activate") {
+                        runAction(conversationId, instance, boundAction, {});
+                        return;
+                      }
+                      // What a form sends is its values, which the node checks against the fields before the action runs.
+                      if (isForm && action === "submit") {
+                        const values = payload.values;
+                        if (typeof values === "object" && values !== null && !Array.isArray(values)) {
+                          runAction(conversationId, instance, boundAction, values as Record<string, unknown>);
+                        }
+                        return;
+                      }
+                      // A list item is sent by its id alone, under the one argument the binding takes it as.
+                      if (isList && action === "item.activate" && typeof payload.itemId === "string") {
+                        const key = boundAction.inputKeys?.[0] ?? DEFAULT_ITEM_KEY;
+                        runAction(conversationId, instance, boundAction, { [key]: payload.itemId });
                         return;
                       }
                       // Everything else is a view action: selection and paging stay in the view, and an action that

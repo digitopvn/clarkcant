@@ -14,12 +14,20 @@
  */
 
 import {
+  type WidgetDefinition,
   type WidgetInstance,
   type WidgetSnapshot,
+  CHOICE_KINDS,
+  INPUT_KINDS,
   MAX_COMPOSITION_SECTIONS,
+  MAX_FORM_FIELDS,
   MAX_GRID_COLUMNS,
   MAX_LAYOUT_DEPTH,
   MAX_LAYOUT_NODES,
+  MAX_LIST_ITEMS,
+  formInputSchema,
+  parseFields,
+  parseListItems,
 } from "@clarkcant/contracts";
 import {
   type WidgetDeps,
@@ -27,8 +35,27 @@ import {
   createInstance,
   saveActionBinding,
 } from "@clarkcant/core";
-import { ACTION, ACTION_ICONS, CTA, OVERVIEW, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
-import { type ActionBindingDeps, compileWidgetAction } from "./application/action-bindings.ts";
+import {
+  ACTION,
+  ACTION_ICONS,
+  CHOICE,
+  CTA,
+  FORM,
+  INPUT,
+  LIST,
+  OVERVIEW,
+  SEARCH,
+  WIDGETS as CATALOG_WIDGETS,
+  primitivePropsProblems,
+} from "@clarkcant/data-canvas";
+import {
+  type ActionBindingDeps,
+  type ActionInputSpec,
+  type WidgetActionCompile,
+  AGENT_ITEM_KEY,
+  compileWidgetAction,
+} from "./application/action-bindings.ts";
+import { validateArgs } from "./application/capability-invoke.ts";
 import { COMPOSITION_TEMPLATES, type ComposeDeps, type ComposeInput, composeMiniApp } from "./compose-mini-app.ts";
 import { composeLayout, layoutLeafWidgets } from "./compose-layout.ts";
 import { definitionDigest } from "@clarkcant/widget-host";
@@ -54,8 +81,10 @@ export function buildViewCatalog(
   // The container is excluded: it is not a leaf a model may place, and registering it twice would
   // give the model a view name whose build knows nothing about the composition. The old call to action is
   // excluded because a model placing one got a button with nothing behind it; `canvas.action@1` replaces it and is
-  // registered below, with the build that compiles its action.
-  const placed = new Set([OVERVIEW.id, CTA.id, ACTION.id]);
+  // registered below, with the build that compiles its action. A form and a list are registered below as well, for the
+  // same reason. A choice, an input and a search box do nothing on their own — a value set in one would go nowhere — so
+  // a model places them as a form's fields and as a layout's search, never alone.
+  const placed = new Set([OVERVIEW.id, CTA.id, ACTION.id, CHOICE.id, INPUT.id, SEARCH.id, FORM.id, LIST.id]);
   const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
     id: definition.id,
@@ -99,7 +128,8 @@ export function buildViewCatalog(
     }),
   );
 
-  if (actions !== undefined) simple.push(actionView(deps, actions));
+  if (actions !== undefined) simple.push(actionView(deps, actions), formView(deps, actions));
+  simple.push(listView(deps, actions));
   if (compose === undefined) return simple;
 
   const overview = OVERVIEW;
@@ -199,6 +229,143 @@ function actionView(deps: WidgetDeps, bindingDeps: () => ActionBindingDeps): Vie
         presentationRef: `catalog:${ACTION.id}`,
       });
       return { type: "surface", definitionRef: { id: ACTION.id, version: ACTION.version }, snapshot };
+    },
+  };
+}
+
+/** The action kinds a form or a list item may be bound to, as the model is told them. */
+const SENDING_ACTIONS =
+  `{"kind":"agent","intent":"<what Clark should do with what was sent>"}, or ` +
+  `{"kind":"invoke","capabilityRef":"<a package service capability>","args":{...}}`;
+
+type ViewRequest = Parameters<ViewDescriptor["build"]>[0];
+
+/**
+ * Store one widget whose action sends something: compile the action with what it carries, then make the instance, bind
+ * it and capture it.
+ *
+ * Props a model wrote are held to the whole schema and to what the schema cannot say before anything is compiled, so a
+ * widget that could never be used is refused in the same turn and nothing is left behind.
+ */
+function placeSending(
+  deps: WidgetDeps,
+  bindingDeps: (() => ActionBindingDeps) | undefined,
+  definition: WidgetDefinition,
+  request: ViewRequest,
+  sending: { action: unknown; label: string; carries: ActionInputSpec } | undefined,
+  textAlternative: string,
+): ReturnType<ViewDescriptor["build"]> {
+  const full = validateArgs(definition.propsSchema, request.props);
+  if (!full.ok) throw new Error(`${definition.id} has props that do not fit its schema: ${full.message}`);
+  const problems = primitivePropsProblems(definition.id, request.props);
+  if (problems.length > 0) throw new Error(`${definition.id} cannot be shown: ${problems.join("; ")}`);
+
+  const definitionRef = { id: definition.id, version: definition.version, packageDigest: definitionDigest(definition) };
+  let compiled: Extract<WidgetActionCompile, { ok: true }> | undefined;
+  if (sending !== undefined) {
+    if (bindingDeps === undefined) throw new Error(`this node cannot bind an action to ${definition.id}`);
+    const result = compileWidgetAction(bindingDeps(), { definitionRef, label: sending.label, action: sending.action, carries: sending.carries });
+    if (!result.ok) throw new Error(result.message);
+    compiled = result;
+  }
+
+  const instance: WidgetInstance = createInstance(deps, {
+    definition,
+    packageDigest: definitionRef.packageDigest,
+    ownerPrincipalId: request.principal.principalId,
+    props: request.props,
+  });
+  if (compiled !== undefined) saveActionBinding(deps, compiled.bindTo(instance.instanceId));
+  const snapshot: WidgetSnapshot = captureSnapshot(deps, {
+    messageId: request.messageId,
+    instance,
+    textAlternative: request.caption.trim() === "" ? textAlternative : request.caption,
+    presentationRef: `catalog:${definition.id}`,
+  });
+  return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
+}
+
+/**
+ * A form a person fills in and sends to one bound action.
+ *
+ * The binding records the form's own fields as the input it accepts, so the node checks every submission against them
+ * before anything runs. An `invoke` action takes each field as the capability argument of the same name.
+ */
+function formView(deps: WidgetDeps, bindingDeps: () => ActionBindingDeps): ViewDescriptor {
+  return {
+    id: FORM.id,
+    label: FORM.semanticDescription,
+    notes:
+      `props.submitLabel is the send button's text; optional props.title and props.description. ` +
+      `props.fields is 1-${String(MAX_FORM_FIELDS)} of {"name":"<identifier>","label":"...","kind":"<kind>","required"?:true,"help"?,"placeholder"?}, ` +
+      `kind one of ${[...CHOICE_KINDS, ...INPUT_KINDS].join(", ")}; a choice takes "options":[{"value","label"}], ` +
+      `number and slider take min/max/step (a slider needs min and max), text takes minLength/maxLength/multiline. ` +
+      `Never ask for a password, token, key or other secret in a field: such a form is refused. ` +
+      `props.action is required and is exactly one of: ${SENDING_ACTIONS}; an invoke gets each field as the argument of the same name.`,
+    shownText:
+      "Shown: canvas.form@1. Nothing has been sent; the node checks what the person enters and sends it to the action only when they submit.",
+    build: (request) => {
+      const { action, ...shown } = request.props;
+      if (action === undefined) throw new Error("canvas.form@1 needs props.action: what sending the form does");
+      const fields = parseFields(shown.fields) ?? [];
+      const carries: ActionInputSpec = {
+        source: "user-input",
+        noun: "form",
+        keys: fields.map((field) => field.name),
+        schema: () => formInputSchema(fields),
+      };
+      const submitLabel = typeof shown.submitLabel === "string" ? shown.submitLabel : "";
+      const title = typeof shown.title === "string" && shown.title !== "" ? shown.title : submitLabel;
+      const text = `${title}: ${fields.map((field) => `${field.label}${field.required === true ? " *" : ""}`).join(", ")}. ${FORM.textFallback}`;
+      return placeSending(deps, bindingDeps, FORM, { ...request, props: shown }, { action, label: submitLabel, carries }, text);
+    },
+  };
+}
+
+/**
+ * A list of items with stable ids, and optionally one action a person runs on an item.
+ *
+ * With an action, the binding records the list's own ids as the only values it accepts, so an item that is not in the
+ * list is refused by the node whatever the page sends.
+ */
+function listView(deps: WidgetDeps, bindingDeps: (() => ActionBindingDeps) | undefined): ViewDescriptor {
+  return {
+    id: LIST.id,
+    label: LIST.semanticDescription,
+    notes:
+      `props.items is up to ${String(MAX_LIST_ITEMS)} of {"id":"<stable id>","title":"...","subtitle"?,"meta"?}; ` +
+      `optional props.title, props.selection ("none" | "single" | "multi"), props.pageSize and props.emptyText. ` +
+      `To let a person act on one item, pass props.itemActionLabel (the button text) with props.action, one of: ${SENDING_ACTIONS}; ` +
+      `an invoke names the argument that takes the item's id: "bindings":[{"target":"<argument>","source":"selected-row"}].`,
+    shownText: "Shown: canvas.list@1. An item's action runs only when the person presses it on that item.",
+    build: (request) => {
+      const { action, ...shown } = request.props;
+      const label = shown.itemActionLabel;
+      if ((action === undefined) !== (label === undefined)) {
+        throw new Error("canvas.list@1 takes props.itemActionLabel and props.action together: the button and what it does");
+      }
+      const items = parseListItems(shown.items) ?? [];
+      const ids = items.map((item) => item.id);
+      const carries: ActionInputSpec = {
+        source: "selected-row",
+        noun: "list",
+        schema: (keys) => {
+          const key = keys[0] ?? AGENT_ITEM_KEY;
+          return { type: "object", additionalProperties: false, properties: { [key]: { type: "string", enum: ids } }, required: [key] };
+        },
+      };
+      const title = typeof shown.title === "string" && shown.title !== "" ? `${shown.title}: ` : "";
+      const shownItems = items.slice(0, 20).map((item) => item.title).join("; ");
+      const more = items.length > 20 ? ` (+${String(items.length - 20)})` : "";
+      const text = items.length === 0 ? `${title}${typeof shown.emptyText === "string" ? shown.emptyText : LIST.textFallback}` : `${title}${shownItems}${more}`;
+      return placeSending(
+        deps,
+        bindingDeps,
+        LIST,
+        { ...request, props: shown },
+        action === undefined ? undefined : { action, label: String(label), carries },
+        text,
+      );
     },
   };
 }

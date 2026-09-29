@@ -17,8 +17,10 @@ import { type CompositionPeriod, type CompositionSlot } from "./surface-composit
 export const SLOT_ORDER: readonly CompositionSlot[] = [
   "metrics",
   "filter",
+  "search",
   "trend",
   "table",
+  "list",
   "calendar",
   "image",
   "note",

@@ -53,7 +53,7 @@ Sau plan này:
 | C | [Hợp đồng đầy đủ của `canvas.table@1`](phase-c-table-contract.md) | — | done (#222, PR #228) |
 | D | [Action tổng quát `canvas.action@1`](phase-d-generic-action.md) | B (với invoke) | done (#223) |
 | E | [Layout primitive và cây composition có giới hạn](phase-e-layout-composition-tree.md) | — | done (#224) |
-| F | [Primitive input, choice, search, form và list](phase-f-input-primitives.md) | E | pending |
+| F | [Primitive input, choice, search, form và list](phase-f-input-primitives.md) | E | done (#225) |
 | G | [State/event graph của composition](phase-g-composition-state-graph.md) | E, F | pending |
 
 A và C độc lập với nhau, có thể làm song song. E, F và G nối tiếp nhau.

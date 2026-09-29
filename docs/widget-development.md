@@ -345,6 +345,55 @@ still answering is refused with `TURN_IN_PROGRESS` rather than interrupting.
 Tests: `apps/runtime/test/action-widget.spec.ts`, `packages/conversation-client/test/action-button.spec.ts`, and the
 browser journey `apps/web/e2e/action-widget.spec.ts`, which runs each kind against a real notes service in a container.
 
+### 8.2 Forms, lists, search and fields
+
+Five definitions let a person give Clark something rather than only read it. One field model, in
+[form-fields.ts](../packages/contracts/src/form-fields.ts), describes a field and checks its value. The page and the
+node both use it, so the page shows the same problem the node would refuse.
+
+| Definition | What it is | How a model places it |
+| --- | --- | --- |
+| `canvas.form@1` | Fields plus one send button, bound to one action. | `show_view` with `props.fields` (1–20), `props.submitLabel` and `props.action`, an `agent` or `invoke` action. |
+| `canvas.list@1` | Items with stable ids, with optional single or multi selection, paging (5–50 per page) and an empty text. | `show_view` with `props.items` (up to 200). `props.itemActionLabel` together with `props.action` gives each item a button for that action. It can also be a layout leaf, which has no item button. |
+| `canvas.search@1` | A search box. | Only as a layout leaf. It narrows every table in the same surface, on the page. |
+| `canvas.choice@1` | One choice: `chips`, `select`, `multiselect`, `radio`, `checkbox` or `toggle`. | Never alone, because its value would go nowhere. It is a form's field. |
+| `canvas.input@1` | One input: `text`, `number`, `date`, `date-range`, `time` or `slider`. | Never alone, as above. |
+
+What the node guarantees:
+
+- **No secret fields.** A field whose name or label asks for a password, token, key, PIN or similar is refused before
+  anything is stored. The model reads the reason in the same turn. Credentials go through the host's connection flow.
+- **The binding knows what it accepts.** A form's binding records its field names and a JSON Schema built from its
+  fields. A list's binding records its item ids. Every submission is checked again on the node. A missing required
+  value, a value outside its options or range, an unknown field, or an item that is not in the list is answered with
+  `400 INVALID_INPUT` and the reason, and nothing runs.
+- **Same route as a button.** A form's `submit` sends its values as the action input. A list item's button sends
+  `{ itemId }`, or the argument an `invoke` binding names. Both go through `POST …/widgets/{instanceId}/actions` with
+  the same revision, digest and invocation-id checks as §8.1. An `agent` form starts a turn whose message is the send
+  label followed by each field as `label: value`. An `invoke` form passes each field as the capability argument of the
+  same name.
+- **View state stays on the page.** A form's draft, a list's selection and page, and a search query are view state.
+  None of them is sent anywhere until the person submits or presses. A refused submission keeps the draft.
+
+What the page does:
+
+- Each field has a real label, its help and its error linked through `aria-describedby`, and `aria-invalid` when it is
+  wrong. A problem shows once the field has been left, or when the person tries to send. A send with problems sends
+  nothing, says how many fields to fix, and moves focus to the first one.
+- A slider nobody moved has no value and says "Not set", rather than sending wherever its thumb rests.
+- Chips show a check mark as well as a colour. A toggle is a `role="switch"`. Every field is at least 44 px tall, and
+  buttons grow to 44 px on a touch screen.
+- A list's item button is live only when the host says its binding can run. Otherwise the list says it is view-only,
+  rather than drawing buttons that do nothing. A list has loading, empty and error states.
+- The search box settles 250 ms after typing pauses, at once on Enter, and Escape or the clear button empties it. A
+  query that matches nothing shows the table's own "no matching rows" state.
+
+Tests: [form-fields.spec.ts](../packages/contracts/test/form-fields.spec.ts),
+[input-primitives.spec.ts](../apps/runtime/test/input-primitives.spec.ts) for the node,
+[input-primitives.spec.ts](../packages/conversation-client/test/input-primitives.spec.ts) for the page, and the
+browser journey [input-primitives.spec.ts](../apps/web/e2e/input-primitives.spec.ts), which runs at 1440 px and at
+375 px with touch.
+
 ---
 
 ## 9. Semantic contract for voice

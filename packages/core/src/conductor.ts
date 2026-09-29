@@ -541,13 +541,14 @@ export async function handleUserMessage(
       ...(input.note === undefined ? {} : { note: input.note }),
     });
     if (composed !== undefined) {
+      // A reply that is only its sentence is said once: leading with the same text again would print it twice.
+      const onlyText = composed.block.type === "text" && composed.block.content === composed.text;
       const message = appendAssistant(
         deps,
         input.conversationId,
-        [
-          { type: "text", format: "plain", content: composed.text, streaming: false },
-          composed.block,
-        ],
+        onlyText
+          ? [composed.block]
+          : [{ type: "text", format: "plain", content: composed.text, streaming: false }, composed.block],
         { at, messageId },
       );
       // No task: composing a view runs nothing, and claiming one would be a lie about what happened.

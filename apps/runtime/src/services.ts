@@ -673,6 +673,11 @@ export interface TimelineActionView {
   /** Why it cannot run now, when it cannot: the reason a click would be refused with. */
   unavailableCode?: string;
   unavailableReason?: string;
+  /**
+   * The names what a use sends goes under, when it sends something: a form's field names, or the one key a list item's
+   * id goes to. Absent for a button, which sends nothing.
+   */
+  inputKeys?: string[];
 }
 
 /**
@@ -761,6 +766,7 @@ export function buildTimeline(
     const actions = instance.actionBindingIds.flatMap((bindingId): TimelineActionView[] => {
       const binding = getActionBinding(deps, bindingId);
       if (binding === undefined) return [];
+      const inputKeys = Object.keys((binding.inputSchema.properties ?? {}) as Record<string, unknown>);
       const availability = bindingAvailability(
         { db, nodeId: services.runtime.identity.nodeId, serviceHost: services.serviceHost },
         binding,
@@ -773,6 +779,7 @@ export function buildTimeline(
           bindingDigest: binding.bindingDigest,
           available: availability.available,
           ...(availability.available ? {} : { unavailableCode: availability.code, unavailableReason: availability.reason }),
+          ...(inputKeys.length === 0 ? {} : { inputKeys }),
         },
       ];
     });

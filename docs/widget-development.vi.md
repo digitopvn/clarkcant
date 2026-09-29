@@ -346,6 +346,55 @@ thì bị từ chối với `TURN_IN_PROGRESS` thay vì ngắt ngang.
 Kiểm thử: `apps/runtime/test/action-widget.spec.ts`, `packages/conversation-client/test/action-button.spec.ts`, và
 journey trình duyệt `apps/web/e2e/action-widget.spec.ts`, chạy từng loại với một notes service thật trong container.
 
+### 8.2 Biểu mẫu, danh sách, ô tìm kiếm và trường nhập
+
+Năm định nghĩa cho phép người dùng đưa thông tin cho Clark, thay vì chỉ đọc. Một mô hình trường duy nhất, trong
+[form-fields.ts](../packages/contracts/src/form-fields.ts), mô tả trường và kiểm giá trị của nó. Cả trang lẫn node đều
+dùng mô hình này, nên trang báo đúng lỗi mà node sẽ từ chối.
+
+| Định nghĩa | Là gì | Model đặt nó thế nào |
+| --- | --- | --- |
+| `canvas.form@1` | Các trường cùng một nút gửi, gắn với một hành động. | `show_view` với `props.fields` (1–20), `props.submitLabel` và `props.action` là hành động `agent` hoặc `invoke`. |
+| `canvas.list@1` | Các mục có id ổn định, có thể chọn một hoặc nhiều mục, chia trang (5–50 mục mỗi trang) và có câu hiển thị khi trống. | `show_view` với `props.items` (tối đa 200). `props.itemActionLabel` đi cùng `props.action` sẽ cho mỗi mục một nút chạy hành động đó. Nó cũng có thể là lá của bố cục, khi đó không có nút cho từng mục. |
+| `canvas.search@1` | Một ô tìm kiếm. | Chỉ làm lá của bố cục. Nó lọc mọi bảng trong cùng bề mặt, ngay trên trang. |
+| `canvas.choice@1` | Một lựa chọn: `chips`, `select`, `multiselect`, `radio`, `checkbox` hoặc `toggle`. | Không bao giờ đứng một mình, vì giá trị của nó chẳng đi đâu cả. Nó là một trường của biểu mẫu. |
+| `canvas.input@1` | Một ô nhập: `text`, `number`, `date`, `date-range`, `time` hoặc `slider`. | Không bao giờ đứng một mình, cùng lý do trên. |
+
+Node bảo đảm:
+
+- **Không có trường bí mật.** Trường nào có tên hoặc nhãn hỏi mật khẩu, token, khoá, mã PIN hay thứ tương tự đều bị từ
+  chối trước khi lưu bất cứ thứ gì. Model đọc lý do ngay trong lượt đó. Thông tin đăng nhập đi qua luồng kết nối của
+  host.
+- **Binding biết nó nhận gì.** Binding của biểu mẫu ghi lại tên các trường và một JSON Schema dựng từ các trường đó.
+  Binding của danh sách ghi lại id các mục. Mỗi lần gửi đều được node kiểm lại. Thiếu giá trị bắt buộc, giá trị nằm ngoài
+  lựa chọn hoặc ngoài khoảng, trường lạ, hay mục không có trong danh sách đều được trả `400 INVALID_INPUT` kèm lý do, và
+  không có gì chạy.
+- **Cùng đường với nút.** `submit` của biểu mẫu gửi các giá trị làm input của hành động. Nút của một mục gửi
+  `{ itemId }`, hoặc tên tham số mà binding `invoke` chỉ định. Cả hai đi qua `POST …/widgets/{instanceId}/actions` với
+  đúng các bước kiểm revision, digest và invocation id như §8.1. Biểu mẫu `agent` mở một lượt với tin nhắn là nhãn nút
+  gửi, rồi từng trường theo dạng `nhãn: giá trị`. Biểu mẫu `invoke` truyền mỗi trường làm tham số cùng tên cho
+  capability.
+- **View state ở lại trên trang.** Bản nháp của biểu mẫu, lựa chọn và trang của danh sách, và câu tìm kiếm đều là view
+  state. Không cái nào được gửi đi cho tới khi người dùng gửi hoặc bấm. Lần gửi bị từ chối vẫn giữ nguyên bản nháp.
+
+Trang làm gì:
+
+- Mỗi trường có nhãn thật, phần hướng dẫn và lỗi được nối qua `aria-describedby`, và có `aria-invalid` khi sai. Lỗi
+  hiện khi người dùng rời trường, hoặc khi họ thử gửi. Lần gửi còn lỗi thì không gửi gì, nói cần sửa bao nhiêu ô, và
+  chuyển focus tới ô đầu tiên.
+- Thanh trượt chưa ai kéo thì chưa có giá trị và hiện "Chưa chọn", thay vì gửi vị trí mà con trượt đang nằm.
+- Chip có dấu ✓ ngoài màu sắc. Công tắc bật/tắt là `role="switch"`. Mọi trường cao ít nhất 44 px, và nút lớn lên 44 px
+  trên màn hình cảm ứng.
+- Nút của từng mục chỉ bấm được khi host nói binding chạy được. Nếu không, danh sách nói nó chỉ để xem, thay vì vẽ những
+  nút bấm không làm gì. Danh sách có trạng thái đang tải, trống và lỗi.
+- Ô tìm kiếm chốt câu tìm 250 ms sau khi ngừng gõ, hoặc ngay khi nhấn Enter. Escape hoặc nút xoá làm trống ô. Câu tìm
+  không khớp gì thì bảng hiện trạng thái "không có dòng nào khớp" của chính nó.
+
+Kiểm thử: [form-fields.spec.ts](../packages/contracts/test/form-fields.spec.ts),
+[input-primitives.spec.ts](../apps/runtime/test/input-primitives.spec.ts) cho node,
+[input-primitives.spec.ts](../packages/conversation-client/test/input-primitives.spec.ts) cho trang, và journey trình
+duyệt [input-primitives.spec.ts](../apps/web/e2e/input-primitives.spec.ts), chạy ở 1440 px và ở 375 px có cảm ứng.
+
 ---
 
 ## 9. Semantic contract cho voice
