@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { AppearanceResponse } from "@clarkcant/contracts";
+import type { AppearanceResponse, ThemeContrastFailureView } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
 import { applyAppearance } from "./appearance.ts";
@@ -16,6 +16,12 @@ import { applyAppearance } from "./appearance.ts";
  * change what a person sees for a reason that has nothing to do with their theme.
  */
 
+/** Why the page refused what the node sent: the English reason, and the failing pairs when it was the colours. */
+export interface LocalAppearanceProblem {
+  message: string;
+  contrast?: ThemeContrastFailureView[];
+}
+
 export interface AppearanceState {
   /** The node's last answer, or `undefined` until it has given one. */
   appearance: AppearanceResponse | undefined;
@@ -23,7 +29,7 @@ export interface AppearanceState {
    * Why the page is drawing Clark Default although the node sent a theme: the page checks the document again before
    * compiling it, and refuses one the node should not have accepted.
    */
-  localProblem: string | undefined;
+  localProblem: LocalAppearanceProblem | undefined;
   /** Counts answers, so a surface listing themes can re-read when the answer may have changed. */
   generation: number;
   refresh: () => Promise<void>;
@@ -31,7 +37,7 @@ export interface AppearanceState {
 
 export function useAppearance(client: GatewayClient): AppearanceState {
   const [appearance, setAppearance] = useState<AppearanceResponse | undefined>(undefined);
-  const [localProblem, setLocalProblem] = useState<string | undefined>(undefined);
+  const [localProblem, setLocalProblem] = useState<LocalAppearanceProblem | undefined>(undefined);
   const [generation, setGeneration] = useState(0);
   // Only the latest request is applied: two refreshes racing must not leave the older answer on screen.
   const latest = useRef(0);
@@ -48,7 +54,11 @@ export function useAppearance(client: GatewayClient): AppearanceState {
     if (ticket !== latest.current) return;
     const applied = applyAppearance({ theme: next.theme, themeRef: next.appliedRef });
     setAppearance(next);
-    setLocalProblem(applied.ok ? undefined : applied.problem);
+    setLocalProblem(
+      applied.ok
+        ? undefined
+        : { message: applied.problem, ...(applied.contrast === undefined ? {} : { contrast: applied.contrast }) },
+    );
     setGeneration((count) => count + 1);
   }, [client]);
 

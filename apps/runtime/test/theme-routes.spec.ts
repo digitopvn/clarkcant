@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import type { ThemeContrastFailureView } from "@clarkcant/contracts";
 import { writeRegisteredPreference } from "@clarkcant/core";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
@@ -135,7 +136,7 @@ interface AppearanceBody {
   appliedRef: string;
   theme: { colors?: { dark?: { accent?: string } } } | null;
   provider: Record<string, unknown>;
-  fallback: { code: string; message: string } | null;
+  fallback: { code: string; message: string; contrast?: ThemeContrastFailureView[] } | null;
 }
 
 async function appearance(): Promise<AppearanceBody> {
@@ -146,7 +147,7 @@ async function appearance(): Promise<AppearanceBody> {
 
 interface ThemesBody {
   themes: { themeRef: string; displayName: string; provider: Record<string, unknown> }[];
-  problems: { packageId: string; themeRef: string | undefined; message: string }[];
+  problems: { packageId: string; themeRef: string | undefined; message: string; contrast?: ThemeContrastFailureView[] }[];
   unchecked: { packageId: string; code: string }[];
 }
 
@@ -353,6 +354,9 @@ describe("the appearance a choice resolves to", () => {
       fallback: { code: "THEME_LOW_CONTRAST" },
     });
     expect(resolved.fallback?.message).toMatch(/in the dark scheme, accent text on the page is 1\.69:1 and needs 4\.5:1/);
+    // The pairs travel as data too, so a page words them in its reader's language instead of showing the sentence.
+    expect(resolved.fallback?.contrast?.[0]).toEqual({ scheme: "dark", foreground: "accent", background: "canvas", ratio: 1.69, minimum: 4.5 });
+    expect(resolved.fallback?.contrast?.every((pair) => pair.scheme === "dark")).toBe(true);
     // The choice is kept, so rolling back to the readable version draws it again.
     await change(DUSK, "rollback");
     expect(await appearance()).toMatchObject({ appliedRef: DUSK_REF, fallback: null });
@@ -404,6 +408,7 @@ describe("choosing a theme", () => {
   it("refuses a theme no installed package provides, and keeps the choice it had", async () => {
     const answer = await refused("package:com.example.nowhere#dusk");
 
+    // No `contrast` here: only a refusal for the theme's colours carries pairs.
     expect(answer).toEqual({
       status: 409,
       body: {
@@ -423,12 +428,15 @@ describe("choosing a theme", () => {
     expect(answer.status).toBe(409);
     expect(answer.body.code).toBe("THEME_LOW_CONTRAST");
     expect(answer.body.message).toMatch(/accent text on the page is 1\.69:1 and needs 4\.5:1/);
+    const pairs = (answer.body as { contrast?: unknown[] }).contrast;
+    expect(pairs?.[0]).toEqual({ scheme: "dark", foreground: "accent", background: "canvas", ratio: 1.69, minimum: 4.5 });
     expect(await appearance()).toMatchObject({ selectedRef: "builtin:clark", appliedRef: "builtin:clark" });
-    // Named where the themes are listed, rather than offered.
+    // Named where the themes are listed, rather than offered, with the same pairs the refusal carried.
     const listed = await themes();
     expect(listed.themes.map((entry) => entry.themeRef)).toEqual(["builtin:clark"]);
     expect(listed.problems).toEqual([expect.objectContaining({ packageId: DUSK, themeRef: DUSK_REF })]);
     expect(listed.problems[0]?.message).toMatch(/^theme dusk: its colours are too close to read/);
+    expect(listed.problems[0]?.contrast).toEqual(pairs);
   });
 
   it("refuses a theme that did not pass validation, and a built-in this build does not have", async () => {

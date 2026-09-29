@@ -5,8 +5,10 @@ import {
   nowInstant,
   parseThemeRef,
   type AppearanceFallbackCode,
+  type AppearanceFallbackView,
   type AppearanceResponse,
   type DirectoryEntry,
+  type ThemeContrastFailureView,
   type ThemeDocument,
   type ThemeListingView,
   type ThemeProblemView,
@@ -65,7 +67,7 @@ export interface ThemeRegistry {
   /** The validated documents, by reference. Only package themes; Clark Default is the compiler's own base. */
   documents: ReadonlyMap<string, ThemeDocument>;
   /** Valid themes whose colours fail the contrast audit, by reference, with why. Listed as problems, never drawn. */
-  lowContrast: ReadonlyMap<string, string>;
+  lowContrast: ReadonlyMap<string, { message: string; contrast: ThemeContrastFailureView[] }>;
 }
 
 const CLARK_LISTING: ThemeListingView = {
@@ -99,7 +101,7 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
   const problems: ThemeProblemView[] = [];
   const unchecked: UncheckedThemePackageView[] = [];
   const documents = new Map<string, ThemeDocument>();
-  const lowContrast = new Map<string, string>();
+  const lowContrast = new Map<string, { message: string; contrast: ThemeContrastFailureView[] }>();
   const claimed = new Set<string>();
 
   for (const pkg of installed) {
@@ -149,9 +151,9 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
       // it would make the conversation itself hard to read, which is not a look anybody chose.
       const unreadable = themeContrastProblem(theme.document);
       if (unreadable !== undefined) {
-        const message = `theme ${theme.facetId}: ${unreadable}`;
-        lowContrast.set(theme.themeRef, message);
-        problems.push({ packageId, version: listed.version, themeRef: theme.themeRef, message });
+        const message = `theme ${theme.facetId}: ${unreadable.message}`;
+        lowContrast.set(theme.themeRef, { message, contrast: unreadable.failures });
+        problems.push({ packageId, version: listed.version, themeRef: theme.themeRef, message, contrast: unreadable.failures });
         continue;
       }
       documents.set(theme.themeRef, theme.document);
@@ -190,7 +192,7 @@ export function resolveAppearance(deps: ThemeRegistryDeps, registry: ThemeRegist
 
 export type ThemeResolution =
   | { ok: true; themeRef: string; theme: ThemeDocument | null; provider: ThemeProviderView }
-  | { ok: false; fallback: { code: AppearanceFallbackCode; message: string } };
+  | { ok: false; fallback: AppearanceFallbackView };
 
 /**
  * What a theme reference draws on this node right now: the theme, or why Clark Default is drawn instead.
@@ -213,7 +215,9 @@ export function resolveThemeRef(registry: ThemeRegistry, themeRef: string): Them
     return { ok: true, themeRef, theme: document, provider: listing.provider };
   }
   const unreadable = registry.lowContrast.get(themeRef);
-  if (unreadable !== undefined) return fallback("THEME_LOW_CONTRAST", unreadable);
+  if (unreadable !== undefined) {
+    return { ok: false, fallback: { code: "THEME_LOW_CONTRAST", message: unreadable.message, contrast: unreadable.contrast } };
+  }
   const problem = registry.problems.find((candidate) => candidate.themeRef === themeRef);
   if (problem !== undefined) return fallback("THEME_INVALID", problem.message);
   const unchecked = registry.unchecked.find((candidate) => candidate.packageId === parts.packageId);

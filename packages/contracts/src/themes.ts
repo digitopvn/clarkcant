@@ -374,6 +374,23 @@ export interface ThemeListingView {
   provider: ThemeProviderView;
 }
 
+/**
+ * One colour pair a theme fails the contrast audit on, as data rather than a sentence.
+ *
+ * `message` fields are English, for logs and for clients that show nothing better. A surface a person reads words each
+ * failure itself, in their language, from these fields. `foreground` and `background` are names from the public token
+ * contract.
+ */
+export interface ThemeContrastFailureView {
+  scheme: ResolvedColorScheme;
+  foreground: ColorTokenName;
+  background: ColorTokenName;
+  /** The ratio the pair has, rounded to two decimals. */
+  ratio: number;
+  /** The ratio it needs. */
+  minimum: number;
+}
+
 /** A theme an installed package declares that could not be loaded, and why. */
 export interface ThemeProblemView {
   packageId: string;
@@ -381,6 +398,8 @@ export interface ThemeProblemView {
   /** Absent when the package id cannot form a reference at all. */
   themeRef: string | undefined;
   message: string;
+  /** Present when the theme is valid and fails the contrast audit: every failing pair. */
+  contrast?: ThemeContrastFailureView[];
 }
 
 /** An installed package this node could not inspect for themes, which is a different fact from "has none". */
@@ -411,6 +430,15 @@ export type AppearanceFallbackCode =
   /** A built-in name this build does not have. */
   | "THEME_UNKNOWN";
 
+/** Why Clark Default is drawn instead of the chosen theme. */
+export interface AppearanceFallbackView {
+  code: AppearanceFallbackCode;
+  /** English, for logs. A person is shown a sentence of the client's own, chosen by `code`. */
+  message: string;
+  /** With `THEME_LOW_CONTRAST`: every pair the theme fails. */
+  contrast?: ThemeContrastFailureView[];
+}
+
 /** `GET /appearance`: the theme to draw now, and why it is not the chosen one when it is not. */
 export interface AppearanceResponse {
   /** What the person chose. Kept as it is when it cannot be drawn, so restoring the package brings it back. */
@@ -420,5 +448,5 @@ export interface AppearanceResponse {
   /** The validated document to compile, or `null` for Clark Default. */
   theme: ThemeDocument | null;
   provider: ThemeProviderView;
-  fallback: { code: AppearanceFallbackCode; message: string } | null;
+  fallback: AppearanceFallbackView | null;
 }

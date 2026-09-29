@@ -98,6 +98,14 @@ describe("applyAppearance", () => {
 
     expect(applied).toMatchObject({ ok: false, themeRef: "builtin:clark" });
     expect(applied.ok === false && applied.problem).toMatch(/in the dark scheme, accent text on the page is 1\.69:1 and needs 4\.5:1/);
+    // The same pairs as data, so the notice can word them in the reader's language rather than show this sentence.
+    expect(applied.ok === false && applied.contrast?.[0]).toEqual({
+      scheme: "dark",
+      foreground: "accent",
+      background: "canvas",
+      ratio: 1.69,
+      minimum: 4.5,
+    });
     expect(tokens()).toBe(themeStylesheet());
     expect(tokens()).not.toContain("#3A3470");
     expect(stored.has(APPEARANCE_STORAGE_KEY)).toBe(false);

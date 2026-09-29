@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
@@ -25,6 +25,25 @@ const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 const PACKAGE = "com.example.theme-dusk";
 const DUSK_REF = `package:${PACKAGE}#dusk`;
 const DRAFT = "một tin nhắn đang viết dở";
+/** The digests of the fixtures' bytes, as `fixtures/directory.json` lists them (a unit test keeps the two in step). */
+const DUSK_DIGEST = "sha256:08c8691d1f8021e05d69a0754f3e6447de04a47ea2fc3cbd0b1817bcd2089053";
+const DUSK_DIM_DIGEST = "sha256:b5b53158c6434ec13b4c44cb63aeb9e59221be06f791340855c6402f10c5a0c6";
+
+/** Every screenshot's horizontal overflow, written beside the screenshots so a reviewer can read it without a rerun. */
+const overflowLog: { shot: string; scrollWidth: number; clientWidth: number; overflow: number }[] = [];
+
+/** Record how far the page is wider than the window, and fail when it is: nothing on the panel may widen the page. */
+async function recordOverflow(page: Page, shot: string): Promise<void> {
+  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  const overflow = scrollWidth - clientWidth;
+  overflowLog.push({ shot, scrollWidth, clientWidth, overflow });
+  writeFileSync(join(EVIDENCE, "theme-overflow.json"), `${JSON.stringify(overflowLog, null, 2)}\n`);
+  console.log(`[overflow] ${shot}: scrollWidth ${String(scrollWidth)} - clientWidth ${String(clientWidth)} = ${String(overflow)}`);
+  expect(overflow, `${shot} is wider than the window`).toBeLessThanOrEqual(0);
+}
 
 function token(): string {
   const parsed = JSON.parse(readFileSync(join(DATA_DIR, "identity.json"), "utf8")) as { localToken?: unknown };
@@ -41,7 +60,7 @@ async function prepare(request: APIRequestContext): Promise<void> {
   if (listed.packages.some((entry) => entry.packageId === PACKAGE)) return;
   const installed = await request.post(`${GATEWAY}/packages/install`, {
     headers,
-    data: { packageId: PACKAGE, version: "1.0.0", localDigest: "sha256:theme-dusk-digest" },
+    data: { packageId: PACKAGE, version: "1.0.0", localDigest: DUSK_DIGEST },
   });
   expect(installed.ok(), `install answered ${String(installed.status())}: ${await installed.text()}`).toBe(true);
 }
@@ -108,9 +127,21 @@ test("a package theme restyles the window in place, falls back when removed or u
   await page.locator("[data-settings='true']").click();
   const dusk = page.locator(`[data-theme-ref='${DUSK_REF}']`);
   await expect(dusk).toBeVisible({ timeout: 20_000 });
-  // Where the theme comes from is on the entry itself: package, version, trust lane and digest.
-  await expect(dusk.locator("[data-theme-provider='package']")).toContainText(`${PACKAGE}@1.0.0`);
-  await expect(dusk.locator("[data-theme-provider='package']")).toContainText("sha256:theme");
+  // The entry shows what a person chooses by: the name, the description and the package's trust lane.
+  await expect(dusk).toContainText("Dusk");
+  await expect(dusk.locator("[data-theme-provider='package']")).toHaveText("chỉ dữ liệu");
+  // The exact build — package id, version and digest — is one click away rather than on every card.
+  const provenance = page.locator(`[data-theme-provenance='${DUSK_REF}']`);
+  await expect(dusk).not.toContainText(PACKAGE);
+  await expect(dusk).not.toContainText("sha256:");
+  await expect(provenance.locator("[data-theme-digest]")).toBeHidden();
+  await provenance.locator("summary").click();
+  await expect(provenance.locator("[data-theme-package]")).toHaveText(`${PACKAGE}@1.0.0`);
+  // The digest of the fixture's bytes, whole, as a published directory lists it.
+  await expect(provenance.locator("[data-theme-digest]")).toHaveText(DUSK_DIGEST);
+  expect(DUSK_DIGEST).toMatch(/^sha256:[0-9a-f]{64}$/);
+  await provenance.locator("summary").click();
+  await expect(provenance.locator("[data-theme-digest]")).toBeHidden();
   await expect(page.locator("[data-theme-ref='builtin:clark']")).toHaveAttribute("aria-pressed", "true");
 
   await dusk.click();
@@ -119,21 +150,28 @@ test("a package theme restyles the window in place, falls back when removed or u
   await expect(dusk).toHaveAttribute("data-theme-applied", "true");
   await settle(page);
   await page.screenshot({ path: join(EVIDENCE, "theme-picker-1280-dark.png") });
+  await recordOverflow(page, "theme-picker-1280-dark");
 
   // The colour scheme is a separate choice: switching it redraws the same theme's light colours.
   await page.locator('[data-theme-choice="light"]').click();
   await expect.poll(() => accent(page)).toBe("#2959AA");
   await settle(page);
   await page.screenshot({ path: join(EVIDENCE, "theme-picker-1280-light.png") });
+  await recordOverflow(page, "theme-picker-1280-light");
   await page.locator('[data-theme-choice="dark"]').click();
   await expect.poll(() => accent(page)).toBe("#7AA2F7");
 
+  // Nothing on a phone-width panel is wider than the screen, however long the package id or digest is — open or not.
   await page.setViewportSize({ width: 390, height: 844 });
   await settle(page);
   await page.screenshot({ path: join(EVIDENCE, "theme-picker-390-dark.png") });
-  // Nothing on a phone-width panel is wider than the screen, however long the package id is.
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(0);
+  await recordOverflow(page, "theme-picker-390-dark");
+  await provenance.locator("summary").click();
+  await expect(provenance.locator("[data-theme-digest]")).toBeVisible();
+  await provenance.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(EVIDENCE, "theme-picker-390-dark-details.png") });
+  await recordOverflow(page, "theme-picker-390-dark-details");
+  await provenance.locator("summary").click();
   await page.setViewportSize({ width: 1280, height: 900 });
 
   // The page was restyled, not reloaded: the mark, the draft and the pinned widget are all still there.
@@ -158,8 +196,12 @@ test("a package theme restyles the window in place, falls back when removed or u
   await expect(notice).toContainText("vẫn được giữ");
   await expect(notice).toHaveAttribute("role", "status");
   await expect(page.locator(`[data-theme-ref='${DUSK_REF}']`)).toHaveCount(0);
+  // The details are the page's own sentence, not the node's English message.
+  await notice.locator("summary").click();
+  await expect(notice.locator(".cc-theme-notice-detail")).toHaveText(`Không gói nào đã cài cung cấp ${DUSK_REF}.`);
   await settle(page);
   await page.screenshot({ path: join(EVIDENCE, "theme-picker-1280-fallback.png") });
+  await recordOverflow(page, "theme-picker-1280-fallback");
 
   // Restoring the package brings the same theme back without choosing it again.
   await page.locator("#cc-tab-extensions").click();
@@ -178,7 +220,7 @@ test("a package theme restyles the window in place, falls back when removed or u
   const headers = { authorization: `Bearer ${token()}` };
   const dim = await request.post(`${GATEWAY}/packages/install`, {
     headers,
-    data: { packageId: PACKAGE, version: "1.1.0", localDigest: "sha256:theme-dusk-dim-digest" },
+    data: { packageId: PACKAGE, version: "1.1.0", localDigest: DUSK_DIM_DIGEST },
   });
   expect(dim.ok(), `install answered ${String(dim.status())}: ${await dim.text()}`).toBe(true);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -189,17 +231,41 @@ test("a package theme restyles the window in place, falls back when removed or u
   await expect(unreadable).toContainText("Clark Default");
   await expect(unreadable).toContainText("khó đọc");
   await unreadable.locator("summary").click();
-  await expect(unreadable.locator(".cc-theme-notice-detail")).toContainText("accent text on the page");
+  // One failing pair per line, worded and numbered in Vietnamese from the pairs the node sent as data.
+  const pairs = unreadable.locator("[data-theme-contrast] li");
+  await expect(pairs).toHaveText([
+    "Chữ nhấn trên nền trang (tối): 2,00:1, cần 4,5:1",
+    "Chữ nhấn trên nền cửa sổ (tối): 1,82:1, cần 4,5:1",
+    "Chữ nhấn trên thẻ (tối): 1,71:1, cần 4,5:1",
+    "Chữ nhấn trên bề mặt nổi (tối): 1,57:1, cần 4,5:1",
+    "Chữ nhấn trên khối mã (tối): 2,18:1, cần 4,5:1",
+    "Nhãn nút trên nút màu nhấn (tối): 2,00:1, cần 4,5:1",
+  ]);
+  // Nothing of the node's English message reaches a Vietnamese page.
+  const noticeText = await unreadable.innerText();
+  expect(noticeText).not.toMatch(/\b(accent|text|page|needs|scheme|colou?rs?|dark|light|theme|close to read)\b/i);
+  // The list of themes Clark could not read words the same pairs the same way.
+  await expect(page.locator(`[data-theme-problem='${DUSK_REF}']`)).toContainText("Chữ nhấn trên nền trang (tối): 2,00:1, cần 4,5:1");
+  await expect(page.locator(`[data-theme-problem='${DUSK_REF}']`)).not.toContainText("accent text");
   await expect(page.locator(`[data-theme-ref='${DUSK_REF}']`)).toHaveCount(0);
-  await unreadable.scrollIntoViewIfNeeded();
-  await expect
-    .poll(() => page.evaluate(() => document.getAnimations().filter((animation) => animation instanceof CSSTransition).length))
-    .toBe(0);
+  const showNotice = async (): Promise<void> => {
+    await unreadable.scrollIntoViewIfNeeded();
+    await expect
+      .poll(() => page.evaluate(() => document.getAnimations().filter((animation) => animation instanceof CSSTransition).length))
+      .toBe(0);
+  };
+  await showNotice();
   await page.screenshot({ path: join(EVIDENCE, "theme-fallback-low-contrast-1280-dark.png") });
+  await recordOverflow(page, "theme-fallback-low-contrast-1280-dark");
+  await page.locator('[data-theme-choice="light"]').click();
+  await showNotice();
+  await page.screenshot({ path: join(EVIDENCE, "theme-fallback-low-contrast-1280-light.png") });
+  await recordOverflow(page, "theme-fallback-low-contrast-1280-light");
+  await page.locator('[data-theme-choice="dark"]').click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await unreadable.scrollIntoViewIfNeeded();
+  await showNotice();
   await page.screenshot({ path: join(EVIDENCE, "theme-fallback-low-contrast-390-dark.png") });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  await recordOverflow(page, "theme-fallback-low-contrast-390-dark");
   await page.setViewportSize({ width: 1280, height: 900 });
 
   // Rolling the update back draws the kept choice again.

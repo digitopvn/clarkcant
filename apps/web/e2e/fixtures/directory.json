@@ -198,7 +198,7 @@
     "permissionsSummary": [],
     "riskTier": "declarative",
     "sizeBytes": 1024,
-    "digest": "sha256:theme-dusk-digest"
+    "digest": "sha256:08c8691d1f8021e05d69a0754f3e6447de04a47ea2fc3cbd0b1817bcd2089053"
   },
   {
     "packageId": "com.example.theme-dusk",
@@ -237,6 +237,6 @@
     "permissionsSummary": [],
     "riskTier": "declarative",
     "sizeBytes": 1024,
-    "digest": "sha256:theme-dusk-dim-digest"
+    "digest": "sha256:b5b53158c6434ec13b4c44cb63aeb9e59221be06f791340855c6402f10c5a0c6"
   }
 ]

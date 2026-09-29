@@ -1,4 +1,9 @@
-import { BUILTIN_CLARK_THEME_REF, checkThemeDocument, type ThemeDocument } from "@clarkcant/contracts";
+import {
+  BUILTIN_CLARK_THEME_REF,
+  checkThemeDocument,
+  type ThemeContrastFailureView,
+  type ThemeDocument,
+} from "@clarkcant/contracts";
 import { appearanceStylesheet, compileAppearance, themeContrastProblem } from "@clarkcant/design-tokens";
 
 /**
@@ -28,6 +33,17 @@ export const APPEARANCE_UNAVAILABLE = "unavailable";
 
 let tokenSheet: { kind: "constructed"; sheet: CSSStyleSheet } | { kind: "element"; element: HTMLStyleElement } | undefined;
 
+/** A theme refused for its colours, carrying every failing pair so the refusal can be worded in the reader's language. */
+export class ThemeContrastError extends Error {
+  readonly contrast: ThemeContrastFailureView[];
+
+  constructor(message: string, contrast: ThemeContrastFailureView[]) {
+    super(message);
+    this.name = "ThemeContrastError";
+    this.contrast = contrast;
+  }
+}
+
 export interface CompiledAppearance {
   css: string;
   /** Both schemes' revisions: the page is drawn in whichever the colour scheme resolves to, and either can change. */
@@ -43,7 +59,7 @@ export interface CompiledAppearance {
 export function compileThemeStylesheet(theme: ThemeDocument | undefined, themeRef: string): CompiledAppearance {
   if (theme !== undefined) {
     const unreadable = themeContrastProblem(theme);
-    if (unreadable !== undefined) throw new Error(unreadable);
+    if (unreadable !== undefined) throw new ThemeContrastError(unreadable.message, unreadable.failures);
   }
   const dark = compileAppearance(theme === undefined ? { scheme: "dark" } : { scheme: "dark", theme, themeRef });
   const light = compileAppearance(theme === undefined ? { scheme: "light" } : { scheme: "light", theme, themeRef });
@@ -112,7 +128,14 @@ export function installStyleSheets(componentCss: string): void {
 export type AppliedAppearance =
   | { ok: true; themeRef: string; revision: string }
   /** The theme could not be drawn here; Clark Default is drawn instead, and `problem` says why. */
-  | { ok: false; themeRef: typeof BUILTIN_CLARK_THEME_REF; revision: string; problem: string };
+  | {
+      ok: false;
+      themeRef: typeof BUILTIN_CLARK_THEME_REF;
+      revision: string;
+      problem: string;
+      /** When the refusal was for the theme's colours: every failing pair. */
+      contrast?: ThemeContrastFailureView[];
+    };
 
 /**
  * Draw the page in a theme, replacing only the token sheet.
@@ -122,6 +145,7 @@ export type AppliedAppearance =
 export function applyAppearance(input: { theme: unknown; themeRef: string }): AppliedAppearance {
   let compiled: CompiledAppearance | undefined;
   let problem: string | undefined;
+  let contrast: ThemeContrastFailureView[] | undefined;
   if (input.theme === null) {
     compiled = clarkStylesheet();
   } else {
@@ -133,6 +157,7 @@ export function applyAppearance(input: { theme: unknown; themeRef: string }): Ap
         compiled = compileThemeStylesheet(checked.document, input.themeRef);
       } catch (error) {
         problem = error instanceof Error ? error.message : "the theme does not compile";
+        if (error instanceof ThemeContrastError) contrast = error.contrast;
       }
     }
   }
@@ -142,7 +167,13 @@ export function applyAppearance(input: { theme: unknown; themeRef: string }): Ap
   cacheAppearance(problem === undefined && input.theme !== null ? { theme: input.theme, themeRef: input.themeRef } : undefined);
   return problem === undefined && compiled !== undefined
     ? { ok: true, themeRef: input.theme === null ? BUILTIN_CLARK_THEME_REF : input.themeRef, revision: drawn.revision }
-    : { ok: false, themeRef: BUILTIN_CLARK_THEME_REF, revision: drawn.revision, problem: problem ?? "the theme does not compile" };
+    : {
+        ok: false,
+        themeRef: BUILTIN_CLARK_THEME_REF,
+        revision: drawn.revision,
+        problem: problem ?? "the theme does not compile",
+        ...(contrast === undefined ? {} : { contrast }),
+      };
 }
 
 function writeTokens(compiled: CompiledAppearance): void {

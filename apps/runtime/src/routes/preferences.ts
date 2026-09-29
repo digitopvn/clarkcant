@@ -156,7 +156,13 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
     if (chosenTheme !== undefined && parseThemeRef(chosenTheme) !== undefined) {
       const resolved = resolveThemeRef(readThemeRegistry(themeRegistryDeps(deps.services)), chosenTheme);
       if (!resolved.ok) {
-        return fail(409, resolved.fallback.code, `that theme cannot be drawn here, so it was not chosen: ${resolved.fallback.message}`);
+        const { code, message, contrast } = resolved.fallback;
+        return fail(
+          409,
+          code,
+          `that theme cannot be drawn here, so it was not chosen: ${message}`,
+          contrast === undefined ? undefined : { contrast },
+        );
       }
     }
     const outcome = writeRegisteredPreference(preferenceDeps, {

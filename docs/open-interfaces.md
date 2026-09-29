@@ -265,14 +265,18 @@ The theme routes are reachable with the same token but are **not** in `/openapi.
 the installed packages provide, each with its `themeRef` (`package:<package id>#<theme id>`) and its provider (package
 id, version, digest, trust lane and source tier); `problems` names each theme that did not pass validation, and
 `unchecked` each installed package whose files this node could not read. A theme whose colours fail the contrast audit Clark
-Default is held to (`requiredPairs` in `packages/design-tokens/src/contrast.ts`) is a problem too, named with the pairs
-that fail, and is not listed as selectable. `GET /appearance` answers what the page should
+Default is held to (`requiredPairs` in `packages/design-tokens/src/contrast.ts`) is a problem too, with a `contrast`
+list of the pairs that fail, and is not listed as selectable. Each pair is `{ scheme, foreground, background, ratio,
+minimum }`: the colour scheme, the two colour token names, the measured ratio rounded to two decimals and the ratio
+required. `message` fields are English, for logs; a client words a failure for its reader from `code` and `contrast`.
+`GET /appearance` answers what the page should
 draw: `selectedRef` (the `experience.themeRef` preference, chosen with `PUT /preferences/experience.themeRef`
 `{ "value": "<themeRef>" }`), `appliedRef`, the validated `theme` document (`null` for Clark Default), its `provider`,
-and a `fallback` `{ code, message }` when the choice cannot be drawn — `THEME_NOT_INSTALLED`, `THEME_INVALID`,
-`THEME_LOW_CONTRAST`, `THEME_UNAVAILABLE` or `THEME_UNKNOWN` — in which case Clark Default is drawn and `selectedRef` is
-kept, so reinstalling the package brings the theme back. Writing `experience.themeRef` checks the reference first: one
-this node cannot draw is refused with `409` and the same code and reason, and nothing is stored. The node does not push package changes: a client re-reads `/appearance` after it
+and a `fallback` `{ code, message, contrast? }` when the choice cannot be drawn — `THEME_NOT_INSTALLED`, `THEME_INVALID`,
+`THEME_LOW_CONTRAST` (the only code that carries `contrast`), `THEME_UNAVAILABLE` or `THEME_UNKNOWN` — in which case
+Clark Default is drawn and `selectedRef` is kept, so reinstalling the package brings the theme back. Writing
+`experience.themeRef` checks the reference first: one this node cannot draw is refused with `409` and the same code,
+reason and `contrast`, and nothing is stored. The node does not push package changes: a client re-reads `/appearance` after it
 changes a package and when its window comes back into view. The shapes are `packages/contracts/src/themes.ts`.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet

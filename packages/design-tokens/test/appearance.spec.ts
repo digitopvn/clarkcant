@@ -163,14 +163,33 @@ describe("contrast audits run against any theme, not only Clark's palettes", () 
     expect(light!.failures).toEqual([]);
   });
 
-  it("says why a theme cannot be drawn readably, in one sentence the node and the page share", () => {
+  it("says why a theme cannot be drawn readably, as pairs a surface can word and a sentence for logs", () => {
     const dim: ThemeDocument = { ...PIXEL, colors: { dark: { accent: "#3A3470", onAccent: "#FFFFFF" } } };
 
     expect(themeContrastProblem(CLARK_THEME)).toBeUndefined();
     expect(themeContrastProblem({ ...PIXEL, colors: { dark: { accent: "#7AA2F7" } } })).toBeUndefined();
     const problem = themeContrastProblem(dim);
-    expect(problem).toMatch(/^its colours are too close to read: in the dark scheme, accent text on the page is 1\.69:1 and needs 4\.5:1, /);
-    expect(problem).not.toMatch(/light scheme/);
+    expect(problem?.message).toMatch(
+      /^its colours are too close to read: in the dark scheme, accent text on the page is 1\.69:1 and needs 4\.5:1, /,
+    );
+    expect(problem?.message).not.toMatch(/light scheme/);
+    // The same pairs as data, token by token, so a page can say them in its reader's language.
+    expect(problem?.failures[0]).toEqual({ scheme: "dark", foreground: "accent", background: "canvas", ratio: 1.69, minimum: 4.5 });
+    expect(problem?.failures).toContainEqual({ scheme: "dark", foreground: "accent", background: "code", ratio: expect.any(Number), minimum: 4.5 });
+    expect(problem?.failures.every((failure) => failure.scheme === "dark")).toBe(true);
+    // Exactly the pairs the audit fails: one source for both.
+    expect(problem?.failures.map((failure) => `${failure.foreground}/${failure.background}`)).toEqual(
+      auditThemeDocument(dim)[0]!.failures.map((failure) => `${failure.foregroundToken}/${failure.backgroundToken}`),
+    );
+  });
+
+  it("names every audited pair by its two tokens as well as in words", () => {
+    for (const pair of requiredPairs(DARK)) {
+      expect(DARK[pair.foregroundToken]).toBe(pair.foreground);
+      expect(DARK[pair.backgroundToken]).toBe(pair.background);
+    }
+    const onButton = requiredPairs(DARK).find((pair) => pair.purpose === "label on an accent button");
+    expect(onButton).toMatchObject({ foregroundToken: "onAccent", backgroundToken: "accent" });
   });
 
   it("holds the accent and every status colour to the text threshold on every surface text is drawn on", () => {

@@ -1,4 +1,4 @@
-import { RESOLVED_COLOR_SCHEMES, type ResolvedColorScheme } from "@clarkcant/contracts";
+import { RESOLVED_COLOR_SCHEMES, type ColorTokenName, type ResolvedColorScheme } from "@clarkcant/contracts";
 
 import { CLARK_SCHEMES, type ColorTokens } from "./tokens.ts";
 
@@ -52,6 +52,9 @@ export const AA_NON_TEXT = 3;
 export interface ContrastPair {
   foreground: string;
   background: string;
+  /** The token the foreground colour is, so a failure can be named in any language rather than only in purpose. */
+  foregroundToken: ColorTokenName;
+  backgroundToken: ColorTokenName;
   minimum: number;
   purpose: string;
 }
@@ -65,18 +68,18 @@ export interface ContrastPair {
  * the canvas and unreadable on a card is a palette that fails on half its screens.
  */
 export function requiredPairs(tokens: ColorTokens): ContrastPair[] {
-  const surfaces: { color: string; name: string }[] = [
-    { color: tokens.canvas, name: "the page" },
-    { color: tokens.window, name: "the window" },
-    { color: tokens.card, name: "a card" },
-    { color: tokens.elevated, name: "an elevated surface" },
-    { color: tokens.code, name: "a code block" },
+  const surfaces: { token: ColorTokenName; name: string }[] = [
+    { token: "canvas", name: "the page" },
+    { token: "window", name: "the window" },
+    { token: "card", name: "a card" },
+    { token: "elevated", name: "an elevated surface" },
+    { token: "code", name: "a code block" },
   ];
 
-  const textTiers: { color: string; name: string }[] = [
-    { color: tokens.text, name: "body text" },
-    { color: tokens.textMuted, name: "caption text" },
-    { color: tokens.textTertiary, name: "tertiary text" },
+  const textTiers: { token: ColorTokenName; name: string }[] = [
+    { token: "text", name: "body text" },
+    { token: "textMuted", name: "caption text" },
+    { token: "textTertiary", name: "tertiary text" },
   ];
 
   /*
@@ -84,40 +87,54 @@ export function requiredPairs(tokens: ColorTokens): ContrastPair[] {
    * and a status colour is a badge's label on a card, a notice on the page or an error in a menu, so each is held to
    * the text threshold on every surface text is drawn on rather than on the one surface it was first designed for.
    */
-  const coloredText: { color: string; name: string }[] = [
-    { color: tokens.accent, name: "accent text" },
-    { color: tokens.success, name: "success status text" },
-    { color: tokens.warning, name: "warning status text" },
-    { color: tokens.danger, name: "error status text" },
+  const coloredText: { token: ColorTokenName; name: string }[] = [
+    { token: "accent", name: "accent text" },
+    { token: "success", name: "success status text" },
+    { token: "warning", name: "warning status text" },
+    { token: "danger", name: "error status text" },
   ];
 
   const pairs: ContrastPair[] = [];
 
   for (const tier of [...textTiers, ...coloredText]) {
     for (const surface of surfaces) {
-      pairs.push({
-        foreground: tier.color,
-        background: surface.color,
-        minimum: AA_NORMAL_TEXT,
-        purpose: `${tier.name} on ${surface.name}`,
-      });
+      pairs.push(contrastPair(tokens, tier.token, surface.token, AA_NORMAL_TEXT, `${tier.name} on ${surface.name}`));
     }
   }
 
   pairs.push(
-    { foreground: tokens.onAccent, background: tokens.accent, minimum: AA_NORMAL_TEXT, purpose: "label on an accent button" },
-    { foreground: tokens.focus, background: tokens.canvas, minimum: AA_NON_TEXT, purpose: "focus ring against the page" },
-    { foreground: tokens.focus, background: tokens.card, minimum: AA_NON_TEXT, purpose: "focus ring against a card" },
-    { foreground: tokens.focus, background: tokens.elevated, minimum: AA_NON_TEXT, purpose: "focus ring against an elevated surface" },
-    { foreground: tokens.border, background: tokens.card, minimum: 1.2, purpose: "hairline separation from a card" },
+    contrastPair(tokens, "onAccent", "accent", AA_NORMAL_TEXT, "label on an accent button"),
+    contrastPair(tokens, "focus", "canvas", AA_NON_TEXT, "focus ring against the page"),
+    contrastPair(tokens, "focus", "card", AA_NON_TEXT, "focus ring against a card"),
+    contrastPair(tokens, "focus", "elevated", AA_NON_TEXT, "focus ring against an elevated surface"),
+    contrastPair(tokens, "border", "card", 1.2, "hairline separation from a card"),
   );
 
   return pairs;
 }
 
+function contrastPair(
+  tokens: ColorTokens,
+  foregroundToken: ColorTokenName,
+  backgroundToken: ColorTokenName,
+  minimum: number,
+  purpose: string,
+): ContrastPair {
+  return { foreground: tokens[foregroundToken], background: tokens[backgroundToken], foregroundToken, backgroundToken, minimum, purpose };
+}
+
+/** One pair a palette fails: in words for a log, and by token for a surface that says it in the reader's language. */
+export interface ContrastFailure {
+  purpose: string;
+  foregroundToken: ColorTokenName;
+  backgroundToken: ColorTokenName;
+  ratio: number;
+  minimum: number;
+}
+
 export interface ContrastAudit {
   scheme: ResolvedColorScheme;
-  failures: { purpose: string; ratio: number; minimum: number }[];
+  failures: ContrastFailure[];
   checked: number;
 }
 
@@ -133,7 +150,13 @@ export function auditColors(scheme: ResolvedColorScheme, tokens: ColorTokens): C
   for (const pair of pairs) {
     const ratio = contrastRatio(pair.foreground, pair.background);
     if (ratio < pair.minimum) {
-      failures.push({ purpose: pair.purpose, ratio: Math.round(ratio * 100) / 100, minimum: pair.minimum });
+      failures.push({
+        purpose: pair.purpose,
+        foregroundToken: pair.foregroundToken,
+        backgroundToken: pair.backgroundToken,
+        ratio: Math.round(ratio * 100) / 100,
+        minimum: pair.minimum,
+      });
     }
   }
   return { scheme, failures, checked: pairs.length };
