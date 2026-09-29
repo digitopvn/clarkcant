@@ -275,9 +275,15 @@ jobs:
           tar -xzf "docker-$DOCKER_VERSION.tgz" --strip-components=1 -C "$bin"
           tar -xzf "docker-rootless-extras-$DOCKER_VERSION.tgz" --strip-components=1 -C "$bin"
 
+          # The daemon puts each container in a systemd scope, which needs the person's own systemd session, as on
+          # a desktop where they are logged in; lingering starts that session for the runner's user.
+          sudo loginctl enable-linger "$(whoami)"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 30); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          cat "/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers"
+
           export PATH="$bin:$PATH"
-          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"
-          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
           nohup dockerd-rootless.sh > "$RUNNER_TEMP/dockerd-rootless.log" 2>&1 &
           export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
           for _ in $(seq 60); do docker info > /dev/null 2>&1 && break; sleep 1; done
@@ -285,6 +291,7 @@ jobs:
 
           echo "$bin" >> "$GITHUB_PATH"
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
           echo "DOCKER_HOST=$DOCKER_HOST" >> "$GITHUB_ENV"
 
       - name: Service container suite on rootless Docker
