@@ -48,10 +48,18 @@ async function expectStoppedAndQuiet(page: Page): Promise<void> {
   await expect(reply).toContainText("Đoạn 1.");
   await expect(reply).not.toContainText("Không gọi được model");
 
-  // Nothing arrives after the stop: the provider would have written about seven more pieces in this second.
-  const atStop = await reply.innerText();
+  /*
+   * Nothing arrives after the stop: the provider would have written about seven more pieces in this second.
+   *
+   * Read as the row's text content, not `innerText`. The stored reply replaces the live row with a settled row that has
+   * `content-visibility: auto`, and until the browser has decided on the next frame that it is on screen its contents
+   * are skipped, so `innerText` reads "" for a row that already holds the whole reply. Any piece that arrived after
+   * the stop would still be text in the row, so this proves the same thing without depending on that frame.
+   */
+  const atStop = await reply.textContent();
+  expect(atStop).toContain("Đoạn 1.");
   await page.waitForTimeout(1_000);
-  expect(await reply.innerText()).toBe(atStop);
+  expect(await reply.textContent()).toBe(atStop);
 
   // Stop has turned back into Send, and the next message can be written straight away.
   await expect(page.locator("[data-stop]")).toHaveCount(0);

@@ -28,7 +28,7 @@ jobs:
           # symlink: path-canonicalisation tests that pass on Linux can fail there.
           - os: macos-latest
             node: "24"
-          # Windows puts os.tmpdir() under C:\Users\<user>, which redaction treats as a private
+          # Windows puts os.tmpdir() under <drive>:\Users\<user>, which redaction treats as a private
           # home path, and reports paths with `\`: both have broken tests that pass elsewhere.
           - os: windows-latest
             node: "24"
@@ -116,6 +116,29 @@ jobs:
           steps.scope.outcome != 'success' || steps.scope.outputs.full !=
           'false'
         run: pnpm exec playwright install --with-deps chromium
+
+      # The tests create and remove thousands of SQLite databases, profiles and
+      # scratch trees under os.tmpdir(). On the Windows runner that is the C:
+      # drive, which measured 10 to 30 times slower than D: (a SQLite open,
+      # schema, 50 inserts and close: 430-1160ms median on C:, about 50ms on D:;
+      # a 4KB write with fsync: 4-9ms on C:, 0.3ms on D:). The suite took about
+      # 240s with C: and 130-140s with D:, and under that load tests that take
+      # under a second elsewhere ran past the 20s timeout. The directory keeps
+      # the <drive>:\Users\<user> shape this leg is here for, and its short
+      # 8.3 form when the volume generates one, as the default RUNNER~1 path is.
+      - name: Keep temporary files on the Windows runner's local disk
+        if: >-
+          runner.os == 'Windows' && (steps.scope.outcome != 'success' ||
+          steps.scope.outputs.full != 'false')
+        shell: pwsh
+        run: |
+          $drive = Split-Path -Qualifier $env:RUNNER_TEMP
+          $long = Join-Path $drive "Users\$env:USERNAME\AppData\Local\Temp"
+          New-Item -ItemType Directory -Force $long | Out-Null
+          $short = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($long).ShortPath
+          "TEMP=$short" >> $env:GITHUB_ENV
+          "TMP=$short" >> $env:GITHUB_ENV
+          "Temporary files: $short (long form $long)"
 
       - name: Tests
         if: >-

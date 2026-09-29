@@ -13,7 +13,8 @@ import { afterEach, describe, expect, it } from "vitest";
  * The browser suite starts the node from the checkout and blanks the provider keys it is handed. The file fills
  * variables that are unset or blank, so without this flag a developer's local `.env` put those keys back and the suite's
  * outcome depended on whose machine ran it. The node is run for real and made to exit on a port it cannot bind, which
- * happens after the file would have been read; the startup line naming what was read is the observable.
+ * happens after the file would have been read; the startup line naming what was read is the observable. Where that
+ * line is expected, the node is stopped once it appears; where it must be absent, the node is left to reach the bind.
  */
 
 const MAIN = join(import.meta.dirname, "..", "src", "main.ts");
@@ -33,18 +34,31 @@ async function holdPort(): Promise<{ server: Server; port: number }> {
   return { server, port: address.port };
 }
 
-/** Run the node in `cwd` until it exits, and return what it wrote to stderr. */
-async function runNodeIn(cwd: string, args: string[]): Promise<string> {
+/**
+ * How long a node may take to get as far as the bind: a full boot. The test gets room past this wait, so a node that
+ * really never exits is reported as that, with its stderr, rather than as a bare test timeout.
+ */
+const BOOT_WAIT_MS = 20_000;
+const TEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Run the node in `cwd` and return what it wrote to stderr: as soon as `enough` says that already shows what the test
+ * needs (the node is then stopped), or else once the node exits by itself.
+ */
+async function runNodeIn(cwd: string, args: string[], enough: (stderr: string) => boolean = () => false): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const env = { ...process.env };
     delete env[PROBE];
     const child = spawn(process.execPath, [MAIN, ...args], { cwd, env, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
-    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+      if (enough(stderr)) child.kill();
+    });
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      reject(new Error(`The runtime did not exit within 20000ms; stderr so far:\n${stderr}`));
-    }, 20_000);
+      reject(new Error(`The runtime did not exit within ${BOOT_WAIT_MS}ms; stderr so far:\n${stderr}`));
+    }, BOOT_WAIT_MS);
     child.on("error", (error) => {
       clearTimeout(timer);
       reject(error);
@@ -69,9 +83,12 @@ async function setup(): Promise<{ cwd: string; args: string[] }> {
 describe("the node's .env file", () => {
   it("is read by default", async () => {
     const { cwd, args } = await setup();
-    const stderr = await runNodeIn(cwd, args);
-    expect(stderr).toContain(`from .env: ${PROBE}`);
-  }, 30_000);
+    // The file is read before anything else the node does, and the line naming it is all this needs: there is no reason
+    // to wait for the rest of the boot.
+    const read = `from .env: ${PROBE}`;
+    const stderr = await runNodeIn(cwd, args, (sofar) => sofar.includes(read));
+    expect(stderr).toContain(read);
+  }, TEST_TIMEOUT_MS);
 
   it("is not read with --no-env-file", async () => {
     const { cwd, args } = await setup();
@@ -79,5 +96,5 @@ describe("the node's .env file", () => {
     // The node still got as far as the bind, so the absence below is the flag and not an earlier exit.
     expect(stderr).toMatch(/port|address|in use/i);
     expect(stderr).not.toContain(".env");
-  }, 30_000);
+  }, TEST_TIMEOUT_MS);
 });
