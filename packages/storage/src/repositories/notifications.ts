@@ -358,6 +358,37 @@ export function dismissNotification(
 }
 
 /**
+ * Take a producer's notices out of the inbox once what they said is no longer so: a wait that ended, a peer that
+ * answers again. The same dismissal a person makes, so the rows stay for the retention window and the producer stays
+ * deduplicated.
+ *
+ * Matched on the start of the dedup key, compared as text rather than with `LIKE`, so an id carrying `%` or `_`
+ * cannot widen the match. `except` keeps the one notice that still holds.
+ */
+export function dismissNotificationsByKeyPrefix(
+  db: Database,
+  input: { principalId: string; dedupKeyPrefix: string; at: Instant; except?: string },
+): number {
+  if (input.dedupKeyPrefix === "") return 0;
+  const result = db
+    .prepare(
+      `UPDATE notifications SET dismissed_at = ?, read_at = COALESCE(read_at, ?)
+        WHERE principal_id = ? AND dismissed_at IS NULL
+          AND substr(dedup_key, 1, ?) = ? AND (? IS NULL OR dedup_key <> ?)`,
+    )
+    .run(
+      input.at,
+      input.at,
+      input.principalId,
+      input.dedupKeyPrefix.length,
+      input.dedupKeyPrefix,
+      input.except ?? null,
+      input.except ?? null,
+    );
+  return Number(result.changes);
+}
+
+/**
  * Mark notices unread again: attention state only, so a notice already dismissed is not touched — marking it unread
  * must not bring it back.
  */

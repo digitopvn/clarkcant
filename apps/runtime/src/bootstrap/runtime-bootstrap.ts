@@ -17,6 +17,7 @@ import { startAutomationService } from "../automation-service.ts";
 import { resumeTasksWaitingOnCapability } from "../capability-waiters.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
 import { createGithubPolling } from "../github-polling.ts";
+import { reconcilePeerOutages } from "../peer-outage.ts";
 import { startPeerDelivery } from "../peer-signals.ts";
 import { settleUndeliveredTasks } from "../delegation-handlers.ts";
 import { taskDispatchReports } from "../task-reporting.ts";
@@ -304,8 +305,12 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   const deliveryNow = (): Instant => new Date().toISOString() as Instant;
   deps.services.peerDelivery = startPeerDelivery(
     { db: deps.services.runtime.db, identity: deps.services.runtime.identity, now: deliveryNow },
-    // A hand-over or a stop given up on settles the task that waited on it.
-    { onDeadLettered: settleUndeliveredTasks(deps.services, deliveryNow) },
+    {
+      // A hand-over or a stop given up on settles the task that waited on it.
+      onDeadLettered: settleUndeliveredTasks(deps.services, deliveryNow),
+      // A peer that stays unreachable is told once per outage, and the notice goes when it answers again.
+      afterPass: () => reconcilePeerOutages(deps.services, deliveryNow()),
+    },
   );
   deps.services.peerDelivery.kick();
 

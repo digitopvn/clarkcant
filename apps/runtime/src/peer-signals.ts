@@ -165,6 +165,8 @@ export function startPeerDelivery(
     log?: (line: string) => void;
     /** Told about each message given up on, so what waited on it is settled rather than left waiting. */
     onDeadLettered?: (letter: DeadLetter) => void;
+    /** Run after every pass, with the outbox as that pass left it: how a peer that stays unreachable is noticed. */
+    afterPass?: () => void;
   } = {},
 ): PeerDelivery {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`));
@@ -198,6 +200,11 @@ export function startPeerDelivery(
       } while (again && !stopped);
     } catch (cause) {
       log(`nodelink: delivery pass failed (${cause instanceof Error ? cause.message : String(cause)})`);
+    }
+    try {
+      if (!stopped) options.afterPass?.();
+    } catch (cause) {
+      log(`nodelink: the check after a delivery pass failed (${cause instanceof Error ? cause.message : String(cause)})`);
     } finally {
       running = false;
     }

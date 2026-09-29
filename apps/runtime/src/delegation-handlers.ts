@@ -1,4 +1,5 @@
 import type { Instant, PeerEnvelope } from "@clarkcant/contracts";
+import { dismissNotificationsByKeyPrefix } from "@clarkcant/storage";
 
 import { readOriginRemote } from "./automation-service.ts";
 import {
@@ -23,6 +24,27 @@ import { taskDispatchReports } from "./task-reporting.ts";
  *
  * Every answer queues an envelope back, so the outbox is woken after each one rather than on its next round.
  */
+
+/** The dedup keys of the notices that say a task handed to a peer waits there: one per state and revision reported. */
+function waitingNoticePrefix(taskId: string): string {
+  return `delegation-status:${taskId}:`;
+}
+
+/**
+ * Take the notice that a task waits on the other node's owner out of this node's inbox, once it no longer waits: they
+ * allowed it, or an answer or a settlement ended it. The decision was theirs; this only stops saying it is pending.
+ */
+function clearWaitingNotice(services: Pick<NodeServices, "runtime">, taskId: string, at: Instant): void {
+  try {
+    dismissNotificationsByKeyPrefix(services.runtime.db, {
+      principalId: services.runtime.identity.ownerPrincipalId,
+      dedupKeyPrefix: waitingNoticePrefix(taskId),
+      at,
+    });
+  } catch (cause) {
+    process.stderr.write(`inbox: could not clear the waiting notice of ${taskId} (${cause instanceof Error ? cause.message : String(cause)})\n`);
+  }
+}
 
 export function peerDelegationHandlers(services: NodeServices, now: () => Instant): DelegationHandlers {
   const { runtime, conductor } = services;
@@ -64,19 +86,21 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
           envelope,
         ),
       ),
-    result: (envelope: PeerEnvelope) =>
-      answered(
-        receiveResult(
-          {
-            db: runtime.db,
-            nodeId: runtime.identity.nodeId,
-            now,
-            conductor,
-            onSettled: taskDispatchReports(services).onSettled,
-          },
-          envelope,
-        ),
-      ),
+    result: (envelope: PeerEnvelope) => {
+      const outcome = receiveResult(
+        {
+          db: runtime.db,
+          nodeId: runtime.identity.nodeId,
+          now,
+          conductor,
+          onSettled: taskDispatchReports(services).onSettled,
+        },
+        envelope,
+      );
+      // Only an answer from the node the task was handed to ends its wait; anyone else's is refused above.
+      if (outcome.accepted && envelope.taskId !== undefined) clearWaitingNotice(services, envelope.taskId, now());
+      return answered(outcome);
+    },
     cancel: (envelope: PeerEnvelope) =>
       answered(receiveCancel({ ...deps, ...(services.taskDispatch === undefined ? {} : { taskDispatch: services.taskDispatch }) }, envelope)),
     // Nothing is sent back for this one, so the outbox is not woken.
@@ -88,8 +112,12 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
           tell: ({ taskId, conversationId, text, about, waiting }) => {
             const at = now();
             appendHostReply(services, { conversationId, text, at });
+            // Allowed there: it no longer waits, so the inbox stops saying it does.
+            if (!waiting) {
+              clearWaitingNotice(services, taskId, at);
+              return;
+            }
             // In the inbox too, for a person not looking at the conversation: the task is waiting on someone else.
-            if (!waiting) return;
             tryRecordNodeNotice(services, {
               sourceKind: "automation",
               category: "alert",
@@ -129,10 +157,11 @@ export function answerUncertain(services: NodeServices, now: () => Instant): (ta
 export function settleUndeliveredTasks(services: NodeServices, now: () => Instant): (letter: DeadLetter) => void {
   return (letter) => {
     const { runtime, conductor } = services;
-    settleUndelivered(
+    const settled = settleUndelivered(
       { db: runtime.db, nodeId: runtime.identity.nodeId, now, conductor, onSettled: taskDispatchReports(services).onSettled },
       letter,
     );
+    if (settled && letter.taskId !== undefined) clearWaitingNotice(services, letter.taskId, now());
   };
 }
 /**

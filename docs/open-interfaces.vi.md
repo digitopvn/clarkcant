@@ -133,6 +133,18 @@ subject?, occurredAt? }` trên gateway của chính nó, với token của chín
 dưới dạng message NodeLink `signal`; peer ghi nó thành `peer.<topic>` từ node mà kênh đã xác thực nói là bên gửi, nên
 chính các yêu cầu lâu dài trên peer quyết định nó khởi động gì, nếu có. Xem [runtime phân tán](distributed-runtime.vi.md).
 
+Một node đã ghép cặp đưa một thông báo vào inbox của chủ node kia bằng `POST /peers/{nodeId}/notices` `{ id, title,
+body?, category?, severity? }` trên gateway của chính nó, với token của chính nó (`202` đã xếp hàng; `404`
+`PEER_UNKNOWN` khi peer chưa được ghép cặp và xác nhận; `409` `NO_LIVE_GRANT` khi không có grant còn hiệu lực nào nối
+hai node, theo chiều nào cũng được; `400` cho mọi trường hợp khác). Nó đi dưới dạng message NodeLink `notice` với
+payload là `notice` `{ key, category, severity, title, body? }` — một object strict: title tối đa 120 ký tự, body tối
+đa 500, key tối đa 160, và không gì khác, nên peer không gửi được action, subject hay liên kết. Bên nhận chỉ ghi nó khi
+đến từ một peer đã xác nhận mà nó có grant còn hiệu lực; nếu không, nó trả `accepted: false` kèm lý do. Thông báo được
+ghi là của peer (`sourceKind` `peer`, `originNodeId`, subject `peer`) dưới khóa `peer:<senderNodeId>:<key>`, nên gửi
+lại hay replay vẫn chỉ là một thông báo, nội dung được coi là dữ liệu (bỏ ký tự điều khiển), và việc có thể làm với nó
+do host bên nhận tự xác định như với mọi thông báo khác. Chính node cũng tự gửi message này: một thông báo nó ghi về
+task mà một peer đã giao cho nó (thất bại, hoặc kết quả không ai xác nhận được) cũng đi tới inbox của peer đó.
+
 Task của một yêu cầu lâu dài cũng có thể chạy trên một node đã ghép cặp. Việc này được đặt trong hội thoại, không qua
 một route: chủ của node gửi nêu peer làm executor của task, và chủ của node nhận nói peer đó được chạy gì ở đó (thư
 mục, repository, effect). Hai node trao đổi grant, lần giao (`delegate`), câu trả lời (`result`) và lệnh dừng

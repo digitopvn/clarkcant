@@ -82,7 +82,7 @@ function writeScript(dir: string): string {
 }
 
 /** A node as `wireRuntime` starts it: its automation service, its delivery pass, and a dispatcher with a worker. */
-async function startClark(label: string, options: { hang?: boolean; stoppable?: boolean } = {}): Promise<Clark> {
+async function startClark(label: string, options: { hang?: boolean; stoppable?: boolean; crash?: boolean } = {}): Promise<Clark> {
   let root = "";
   const node = await nodes.start(label, (services) => {
     root = join(services.runtime.dataDir, "work");
@@ -108,13 +108,15 @@ async function startClark(label: string, options: { hang?: boolean; stoppable?: 
       ownerPrincipalId: () => services.runtime.identity.ownerPrincipalId,
       ...taskDispatchReports(services),
       timeoutMs: 60_000,
-      // A worker that never answers stands for a node that stopped while the task ran.
+      // A worker that never answers stands for a node that stopped while the task ran; one that crashes, for a failure.
       runWorker:
         options.hang === true
           ? () => new Promise<never>(() => undefined)
-          : options.stoppable === true
-            ? stoppableWorker
-            : (worker) => runWorkerProcess({ ...worker, scriptPath: script }),
+          : options.crash === true
+            ? () => Promise.reject(new Error("the worker process exited with code 1"))
+            : options.stoppable === true
+              ? stoppableWorker
+              : (worker) => runWorkerProcess({ ...worker, scriptPath: script }),
     });
     services.conductor.runTask = (input) => dispatcher.dispatch(input);
     services.taskDispatch = dispatcher;
@@ -589,20 +591,71 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
     expect(notices[0]?.subject).toContain(firstId);
     expect(allRows(a.services.runtime.db, "SELECT approval_id FROM approvals")).toEqual([]);
 
+    expect(waitingOnA(a, firstId)).toBe(true);
+
     await decide(b, firstId, "denied");
     await waitUntil(() => getTask(a.services.runtime.db, firstId)?.state === "failed", "A's task to end on the refusal");
     expect(said(a, onA).find((text) => text.startsWith(`Không xong (task ${firstId})`))).toContain(
       `${identityOf(b).nodeId} không chạy việc này: chủ của node này đã từ chối`,
     );
+    // Decided on B, so it is no longer waiting in A's inbox either; B's own waiting item is gone with its approval.
+    expect(waitingOnA(a, firstId)).toBe(false);
+    expect(await waitingOn(b)).toEqual([]);
 
     // Allowed by B's owner: A hears it goes on, and it finishes there.
     await signal(a, "note-2");
     await waitUntil(() => tasksOn(b)[1]?.state === "waiting_approval", "the second task on B to wait");
     const secondId = String(tasksOn(a)[1]?.taskId);
+    await waitUntil(() => waitingOnA(a, secondId), "A's inbox to say the second task waits");
     await decide(b, secondId, "granted");
     await waitUntil(() => said(a, onA).some((text) => text === `Chủ của ${identityOf(b).nodeId} đã duyệt; task ${secondId} tiếp tục chạy trên ${identityOf(b).nodeId}.`), "A to hear it goes on");
+    expect(waitingOnA(a, secondId)).toBe(false);
     await waitUntil(() => getTask(a.services.runtime.db, secondId)?.state === "succeeded", "A's second task to finish");
     expect(readFileSync(join(b.root, "notes.md"), "utf8")).toBe("viết từ máy bàn\n");
+  });
+
+  it("passes the other node's notice about a hand-over that failed there to the sender's inbox", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop", { crash: true });
+    await pair(a, b);
+    const onA = await conversation(a, "Ghi chú");
+    const onB = await conversation(b, "Máy bàn");
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+
+    await signal(a, "note-1");
+
+    const taskId = await (async () => {
+      await waitUntil(() => tasksOn(a).length === 1, "A's task");
+      return String(tasksOn(a)[0]?.taskId);
+    })();
+    const fromB = (): { title: string; body: string; source_kind: string; origin_node_id: string; conversation_id: string | null; subject: string; dedup_key: string }[] =>
+      allRows(
+        a.services.runtime.db,
+        "SELECT title, body, source_kind, origin_node_id, conversation_id, subject, dedup_key FROM notifications WHERE origin_node_id IS NOT NULL",
+      );
+    await waitUntil(() => fromB().length === 1, "B's notice to reach A");
+    expect(fromB()[0]).toEqual({
+      title: "Việc chạy nền không xong",
+      body: expect.stringContaining("the worker process exited with code 1") as string,
+      source_kind: "peer",
+      origin_node_id: identityOf(b).nodeId,
+      // Opened where A's owner set the work up, because the task is A's own and was handed to B.
+      conversation_id: onA,
+      subject: JSON.stringify({ kind: "peer", nodeId: identityOf(b).nodeId }),
+      dedup_key: `peer:${identityOf(b).nodeId}:worker:${taskId}`,
+    });
+    // B's own inbox keeps its notice; nothing B says about work nobody handed it leaves B.
+    const onBInbox = allRows<{ dedup_key: string }>(b.services.runtime.db, "SELECT dedup_key FROM notifications WHERE dedup_key = ?", `worker:${taskId}`);
+    expect(onBInbox).toHaveLength(1);
+    const notices = allRows<{ document: string }>(b.services.runtime.db, "SELECT document FROM outbox").filter(
+      (row) => (JSON.parse(row.document) as PeerEnvelope).kind === "notice",
+    );
+    expect(notices).toHaveLength(1);
   });
 
   it("settles the sender's task when the other node's owner lets the approval expire", async () => {
@@ -774,6 +827,25 @@ async function decide(node: LiveNode, taskId: string, decision: "granted" | "den
     token: node.token,
   });
   expect(decided.status).toBe(200);
+}
+
+/** Whether A's inbox, as its owner reads it, still says the task waits on the other node's owner. */
+function waitingOnA(node: LiveNode, taskId: string): boolean {
+  return (
+    allRows(
+      node.services.runtime.db,
+      "SELECT notification_id FROM notifications WHERE dismissed_at IS NULL AND substr(dedup_key, 1, ?) = ?",
+      `delegation-status:${taskId}:`.length,
+      `delegation-status:${taskId}:`,
+    ).length > 0
+  );
+}
+
+/** What a node's inbox says is waiting for its owner, read through the route the surface reads. */
+async function waitingOn(node: LiveNode): Promise<unknown[]> {
+  const inbox = await call(node, "/inbox", { method: "GET", token: node.token });
+  expect(inbox.status).toBe(200);
+  return inbox.body["waiting"] as unknown[];
 }
 
 function onlyIntentId(node: LiveNode): string {

@@ -116,6 +116,44 @@ export function pendingOutbox(db: Database, peerNodeId?: string, now?: Instant):
   return rows.map((row) => parseJson<unknown>(row.document, "outbox.document"));
 }
 
+/** How delivery to one peer is going, read from the outbox's own retry state. */
+export interface PeerDeliveryState {
+  /** The last time the peer acknowledged anything this node sent it; null when it never has. */
+  lastAcknowledgedAt: Instant | null;
+  /**
+   * Since when delivery has been failing: the oldest message still being retried that failed after the last
+   * acknowledgement, and never earlier than that acknowledgement. Null while nothing owed to the peer is failing.
+   */
+  failingSince: Instant | null;
+}
+
+/**
+ * Whether a peer is being reached, without a second record of it: an acknowledgement is a delivery that worked, and a
+ * message still being retried whose last attempt came after the last acknowledgement is one that did not. A message
+ * given up on is not counted as failing now, and a peer nothing is owed to is not failing either.
+ */
+export function peerDeliveryState(db: Database, peerNodeId: string): PeerDeliveryState {
+  const acknowledged = oneRow<{ at: string | null }>(
+    db,
+    "SELECT MAX(acknowledged_at) AS at FROM outbox WHERE peer_node_id = ?",
+    peerNodeId,
+  );
+  const lastAcknowledgedAt = (acknowledged?.at ?? null) as Instant | null;
+  const failing = oneRow<{ since: string | null }>(
+    db,
+    `SELECT MIN(created_at) AS since FROM outbox
+      WHERE peer_node_id = ? AND acknowledged_at IS NULL AND dead_lettered_at IS NULL
+        AND last_error IS NOT NULL AND last_attempt_at IS NOT NULL
+        AND (? IS NULL OR last_attempt_at > ?)`,
+    peerNodeId,
+    lastAcknowledgedAt,
+    lastAcknowledgedAt,
+  );
+  const since = (failing?.since ?? null) as Instant | null;
+  if (since === null) return { lastAcknowledgedAt, failingSince: null };
+  return { lastAcknowledgedAt, failingSince: lastAcknowledgedAt !== null && lastAcknowledgedAt > since ? lastAcknowledgedAt : since };
+}
+
 export interface DeadLetteredOutboxEntry {
   messageId: string;
   peerNodeId: string;

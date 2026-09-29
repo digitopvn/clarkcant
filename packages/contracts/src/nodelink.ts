@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { instantSchema, sequenceSchema, type Instant } from "./primitives.ts";
 import { grantSchema } from "./grants.ts";
+import { NOTICE_BODY_MAX, NOTICE_TITLE_MAX, noticeCategorySchema, noticeSeveritySchema } from "./inbox.ts";
 
 /**
  * NodeLink — the peer protocol between independent installations.
@@ -41,8 +42,30 @@ export const peerMessageKindSchema = z.enum([
    * carries no grant and asks for nothing, and what it starts is decided by what the receiver's owner set up there.
    */
   "signal",
+  /**
+   * Something the sender's owner should hear about on this node too, for its inbox. Words and nothing more: a notice
+   * carries no subject, no action and no instruction, and the receiver records it under the sender's name only while
+   * the two nodes hold a live grant between them.
+   */
+  "notice",
 ]);
 export type PeerMessageKind = z.infer<typeof peerMessageKindSchema>;
+
+/**
+ * The payload of a `notice` envelope.
+ *
+ * `key` is the sender's own name for the event, so the same notice sent again — a retry, or a second envelope for the
+ * same thing — is recorded once. Strict: a sender that adds a subject, an action or anything else is refused rather
+ * than having it dropped silently, because what a person can do with a notice is decided by the host that shows it.
+ */
+export const peerNoticeSchema = z.strictObject({
+  key: z.string().min(1).max(160),
+  category: noticeCategorySchema,
+  severity: noticeSeveritySchema,
+  title: z.string().min(1).max(NOTICE_TITLE_MAX),
+  body: z.string().max(NOTICE_BODY_MAX).optional(),
+});
+export type PeerNotice = z.infer<typeof peerNoticeSchema>;
 
 export const peerEnvelopeSchema = z.strictObject({
   protocol: z.literal("agent.nodelink"),
@@ -94,6 +117,7 @@ const REQUIRED_PAYLOAD_KEYS: Record<PeerMessageKind, readonly string[]> = {
   "artifact.accept": ["artifactOfferMessageId", "decision"],
   heartbeat: [],
   signal: ["signal"],
+  notice: ["notice"],
 };
 
 export const peerValidationIssueSchema = z.strictObject({

@@ -360,14 +360,26 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
   item the inbox surfaces is always one the route can find. Cards older than that window are not surfaced, and
   their approvals still expire by TTL.
 - **Notices** — background job results, worker dispatches, approvals/questions that expired unanswered,
-  Pi/package/widget updates; later messages from other nodes — are events that have already happened, **stored** in
+  Pi/package/widget updates, notices from paired nodes — are events that have already happened, **stored** in
   the `notifications` table (migration 26). Producers call `recordNodeNotice` / `tryRecordNodeNotice`
   (`apps/runtime/src/notices.ts`); recording a notice never breaks the work that produced it.
   Writes are idempotent on `(principal, dedupKey)` — the same event sent again (a retry, or via NodeLink) does not
   become two rows — text is redacted and truncated, and the table cleans itself up: each principal keeps at most 200
   **undismissed** notices (oldest first out), while dismissed notices are deleted only after 30 days, so dismissing
   does not push an unread notice out. A dispatched background task records one notice per task when it finishes
-  (`workerSettledNotice`, key `worker:<taskId>`). `originNodeId` is reserved for notices coming from other nodes.
+  (`workerSettledNotice`, key `worker:<taskId>`). `originNodeId` is set only on a notice a paired node sent.
+  - **Notices from paired nodes** (#170, `apps/runtime/src/peer-notices.ts`). A confirmed peer sends a NodeLink
+    `notice` (key, category, severity, title, body; strict and bounded, no actions). The receiver records it only while
+    a live grant ties the two nodes, in either direction, as `sourceKind` `peer` with `originNodeId` and subject `peer`,
+    under `peer:<senderNodeId>:<key>`, so a replay lands once; a refusal is answered with its reason. `recordNodeNotice`
+    passes a notice whose subject is a task a peer handed this node on to that peer through the outbox. The sender's
+    `delegation-status:<taskId>:…` waiting notice is dismissed when the task stops waiting (a `running` status, an
+    accepted result, or a settlement after giving up delivery). Deciding the receiver's approval from the sender is not
+    implemented (see [distributed runtime](distributed-runtime.md)).
+  - **A peer that cannot be reached** (`apps/runtime/src/peer-outage.ts`). After each delivery pass,
+    `reconcilePeerOutages` reads the outbox's retry state (`peerDeliveryState`) and, once delivery to a confirmed peer
+    has been failing for 10 minutes, records one warning notice per outage, keyed by the peer's last acknowledgement
+    (`peer-offline:<peerNodeId>:<lastAck|never>`). It is dismissed when the peer acknowledges again or is revoked.
   - **Expired approvals/questions.** An approval or question that expires without a decision drops out of the
     pending list silently — right for the list, but someone who was not looking at that moment would never find
     out. `apps/runtime/src/expiry-notices.ts` sweeps periodically (an unref'd interval, started in `wireRuntime`,
@@ -519,7 +531,8 @@ beside the OS notification toggle until the OS accepts a notification again. In 
 once the user has turned it on in Settings → Control and the browser granted permission; each notification carries
 the item's id as its `tag`, so several tabs do not stack copies. The poll still reads `GET /inbox` when no channel
 can deliver, so the set of seen ids stays current: turning notifications on midway neither floods a backlog nor
-swallows an item that just arrived. The "other devices" group stays off with a reason until NodeLink pairing exists.
+swallows an item that just arrived. The "other devices" group is still shown off in Settings with a reason; notices
+from paired nodes now arrive, but the group has not been switched on for them yet.
 
 The `notifications` table is not NodeLink's `inbox` in §10: the latter is a command queue between nodes, the former is
 what the user is told.
