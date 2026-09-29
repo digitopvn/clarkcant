@@ -1,11 +1,17 @@
 import {
+  AS_OF_PATTERN,
   CHOICE_KINDS,
   INPUT_KINDS,
   LIST_PAGE_SIZES,
+  MAX_DETAIL_ITEMS,
   MAX_FIELD_OPTIONS,
   MAX_FORM_FIELDS,
   MAX_LIST_ITEMS,
+  MAX_PROGRESS_STEPS,
   MAX_TEXT_LENGTH,
+  STATUS_TONES,
+  STEP_STATUSES,
+  type StatusCardKind,
   type WidgetDefinition,
   checkField,
   checkFieldValue,
@@ -14,6 +20,7 @@ import {
   fieldFromProps,
   parseFields,
   parseListItems,
+  statusCardProblems,
 } from "@clarkcant/contracts";
 
 /**
@@ -724,6 +731,132 @@ export const LIST: WidgetDefinition = {
   datasetRefs: [],
 };
 
+/*
+ * Status cards: a status, the progress of one thing, a few labelled facts.
+ *
+ * What they show is what the model wrote when it placed them; none reads a task, a connection or a dataset. The node's
+ * own task and connection cards stay host-owned and are built from its records. So these carry no freshness badge and
+ * no control, and an `asOf` is said in words: "as of" a time, never "live".
+ */
+
+const asOfProp = {
+  type: "string",
+  maxLength: 40,
+  pattern: AS_OF_PATTERN,
+  description: "When the facts were true: a day (2026-09-30) or an instant with its offset (2026-09-30T09:00:00+07:00)",
+};
+
+/** One labelled state with a tone. The tone is said in words and a symbol as well as colour. */
+export const STATUS: WidgetDefinition = {
+  id: "canvas.status@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: { type: "string", maxLength: 200 },
+      label: { type: "string", minLength: 1, maxLength: 120 },
+      tone: { type: "string", enum: [...STATUS_TONES] },
+      detail: { type: "string", maxLength: 500 },
+      asOf: asOfProp,
+    },
+    required: ["label", "tone"],
+  },
+  eventSchemas: {},
+  sizing: { compact: true, expanded: true, minHeight: 72 },
+  semanticDescription: "A status the model states: one label with a tone (neutral, info, success, warning or danger) and an optional detail",
+  requestedCapabilities: [],
+  textFallback: "A status appears as text: its label, its tone and its detail.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/** Progress of one thing: a value of a maximum, or a short list of steps. Never a spinner with nothing behind it. */
+export const PROGRESS: WidgetDefinition = {
+  id: "canvas.progress@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: { type: "string", maxLength: 200 },
+      label: { type: "string", maxLength: 200 },
+      value: { type: "number", minimum: 0 },
+      max: { type: "number", exclusiveMinimum: 0 },
+      unit: { type: "string", maxLength: 20 },
+      steps: {
+        type: "array",
+        minItems: 1,
+        maxItems: MAX_PROGRESS_STEPS,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            label: { type: "string", minLength: 1, maxLength: 120 },
+            status: { type: "string", enum: [...STEP_STATUSES] },
+            detail: { type: "string", maxLength: 200 },
+          },
+          required: ["label", "status"],
+        },
+      },
+      asOf: asOfProp,
+    },
+  },
+  eventSchemas: {},
+  sizing: { compact: true, expanded: true, minHeight: 72 },
+  semanticDescription: "Progress the model states for one thing: a value of a maximum, or steps each done, current, pending, failed or skipped",
+  requestedCapabilities: [],
+  textFallback: "Progress appears as text: the value of its maximum, or each step with its status.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/** A few labelled facts, in the order the model gave them. */
+export const DETAILS: WidgetDefinition = {
+  id: "canvas.details@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: { type: "string", maxLength: 200 },
+      items: {
+        type: "array",
+        minItems: 1,
+        maxItems: MAX_DETAIL_ITEMS,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            label: { type: "string", minLength: 1, maxLength: 80 },
+            value: { type: "string", minLength: 1, maxLength: 300 },
+          },
+          required: ["label", "value"],
+        },
+      },
+      asOf: asOfProp,
+    },
+    required: ["items"],
+  },
+  eventSchemas: {},
+  sizing: { compact: true, expanded: true, minHeight: 72 },
+  semanticDescription: "Labelled facts the model states about one thing, as label and value pairs",
+  requestedCapabilities: [],
+  textFallback: "Details appear as text: one label and value per line.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/** Which kind of status card each definition draws. */
+export const STATUS_CARD_KIND: Readonly<Record<string, StatusCardKind>> = {
+  [STATUS.id]: "status",
+  [PROGRESS.id]: "progress",
+  [DETAILS.id]: "details",
+};
+
 /**
  * A personal note.
  *
@@ -784,6 +917,9 @@ export const WIDGETS = [
   SEARCH,
   FORM,
   LIST,
+  STATUS,
+  PROGRESS,
+  DETAILS,
 ];
 
 /**
@@ -818,6 +954,11 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   // expect a control with no effect.
   "canvas.form@1": "form",
   "canvas.list@1": "list",
+  // One family for the three: each says where something stands in the model's words, and a layout places any of them in
+  // the same region.
+  "canvas.status@1": "status",
+  "canvas.progress@1": "status",
+  "canvas.details@1": "status",
 };
 
 /**
@@ -844,6 +985,8 @@ export function primitivePropsProblems(definitionId: string, props: Readonly<Rec
     const items = parseListItems(props.items);
     return items === undefined ? ["the items are not ones a list can hold"] : checkListItems(items);
   }
+  const card = STATUS_CARD_KIND[definitionId];
+  if (card !== undefined) return statusCardProblems(card, props);
   return [];
 }
 export function familyOf(definitionId: string): string {

@@ -652,6 +652,62 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * A status, progress or details card, placed through the same views `show_view` uses. "tiến độ sai" proposes a value
+     * above its maximum, so the refusal a model would read is the host's own sentence.
+     */
+    const card = /^(?:đặt|place)\s+thẻ\s+(trạng thái|tiến độ|các bước|chi tiết|tiến độ sai)$/iu.exec(input.text.trim());
+    if (card !== null) {
+      const which = (card[1] ?? "").toLowerCase();
+      const catalog = buildViewCatalog(deps.services().conductor);
+      const definitionId =
+        which === "trạng thái" ? "canvas.status@1" : which === "chi tiết" ? "canvas.details@1" : "canvas.progress@1";
+      const view = catalog.find((entry) => entry.id === definitionId);
+      if (view === undefined) return undefined;
+      const props: Record<string, unknown> =
+        which === "trạng thái"
+          ? {
+              title: "Bản dựng đêm qua",
+              label: "Chạy xong nhưng có 2 test chập chờn",
+              tone: "warning",
+              detail: "Hai test E2E phải chạy lại mới qua.",
+              asOf: "2026-09-30T07:30:00+07:00",
+            }
+          : which === "chi tiết"
+            ? {
+                title: "Đơn #1042",
+                items: [
+                  { label: "Khách hàng", value: "Nguyễn Thị Lan" },
+                  { label: "Tổng tiền", value: "1.250.000 ₫" },
+                  { label: "Trạng thái", value: "Đang giao" },
+                ],
+              }
+            : which === "các bước"
+              ? {
+                  title: "Chuyển nhà",
+                  steps: [
+                    { label: "Đóng thùng", status: "done" },
+                    { label: "Chuyển đồ", status: "current" },
+                    { label: "Lắp internet", status: "pending" },
+                  ],
+                }
+              : { title: "Nhập ảnh", label: "Ảnh đã nhập", value: which === "tiến độ sai" ? 130 : 42, max: 120, unit: "ảnh" };
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt thẻ ${which} (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
+
+    /*
      * A question, scripted — the producer for the question card.
      *
      * The same reason the approval fixture exists: the browser half of this feature is a card whose answer

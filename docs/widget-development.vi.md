@@ -478,6 +478,56 @@ Kiểm thử: [composition-graph.spec.ts](../packages/contracts/test/composition
 [surface-graph.spec.ts](../packages/conversation-client/test/surface-graph.spec.ts) cho trang, và journey trình duyệt
 [composition-graph.spec.ts](../apps/web/e2e/composition-graph.spec.ts), cũng chạy ở 375 px.
 
+### 8.4 Thẻ trạng thái, tiến độ và chi tiết
+
+Ba định nghĩa chỉ-đọc cho thấy điều model biết về một việc: một trạng thái, việc đó đã tới đâu, hoặc vài thông tin có
+nhãn. Đây là hàng "Text / status" của [widgets and extensions §4](widgets-and-extensions.vi.md#4-rich-built-in-catalog)
+cho nội dung do model nêu. Chúng không phải thẻ tác vụ, kết nối hay cài đặt của host, vốn vẫn do host sở hữu. Một bộ
+hàm duy nhất, trong [status-cards.ts](../packages/contracts/src/status-cards.ts), kiểm props và viết câu chữ. Cả node
+lẫn trang đều dùng bộ hàm này, nên trang không bao giờ vẽ một thẻ mà node sẽ từ chối.
+
+| Định nghĩa | Là gì | Props |
+| --- | --- | --- |
+| `canvas.status@1` | Một trạng thái kèm sắc thái. | `label` (1–120), `tone` (`neutral`, `info`, `success`, `warning`, `danger`), tuỳ chọn `title`, `detail` (tối đa 500) và `asOf`. |
+| `canvas.progress@1` | Tiến độ của một việc: một giá trị trên một mức tối đa, hoặc một danh sách bước. | Hoặc `value` (từ 0 trở lên) cùng `max` (lớn hơn 0) và `unit` tuỳ chọn, hoặc `steps` (1–12), mỗi bước `{ label, status, detail? }` với status `done`, `current`, `pending`, `failed` hoặc `skipped`. Tuỳ chọn `title`, `label` và `asOf`. |
+| `canvas.details@1` | Các thông tin có nhãn. | `items` (1–24), mỗi mục `{ label (1–80), value (1–300) }`, không nhãn nào lặp lại. Tuỳ chọn `title` và `asOf`. |
+
+Model đặt từng thẻ bằng `show_view`, hoặc làm lá của một cây bố cục (§8.3), nơi cả ba nằm ở vùng `status`.
+
+Node bảo đảm:
+
+- **Không có gì quay tròn khi chẳng có gì phía sau.** Thẻ tiến độ cần một giá trị và một mức tối đa, hoặc các bước.
+  Thẻ không có cái nào, có cả hai, có giá trị vượt mức tối đa, có đơn vị đi kèm các bước, hoặc có hơn một bước đang làm
+  đều bị từ chối kèm lý do ngay trong lượt đó, và không instance nào được lưu.
+- **Mốc "tính đến" không bao giờ mơ hồ.** `asOf` là một ngày (`2026-09-30`) hoặc một thời điểm có `Z` hay độ lệch múi
+  giờ (`2026-09-30T07:30:00+07:00`). Giờ địa phương không có độ lệch, hoặc ngày không tồn tại, đều bị từ chối.
+- **Text alternative là chính lời của thẻ.** Nó được dựng từ props, ví dụ
+  `Build: Flaky (warning). 2 retries (as of 2026-09-30)` hoặc `Photos: 42 of 120 photos (35%)`, và caption không thay
+  thế được nó. Một section của bố cục chứa thẻ cũng dùng đúng những lời đó.
+- **Voice và `inspect_ui` đọc điều đã được nêu, không phải số đo trực tiếp.** Tài liệu ngữ nghĩa (§9) được dựng từ
+  props. Summary của nó ghi "as stated when shown", và freshness là `unknown` chứ không phải `live`. Thẻ không có action
+  và không có state.
+
+Trang làm gì:
+
+- Sắc thái là một chữ trong badge, đặt cạnh một ký hiệu, nên màu sắc không bao giờ là tín hiệu duy nhất. Mỗi bước hiện
+  trạng thái bằng chữ, và bước đang làm mang `aria-current="step"`.
+- Giá trị trên mức tối đa là một `role="progressbar"` có `aria-valuemin`, `aria-valuemax`, `aria-valuenow` và
+  `aria-valuetext` khớp với con số trên màn hình.
+- `asOf` là một ngày thì hiện đúng ngày đó. Một thời điểm thì hiện theo múi giờ và ngôn ngữ của người đọc, sau chữ
+  "Tính đến".
+- Thẻ không có badge độ mới, vì thứ nó hiện là điều model đã viết. Nó không có nút điều khiển nào và không tự thêm
+  chuyển động.
+- Phần chi tiết xếp thành hai cột thẳng hàng và chuyển thành một cột khi hẹp hơn 480 px. Giá trị dài thì xuống dòng thay
+  vì làm trang rộng ra.
+- Props mà trang không đọc được thì hiện trạng thái lỗi, thay vì một thẻ đoán mò.
+
+Kiểm thử: [status-cards.spec.ts](../packages/contracts/test/status-cards.spec.ts) cho các quy tắc,
+[status-cards.spec.ts](../apps/runtime/test/status-cards.spec.ts) cho node,
+[status-cards.spec.ts](../packages/conversation-client/test/status-cards.spec.ts) cho trang, và journey trình duyệt
+[status-cards.spec.ts](../apps/web/e2e/status-cards.spec.ts), chạy ở 1280 px với giao diện tối và sáng, ở 390 px có
+cảm ứng, và trong Widget Library.
+
 ---
 
 ## 9. Semantic contract cho voice và lượt kế tiếp

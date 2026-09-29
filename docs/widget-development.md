@@ -479,6 +479,55 @@ Tests: [composition-graph.spec.ts](../packages/contracts/test/composition-graph.
 [surface-graph.spec.ts](../packages/conversation-client/test/surface-graph.spec.ts) for the page, and the browser
 journey [composition-graph.spec.ts](../apps/web/e2e/composition-graph.spec.ts), which also runs at 375 px.
 
+### 8.4 Status, progress and details cards
+
+Three read-only definitions show what a model knows about one thing: a status, how far along it is, or a few labelled
+facts. They are the "Text / status" row of [widgets and extensions §4](widgets-and-extensions.md#4-rich-built-in-catalog)
+for content the model states. They are not the host's task, connection or install cards, which stay host-owned. One
+set of functions, in [status-cards.ts](../packages/contracts/src/status-cards.ts), checks the props and writes the
+text. The node and the page both use it, so the page never draws a card the node would refuse.
+
+| Definition | What it is | Props |
+| --- | --- | --- |
+| `canvas.status@1` | One status with a tone. | `label` (1–120), `tone` (`neutral`, `info`, `success`, `warning`, `danger`), optional `title`, `detail` (up to 500) and `asOf`. |
+| `canvas.progress@1` | The progress of one thing: a value of a maximum, or a list of steps. | Either `value` (0 or more) with `max` (above 0) and an optional `unit`, or `steps` (1–12), each `{ label, status, detail? }` with status `done`, `current`, `pending`, `failed` or `skipped`. Optional `title`, `label` and `asOf`. |
+| `canvas.details@1` | Labelled facts. | `items` (1–24), each `{ label (1–80), value (1–300) }`, with no label repeated. Optional `title` and `asOf`. |
+
+A model places each card with `show_view`, or as a leaf of a layout tree (§8.3), where the three take the `status`
+region.
+
+What the node guarantees:
+
+- **Nothing spins with nothing behind it.** A progress card needs a value and a maximum, or steps. A card with
+  neither, with both, with a value above its maximum, with a unit on steps, or with more than one current step is
+  refused with the reason in the same turn, and no instance is stored.
+- **An "as of" time is never ambiguous.** `asOf` is a day (`2026-09-30`) or an instant with `Z` or an offset
+  (`2026-09-30T07:30:00+07:00`). A local time with no offset, or a date that does not exist, is refused.
+- **The text alternative is the card's own words.** It is built from the props, for example
+  `Build: Flaky (warning). 2 retries (as of 2026-09-30)` or `Photos: 42 of 120 photos (35%)`, and the caption does not
+  replace it. A layout section that holds a card uses the same words.
+- **Voice and `inspect_ui` read what was stated, not a live reading.** The semantic document (§9) is built from the
+  props. Its summary says "as stated when shown", and its freshness is `unknown` rather than `live`. The card has no
+  actions and no state.
+
+What the page does:
+
+- The tone is a word in a badge, next to a mark, so a colour is never the only signal. Each step shows its status in
+  words, and the current step carries `aria-current="step"`.
+- A value of a maximum is a `role="progressbar"` with `aria-valuemin`, `aria-valuemax`, `aria-valuenow` and an
+  `aria-valuetext` that matches the figure on screen.
+- An `asOf` day is shown as that day. An instant is shown in the reader's own time zone and locale, after "As of".
+- The card shows no freshness badge, since what it shows is what the model wrote. It has no control, and it adds no
+  motion of its own.
+- Details line up as two columns and become one column below 480 px. Long values wrap rather than widen the page.
+- Props the page cannot read show an error state rather than a guessed card.
+
+Tests: [status-cards.spec.ts](../packages/contracts/test/status-cards.spec.ts) for the rules,
+[status-cards.spec.ts](../apps/runtime/test/status-cards.spec.ts) for the node,
+[status-cards.spec.ts](../packages/conversation-client/test/status-cards.spec.ts) for the page, and the browser
+journey [status-cards.spec.ts](../apps/web/e2e/status-cards.spec.ts), which runs at 1280 px in dark and light themes,
+at 390 px with touch, and in the Widget Library.
+
 ---
 
 ## 9. Semantic contract for voice and the next turn

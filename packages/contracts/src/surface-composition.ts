@@ -48,6 +48,7 @@ export const MAX_MATERIALIZED_ROWS = 5000;
  */
 export const compositionSlotSchema = z.enum([
   "metrics",
+  "status",
   "filter",
   "search",
   "choice",

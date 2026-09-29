@@ -27,6 +27,11 @@ import {
   normalizeTableSelection,
   parseFields,
   parseListItems,
+  progressPercent,
+  readStatusCard,
+  type StatusTone,
+  type StepStatus,
+  stepCounts,
   tableView,
   type TableTotalFn,
 } from "@clarkcant/contracts";
@@ -2423,6 +2428,200 @@ function ListView({ props, state, onAction, onStateChange }: RendererProps): Rea
 }
 
 /* ------------------------------------------------------------------ *
+ * Status, progress and details cards
+ * ------------------------------------------------------------------ */
+
+/*
+ * What these cards show is what the model wrote when it placed them. None reads a dataset, so none carries a freshness
+ * badge: a badge would say "live" or "sample" about something that is neither. When the model said when its facts were
+ * true, the card says "as of" that time in words. Nothing on them acts, so nothing on them takes focus.
+ */
+
+/** A symbol per tone, so a tone is never carried by colour alone. */
+const TONE_MARK: Record<StatusTone, string> = { neutral: "•", info: "i", success: "✓", warning: "!", danger: "✕" };
+/** The badge tone the shared chrome already styles, per status tone. */
+const TONE_BADGE: Record<StatusTone, string | undefined> = {
+  neutral: undefined,
+  info: "info",
+  success: "ok",
+  warning: "warn",
+  danger: "danger",
+};
+const STEP_MARK: Record<StepStatus, string> = { done: "✓", current: "›", pending: "○", failed: "✕", skipped: "–" };
+
+/**
+ * "As of" a day or an instant, in the reader's locale.
+ *
+ * A day is formatted in UTC so it stays the day the model named; an instant carries its offset and is shown in the
+ * reader's own timezone, which is the moment it names.
+ */
+function AsOf({ asOf }: { asOf: string | undefined }): ReactElement | null {
+  const t = useT();
+  const locale = useLocale();
+  if (asOf === undefined) return null;
+  const dayOnly = asOf.length === 10;
+  const formatted = new Intl.DateTimeFormat(
+    locale,
+    dayOnly ? { dateStyle: "medium", timeZone: "UTC" } : { dateStyle: "medium", timeStyle: "short" },
+  ).format(new Date(dayOnly ? `${asOf}T00:00:00Z` : asOf));
+  return (
+    <p className="cc-freshness cc-status-card-asof" data-status-as-of={asOf}>
+      <time dateTime={asOf}>{t("widgets.status.asOf").replace("{time}", formatted)}</time>
+    </p>
+  );
+}
+
+function StatusCardView({ props }: RendererProps): ReactElement {
+  const t = useT();
+  const content = useMemo(() => readStatusCard("status", props), [props]);
+  const title = typeof props.title === "string" && props.title !== "" ? props.title : t("widgets.status.title");
+  if (content?.kind !== "status") {
+    return (
+      <Frame title={title} dataset={undefined} role="status">
+        <p className="cc-freshness" data-status-state="error" style={{ margin: 0 }}>
+          {t("widgets.status.unreadable")}
+        </p>
+      </Frame>
+    );
+  }
+  const { label: statusLabel, tone, detail, asOf } = content.card;
+  const toneWord = t(`widgets.status.tone.${tone}` as MessageKey);
+  return (
+    <Frame title={title} dataset={undefined} role="status">
+      <div className="cc-status-card" data-status-tone={tone} data-status-state="ready">
+        <span className="cc-status-card-mark" aria-hidden="true">
+          {TONE_MARK[tone]}
+        </span>
+        <div className="cc-status-card-text">
+          <p className="cc-status-card-label">
+            <span className="cc-badge" data-tone={TONE_BADGE[tone]} data-status-tone-word={tone}>
+              {toneWord}
+            </span>
+            <span className="cc-status-card-value">{statusLabel}</span>
+          </p>
+          {detail !== undefined && detail !== "" && <p className="cc-status-card-detail">{detail}</p>}
+        </div>
+      </div>
+      <AsOf asOf={asOf} />
+    </Frame>
+  );
+}
+
+function ProgressCardView({ props }: RendererProps): ReactElement {
+  const t = useT();
+  const locale = useLocale();
+  const content = useMemo(() => readStatusCard("progress", props), [props]);
+  const title = typeof props.title === "string" && props.title !== "" ? props.title : t("widgets.progress.title");
+  if (content?.kind !== "progress") {
+    return (
+      <Frame title={title} dataset={undefined} role="progress">
+        <p className="cc-freshness" data-progress-state="error" style={{ margin: 0 }}>
+          {t("widgets.progress.unreadable")}
+        </p>
+      </Frame>
+    );
+  }
+  const card = content.card;
+  const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
+  const subject = card.label !== undefined && card.label !== "" ? card.label : undefined;
+  const percent = progressPercent(card);
+
+  if (card.steps === undefined) {
+    const value = card.value ?? 0;
+    const max = card.max ?? 1;
+    const shown = percent ?? 0;
+    const figure = t("widgets.progress.value")
+      .replace("{value}", number.format(value))
+      .replace("{max}", number.format(max))
+      .replace("{unit}", card.unit === undefined || card.unit === "" ? "" : ` ${card.unit}`)
+      .replace("{percent}", number.format(shown));
+    return (
+      <Frame title={title} dataset={undefined} role="progress">
+        {subject !== undefined && <p className="cc-progress-subject">{subject}</p>}
+        <div className="cc-progress-row" data-progress-state="ready" data-progress-kind="value">
+          <div
+            className="cc-progress-track"
+            role="progressbar"
+            aria-label={subject ?? title}
+            aria-valuemin={0}
+            aria-valuemax={max}
+            aria-valuenow={value}
+            aria-valuetext={figure}
+          >
+            <span className="cc-progress-fill" style={{ inlineSize: `${String(shown)}%` }} />
+          </div>
+          <span className="cc-progress-figure" data-progress-percent={shown}>
+            {figure}
+          </span>
+        </div>
+        <AsOf asOf={card.asOf} />
+      </Frame>
+    );
+  }
+
+  const counts = stepCounts(card.steps);
+  return (
+    <Frame title={title} dataset={undefined} role="progress">
+      {subject !== undefined && <p className="cc-progress-subject">{subject}</p>}
+      <p className="cc-freshness" data-progress-steps-summary={`${String(counts.finished)}/${String(counts.total)}`} style={{ margin: 0 }}>
+        {t("widgets.progress.stepsSummary")
+          .replace("{finished}", number.format(counts.finished))
+          .replace("{total}", number.format(counts.total))}
+      </p>
+      <ol className="cc-progress-steps" aria-label={t("widgets.progress.stepsLabel")} data-progress-state="ready" data-progress-kind="steps">
+        {card.steps.map((step, index) => (
+          <li
+            // Labels may repeat; the position is what identifies a step in a list nobody reorders.
+            key={index}
+            className="cc-progress-step"
+            data-step-status={step.status}
+            aria-current={step.status === "current" ? "step" : undefined}
+          >
+            <span className="cc-progress-step-mark" aria-hidden="true">
+              {STEP_MARK[step.status]}
+            </span>
+            <span className="cc-progress-step-text">
+              <span className="cc-progress-step-label">{step.label}</span>
+              {step.detail !== undefined && step.detail !== "" && <span className="cc-progress-step-detail">{step.detail}</span>}
+            </span>
+            <span className="cc-progress-step-status">{t(`widgets.progress.step.${step.status}` as MessageKey)}</span>
+          </li>
+        ))}
+      </ol>
+      <AsOf asOf={card.asOf} />
+    </Frame>
+  );
+}
+
+function DetailsCardView({ props }: RendererProps): ReactElement {
+  const t = useT();
+  const content = useMemo(() => readStatusCard("details", props), [props]);
+  const title = typeof props.title === "string" && props.title !== "" ? props.title : t("widgets.details.title");
+  if (content?.kind !== "details") {
+    return (
+      <Frame title={title} dataset={undefined} role="details">
+        <p className="cc-freshness" data-details-state="error" style={{ margin: 0 }}>
+          {t("widgets.details.unreadable")}
+        </p>
+      </Frame>
+    );
+  }
+  return (
+    <Frame title={title} dataset={undefined} role="details">
+      <dl className="cc-details" data-details-state="ready">
+        {content.card.items.map((item) => (
+          <div key={item.label} className="cc-details-row" data-details-item={item.label}>
+            <dt>{item.label}</dt>
+            <dd>{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+      <AsOf asOf={content.card.asOf} />
+    </Frame>
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * Registry
  * ------------------------------------------------------------------ */
 
@@ -2454,6 +2653,9 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.search@1": SearchBox,
   "canvas.form@1": FormView,
   "canvas.list@1": ListView,
+  "canvas.status@1": StatusCardView,
+  "canvas.progress@1": ProgressCardView,
+  "canvas.details@1": DetailsCardView,
 };
 
 export function resolveRenderer(definitionId: string): CatalogRenderer | undefined {

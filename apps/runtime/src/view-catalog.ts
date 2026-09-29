@@ -9,6 +9,8 @@
  *
  * Two things are deliberately not here. There is no view that reports task or connection state —
  * the node builds those cards from its own records, and a model has no records to build one from.
+ * The status, progress and details cards below are not that: they show what the model states about
+ * something, carry no control and no freshness badge, and never stand in for the node's own cards.
  * And there is no way to pass rows inline: the catalog widgets take an opaque dataset reference,
  * so a large result set never enters the conversation transcript.
  */
@@ -25,10 +27,16 @@ import {
   MAX_GRID_COLUMNS,
   MAX_LAYOUT_DEPTH,
   MAX_LAYOUT_NODES,
+  MAX_DETAIL_ITEMS,
   MAX_LIST_ITEMS,
+  MAX_PROGRESS_STEPS,
+  STATUS_TONES,
+  STEP_STATUSES,
   formInputSchema,
   parseFields,
   parseListItems,
+  readStatusCard,
+  statusCardText,
 } from "@clarkcant/contracts";
 import {
   type WidgetDeps,
@@ -41,11 +49,15 @@ import {
   ACTION_ICONS,
   CHOICE,
   CTA,
+  DETAILS,
   FORM,
   INPUT,
   LIST,
   OVERVIEW,
+  PROGRESS,
   SEARCH,
+  STATUS,
+  STATUS_CARD_KIND,
   WIDGETS as CATALOG_WIDGETS,
   primitivePropsProblems,
 } from "@clarkcant/data-canvas";
@@ -84,7 +96,22 @@ export function buildViewCatalog(
   // registered below, with the build that compiles its action. A form and a list are registered below as well, for the
   // same reason. A choice, an input and a search box do nothing on their own — a value set in one would go nowhere — so
   // a model places them as a form's fields and as a layout's search, never alone.
-  const placed = new Set([OVERVIEW.id, CTA.id, ACTION.id, CHOICE.id, INPUT.id, SEARCH.id, FORM.id, LIST.id]);
+  //
+  // The status cards are registered below too: what they show is all in their props, so their text alternative is
+  // written from those props rather than from the definition's generic sentence.
+  const placed = new Set([
+    OVERVIEW.id,
+    CTA.id,
+    ACTION.id,
+    CHOICE.id,
+    INPUT.id,
+    SEARCH.id,
+    FORM.id,
+    LIST.id,
+    STATUS.id,
+    PROGRESS.id,
+    DETAILS.id,
+  ]);
   const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
     id: definition.id,
@@ -129,7 +156,7 @@ export function buildViewCatalog(
   );
 
   if (actions !== undefined) simple.push(actionView(deps, actions), formView(deps, actions));
-  simple.push(listView(deps, actions));
+  simple.push(listView(deps, actions), ...statusCardViews(deps));
   if (compose === undefined) return simple;
 
   const overview = OVERVIEW;
@@ -378,4 +405,39 @@ function listView(deps: WidgetDeps, bindingDeps: (() => ActionBindingDeps) | und
       );
     },
   };
+}
+
+/** What the model is told about each status card's props. */
+const STATUS_CARD_NOTES: Readonly<Record<string, string>> = {
+  [STATUS.id]:
+    `props.label is the status in a few words and props.tone one of ${STATUS_TONES.join(", ")}; optional props.title, ` +
+    `props.detail and props.asOf (a day like 2026-09-30, or an instant with its offset like 2026-09-30T09:00:00+07:00).`,
+  [PROGRESS.id]:
+    `Either props.value and props.max (value 0 to max; optional props.unit), or props.steps: 1-${String(MAX_PROGRESS_STEPS)} of ` +
+    `{"label":"...","status":"${STEP_STATUSES.join('" | "')}","detail"?} with at most one current step. ` +
+    `Optional props.title, props.label (what is progressing) and props.asOf. Only a value you actually know: never a guess.`,
+  [DETAILS.id]:
+    `props.items is 1-${String(MAX_DETAIL_ITEMS)} of {"label":"...","value":"..."}, each label once; optional props.title and props.asOf.`,
+};
+
+/**
+ * The status, progress and details cards.
+ *
+ * Nothing on them acts and nothing on them is read from the node, so the model is told exactly that: the card shows what
+ * it wrote, and says "as of" only when the model gave a time.
+ */
+function statusCardViews(deps: WidgetDeps): ViewDescriptor[] {
+  return [STATUS, PROGRESS, DETAILS].map((definition) => ({
+    id: definition.id,
+    label: definition.semanticDescription,
+    notes: STATUS_CARD_NOTES[definition.id] ?? "",
+    shownText: `Shown: ${definition.id}. It shows what you wrote, not a live reading, and nothing on it acts.`,
+    build: (request) => {
+      const kind = STATUS_CARD_KIND[definition.id] ?? "status";
+      const content = readStatusCard(kind, request.props);
+      const text = content === undefined ? definition.textFallback : statusCardText(content);
+      // The card's own words are its text alternative: a caption would only repeat what the card says, less exactly.
+      return placeSending(deps, undefined, definition, { ...request, caption: "" }, undefined, text);
+    },
+  }));
 }

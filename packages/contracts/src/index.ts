@@ -29,6 +29,7 @@ export * from "./schema-patterns.ts";
 export * from "./widget-props.ts";
 export * from "./composition-layout.ts";
 export * from "./form-fields.ts";
+export * from "./status-cards.ts";
 export * from "./surface-composition.ts";
 export * from "./period.ts";
 export * from "./automation.ts";
