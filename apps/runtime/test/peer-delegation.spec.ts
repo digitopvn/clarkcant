@@ -4,16 +4,17 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Instant, MessageRecord, PeerEnvelope, TaskRecord } from "@clarkcant/contracts";
+import type { Grant, Instant, MessageRecord, PeerEnvelope, TaskRecord } from "@clarkcant/contracts";
 import { createTask, registerCapability, startTaskHere } from "@clarkcant/core";
 import { sendEnvelope } from "@clarkcant/node-link";
 import { CONTROLLED_CODE_TASK } from "@clarkcant/project-work";
-import { allRows, getGrant, getTask, nextOutboundSequence, parseJson, pendingOutbox, revokeGrant } from "@clarkcant/storage";
+import { allRows, getGrant, getPersistentIntent, getTask, nextOutboundSequence, parseJson, pendingOutbox, revokeGrant } from "@clarkcant/storage";
 
 import { createAutomationTools } from "../src/automation-tools.ts";
 import { startAutomationService } from "../src/automation-service.ts";
-import { queueResult } from "../src/delegation.ts";
+import { queueResult, writeGrant } from "../src/delegation.ts";
 import { answerUncertain, settleUndeliveredTasks } from "../src/delegation-handlers.ts";
+import { sweepExpired } from "../src/expiry-notices.ts";
 import { startPeerDelivery } from "../src/peer-signals.ts";
 import { createTaskDispatcher } from "../src/task-dispatch.ts";
 import { taskDispatchReports } from "../src/task-reporting.ts";
@@ -561,7 +562,231 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
     await waitUntil(() => pendingOutbox(c.services.runtime.db).length === 0, "C's grant to be delivered");
     expect(getGrant(b.services.runtime.db, grantId)).toMatchObject({ senderNodeId: identityOf(a).nodeId });
   });
+
+  it("tells the sender while its task waits for the other node's owner, and settles it on their decision", async () => {
+    const { a, b, onA, onB } = await desks();
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read"],
+    });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+
+    // Refused by B's owner: A hears it waited, then that it ended without running.
+    await signal(a, "note-1");
+    await waitUntil(() => tasksOn(b)[0]?.state === "waiting_approval", "the task on B to wait for its owner");
+    const [first] = tasksOn(a);
+    const firstId = String(first?.taskId);
+    await waitUntil(() => said(a, onA).some((text) => text.includes(`Task ${firstId} trên ${identityOf(b).nodeId} đang chờ chủ của`)), "A to hear it waits");
+    // A's own task is not offered to A's owner as a decision: it still runs, on B.
+    expect(getTask(a.services.runtime.db, firstId)?.state).toBe("running");
+    const notices = allRows<{ title: string; body: string; subject: string | null }>(
+      a.services.runtime.db,
+      "SELECT title, body, subject FROM notifications WHERE title = 'Việc đang chờ chủ máy kia duyệt'",
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.body).toContain("Chỉ họ quyết định được");
+    expect(notices[0]?.subject).toContain(firstId);
+    expect(allRows(a.services.runtime.db, "SELECT approval_id FROM approvals")).toEqual([]);
+
+    await decide(b, firstId, "denied");
+    await waitUntil(() => getTask(a.services.runtime.db, firstId)?.state === "failed", "A's task to end on the refusal");
+    expect(said(a, onA).find((text) => text.startsWith(`Không xong (task ${firstId})`))).toContain(
+      `${identityOf(b).nodeId} không chạy việc này: chủ của node này đã từ chối`,
+    );
+
+    // Allowed by B's owner: A hears it goes on, and it finishes there.
+    await signal(a, "note-2");
+    await waitUntil(() => tasksOn(b)[1]?.state === "waiting_approval", "the second task on B to wait");
+    const secondId = String(tasksOn(a)[1]?.taskId);
+    await decide(b, secondId, "granted");
+    await waitUntil(() => said(a, onA).some((text) => text === `Chủ của ${identityOf(b).nodeId} đã duyệt; task ${secondId} tiếp tục chạy trên ${identityOf(b).nodeId}.`), "A to hear it goes on");
+    await waitUntil(() => getTask(a.services.runtime.db, secondId)?.state === "succeeded", "A's second task to finish");
+    expect(readFileSync(join(b.root, "notes.md"), "utf8")).toBe("viết từ máy bàn\n");
+  });
+
+  it("settles the sender's task when the other node's owner lets the approval expire", async () => {
+    const { a, b, onA, onB } = await desks();
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read"],
+    });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+    await signal(a, "note-1");
+    await waitUntil(() => tasksOn(b)[0]?.state === "waiting_approval", "the task on B to wait for its owner");
+    const taskId = String(tasksOn(a)[0]?.taskId);
+
+    // Nobody on B decides before the approval's deadline, and B's sweep ends the task there.
+    const past = new Date(Date.now() - 1000).toISOString();
+    b.services.runtime.db.prepare("UPDATE approvals SET expires_at = ? WHERE task_id = ?").run(past, taskId);
+    sweepExpired(b.services, new Date().toISOString() as Instant);
+
+    await waitUntil(() => getTask(a.services.runtime.db, taskId)?.state === "failed", "A's task to end on the expiry");
+    expect(said(a, onA).find((text) => text.startsWith(`Không xong (task ${taskId})`))).toContain("yêu cầu duyệt đã hết hạn");
+    // Swept again, nothing more is sent.
+    sweepExpired(b.services, new Date().toISOString() as Instant);
+    const results = allRows<{ document: string }>(b.services.runtime.db, "SELECT document FROM outbox").filter(
+      (row) => (JSON.parse(row.document) as PeerEnvelope).kind === "result",
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it("withdraws an automation's own grant on both nodes when it is paused or removed, and writes a new one to resume", async () => {
+    const { a, b, onA, onB } = await desks();
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+    const intentId = onlyIntentId(a);
+    const first = actionGrantId(a, intentId);
+    expect(getGrant(b.services.runtime.db, first)?.revokedAt).toBeUndefined();
+
+    expect(await tools(a, onA)("update_automation", { intentId, change: "pause" })).toContain("Changed.");
+    await waitUntil(() => getGrant(b.services.runtime.db, first)?.revokedAt !== undefined, "B to hold the grant withdrawn");
+    expect(getGrant(a.services.runtime.db, first)?.revokedAt).toBeDefined();
+
+    expect(await tools(a, onA)("update_automation", { intentId, change: "resume" })).toContain("Changed.");
+    const second = actionGrantId(a, intentId);
+    expect(second).not.toBe(first);
+    await waitUntil(() => getGrant(b.services.runtime.db, second) !== undefined, "the new grant to reach B");
+    // A withdrawn grant stays withdrawn; the automation runs under its new one.
+    expect(getGrant(b.services.runtime.db, first)?.revokedAt).toBeDefined();
+    await signal(a, "note-1");
+    await waitUntil(() => tasksOn(a)[0]?.state === "succeeded", "the resumed automation to run on B");
+    expect(tasksOn(b)[0]?.origin).toMatchObject({ kind: "delegated", delegationId: second });
+
+    expect(await tools(a, onA)("update_automation", { intentId, change: "remove" })).toContain("Removed");
+    await waitUntil(() => getGrant(b.services.runtime.db, second)?.revokedAt !== undefined, "B to hold the second grant withdrawn");
+  });
+
+  it("runs an automation only under its own grant, not another that covers the same folders", async () => {
+    const { a, b, onA, onB } = await desks();
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+    const intentId = onlyIntentId(a);
+    // Another automation to the same node and folder, with a grant of its own.
+    expect(
+      await tools(a, onA)("create_automation", {
+        summary: "Ghi chú khác",
+        topic: "local.note.other",
+        action: "task",
+        goal: "Write notes.md with another note.",
+        folders: [{ path: b.root, access: "write" }],
+        allowedEffects: ["read", "local-write"],
+        executor: identityOf(b).nodeId,
+      }),
+    ).toContain("Set up.");
+    await waitUntil(() => pendingOutbox(a.services.runtime.db).length === 0, "the second grant to reach B");
+
+    revokeGrant(a.services.runtime.db, actionGrantId(a, intentId), new Date().toISOString() as Instant);
+    await signal(a, "note-1");
+
+    await waitUntil(() => said(a, onA).some((text) => text.includes("không chạy cho")), "A to refuse the run");
+    expect(said(a, onA).find((text) => text.includes("không chạy cho"))).toContain(`no live grant lets ${identityOf(b).nodeId} run it any more`);
+    expect(tasksOn(b)).toEqual([]);
+  });
+
+  it("holds a run on the other node to the sender's time limit and run count", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop", { stoppable: true });
+    await pair(a, b);
+    const onA = await conversation(a, "Ghi chú");
+    const onB = await conversation(b, "Máy bàn");
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    expect(
+      await tools(a, onA)("create_automation", {
+        summary: "Ghi chú",
+        topic: "local.note.requested",
+        action: "task",
+        goal: "Write notes.md.",
+        folders: [{ path: a.root, access: "write" }],
+        maxMinutesPerRun: 5,
+      }),
+    ).toContain("maxMinutesPerRun is for a task another node runs");
+    expect(
+      await tools(a, onA)("create_automation", {
+        summary: "Ghi chú trên laptop",
+        topic: "local.note.requested",
+        action: "task",
+        goal: "Write notes.md with today's note.",
+        folders: [{ path: b.root, access: "write" }],
+        allowedEffects: ["read", "local-write"],
+        executor: identityOf(b).nodeId,
+        maxMinutesPerRun: 5,
+      }),
+    ).toContain("Set up.");
+    const grantId = actionGrantId(a, onlyIntentId(a));
+    await waitUntil(() => getGrant(b.services.runtime.db, grantId) !== undefined, "the grant to reach B");
+    expect(getGrant(b.services.runtime.db, grantId)?.budget).toEqual({ maxWallClockMs: 300_000 });
+
+    // A's owner narrows the same grant to half a second and one run; B holds the narrower one.
+    const grant = getGrant(a.services.runtime.db, grantId);
+    const identity = identityOf(a);
+    expect(
+      writeGrant(
+        { db: a.services.runtime.db, identity, now: () => new Date().toISOString() as Instant, newId: a.services.conductor.newId },
+        { ...(grant as Grant), budget: { maxWallClockMs: 500, maxRuns: 1 } },
+      ),
+    ).toEqual({ ok: true });
+    a.services.peerDelivery?.kick();
+    await waitUntil(() => getGrant(b.services.runtime.db, grantId)?.budget?.maxRuns === 1, "B to hold the narrower grant");
+
+    await signal(a, "note-1");
+    const taskId = await (async () => {
+      await waitUntil(() => tasksOn(a).length === 1, "the first task");
+      return String(tasksOn(a)[0]?.taskId);
+    })();
+    await waitUntil(() => getTask(a.services.runtime.db, taskId)?.state === "failed", "the run to be stopped by the limit");
+    expect(tasksOn(b)[0]?.budget).toEqual({ maxWallClockMs: 500, maxDelegationDepth: 0 });
+    expect(said(a, onA).find((text) => text.startsWith(`Không xong (task ${taskId})`))).toContain("wall-clock budget of 500 ms");
+    expect(workers[0]?.exitCode !== null || workers[0]?.signalCode !== null).toBe(true);
+
+    await signal(a, "note-2");
+    await waitUntil(() => tasksOn(a)[1]?.state === "failed", "the second run to be refused");
+    expect(said(a, onA).find((text) => text.startsWith(`Không xong (task ${String(tasksOn(a)[1]?.taskId)})`))).toContain(
+      "allows 1 run(s), and they are used up",
+    );
+    expect(tasksOn(b)).toHaveLength(1);
+  });
 });
+
+/** B's owner decides the approval B's task waits on, the way the approval card does. */
+async function decide(node: LiveNode, taskId: string, decision: "granted" | "denied"): Promise<void> {
+  const [approval] = allRows<{ approval_id: string; operation_digest: string }>(
+    node.services.runtime.db,
+    "SELECT approval_id, operation_digest FROM approvals WHERE task_id = ? AND decision = 'pending'",
+    taskId,
+  );
+  if (approval === undefined) throw new Error(`no pending approval for ${taskId}`);
+  const decided = await call(node, `/tasks/${taskId}/approvals/${approval.approval_id}/decide`, {
+    body: { decision, digest: approval.operation_digest },
+    token: node.token,
+  });
+  expect(decided.status).toBe(200);
+}
+
+function onlyIntentId(node: LiveNode): string {
+  const rows = allRows<{ intent_id: string }>(node.services.runtime.db, "SELECT intent_id FROM persistent_intents ORDER BY created_at");
+  if (rows[0] === undefined) throw new Error("no automation");
+  return rows[0].intent_id;
+}
+
+function actionGrantId(node: LiveNode, intentId: string): string {
+  const intent = getPersistentIntent(node.services.runtime.db, intentId);
+  if (intent?.do.kind !== "task" || intent.do.grantId === undefined) throw new Error("no grant recorded on the automation");
+  return intent.do.grantId;
+}
 
 function getGrantIdFor(from: LiveNode, to: LiveNode): string {
   const [row] = allRows<{ grant_id: string }>(

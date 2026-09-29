@@ -1,6 +1,6 @@
 import type { Instant } from "@clarkcant/contracts";
 
-import { reportDelegatedOutcome } from "./delegation.ts";
+import { reportDelegatedOutcome, reportDelegatedStatus } from "./delegation.ts";
 import { tryRecordNodeNotice, workerSettledNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
@@ -51,12 +51,18 @@ export function taskDispatchReports(
     // this run's eventual real outcome, and a notice recorded here would suppress it once the approval is
     // decided and the run actually settles. The inbox already surfaces the pending approval itself as a
     // waiting item, derived live, so no separate notice is needed for the park to be visible.
-    onWaitingApproval: ({ taskId, conversationId, message }) => {
+    onWaitingApproval: ({ taskId, conversationId, message, effect }) => {
+      const at = new Date().toISOString() as Instant;
       appendHostReply(services, {
         conversationId,
         text: `Đang chờ bạn duyệt (task ${taskId}): ${message}`,
-        at: new Date().toISOString() as Instant,
+        at,
       });
+      // A task a peer handed over: its owner hears it waits here, and that only this node's owner decides.
+      const { runtime, conductor } = services;
+      if (reportDelegatedStatus({ db: runtime.db, identity: runtime.identity, now: () => at, newId: conductor.newId }, { taskId, state: "waiting_approval", message: effect })) {
+        services.peerDelivery?.kick();
+      }
     },
   };
 }

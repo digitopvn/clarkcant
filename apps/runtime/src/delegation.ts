@@ -37,8 +37,10 @@ import {
   getGrant,
   getPeer,
   getTask,
+  countDelegatedTasks,
   livePeerAllowance,
   nextOutboundSequence,
+  revokeGrant,
   transaction,
   upsertGrant,
 } from "@clarkcant/storage";
@@ -106,6 +108,8 @@ export function taskGrant(input: {
   resources: readonly TaskResource[];
   allowedCategories: readonly EffectCategory[];
   expiresAt: Instant;
+  /** How long one run may take on the receiver, at most; absent leaves it to the receiver's own limits. */
+  maxWallClockMs?: number;
 }): { ok: true; grant: Grant } | { ok: false; message: string } {
   const parsed = grantSchema.safeParse({
     grantId: input.grantId,
@@ -116,6 +120,7 @@ export function taskGrant(input: {
     resources: input.resources.map((resource) => grantResource(input.receiverNodeId, resource)),
     allowedDataClasses: ["public", "internal"],
     expiresAt: input.expiresAt,
+    ...(input.maxWallClockMs === undefined ? {} : { budget: { maxWallClockMs: input.maxWallClockMs } }),
     maxDelegationDepth: 0,
     allowedEffectCategories: [...input.allowedCategories],
   });
@@ -169,7 +174,13 @@ export function writeGrant(deps: DelegationDeps, grant: Grant): WriteGrantResult
   return { ok: true };
 }
 
-/** A live grant this node's owner wrote that covers everything this task names on the executor, or nothing. */
+/**
+ * The live grant a run of this task automation goes under, or nothing.
+ *
+ * The one written for it when it was set up, while it is live and still covers everything the task names on the
+ * executor: withdrawing that grant stops its runs, whatever other grants to the same node there are. An automation set
+ * up before its grant was recorded goes under any live grant this node's owner wrote that covers it.
+ */
 export function grantCovering(
   deps: Pick<DelegationDeps, "db" | "identity">,
   executor: string,
@@ -177,21 +188,55 @@ export function grantCovering(
   at: Instant,
 ): Grant | undefined {
   const capabilityRef = automationCapabilityFor(action);
-  return activeGrants(deps.db, deps.identity.nodeId, at).find(
-    (grant) =>
-      grant.receiverNodeId === executor &&
-      grant.ownerPrincipalId === deps.identity.ownerPrincipalId &&
-      action.resources.every(
-        (resource) =>
-          checkGrant(grant, {
-            capabilityRef,
-            at,
-            resource: grantResource(executor, resource),
-            dataClass: "internal",
-            delegationDepth: 0,
-          }).allowed,
-      ),
-  );
+  const covers = (grant: Grant): boolean =>
+    grant.receiverNodeId === executor &&
+    grant.senderNodeId === deps.identity.nodeId &&
+    grant.ownerPrincipalId === deps.identity.ownerPrincipalId &&
+    action.resources.every(
+      (resource) =>
+        checkGrant(grant, {
+          capabilityRef,
+          at,
+          resource: grantResource(executor, resource),
+          dataClass: "internal",
+          delegationDepth: 0,
+        }).allowed,
+    );
+  if (action.grantId !== undefined) {
+    const own = getGrant(deps.db, action.grantId);
+    return own !== undefined && covers(own) ? own : undefined;
+  }
+  return activeGrants(deps.db, deps.identity.nodeId, at).find(covers);
+}
+
+/**
+ * Withdraw a grant this node's owner wrote, here and on the peer it names.
+ *
+ * Both in one write, so a grant is never withdrawn here and left live there: the outbox carries the revocation however
+ * long the peer is away, and the peer refuses any later hand-over under it. Answers whether anything was withdrawn; a
+ * grant already withdrawn, or not this node's, is left as it is.
+ */
+export function withdrawGrant(deps: DelegationDeps, grantId: string, reason: string): boolean {
+  const grant = getGrant(deps.db, grantId);
+  if (grant === undefined || grant.senderNodeId !== deps.identity.nodeId || grant.revokedAt !== undefined) return false;
+  const at = deps.now();
+  return transaction(deps.db, () => {
+    if (!revokeGrant(deps.db, grantId, at)) return false;
+    sendEnvelope(deps, {
+      protocol: "agent.nodelink",
+      version: 1,
+      messageId: deps.newId("msg"),
+      correlationId: grantId,
+      senderNodeId: deps.identity.nodeId,
+      recipientNodeId: grant.receiverNodeId,
+      kind: "revoke",
+      delegationId: grantId,
+      sourceSequence: nextOutboundSequence(deps.db, grant.receiverNodeId),
+      sentAt: at,
+      payload: { grantId, reason: reason.slice(0, 300) },
+    });
+    return true;
+  });
 }
 
 /** What started the task, in the fields a program set; a timer is nothing to tell. */
@@ -371,19 +416,122 @@ export function queueResult(
   });
 }
 
-/** Answer the peer that handed a task over, once it settled here. Nothing for a task no peer handed over. */
+/**
+ * Answer the peer that handed a task over, once it settled here. Nothing for a task no peer handed over.
+ *
+ * `ran` is false for a task that ended before its worker did anything, such as one whose approval was refused here.
+ */
 export function reportDelegatedOutcome(
   deps: DelegationDeps,
-  input: { taskId: string; outcome: DelegationResult["outcome"]; message: string },
+  input: { taskId: string; outcome: DelegationResult["outcome"]; message: string; ran?: boolean },
 ): boolean {
   const task = getTask(deps.db, input.taskId);
   if (task?.origin?.kind !== "delegated") return false;
   queueResult(deps, task.origin.peerNodeId, task.taskId, {
     outcome: input.outcome,
     message: input.message.slice(0, 1000) || input.outcome,
-    ran: true,
+    ran: input.ran ?? true,
   });
   return true;
+}
+
+/** The states a peer is told about while a task it handed over is still open here. */
+export type DelegatedStatus = "waiting_approval" | "running";
+
+/**
+ * Tell the peer that handed a task over that it now waits for this node's owner, or goes on after they allowed it.
+ *
+ * Only a fact about this node: the peer's owner hears it, and can stop the task, but the decision stays with this node's
+ * owner. Nothing for a task no peer handed over.
+ */
+export function reportDelegatedStatus(
+  deps: DelegationDeps,
+  input: { taskId: string; state: DelegatedStatus; message: string },
+): boolean {
+  const task = getTask(deps.db, input.taskId);
+  if (task?.origin?.kind !== "delegated") return false;
+  sendEnvelope(deps, {
+    protocol: "agent.nodelink",
+    version: 1,
+    messageId: deps.newId("msg"),
+    correlationId: task.taskId,
+    senderNodeId: deps.identity.nodeId,
+    recipientNodeId: task.origin.peerNodeId,
+    kind: "status",
+    taskId: task.taskId,
+    sourceSequence: nextOutboundSequence(deps.db, task.origin.peerNodeId),
+    sentAt: deps.now(),
+    payload: { taskState: input.state, taskRevision: task.revision, message: input.message.slice(0, 500) },
+  });
+  return true;
+}
+
+export interface StatusReceiveDeps {
+  db: Database;
+  nodeId: string;
+  /** Tell this node's owner, in the task's conversation and the inbox. `about` makes the same news one notice. */
+  tell: (input: { taskId: string; conversationId: string; text: string; about: string; waiting: boolean }) => void;
+}
+
+/**
+ * A peer's word on a task this node handed it, while that task is still open.
+ *
+ * Only the peer the task was handed to, and only for a task still open here. The task here stays as it is: waiting on
+ * the peer's owner is not something this node's owner can decide, so it is told, never offered as a decision.
+ */
+export function receiveStatus(
+  deps: StatusReceiveDeps,
+  envelope: PeerEnvelope,
+): { accepted: true; told: boolean } | { accepted: false; reason: string } {
+  const task = envelope.taskId === undefined ? undefined : getTask(deps.db, envelope.taskId);
+  if (task === undefined || task.homeNodeId !== deps.nodeId || task.executionNodeId !== envelope.senderNodeId) {
+    return { accepted: false, reason: "this node handed that peer no such task" };
+  }
+  if (isTerminal(task.state)) return { accepted: true, told: false };
+  const state = envelope.payload["taskState"];
+  const revision = envelope.payload["taskRevision"];
+  const peer = envelope.senderNodeId;
+  const about = `${task.taskId}:${String(state)}:${typeof revision === "number" ? String(revision) : "?"}`;
+  if (state === "waiting_approval") {
+    const why = typeof envelope.payload["message"] === "string" ? quotedPeerText(envelope.payload["message"]) : "";
+    deps.tell({
+      taskId: task.taskId,
+      conversationId: task.conversationId,
+      text:
+        `Task ${task.taskId} trên ${peer} đang chờ chủ của ${peer} duyệt${why === "" ? "" : `: ${why}`}. ` +
+        `Chỉ họ quyết định được; nếu họ duyệt, việc tiếp tục ở đó. Bạn vẫn có thể dừng nó từ đây.`,
+      about,
+      waiting: true,
+    });
+    return { accepted: true, told: true };
+  }
+  if (state === "running") {
+    deps.tell({
+      taskId: task.taskId,
+      conversationId: task.conversationId,
+      text: `Chủ của ${peer} đã duyệt; task ${task.taskId} tiếp tục chạy trên ${peer}.`,
+      about,
+      waiting: false,
+    });
+    return { accepted: true, told: true };
+  }
+  return { accepted: true, told: false };
+}
+
+/**
+ * The peer that wrote a grant to this node withdraws it. Only that peer, and only its own grant: the grant stays
+ * withdrawn, and a later hand-over under it is answered with why it does not run.
+ */
+export function receiveRevoke(
+  deps: Pick<DelegationDeps, "db" | "now">,
+  envelope: PeerEnvelope,
+): { accepted: true; revoked: boolean } | { accepted: false; reason: string } {
+  const grantId = envelope.payload["grantId"];
+  const grant = typeof grantId === "string" ? getGrant(deps.db, grantId) : undefined;
+  if (grant === undefined || grant.senderNodeId !== envelope.senderNodeId) {
+    return { accepted: false, reason: "that peer gave this node no such grant" };
+  }
+  return { accepted: true, revoked: revokeGrant(deps.db, grant.grantId, deps.now()) };
 }
 
 export interface DelegateReceiveDeps extends DelegationDeps {
@@ -457,6 +605,11 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
   }
 
   const effective = intersectGrants(grant, { ...allowance.grant, grantId: grant.grantId });
+  // The runs either owner allowed under this grant, counted by the tasks it already made here.
+  const maxRuns = effective.budget?.maxRuns;
+  if (maxRuns !== undefined && countDelegatedTasks(deps.db, grant.grantId) >= maxRuns) {
+    return refuse(deps, peer, taskId, `the grant this hand-over names allows ${String(maxRuns)} run(s), and they are used up`);
+  }
   const resources = localResources(brief.resources, effective);
   if (!resources.ok) return refuse(deps, peer, taskId, resources.reason);
   const capabilityRef = automationCapabilityFor({ kind: "task", goal: brief.goal, resources: resources.resources, allowedCategories: [] });
@@ -503,6 +656,16 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
     principal,
     origin: { kind: "delegated", principalId: grant.ownerPrincipalId, peerNodeId: peer, delegationId: grant.grantId, allowedCategories },
     resources: resources.resources,
+    // The time and tokens either owner gave one run; the worker is stopped when either runs out, as for any task here.
+    ...(effective.budget?.maxWallClockMs === undefined && effective.budget?.maxTokens === undefined
+      ? {}
+      : {
+          budget: {
+            ...(effective.budget.maxWallClockMs === undefined ? {} : { maxWallClockMs: effective.budget.maxWallClockMs }),
+            ...(effective.budget.maxTokens === undefined ? {} : { maxTokens: effective.budget.maxTokens }),
+            maxDelegationDepth: 0,
+          },
+        }),
   });
   const started = startTaskHere(coordination, taskId, capabilityRef);
   if (!started.ok) return refuse(deps, peer, taskId, started.reason);

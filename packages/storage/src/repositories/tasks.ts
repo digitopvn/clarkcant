@@ -121,6 +121,16 @@ export function getTask(db: Database, taskId: string): TaskRecord | undefined {
   };
 }
 
+/** How many tasks a peer has handed this node under one grant, which is what a grant's run budget counts. */
+export function countDelegatedTasks(db: Database, delegationId: string): number {
+  const row = oneRow<{ count: number }>(
+    db,
+    "SELECT COUNT(*) AS count FROM tasks WHERE json_extract(origin, '$.kind') = 'delegated' AND json_extract(origin, '$.delegationId') = ?",
+    delegationId,
+  );
+  return Number(row?.count ?? 0);
+}
+
 export function listActiveTasks(db: Database, conversationId: string): TaskRecord[] {
   const rows = allRows<{ task_id: string }>(
     db,

@@ -105,6 +105,8 @@ export interface TaskDispatcherDeps {
     conversationId: string;
     approvalId: string;
     message: string;
+    /** Only the effect waiting for a decision, without what the owner is told about deciding it. */
+    effect: string;
   }) => void;
   at?: () => Instant;
   /** Injected so a test can substitute a fake worker without spawning a real process. */
@@ -502,6 +504,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             conversationId: task.conversationId,
             approvalId: approval.approvalId,
             message: parkedReason,
+            effect: effectDescription,
           });
           return;
         }
