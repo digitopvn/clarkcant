@@ -309,6 +309,10 @@ export const MESSAGES_TIMELINE_VI = {
 
   // WidgetFrame.tsx
   "widgets.frame.opening": "Đang mở widget…",
+  "widgets.frame.reloadFailed":
+    "Không tải lại được widget này: liên kết truy cập đã hết hạn và liên kết mới cũng không dùng được. Những gì widget đã lưu vẫn được giữ trên node này. Hãy thử lại, hoặc đóng rồi mở lại widget.",
+  "widgets.frame.reloadFailedReason": "Lý do: {reason}",
+  "widgets.frame.retry": "Thử lại",
 
   // mini-app-surface.tsx
   "widgets.surface.regionMissing": "Chưa có dữ liệu cho vùng này.",
@@ -822,6 +826,10 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.toolLists.agentToolsEmpty": "The agent reports no native tools.",
 
   "widgets.frame.opening": "Opening widget…",
+  "widgets.frame.reloadFailed":
+    "This widget could not load again: its access link had expired, and a fresh one did not work. What it saved is kept on this node. Try again, or close and reopen the widget.",
+  "widgets.frame.reloadFailedReason": "Reason: {reason}",
+  "widgets.frame.retry": "Try again",
 
   "widgets.surface.regionMissing": "No data for this region yet.",
   "widgets.surface.regionDenied": "You do not have permission to view this region.",

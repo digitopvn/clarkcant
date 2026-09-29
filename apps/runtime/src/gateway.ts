@@ -13,6 +13,7 @@ import { handlePairingRoutes, handlePeerUplinkRoutes } from "./routes/peers.ts";
 import { handlePublicRoutes } from "./routes/public.ts";
 import { handleNodeRoutes } from "./routes/node.ts";
 import { handleVoiceRoutes } from "./routes/voice.ts";
+import { handleFrameGrantFixtureRoutes } from "./routes/frame-grant-fixture.ts";
 import { handleControlRoutes } from "./routes/control.ts";
 import { handleTerminalRoutes } from "./routes/terminals.ts";
 import { handleCredentialRoutes } from "./routes/credentials.ts";
@@ -225,6 +226,9 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   const voiceResponse = handleVoiceRoutes({ services, request, segments, env: process.env });
   if (voiceResponse !== undefined) return voiceResponse;
+
+  const frameGrantFixtureResponse = handleFrameGrantFixtureRoutes({ services, request, segments });
+  if (frameGrantFixtureResponse !== undefined) return frameGrantFixtureResponse;
 
   const controlResponse = await handleControlRoutes({ services, request, segments, at });
   if (controlResponse !== undefined) return controlResponse;

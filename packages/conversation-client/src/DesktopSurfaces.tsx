@@ -21,7 +21,7 @@ import { useT } from "./i18n/locale-context.tsx";
 import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
 import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent } from "./mini-app-surface.tsx";
-import { WidgetFrame } from "./WidgetFrame.tsx";
+import { type FrameSource, WidgetFrame } from "./WidgetFrame.tsx";
 import { useImageUrls } from "./use-image-urls.ts";
 
 export interface MenuBarPopoverProps {
@@ -160,6 +160,10 @@ const SERVICE_AVAILABILITY_MS = 5_000;
  *
  * The URL carries a grant minted per read, so it differs every time; handing the new one to the frame would reload a
  * running widget — and lose its view state — merely because availability was re-read.
+ *
+ * The kept URL keeps its own expiry: the two describe one grant, and pairing the old URL with the new read's expiry
+ * would call a lapsed grant fresh. A frame that has to load its document again after that expiry asks for a fresh URL
+ * itself (`WidgetFrame`'s `renewUrl`).
  */
 export function keepMountedFrame(
   previous: LiveWidgetResponse | IsolatedFrameLiveResponse | undefined,
@@ -168,7 +172,16 @@ export function keepMountedFrame(
   if (previous?.kind !== "isolated-frame" || next.kind !== "isolated-frame") return next;
   if (previous.frame === null || next.frame === null) return next;
   if (previous.frame.document === undefined || previous.frame.document !== next.frame.document) return next;
-  return { ...next, frame: { ...next.frame, url: previous.frame.url } };
+  const { urlExpiresInMs: _nextIn, urlExpiresAt: _nextAt, ...rest } = next.frame;
+  return {
+    ...next,
+    frame: {
+      ...rest,
+      url: previous.frame.url,
+      ...(previous.frame.urlExpiresInMs === undefined ? {} : { urlExpiresInMs: previous.frame.urlExpiresInMs }),
+      ...(previous.frame.urlExpiresAt === undefined ? {} : { urlExpiresAt: previous.frame.urlExpiresAt }),
+    },
+  };
 }
 
 /**
@@ -279,6 +292,20 @@ export function PinnedLiveSurface({
       setNotice(cause instanceof Error ? cause.message : String(cause));
       setOwnership("error");
     }
+  }, [client, conversationId, instanceId]);
+
+  /*
+   * A fresh URL for the mounted frame, when it has to load its document after the old URL's grant lapsed.
+   *
+   * The answer also refreshes the surface, through the same merge as any re-read — so a document that changed in the
+   * meantime is mounted as the new document it is. A failure is the frame's to show, next to it: the surface itself is
+   * still the owner and still readable.
+   */
+  const renewFrameUrl = useCallback(async (): Promise<FrameSource> => {
+    const fresh = await client.liveWidget(conversationId, instanceId);
+    setLive((previous) => keepMountedFrame(previous, fresh));
+    if (fresh.kind !== "isolated-frame" || fresh.frame === null) throw new Error("");
+    return { url: client.nodeUrl(fresh.frame.url), urlExpiresAt: fresh.frame.urlExpiresAt };
   }, [client, conversationId, instanceId]);
 
   // Skipped on the first render on purpose: the claim effect already reads the surface, and a second read of the
@@ -598,6 +625,8 @@ export function PinnedLiveSurface({
         <WidgetFrame
           instanceId={live.instanceId}
           url={client.nodeUrl(frame.url)}
+          urlExpiresAt={frame.urlExpiresAt}
+          renewUrl={renewFrameUrl}
           title={title ?? instanceId}
           props={live.props}
           state={live.state}

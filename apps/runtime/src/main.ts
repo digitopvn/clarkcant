@@ -231,6 +231,16 @@ async function main(): Promise<void> {
    * command is journaled and the first shell already has the node's keys withheld.
    */
   const work = attachNodeWork({ services, env: process.env, envLoaded: envFile.loaded });
+
+  /*
+   * The frame-grant lifetime a browser journey can shorten, only when its gate is on. Absent, the node mints every grant
+   * with the production lifetime and has no route that could change it.
+   */
+  if (fixtureGates.frameGrant) {
+    const frameGrant = fixtures?.createFrameGrantFixture();
+    if (frameGrant !== undefined) services.frameGrantFixture = frameGrant;
+    process.stderr.write("frame grants: fixture lifetime seam loaded (CC_FRAME_GRANT_FIXTURE=1)\n");
+  }
   // An expired lease is released on a timer, so a resource nobody contends for does not read as held forever.
   const leaseSweeper = startLeaseSweeper({
     db: services.runtime.db,

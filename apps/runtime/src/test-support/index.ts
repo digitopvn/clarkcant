@@ -22,5 +22,6 @@ export {
   type FixtureModelDeps,
   type FixtureModelWiring,
 } from "./fixture-model.ts";
+export { createFrameGrantFixture } from "./fixture-frame-grant.ts";
 export { fixtureProjectSessions } from "./fixture-session.ts";
 export { createVoiceFixture, type VoiceFixture } from "./fixture-voice.ts";
