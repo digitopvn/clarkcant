@@ -45,6 +45,15 @@ export function markOutboxAcknowledged(db: Database, messageId: string, at: Inst
   db.prepare("UPDATE outbox SET acknowledged_at = ? WHERE message_id = ?").run(at, messageId);
 }
 
+/**
+ * Record why a peer that acknowledged a message did not act on it: the message was delivered and stays acknowledged,
+ * so nothing retries it, but the row says it was turned down. Only an acknowledged row is touched, so this can never make
+ * a message that is still owed look failed to `peerDeliveryState`.
+ */
+export function markOutboxTurnedDown(db: Database, messageId: string, reason: string): void {
+  db.prepare("UPDATE outbox SET last_error = ? WHERE message_id = ? AND acknowledged_at IS NOT NULL").run(reason.slice(0, 500), messageId);
+}
+
 export type OutboxFailureOutcome =
   | { status: "scheduled"; nextAttemptAt: Instant }
   | { status: "dead-lettered" };

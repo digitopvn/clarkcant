@@ -374,7 +374,9 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     The receiver records it only when its own owner decided to work with the sender (a live grant the receiver wrote
     to that peer, or a live `allow_peer_tasks` allowance), at most 30 a minute per peer, as `sourceKind` `peer` with
     `originNodeId` and subject `peer`, under `peer:<senderNodeId>:<key>`, so a replay lands once; a refusal is answered
-    with its reason and is final. `recordNotification` keeps at most 20 undismissed notices per origin node, apart from
+    with a code and its reason and is final. The sender's `deliverPending` reads each answer within a 30-second deadline
+    and 16 KiB, records a refused notice on its outbox row and reports it (`turnedDown`), and `tellNoticeTurnedDown`
+    puts one notice per peer and reason in the sender's inbox. `recordNotification` keeps at most 20 undismissed notices per origin node, apart from
     the local cap. The sender learns a peer's `features` and `label` (storage migration 34) from pairing offers and from
     each `200` of `POST /peers/messages` (`recordPeerAdvertisement`). The sender's
     `delegation-status:<taskId>:…` waiting notice is dismissed when the task stops waiting (a `running` status, an
@@ -383,10 +385,12 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
   - **A peer that cannot be reached** (`apps/runtime/src/peer-outage.ts`). `watchPeerOutages` runs after each delivery
     pass and reads the outbox's retry state (`peerDeliveryState`). Once delivery to a confirmed peer has been failing
     for 10 minutes of time this process watched (counted from the later of the failure, the process start and the last
-    wake the delivery timer noticed), it records one notice per outage, worded for what is wrong: `unreachable` (no
-    answer), `refused` (a `4xx`), or `given-up` (everything owed was dead-lettered), keyed
-    `peer-offline:<peerNodeId>:<lastAck|never>:<situation>`. It names the peer by its label, falling back to the node
-    id, and is dismissed when the peer acknowledges again or is revoked. One peer failing to reconcile does not stop the
+    wake the delivery timer noticed, and then said as "at least since"), it records a notice worded for what is wrong:
+    `unreachable` (no answer), `refused` (a `4xx`), `erroring` (a `5xx`), or `given-up` (everything owed was
+    dead-lettered), keyed `peer-offline:<peerNodeId>:<lastAck|never>:<step>:<situation>`. Each change of situation in
+    one outage takes the next step and replaces the notice showing, so one outage has one notice showing and a situation
+    that returns is said again. It names the peer by its label, falling back to the node id, shows times with the node's
+    zone, and is dismissed when the peer acknowledges again or is revoked. One peer failing to reconcile does not stop the
     others.
   - **Expired approvals/questions.** An approval or question that expires without a decision drops out of the
     pending list silently — right for the list, but someone who was not looking at that moment would never find

@@ -9,10 +9,12 @@ import {
   dismissNotificationsByKeyPrefix,
   enqueueOutbox,
   getPeer,
+  latestNotificationKeyWithPrefix,
   listNotifications,
   markOutboxAcknowledged,
   markOutboxAttempt,
   markOutboxFailed,
+  markOutboxTurnedDown,
   migrate,
   openDatabase,
   peerDeliveryState,
@@ -252,6 +254,39 @@ describe("dismissing a family of notices by the start of their key", () => {
       )
       .all(at(1), at(1), "owner_1", "a:", "a;", null, null) as { detail: string }[];
     expect(plan.map((row) => row.detail).join(" ")).toMatch(/idx_notifications_dedup \(principal_id=\? AND dedup_key>\? AND dedup_key<\?\)/);
+  });
+
+  it("finds the newest key of a family, dismissed or not, for that principal only", () => {
+    const db = freshDb();
+    expect(latestNotificationKeyWithPrefix(db, { principalId: "owner_1", dedupKeyPrefix: "peer-offline:node_b:never:" })).toBeUndefined();
+    notice(db, "peer-offline:node_b:never:0:unreachable");
+    notice(db, "peer-offline:node_b:never:1:given-up");
+    notice(db, "peer-offline:node_bc:never:5:refused");
+    notice(db, "peer-offline:node_b:never:7:refused", "owner_2");
+    dismissNotificationsByKeyPrefix(db, { principalId: "owner_1", dedupKeyPrefix: "peer-offline:node_b:", at: at(1) });
+    expect(latestNotificationKeyWithPrefix(db, { principalId: "owner_1", dedupKeyPrefix: "peer-offline:node_b:never:" })).toBe(
+      "peer-offline:node_b:never:1:given-up",
+    );
+    expect(latestNotificationKeyWithPrefix(db, { principalId: "owner_1", dedupKeyPrefix: "" })).toBeUndefined();
+  });
+});
+
+describe("a message a peer acknowledged and did not take", () => {
+  it("keeps the reason on its row and stays acknowledged, without making the peer look unreachable", () => {
+    const db = freshDb();
+    queue(db, "msg_1", at(0));
+    markOutboxAttempt(db, "msg_1", at(1));
+    // Not yet acknowledged: nothing is written, so a message still owed is never marked by this.
+    markOutboxTurnedDown(db, "msg_1", "the peer did not take it: no");
+    expect(peerDeliveryState(db, "node_b").lastError).toBeNull();
+    markOutboxAcknowledged(db, "msg_1", at(1));
+    markOutboxTurnedDown(db, "msg_1", "the peer did not take it: no");
+    const row = db.prepare("SELECT last_error, acknowledged_at FROM outbox WHERE message_id = 'msg_1'").get() as {
+      last_error: string | null;
+      acknowledged_at: string | null;
+    };
+    expect(row).toEqual({ last_error: "the peer did not take it: no", acknowledged_at: at(1) });
+    expect(peerDeliveryState(db, "node_b")).toEqual({ lastAcknowledgedAt: at(1), failingSince: null, lastError: null, givenUpSince: null });
   });
 });
 

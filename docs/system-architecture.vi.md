@@ -385,7 +385,9 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     nhận chỉ ghi nó khi chính chủ của mình đã quyết định làm việc với bên gửi (một grant còn hiệu lực do bên nhận viết
     cho peer đó, hoặc một allowance `allow_peer_tasks` còn hiệu lực), tối đa 30 thông báo mỗi phút mỗi peer, với
     `sourceKind` `peer`, `originNodeId` và subject `peer`, dưới khóa `peer:<senderNodeId>:<key>`, nên replay chỉ thành
-    một dòng; khi từ chối thì trả kèm lý do và lời từ chối là cuối cùng. `recordNotification` giữ tối đa 20 thông báo
+    một dòng; khi từ chối thì trả kèm một mã và lý do, và lời từ chối là cuối cùng. `deliverPending` của bên gửi đọc
+    mỗi câu trả lời trong hạn 30 giây và tối đa 16 KiB, ghi thông báo bị từ chối lên dòng outbox của nó và báo lại
+    (`turnedDown`), và `tellNoticeTurnedDown` đặt vào inbox bên gửi mỗi peer và mỗi lý do một thông báo. `recordNotification` giữ tối đa 20 thông báo
     chưa bỏ qua cho mỗi node gốc, tách khỏi giới hạn của thông báo cục bộ. Bên gửi biết `features` và `label` của peer
     (migration lưu trữ 34) từ lời mời ghép cặp và từ mỗi phản hồi `200` của `POST /peers/messages`
     (`recordPeerAdvertisement`). Thông báo đang chờ `delegation-status:<taskId>:…` ở bên gửi được đóng khi task thôi chờ (status `running`, một
@@ -394,10 +396,13 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
   - **Một peer không liên lạc được** (`apps/runtime/src/peer-outage.ts`). `watchPeerOutages` chạy sau mỗi lượt gửi và
     đọc trạng thái thử lại của outbox (`peerDeliveryState`). Khi việc gửi tới một peer đã xác nhận thất bại suốt 10 phút
     trong thời gian tiến trình này theo dõi (tính từ thời điểm muộn nhất trong lần thất bại, lúc tiến trình khởi động và
-    lần thức dậy gần nhất mà bộ hẹn giờ gửi nhận ra), nó ghi một thông báo cho mỗi lần mất liên lạc, với lời theo điều
-    đang sai: `unreachable` (không trả lời), `refused` (một mã `4xx`), hoặc `given-up` (mọi thứ cần gửi đã bị
-    dead-letter), khóa `peer-offline:<peerNodeId>:<lastAck|never>:<situation>`. Thông báo gọi peer bằng label của nó,
-    nếu không có thì bằng node id, và được đóng khi peer xác nhận lại hoặc bị thu hồi. Một peer lỗi khi đối chiếu không
+    lần thức dậy gần nhất mà bộ hẹn giờ gửi nhận ra, và khi đó nói là "ít nhất từ lúc"), nó ghi một thông báo với lời
+    theo điều đang sai: `unreachable` (không trả lời), `refused` (một mã `4xx`), `erroring` (một mã `5xx`), hoặc
+    `given-up` (mọi thứ cần gửi đã bị dead-letter), khóa `peer-offline:<peerNodeId>:<lastAck|never>:<step>:<situation>`.
+    Mỗi lần tình huống thay đổi trong một lần mất liên lạc lấy bước kế tiếp và thay thông báo đang hiện, nên mỗi lần mất
+    liên lạc chỉ có một thông báo đang hiện và một tình huống quay lại được báo lại. Thông báo gọi peer bằng label của
+    nó, nếu không có thì bằng node id, hiển thị thời gian kèm múi giờ của node, và được đóng khi peer xác nhận lại hoặc
+    bị thu hồi. Một peer lỗi khi đối chiếu không
     làm dừng các peer khác.
   - **Approval/câu hỏi hết hạn.** Một approval/câu hỏi hết hạn mà không ai quyết định thì rơi khỏi danh sách việc
     chờ trong im lặng — đúng thiết kế cho danh sách, nhưng người không nhìn vào lúc đó sẽ không bao giờ biết. `apps/runtime/src/expiry-notices.ts` quét định kỳ (interval

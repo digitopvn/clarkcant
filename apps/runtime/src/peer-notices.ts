@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { type Instant, type PeerEnvelope, peerNoticeSchema, peerTextAsData } from "@clarkcant/contracts";
 import { sendEnvelope } from "@clarkcant/node-link";
 import {
@@ -10,7 +12,8 @@ import {
   nextOutboundSequence,
 } from "@clarkcant/storage";
 
-import type { NodeNotice } from "./notices.ts";
+import { type NodeNotice, type NoticeServices, tryRecordNodeNotice } from "./notices.ts";
+import type { TurnedDown } from "./peer-transport.ts";
 
 /**
  * Notices between paired nodes: something one Clark's owner should also hear about in the inbox of another.
@@ -24,8 +27,9 @@ import type { NodeNotice } from "./notices.ts";
  * Only a decision this node's owner made admits a peer's notices: a live grant this node wrote to that peer, or a live
  * allowance for it. A grant the peer wrote to this node is the peer's decision, not this owner's, so it admits nothing.
  * Each peer is held to `PEER_NOTICES_PER_MINUTE`, and its notices to their own share of the inbox, so one peer cannot
- * flood it. Anything refused is answered with the reason, and the refusal is final: the sender does not send it again.
- * A notice sent again under the same key is recorded once.
+ * flood it. Anything refused is answered with a code and the reason, and the refusal is final: the sender does not send
+ * it again, and tells its own owner, once per peer and reason, that the notice did not arrive. A notice sent again under
+ * the same key is recorded once.
  *
  * The sending side queues a notice only for a confirmed peer that said it takes them (its `notice` feature); whether
  * that peer's owner admits it is theirs to decide, which this node cannot see.
@@ -80,7 +84,9 @@ export function queuePeerNotice(deps: PeerNoticeSendDeps, peerNodeId: string, no
       ok: false,
       code: "NOTICES_UNSUPPORTED",
       message:
-        "that peer has not said it takes notices: it runs a ClarkCant from before them, or has not answered this node since it was updated. Nothing was queued; it is learned from the peer's next answer to anything this node sends it",
+        "that peer has not said it takes notices, so nothing was queued. This node learns it from the peer's answer to anything it delivers there: " +
+        `if ClarkCant on that device is up to date, send it something first (a signal, POST /peers/${peerNodeId}/signals) and try again; ` +
+        "if it runs a ClarkCant from before notices, update it there",
     };
   }
   const at = deps.now();
@@ -98,6 +104,18 @@ export function queuePeerNotice(deps: PeerNoticeSendDeps, peerNodeId: string, no
     payload: { notice: read.data },
   });
   return { ok: true, messageId };
+}
+
+/**
+ * Why a node did not take a peer's notice, as a code its sender can act on and words for a person. Answered as an
+ * acknowledgement, so it is final: sending the same notice again would be refused the same way.
+ */
+export const PEER_NOTICE_REFUSAL_CODES = ["PEER_NOT_ALLOWED", "RATE_LIMITED", "NOTICE_UNREADABLE", "NOTICES_OFF"] as const;
+export type PeerNoticeRefusalCode = (typeof PEER_NOTICE_REFUSAL_CODES)[number];
+export interface PeerNoticeRefusal {
+  accepted: false;
+  code: PeerNoticeRefusalCode;
+  reason: string;
 }
 
 export interface PeerNoticeReceiveDeps {
@@ -118,14 +136,15 @@ export interface PeerNoticeReceiveDeps {
 export function receivePeerNotice(
   deps: PeerNoticeReceiveDeps,
   envelope: PeerEnvelope,
-): { accepted: true; noticeId: string; duplicate: boolean } | { accepted: false; reason: string } {
+): { accepted: true; noticeId: string; duplicate: boolean } | PeerNoticeRefusal {
   const read = peerNoticeSchema.safeParse(envelope.payload["notice"]);
-  if (!read.success) return { accepted: false, reason: "the notice is not one this node can read" };
+  if (!read.success) return { accepted: false, code: "NOTICE_UNREADABLE", reason: "the notice is not one this node can read" };
   const peer = envelope.senderNodeId;
   const at = deps.now();
   if (!admitsPeerNotices(deps.db, deps.nodeId, peer, at)) {
     return {
       accepted: false,
+      code: "PEER_NOT_ALLOWED",
       reason: "this node's owner has not chosen to work with that peer (no grant to it, no allowance for it), so it takes no notices from it",
     };
   }
@@ -134,6 +153,7 @@ export function receivePeerNotice(
   if (countRecentInbox(deps.db, { peerNodeId: peer, kind: "notice", since: minuteAgo }) >= PEER_NOTICES_PER_MINUTE) {
     return {
       accepted: false,
+      code: "RATE_LIMITED",
       reason: `this node takes at most ${String(PEER_NOTICES_PER_MINUTE)} notices a minute from one peer; this one came past that and was not recorded`,
     };
   }
@@ -154,4 +174,82 @@ export function receivePeerNotice(
     at,
   });
   return { accepted: true, noticeId: recorded.notificationId, duplicate: !recorded.created };
+}
+
+const TURNED_DOWN_KEY_PREFIX = "peer-notice-refused";
+
+/** Why, and what to do next, for each reason a node gives for not taking a notice. */
+const TURNED_DOWN_WORDS: Record<PeerNoticeRefusalCode, { why: string; next: string }> = {
+  PEER_NOT_ALLOWED: {
+    why: "chủ của thiết bị đó chưa cho phép làm việc với Clark này",
+    next: "Nếu muốn thiết bị đó nhận thông báo từ máy này, chủ của nó cần cho phép làm việc với Clark này (ví dụ bằng allow_peer_tasks), rồi gửi lại.",
+  },
+  RATE_LIMITED: {
+    why: `máy này đã gửi tới đó quá ${String(PEER_NOTICES_PER_MINUTE)} thông báo trong một phút`,
+    next: "Hãy đợi một phút rồi gửi lại những gì còn cần.",
+  },
+  NOTICE_UNREADABLE: {
+    why: "thiết bị đó không đọc được thông báo này",
+    next: "Hãy cập nhật ClarkCant trên cả hai máy rồi gửi lại.",
+  },
+  NOTICES_OFF: {
+    why: "ClarkCant trên thiết bị đó không ghi thông báo từ thiết bị khác",
+    next: "Hãy cập nhật ClarkCant trên thiết bị đó nếu muốn nó nhận thông báo.",
+  },
+};
+
+function isRefusalCode(code: string | undefined): code is PeerNoticeRefusalCode {
+  return (PEER_NOTICE_REFUSAL_CODES as readonly (string | undefined)[]).includes(code);
+}
+
+/**
+ * The notice this node's owner gets when a peer acknowledged one of this node's notices and did not take it: what did
+ * not arrive and why, that nothing was recorded there and it is not sent again, and what would change that.
+ *
+ * One per peer and reason: a known reason is keyed by its code, anything else by a digest of the peer's words, so a
+ * burst of refusals for the same reason is one notice. The peer's words are shown only when its code is not one this
+ * node knows, and then as quoted data.
+ */
+export function peerNoticeTurnedDownNotice(input: {
+  peerNodeId: string;
+  /** What the peer calls itself, already cleaned; its node id is shown when it never said. */
+  label?: string;
+  envelope: PeerEnvelope;
+  reason: string;
+  code?: string;
+  at: Instant;
+}): NodeNotice {
+  const name = input.label ?? input.peerNodeId;
+  const sent = peerNoticeSchema.safeParse(input.envelope.payload["notice"]);
+  const what = sent.success ? `thông báo “${sent.data.title}”` : "một thông báo";
+  const known = isRefusalCode(input.code) ? TURNED_DOWN_WORDS[input.code] : undefined;
+  const why = known?.why ?? `thiết bị đó trả lời: “${input.reason}”`;
+  const next = known?.next ?? "Nếu cần, hãy hỏi chủ của thiết bị đó về lý do trên rồi gửi lại.";
+  const reasonKey = isRefusalCode(input.code) ? input.code : `other-${createHash("sha256").update(input.reason).digest("hex").slice(0, 16)}`;
+  return {
+    sourceKind: "system",
+    category: "alert",
+    severity: "warning",
+    title: "Thiết bị khác không nhận thông báo",
+    body: `Thiết bị ${name} đã nhận nhưng không ghi ${what} mà máy này gửi: ${why}. Không có gì được ghi ở đó, và máy này sẽ không gửi lại. ${next}`,
+    subject: { kind: "peer", nodeId: input.peerNodeId },
+    dedupKey: `${TURNED_DOWN_KEY_PREFIX}:${input.peerNodeId}:${reasonKey}`,
+    at: input.at,
+  };
+}
+
+/** Tell this node's owner that a peer did not take one of this node's notices. Never throws into the delivery pass. */
+export function tellNoticeTurnedDown(services: NoticeServices, turned: TurnedDown, at: Instant): void {
+  const label = getPeer(services.runtime.db, turned.peerNodeId)?.label;
+  tryRecordNodeNotice(
+    services,
+    peerNoticeTurnedDownNotice({
+      peerNodeId: turned.peerNodeId,
+      ...(label === undefined ? {} : { label }),
+      envelope: turned.envelope,
+      reason: turned.reason,
+      ...(turned.code === undefined ? {} : { code: turned.code }),
+      at,
+    }),
+  );
 }

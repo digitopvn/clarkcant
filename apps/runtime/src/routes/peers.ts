@@ -143,7 +143,7 @@ function peerHandler(
 
     if (envelope.kind === "notice") {
       // Words for this node's inbox, under the peer's name, taken only when this node's owner chose to work with it.
-      if (notice === undefined) return { accepted: false, reason: "this node records no notices from peers" };
+      if (notice === undefined) return { accepted: false, code: "NOTICES_OFF", reason: "this node records no notices from peers" };
       return notice(envelope);
     }
 

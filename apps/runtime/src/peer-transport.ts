@@ -1,10 +1,11 @@
-import { type Instant, type PeerEnvelope, peerEnvelopeSchema } from "@clarkcant/contracts";
+import { type Instant, type PeerEnvelope, peerEnvelopeSchema, peerTextAsData } from "@clarkcant/contracts";
 import { recordAcknowledgement, recordTransmissionAttempt, sendEnvelope } from "@clarkcant/node-link";
 import {
   type Database,
   type PeerRecord,
   deadLetterOutbox,
   markOutboxFailed,
+  markOutboxTurnedDown,
   pendingOutbox,
   recordPeerAdvertisement,
 } from "@clarkcant/storage";
@@ -43,6 +44,34 @@ export interface PeerTransportDeps {
   fetchImpl?: typeof fetch;
   /** How many pending messages one pass attempts. */
   batchSize?: number;
+  /** How long one delivery may take, answer included, before it counts as failed. */
+  timeoutMs?: number;
+}
+
+/**
+ * The longest a delivery may take, from dialling to the end of the answer. A peer that answers slowly or trickles its
+ * answer would otherwise hold the pass, and every other peer's delivery behind it, for as long as it liked.
+ */
+export const PEER_DELIVERY_TIMEOUT_MS = 30_000;
+
+/**
+ * The most of a peer's answer this node reads. The answer is a status, the recorded outcome and what the peer says about
+ * itself — a few hundred bytes — so anything past this is not an answer this node needs, and is not held in memory.
+ */
+export const PEER_ANSWER_MAX_BYTES = 16 * 1024;
+
+/**
+ * A message the peer acknowledged but did not act on: it answered, final, that it would not take it. Reported only for
+ * notices, whose sender has nothing else that would tell it; the other kinds answer through their own replies.
+ */
+export interface TurnedDown {
+  messageId: string;
+  peerNodeId: string;
+  envelope: PeerEnvelope;
+  /** The peer's reason, as the peer said it: data, cleaned and bounded, never an instruction. */
+  reason: string;
+  /** The peer's code for it, when it gave one; checked against a known set by whoever reads it. */
+  code?: string;
 }
 
 export interface DeliveryOutcome {
@@ -58,6 +87,8 @@ export interface DeliveryOutcome {
    * saw before this field existed.
    */
   deadLettered?: DeadLetter[];
+  /** Notices the peer acknowledged and turned down, this pass. Present only when there was one. */
+  turnedDown?: TurnedDown[];
 }
 
 /**
@@ -131,38 +162,99 @@ function sanitizeDeliveryError(reason: string): string {
 const PEER_ANSWERED = "the peer answered";
 
 /**
- * The status a peer refused a message with, read back from a stored failure reason: a 4xx means the peer was reached
- * and turned the message down, which is not the same as not being reachable. `undefined` for any other failure.
+ * The HTTP status a peer answered a message with, read back from a stored failure reason: the peer was reached, which
+ * is not the same as not being reachable. `undefined` for a failure where nothing answered.
  */
-export function refusalStatus(lastError: string | null): number | undefined {
-  const match = lastError === null ? null : new RegExp(`^${PEER_ANSWERED} (4\\d\\d)$`).exec(lastError);
+export function answeredStatus(lastError: string | null): number | undefined {
+  const match = lastError === null ? null : new RegExp(`^${PEER_ANSWERED} ([1-5]\\d\\d)$`).exec(lastError);
   return match?.[1] === undefined ? undefined : Number(match[1]);
 }
 
 /**
- * What an acknowledging peer says about itself, recorded for that peer: the features it takes and the name it gives.
+ * A peer's answer as text, read no further than `PEER_ANSWER_MAX_BYTES` and no longer than the delivery's deadline.
+ * `undefined` when it is longer, stops coming, or cannot be read: the caller treats that as an answer that says nothing
+ * more than its status.
+ */
+async function readAnswer(response: Response, deadline: AbortSignal): Promise<string | undefined> {
+  const declared = Number(response.headers.get("content-length") ?? "");
+  const body = response.body;
+  if (body === null) return "";
+  if ((Number.isFinite(declared) && declared > PEER_ANSWER_MAX_BYTES) || deadline.aborted) {
+    void body.cancel().catch(() => undefined);
+    return undefined;
+  }
+  const reader = body.getReader();
+  // Cancelling ends a read that is waiting, so a peer that stops sending half-way cannot hold this past the deadline.
+  const stop = (): void => void reader.cancel().catch(() => undefined);
+  deadline.addEventListener("abort", stop, { once: true });
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > PEER_ANSWER_MAX_BYTES) {
+        stop();
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return undefined;
+  } finally {
+    deadline.removeEventListener("abort", stop);
+  }
+  if (deadline.aborted) return undefined;
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
+function objectOf(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+/** What a peer's reason may be when it is shown to this node's owner: its text as data, and short. */
+const TURNED_DOWN_REASON_MAX = 300;
+
+/**
+ * What an acknowledging peer's answer says, recorded: the features it takes and the name it gives, for that peer, and —
+ * for a notice — whether it took it.
  *
  * Only from the answer of the peer this node authenticated and addressed, after its acknowledgement was recorded, so
  * nothing but a real answer from that peer changes its row. A body this node cannot read changes nothing; an answer
- * without features, as a build from before them gives, records that the peer takes none.
+ * without features, as a build from before them gives, records that the peer takes none. Failing here never turns the
+ * delivered message into a failed one.
  */
-async function recordAdvertisement(deps: PeerTransportDeps, peerNodeId: string, response: Response): Promise<void> {
-  let body: unknown;
+function recordAnswer(deps: PeerTransportDeps, envelope: PeerEnvelope, text: string | undefined): TurnedDown | undefined {
+  const peerNodeId = envelope.recipientNodeId;
+  let fields: Record<string, unknown> | undefined;
   try {
-    body = JSON.parse(await response.text());
+    fields = text === undefined ? undefined : objectOf(JSON.parse(text));
   } catch {
-    return;
+    fields = undefined;
   }
-  if (body === null || typeof body !== "object" || Array.isArray(body)) return;
-  const fields = body as Record<string, unknown>;
+  if (fields === undefined) return undefined;
   try {
     recordPeerAdvertisement(deps.db, peerNodeId, { features: fields["features"], label: fields["label"] });
   } catch (cause) {
-    // The message was delivered and its acknowledgement is recorded; failing here must not turn it into a failure.
     process.stderr.write(
       `nodelink: could not record what ${peerNodeId} says it takes (${cause instanceof Error ? cause.message : String(cause)})\n`,
     );
   }
+  if (envelope.kind !== "notice") return undefined;
+  const outcome = objectOf(objectOf(fields["response"])?.["outcome"]);
+  if (outcome?.["accepted"] !== false) return undefined;
+  const said = typeof outcome["reason"] === "string" ? peerTextAsData(outcome["reason"]).replace(/\s+/g, " ").trim() : "";
+  const reason = [...(said === "" ? "the peer gave no reason" : said)].slice(0, TURNED_DOWN_REASON_MAX).join("");
+  const code = typeof outcome["code"] === "string" && /^[A-Z_]{1,40}$/.test(outcome["code"]) ? outcome["code"] : undefined;
+  try {
+    markOutboxTurnedDown(deps.db, envelope.messageId, `the peer did not take it: ${reason}`);
+  } catch (cause) {
+    process.stderr.write(
+      `nodelink: could not record that ${peerNodeId} turned ${envelope.messageId} down (${cause instanceof Error ? cause.message : String(cause)})\n`,
+    );
+  }
+  return { messageId: envelope.messageId, peerNodeId, envelope, reason, ...(code === undefined ? {} : { code }) };
 }
 
 /** One pass over the outbox: attempt what is pending, record what the peer acknowledged. */
@@ -172,6 +264,7 @@ export async function deliverPending(
 ): Promise<DeliveryOutcome> {
   const outcome: DeliveryOutcome = { attempted: 0, acknowledged: 0, refused: [] };
   const deadLettered: DeadLetter[] = [];
+  const turnedDown: TurnedDown[] = [];
   const gaveUp = (envelope: PeerEnvelope, refusedByPeer: boolean): void => {
     deadLettered.push({
       messageId: envelope.messageId,
@@ -214,6 +307,7 @@ export async function deliverPending(
 
     outcome.attempted += 1;
     recordTransmissionAttempt(deps, envelope.messageId);
+    const deadline = AbortSignal.timeout(deps.timeoutMs ?? PEER_DELIVERY_TIMEOUT_MS);
     try {
       const response = await send(peerMessagesUrl(peer.endpoint), {
         method: "POST",
@@ -225,8 +319,11 @@ export async function deliverPending(
         body: JSON.stringify(envelope),
         // Not "follow": a redirect is how a paired address turns into an address nobody paired with.
         redirect: "error",
+        signal: deadline,
       });
       if (!response.ok) {
+        // Its body is not needed, and a connection left holding an unread one is not given back.
+        void response.body?.cancel().catch(() => undefined);
         const reason = `${PEER_ANSWERED} ${response.status}`;
         outcome.refused.push({ messageId: envelope.messageId, reason });
         const failure = markOutboxFailed(deps.db, envelope.messageId, deps.now(), sanitizeDeliveryError(reason));
@@ -236,7 +333,9 @@ export async function deliverPending(
       }
       recordAcknowledgement(deps, envelope.messageId);
       outcome.acknowledged += 1;
-      await recordAdvertisement(deps, peer.peerNodeId, response);
+      // Acknowledged first: however the answer's body goes, the peer has the message and it is not sent again.
+      const turned = recordAnswer(deps, envelope, await readAnswer(response, deadline));
+      if (turned !== undefined) turnedDown.push(turned);
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : "delivery failed";
       outcome.refused.push({ messageId: envelope.messageId, reason });
@@ -246,6 +345,7 @@ export async function deliverPending(
   }
 
   if (deadLettered.length > 0) outcome.deadLettered = deadLettered;
+  if (turnedDown.length > 0) outcome.turnedDown = turnedDown;
   return outcome;
 }
 

@@ -414,6 +414,27 @@ export function dismissNotificationsByKeyPrefix(
 }
 
 /**
+ * The key of the newest notice (dismissed or not) whose key starts with `dedupKeyPrefix`, by insertion: how a producer
+ * that keys one story by a family of keys finds where the story got to. Read as a range of the dedup index, like the
+ * dismissal above.
+ */
+export function latestNotificationKeyWithPrefix(
+  db: Database,
+  input: { principalId: string; dedupKeyPrefix: string },
+): string | undefined {
+  if (input.dedupKeyPrefix === "") return undefined;
+  const upper = prefixUpperBound(input.dedupKeyPrefix);
+  const range = upper === undefined ? "dedup_key >= ?" : "dedup_key >= ? AND dedup_key < ?";
+  return oneRow<{ dedup_key: string }>(
+    db,
+    `SELECT dedup_key FROM notifications WHERE principal_id = ? AND ${range} ORDER BY rowid DESC LIMIT 1`,
+    input.principalId,
+    input.dedupKeyPrefix,
+    ...(upper === undefined ? [] : [upper]),
+  )?.dedup_key;
+}
+
+/**
  * The first string past every string that starts with `prefix`: its last character moved up by one, after dropping any
  * trailing characters that are already the highest there is. SQLite compares text as UTF-8 bytes, which order the same
  * way code points do, so this bound holds under the index's own collation. `undefined` when no such string exists.

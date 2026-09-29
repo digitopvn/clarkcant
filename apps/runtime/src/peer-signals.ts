@@ -10,7 +10,7 @@ import { sendEnvelope } from "@clarkcant/node-link";
 import { type Database, getPeer, nextOutboundSequence } from "@clarkcant/storage";
 
 import type { NodeIdentity } from "./node.ts";
-import { type DeadLetter, type PeerTransportDeps, deliverPending } from "./peer-transport.ts";
+import { type DeadLetter, type PeerTransportDeps, type TurnedDown, deliverPending } from "./peer-transport.ts";
 
 /**
  * Signals between paired nodes: something that happened on one Clark, for the other's standing requests to answer.
@@ -165,6 +165,8 @@ export function startPeerDelivery(
     log?: (line: string) => void;
     /** Told about each message given up on, so what waited on it is settled rather than left waiting. */
     onDeadLettered?: (letter: DeadLetter) => void;
+    /** Told about each notice a peer acknowledged and did not take, so this node's owner hears it did not arrive. */
+    onTurnedDown?: (turned: TurnedDown) => void;
     /** Run after every pass, with the outbox as that pass left it: how a peer that stays unreachable is noticed. */
     afterPass?: () => void;
     /**
@@ -202,6 +204,13 @@ export function startPeerDelivery(
             options.onDeadLettered?.(dead);
           } catch (cause) {
             log(`nodelink: could not settle what ${dead.messageId} was about (${cause instanceof Error ? cause.message : String(cause)})`);
+          }
+        }
+        for (const turned of outcome.turnedDown ?? []) {
+          try {
+            options.onTurnedDown?.(turned);
+          } catch (cause) {
+            log(`nodelink: could not tell that ${turned.peerNodeId} did not take ${turned.messageId} (${cause instanceof Error ? cause.message : String(cause)})`);
           }
         }
       } while (again && !stopped);
