@@ -929,6 +929,18 @@ describe("choosing between usable capabilities (Phase 9)", () => {
     expect(JSON.stringify(outcome.messages)).toContain(NODE_A);
   });
 
+  it("does not hand a message to a package service's capability, which only takes one typed call", async () => {
+    const base = makeDeps();
+    registerCapability(base, {
+      ...descriptorOn(NODE_A),
+      ref: "com.example.notes.add@1" as CapabilityDescriptor["ref"],
+      providedBy: { packageId: "com.example.notes", version: "1.0.0", digest: "sha256:x", generation: "com.example.notes@1.0.0:c" },
+    });
+    const outcome = await ask({ ...base, sampleRecipes: [] }, "cho tui xem bảng dữ liệu");
+    expect(outcome.resolution).not.toBe("task-dispatched");
+    expect(JSON.stringify(outcome.messages)).not.toContain(`Đang chạy trên ${NODE_A}`);
+  });
+
   it("keeps the deterministic order when no decider is configured", async () => {
     const base = makeDeps();
     registerCapability(base, descriptorOn(NODE_A));

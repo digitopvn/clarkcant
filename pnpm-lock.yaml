@@ -237,6 +237,9 @@ importers:
       '@clarkcant/host-adapters':
         specifier: workspace:*
         version: link:../../packages/host-adapters
+      '@clarkcant/mcp-adapters':
+        specifier: workspace:*
+        version: link:../../packages/mcp-adapters
       '@clarkcant/node-link':
         specifier: workspace:*
         version: link:../../packages/node-link

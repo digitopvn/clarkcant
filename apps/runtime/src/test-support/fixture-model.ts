@@ -18,6 +18,7 @@ import { definitionDigest } from "@clarkcant/widget-host";
 import { join } from "node:path";
 
 import { createAskUserQuestionTool } from "../ask-user-question.ts";
+import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
 import { blobsDir, readBlob } from "../blobs.ts";
 import { composeMiniApp } from "../compose-mini-app.ts";
@@ -27,6 +28,7 @@ import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
 import { controlApp, createNodeTools, createRememberTool, type CommandToolDeps } from "../node-tools.ts";
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps } from "../project-finder.ts";
+import { createInvokeCapabilityTool } from "../invoke-capability-tool.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "../request-secret.ts";
 import { commandDigest } from "../run-command.ts";
 import { captureBrowserFrame, previewPageUrl } from "./browser-frame.ts";
@@ -68,7 +70,10 @@ export interface FixtureModelWiring {
 
 export interface FixtureModelDeps {
   /** The node this fixture stands in for, read when a turn asks rather than when the composer is built. */
-  services: () => Pick<NodeServices, "runtime" | "conductor" | "controlSessions" | "terminals" | "hostControl">;
+  services: () => Pick<
+    NodeServices,
+    "runtime" | "conductor" | "controlSessions" | "terminals" | "hostControl" | "serviceHost"
+  >;
   dataDir: string;
   wiring: FixtureModelWiring;
 }
@@ -894,6 +899,133 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           definitionRef: { id: definition.id, version: definition.version },
           snapshot,
         },
+      };
+    }
+
+    /*
+     * The notes widget, whose buttons call its package's own service.
+     *
+     * The bindings are `invoke` bindings made here, because nothing in the product makes them for a package widget
+     * yet (#223 does): what this fixture stands in for is that step, not the call. Everything after it — the binding
+     * check, the registry's readiness, the capability's schema, the policy, the service in its container — is the path
+     * a real binding takes. The definition is written out for the same reason as the frame widget's: it has to agree
+     * with the package's own `widget.json`.
+     *
+     * The binding records the generation the service host is serving now, so a later install of a different version
+     * makes it stale the way a real binding would be.
+     */
+    if (/widget ghi chú|notes widget/i.test(input.text)) {
+      const definition = {
+        id: "com.example.notes.board@1",
+        version: "1.0.0",
+        renderer: "isolated-app" as const,
+        propsSchema: {
+          type: "object",
+          properties: { title: { type: "string", maxLength: 200 } },
+          required: ["title"],
+          additionalProperties: false,
+        },
+        eventSchemas: {},
+        stateSchema: { type: "object", properties: {}, additionalProperties: true },
+        stateVersion: 0,
+        semanticDescription: "Notes kept by the package's own service.",
+        requestedCapabilities: [],
+        sizing: { compact: true, expanded: true, minHeight: 200 },
+        textFallback: "Ghi chú: danh sách ghi chú do dịch vụ của gói lưu.",
+        effectCategories: ["local-write" as const],
+        datasetRefs: [],
+      };
+      const served = deps.services().serviceHost?.serves("com.example.notes.add@1");
+      const packageGeneration = served?.generationId ?? definitionDigest(definition);
+      const instance = createInstance(deps.services().conductor, {
+        definition,
+        packageDigest: definitionDigest(definition),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Ghi chú (fixture)" },
+      });
+      const bindings = [
+        {
+          // Fixed, because the widget's own code names them.
+          actionBindingId: "binding_notes_add",
+          label: "Thêm ghi chú",
+          proposal: {
+            kind: "invoke" as const,
+            capabilityRef: "com.example.notes.add@1",
+            args: {},
+            bindings: [{ target: "text", source: "user-input" as const }],
+          },
+          inputSchema: {
+            type: "object",
+            properties: { text: { type: "string", minLength: 1, maxLength: 500 } },
+            required: ["text"],
+            additionalProperties: false,
+          },
+          effectCategory: "local-write" as const,
+        },
+        {
+          actionBindingId: "binding_notes_list",
+          label: "Tải danh sách",
+          proposal: { kind: "invoke" as const, capabilityRef: "com.example.notes.list@1", args: {} },
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          effectCategory: "read" as const,
+        },
+      ];
+      for (const binding of bindings) {
+        saveActionBinding(deps.services().conductor, {
+          ...binding,
+          instanceId: instance.instanceId,
+          definitionId: definition.id,
+          packageGeneration,
+          allowedDataRefs: [],
+          fixedConstraints: {},
+          requiresApproval: false,
+          limits: {},
+          bindingDigest: `sha256:${binding.actionBindingId}`,
+          createdAt: instantSchema.parse(new Date().toISOString()),
+        });
+      }
+      const snapshot = captureSnapshot(deps.services().conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: widget ghi chú, các nút gọi dịch vụ của gói (không phải model thật).",
+        block: {
+          type: "surface",
+          definitionRef: { id: definition.id, version: definition.version },
+          snapshot,
+        },
+      };
+    }
+
+    /*
+     * The agent calling the same capability the notes widget's button calls.
+     *
+     * The decision to call `invoke_capability` is scripted; the tool is the real one, so the gate, the policy card and
+     * the service's answer are the node's own. A turn that came in by voice goes through with the voice source.
+     */
+    const noted = /^(?:ghi chú giúp tui|note this)\s*:?\s*(.+)$/iu.exec(input.text.trim());
+    if (noted !== null || /^(?:đọc ghi chú|list my notes)\b/iu.test(input.text.trim())) {
+      const tool = createInvokeCapabilityTool({
+        deps: () => capabilityInvokeDeps(deps.services()),
+        conversationId: input.conversationId,
+        channel: () => input.channel ?? "chat",
+      });
+      const answer = await tool.execute(
+        noted === null
+          ? { action: "invoke", ref: "com.example.notes.list@1", args: {} }
+          : { action: "invoke", ref: "com.example.notes.add@1", args: { text: (noted[1] ?? "").trim() } },
+      );
+      if (answer.hostCard !== undefined) {
+        // SAFETY: the approval card `invokeCapability` built against the message-block union; the node validates it
+        // before storing.
+        return { text: answer.text, block: answer.hostCard as unknown as MessageBlock };
+      }
+      return {
+        text: "Fixture: tui gọi invoke_capability (không phải model thật).",
+        block: { type: "text", format: "plain", content: answer.text, streaming: false },
       };
     }
 

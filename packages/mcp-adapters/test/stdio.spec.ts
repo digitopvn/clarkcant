@@ -23,13 +23,18 @@ const SERVER = join(here, "fixtures", "reference-server.mjs");
 
 const open: StdioMcpTransport[] = [];
 
-function connect(mode?: string, requestTimeoutMs = 5_000): Promise<StdioMcpTransport> {
+function connect(
+  mode?: string,
+  requestTimeoutMs = 5_000,
+  onExit?: (reason: Error) => void,
+): Promise<StdioMcpTransport> {
   return connectStdio({
     serverId: "reference",
     command: process.execPath,
     args: [SERVER],
     ...(mode === undefined ? {} : { env: { MCP_FIXTURE_MODE: mode } }),
     requestTimeoutMs,
+    ...(onExit === undefined ? {} : { onExit }),
   }).then((transport) => {
     open.push(transport);
     return transport;
@@ -136,6 +141,15 @@ describe("failure modes each settle", () => {
     expect(transport.stderrTail).toContain("crashing on purpose");
   });
 
+  it("stops a server whose message outgrows the limit, instead of holding it all in memory", async () => {
+    const reasons: Error[] = [];
+    const transport = await connect("flood", 10_000, (reason) => reasons.push(reason));
+    await expect(transport.listTools()).rejects.toThrow(/longer than 4 MB/);
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]?.message).toMatch(/longer than 4 MB and was stopped/);
+    expect(transport.running).toBe(false);
+  });
+
   it("tolerates a server that prints a banner to stdout", async () => {
     const transport = await connect("banner");
     // A chatty server is common and is not a protocol violation worth failing over.
@@ -153,5 +167,37 @@ describe("failure modes each settle", () => {
     const transport = await connect();
     await transport.close();
     await expect(transport.close()).resolves.toBeUndefined();
+  });
+});
+
+describe("liveness", () => {
+  it("answers a ping while the server runs", async () => {
+    const transport = await connect();
+    await expect(transport.ping()).resolves.toBeUndefined();
+    expect(transport.running).toBe(true);
+  });
+
+  it("fails a ping to a server that stopped answering, within the ceiling", async () => {
+    const transport = await connect("hang", 2500);
+    await expect(transport.ping()).rejects.toThrow(/did not answer ping/);
+  });
+
+  it("tells its owner once when the server goes away on its own", async () => {
+    const reasons: Error[] = [];
+    const transport = await connect("crash", 5_000, (reason) => reasons.push(reason));
+    await expect(transport.callTool("write_note", { text: "x" })).rejects.toThrow(/exited with code 3/);
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]?.message).toMatch(/exited with code 3/);
+    expect(transport.running).toBe(false);
+    // Asking a dead server anything fails at once rather than waiting out the ceiling.
+    await expect(transport.ping()).rejects.toThrow(/not running/);
+  });
+
+  it("does not report an exit its owner caused by closing", async () => {
+    const reasons: Error[] = [];
+    const transport = await connect(undefined, 5_000, (reason) => reasons.push(reason));
+    await transport.close();
+    expect(reasons).toEqual([]);
+    expect(transport.running).toBe(false);
   });
 });

@@ -27,6 +27,7 @@
     "@clarkcant/data-canvas": "workspace:*",
     "@clarkcant/execution-supervisor": "workspace:*",
     "@clarkcant/host-adapters": "workspace:*",
+    "@clarkcant/mcp-adapters": "workspace:*",
     "@clarkcant/node-link": "workspace:*",
     "@clarkcant/pi-adapter": "workspace:*",
     "@clarkcant/project-work": "workspace:*",

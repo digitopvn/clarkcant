@@ -479,6 +479,7 @@ async function main(): Promise<void> {
           turnControl: services.turnControl,
           taskDispatch: services.taskDispatch,
           terminals: services.terminals,
+          services: services.serviceHost,
           work: work.supervisor,
           reason: "shutdown",
         });

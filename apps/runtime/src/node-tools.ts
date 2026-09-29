@@ -46,6 +46,7 @@ import { commandDigest, runGuardedCommand, type CommandOutcome } from "./run-com
 import type { ProjectFinderDeps } from "./project-finder.ts";
 import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
+import { createInvokeCapabilityTool, type InvokeCapabilityToolDeps } from "./invoke-capability-tool.ts";
 import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
 import { createReadInboxTool } from "./read-inbox-tool.ts";
 import { createTerminalTools } from "./terminal-tools.ts";
@@ -164,6 +165,12 @@ export function createNodeTools(input: {
    */
   packages?: ManagePackageToolDeps;
   /**
+   * Installed packages' service capabilities, when this turn belongs to a node that runs them.
+   *
+   * Absent means `invoke_capability` is not registered. Present, it calls the same path a widget button calls.
+   */
+  capabilities?: InvokeCapabilityToolDeps;
+  /**
    * The node's terminals, when a turn may open or type into one.
    *
    * Registered only with `command`: typing into a shell is running a command, so it is gated by the same policy
@@ -244,6 +251,7 @@ export function createNodeTools(input: {
         ]),
     ...(input.appControl === undefined ? [] : [createControlAppTool(input.appControl)]),
     ...(input.packages === undefined ? [] : [createManagePackageTool(input.packages)]),
+    ...(input.capabilities === undefined ? [] : [createInvokeCapabilityTool(input.capabilities)]),
     ...(input.work === undefined ? [] : createWorkTools(input.work)),
     ...(input.inbox === undefined ? [] : [createReadInboxTool(input.inbox)]),
   ];

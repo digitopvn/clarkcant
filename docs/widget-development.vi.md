@@ -140,21 +140,53 @@ Mỗi loại facet chỉ chạy trong đúng một lane, và schema từ chối 
 | `kind` | `isolation` | Ý nghĩa |
 |---|---|---|
 | `ui` | `isolated-ui` | Widget vẽ trong frame riêng. `id` phải trùng với id nằm trong `definition`. |
-| `tools` | `service` | Một process riêng, nói MCP qua stdio và khai báo mọi capability nó cung cấp. |
+| `tools` | `service` | Một service mà node chạy trong container, nói MCP qua stdio và khai báo mọi capability nó cung cấp. |
 | `skills`, `prompts`, `themes`, `setup` | `declarative` | Dữ liệu mà host đọc, không bao giờ chạy. |
 | `driver`, `voice` | `service` hoặc `trusted-native` | Có trong bộ từ vựng để listing hiển thị được lane. Hiện chưa host nào chạy loại này từ package. |
 
 Reader cũng từ chối manifest khi:
 
-- hai facet trùng `id`;
+- hai facet trùng `id`, hoặc một `id` không phải là một tên đơn (chữ cái, chữ số, `.`, `_`, `@`, `-`, bắt đầu và kết
+  thúc bằng chữ cái hoặc chữ số), vì nó còn đặt tên cho thư mục dữ liệu và container của service;
+- package có facet `tools` mà `id` không phải tên reverse-DNS gồm ít nhất hai đoạn chữ thường, như `com.example.notes`,
+  hoặc nằm dưới namespace mà capability của chính node dùng (`canvas`, `clarkcant`, `dev`, `mcp`, `project`);
 - `entry` hoặc `definition` của facet nằm ngoài package (`..`, đường dẫn tuyệt đối, ký tự ổ đĩa) hoặc là URL;
 - `ref` của một capability trong facet `tools` không nằm dưới package id (`<package id>.<name>@<major>`), hoặc một
   tool hay capability bị khai báo hai lần.
 
 Facet `tools` khai báo capability ngay trong manifest, nhờ vậy màn hình đồng ý hiển thị được chúng trước khi bất kỳ
-đoạn code nào của package chạy. Hiện tại manifest đã được kiểm tra và hiển thị trong listing, kể cả risk lane
-`service` của facet. Host chưa khởi chạy service facet: việc đó thuộc
-[#221](https://github.com/digitopvn/clarkcant/issues/221).
+đoạn code nào của package chạy. Việc cài package chính là sự đồng ý với những gì package khai báo; mỗi lời gọi vẫn do
+execution policy quyết định.
+
+**Node chạy service facet như thế nào.** Node chạy một container cho mỗi facet `tools` của mọi package generation
+đang active, và dừng nó khi generation không còn active (`apps/runtime/src/service-host.ts`). Service là code bên thứ
+ba, còn một process riêng không phải sandbox, nên container mới là ranh giới. `serviceRunArgs` trong
+`apps/runtime/src/service-container.ts` định nghĩa ranh giới đó: không có mạng, root filesystem chỉ đọc, bỏ mọi Linux
+capability, không cho leo thang đặc quyền, user không phải root, package được mount chỉ đọc tại `/pkg`, một thư mục
+riêng ghi được tại `/data`, và chỉ những biến môi trường mà hàm này nêu tên, không bao giờ là biến môi trường của node.
+Host nói MCP qua stdio của container, nên không mở cổng nào. Engine là Docker chạy Linux container, hoặc Podman. Node
+không có engine nào thì không chạy service. Không có fallback chỉ chạy process. Các capability vẫn được đăng ký, ở
+trạng thái chưa load, kèm lý do "needs Docker or Podman to run; this node has neither running".
+
+Những gì registry báo là những gì host đã quan sát được, không phải điều manifest mong đợi:
+
+- tool mà service liệt kê nhưng manifest không khai báo thì không bao giờ được đăng ký;
+- tool đã khai báo mà service không liệt kê thì vẫn ở trạng thái chưa load, và lý do nói rõ điều đó;
+- service bị dừng thì được khởi động lại với backoff, và bị để dừng hẳn nếu cứ crash mãi, lý do nói rõ trường hợp nào;
+- ref mà node hoặc package khác đã đăng ký thì được giữ nguyên và package này không phục vụ nó, log của node ghi rõ điều
+  đó;
+- node không tìm thấy engine sẽ hỏi lại sau một phút, nên bật Docker sau đó không cần khởi động lại node.
+
+Lý do đó là thứ người dùng đọc được bên cạnh một action bị vô hiệu hoá. Binding `invoke` của widget, tool
+`invoke_capability` của agent và lệnh nói đều đi tới một đường host duy nhất, `invokeCapability`
+(`apps/runtime/src/application/capability-invoke.ts`). Registry quyết định capability có chạy được không. Input schema
+mà service liệt kê cho tool đó quyết định input có được chấp nhận không. Execution policy quyết định có được phép chạy không, và
+khi policy cần hỏi thì một approval card do host sở hữu xuất hiện trong cuộc trò chuyện. Các lời từ chối là các mã
+`CapabilityInvokeRefusal` trong file đó.
+
+Chưa xây: credential broker cho service, cô lập bằng VM, và gọi service trên node khác. Composer chưa tự đặt widget của
+một package đã cài kèm binding `invoke` ([#223](https://github.com/digitopvn/clarkcant/issues/223)). Journey trình
+duyệt [`service-facet.spec.ts`](../apps/web/e2e/service-facet.spec.ts) tạo chúng qua một fixture model.
 
 `publisher` là tuỳ chọn trong manifest. `clark widget publish` thì bắt buộc phải có, vì một directory entry phải
 cho biết package đến từ ai. `dependencies` mặc định là `[]`.
@@ -322,6 +354,8 @@ Author-facing target:
     events.emit(name, payload)
 
     actions.invoke(bindingId, input, invocationId)
+    actions.availability()
+    actions.subscribe(handler)
 
     capabilities.request(ref, justification)
 
@@ -337,6 +371,21 @@ Author-facing target:
     lifecycle.onSuspend()
     lifecycle.onResume()
     lifecycle.onDispose()
+
+Kiểu đã ship là `WidgetAuthorApi` trong `packages/widget-sdk/src/index.ts`. Host làm gì với chúng:
+
+- `actions.invoke` resolve với text output của service khi binding gọi một package service
+  (xem [§4](#4-package-manifest)), và với `undefined` trong các trường hợp khác. Nó reject kèm lý do của host, kể cả
+  khi action đang chờ approval card. Mỗi lời gọi được trả lời theo `invocationId` của riêng nó, nên hai lời gọi của cùng
+  một binding kết thúc độc lập. Khi lý do nói yêu cầu đã tới service, service có thể đã làm một phần.
+- `actions.availability()` trả về điều host nói gần nhất về từng binding có service phía sau: `available`, và lý do khi
+  không available. `actions.subscribe(handler)` được gọi khi điều đó thay đổi. Host chỉ gửi thông tin này cho binding
+  có service phía sau, và chỉ khi câu trả lời thay đổi. Hãy vô hiệu hoá control đó và hiển thị lý do; phần còn lại của
+  widget vẫn hoạt động.
+- `host.resize({ height })` được host tôn trọng: host đặt chiều cao frame theo yêu cầu, giới hạn trong 80–1200 px.
+  Frame mở ở 200 px cho tới khi widget yêu cầu.
+- Các message host gửi trước khi runtime của SDK load xong được đệm lại và phát lại đúng thứ tự, nên message
+  availability đến sớm không bị mất.
 
 Không expose:
 

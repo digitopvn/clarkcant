@@ -1,12 +1,17 @@
 import { type Instant } from "@clarkcant/contracts";
 import {
+  checkInvokeAction,
   getActionBinding,
   getInstance,
   invokeMiniAppAction,
   readExecutionPolicy,
+  readWidgetStateRow,
+  recordInvokeAction,
 } from "@clarkcant/core";
 
+import { appendHostReply } from "../routes/conversations.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
+import { type CapabilityInvokeSource, capabilityInvokeDeps, invokeCapability, mayHaveRun } from "./capability-invoke.ts";
 
 /**
  * Widget actions: the cursor a spoken action is checked against, and the invocation itself.
@@ -51,8 +56,121 @@ export interface WidgetActionRequest {
 }
 
 export type WidgetActionResult =
-  | { ok: true; status: 200; body: Record<string, unknown> }
+  | { ok: true; status: 200 | 202; body: Record<string, unknown> }
   | { ok: false; status: number; code: string; message: string; currentRevision?: number };
+
+function statusOf(code: string): number {
+  return code === "INSTANCE_UNKNOWN" || code === "ACTION_UNKNOWN"
+    ? 404
+    : code === "NOT_AUTHORIZED"
+      ? 403
+      : code === "REVISION_MISMATCH" || code === "BINDING_STALE" || code === "INVOCATION_KEY_REUSED"
+        ? 409
+        : 400;
+}
+
+/** Invocation ids whose service call has not answered yet, on this node. */
+const inFlight = new Set<string>();
+
+/**
+ * The `invoke` half: a widget button that calls a package's service capability.
+ *
+ * The widget gate runs first — owner, binding, revision, digest, one outcome per invocation id — and then the same
+ * `invokeCapability` the agent's tool and a spoken command reach, so the registry, the input schema and the policy
+ * answer a click exactly as they answer a sentence. When the policy asks, the question is a host card in this
+ * conversation: the frame is told it is waiting, and nothing it sends can answer it.
+ */
+async function invokeCapabilityAction(
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost">,
+  request: WidgetActionRequest,
+  source: CapabilityInvokeSource,
+): Promise<WidgetActionResult> {
+  const checked = checkInvokeAction(services.conductor, request);
+  if (!checked.ok) {
+    return {
+      ok: false,
+      status: statusOf(checked.code),
+      code: checked.code,
+      message: checked.message,
+      ...(checked.currentRevision === undefined ? {} : { currentRevision: checked.currentRevision }),
+    };
+  }
+
+  const state = readWidgetStateRow(services.runtime.db, checked.instance.instanceId);
+  const respond = (status: 200 | 202, extra: Record<string, unknown>, duplicate: boolean): WidgetActionResult => ({
+    ok: true,
+    status,
+    body: {
+      duplicate,
+      instanceId: checked.instance.instanceId,
+      revision: checked.instance.revision,
+      stateRevision: state?.revision ?? 0,
+      state: state?.body ?? {},
+      pinId: null,
+      ...extra,
+      timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),
+    },
+  });
+
+  if (checked.duplicate !== undefined) {
+    return checked.duplicate.kind === "done"
+      ? respond(200, { output: checked.duplicate.output }, true)
+      : respond(202, { approvalRequired: { approvalId: checked.duplicate.approvalId } }, true);
+  }
+
+  // A second request with the same invocation id while the first is still with the service would run it twice: the
+  // outcome that makes it a duplicate is only recorded once the service answers.
+  if (inFlight.has(request.invocationId)) {
+    return {
+      ok: false,
+      status: 409,
+      code: "INVOCATION_IN_PROGRESS",
+      message: "this action is already running; its answer will come back to the first request",
+    };
+  }
+  inFlight.add(request.invocationId);
+  let outcome: Awaited<ReturnType<typeof invokeCapability>>;
+  try {
+    outcome = await invokeCapability(capabilityInvokeDeps(services), {
+      ref: checked.proposal.capabilityRef,
+      args: checked.args,
+      source,
+      conversationId: request.conversationId,
+      bindingGeneration: checked.binding.packageGeneration,
+    });
+  } finally {
+    inFlight.delete(request.invocationId);
+  }
+  if (outcome.kind === "refused") {
+    // Not recorded, so a retry after the service recovers can run. A refusal decided before the service was asked
+    // changed nothing; one after it may have, and the person is told so rather than that nothing happened.
+    const message = mayHaveRun(outcome.code)
+      ? `${outcome.message} — the request reached the service, so it may have done part of it`
+      : outcome.message;
+    return { ok: false, status: outcome.status, code: outcome.code, message };
+  }
+
+  const record = {
+    invocationId: request.invocationId,
+    actionBindingId: request.actionBindingId,
+    instanceId: checked.instance.instanceId,
+    digest: checked.digest,
+  };
+  if (outcome.kind === "approval-required") {
+    recordInvokeAction(services.conductor, {
+      ...record,
+      result: { kind: "approval-required", approvalId: outcome.approval.approvalId },
+    });
+    appendHostReply(services, {
+      conversationId: request.conversationId,
+      blocks: [outcome.card],
+      at: new Date().toISOString() as Instant,
+    });
+    return respond(202, { approvalRequired: { approvalId: outcome.approval.approvalId } }, false);
+  }
+  recordInvokeAction(services.conductor, { ...record, result: { kind: "done", output: outcome.output } });
+  return respond(200, { output: outcome.output }, false);
+}
 
 /**
  * Invoke a widget action.
@@ -65,10 +183,11 @@ export type WidgetActionResult =
  * request-shaped validation and this keeps the authorization, which is the split that matters: what the HTTP body
  * looks like is the transport's business, and whether an action may run is not.
  */
-export function invokeWidgetAction(
-  services: Pick<NodeServices, "runtime" | "conductor">,
+export async function invokeWidgetAction(
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost">,
   request: WidgetActionRequest,
-): WidgetActionResult {
+  source: "click" | "voice" = "click",
+): Promise<WidgetActionResult> {
   // The guard main added at the route, kept where the invocation actually happens so both callers get it.
   if (!Number.isFinite(request.expectedRevision)) {
     return {
@@ -79,6 +198,10 @@ export function invokeWidgetAction(
     };
   }
 
+  if (getActionBinding(services.conductor, request.actionBindingId)?.proposal.kind === "invoke") {
+    return invokeCapabilityAction(services, request, source === "voice" ? "voice" : "widget");
+  }
+
   // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take
   // instead of the next time the node starts.
   const policy = readExecutionPolicy(
@@ -87,17 +210,9 @@ export function invokeWidgetAction(
   );
   const outcome = invokeMiniAppAction(services.conductor, { ...request, policy });
   if (!outcome.ok) {
-    const status =
-      outcome.code === "INSTANCE_UNKNOWN" || outcome.code === "ACTION_UNKNOWN"
-        ? 404
-        : outcome.code === "NOT_AUTHORIZED"
-          ? 403
-          : outcome.code === "REVISION_MISMATCH" || outcome.code === "BINDING_STALE" || outcome.code === "INVOCATION_KEY_REUSED"
-            ? 409
-            : 400;
     return {
       ok: false,
-      status,
+      status: statusOf(outcome.code),
       code: outcome.code,
       message: outcome.message,
       ...(outcome.currentRevision === undefined ? {} : { currentRevision: outcome.currentRevision }),

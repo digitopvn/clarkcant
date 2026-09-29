@@ -5,6 +5,7 @@ import {
   type AppIntentDecision,
   type AppIntentResolution,
   type AttachmentRef,
+  type CapabilityRef,
   type DirectoryEntry,
   type Instant,
   type MessageBlock,
@@ -38,6 +39,7 @@ import {
   releaseLiveOwner,
   sweepExpiredLiveOwners,
   unpinInstance,
+  type UnavailableCapability,
 } from "@clarkcant/core";
 import {
   type Database,
@@ -67,6 +69,11 @@ import { markProjectUsed, projectContext, resolveProject } from "../project-find
 import { initialPrompt } from "../project-session.ts";
 import { tryRecordNodeNotice } from "../notices.ts";
 import { receiptForModel, runApprovedCommand } from "../run-command.ts";
+import {
+  capabilityInvokeDeps,
+  isCapabilityPayload,
+  runApprovedCapability,
+} from "../application/capability-invoke.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -174,8 +181,20 @@ function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity:
  * read under the same call, which is what lets a control start at the value the server holds
  * instead of at the default in the spec.
  */
+/** One binding as a frame's live view lists it, plus the registry refusal it is merged into the notice from. */
+interface FrameBindingRow {
+  actionBindingId: string;
+  label: string;
+  effectCategory: string;
+  bindingDigest: string;
+  capabilityRef?: string;
+  available?: boolean;
+  unavailableReason?: string;
+  unavailable: UnavailableCapability | undefined;
+}
+
 function resolveLiveWidget(
-  services: Pick<NodeServices, "runtime" | "conductor">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "serviceHost">,
   conversationId: string,
   instanceId: string,
   principalId: string,
@@ -219,11 +238,58 @@ function resolveLiveWidget(
     const grantedForFrame = brokeredCapabilities(isolated.requestedCapabilities, generation?.grantedCapabilities);
     // Granted is permission; the registry says whether each one can run now. A granted capability still missing its
     // connection is held back and named, rather than handed to a frame that would find out on first use.
-    const capabilities = readyCapabilities(grantedForFrame, (ref) => {
+    const preflight = (ref: string): ReturnType<typeof invocationPreflight> => {
       const parsed = capabilityRefSchema.safeParse(ref);
       if (!parsed.success) return { ready: false, code: "CAPABILITY_MISSING", message: `${ref} is not a capability reference` };
       return invocationPreflight({ db: runtime.db, nodeId: runtime.identity.nodeId }, parsed.data);
+    };
+    const capabilities = readyCapabilities(grantedForFrame, preflight);
+    /*
+     * The bindings the instance holds, each with the digest the client must send back — and, for a binding that calls
+     * a service capability, whether that capability can run right now.
+     *
+     * Read from the registry at the same moment as the grants above, so a service that crashed, or a node with no
+     * container engine, shows the binding disabled with the registry's own reason instead of a button that fails when
+     * pressed. The widget keeps rendering either way: a service being down is not the widget being broken.
+     */
+    const bindings = instance.actionBindingIds.flatMap((bindingId): FrameBindingRow[] => {
+      const binding = getActionBinding(services.conductor, bindingId);
+      if (binding === undefined) return [];
+      const base = {
+        actionBindingId: binding.actionBindingId,
+        label: binding.label,
+        effectCategory: binding.effectCategory,
+        bindingDigest: binding.bindingDigest,
+      };
+      if (binding.proposal.kind !== "invoke") return [{ ...base, unavailable: undefined }];
+      const ref = binding.proposal.capabilityRef;
+      // The same first question the invoke path asks: a row the registry holds is not a service this node runs.
+      const checked: ReturnType<typeof preflight> | { ready: false; code: "NOT_A_SERVICE_CAPABILITY"; message: string } =
+        services.serviceHost?.serves(ref as CapabilityRef) === undefined
+          ? {
+              ready: false,
+              code: "NOT_A_SERVICE_CAPABILITY",
+              message: `${ref} is not provided by an active package's service on this node`,
+            }
+          : preflight(ref);
+      return [
+        checked.ready
+          ? { ...base, capabilityRef: ref, available: true, unavailable: undefined }
+          : {
+              ...base,
+              capabilityRef: ref,
+              available: false,
+              unavailableReason: checked.message,
+              unavailable: { ref, code: checked.code, message: checked.message },
+            },
+      ];
     });
+    const unavailableCapabilities = [...capabilities.unavailable];
+    for (const binding of bindings) {
+      if (binding.unavailable !== undefined && !unavailableCapabilities.some((entry) => entry.ref === binding.unavailable?.ref)) {
+        unavailableCapabilities.push(binding.unavailable);
+      }
+    }
     /*
      * The durable state the frame starts from, migrated here — on the node, once, before any code of this version
      * reads it. State that could not be migrated, or that a newer version wrote, is still returned so the widget can
@@ -278,30 +344,22 @@ function resolveLiveWidget(
           secret: runtime.identity.localToken,
           expiresAtMs: Date.parse(nowInstant()) + 5 * 60 * 1000,
         })}/${isolated.entryPath}`,
+        /*
+         * Which document the URL loads, without the grant. The grant changes on every read, so a client that compared
+         * URLs would remount a running widget each time it re-read availability; this changes only when the code does.
+         */
+        document: `${isolated.packageId}@${isolated.version}/${isolated.entryPath}`,
         isolation: isolated.isolation,
         grantedCapabilities: capabilities.ready,
-        unavailableCapabilities: capabilities.unavailable,
+        unavailableCapabilities,
         allowedOrigins: isolated.allowedOrigins,
       },
       /*
-       * The bindings the instance holds, each with the digest the client must send back.
-       *
        * The same shape the composition path returns, and for the same reason: an invocation is re-authorized
        * against the instance, the digest and the revision, so a client that could not send the digest it displayed
        * could not be authorized at all. A frame names one of these ids and nothing else.
        */
-      bindings: instance.actionBindingIds.flatMap((bindingId) => {
-        const binding = getActionBinding(services.conductor, bindingId);
-        if (binding === undefined) return [];
-        return [
-          {
-            actionBindingId: binding.actionBindingId,
-            label: binding.label,
-            effectCategory: binding.effectCategory,
-            bindingDigest: binding.bindingDigest,
-          },
-        ];
-      }),
+      bindings: bindings.map(({ unavailable: _unavailable, ...binding }) => binding),
       /*
        * The props the widget was created with. The frame cannot read them from anywhere else: it has no session, no
        * storage and no route of its own, so what it is showing has to arrive with the thing that mounts it.
@@ -1124,7 +1182,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       return fail(400, "INSTANCE_MISMATCH", "the body names a different instance than the path");
     }
 
-    const result = invokeWidgetAction(services, {
+    const result = await invokeWidgetAction(services, {
       conversationId,
       principalId: runtime.identity.ownerPrincipalId,
       instanceId,
@@ -1389,7 +1447,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
  * something that did not happen is how a transcript starts lying.
  */
 export async function decideApprovalForNode(
-  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "projects">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "projects" | "serviceHost">,
   input: {
     conversationId: string;
     approvalId: string;
@@ -1443,10 +1501,13 @@ export async function decideApprovalForNode(
   });
   if (!decided.ok) return { ok: false, code: decided.code, message: decided.message };
 
+  const capabilityCall = isCapabilityPayload(payload);
   if (input.decision === "denied") {
     // A record rather than a sentence, because the card reads its decision from the transcript: a refusal written
     // only as text left the card offering Approve and Deny again after it had been denied.
-    const refused = "Đã từ chối chạy lệnh đó. Không có gì được chạy.";
+    const refused = capabilityCall
+      ? "Đã từ chối gọi capability đó. Không có gì được chạy."
+      : "Đã từ chối chạy lệnh đó. Không có gì được chạy.";
     appendHostReply(services, {
       conversationId: input.conversationId,
       blocks: [
@@ -1464,6 +1525,30 @@ export async function decideApprovalForNode(
       at: input.at,
     });
     return { ok: true };
+  }
+
+  if (capabilityCall) {
+    // A package's service capability, approved on the same card a command is: the payload is hashed again against
+    // the digest the decision covered, and the registry and the input are checked again before the service is called.
+    const invoked = await runApprovedCapability(capabilityInvokeDeps(services), {
+      payload,
+      expectedDigest: decided.approval.operationDigest,
+      approvalId: input.approvalId,
+      conversationId: input.conversationId,
+    });
+    if (!invoked.ok) return { ok: false, code: invoked.code, message: invoked.message };
+    appendHostReply(services, { conversationId: input.conversationId, blocks: invoked.blocks, at: input.at });
+    appendAuditEvent(services.runtime.db, {
+      auditId: services.conductor.newId("audit"),
+      principalId: services.runtime.identity.ownerPrincipalId,
+      nodeId: services.runtime.identity.nodeId,
+      kind: "approval",
+      summary: invoked.description,
+      outcome: invoked.succeeded ? "done" : "failed",
+      ref: input.approvalId,
+      at: input.at,
+    });
+    return { ok: true, outcome: invoked.description };
   }
 
   const ran = await runApprovedCommand({

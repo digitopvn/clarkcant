@@ -53,6 +53,7 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-badge[data-tone="danger"] { color: var(--cc-danger); border-color: color-mix(in oklab, var(--cc-danger) 45%, transparent); }
 .cc-badge[data-tone="ok"] { color: var(--cc-success); border-color: color-mix(in oklab, var(--cc-success) 45%, transparent); }
 .cc-freshness { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-widget-frame-document { display: block; width: 100%; border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card); }
 
 /* Tables */
 .cc-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }

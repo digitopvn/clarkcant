@@ -5,6 +5,8 @@ import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { credentialNames, messagesSince, readPreference } from "@clarkcant/storage";
 
+import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
+import { packageInstallDepsOf } from "../application/package-install.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
 import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
@@ -273,7 +275,13 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         inbox: () => readInbox(deps.services(), instantSchema.parse(new Date().toISOString())),
         // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
         packages: {
-          packages: { runtime: deps.services().runtime, conductor: deps.services().conductor },
+          packages: packageInstallDepsOf(deps.services()),
+          conversationId: turn.conversationId,
+          channel: turn.channel,
+        },
+        // The same path a widget button takes, so "add a note" typed or said and a click are one action.
+        capabilities: {
+          deps: () => capabilityInvokeDeps(deps.services()),
           conversationId: turn.conversationId,
           channel: turn.channel,
         },

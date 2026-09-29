@@ -77,6 +77,8 @@ export interface IsolatedFrameLiveResponse {
   frame: {
     /** Relative to the node, and served from the package path so the widget's own imports resolve. */
     url: string;
+    /** The document the URL loads, without its per-read grant: equal across reads until the widget's code changes. */
+    document?: string;
     isolation: string;
     /**
      * What this frame is actually brokered — the *granted* set, already narrowed against what the package's
@@ -100,6 +102,13 @@ export interface IsolatedFrameLiveResponse {
     label: string;
     effectCategory: string;
     bindingDigest: string;
+    /**
+     * Present only on a binding that calls a service capability: the capability, and whether the registry says it can
+     * run right now — false with the registry's own reason when the service is down, starting, or has no engine.
+     */
+    capabilityRef?: string;
+    available?: boolean;
+    unavailableReason?: string;
   }[];
   /** What the widget was created with, sent to it in the init message and nowhere else. */
   props: Record<string, unknown>;
@@ -198,6 +207,10 @@ export interface ActionInvocationResult {
   state: Record<string, unknown>;
   pinId: string | null;
   timeline: Timeline;
+  /** What a service capability answered, when the binding called one and it ran. */
+  output?: string;
+  /** Set when the policy asked first: the host placed an approval card in the conversation and nothing ran yet. */
+  approvalRequired?: { approvalId: string };
 }
 
 export interface TimelineMessage {

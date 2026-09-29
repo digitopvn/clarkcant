@@ -168,6 +168,8 @@ Conductor mặc định chỉ thấy capability summary và danh sách tool ch�
 
 Conductor không được có tool tự accept consent, đọc secret values hoặc patch core policy. Tool discovery metadata và mô tả MCP do bên ngoài cung cấp vẫn là untrusted input.
 
+Service facet của package là một nguồn capability: node chạy nó trong container và chỉ đăng ký những tool mà manifest khai báo, với readiness mà host quan sát được (`apps/runtime/src/service-host.ts`). Binding của widget, tool `invoke_capability` của agent và voice đều tới đó qua một đường duy nhất, `invokeCapability`, nơi kiểm tra readiness, input schema của tool và execution policy trước khi bất cứ thứ gì chạy. Ranh giới và những gì chưa xây nằm ở [widget-development.vi.md §4](widget-development.vi.md#4-package-manifest).
+
 ### 7.2 Memory & Search: shared service, và Jev là lớp quyết định
 
 Memory & Search là **service dùng chung trong runtime process**, sống qua Pi swap và không nằm trong worker. Nó gồm năm lớp theo sơ đồ: semantic retrieval (sqlite-vec, exact KNN), lexical retrieval (SQLite FTS5, BM25), structured filters (tasks, projects, source refs, thời gian, principal), local embeddings (E5-small quantized ONNX), và rank + verify (RRF, branches, live status). Corpus là Knowledge & History Store: bảng `messages`/summaries trong SQLite và Pi JSONL session của worker, đều đã qua redaction trước khi persist.

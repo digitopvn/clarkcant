@@ -4,16 +4,17 @@
  *
  * Written for the transport tests, so the transport is verified against a real process speaking
  * the real protocol rather than against a mock that agrees with whatever the transport does. It
- * implements exactly enough to be a server: initialize, tools/list, tools/call, plus two failure
+ * implements exactly enough to be a server: initialize, ping, tools/list, tools/call, plus the failure
  * modes a client has to survive.
  *
  * Behaviour chosen by `MCP_FIXTURE_MODE`:
  *   (unset)   normal
- *   "hang"    accepts initialize, then never answers tools/list
+ *   "hang"    accepts initialize, then never answers tools/list or ping
  *   "crash"   accepts initialize, then exits when a tool is called
  *   "banner"  prints a non-JSON line to stdout before the protocol starts
  *   "malformed" returns a tool object that does not match the protocol shape
  *   "toolerror" makes the tool report failure through the protocol's isError
+ *   "flood"   accepts initialize, then answers tools/list with output that never ends a line
  */
 
 const MODE = process.env.MCP_FIXTURE_MODE ?? "normal";
@@ -68,8 +69,25 @@ function handle(request) {
     return;
   }
 
+  if (method === "ping") {
+    if (MODE === "hang") return;
+    send({ jsonrpc: "2.0", id, result: {} });
+    return;
+  }
+
   if (method === "tools/list") {
     if (MODE === "hang") return;
+    if (MODE === "flood") {
+      // One line that never ends: a client that keeps reading it grows without bound.
+      const chunk = "x".repeat(64 * 1024);
+      const flood = () => {
+        let more = true;
+        while (more) more = process.stdout.write(chunk);
+        process.stdout.once("drain", flood);
+      };
+      flood();
+      return;
+    }
     if (MODE === "malformed") {
       send({ jsonrpc: "2.0", id, result: { tools: [{ name: "broken", inputSchema: "not-an-object" }] } });
       return;

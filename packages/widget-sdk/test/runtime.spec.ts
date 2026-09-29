@@ -221,6 +221,83 @@ describe("what the runtime sends", () => {
     await expect(pending).resolves.toBeUndefined();
   });
 
+  it("resolves an action with what the service answered", async () => {
+    const { api, bus } = ready();
+
+    const pending = api.actions.invoke("act_1", { text: "mua sữa" }, "inv_1");
+    bus.deliver({
+      kind: "action-result",
+      nonce: NONCE,
+      actionBindingId: "act_1",
+      status: "accepted",
+      message: "ok",
+      output: "Saved. 1 note(s): mua sữa",
+    });
+    await expect(pending).resolves.toBe("Saved. 1 note(s): mua sữa");
+  });
+
+  it("gives each call of the same action its own answer, whichever comes back first", async () => {
+    const { api, bus } = ready();
+
+    const first = api.actions.invoke("act_1", { text: "một" }, "inv_1");
+    const second = api.actions.invoke("act_1", { text: "hai" }, "inv_2");
+    bus.deliver({
+      kind: "action-result",
+      nonce: NONCE,
+      actionBindingId: "act_1",
+      invocationId: "inv_2",
+      status: "accepted",
+      message: "ok",
+      output: "hai",
+    });
+    bus.deliver({
+      kind: "action-result",
+      nonce: NONCE,
+      actionBindingId: "act_1",
+      invocationId: "inv_1",
+      status: "refused",
+      message: "no answer from the service",
+    });
+
+    await expect(second).resolves.toBe("hai");
+    await expect(first).rejects.toThrow("no answer from the service");
+  });
+
+  it("does not settle a call with an answer that names another action", async () => {
+    const { api, bus } = ready();
+
+    const pending = api.actions.invoke("act_1", {}, "inv_1");
+    bus.deliver({ kind: "action-result", nonce: NONCE, actionBindingId: "act_2", invocationId: "inv_1", status: "accepted", message: "ok" });
+    bus.deliver({ kind: "action-result", nonce: NONCE, actionBindingId: "act_1", invocationId: "inv_1", status: "accepted", message: "ok", output: "đúng" });
+    await expect(pending).resolves.toBe("đúng");
+  });
+
+  it("tells the widget which service-backed actions can run, and why one cannot", () => {
+    const { api, bus } = ready();
+    const seen: unknown[] = [];
+    expect(api.actions.availability()).toEqual([]);
+    api.actions.subscribe((actions) => seen.push(actions));
+
+    bus.deliver({
+      kind: "actions",
+      nonce: NONCE,
+      actions: [{ actionBindingId: "act_1", available: false, reason: "needs Docker or Podman" }],
+    });
+
+    expect(api.actions.availability()).toEqual([
+      { actionBindingId: "act_1", available: false, reason: "needs Docker or Podman" },
+    ]);
+    expect(seen).toHaveLength(1);
+    // Hearing it sends nothing back: availability is the host's to say, not something the frame negotiates.
+    expect(bus.sent).toHaveLength(0);
+  });
+
+  it("ignores an availability message from the wrong nonce", () => {
+    const { api, bus } = ready();
+    bus.deliver({ kind: "actions", nonce: "someone-elses", actions: [{ actionBindingId: "act_1", available: true }] });
+    expect(api.actions.availability()).toEqual([]);
+  });
+
   it("rejects an action the host refused, and says what the host said", async () => {
     const { api, bus } = ready();
 

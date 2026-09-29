@@ -35,6 +35,7 @@ import {
 
 import { loadLocalEmbedder } from "./embeddings-local.ts";
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
+import type { ServiceHost } from "./service-host.ts";
 import type { TaskDispatcher } from "./task-dispatch.ts";
 import {
   type VectorIndexService,
@@ -241,6 +242,14 @@ export interface NodeServices {
    * `wireRuntime` — those tests exercise the sweep function itself rather than the timer around it.
    */
   expirySweep?: { stop(): void };
+  /**
+   * The containers that run installed packages' service facets.
+   *
+   * Assigned after boot, like `taskDispatch`: it reads what is installed and registers capabilities, so it starts once
+   * the node's storage and identity exist. Absent in a test that builds `NodeServices` directly, where every service
+   * capability is refused as not served by this node.
+   */
+  serviceHost?: ServiceHost;
 }
 
 /**

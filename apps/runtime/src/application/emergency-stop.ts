@@ -32,6 +32,11 @@ export interface EmergencyStopDeps {
   taskDispatch?: { stopAll(): number } | undefined;
   /** The terminals opened in the conversation. A shell is running work too, and a stop that left it running would not be one. */
   terminals?: { stopAll(): number } | undefined;
+  /**
+   * Installed packages' services. A person's stop kills them and starts them again from scratch, so whatever a service
+   * was doing stops while its capabilities come back; a shutdown only stops them.
+   */
+  services?: { stopAll(options?: { restart?: boolean }): Promise<number> } | undefined;
   /** The background lane. Defaults to the node's supervisor; a test passes its own. */
   work?: { cancelBackground(reason?: "stopped" | "shutdown"): number };
   /**
@@ -47,6 +52,7 @@ export interface EmergencyStopReport {
   background: number;
   tasks: number;
   terminals: number;
+  services: number;
 }
 
 export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<EmergencyStopReport> {
@@ -73,8 +79,9 @@ export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<Eme
   // turns). A stop that reached everything else and left a worker running would not be an emergency stop.
   const tasks = deps.taskDispatch?.stopAll() ?? 0;
   const terminals = deps.terminals?.stopAll() ?? 0;
+  const services = (await deps.services?.stopAll({ restart: !shutdown }).catch(() => 0)) ?? 0;
 
-  const stopped = commands + turns + background + tasks + terminals;
+  const stopped = commands + turns + background + tasks + terminals + services;
   if (stopped > 0) {
     // Written down whether or not anybody was watching: a stop is the event most likely to need explaining later.
     appendAuditEvent(deps.db, {
@@ -82,10 +89,10 @@ export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<Eme
       principalId: deps.ownerPrincipalId,
       nodeId: deps.nodeId,
       kind: "stop",
-      summary: `${shutdown ? "tắt node" : "dừng khẩn cấp"}: ${commands} lệnh, ${turns} lượt, ${background} việc nền, ${tasks} worker task, ${terminals} terminal`,
+      summary: `${shutdown ? "tắt node" : "dừng khẩn cấp"}: ${commands} lệnh, ${turns} lượt, ${background} việc nền, ${tasks} worker task, ${terminals} terminal, ${services} service`,
       outcome: "stopped",
       at: nowInstant(),
     });
   }
-  return { commands, turns, background, tasks, terminals };
+  return { commands, turns, background, tasks, terminals, services };
 }
