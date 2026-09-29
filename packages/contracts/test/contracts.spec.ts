@@ -46,6 +46,10 @@ import {
   peerSkipSchema,
   NOTICE_BODY_MAX,
   NOTICE_TITLE_MAX,
+  DELEGATED_ARTIFACT_MAX_BYTES,
+  DELEGATED_ARTIFACTS_MAX,
+  delegatedArtifactSchema,
+  delegationResultSchema,
 } from "../src/index.ts";
 
 // Branded values are produced through their own schema so the fixtures cannot drift
@@ -675,7 +679,7 @@ describe("a peer's notice", () => {
 
 describe("what a peer says about itself", () => {
   it("keeps only the features this build knows, each once, from a bounded list", () => {
-    expect(PEER_FEATURES).toEqual(["notice", "skip", "capabilities"]);
+    expect(PEER_FEATURES).toEqual(["notice", "skip", "capabilities", "artifacts"]);
     expect(readPeerFeatures(["notice", "teleport", "notice", 7, null])).toEqual(["notice"]);
     expect(readPeerFeatures(["skip", "notice", "skip"])).toEqual(["skip", "notice"]);
     expect(readPeerFeatures([])).toEqual([]);
@@ -714,6 +718,27 @@ describe("what a peer says it can run for this node", () => {
     expect(peerCapabilitySummarySchema.safeParse({ ...summary, version: 2 }).success).toBe(false);
     const many = Array.from({ length: PEER_CAPABILITY_SUMMARY_MAX + 1 }, (_, index) => ({ ref: `pack.thing${String(index)}@1`, ready: true }));
     expect(peerCapabilitySummarySchema.safeParse({ ...summary, capabilities: many }).success).toBe(false);
+  });
+});
+
+describe("the files a handed-over task's result names", () => {
+  const file = { artifactId: "art_1", digest: `sha256:${"a".repeat(64)}`, name: "notes.md", sizeBytes: 12, mimeType: "text/markdown" };
+  const result = { outcome: "succeeded", evidence: { message: "Wrote notes.md.", ran: true } };
+
+  it("reads a result without files, as an older build sends it, and one naming a bounded list of them", () => {
+    expect(delegationResultSchema.safeParse(result).success).toBe(true);
+    expect(delegationResultSchema.safeParse({ ...result, evidence: { ...result.evidence, artifacts: [file] } }).success).toBe(true);
+    const many = Array.from({ length: DELEGATED_ARTIFACTS_MAX + 1 }, (_, index) => ({ ...file, artifactId: `art_${String(index)}` }));
+    expect(delegationResultSchema.safeParse({ ...result, evidence: { ...result.evidence, artifacts: many } }).success).toBe(false);
+  });
+
+  it("refuses a file that is not named by a sha256 digest, is too large, or carries anything else", () => {
+    expect(delegatedArtifactSchema.safeParse(file).success).toBe(true);
+    expect(delegatedArtifactSchema.safeParse({ ...file, digest: "sha256:abc" }).success).toBe(false);
+    expect(delegatedArtifactSchema.safeParse({ ...file, digest: `md5:${"a".repeat(64)}` }).success).toBe(false);
+    expect(delegatedArtifactSchema.safeParse({ ...file, sizeBytes: DELEGATED_ARTIFACT_MAX_BYTES + 1 }).success).toBe(false);
+    expect(delegatedArtifactSchema.safeParse({ ...file, path: "/home/someone/notes.md" }).success).toBe(false);
+    expect(delegatedArtifactSchema.safeParse({ ...file, name: "x".repeat(201) }).success).toBe(false);
   });
 });
 

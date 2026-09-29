@@ -1487,6 +1487,38 @@ export const MIGRATIONS: readonly Migration[] = [
             FROM preferences
            WHERE key = 'experience.theme'
              AND value IN ('"system"', '"light"', '"dark"');
+        `);
+      },
+    },
+    {
+    version: 37,
+    name: "task_artifacts",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The files a task handed between two nodes brought back, one row per file and side. On the node that ran the
+        -- task, direction 'offered': what it offered the node that handed the task over, which is also the only thing
+        -- that node may fetch from here. On the node that handed it over, direction 'received': what it was offered,
+        -- whether its owner's grant let it in (state 'accepted' or 'refused', with the reason), and once the bytes
+        -- arrived and matched their digest, 'received' with the local artifact they became. peer_artifact_id is the
+        -- id the offering node gave the file, which is what makes an offer delivered twice one row.
+        CREATE TABLE task_artifacts (
+          task_id           TEXT NOT NULL,
+          direction         TEXT NOT NULL CHECK (direction IN ('offered', 'received')),
+          peer_artifact_id  TEXT NOT NULL,
+          peer_node_id      TEXT NOT NULL,
+          artifact_id       TEXT,
+          name              TEXT NOT NULL,
+          digest            TEXT NOT NULL,
+          size_bytes        INTEGER NOT NULL,
+          mime_type         TEXT NOT NULL,
+          state             TEXT NOT NULL CHECK (state IN ('offered', 'accepted', 'refused', 'received', 'failed')),
+          reason            TEXT,
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL,
+          PRIMARY KEY (task_id, direction, peer_artifact_id)
+        );
+        CREATE INDEX idx_task_artifacts_peer_digest ON task_artifacts(peer_node_id, digest);
       `);
     },
   },

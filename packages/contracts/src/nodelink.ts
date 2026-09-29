@@ -127,8 +127,13 @@ function skipListsInOrder(skip: PeerSkip): boolean {
  * `capabilities`: the node answers `GET /peers/capabilities` with what it can run for the asking peer, and says in a
  * `status` when a task handed to it waits for a capability (`waiting_capability`) and when it goes on (`running`, with
  * the capability named).
+ *
+ * `artifacts`: the node takes an `artifact.offer` for a task it handed over, decided against its own owner's grant for
+ * that task, and reads the files a `result` names (`evidence.artifacts`). A node that ran such a task offers its files
+ * only to a peer that advertises this, since an older build would refuse the whole result for the field it does not
+ * know.
  */
-export const peerFeatureSchema = z.enum(["notice", "skip", "capabilities"]);
+export const peerFeatureSchema = z.enum(["notice", "skip", "capabilities", "artifacts"]);
 export type PeerFeature = z.infer<typeof peerFeatureSchema>;
 /** Every feature this build takes, in the order it advertises them. */
 export const PEER_FEATURES: readonly PeerFeature[] = peerFeatureSchema.options;

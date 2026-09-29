@@ -2,12 +2,14 @@ import { isAbsolute, resolve } from "node:path";
 
 import {
   type CapabilityRef,
+  type DelegatedArtifact,
   type DelegationBrief,
   type DelegationResult,
   type EffectCategory,
   type Grant,
   type Instant,
   type IntentAction,
+  type MessageBlock,
   type PeerEnvelope,
   type PersistentIntent,
   type Principal,
@@ -39,6 +41,7 @@ import {
   getPeer,
   getTask,
   countDelegatedTasks,
+  inTransaction,
   livePeerAllowance,
   nextOutboundSequence,
   revokeGrant,
@@ -48,7 +51,8 @@ import {
 
 import { repositoryBindingRefusal, triggerBrief } from "./automation-service.ts";
 import type { NodeIdentity } from "./node.ts";
-import { type TaskDispatcher, stopTask } from "./task-dispatch.ts";
+import { describeResultArtifacts, prepareDelegatedArtifacts, queueArtifactOffers } from "./delegated-artifacts.ts";
+import { type TaskDispatcher, type TaskOutputFile, stopTask } from "./task-dispatch.ts";
 
 /**
  * Handing a task to a paired Clark, and hearing back.
@@ -111,7 +115,13 @@ export function taskGrant(input: {
   expiresAt: Instant;
   /** How long one run may take on the receiver, at most; absent leaves it to the receiver's own limits. */
   maxWallClockMs?: number;
+  /** How many bytes of files one run may bring back from the receiver; absent brings none back. */
+  maxArtifactBytes?: number;
 }): { ok: true; grant: Grant } | { ok: false; message: string } {
+  const budget = {
+    ...(input.maxWallClockMs === undefined ? {} : { maxWallClockMs: input.maxWallClockMs }),
+    ...(input.maxArtifactBytes === undefined ? {} : { maxArtifactBytes: input.maxArtifactBytes }),
+  };
   const parsed = grantSchema.safeParse({
     grantId: input.grantId,
     ownerPrincipalId: input.ownerPrincipalId,
@@ -121,7 +131,7 @@ export function taskGrant(input: {
     resources: input.resources.map((resource) => grantResource(input.receiverNodeId, resource)),
     allowedDataClasses: ["public", "internal"],
     expiresAt: input.expiresAt,
-    ...(input.maxWallClockMs === undefined ? {} : { budget: { maxWallClockMs: input.maxWallClockMs } }),
+    ...(Object.keys(budget).length === 0 ? {} : { budget }),
     maxDelegationDepth: 0,
     allowedEffectCategories: [...input.allowedCategories],
   });
@@ -287,8 +297,14 @@ export interface ResultReceiveDeps {
   nodeId: string;
   now: () => Instant;
   conductor: ConductorDeps;
-  /** How a settled task is told, the same as one this node ran. */
-  onSettled: (input: { taskId: string; conversationId: string; outcome: "succeeded" | "failed" | "uncertain" | "cancelled"; message: string }) => void;
+  /** How a settled task is told, the same as one this node ran; `blocks` show what came back with it. */
+  onSettled: (input: {
+    taskId: string;
+    conversationId: string;
+    outcome: "succeeded" | "failed" | "uncertain" | "cancelled";
+    message: string;
+    blocks?: readonly MessageBlock[];
+  }) => void;
 }
 
 /**
@@ -311,7 +327,11 @@ export function receiveResult(
   if (isTerminal(task.state)) return { accepted: true, duplicate: true };
 
   const peer = envelope.senderNodeId;
-  const said = result.ran ? `trên ${peer}: ${result.message}` : `${peer} không chạy việc này: ${result.message}`;
+  // The files the peer named, as this node decided about each when it was offered: every offer was queued ahead of this.
+  const files = describeResultArtifacts(deps.db, task.taskId, result.artifacts ?? []);
+  const words = result.ran ? `trên ${peer}: ${result.message}` : `${peer} không chạy việc này: ${result.message}`;
+  const said = files.text === "" ? words : `${words} ${files.text}`;
+  const shown = files.blocks.length === 0 ? {} : { blocks: files.blocks };
   const coordination = { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.conductor.newId };
 
   if (task.state === "cancel_requested") {
@@ -319,7 +339,7 @@ export function receiveResult(
     // confirmed stop; anything it finished is an outcome nobody here can vouch for, and is called that.
     const confirmed = result.outcome === "cancelled" || !result.ran;
     applyTaskEvent(coordination, task.taskId, confirmed ? "cancel.confirmed" : "effect.unknown");
-    deps.onSettled({ taskId: task.taskId, conversationId: task.conversationId, outcome: confirmed ? "cancelled" : "uncertain", message: said });
+    deps.onSettled({ taskId: task.taskId, conversationId: task.conversationId, outcome: confirmed ? "cancelled" : "uncertain", message: said, ...shown });
     return { accepted: true, duplicate: false };
   }
 
@@ -336,7 +356,7 @@ export function receiveResult(
             return requested.ok ? applyTaskEvent(coordination, task.taskId, "cancel.confirmed") : requested;
           })();
     if (settled.ok) {
-      deps.onSettled({ taskId: task.taskId, conversationId: task.conversationId, outcome: result.outcome, message: said });
+      deps.onSettled({ taskId: task.taskId, conversationId: task.conversationId, outcome: result.outcome, message: said, ...shown });
       return { accepted: true, duplicate: false };
     }
   }
@@ -348,7 +368,7 @@ export function receiveResult(
     summary: said.slice(0, 1000),
     verified: result.outcome === "succeeded",
   });
-  deps.onSettled({ taskId: task.taskId, conversationId: task.conversationId, outcome: settled.outcome, message: said });
+  deps.onSettled({ taskId: task.taskId, conversationId: task.conversationId, outcome: settled.outcome, message: said, ...shown });
   return { accepted: true, duplicate: false };
 }
 
@@ -419,13 +439,18 @@ export function settleLostResult(deps: ResultReceiveDeps, lost: { peerNodeId: st
  * The receiver's side
  * ------------------------------------------------------------------ */
 
-/** Queue this node's answer about a task a peer handed it. */
+/** Queue this node's answer about a task a peer handed it, naming the files offered back ahead of it, when there are. */
 export function queueResult(
   deps: DelegationDeps,
   peerNodeId: string,
   taskId: string,
-  result: { outcome: DelegationResult["outcome"]; message: string; ran: boolean },
+  result: { outcome: DelegationResult["outcome"]; message: string; ran: boolean; artifacts?: readonly DelegatedArtifact[] },
 ): void {
+  const evidence: DelegationResult["evidence"] = {
+    message: result.message.slice(0, 1000) || result.outcome,
+    ran: result.ran,
+    ...(result.artifacts === undefined || result.artifacts.length === 0 ? {} : { artifacts: [...result.artifacts] }),
+  };
   sendEnvelope(deps, {
     protocol: "agent.nodelink",
     version: 1,
@@ -437,7 +462,7 @@ export function queueResult(
     taskId,
     sourceSequence: nextOutboundSequence(deps.db, peerNodeId),
     sentAt: deps.now(),
-    payload: { outcome: result.outcome, evidence: { message: result.message.slice(0, 1000) || result.outcome, ran: result.ran } } satisfies DelegationResult,
+    payload: { outcome: result.outcome, evidence } satisfies DelegationResult,
   });
 }
 
@@ -445,18 +470,41 @@ export function queueResult(
  * Answer the peer that handed a task over, once it settled here. Nothing for a task no peer handed over.
  *
  * `ran` is false for a task that ended before its worker did anything, such as one whose approval was refused here.
+ * `files` are what its worker wrote, read from `dataDir`'s side of the disk: each one this node can still vouch for is
+ * offered back ahead of the answer, which names them, to a peer that said it takes them. Read before this returns,
+ * since a task's worktree goes once it is reported.
  */
 export function reportDelegatedOutcome(
   deps: DelegationDeps,
-  input: { taskId: string; outcome: DelegationResult["outcome"]; message: string; ran?: boolean },
+  input: {
+    taskId: string;
+    outcome: DelegationResult["outcome"];
+    message: string;
+    ran?: boolean;
+    files?: { dataDir: string; outputs: readonly TaskOutputFile[] };
+  },
 ): boolean {
   const task = getTask(deps.db, input.taskId);
   if (task?.origin?.kind !== "delegated") return false;
-  queueResult(deps, task.origin.peerNodeId, task.taskId, {
-    outcome: input.outcome,
-    message: input.message.slice(0, 1000) || input.outcome,
-    ran: input.ran ?? true,
-  });
+  const peer = task.origin.peerNodeId;
+  const ran = input.ran ?? true;
+  const offering =
+    ran && input.files !== undefined && input.files.outputs.length > 0 && (getPeer(deps.db, peer)?.features ?? []).includes("artifacts")
+      ? prepareDelegatedArtifacts(input.files.dataDir, input.files.outputs)
+      : undefined;
+  const left = offering === undefined || offering.left.length === 0 ? "" : ` Không gửi về: ${offering.left.join("; ")}.`;
+  const message = (input.message.slice(0, 1000 - left.length) || input.outcome) + left;
+  const answer = (): void => {
+    const artifacts =
+      offering === undefined || offering.prepared.length === 0
+        ? []
+        : queueArtifactOffers(deps, { taskId: task.taskId, peerNodeId: peer, prepared: offering.prepared });
+    queueResult(deps, peer, task.taskId, { outcome: input.outcome, message, ran, artifacts });
+  };
+  // The offers and the answer that names them are queued together, so a peer never reads an answer whose files were
+  // never offered.
+  if (inTransaction(deps.db)) answer();
+  else transaction(deps.db, answer);
   return true;
 }
 

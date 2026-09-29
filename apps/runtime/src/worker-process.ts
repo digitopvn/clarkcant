@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { RunRecord } from "@clarkcant/contracts";
-import type { WorkerBriefEnvelope } from "@clarkcant/app-worker";
+import type { WorkerBriefEnvelope, WrittenFile } from "@clarkcant/app-worker";
 import { BUILTIN_PROFILES, buildEnvironment, type ExecutionProfile } from "@clarkcant/execution-supervisor";
 
 import { stopTree } from "./process-tree.ts";
@@ -96,6 +96,11 @@ export interface WorkerProcessResult {
    * from "this adapter does not say".
    */
   usage?: { turns: number; tokens?: number };
+  /**
+   * The files the worker's tools wrote, each with the SHA-256 (hex) of its last write. Optional for the same reason as
+   * `usage`: a fake result predating it has none to report.
+   */
+  outputs?: WrittenFile[];
 }
 
 /** The worker in this repository, resolved from this file rather than from the working directory. */
@@ -218,6 +223,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       withheldCapabilities: parsed.withheldCapabilities,
       record: parsed.record,
       usage: parsed.usage,
+      outputs: parsed.outputs,
     };
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -231,7 +237,11 @@ interface WorkerOutput {
   withheldCapabilities: string[];
   record: RunRecord;
   usage: { turns: number; tokens?: number };
+  outputs: WrittenFile[];
 }
+
+/** The most written files read back from one run, the same bound the worker reports under. */
+const MAX_WORKER_OUTPUTS = 64;
 
 /**
  * Read the worker's record back.
@@ -266,7 +276,26 @@ function parseWorkerOutput(stdout: string): WorkerOutput {
       : [],
     record: output.record as RunRecord,
     usage: parseUsage(output.usage),
+    outputs: parseOutputs(output.outputs),
   };
+}
+
+/**
+ * The files the worker says it wrote, each read as an absolute path and a SHA-256 in hex, and nothing else: whatever
+ * is done with them later reads the file again and compares it with this digest, so an entry that is not both is left
+ * out rather than guessed at.
+ */
+function parseOutputs(value: unknown): WrittenFile[] {
+  if (!Array.isArray(value)) return [];
+  const outputs: WrittenFile[] = [];
+  for (const item of value.slice(0, MAX_WORKER_OUTPUTS)) {
+    if (item === null || typeof item !== "object") continue;
+    const { path, sha256 } = item as { path?: unknown; sha256?: unknown };
+    if (typeof path !== "string" || path.length === 0 || path.length > 4096 || !isAbsolute(path)) continue;
+    if (typeof sha256 !== "string" || !/^[0-9a-f]{64}$/.test(sha256)) continue;
+    outputs.push({ path, sha256 });
+  }
+  return outputs;
 }
 
 /**

@@ -152,7 +152,7 @@ trước, mà không đẩy thông báo của chính node hay của peer khác r
 định như với mọi thông báo khác.
 
 Mọi phản hồi `200` từ `POST /peers/messages` đều mang `features` (những gì node trả lời nhận thêm ngoài các envelope
-cơ bản; hiện là `["notice", "skip", "capabilities"]`) và `label` (tên nó tự gọi mình), và phản hồi `409` `SEQUENCE_GAP` cũng vậy
+cơ bản; hiện là `["notice", "skip", "capabilities", "artifacts"]`) và `label` (tên nó tự gọi mình), và phản hồi `409` `SEQUENCE_GAP` cũng vậy
 (`{ code, expected, received, features, label }`). Bên gửi ghi cả hai cho peer đó, chỉ từ câu trả lời cho một thứ nó đã
 giao qua kênh đã xác thực; lời mời ghép cặp cũng có thể mang `features`. Feature lạ bị bỏ, label được làm sạch và cắt
 còn 64 ký tự, và một peer chưa cho biết gì — một bản dựng có trước thay đổi này — không được gửi thông báo hay skip cho
@@ -173,6 +173,20 @@ message, capabilityRef }`, rồi cùng payload đó với `taskState: "running"`
 thể dừng nó. Bên gửi không quảng bá `capabilities` thì bị từ chối ngay như trước.
 Envelope vẫn ở phiên bản giao thức 1; chính feature được quảng bá là thứ đánh phiên bản cho route và các status này. Xem
 [distributed runtime](distributed-runtime.md).
+
+Với một bên gửi có quảng bá `artifacts`, node đã chạy một task được giao đề nghị gửi lại từng tệp mà worker của nó ghi,
+mỗi tệp trong một message NodeLink `artifact.offer` riêng cho `taskId` đó, xếp hàng trước `result`: payload `{ artifact:
+{ artifactId, digest, sizeBytes, mimeType, classification, originNodeId }, digest, sizeBytes, classification, name }`,
+trong đó `name` là đường dẫn của tệp tương đối với thư mục nơi nó được ghi (tối đa 200 ký tự, được coi là dữ liệu).
+`evidence.artifacts` của `result` nêu đúng các tệp đó dưới dạng `[{ artifactId, digest, name, sizeBytes, mimeType }]` —
+tối đa 8 tệp, mỗi tệp tối đa 4 MiB, digest dạng `sha256:<64 hex>`. Bên gửi trả lời từng lời đề nghị là `accepted` hay
+không kèm `reason`, chỉ dựa trên grant của chính chủ nó cho task đó: `budget.maxArtifactBytes` của grant, tính dồn qua
+các tệp của task, trong đó không đặt hoặc bằng 0 thì không nhận tệp nào. Sau đó nó kéo tệp đã nhận từ `GET
+/peers/artifacts/{digest}` bằng peer token dẫn xuất của nó; node đề nghị chỉ phục vụ một digest cho đúng peer nó đã đề
+nghị (`401` khi không có peer token, `404` trong mọi trường hợp khác, giống như một digest không biết), và bên gửi không
+đọc quá kích thước đã đề nghị và kiểm tra digest trước khi lưu. `create_automation` nhận `maxArtifactBytes` (0 đến 16 MiB,
+chỉ khi có `executor`). Bên gửi không quảng bá `artifacts` không được đề nghị tệp nào. Envelope vẫn ở phiên bản giao
+thức 1; feature được quảng bá là thứ đánh phiên bản cho các lời đề nghị và `evidence.artifacts`.
 
 NodeLink đánh số thứ tự mọi envelope một node gửi cho một peer, và peer từ chối mọi thứ nằm sau một chỗ hổng bằng `409`
 `SEQUENCE_GAP`. Khi bên gửi bỏ một message sau 12 lần thử thất bại, một peer có quảng bá `skip` được gửi một message

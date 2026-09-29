@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { lstat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,15 @@ import {
   type WorkerDeps,
   type WorkerTool,
 } from "../src/index.ts";
-import { allWorkerTools, createCommandTools, READ_PROJECT_FILE_TOOL, RUN_COMMAND_TOOL, type HostCommandReply } from "../src/tools.ts";
+import {
+  allWorkerTools,
+  CAPABILITY_PROJECT_CODE_CHANGE,
+  createCommandTools,
+  READ_PROJECT_FILE_TOOL,
+  RUN_COMMAND_TOOL,
+  WRITE_PROJECT_FILE_TOOL,
+  type HostCommandReply,
+} from "../src/tools.ts";
 
 /**
  * Worker run-loop tests.
@@ -336,6 +345,47 @@ describe("file tools stay inside the approved roots", () => {
     const refused = result.record.evidence.find((item) => item.verdict === "contradicted");
     expect(refused, "expected the symlink escape to be refused").toBeDefined();
     expect(refused?.summary).toContain("outside every approved root");
+  });
+});
+
+describe("the files a run wrote are reported to the host", () => {
+  it("names each file once, with the digest of its last write, and keeps that out of what the agent sees", async () => {
+    const adapter = new FakePiAdapter();
+    const seen: string[] = [];
+    const notes = join(root, "out", "notes.md");
+    const result = await runWorker(
+      brief({ runId: "run_outputs", allowedCapabilityRefs: [CAPABILITY_READ, CAPABILITY_PROJECT_CODE_CHANGE] }),
+      deps(adapter, allWorkerTools([root]), {
+        drive: async (sessionId) => {
+          seen.push(JSON.stringify(await adapter.callToolResult(sessionId, WRITE_PROJECT_FILE_TOOL, { path: notes, contents: "first\n" })));
+          await adapter.callTool(sessionId, WRITE_PROJECT_FILE_TOOL, { path: join(root, "other.txt"), contents: "other\n" });
+          await adapter.callTool(sessionId, WRITE_PROJECT_FILE_TOOL, { path: notes, contents: "second\n" });
+          await adapter.callTool(sessionId, READ_PROJECT_FILE_TOOL, { path: join(root, "report.txt") });
+        },
+      }),
+    );
+
+    const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
+    // Named as the tool resolved it: inside the root as the disk has it, which a temp folder's link may not be.
+    const real = realpathSync.native(root);
+    expect(result.outputs).toEqual([
+      { path: join(real, "out", "notes.md"), sha256: digest("second\n") },
+      { path: join(real, "other.txt"), sha256: digest("other\n") },
+    ]);
+    expect(seen[0]).not.toContain("wrote");
+  });
+
+  it("names nothing for a run that wrote nothing", async () => {
+    const adapter = new FakePiAdapter();
+    const result = await runWorker(
+      brief({ runId: "run_no_outputs" }),
+      deps(adapter, allWorkerTools([root]), {
+        drive: async (sessionId) => {
+          await adapter.callTool(sessionId, READ_PROJECT_FILE_TOOL, { path: join(root, "report.txt") });
+        },
+      }),
+    );
+    expect(result.outputs).toEqual([]);
   });
 });
 

@@ -2,6 +2,7 @@ import type { Instant, PeerEnvelope } from "@clarkcant/contracts";
 import { dismissNotificationsByKeyPrefix } from "@clarkcant/storage";
 
 import { readOriginRemote } from "./automation-service.ts";
+import { type ArtifactIntakeDeps, collectTaskArtifact, receiveArtifactOffer } from "./delegated-artifacts.ts";
 import {
   type DelegationDeps,
   receiveCancel,
@@ -45,6 +46,28 @@ function clearWaitingNotice(services: Pick<NodeServices, "runtime">, taskId: str
   } catch (cause) {
     process.stderr.write(`inbox: could not clear the waiting notice of ${taskId} (${cause instanceof Error ? cause.message : String(cause)})\n`);
   }
+}
+
+/**
+ * Where the files a peer brings back for a task are fetched to, recorded and said: this node's data directory, and the
+ * task's own conversation.
+ */
+export function artifactIntakeDeps(services: Pick<NodeServices, "runtime" | "conductor" | "search">, now: () => Instant): ArtifactIntakeDeps {
+  const { runtime, conductor } = services;
+  return {
+    db: runtime.db,
+    identity: runtime.identity,
+    dataDir: runtime.dataDir,
+    now,
+    newId: conductor.newId,
+    say: (conversationId, text, blocks = []) => {
+      appendHostReply(services, {
+        conversationId,
+        blocks: [{ type: "text", format: "plain", content: text, streaming: false }, ...blocks],
+        at: now(),
+      });
+    },
+  };
 }
 
 export function peerDelegationHandlers(services: NodeServices, now: () => Instant): DelegationHandlers {
@@ -104,6 +127,14 @@ export function peerDelegationHandlers(services: NodeServices, now: () => Instan
     },
     cancel: (envelope: PeerEnvelope) =>
       answered(receiveCancel({ ...deps, ...(services.taskDispatch === undefined ? {} : { taskDispatch: services.taskDispatch }) }, envelope)),
+    // Decided against this node's owner's grant for the task and recorded; nothing is sent back, so the outbox is not woken.
+    offer: (envelope: PeerEnvelope) => receiveArtifactOffer({ db: runtime.db, identity: runtime.identity, now }, envelope),
+    collect: (envelope: PeerEnvelope) => {
+      const offered = envelope.payload["artifact"];
+      const artifactId = offered !== null && typeof offered === "object" ? (offered as { artifactId?: unknown }).artifactId : undefined;
+      if (envelope.taskId === undefined || typeof artifactId !== "string") return;
+      void collectTaskArtifact(artifactIntakeDeps(services, now), envelope.taskId, artifactId);
+    },
     // Nothing is sent back for this one, so the outbox is not woken.
     status: (envelope: PeerEnvelope) =>
       receiveStatus(

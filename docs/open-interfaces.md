@@ -150,7 +150,7 @@ at most 20 undismissed notices, its oldest going first, without pushing out the 
 can be done with it is worked out by the receiving host like for any notice.
 
 Every `200` from `POST /peers/messages` carries `features` (what the answering node takes beyond the base envelopes;
-today `["notice", "skip", "capabilities"]`) and `label` (what it calls itself), and so does a `409` `SEQUENCE_GAP` (`{ code, expected,
+today `["notice", "skip", "capabilities", "artifacts"]`) and `label` (what it calls itself), and so does a `409` `SEQUENCE_GAP` (`{ code, expected,
 received, features, label }`). The sender records both for that peer, only from an answer to something it delivered
 over the authenticated channel; a pairing offer may carry `features` too. Unknown features are dropped, the label is
 cleaned and cut to 64 characters, and a peer that advertised nothing — a build from before this — is sent no notices
@@ -171,6 +171,20 @@ taskState: "waiting_capability", taskRevision, message, capabilityRef }`, then t
 the task starts. The wait has no time limit; both owners are told when it starts, and the sender can stop it. A sender that
 does not advertise `capabilities` is refused at once, as before. The envelope stays at protocol version 1; the
 advertised feature is what versions the route and these statuses. See [distributed runtime](distributed-runtime.md).
+
+To a sender that advertises `artifacts`, a node that ran a handed-over task offers each file its worker wrote as its own
+NodeLink `artifact.offer` for that `taskId`, queued ahead of the `result`: payload `{ artifact: { artifactId, digest,
+sizeBytes, mimeType, classification, originNodeId }, digest, sizeBytes, classification, name }`, where `name` is the
+file's path relative to the folder it was written in (at most 200 characters, treated as data). The `result`'s
+`evidence.artifacts` names the same files as `[{ artifactId, digest, name, sizeBytes, mimeType }]` — at most 8, each at
+most 4 MiB, digests `sha256:<64 hex>`. The sender answers each offer `accepted` or not with a `reason`, decided only
+by its own owner's grant for that task: its `budget.maxArtifactBytes`, counted across the task's files, where none or
+0 takes no file. It then pulls an accepted file from `GET /peers/artifacts/{digest}` with its derived peer token; the
+offering node serves a digest only to the peer it offered it to (`401` without a peer token, `404` otherwise, the same
+as an unknown digest), and the sender reads no more than the size offered and checks the digest before storing it.
+`create_automation` takes `maxArtifactBytes` (0 to 16 MiB, with an `executor` only). A sender that does not advertise
+`artifacts` is offered nothing. The envelope stays at protocol version 1; the advertised feature versions the offers
+and `evidence.artifacts`.
 
 NodeLink sequences every envelope a node sends one peer, and the peer refuses anything past a gap with `409`
 `SEQUENCE_GAP`. When the sender gives up on a message after 12 failed attempts, a peer that advertises `skip` is sent a

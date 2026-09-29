@@ -21,7 +21,8 @@ import { tellNoticeTurnedDown } from "../peer-notices.ts";
 import { tellSkipped, tellStuck } from "../peer-skip.ts";
 import { watchPeerOutages } from "../peer-outage.ts";
 import { startPeerDelivery } from "../peer-signals.ts";
-import { settleUndeliveredTasks } from "../delegation-handlers.ts";
+import { artifactIntakeDeps, settleUndeliveredTasks } from "../delegation-handlers.ts";
+import { resumeArtifactIntake } from "../delegated-artifacts.ts";
 import { taskDispatchReports } from "../task-reporting.ts";
 import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
@@ -403,6 +404,11 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   process.stderr.write(
     `filesystem search: read-only over ${machineRoots().join(", ")} — no index is built; matches are sent to the model provider\n`,
   );
+
+  // Files a paired node offered back for a task this one handed it, accepted and not yet arrived when this node last
+  // stopped: fetched now, in the background like one just accepted, so an accepted file is not silently lost to a restart.
+  const collecting = resumeArtifactIntake(artifactIntakeDeps(deps.services, () => new Date().toISOString() as Instant));
+  if (collecting > 0) process.stderr.write(`fetching ${String(collecting)} file(s) a paired node offered back\n`);
 
   /*
    * Build the project index, in the background and after the node is listening.

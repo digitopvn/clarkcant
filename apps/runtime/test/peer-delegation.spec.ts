@@ -1,18 +1,32 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { type Grant, type Instant, type MessageRecord, PEER_FEATURES, type PeerEnvelope, type TaskRecord } from "@clarkcant/contracts";
+import {
+  type Grant,
+  type Instant,
+  type MessageBlock,
+  type MessageRecord,
+  PEER_FEATURES,
+  type PeerEnvelope,
+  type TaskRecord,
+} from "@clarkcant/contracts";
 import { createTask, registerCapability, startTaskHere, updateReadiness } from "@clarkcant/core";
 import { sendEnvelope } from "@clarkcant/node-link";
 import { CONTROLLED_CODE_TASK } from "@clarkcant/project-work";
 import {
   allRows,
+  getArtifact,
   getGrant,
+  getPeer,
   getPersistentIntent,
   getTask,
+  getTaskArtifact,
+  insertTaskArtifact,
+  listTaskArtifacts,
   nextOutboundSequence,
   parseJson,
   pendingOutbox,
@@ -22,10 +36,12 @@ import {
 
 import { createAutomationTools } from "../src/automation-tools.ts";
 import { startAutomationService } from "../src/automation-service.ts";
+import { blobPathForDigest, readBlob } from "../src/blobs.ts";
 import { resumeTasksWaitingOnCapability } from "../src/capability-waiters.ts";
 import { askPeerCapabilities } from "../src/peer-capabilities.ts";
 import { queueResult, writeGrant } from "../src/delegation.ts";
-import { answerUncertain, settleUndeliveredTasks } from "../src/delegation-handlers.ts";
+import { resumeArtifactIntake } from "../src/delegated-artifacts.ts";
+import { answerUncertain, artifactIntakeDeps, settleUndeliveredTasks } from "../src/delegation-handlers.ts";
 import { sweepExpired } from "../src/expiry-notices.ts";
 import { startPeerDelivery } from "../src/peer-signals.ts";
 import { createTaskDispatcher } from "../src/task-dispatch.ts";
@@ -245,7 +261,14 @@ async function desks(): Promise<{ a: Clark; b: Clark; onA: string; onB: string }
   return { a, b, onA: await conversation(a, "Ghi chú"), onB: await conversation(b, "Máy bàn") };
 }
 
-async function handToLaptop(a: Clark, b: Clark, onA: string, folders: unknown[], allowedEffects: string[]): Promise<void> {
+async function handToLaptop(
+  a: Clark,
+  b: Clark,
+  onA: string,
+  folders: unknown[],
+  allowedEffects: string[],
+  more: Record<string, unknown> = {},
+): Promise<string> {
   const text = await tools(a, onA)("create_automation", {
     summary: "Ghi chú trên laptop",
     topic: "local.note.requested",
@@ -254,11 +277,13 @@ async function handToLaptop(a: Clark, b: Clark, onA: string, folders: unknown[],
     folders,
     allowedEffects,
     executor: identityOf(b).nodeId,
+    ...more,
   });
   expect(text).toContain("Set up.");
   expect(text).toContain(`It runs on ${identityOf(b).nodeId}`);
   // The grant travels as soon as it is written; B holds it before anything asks to run under it.
   await waitUntil(() => pendingOutbox(a.services.runtime.db).length === 0, "the grant to reach B");
+  return text;
 }
 
 describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
@@ -1051,6 +1076,200 @@ describe("what the other node can run, asked before a task is handed to it", { t
     expect(setUp).toContain(
       `Warning: what ${identityOf(b).nodeId}'s owner allows this node there does not cover project.code.change@1, which this task needs`,
     );
+  });
+});
+
+/** The files shown in a conversation: the artifact blocks of what the assistant said there. */
+function shownFiles(node: LiveNode, conversationId: string): Extract<MessageBlock, { type: "artifact" }>[] {
+  return allRows<{ document: string }>(
+    node.services.runtime.db,
+    "SELECT document FROM messages WHERE conversation_id = ? ORDER BY sequence",
+    conversationId,
+  ).flatMap((row) => {
+    const message = parseJson<MessageRecord>(row.document, "messages.document");
+    return message.role === "assistant" ? message.blocks.flatMap((block) => (block.type === "artifact" ? [block] : [])) : [];
+  });
+}
+
+/** What a node queued for its peers, in the order each peer reads it. */
+function sentBy(node: LiveNode): PeerEnvelope[] {
+  return allRows<{ document: string }>(node.services.runtime.db, "SELECT document FROM outbox")
+    .map((row) => JSON.parse(row.document) as PeerEnvelope)
+    .sort((left, right) => left.sourceSequence - right.sourceSequence);
+}
+
+describe("the files a task handed to another Clark brings back", { timeout: 60_000 }, () => {
+  const written = "viết từ máy bàn\n";
+  const writtenDigest = `sha256:${createHash("sha256").update(written).digest("hex")}`;
+  const writtenBytes = Buffer.byteLength(written);
+
+  /** A and B paired by this build, each saying what it takes, with B's owner letting A write in B's folder. */
+  async function allowingDesks(options: { advertise?: boolean } = { advertise: true }): Promise<{ a: Clark; b: Clark; onA: string }> {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b, options);
+    const onA = await conversation(a, "Ghi chú");
+    const onB = await conversation(b, "Máy bàn");
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    return { a, b, onA };
+  }
+
+  async function ranTask(a: Clark, onA: string, outcome: "Xong" | "Không xong" = "Xong"): Promise<string> {
+    await signal(a, "note-1");
+    await waitUntil(() => said(a, onA).some((text) => text.startsWith(`${outcome} (task`)), "A to hear how the task ended");
+    return String(tasksOn(a)[0]?.taskId);
+  }
+
+  it("brings a file the task wrote back to the sender within its owner's byte budget, and shows it with the result", async () => {
+    const { a, b, onA } = await allowingDesks();
+    const setUp = await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"], { maxArtifactBytes: 1024 });
+    expect(setUp).toContain("Files a run writes there come back here, up to 1024 bytes per run.");
+
+    const taskId = await ranTask(a, onA);
+    await waitUntil(() => listTaskArtifacts(a.services.runtime.db, taskId, "received")[0]?.state === "received", "the file to reach A");
+    await waitUntil(() => shownFiles(a, onA).length === 1, "A to show the file");
+
+    // B offered the file as its worker wrote it, and the answer that followed names it by that offer.
+    const sent = sentBy(b);
+    const offer = sent.find((envelope) => envelope.kind === "artifact.offer");
+    const result = sent.find((envelope) => envelope.kind === "result");
+    expect(offer?.taskId).toBe(taskId);
+    expect(offer?.payload).toMatchObject({ name: "notes.md", digest: writtenDigest, sizeBytes: writtenBytes });
+    expect(Number(offer?.sourceSequence)).toBeLessThan(Number(result?.sourceSequence));
+    const offered = offer?.payload["artifact"] as { artifactId: string };
+    expect((result?.payload["evidence"] as { artifacts?: unknown[] }).artifacts).toEqual([
+      { artifactId: offered.artifactId, digest: writtenDigest, name: "notes.md", sizeBytes: writtenBytes, mimeType: "text/markdown" },
+    ]);
+    expect(listTaskArtifacts(b.services.runtime.db, taskId, "offered")).toMatchObject([{ peerArtifactId: offered.artifactId, state: "offered" }]);
+    // The offer names the file by where it sits in the folder, and carries no path on B.
+    const offerDocument = JSON.stringify(offer);
+    expect(offerDocument).not.toContain(JSON.stringify(b.root).slice(1, -1));
+    expect(offerDocument).not.toContain(JSON.stringify(b.services.runtime.dataDir).slice(1, -1));
+
+    // A holds the bytes, checked against the digest, as an artifact from B attached to its own task's run.
+    const [file] = listTaskArtifacts(a.services.runtime.db, taskId, "received");
+    const artifact = getArtifact(a.services.runtime.db, String(file?.artifactId));
+    expect(artifact).toMatchObject({ digest: writtenDigest, sizeBytes: writtenBytes, mimeType: "text/markdown", originNodeId: identityOf(b).nodeId });
+    const stored = readBlob({
+      dataDir: a.services.runtime.dataDir,
+      blobPath: String(blobPathForDigest({ dataDir: a.services.runtime.dataDir, digest: writtenDigest })),
+    });
+    expect(stored.ok && Buffer.from(stored.bytes).toString("utf8")).toBe(written);
+    const home = getTask(a.services.runtime.db, taskId);
+    expect(home?.state).toBe("succeeded");
+    const evidence = allRows<{ kind: string; verdict: string; ref: string | null; digest: string | null }>(
+      a.services.runtime.db,
+      "SELECT kind, verdict, ref, digest FROM evidence WHERE run_id = ? ORDER BY kind",
+      String(home?.activeRunId),
+    );
+    expect(evidence).toEqual([
+      { kind: "api-receipt", verdict: "verified", ref: null, digest: null },
+      { kind: "file-version", verdict: "verified", ref: `artifact:${String(file?.artifactId)}`, digest: writtenDigest },
+    ]);
+
+    // Shown once, where the result is said: with the result when it arrived first, or just after it when not.
+    expect(shownFiles(a, onA)).toEqual([
+      {
+        type: "artifact",
+        artifactId: file?.artifactId,
+        mimeType: "text/markdown",
+        sizeBytes: writtenBytes,
+        digest: writtenDigest,
+        label: "notes.md",
+        originNodeId: identityOf(b).nodeId,
+      },
+    ]);
+    const told = said(a, onA);
+    expect(
+      told.some((text) => text.startsWith(`Xong (task ${taskId})`) && text.includes("Tệp: đã nhận notes.md.")) ||
+        told.includes(`Đã nhận tệp notes.md từ ${identityOf(b).nodeId} cho task ${taskId}.`),
+    ).toBe(true);
+  });
+
+  it("fetches, when it starts again, a file it accepted and had not received, and says it arrived", async () => {
+    const { a, b, onA } = await allowingDesks();
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"], { maxArtifactBytes: 1024 });
+    const taskId = await ranTask(a, onA);
+    await waitUntil(() => listTaskArtifacts(a.services.runtime.db, taskId, "received")[0]?.state === "received", "the file to reach A");
+
+    // A second file B offered and A accepted, whose bytes had not arrived when A stopped.
+    const now = (): Instant => new Date().toISOString() as Instant;
+    insertTaskArtifact(a.services.runtime.db, {
+      taskId,
+      direction: "received",
+      peerArtifactId: "art_left_waiting",
+      peerNodeId: identityOf(b).nodeId,
+      name: "notes-copy.md",
+      digest: writtenDigest,
+      sizeBytes: writtenBytes,
+      mimeType: "text/markdown",
+      state: "accepted",
+      at: now(),
+    });
+
+    expect(resumeArtifactIntake(artifactIntakeDeps(a.services, now))).toBe(1);
+    await waitUntil(() => getTaskArtifact(a.services.runtime.db, taskId, "received", "art_left_waiting")?.state === "received", "the file to be fetched");
+    await waitUntil(
+      () => said(a, onA).includes(`Đã nhận tệp notes-copy.md từ ${identityOf(b).nodeId} cho task ${taskId}.`),
+      "A to say the file arrived after the result",
+    );
+    expect(shownFiles(a, onA).map((block) => block.label)).toContain("notes-copy.md");
+    // Nothing waits any more.
+    expect(resumeArtifactIntake(artifactIntakeDeps(a.services, now))).toBe(0);
+  });
+
+  it("refuses a file larger than the sender's byte budget, and says why with the result", async () => {
+    const { a, b, onA } = await allowingDesks();
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"], { maxArtifactBytes: 4 });
+
+    const taskId = await ranTask(a, onA);
+
+    expect(said(a, onA).find((text) => text.startsWith(`Xong (task ${taskId})`))).toContain(
+      `Tệp: không nhận notes.md: the file is ${String(writtenBytes)} bytes and the automation allows 4 bytes of files back per run.`,
+    );
+    expect(listTaskArtifacts(a.services.runtime.db, taskId, "received")).toMatchObject([{ state: "refused", digest: writtenDigest }]);
+    expect(allRows(a.services.runtime.db, "SELECT artifact_id FROM artifacts")).toEqual([]);
+    expect(blobPathForDigest({ dataDir: a.services.runtime.dataDir, digest: writtenDigest })).toBeUndefined();
+    expect(shownFiles(a, onA)).toEqual([]);
+    expect(sentBy(b).filter((envelope) => envelope.kind === "artifact.offer")).toHaveLength(1);
+  });
+
+  it("takes no file back when the sender's owner allowed no bytes, and says so", async () => {
+    const { a, b, onA } = await allowingDesks();
+    const setUp = await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+    expect(setUp).toContain("Files a run writes there stay there; set maxArtifactBytes to bring them back here.");
+
+    const taskId = await ranTask(a, onA);
+
+    expect(said(a, onA).find((text) => text.startsWith(`Xong (task ${taskId})`))).toContain(
+      "Tệp: không nhận notes.md: the automation that handed this task over allows no file bytes back.",
+    );
+    expect(listTaskArtifacts(a.services.runtime.db, taskId, "received")).toMatchObject([{ state: "refused" }]);
+    expect(allRows(a.services.runtime.db, "SELECT artifact_id FROM artifacts")).toEqual([]);
+    expect(blobPathForDigest({ dataDir: a.services.runtime.dataDir, digest: writtenDigest })).toBeUndefined();
+    expect(readFileSync(join(b.root, "notes.md"), "utf8")).toBe(written);
+  });
+
+  it("offers nothing to a sender that has not said it takes files, and answers it as before", async () => {
+    // Paired as a build from before this: B has not heard A say it takes files when the task ends.
+    const { a, b, onA } = await allowingDesks({ advertise: false });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"], { maxArtifactBytes: 1024 });
+    expect(getPeer(b.services.runtime.db, identityOf(a).nodeId)?.features ?? []).not.toContain("artifacts");
+
+    const taskId = await ranTask(a, onA);
+    await waitUntil(() => pendingOutbox(b.services.runtime.db).length === 0, "B's answer to be delivered");
+
+    const sent = sentBy(b);
+    expect(sent.filter((envelope) => envelope.kind === "artifact.offer")).toEqual([]);
+    const result = sent.find((envelope) => envelope.kind === "result");
+    expect(result?.payload["evidence"]).not.toHaveProperty("artifacts");
+    expect(said(a, onA).find((text) => text.startsWith(`Xong (task ${taskId})`))).not.toContain("Tệp:");
+    expect(listTaskArtifacts(a.services.runtime.db, taskId, "received")).toEqual([]);
+    expect(listTaskArtifacts(b.services.runtime.db, taskId, "offered")).toEqual([]);
   });
 });
 

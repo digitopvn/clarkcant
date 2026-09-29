@@ -213,6 +213,7 @@ export function createCodeChangeTools(projectRoots: readonly string[]): WorkerTo
             `${verb} ${target} (${contents.length} characters)\n` +
             `before: ${before.digest ?? "absent"}\n` +
             `after: ${after}`,
+          wrote: { path: target, sha256: after },
         };
       },
     },

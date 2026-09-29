@@ -1,4 +1,6 @@
 import type { ChildProcess } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { basename, isAbsolute, relative, sep } from "node:path";
 
 import type {
   ApprovalId,
@@ -64,6 +66,35 @@ import type { WorkView } from "./work-supervisor.ts";
  * too, so a burst past it is refused in the conversation rather than held out of sight for ever.
  */
 
+/** A file a task's worker wrote: where, the SHA-256 (hex) of what it wrote, and its name in the folder it wrote it in. */
+export interface TaskOutputFile {
+  path: string;
+  sha256: string;
+  /** Relative to the root it was written under, with `/` between folders; the file's own name when none contains it. */
+  name: string;
+}
+
+/**
+ * The name a written file has in the folder the task was given, so a person told about it recognises it without
+ * learning where that folder is on this machine. Compared against each root as given and as the filesystem resolves
+ * it, since the worker reports the resolved path.
+ */
+function outputName(path: string, roots: readonly string[]): string {
+  for (const root of roots) {
+    const candidates = [root];
+    try {
+      candidates.push(realpathSync.native(root));
+    } catch {
+      // A root that no longer resolves is compared as given.
+    }
+    for (const candidate of candidates) {
+      const inside = relative(candidate, path);
+      if (inside !== "" && !inside.startsWith("..") && !isAbsolute(inside)) return inside.split(sep).join("/");
+    }
+  }
+  return basename(path);
+}
+
 export interface TaskDispatcherDeps {
   conductor: ConductorDeps;
   /** The roots granted to the worker for this run, read fresh at dispatch time. */
@@ -85,12 +116,18 @@ export interface TaskDispatcherDeps {
    * always supplies it, so the gate is live for every task this node actually dispatches to a user.
    */
   ownerPrincipalId?: () => string;
-  /** Reported once a run settles, so the conversation can say what happened without the caller asking. */
+  /**
+   * Reported once a run settles, so the conversation can say what happened without the caller asking.
+   *
+   * `outputs` are the files a worker that finished wrote, still where it wrote them: this is called before a task's
+   * worktree is taken away, and anything that reads them has to do so before it returns.
+   */
   onSettled: (input: {
     taskId: string;
     conversationId: string;
     outcome: "succeeded" | "failed" | "uncertain" | "cancelled";
     message: string;
+    outputs?: readonly TaskOutputFile[];
   }) => void;
   /**
    * Reported when the gate parks a dispatched run waiting for approval, instead of settling it.
@@ -681,7 +718,8 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       });
 
       journal((j) => j.taskEnded(job.taskId, outcome.outcome === "succeeded" ? "done" : "failed"));
-      settle(job, outcome.outcome, outcome.message);
+      const outputs = (result.outputs ?? []).map((file) => ({ ...file, name: outputName(file.path, write) }));
+      settle(job, outcome.outcome, outcome.message, outputs);
     } catch (cause) {
       // A worker ended by a signal — a person's stop, the wall-clock budget, a crash — rejects rather than returning,
       // so this is the path most stops actually take. It settles the task through the state machine like every
@@ -766,13 +804,20 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     job: QueuedRun,
     outcome: "succeeded" | "failed" | "uncertain" | "cancelled",
     message: string,
+    outputs?: readonly TaskOutputFile[],
   ): void {
     // Every path reports here straight after `runDispatchedTask` wrote the run's settlement, so from now on nothing this
     // run does can settle the task: an answer to one of its effects has to settle it itself.
     reported.add(job.taskId);
     const task = getTask(deps.conductor.db, job.taskId);
     if (task === undefined) return;
-    deps.onSettled({ taskId: job.taskId, conversationId: task.conversationId, outcome, message });
+    deps.onSettled({
+      taskId: job.taskId,
+      conversationId: task.conversationId,
+      outcome,
+      message,
+      ...(outputs === undefined || outputs.length === 0 ? {} : { outputs }),
+    });
   }
 
   return {

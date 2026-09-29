@@ -417,7 +417,7 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
     evidenceTests: [
       {
         file: `${RUNTIME}/artifact-transfer.spec.ts`,
-        test: "serves a stored blob to a confirmed peer, and refuses everyone else",
+        test: "serves a blob it offered a confirmed peer to that peer, and refuses everyone else",
       },
       {
         file: `${RUNTIME}/portable-runtime.spec.ts`,
