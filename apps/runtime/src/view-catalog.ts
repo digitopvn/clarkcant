@@ -229,6 +229,19 @@ export function buildViewCatalog(
   ];
 }
 
+/** The context-reference grammar, as the model is told it (`application/action-context.ts`). */
+const CONTEXT_REFS_NOTE =
+  `"widget" or "widget:<instanceId>" for what a widget shows, "selection" or "selection:<instanceId>" for what is ` +
+  `selected in it, "state:<key>" or "state:<instanceId>/<key>" for a composed view's state value; only widgets the same ` +
+  `person owns`;
+
+/** The workflow step vocabulary, as the model is told it (`application/workflow-executor.ts`). */
+const WORKFLOW_NOTE =
+  `each step {"stepId","kind","dependsOn":[...]}: "invoke" with "capabilityRef" and "args", where an arg may be ` +
+  `{"$step":"<a step it depends on>"} (optionally with "field") or {"$input":"<a key the widget sends>"}; "transform" ` +
+  `with "transform" select-field | map-field | filter-equals | take | count and its args (field, value, count); ` +
+  `"condition" with {"field","operator","value"} — a false one skips the steps that depend on it`;
+
 /**
  * The one button a model may place, with the action it performs.
  *
@@ -243,10 +256,13 @@ function actionView(deps: WidgetDeps, bindingDeps: () => ActionBindingDeps): Vie
     notes:
       `props.label is the button text (also the request sent to Clark for an agent action); optional props.description, ` +
       `props.emphasis ("primary" | "secondary") and props.icon (${ACTION_ICONS.join(" | ")}). ` +
-      `props.action is required and is exactly one of: {"kind":"agent","intent":"<what Clark should do when pressed>"}; ` +
-      `{"kind":"invoke","capabilityRef":"<a package service capability>","args":{...}}; ` +
+      `props.action is required and is exactly one of: {"kind":"agent","intent":"<what Clark should do when pressed>"}, ` +
+      `optionally with "contextRefs" the host reads for the request (${CONTEXT_REFS_NOTE}) and "background":true to run it ` +
+      `as background work; {"kind":"invoke","capabilityRef":"<a package service capability>","args":{...}}; ` +
       `{"kind":"view","operation":"view.save","args":{}} to pin this button to the conversation; ` +
-      `or {"kind":"workflow","steps":[...]}, which this node shows but cannot run yet.`,
+      `or {"kind":"workflow","steps":[...]} over package service capabilities (${WORKFLOW_NOTE}). ` +
+      `An agent, invoke or workflow action may add "limits" to tighten the host's own: ` +
+      `invoke and workflow {"deadlineMs","maxCallsPerMinute"}, agent {"maxTokens","maxCallsPerMinute"}.`,
     shownText:
       "Shown: canvas.action@1. The button is bound to that action; nothing has run yet, and it runs only when the person presses it.",
     build: ({ props, caption, principal, messageId }) => {
@@ -257,6 +273,7 @@ function actionView(deps: WidgetDeps, bindingDeps: () => ActionBindingDeps): Vie
         definitionRef,
         label: typeof shown.label === "string" ? shown.label : "",
         action,
+        ownerPrincipalId: principal.principalId,
       });
       if (!compiled.ok) throw new Error(compiled.message);
       const textAlternative = keptText(ACTION.id, caption, `${String(shown.label)}. ${ACTION.textFallback}`);
@@ -325,7 +342,13 @@ function placeSending(
   let compiled: Extract<WidgetActionCompile, { ok: true }> | undefined;
   if (sending !== undefined) {
     if (bindingDeps === undefined) throw new Error(`this node cannot bind an action to ${definition.id}`);
-    const result = compileWidgetAction(bindingDeps(), { definitionRef, label: sending.label, action: sending.action, carries: sending.carries });
+    const result = compileWidgetAction(bindingDeps(), {
+      definitionRef,
+      label: sending.label,
+      action: sending.action,
+      carries: sending.carries,
+      ownerPrincipalId: request.principal.principalId,
+    });
     if (!result.ok) throw new Error(result.message);
     compiled = result;
   }

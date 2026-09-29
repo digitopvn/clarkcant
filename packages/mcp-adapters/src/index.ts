@@ -163,7 +163,15 @@ export interface McpTransport {
   callTool(name: string, args: Record<string, unknown>): Promise<{ content: string }>;
 }
 
-export { StdioMcpTransport, connectStdio, MCP_TRANSPORT_STATUS, type StdioMcpTransportOptions, type ServerHandshake } from "./stdio.ts";
+export {
+  StdioMcpTransport,
+  connectStdio,
+  MCP_TRANSPORT_STATUS,
+  McpRequestCancelled,
+  McpRequestTimeout,
+  type StdioMcpTransportOptions,
+  type ServerHandshake,
+} from "./stdio.ts";
 export {
   MCP_HTTP_TRANSPORT_STATUS,
   StreamableHttpMcpTransport,

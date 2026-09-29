@@ -1,5 +1,5 @@
 import type { MessageKey } from "./i18n/messages.ts";
-import { useCallback, useRef, useState, type ReactElement, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement, type RefObject } from "react";
 
 import {
   GatewayError,
@@ -90,12 +90,23 @@ interface ActionRun {
 }
 
 const UNAVAILABLE_KEYS: Record<string, MessageKey> = {
+  // Kept for a node that predates workflow actions and still answers with it.
   WORKFLOW_UNSUPPORTED: "widgets.action.unavailable.WORKFLOW_UNSUPPORTED",
   NOT_A_SERVICE_CAPABILITY: "widgets.action.unavailable.NOT_A_SERVICE_CAPABILITY",
   BINDING_STALE: "widgets.action.unavailable.BINDING_STALE",
   CAPABILITY_NOT_READY: "widgets.action.unavailable.CAPABILITY_NOT_READY",
   CAPABILITY_NOT_AUTHENTICATED: "widgets.action.unavailable.CAPABILITY_NOT_AUTHENTICATED",
   CAPABILITY_MISSING: "widgets.action.unavailable.CAPABILITY_MISSING",
+};
+
+/**
+ * A single call whose answer never came, said whole in the person's language: why it is unknown, that it was not run
+ * again, and what happens next. A workflow's sentence stays the node's own, because it names the step it stopped at.
+ */
+const UNCERTAIN_KEYS: Record<string, MessageKey> = {
+  SERVICE_CANCELLED: "widgets.action.uncertain.SERVICE_CANCELLED",
+  SERVICE_TIMED_OUT: "widgets.action.uncertain.SERVICE_TIMED_OUT",
+  ACTION_INTERRUPTED: "widgets.action.uncertain.ACTION_INTERRUPTED",
 };
 
 /**
@@ -144,6 +155,8 @@ export interface SurfaceRendererDeps {
   applyTimeline: (next: Timeline) => void;
   setError: (message: string | undefined) => void;
   liveTrigger: RefObject<HTMLElement | null>;
+  /** Told whenever a press starts or stops waiting on the node, so the conversation can offer Stop meanwhile. */
+  onActionsRunningChange?: (running: boolean) => void;
 }
 
 /**
@@ -167,6 +180,7 @@ export function useSurfaceRenderer({
   setError,
   liveTrigger,
   t,
+  onActionsRunningChange,
 }: SurfaceRendererDeps): (input: SurfaceBlockRef) => ReactElement {
   /*
    * A standalone widget's view (a table's sort, search, page and selection; a form's draft; a list's page and
@@ -203,6 +217,12 @@ export function useSurfaceRenderer({
    * node checks it against what the binding accepts before anything runs.
    */
   const [actionRuns, setActionRuns] = useState<Record<string, ActionRun>>({});
+  // Whether a press is still waiting on the node, told to the conversation so its Stop is offered while one is: a
+  // button's call is stopped by the same Stop as a reply.
+  const anyActionRunning = Object.values(actionRuns).some((run) => run.pending);
+  useEffect(() => {
+    onActionsRunningChange?.(anyActionRunning);
+  }, [anyActionRunning, onActionsRunningChange]);
   const runAction = useCallback(
     (conversation: string, instance: Timeline["instances"][number], action: TimelineAction, input: Record<string, unknown>): void => {
       const id = instance.instanceId;
@@ -218,26 +238,36 @@ export function useSurfaceRenderer({
         .then((result) => {
           applyTimeline(result.timeline);
           const run: ActionRun =
-            result.approvalRequired !== undefined
-              ? // Nothing ran yet; the card the host placed in the conversation is where it is decided.
-                { pending: false, tone: "waiting", message: t("widgets.action.awaitingApproval") }
-              : result.duplicate
-                ? { pending: false, tone: "done", message: t("widgets.action.duplicate") }
-                : typeof result.output === "string" && result.output !== ""
-                  ? { pending: false, tone: "done", message: result.output }
-                  : result.pinId !== null
-                    ? { pending: false, tone: "done", message: t("widgets.action.pinned") }
-                    : { pending: false, tone: "done", message: t("widgets.action.done") };
+            result.outcome === "background"
+              ? // Started, not done: the run reports into the conversation when it ends.
+                { pending: false, tone: "waiting", message: t("widgets.action.background") }
+              : result.approvalRequired !== undefined
+                ? // Nothing ran yet — or, for a workflow, not the step that asked; the card is where it is decided.
+                  { pending: false, tone: "waiting", message: result.message ?? t("widgets.action.awaitingApproval") }
+                : result.duplicate
+                  ? { pending: false, tone: "done", message: t("widgets.action.duplicate") }
+                  : typeof result.output === "string" && result.output !== ""
+                    ? { pending: false, tone: "done", message: result.output }
+                    : result.pinId !== null
+                      ? { pending: false, tone: "done", message: t("widgets.action.pinned") }
+                      : { pending: false, tone: "done", message: result.message ?? t("widgets.action.done") };
           setActionRuns((current) => ({ ...current, [id]: run }));
         })
         .catch((cause: unknown) => {
           const code = cause instanceof GatewayError ? cause.code : undefined;
+          const reason = cause instanceof GatewayError ? cause.reason : undefined;
+          const outcome = cause instanceof GatewayError ? cause.details.outcome : undefined;
           const message =
             code === "TURN_IN_PROGRESS"
               ? t("widgets.action.turnInProgress")
               : code === "REVISION_MISMATCH"
                 ? t("widgets.action.revisionMismatch")
-                : reasonFor(t, code, cause instanceof GatewayError ? cause.reason : undefined);
+                : outcome === "uncertain" && code !== undefined && UNCERTAIN_KEYS[code] !== undefined
+                  ? t(UNCERTAIN_KEYS[code])
+                  : outcome === "uncertain" || outcome === "partial"
+                  ? // The node's own sentence: which step or call, what is kept, what happens next.
+                    `${t(outcome === "uncertain" ? "widgets.action.uncertain" : "widgets.action.partial")} ${reason ?? ""}`.trim()
+                  : reasonFor(t, code, reason);
           setActionRuns((current) => ({ ...current, [id]: { pending: false, tone: "refused", message } }));
         });
     },

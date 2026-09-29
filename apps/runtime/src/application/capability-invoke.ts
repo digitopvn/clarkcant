@@ -59,7 +59,9 @@ export type CapabilityInvokeRefusal =
   | "APPROVAL_STALE"
   | "SERVICE_NOT_RUNNING"
   | "SERVICE_TOOL_FAILED"
-  | "SERVICE_UNREACHABLE";
+  | "SERVICE_UNREACHABLE"
+  | "SERVICE_TIMED_OUT"
+  | "SERVICE_CANCELLED";
 
 export type CapabilityInvokeOutcome =
   | { kind: "done"; ref: CapabilityRef; effectCategory: EffectCategory; output: string; description: string }
@@ -112,6 +114,10 @@ export interface CapabilityInvokeRequest {
    * Set only by `runApprovedCapability`, after `decideApproval` checked the decider and the digest.
    */
   approvedBy?: { approvalId: string; generation: string; effectCategory: EffectCategory };
+  /** How long the service may take to answer, within the host's own ceiling. */
+  timeoutMs?: number;
+  /** Withdraws the call once it was sent: a person's Stop, or a workflow's deadline. */
+  signal?: AbortSignal;
 }
 
 /** What an approval is also bound to besides the call: the code that would run it, and the effect it was shown as. */
@@ -125,7 +131,23 @@ export interface CapabilityApprovalContext {
  * or nothing at all. Every other refusal is decided before the service is asked, so nothing ran.
  */
 export function mayHaveRun(code: CapabilityInvokeRefusal): boolean {
-  return code === "SERVICE_TOOL_FAILED" || code === "SERVICE_UNREACHABLE";
+  return (
+    code === "SERVICE_TOOL_FAILED" ||
+    code === "SERVICE_UNREACHABLE" ||
+    code === "SERVICE_TIMED_OUT" ||
+    code === "SERVICE_CANCELLED"
+  );
+}
+
+/**
+ * Whether a call was sent and its answer never came back — it ran out of time, or a person withdrew it.
+ *
+ * Narrower than `mayHaveRun`: a service that answered with an error has answered, and one that crashed mid-call is the
+ * service failing. These two are the ones where the service was reachable and working, so what it was asked to do may
+ * well have been done, and nothing on this node can say which.
+ */
+export function answerNeverCame(code: CapabilityInvokeRefusal): boolean {
+  return code === "SERVICE_TIMED_OUT" || code === "SERVICE_CANCELLED";
 }
 
 /**
@@ -331,7 +353,10 @@ export async function invokeCapability(
   );
 
   try {
-    const result = await host.call(ref, request.args);
+    const result = await host.call(ref, request.args, {
+      ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    });
     return {
       kind: "done",
       ref,
@@ -341,7 +366,14 @@ export async function invokeCapability(
     };
   } catch (cause) {
     if (cause instanceof ServiceCallError) {
-      const status = cause.code === "SERVICE_TOOL_FAILED" ? 502 : cause.code === "SERVICE_NOT_RUNNING" ? 503 : 504;
+      const status =
+        cause.code === "SERVICE_TOOL_FAILED"
+          ? 502
+          : cause.code === "SERVICE_NOT_RUNNING"
+            ? 503
+            : cause.code === "SERVICE_CANCELLED"
+              ? 409
+              : 504;
       return refused(status, cause.code, cause.message);
     }
     return refused(504, "SERVICE_UNREACHABLE", cause instanceof Error ? cause.message : String(cause));

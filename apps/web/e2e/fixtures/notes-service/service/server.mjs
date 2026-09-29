@@ -27,6 +27,19 @@ const TOOLS = [
     },
   },
   {
+    name: "add_note_slowly",
+    description: "Add a note after a wait, unless the request is cancelled first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", minLength: 1, maxLength: 500 },
+        seconds: { type: "integer", minimum: 1, maximum: 120 },
+      },
+      required: ["text", "seconds"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "list_notes",
     description: "List every note, oldest first.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -59,8 +72,19 @@ function text(value, isError = false) {
   return { content: [{ type: "text", text: value }], ...(isError ? { isError: true } : {}) };
 }
 
+/** Slow adds still waiting, by request id, so a `notifications/cancelled` for one can drop it before it writes. */
+const waiting = new Map();
+
 function handle(request) {
   const { id, method, params } = request;
+  if (method === "notifications/cancelled") {
+    const timer = waiting.get(params?.requestId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      waiting.delete(params.requestId);
+    }
+    return;
+  }
   if (id === undefined) return;
   if (method === "initialize") {
     send({
@@ -93,6 +117,22 @@ function handle(request) {
       const notes = [...readNotes(), note];
       writeNotes(notes);
       send({ jsonrpc: "2.0", id, result: text(`Saved. ${String(notes.length)} note(s): ${notes.join(" | ")}`) });
+      return;
+    }
+    if (name === "add_note_slowly") {
+      const note = String(params?.arguments?.text ?? "").trim();
+      const seconds = Number(params?.arguments?.seconds ?? 1);
+      // Written only once the wait is over: a request cancelled before then leaves the notes as they were, and the
+      // protocol says a cancelled request is not answered.
+      waiting.set(
+        id,
+        setTimeout(() => {
+          waiting.delete(id);
+          const notes = [...readNotes(), note];
+          writeNotes(notes);
+          send({ jsonrpc: "2.0", id, result: text(`Saved. ${String(notes.length)} note(s): ${notes.join(" | ")}`) });
+        }, seconds * 1000),
+      );
       return;
     }
     if (name === "list_notes") {

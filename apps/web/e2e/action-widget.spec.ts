@@ -9,8 +9,9 @@ import { expect, test, type APIRequestContext, type Locator, type Page } from "@
  *
  * The button is placed through the view a model's `show_view` uses, so the action is compiled by the host and the
  * button learns only its label. What a press does is then the host's: a `view` binding pins, an `agent` binding starts
- * a turn whose message is the label, an `invoke` binding calls the notes package's service in its container, and a
- * `workflow` binding — which this node cannot run — is drawn disabled with that reason instead of as a live control.
+ * a turn whose message is the label — with context the host read from its own records when the button names some — an
+ * `invoke` binding calls the notes package's service in its container and can be stopped while it waits, and a
+ * `workflow` binding runs its steps through that same service, each through the same gate.
  *
  * Needs a container engine that runs Linux containers for the `invoke` case, like the service-facet journey.
  */
@@ -76,7 +77,7 @@ async function say(page: Page, text: string): Promise<void> {
 }
 
 /** Ask the fixture model to place a button of one kind, and return the newest button in the conversation. */
-async function place(page: Page, kind: "view" | "agent" | "invoke" | "workflow"): Promise<Locator> {
+async function place(page: Page, kind: "view" | "agent" | "invoke" | "workflow" | "chậm" | `agent ngữ cảnh ${string}`): Promise<Locator> {
   const before = await page.locator("[data-action-widget]").count();
   await say(page, `đặt nút ${kind}`);
   await expect(page.locator("[data-action-widget]")).toHaveCount(before + 1, { timeout: 20_000 });
@@ -161,13 +162,75 @@ test("an invoke button calls the package's service and shows what it answered", 
   expect(await shape(button)).toBe(await shape(agent));
 });
 
-test("a workflow button is drawn disabled with the reason the node cannot run it", async ({ page }) => {
-  test.setTimeout(60_000);
+test("a workflow button adds a note through the package's service and reads the list back", async ({ page }) => {
+  test.setTimeout(90_000);
   await openApp(page);
   const button = await place(page, "workflow");
-  await expect(button).toHaveAttribute("data-action-actionable", "false");
-  await expect(button.getByRole("button", { name: "Chạy quy trình" })).toBeDisabled();
-  await expect(button.locator("[data-action-unavailable]")).toHaveText("Máy này chưa chạy được quy trình nhiều bước.");
+  await expect(button).toHaveAttribute("data-action-actionable", "true");
+  const pressed = page.waitForResponse((response) => response.request().method() === "POST" && /\/widgets\/[^/]+\/actions$/u.test(response.url()));
+  await button.getByRole("button", { name: "Ghi rồi đọc ghi chú" }).click();
+
+  // The last step's answer is the list the service keeps, which now holds the note the first step added.
+  await expect(button.locator("[data-action-result='done']")).toContainText("từ quy trình", { timeout: 30_000 });
+  const body = (await (await pressed).json()) as {
+    outcome?: string;
+    workflow?: { completed: boolean; steps: { stepId: string; status: string }[] };
+  };
+  expect(body.outcome).toBe("done");
+  expect(body.workflow?.completed).toBe(true);
+  expect(body.workflow?.steps.map((step) => [step.stepId, step.status])).toEqual([
+    ["add", "done"],
+    ["list", "done"],
+  ]);
+});
+
+test("an agent button with a context reference gives the model what the host read, not what the frame said", async ({ page }) => {
+  test.setTimeout(90_000);
+  await openApp(page);
+  await say(page, "đặt thẻ chi tiết");
+  const card = page.locator("[data-widget-instance]").filter({ hasText: "Nguyễn Thị Lan" }).last();
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  const instanceId = (await card.getAttribute("data-widget-instance")) ?? "";
+  expect(instanceId, "the details card is drawn for an instance").not.toBe("");
+
+  const button = await place(page, `agent ngữ cảnh ${instanceId}`);
+  await expect(button).toHaveAttribute("data-action-actionable", "true");
+  const pressed = page.waitForResponse((response) => response.request().method() === "POST" && /\/widgets\/[^/]+\/actions$/u.test(response.url()));
+  await button.getByRole("button", { name: "Tóm tắt thẻ" }).click();
+
+  // The person's message is the label alone; the card's facts reached the model through the host.
+  await expect(page.locator("[data-role='user'] [data-bubble='user']").last()).toHaveText("Tóm tắt thẻ", { timeout: 30_000 });
+  const reply = page.locator("[data-role='assistant']").last();
+  await expect(reply).toContainText("Ngữ cảnh host đọc:");
+  await expect(reply).toContainText("Nguyễn Thị Lan");
+  const body = (await (await pressed).json()) as { context?: { ref: string; kind: string; instanceId: string }[] };
+  expect(body.context).toEqual([{ ref: `widget:${instanceId}`, kind: "widget", instanceId }]);
+});
+
+test("Stop cancels an invoke still waiting on the service, and says whether it took effect is unknown", async ({ page }) => {
+  test.setTimeout(90_000);
+  await openApp(page);
+  const button = await place(page, "chậm");
+  await expect(button).toHaveAttribute("data-action-actionable", "true");
+  const pressed = page.waitForResponse((response) => response.request().method() === "POST" && /\/widgets\/[^/]+\/actions$/u.test(response.url()));
+  await button.getByRole("button", { name: "Ghi chậm" }).click();
+
+  // While the call waits, the conversation's own Stop is the control that stops it.
+  const stop = page.getByRole("button", { name: "Dừng trả lời (Esc)" });
+  await expect(stop).toBeVisible({ timeout: 10_000 });
+  await stop.click();
+
+  const response = await pressed;
+  expect(response.status()).toBe(409);
+  const body = (await response.json()) as { code?: string; outcome?: string; mayHaveRun?: boolean; message?: string };
+  expect(body).toMatchObject({ code: "SERVICE_CANCELLED", outcome: "uncertain", mayHaveRun: true });
+  const result = button.locator("[data-action-result='refused']");
+  // Said whole in the person's language: they stopped it after it was sent, so it is unknown, and it was not run again.
+  await expect(result).toHaveText(
+    "Bạn đã dừng nó sau khi yêu cầu đã được gửi, trước khi dịch vụ trả lời, nên chưa rõ việc này đã có hiệu lực hay chưa. Nó không được chạy lại; hộp thư sẽ hỏi bạn nó đã có hiệu lực chưa.",
+    { timeout: 10_000 },
+  );
+  await expect(stop).toBeHidden();
 });
 
 test("a press the node refuses shows the reason, and an unknown or stale binding is refused", async ({ page, request }) => {
@@ -218,7 +281,7 @@ test("the buttons read at phone width without horizontal scrolling", async ({ pa
   await place(page, "agent");
   await place(page, "invoke");
   const workflow = await place(page, "workflow");
-  await expect(workflow.locator("[data-action-unavailable]")).toBeVisible();
+  await expect(workflow).toHaveAttribute("data-action-actionable", "true");
   await workflow.scrollIntoViewIfNeeded();
   await page.waitForTimeout(600);
   await page.screenshot({ path: testInfo.outputPath("action-buttons-desktop.png") });

@@ -4,6 +4,7 @@ import type { Database } from "@clarkcant/storage";
 
 import { stopRunningCommands } from "../run-command.ts";
 import { nodeWork } from "../work-supervisor.ts";
+import { cancelAllActionRuns } from "./action-runs.ts";
 
 /**
  * The emergency stop.
@@ -79,9 +80,12 @@ export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<Eme
   // turns). A stop that reached everything else and left a worker running would not be an emergency stop.
   const tasks = deps.taskDispatch?.stopAll() ?? 0;
   const terminals = deps.terminals?.stopAll() ?? 0;
+  // Before the services go down: a widget's call withdrawn first is reported as stopped, with its effect unknown, rather
+  // than as a service that vanished mid-call.
+  const actions = cancelAllActionRuns();
   const services = (await deps.services?.stopAll({ restart: !shutdown }).catch(() => 0)) ?? 0;
 
-  const stopped = commands + turns + background + tasks + terminals + services;
+  const stopped = commands + turns + background + tasks + terminals + services + actions;
   if (stopped > 0) {
     // Written down whether or not anybody was watching: a stop is the event most likely to need explaining later.
     appendAuditEvent(deps.db, {
@@ -89,7 +93,7 @@ export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<Eme
       principalId: deps.ownerPrincipalId,
       nodeId: deps.nodeId,
       kind: "stop",
-      summary: `${shutdown ? "tắt node" : "dừng khẩn cấp"}: ${commands} lệnh, ${turns} lượt, ${background} việc nền, ${tasks} worker task, ${terminals} terminal, ${services} service`,
+      summary: `${shutdown ? "tắt node" : "dừng khẩn cấp"}: ${commands} lệnh, ${turns} lượt, ${background} việc nền, ${tasks} worker task, ${terminals} terminal, ${services} service${actions > 0 ? `, ${String(actions)} thao tác widget` : ""}`,
       outcome: "stopped",
       at: nowInstant(),
     });

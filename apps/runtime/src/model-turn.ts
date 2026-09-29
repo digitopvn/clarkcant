@@ -103,6 +103,8 @@ export interface BackgroundRunInput {
   workId?: string;
   /** Aborted when the run is stopped, overruns its deadline or the node shuts down; the reason says which. */
   signal?: AbortSignal;
+  /** The token budget the request that started this run set, handed to the worker's brief. */
+  maxTokens?: number;
 }
 
 /**
@@ -1012,6 +1014,7 @@ export async function createModelTurn(options: {
         // Routed only for background work. Foreground honours the person's choice, and nobody is watching this run —
         // which is exactly why the model for it is a decision rather than a setting.
         ...(routed === undefined ? {} : { model: routed }),
+        ...(input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens }),
       });
       backgroundSessions.set(workId, handle.sessionId);
       let said = "";

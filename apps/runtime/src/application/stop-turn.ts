@@ -3,13 +3,14 @@ import { appendAuditEvent } from "@clarkcant/storage";
 import type { Database } from "@clarkcant/storage";
 
 import { type NodeServices } from "../services.ts";
+import { cancelActionRuns } from "./action-runs.ts";
 
 /**
  * Stopping the reply one conversation is writing.
  *
- * The narrow sibling of the emergency stop: it reaches only this conversation's turn, and leaves the commands,
- * terminals and background work of the node running, because a person who presses Stop under a reply is stopping
- * that reply and nothing else. The Stop button, Escape, "dừng lại" said or typed, and `POST
+ * The narrow sibling of the emergency stop: it reaches only this conversation's turn and the widget actions running in
+ * it, and leaves the commands, terminals and background work of the node running, because a person who presses Stop
+ * under a reply is stopping what this conversation is doing and nothing else. The Stop button, Escape, "dừng lại" said or typed, and `POST
  * /conversations/:id/stop` all arrive here, so there is one answer to "what does stopping do".
  *
  * What the turn had already written is kept: the model turn ends with its partial reply and a stopped label rather
@@ -32,8 +33,16 @@ export function stopConversationTurn(
   deps: StopTurnDeps,
   input: { conversationId: string; source: StopTurnSource },
 ): { stopped: boolean } {
-  const stopped = deps.turnControl?.interrupt(input.conversationId) ?? false;
+  const interrupted = deps.turnControl?.interrupt(input.conversationId) ?? false;
+  // A button's service call or workflow running in this conversation is stopped by the same Stop: to the person it is
+  // what this conversation is doing, and there is no second control for it (`action-runs.ts`).
+  const actions = cancelActionRuns(input.conversationId);
+  const stopped = interrupted || actions > 0;
   if (stopped) {
+    const what = [
+      ...(interrupted ? ["lượt trả lời"] : []),
+      ...(actions > 0 ? [`${String(actions)} thao tác của widget`] : []),
+    ].join(" và ");
     // Written only for a stop that stopped something: a no-op is not an event, and a row for every idle press would
     // bury the ones that explain why a reply ended early.
     appendAuditEvent(deps.db, {
@@ -41,7 +50,7 @@ export function stopConversationTurn(
       principalId: deps.ownerPrincipalId,
       nodeId: deps.nodeId,
       kind: "stop",
-      summary: `dừng lượt trả lời theo yêu cầu (${input.source})`,
+      summary: `dừng ${what} theo yêu cầu (${input.source})`,
       outcome: "stopped",
       at: nowInstant(),
       ref: input.conversationId,

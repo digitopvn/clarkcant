@@ -359,26 +359,94 @@ same turn, and no button is left behind.
 | `action.kind` | What a press does | Compiled from |
 | --- | --- | --- |
 | `view` (`view.save`) | Pins this button to the conversation. | Effect category `local-write`. |
-| `agent` | Starts a turn in the same conversation whose message is exactly the label; the `intent` goes to the model beside it. The reply is the press's outcome. | Starting a turn changes nothing by itself; what the turn then does passes the policy on its own. |
-| `invoke` | Calls a package service capability through `invokeCapability`, the same path as the agent's `invoke_capability` tool and voice. | The capability's own effect category and the package generation serving it now; the arguments are checked against its input schema. |
-| `workflow` | Nothing yet: this node cannot run a workflow, so the button is drawn disabled with that reason. | The most severe category among its steps. |
+| `agent` | Starts a turn in the same conversation whose message is exactly the label; the `intent` goes to the model beside it, with the context its `contextRefs` name, read by the host. The reply is the press's outcome. With `background: true` the request goes to the node's background lane instead, and its result arrives in the conversation and the inbox. | Starting a turn changes nothing by itself; what the turn then does passes the policy on its own. `contextRefs` are checked against the closed grammar and the person placing the button. |
+| `invoke` | Calls a package service capability through `invokeCapability`, the same path as the agent's `invoke_capability` tool and voice, within the binding's deadline. | The capability's own effect category and the package generation serving it now; the arguments are checked against its input schema. |
+| `workflow` | Runs its steps in `dependsOn` order within one total deadline, and stops at the first step that does not complete. | The most severe category among its steps; each `invoke` step must be served by a running service. A workflow whose steps all come from one package pins that package's generation. |
 
-The binding digest covers the proposal, the package generation, the effect category and the label. A package update
-makes the binding stale (`BINDING_STALE`) instead of retargeting it. Whether a press needs approval is the execution
-policy's decision at the press, not a flag frozen at compile time.
+The binding digest covers the proposal, the package generation, the effect category, the label and the limits. A package
+update makes the binding stale (`BINDING_STALE`) instead of retargeting it. Whether a press needs approval is the
+execution policy's decision at the press, not a flag frozen at compile time. A click and a spoken request for the same
+button take the same path (`invokeWidgetAction`) and get the same policy decision and the same outcome.
 
 Every surface reads availability from one function (`bindingAvailability` in
 `apps/runtime/src/application/action-bindings.ts`), and the timeline carries it beside the instance. A service that
-stopped, a capability that is not a service, a stale binding or a workflow is a disabled button with the reason in
-words, not a live one that fails. The press is still checked again when it arrives. A press shows pending, then the
-outcome in a `role="status"` line. The outcome is the service's output, the agent's reply, "pinned", "waiting for your
-approval", or the refusal reason. A second press while the first is pending sends nothing. An agent press while Clark is
-still answering is refused with `TURN_IN_PROGRESS` rather than interrupting.
+stopped, a capability that is not a service, or a stale binding is a disabled button with the reason in words, not a
+live one that fails. A workflow is available only when every `invoke` step's capability is ready, and the reason names
+the step that is not. The press is still checked again when it arrives. A press shows pending, then the outcome in a
+`role="status"` line. The outcome is the service's output, the agent's reply, the workflow's last output, "pinned",
+"started in the background", "waiting for your approval", or the refusal reason. A second press while the first is
+pending sends nothing. A foreground agent press while Clark is still answering is refused with `TURN_IN_PROGRESS`
+rather than interrupting.
+
+**Limits.** A proposal may ask for tighter `limits` than the defaults. What it asks for is clamped to the ceilings when
+the binding is compiled, and a binding stored without limits runs under the defaults, so no binding runs unbounded
+(`apps/runtime/src/application/action-limits.ts`).
+
+| Kind | `deadlineMs` | `maxTokens` | `maxCallsPerMinute` |
+| --- | --- | --- | --- |
+| `invoke` | 60 s by default, 1–60 s; the service host's own call ceiling still applies. | — | 30 by default, 1–120. |
+| `agent` | — (the node's turn and background deadlines apply) | 4000 by default, 256–16000. | 10 by default, 1–30. |
+| `workflow` | 120 s by default, 1–300 s, for the whole run. | — | 10 by default, 1–60. |
+
+The per-minute count is per binding, on this node, and counts only admitted presses. A press over it is refused with
+`RATE_LIMITED` (429) and nothing runs.
+
+**Context for an agent button.** `contextRefs` form a closed grammar: `widget` / `widget:<instanceId>` (what a widget
+means now, from the same semantic document `inspect_ui` reads), `selection` / `selection:<instanceId>`, and
+`state:<key>` / `state:<instanceId>/<key>` (one value of a composed view's state). A reference without an instance id
+means the button's own widget. Anything else is refused when the binding is compiled, as is a widget this node does not
+hold or one another person owns. `artifact:<id>` is refused until the node has the artifact broker (#313). At the press
+the host reads each reference again for the person who pressed, bounds each to 4000 characters, and gives it to the
+model under a heading that marks it as data, not instructions. The frame supplies no text at all: a button sends no
+input, and anything it sends is refused. A reference that no longer resolves refuses the press with
+`CONTEXT_REF_UNKNOWN` (404) or `CONTEXT_REF_FORBIDDEN` (403) before any model is called. The request and its context
+are then measured against `maxTokens` with a conservative estimate (UTF-8 bytes / 3). One that does not fit is refused
+whole with `TOKEN_BUDGET_EXCEEDED`, and nothing is sent to the model. A background request hands the budget to its
+worker as the brief's `maxTokens`. The model adapter does not yet cap a worker's own output with it.
+
+**A call whose answer never came.** Stop, Escape or "dừng lại" in the conversation also stops a button's service call or
+workflow still running there. While one runs, the composer shows Stop. A call that was sent and then ran out of time or
+was stopped may have taken effect. The press answers `outcome: "uncertain"` with `mayHaveRun: true`
+(`SERVICE_TIMED_OUT` 504, `SERVICE_CANCELLED` 409, `WORKFLOW_DEADLINE` 504 or `WORKFLOW_STOPPED` 409). The call is
+written into the effect ledger (#273) as an unknown effect, whose inbox notice asks the person whether it took effect.
+It is recorded against the invocation id, and it is never retried. A `read` capability that ran out of time is reported
+plainly: nothing changed, so pressing again is safe. A service over MCP stdio is sent `notifications/cancelled` for a
+withdrawn or timed-out request. A service that honours it can stop, but the host never assumes it did.
+
+**One outcome per invocation id, across a restart.** Before anything is sent, the node writes a `started` record for
+the invocation id, and replaces it with the outcome when the press ends. The same id arriving again gets that outcome
+back and runs nothing. While the first is still running the answer is `INVOCATION_IN_PROGRESS`. After a restart
+interrupted it, the answer is `ACTION_INTERRUPTED` with `outcome: "uncertain"`, and it is not run again. A press refused
+before anything was sent is not recorded, so the same press can run once whatever refused it changes.
+
+**Workflows.** The step vocabulary is closed and holds no code:
+
+- `invoke` calls a capability through `invokeCapability`, with its own registry check, schema check, policy decision
+  and, when the policy asks, its own approval card;
+- `transform` reshapes the output of the step it depends on with one of five pure functions: `select-field`,
+  `filter-equals`, `map-field`, `take` or `count`;
+- `condition` tests that output (`equals`, `not-equals`, `exists`, `greater-than` or `less-than`), and the steps
+  depending on a false condition are skipped.
+
+An `invoke` step's argument may be `{"$step": "<id>"}` (a step it depends on, optionally with `"field"`) or
+`{"$input": "<key>"}` (a value the press sent). The run stops at the first step that is refused, fails, asks for
+approval, or does not answer in time. Its message names that step and the steps that did not run. The steps before it
+stay done, because a workflow has no rollback and never claims one. The response says `outcome: "partial"` when some
+step reached a service before the stop, `"uncertain"` when the stopped step may have run, and `"refused"` otherwise, and
+it carries a `workflow` report of every step. Every step the run reached, a skipped one included, is written to the
+audit log. An approval a step asked for is a host card in the conversation. Approving it runs that step on its own and
+does not resume the workflow.
+
+Response bodies say what happened in `outcome`: `done` (200), `approval-required` (202) or `background` (202). A
+refusal's body carries `code`, `message` and, when relevant, `outcome`, `mayHaveRun`, `taskId` (the ledger entry) and
+`workflow`.
 
 `canvas.cta@1` is kept so history renders. A model can no longer place it, because it had no action behind it.
 
-Tests: `apps/runtime/test/action-widget.spec.ts`, `packages/conversation-client/test/action-button.spec.ts`, and the
-browser journey `apps/web/e2e/action-widget.spec.ts`, which runs each kind against a real notes service in a container.
+Tests: `apps/runtime/test/action-widget.spec.ts`, `apps/runtime/test/workflow-executor.spec.ts`, the bounded-call
+cases in `apps/runtime/test/service-host.spec.ts`, `packages/conversation-client/test/action-button.spec.ts`, and the
+browser journey `apps/web/e2e/action-widget.spec.ts`, which runs each kind against a real notes service in a container,
+including a workflow, an agent button with a context reference and Stop during a slow call.
 
 ### 8.2 Forms, lists, search and fields
 

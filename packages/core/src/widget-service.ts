@@ -1,6 +1,7 @@
 import {
   type ActionBinding,
   type ActionProposal,
+  type WorkflowRunReport,
   type ActionInvocation,
   type CapabilityRef,
   type CompiledSection,
@@ -1496,7 +1497,21 @@ interface InvokeRecord {
   digest: string;
   result:
     | { kind: "done"; output: string }
-    | { kind: "approval-required"; approvalId: string };
+    | { kind: "approval-required"; approvalId: string }
+    /**
+     * Sent, and its answer never came back: the deadline passed or a person stopped it. Recorded so the same
+     * invocation id is told that again rather than sent a second time, which is how an effect would happen twice.
+     */
+    | { kind: "uncertain"; code: string; message: string; taskId?: string }
+    /** Handed to the node's background lane; its result arrives in the conversation, not in this answer. */
+    | { kind: "background"; workId: string; state: "running" | "queued" }
+    /** A workflow's run, complete or stopped at a step, with what each step came to. */
+    | { kind: "workflow"; report: WorkflowRunReport }
+    /**
+     * Written before anything is sent, and replaced by the outcome once there is one. Found again after a restart, it
+     * means the node stopped while the action ran: its effect is unknown, and it is not run a second time.
+     */
+    | { kind: "started"; at: string };
 }
 
 /** What an action run outside this package came to, recorded so the same invocation id gets it back. */
@@ -1646,6 +1661,35 @@ export function recordInvokeAction(
       toJson({ digest: input.digest, result: input.result }),
       deps.now(),
     );
+}
+
+/**
+ * Replace a `started` record with what the action came to.
+ *
+ * Only a `started` record is replaced: an outcome already written is the answer the same id keeps getting.
+ */
+export function settleInvokeAction(
+  deps: WidgetDeps,
+  input: { invocationId: string; digest: string; result: InvokeRecord["result"] },
+): void {
+  deps.db
+    .prepare(
+      `UPDATE action_invocations SET outcome = ?, recorded_at = ?
+       WHERE invocation_id = ? AND json_extract(outcome, '$.result.kind') = 'started'`,
+    )
+    .run(toJson({ digest: input.digest, result: input.result }), deps.now(), input.invocationId);
+}
+
+/**
+ * Remove a `started` record for an action that was refused before anything was sent, so the same id can be pressed
+ * again once whatever refused it has changed.
+ */
+export function forgetStartedInvokeAction(deps: WidgetDeps, invocationId: string): void {
+  deps.db
+    .prepare(
+      `DELETE FROM action_invocations WHERE invocation_id = ? AND json_extract(outcome, '$.result.kind') = 'started'`,
+    )
+    .run(invocationId);
 }
 
 function readDisplayMode(input: Record<string, unknown>): "compact" | "expanded" {

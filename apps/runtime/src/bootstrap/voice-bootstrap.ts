@@ -399,6 +399,15 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
       );
 
       if (!result.ok) return { ok: false, say: `Không thực hiện được: ${result.message}` };
+      if (result.body.outcome === "background") {
+        // Started, not done: the run reports into the conversation and the inbox when it ends.
+        return {
+          ok: true,
+          instanceId,
+          revision: target.revision,
+          say: `Tôi đang làm “${action.label}” ở nền. Kết quả sẽ có trong cuộc trò chuyện khi xong.`,
+        };
+      }
       if (result.status === 202) {
         // The policy asked. The card is in the conversation; saying "done" here would be claiming something that has
         // not happened, and the person answers the card, not this sentence.

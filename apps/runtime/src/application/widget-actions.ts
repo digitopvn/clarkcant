@@ -5,12 +5,16 @@ import {
   type Instant,
   type ListItem,
   type WidgetInstance,
+  type WorkflowRunReport,
   checkFormValues,
   describeFieldValue,
 } from "@clarkcant/contracts";
 import {
+  type BoundActionCheck,
+  type BoundActionResult,
   checkBoundAction,
   checkInvokeAction,
+  forgetStartedInvokeAction,
   getActionBinding,
   getInstance,
   handleUserMessage,
@@ -18,13 +22,28 @@ import {
   readExecutionPolicy,
   readWidgetStateRow,
   recordInvokeAction,
+  settleInvokeAction,
 } from "@clarkcant/core";
+import { appendAuditEvent } from "@clarkcant/storage";
 
-import { appendHostReply } from "../routes/conversations.ts";
+import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { AGENT_ITEM_KEY } from "./action-bindings.ts";
-import { type CapabilityInvokeSource, capabilityInvokeDeps, invokeCapability, mayHaveRun, validateArgs } from "./capability-invoke.ts";
+import { estimateTokens, renderActionContext, resolveActionContext } from "./action-context.ts";
+import { effectCategoryOf, recordUncertainCall } from "./action-effects.ts";
+import { ACTION_LIMITS, admitCall, bindingLimits, rateLimitedMessage } from "./action-limits.ts";
+import { actionRunning, beginActionRun, endActionRun } from "./action-runs.ts";
+import {
+  type CapabilityInvokeRefusal,
+  type CapabilityInvokeSource,
+  answerNeverCame,
+  capabilityInvokeDeps,
+  invokeCapability,
+  mayHaveRun,
+  validateArgs,
+} from "./capability-invoke.ts";
+import { runWorkflow } from "./workflow-executor.ts";
 
 const FORM_DEFINITION_ID = "canvas.form@1";
 const LIST_DEFINITION_ID = "canvas.list@1";
@@ -116,25 +135,233 @@ export interface WidgetActionRequest {
   invocationId: string;
 }
 
+/**
+ * What an action came to.
+ *
+ * A body that arrives says what happened in `outcome`: `done`, `approval-required` (a host card waits in the
+ * conversation) or `background` (the node's background lane took it, and its result arrives in the conversation). A
+ * refusal carries its code and a sentence; `detail` adds what a surface needs to tell a refusal that changed nothing
+ * from one that may have — `outcome: "uncertain"` for a call whose answer never came, `outcome: "partial"` for a
+ * workflow that stopped after some steps ran — and a workflow's report of every step.
+ */
 export type WidgetActionResult =
   | { ok: true; status: 200 | 202; body: Record<string, unknown> }
-  | { ok: false; status: number; code: string; message: string; currentRevision?: number };
+  | {
+      ok: false;
+      status: number;
+      code: string;
+      message: string;
+      currentRevision?: number;
+      detail?: Record<string, unknown>;
+    };
 
 function statusOf(code: string): number {
-  return code === "INSTANCE_UNKNOWN" || code === "ACTION_UNKNOWN"
-    ? 404
-    : code === "NOT_AUTHORIZED"
-      ? 403
-      : code === "REVISION_MISMATCH" ||
-          code === "BINDING_STALE" ||
-          code === "INVOCATION_KEY_REUSED" ||
-          code === "TURN_IN_PROGRESS"
-        ? 409
-        : 400;
+  switch (code) {
+    case "INSTANCE_UNKNOWN":
+    case "ACTION_UNKNOWN":
+    case "CONTEXT_REF_UNKNOWN":
+      return 404;
+    case "NOT_AUTHORIZED":
+    case "CONTEXT_REF_FORBIDDEN":
+    case "POLICY_REFUSED":
+      return 403;
+    case "REVISION_MISMATCH":
+    case "BINDING_STALE":
+    case "INVOCATION_KEY_REUSED":
+    case "INVOCATION_IN_PROGRESS":
+    case "ACTION_INTERRUPTED":
+    case "TURN_IN_PROGRESS":
+    case "SERVICE_CANCELLED":
+    case "WORKFLOW_STOPPED":
+      return 409;
+    case "RATE_LIMITED":
+      return 429;
+    case "SERVICE_TOOL_FAILED":
+      return 502;
+    case "SERVICE_NOT_RUNNING":
+    case "CAPABILITY_NOT_READY":
+    case "BACKGROUND_UNAVAILABLE":
+      return 503;
+    case "SERVICE_TIMED_OUT":
+    case "SERVICE_UNREACHABLE":
+    case "WORKFLOW_DEADLINE":
+      return 504;
+    default:
+      return 400;
+  }
 }
 
-/** Invocation ids whose service call has not answered yet, on this node. */
-const inFlight = new Set<string>();
+function refusal(code: string, message: string, detail?: Record<string, unknown>): WidgetActionResult {
+  return { ok: false, status: statusOf(code), code, message, ...(detail === undefined ? {} : { detail }) };
+}
+
+function gateRefusal(checked: Extract<BoundActionCheck, { ok: false }>): WidgetActionResult {
+  return {
+    ok: false,
+    status: statusOf(checked.code),
+    code: checked.code,
+    message: checked.message,
+    ...(checked.currentRevision === undefined ? {} : { currentRevision: checked.currentRevision }),
+  };
+}
+
+type WidgetActionServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "turnControl">;
+
+type Admitted = Extract<BoundActionCheck, { ok: true }>;
+
+/** The body every kind answers with, so a surface reads them the same way: the instance as it now is, and the page. */
+function actionBody(
+  services: WidgetActionServices,
+  checked: Admitted,
+  conversationId: string,
+  duplicate: boolean,
+  extra: Record<string, unknown>,
+): Record<string, unknown> {
+  const state = readWidgetStateRow(services.runtime.db, checked.instance.instanceId);
+  return {
+    duplicate,
+    instanceId: checked.instance.instanceId,
+    revision: checked.instance.revision,
+    stateRevision: state?.revision ?? 0,
+    state: state?.body ?? {},
+    pinId: null,
+    ...extra,
+    timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+  };
+}
+
+/** A call sent whose answer never came, as the person is told it: what was sent, why it is unknown, what happens next. */
+function uncertainMessage(label: string, code: string, deadlineMs: number | undefined, recorded: boolean): string {
+  const why =
+    code === "SERVICE_CANCELLED"
+      ? "you stopped it before the service answered"
+      : `the service did not answer within ${String(Math.ceil((deadlineMs ?? 60_000) / 1000))} s`;
+  const next = recorded
+    ? "The inbox asks you to say whether it did."
+    : "Say in the conversation whether it did before pressing it again.";
+  return `“${label}” was sent, but ${why}, so whether it took effect is unknown. It was not retried. ${next}`;
+}
+
+/** An outcome of a workflow run, as the response carries it: its report, and whether anything it ran is kept. */
+function workflowResult(
+  services: WidgetActionServices,
+  checked: Admitted,
+  conversationId: string,
+  report: WorkflowRunReport,
+  duplicate: boolean,
+): WidgetActionResult {
+  if (report.completed) {
+    return {
+      ok: true,
+      status: 200,
+      body: actionBody(services, checked, conversationId, duplicate, {
+        outcome: "done",
+        output: report.output ?? "",
+        message: report.message,
+        workflow: report,
+      }),
+    };
+  }
+  const waiting = report.steps.find((step) => step.status === "awaiting-approval");
+  if (waiting !== undefined) {
+    return {
+      ok: true,
+      status: 202,
+      body: actionBody(services, checked, conversationId, duplicate, {
+        outcome: "approval-required",
+        approvalRequired: { approvalId: waiting.detail ?? "" },
+        message: report.message,
+        workflow: report,
+      }),
+    };
+  }
+  const uncertain = report.steps.some((step) => step.status === "uncertain");
+  const ran = report.steps.some((step) => step.status === "done" && step.kind === "invoke");
+  return refusal(report.code ?? "WORKFLOW_STEP_FAILED", report.message, {
+    outcome: uncertain ? "uncertain" : ran ? "partial" : "refused",
+    ...(uncertain ? { mayHaveRun: true } : {}),
+    workflow: report,
+  });
+}
+
+/**
+ * The same invocation arriving again: its first outcome, returned rather than repeated.
+ *
+ * `started` is the one record that is not an outcome. With the run still going, the second request is told so; with no
+ * run going, the node stopped while it ran — the record outlived the process — and its effect is unknown. It is not run a
+ * second time either way.
+ */
+function replay(
+  services: WidgetActionServices,
+  checked: Admitted,
+  request: WidgetActionRequest,
+  prior: BoundActionResult,
+): WidgetActionResult {
+  const body = (status: 200 | 202, extra: Record<string, unknown>): WidgetActionResult => ({
+    ok: true,
+    status,
+    body: actionBody(services, checked, request.conversationId, true, extra),
+  });
+  switch (prior.kind) {
+    case "done":
+      return body(200, { outcome: "done", output: prior.output });
+    case "approval-required":
+      return body(202, { outcome: "approval-required", approvalRequired: { approvalId: prior.approvalId } });
+    case "background":
+      return body(202, { outcome: "background", background: { workId: prior.workId, state: prior.state } });
+    case "workflow":
+      return workflowResult(services, checked, request.conversationId, prior.report, true);
+    case "uncertain":
+      return refusal(prior.code, prior.message, {
+        outcome: "uncertain",
+        mayHaveRun: true,
+        ...(prior.taskId === undefined ? {} : { taskId: prior.taskId }),
+      });
+    case "started":
+      return actionRunning(request.invocationId)
+        ? refusal("INVOCATION_IN_PROGRESS", "this action is already running; its answer will come back to the first request")
+        : refusal(
+            "ACTION_INTERRUPTED",
+            `“${checked.binding.label}” started before this node restarted and never reported back, so whether it took effect is unknown. It was not run again; press it anew once you know.`,
+            { outcome: "uncertain", mayHaveRun: true },
+          );
+  }
+}
+
+/**
+ * Admit one use against the binding's per-minute limit and start tracking it, or say why not.
+ *
+ * Synchronous from the gate to here on purpose: two requests with one invocation id cannot both pass, because the first
+ * has either written its `started` record or is registered as running before the second is looked at.
+ */
+function admit(
+  services: WidgetActionServices,
+  checked: Admitted,
+  request: WidgetActionRequest,
+  perMinute: number,
+): { ok: true; controller: AbortController } | { ok: false; result: WidgetActionResult } {
+  const rate = admitCall(checked.binding.actionBindingId, perMinute);
+  if (!rate.allowed) return { ok: false, result: refusal("RATE_LIMITED", rateLimitedMessage(rate)) };
+  const controller = beginActionRun({ invocationId: request.invocationId, conversationId: request.conversationId });
+  if (controller === undefined) {
+    return {
+      ok: false,
+      result: refusal("INVOCATION_IN_PROGRESS", "this action is already running; its answer will come back to the first request"),
+    };
+  }
+  recordInvokeAction(services.conductor, {
+    invocationId: request.invocationId,
+    actionBindingId: request.actionBindingId,
+    instanceId: checked.instance.instanceId,
+    digest: checked.digest,
+    result: { kind: "started", at: new Date().toISOString() },
+  });
+  return { ok: true, controller };
+}
+
+function settle(services: WidgetActionServices, checked: Admitted, request: WidgetActionRequest, result: BoundActionResult): void {
+  settleInvokeAction(services.conductor, { invocationId: request.invocationId, digest: checked.digest, result });
+}
 
 /**
  * The `invoke` half: a widget button that calls a package's service capability.
@@ -143,60 +370,27 @@ const inFlight = new Set<string>();
  * `invokeCapability` the agent's tool and a spoken command reach, so the registry, the input schema and the policy
  * answer a click exactly as they answer a sentence. When the policy asks, the question is a host card in this
  * conversation: the frame is told it is waiting, and nothing it sends can answer it.
+ *
+ * The call is bounded by the binding's deadline and stoppable by the conversation's Stop. A call that was sent and then
+ * ran out of time or was stopped is not reported as refused: the service may have done it. It is written into the effect
+ * ledger for the person to settle, recorded against the invocation id so the same press is never sent again, and never
+ * retried by the node.
  */
 async function invokeCapabilityAction(
-  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost">,
+  services: WidgetActionServices,
   request: WidgetActionRequest,
   source: CapabilityInvokeSource,
 ): Promise<WidgetActionResult> {
   const checked = checkInvokeAction(services.conductor, request);
-  if (!checked.ok) {
-    return {
-      ok: false,
-      status: statusOf(checked.code),
-      code: checked.code,
-      message: checked.message,
-      ...(checked.currentRevision === undefined ? {} : { currentRevision: checked.currentRevision }),
-    };
-  }
-  if (checked.duplicate === undefined) {
-    const problem = actionInputProblem(checked.instance, checked.binding, request.input);
-    if (problem !== undefined) return { ok: false, status: 400, code: "INVALID_INPUT", message: problem };
-  }
+  if (!checked.ok) return gateRefusal(checked);
+  if (checked.duplicate !== undefined) return replay(services, checked, request, checked.duplicate);
+  const problem = actionInputProblem(checked.instance, checked.binding, request.input);
+  if (problem !== undefined) return refusal("INVALID_INPUT", problem);
 
-  const state = readWidgetStateRow(services.runtime.db, checked.instance.instanceId);
-  const respond = (status: 200 | 202, extra: Record<string, unknown>, duplicate: boolean): WidgetActionResult => ({
-    ok: true,
-    status,
-    body: {
-      duplicate,
-      instanceId: checked.instance.instanceId,
-      revision: checked.instance.revision,
-      stateRevision: state?.revision ?? 0,
-      state: state?.body ?? {},
-      pinId: null,
-      ...extra,
-      timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),
-    },
-  });
+  const limits = bindingLimits(checked.binding);
+  const admitted = admit(services, checked, request, limits.maxCallsPerMinute ?? ACTION_LIMITS.invoke.maxCallsPerMinute?.default ?? 1);
+  if (!admitted.ok) return admitted.result;
 
-  if (checked.duplicate !== undefined) {
-    return checked.duplicate.kind === "done"
-      ? respond(200, { output: checked.duplicate.output }, true)
-      : respond(202, { approvalRequired: { approvalId: checked.duplicate.approvalId } }, true);
-  }
-
-  // A second request with the same invocation id while the first is still with the service would run it twice: the
-  // outcome that makes it a duplicate is only recorded once the service answers.
-  if (inFlight.has(request.invocationId)) {
-    return {
-      ok: false,
-      status: 409,
-      code: "INVOCATION_IN_PROGRESS",
-      message: "this action is already running; its answer will come back to the first request",
-    };
-  }
-  inFlight.add(request.invocationId);
   let outcome: Awaited<ReturnType<typeof invokeCapability>>;
   try {
     outcome = await invokeCapability(capabilityInvokeDeps(services), {
@@ -205,39 +399,85 @@ async function invokeCapabilityAction(
       source,
       conversationId: request.conversationId,
       bindingGeneration: checked.binding.packageGeneration,
+      ...(limits.deadlineMs === undefined ? {} : { timeoutMs: limits.deadlineMs }),
+      signal: admitted.controller.signal,
     });
+  } catch (cause) {
+    forgetStartedInvokeAction(services.conductor, request.invocationId);
+    throw cause;
   } finally {
-    inFlight.delete(request.invocationId);
+    endActionRun(request.invocationId);
   }
+
   if (outcome.kind === "refused") {
+    if (answerNeverCame(outcome.code)) {
+      return uncertainInvoke(services, checked, request, outcome.code, outcome.message, limits.deadlineMs);
+    }
     // Not recorded, so a retry after the service recovers can run. A refusal decided before the service was asked
     // changed nothing; one after it may have, and the person is told so rather than that nothing happened.
+    forgetStartedInvokeAction(services.conductor, request.invocationId);
     const message = mayHaveRun(outcome.code)
       ? `${outcome.message} — the request reached the service, so it may have done part of it`
       : outcome.message;
     return { ok: false, status: outcome.status, code: outcome.code, message };
   }
 
-  const record = {
-    invocationId: request.invocationId,
-    actionBindingId: request.actionBindingId,
-    instanceId: checked.instance.instanceId,
-    digest: checked.digest,
-  };
   if (outcome.kind === "approval-required") {
-    recordInvokeAction(services.conductor, {
-      ...record,
-      result: { kind: "approval-required", approvalId: outcome.approval.approvalId },
-    });
+    settle(services, checked, request, { kind: "approval-required", approvalId: outcome.approval.approvalId });
     appendHostReply(services, {
       conversationId: request.conversationId,
       blocks: [outcome.card],
       at: new Date().toISOString() as Instant,
     });
-    return respond(202, { approvalRequired: { approvalId: outcome.approval.approvalId } }, false);
+    return {
+      ok: true,
+      status: 202,
+      body: actionBody(services, checked, request.conversationId, false, {
+        outcome: "approval-required",
+        approvalRequired: { approvalId: outcome.approval.approvalId },
+      }),
+    };
   }
-  recordInvokeAction(services.conductor, { ...record, result: { kind: "done", output: outcome.output } });
-  return respond(200, { output: outcome.output }, false);
+  settle(services, checked, request, { kind: "done", output: outcome.output });
+  return {
+    ok: true,
+    status: 200,
+    body: actionBody(services, checked, request.conversationId, false, { outcome: "done", output: outcome.output }),
+  };
+}
+
+/**
+ * A call that was sent and never answered.
+ *
+ * A `read` changed nothing whatever happened, so it is reported plainly and the id is freed for a retry. Anything else
+ * goes into the ledger and is recorded as uncertain against the id.
+ */
+function uncertainInvoke(
+  services: WidgetActionServices,
+  checked: Extract<ReturnType<typeof checkInvokeAction>, { ok: true }>,
+  request: WidgetActionRequest,
+  code: CapabilityInvokeRefusal,
+  message: string,
+  deadlineMs: number | undefined,
+): WidgetActionResult {
+  const ref = checked.proposal.capabilityRef;
+  if (effectCategoryOf(services, ref) === "read") {
+    forgetStartedInvokeAction(services.conductor, request.invocationId);
+    const why = code === "SERVICE_CANCELLED" ? "you stopped it" : "the service did not answer in time";
+    return refusal(code, `“${checked.binding.label}” did not finish: ${why}. It only reads, so nothing changed and pressing it again is safe.`);
+  }
+  const taskId = recordUncertainCall(services, {
+    conversationId: request.conversationId,
+    principalId: request.principalId,
+    capabilityRef: ref,
+    args: checked.args,
+    intent: `${checked.binding.label} (${ref})`,
+    stopped: code === "SERVICE_CANCELLED",
+    message,
+  });
+  const said = uncertainMessage(checked.binding.label, code, deadlineMs, taskId !== undefined);
+  settle(services, checked, request, { kind: "uncertain", code, message: said, ...(taskId === undefined ? {} : { taskId }) });
+  return refusal(code, said, { outcome: "uncertain", mayHaveRun: true, ...(taskId === undefined ? {} : { taskId }) });
 }
 
 /** What the model is told about a turn a button started, beside the label the person saw. */
@@ -249,15 +489,18 @@ function agentActionNote(label: string, intent: string, input: Record<string, un
   );
 }
 
-type WidgetActionServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "turnControl">;
-
 /**
  * The `agent` half: a button that asks Clark for something.
  *
  * It passes the same gate every bound action does, then becomes a turn in the same conversation whose message is the
  * button's label — exactly what the person saw and pressed — with the intent the button was offered for given to the
- * model beside it. The turn is an ordinary one: whatever it goes on to do passes the policy on its own. Its reply is the
- * outcome, recorded per invocation id, so a double click starts one turn and a spoken request hears the answer.
+ * model beside it, and the context its references name, read by the host from its own records. The frame supplies none
+ * of that text. The request is measured against the button's token budget before any model is asked, and refused whole
+ * when it does not fit. The turn is an ordinary one: whatever it goes on to do passes the policy on its own. Its reply is
+ * the outcome, recorded per invocation id, so a double click starts one turn and a spoken request hears the answer.
+ *
+ * A `background` button hands the same request to the node's supervisor instead, whose run reports into this
+ * conversation and the inbox when it ends; the answer now is that it started.
  */
 async function invokeAgentAction(
   services: WidgetActionServices,
@@ -265,65 +508,76 @@ async function invokeAgentAction(
   source: "click" | "voice",
 ): Promise<WidgetActionResult> {
   const checked = checkBoundAction(services.conductor, request, "agent");
-  if (!checked.ok) {
-    return {
-      ok: false,
-      status: statusOf(checked.code),
-      code: checked.code,
-      message: checked.message,
-      ...(checked.currentRevision === undefined ? {} : { currentRevision: checked.currentRevision }),
-    };
-  }
-  // The same body an `invoke` answers with, so a surface reads every kind the same way.
-  const state = readWidgetStateRow(services.runtime.db, checked.instance.instanceId);
-  const respond = (output: string, duplicate: boolean): WidgetActionResult => ({
-    ok: true,
-    status: 200,
-    body: {
-      duplicate,
-      instanceId: checked.instance.instanceId,
-      revision: checked.instance.revision,
-      stateRevision: state?.revision ?? 0,
-      state: state?.body ?? {},
-      pinId: null,
-      output,
-      timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),
-    },
-  });
-  if (checked.duplicate !== undefined) {
-    return respond(checked.duplicate.kind === "done" ? checked.duplicate.output : "", true);
-  }
+  if (!checked.ok) return gateRefusal(checked);
+  if (checked.duplicate !== undefined) return replay(services, checked, request, checked.duplicate);
   const problem = actionInputProblem(checked.instance, checked.binding, request.input);
-  if (problem !== undefined) return { ok: false, status: 400, code: "INVALID_INPUT", message: problem };
-  if (inFlight.has(request.invocationId)) {
-    return {
-      ok: false,
-      status: 409,
-      code: "INVOCATION_IN_PROGRESS",
-      message: "this action is already running; its answer will come back to the first request",
-    };
-  }
-  // A button does not decide whether to interrupt, steer or queue beside a running answer the way a typed message is
-  // decided: it says so and leaves the choice to the person, who can press it again once the answer is done.
-  if (services.turnControl?.running().includes(request.conversationId) === true) {
-    return {
-      ok: false,
-      status: 409,
-      code: "TURN_IN_PROGRESS",
-      message: "Clark is still answering in this conversation; press it again when the answer is done",
-    };
-  }
+  if (problem !== undefined) return refusal("INVALID_INPUT", problem);
 
   const proposal = checked.binding.proposal as Extract<ActionProposal, { kind: "agent" }>;
+  const background = proposal.background === true;
+  // A button does not decide whether to interrupt, steer or queue beside a running answer the way a typed message is
+  // decided: it says so and leaves the choice to the person, who can press it again once the answer is done. Work for
+  // the background lane does not wait on the conversation's turn.
+  if (!background && services.turnControl?.running().includes(request.conversationId) === true) {
+    return refusal("TURN_IN_PROGRESS", "Clark is still answering in this conversation; press it again when the answer is done");
+  }
+
+  const context = resolveActionContext(services.conductor, {
+    principalId: request.principalId,
+    instanceId: checked.instance.instanceId,
+    refs: proposal.contextRefs,
+  });
+  if (!context.ok) return refusal(context.code, `${context.message}; nothing was sent to the model`);
+
+  const limits = bindingLimits(checked.binding);
+  const maxTokens = limits.maxTokens ?? ACTION_LIMITS.agent.maxTokens?.default ?? 4_000;
+  const text = agentActionText(checked.instance, checked.binding.label, request.input);
+  const rendered = renderActionContext(context.items);
+  const note = rendered === "" ? agentActionNote(checked.binding.label, proposal.intent, request.input) : `${agentActionNote(checked.binding.label, proposal.intent, request.input)}\n\n${rendered}`;
+  // Measured before anything is admitted or sent, so a request over its budget costs nothing and is never cut short.
+  const tokensEstimated = estimateTokens(`${text}\n${note}`);
+  if (tokensEstimated > maxTokens) {
+    return refusal(
+      "TOKEN_BUDGET_EXCEEDED",
+      `this request and the context it reads come to about ${String(tokensEstimated)} tokens, over the ${String(maxTokens)} this button allows; nothing was sent to the model — ask Clark directly, or for a button that reads less`,
+    );
+  }
+
+  const admitted = admit(services, checked, request, limits.maxCallsPerMinute ?? ACTION_LIMITS.agent.maxCallsPerMinute?.default ?? 1);
+  if (!admitted.ok) return admitted.result;
+  const resolved = context.items.map((item) => ({ ref: item.ref, kind: item.kind, instanceId: item.instanceId }));
   const at = new Date().toISOString() as Instant;
-  inFlight.add(request.invocationId);
+  const principal = { principalId: request.principalId as never, kind: "user" as const, nodeId: services.runtime.identity.nodeId as never };
+
   try {
+    if (background) {
+      const started = startBackgroundWork(services, principal, () => new Date().toISOString() as Instant, request.conversationId, `${text}\n\n${note}`, {
+        title: checked.binding.label,
+        maxTokens,
+      });
+      if ("refusal" in started) {
+        forgetStartedInvokeAction(services.conductor, request.invocationId);
+        return refusal("BACKGROUND_UNAVAILABLE", `${started.refusal} Nothing was started.`);
+      }
+      settle(services, checked, request, { kind: "background", workId: started.sessionId, state: started.state });
+      return {
+        ok: true,
+        status: 202,
+        body: actionBody(services, checked, request.conversationId, false, {
+          outcome: "background",
+          background: { workId: started.sessionId, state: started.state },
+          context: resolved,
+          tokensEstimated,
+        }),
+      };
+    }
+
     const outcome = await handleUserMessage(services.conductor, {
       conversationId: request.conversationId as never,
-      principal: { principalId: request.principalId as never, kind: "user", nodeId: services.runtime.identity.nodeId as never },
-      text: agentActionText(checked.instance, checked.binding.label, request.input),
+      principal,
+      text,
       at,
-      note: agentActionNote(checked.binding.label, proposal.intent, request.input),
+      note,
       channel: source === "voice" ? "voice" : "chat",
     });
     indexMessages(services.search, { conversationId: request.conversationId, messages: outcome.messages, at });
@@ -333,17 +587,122 @@ async function invokeAgentAction(
       .join("\n\n")
       .trim()
       .slice(0, 2_000);
-    recordInvokeAction(services.conductor, {
-      invocationId: request.invocationId,
-      actionBindingId: request.actionBindingId,
-      instanceId: checked.instance.instanceId,
-      digest: checked.digest,
-      result: { kind: "done", output: reply },
-    });
-    return respond(reply, false);
+    settle(services, checked, request, { kind: "done", output: reply });
+    return {
+      ok: true,
+      status: 200,
+      body: actionBody(services, checked, request.conversationId, false, {
+        outcome: "done",
+        output: reply,
+        context: resolved,
+        tokensEstimated,
+      }),
+    };
+  } catch (cause) {
+    // A turn that threw left nothing to replay: the id is freed so the person's next press is a fresh request.
+    forgetStartedInvokeAction(services.conductor, request.invocationId);
+    throw cause;
   } finally {
-    inFlight.delete(request.invocationId);
+    endActionRun(request.invocationId);
   }
+}
+
+/**
+ * The `workflow` half: a button that runs a bounded sequence of steps (`workflow-executor.ts`).
+ *
+ * Each step that calls a service goes through `invokeCapability` on its own — its own registry check, schema check and
+ * policy decision — so a workflow is never a way to run something a single button could not. The run is bounded by the
+ * binding's total deadline and stopped by the conversation's Stop, and every step is written to the audit log whatever it
+ * came to. What it came to is recorded against the invocation id once any step that calls a service has run, so a second
+ * press with that id is answered with the same report and runs nothing.
+ */
+async function invokeWorkflowAction(
+  services: WidgetActionServices,
+  request: WidgetActionRequest,
+  source: CapabilityInvokeSource,
+): Promise<WidgetActionResult> {
+  const checked = checkBoundAction(services.conductor, request, "workflow");
+  if (!checked.ok) return gateRefusal(checked);
+  if (checked.duplicate !== undefined) return replay(services, checked, request, checked.duplicate);
+  const problem = actionInputProblem(checked.instance, checked.binding, request.input);
+  if (problem !== undefined) return refusal("INVALID_INPUT", problem);
+
+  const proposal = checked.binding.proposal as Extract<ActionProposal, { kind: "workflow" }>;
+  const limits = bindingLimits(checked.binding);
+  const deadlineMs = limits.deadlineMs ?? ACTION_LIMITS.workflow.deadlineMs?.default ?? 120_000;
+  const admitted = admit(services, checked, request, limits.maxCallsPerMinute ?? ACTION_LIMITS.workflow.maxCallsPerMinute?.default ?? 1);
+  if (!admitted.ok) return admitted.result;
+
+  const deps = capabilityInvokeDeps(services);
+  const label = checked.binding.label;
+  let result: Awaited<ReturnType<typeof runWorkflow>>;
+  try {
+    result = await runWorkflow(
+      {
+        invoke: (step, args, options) =>
+          invokeCapability(deps, {
+            ref: step.capabilityRef ?? "",
+            args,
+            source,
+            conversationId: request.conversationId,
+            bindingGeneration: checked.binding.packageGeneration,
+            timeoutMs: options.timeoutMs,
+            signal: options.signal,
+          }),
+        audit: (step, report) => {
+          appendAuditEvent(services.runtime.db, {
+            auditId: services.conductor.newId("audit"),
+            principalId: request.principalId,
+            nodeId: services.runtime.identity.nodeId,
+            kind: "interaction",
+            summary: `workflow “${label}” step ${step.stepId} (${step.kind}${step.capabilityRef === undefined ? "" : ` ${step.capabilityRef}`}): ${report.status}${report.detail === undefined ? "" : ` — ${report.detail}`}`,
+            outcome:
+              report.status === "done" || report.status === "skipped"
+                ? "done"
+                : report.status === "failed" || report.status === "uncertain"
+                  ? "failed"
+                  : "refused",
+            at: new Date().toISOString() as Instant,
+            ref: request.invocationId,
+          });
+        },
+        uncertain: (step, reason) => {
+          const ref = step.capabilityRef ?? "";
+          if (effectCategoryOf(services, ref) === "read") return;
+          recordUncertainCall(services, {
+            conversationId: request.conversationId,
+            principalId: request.principalId,
+            capabilityRef: ref,
+            args: reason.args,
+            intent: `${label}: step ${step.stepId} (${ref})`,
+            stopped: reason.stopped,
+            message: reason.message,
+          });
+        },
+      },
+      { steps: proposal.steps, input: request.input, deadlineMs, signal: admitted.controller.signal },
+    );
+  } catch (cause) {
+    forgetStartedInvokeAction(services.conductor, request.invocationId);
+    throw cause;
+  } finally {
+    endActionRun(request.invocationId);
+  }
+
+  if (result.approvalCard !== undefined) {
+    appendHostReply(services, {
+      conversationId: request.conversationId,
+      blocks: [result.approvalCard],
+      at: new Date().toISOString() as Instant,
+    });
+  }
+  const { report } = result;
+  const reachedAService = report.steps.some(
+    (step) => step.kind === "invoke" && (step.status === "done" || step.status === "uncertain" || step.status === "awaiting-approval" || step.status === "failed"),
+  );
+  if (reachedAService) settle(services, checked, request, { kind: "workflow", report });
+  else forgetStartedInvokeAction(services.conductor, request.invocationId);
+  return workflowResult(services, checked, request.conversationId, report, false);
 }
 
 /**
@@ -375,22 +734,10 @@ export async function invokeWidgetAction(
   // The binding decides what the action is; the request only names it. An unknown binding falls through to the view path,
   // whose gate refuses it with the reason.
   const kind = getActionBinding(services.conductor, request.actionBindingId)?.proposal.kind;
-  if (kind === "invoke") return invokeCapabilityAction(services, request, source === "voice" ? "voice" : "widget");
+  const capabilitySource: CapabilityInvokeSource = source === "voice" ? "voice" : "widget";
+  if (kind === "invoke") return invokeCapabilityAction(services, request, capabilitySource);
   if (kind === "agent") return invokeAgentAction(services, request, source);
-  if (kind === "workflow") {
-    // Gated first, so a stale or foreign binding is refused as that rather than as a missing executor.
-    const checked = checkBoundAction(services.conductor, request, "workflow");
-    if (!checked.ok) {
-      return {
-        ok: false,
-        status: statusOf(checked.code),
-        code: checked.code,
-        message: checked.message,
-        ...(checked.currentRevision === undefined ? {} : { currentRevision: checked.currentRevision }),
-      };
-    }
-    return { ok: false, status: 400, code: "UNSUPPORTED_ACTION", message: "this node cannot run a workflow action yet" };
-  }
+  if (kind === "workflow") return invokeWorkflowAction(services, request, capabilitySource);
 
   // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take
   // instead of the next time the node starts.
@@ -419,6 +766,7 @@ export async function invokeWidgetAction(
       stateRevision: outcome.stateRevision,
       state: outcome.state,
       pinId: outcome.pinId ?? null,
+      outcome: "done",
       // The whole page comes back after a mutation, so the client does not have to guess whether
       // its cursor is still valid.
       timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),

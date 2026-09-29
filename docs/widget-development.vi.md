@@ -361,26 +361,93 @@ biết gì về hành động. Nếu host từ chối đề xuất, model đọc
 | `action.kind` | Bấm nút thì làm gì | Biên dịch từ |
 | --- | --- | --- |
 | `view` (`view.save`) | Ghim nút này vào cuộc trò chuyện. | Effect category `local-write`. |
-| `agent` | Mở một lượt trong cùng cuộc trò chuyện với tin nhắn đúng bằng nhãn; `intent` được gửi kèm cho model. Câu trả lời là kết quả của lần bấm. | Bản thân việc mở lượt không thay đổi gì; lượt đó làm gì tiếp thì tự đi qua policy. |
-| `invoke` | Gọi một capability của package service qua `invokeCapability`, cùng đường với tool `invoke_capability` của agent và giọng nói. | Effect category của chính capability và thế hệ package đang phục vụ nó; tham số được kiểm theo input schema. |
-| `workflow` | Chưa làm gì: node này chưa chạy được quy trình, nên nút hiện ở trạng thái tắt kèm lý do. | Category nặng nhất trong các bước. |
+| `agent` | Mở một lượt trong cùng cuộc trò chuyện với tin nhắn đúng bằng nhãn; `intent` được gửi kèm cho model, cùng ngữ cảnh mà `contextRefs` chỉ ra, do host đọc. Câu trả lời là kết quả của lần bấm. Với `background: true`, yêu cầu đi vào làn chạy nền của node, và kết quả tới cuộc trò chuyện và hộp thư. | Bản thân việc mở lượt không thay đổi gì; lượt đó làm gì tiếp thì tự đi qua policy. `contextRefs` được kiểm theo ngữ pháp đóng và theo người đặt nút. |
+| `invoke` | Gọi một capability của package service qua `invokeCapability`, cùng đường với tool `invoke_capability` của agent và giọng nói, trong hạn chót của binding. | Effect category của chính capability và thế hệ package đang phục vụ nó; tham số được kiểm theo input schema. |
+| `workflow` | Chạy các bước theo thứ tự `dependsOn` trong một hạn chót chung, và dừng ở bước đầu tiên không hoàn tất. | Category nặng nhất trong các bước; mỗi bước `invoke` phải do một service đang chạy phục vụ. Workflow mà mọi bước đều thuộc một package thì ghim thế hệ của package đó. |
 
-Binding digest bao gồm đề xuất, thế hệ package, effect category và nhãn. Khi package được cập nhật, binding trở nên cũ
-(`BINDING_STALE`) thay vì bị trỏ sang đích khác. Lần bấm có cần phê duyệt hay không là quyết định của execution policy
-tại thời điểm bấm, không phải một cờ đóng băng lúc biên dịch.
+Binding digest bao gồm đề xuất, thế hệ package, effect category, nhãn và các giới hạn. Khi package được cập nhật,
+binding trở nên cũ (`BINDING_STALE`) thay vì bị trỏ sang đích khác. Lần bấm có cần phê duyệt hay không là quyết định của
+execution policy tại thời điểm bấm, không phải một cờ đóng băng lúc biên dịch. Bấm nút và nói yêu cầu cho cùng một nút
+đi chung một đường (`invokeWidgetAction`), nhận cùng quyết định policy và cùng kết quả.
 
 Mọi bề mặt đọc trạng thái sẵn sàng từ một hàm duy nhất (`bindingAvailability` trong
 `apps/runtime/src/application/action-bindings.ts`), và timeline mang trạng thái đó bên cạnh instance. Service đã dừng,
-capability không phải service, binding cũ hay workflow đều là nút bị tắt kèm lý do bằng lời, không phải nút trông như
-bấm được rồi thất bại. Lần bấm vẫn được kiểm lại khi tới node. Khi bấm, nút hiện trạng thái đang chạy, rồi kết quả trong
-một dòng `role="status"`. Kết quả là output của service, câu trả lời của agent, "đã ghim", "đang chờ bạn phê duyệt"
-hoặc lý do bị từ chối. Bấm lần hai khi lần đầu còn đang chạy thì không gửi gì. Bấm nút agent khi Clark còn đang trả lời
-thì bị từ chối với `TURN_IN_PROGRESS` thay vì ngắt ngang.
+capability không phải service hay binding cũ đều là nút bị tắt kèm lý do bằng lời, không phải nút trông như bấm được rồi
+thất bại. Workflow chỉ sẵn sàng khi capability của mọi bước `invoke` đều sẵn sàng, và lý do nêu tên bước chưa sẵn sàng.
+Lần bấm vẫn được kiểm lại khi tới node. Khi bấm, nút hiện trạng thái đang chạy, rồi kết quả trong một dòng
+`role="status"`. Kết quả là output của service, câu trả lời của agent, output cuối của workflow, "đã ghim", "đã bắt đầu
+chạy nền", "đang chờ bạn phê duyệt" hoặc lý do bị từ chối. Bấm lần hai khi lần đầu còn đang chạy thì không gửi gì. Bấm
+nút agent chạy trước mặt khi Clark còn đang trả lời thì bị từ chối với `TURN_IN_PROGRESS` thay vì ngắt ngang.
+
+**Giới hạn.** Đề xuất có thể xin `limits` chặt hơn mặc định. Những gì nó xin được kẹp vào trần khi biên dịch binding, và
+binding được lưu không kèm giới hạn thì chạy theo mặc định, nên không binding nào chạy không có giới hạn
+(`apps/runtime/src/application/action-limits.ts`).
+
+| Loại | `deadlineMs` | `maxTokens` | `maxCallsPerMinute` |
+| --- | --- | --- | --- |
+| `invoke` | Mặc định 60 giây, 1–60 giây; trần thời gian gọi của chính service host vẫn áp dụng. | — | Mặc định 30, 1–120. |
+| `agent` | — (áp dụng hạn chót của lượt và của việc chạy nền trên node) | Mặc định 4000, 256–16000. | Mặc định 10, 1–30. |
+| `workflow` | Mặc định 120 giây, 1–300 giây, cho cả lần chạy. | — | Mặc định 10, 1–60. |
+
+Số lần mỗi phút được tính theo từng binding, trên node này, và chỉ đếm các lần bấm được nhận. Lần bấm vượt quá bị từ chối
+với `RATE_LIMITED` (429) và không có gì chạy.
+
+**Ngữ cảnh cho nút agent.** `contextRefs` là một ngữ pháp đóng: `widget` / `widget:<instanceId>` (widget đang mang ý
+nghĩa gì lúc này, lấy từ chính semantic document mà `inspect_ui` đọc), `selection` / `selection:<instanceId>`, và
+`state:<key>` / `state:<instanceId>/<key>` (một giá trị trong state của một view ghép). Tham chiếu không có instance id
+nghĩa là widget của chính nút. Mọi thứ khác bị từ chối khi biên dịch binding, cũng như một widget mà node này không giữ
+hoặc thuộc về người khác. `artifact:<id>` bị từ chối cho tới khi node có artifact broker (#313). Khi bấm, host đọc lại
+từng tham chiếu cho người đã bấm, giới hạn mỗi cái ở 4000 ký tự, và đưa cho model dưới một tiêu đề đánh dấu đó là dữ
+liệu, không phải chỉ dẫn. Frame không cung cấp chút văn bản nào: nút không gửi input, và bất cứ thứ gì nó gửi đều bị từ
+chối. Tham chiếu không còn phân giải được thì lần bấm bị từ chối với `CONTEXT_REF_UNKNOWN` (404) hoặc
+`CONTEXT_REF_FORBIDDEN` (403) trước khi gọi bất kỳ model nào. Sau đó yêu cầu và ngữ cảnh được đo theo `maxTokens` bằng
+một ước lượng thận trọng (số byte UTF-8 / 3). Yêu cầu không vừa bị từ chối trọn vẹn với `TOKEN_BUDGET_EXCEEDED`, và không
+có gì được gửi tới model. Yêu cầu chạy nền trao ngân sách này cho worker dưới dạng `maxTokens` của brief. Model adapter
+chưa dùng nó để giới hạn output của chính worker.
+
+**Cuộc gọi không bao giờ nhận được câu trả lời.** Stop, Escape hoặc "dừng lại" trong cuộc trò chuyện cũng dừng một cuộc
+gọi service hay workflow của nút còn đang chạy ở đó. Khi có cái đang chạy, ô soạn tin hiện Stop. Cuộc gọi đã được gửi rồi
+hết giờ hoặc bị dừng có thể đã có hiệu lực. Lần bấm trả về `outcome: "uncertain"` với `mayHaveRun: true`
+(`SERVICE_TIMED_OUT` 504, `SERVICE_CANCELLED` 409, `WORKFLOW_DEADLINE` 504 hoặc `WORKFLOW_STOPPED` 409). Cuộc gọi được
+ghi vào sổ effect (#273) như một effect chưa rõ, kèm thông báo trong hộp thư hỏi người dùng nó đã có hiệu lực chưa. Nó
+được ghi theo invocation id, và không bao giờ được thử lại. Capability `read` hết giờ thì được báo thẳng: không có gì
+thay đổi, nên bấm lại là an toàn. Service qua MCP stdio được gửi `notifications/cancelled` cho yêu cầu bị rút lại hoặc
+hết giờ. Service tôn trọng thông báo này có thể dừng, nhưng host không bao giờ mặc định là nó đã dừng.
+
+**Một kết quả cho mỗi invocation id, kể cả qua khởi động lại.** Trước khi gửi bất cứ thứ gì, node ghi một bản ghi
+`started` cho invocation id, và thay nó bằng kết quả khi lần bấm kết thúc. Cùng id đó tới lần nữa thì nhận lại kết quả ấy
+và không chạy gì. Khi lần đầu còn đang chạy, câu trả lời là `INVOCATION_IN_PROGRESS`. Sau khi một lần khởi động lại cắt
+ngang nó, câu trả lời là `ACTION_INTERRUPTED` với `outcome: "uncertain"`, và nó không được chạy lại. Lần bấm bị từ chối
+trước khi gửi gì thì không được ghi, nên cùng lần bấm đó có thể chạy một lần khi điều khiến nó bị từ chối thay đổi.
+
+**Workflow.** Bộ từ vựng bước là đóng và không chứa mã:
+
+- `invoke` gọi một capability qua `invokeCapability`, với phần kiểm registry, kiểm schema, quyết định policy riêng và,
+  khi policy hỏi, thẻ phê duyệt riêng;
+- `transform` định hình lại output của bước nó phụ thuộc bằng một trong năm hàm thuần: `select-field`,
+  `filter-equals`, `map-field`, `take` hoặc `count`;
+- `condition` kiểm output đó (`equals`, `not-equals`, `exists`, `greater-than` hoặc `less-than`), và các bước phụ thuộc
+  vào một điều kiện sai thì bị bỏ qua.
+
+Tham số của bước `invoke` có thể là `{"$step": "<id>"}` (một bước nó phụ thuộc, có thể kèm `"field"`) hoặc
+`{"$input": "<key>"}` (một giá trị lần bấm đã gửi). Lần chạy dừng ở bước đầu tiên bị từ chối, thất bại, xin phê duyệt
+hoặc không trả lời kịp. Thông điệp nêu tên bước đó và các bước chưa chạy. Các bước trước nó vẫn giữ nguyên là đã xong,
+vì workflow không có rollback và không bao giờ tuyên bố có. Phản hồi nói `outcome: "partial"` khi có bước đã tới service
+trước lúc dừng, `"uncertain"` khi bước bị dừng có thể đã chạy, và `"refused"` trong các trường hợp còn lại, kèm một báo
+cáo `workflow` về mọi bước. Mọi bước mà lần chạy đã tới, kể cả bước bị bỏ qua, đều được ghi vào nhật ký audit. Phê duyệt
+mà một bước xin là một thẻ của host trong cuộc trò chuyện. Phê duyệt nó thì chỉ chạy riêng bước đó và không tiếp tục
+workflow.
+
+Body phản hồi nói điều gì đã xảy ra trong `outcome`: `done` (200), `approval-required` (202) hoặc `background` (202).
+Body của một lần từ chối mang `code`, `message` và, khi liên quan, `outcome`, `mayHaveRun`, `taskId` (mục trong sổ) và
+`workflow`.
 
 `canvas.cta@1` được giữ để lịch sử vẫn hiển thị. Model không đặt nó được nữa, vì nó không có hành động nào phía sau.
 
-Kiểm thử: `apps/runtime/test/action-widget.spec.ts`, `packages/conversation-client/test/action-button.spec.ts`, và
-journey trình duyệt `apps/web/e2e/action-widget.spec.ts`, chạy từng loại với một notes service thật trong container.
+Kiểm thử: `apps/runtime/test/action-widget.spec.ts`, `apps/runtime/test/workflow-executor.spec.ts`, các trường hợp gọi
+có giới hạn trong `apps/runtime/test/service-host.spec.ts`, `packages/conversation-client/test/action-button.spec.ts`,
+và journey trình duyệt `apps/web/e2e/action-widget.spec.ts`, chạy từng loại với một notes service thật trong container,
+gồm một workflow, một nút agent có tham chiếu ngữ cảnh và Stop trong lúc một cuộc gọi chậm đang chạy.
 
 ### 8.2 Biểu mẫu, danh sách, ô tìm kiếm và trường nhập
 

@@ -57,4 +57,15 @@ describe("the action button", () => {
     expect(keys).toContain("widgets.action.unavailable.WORKFLOW_UNSUPPORTED");
     expect(keys).toContain("widgets.action.unavailable.BINDING_STALE");
   });
+
+  it("says a call whose answer never came in the person's language, for every code it maps", () => {
+    const hook = readFileSync(join(SOURCE, "use-surface-renderer.tsx"), "utf8");
+    const table = hook.slice(hook.indexOf("const UNCERTAIN_KEYS"), hook.indexOf("};", hook.indexOf("const UNCERTAIN_KEYS")));
+    const mapped = [...table.matchAll(/"(widgets\.action\.uncertain\.[A-Z_]+)"/gu)].map((match) => match[1] as keyof typeof MESSAGES_VI);
+    expect(mapped.map((key) => key.split(".").at(-1))).toEqual(["SERVICE_CANCELLED", "SERVICE_TIMED_OUT", "ACTION_INTERRUPTED"]);
+    for (const key of mapped) {
+      expect(MESSAGES_VI[key], key).toContain("chưa rõ việc này đã có hiệu lực hay chưa");
+      expect(MESSAGES_EN[key as keyof typeof MESSAGES_EN], key).toContain("whether it took effect is unknown");
+    }
+  });
 });

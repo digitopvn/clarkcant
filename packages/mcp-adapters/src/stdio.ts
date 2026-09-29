@@ -50,6 +50,29 @@ interface Pending {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** Removes the abort listener a caller's signal holds, once the request has settled some other way. */
+  release?: () => void;
+}
+
+/**
+ * A request the server did not answer in time.
+ *
+ * Its own class, because a caller that sent something with an effect has to tell "the server said no" from "the server
+ * never said": after a timeout the request may still have been carried out.
+ */
+export class McpRequestTimeout extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "McpRequestTimeout";
+  }
+}
+
+/** A request its caller withdrew before the server answered; the server was told, and may have acted already. */
+export class McpRequestCancelled extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "McpRequestCancelled";
+  }
 }
 
 /** How much stderr is kept for diagnostics. Enough to explain a crash, not a log sink. */
@@ -174,12 +197,19 @@ export class StdioMcpTransport implements McpTransport {
     return this.#child !== undefined && !this.#closed && !this.#exited;
   }
 
+  /**
+   * Call one tool.
+   *
+   * `signal` withdraws the request: the pending promise rejects at once with `McpRequestCancelled`, and the server is
+   * sent the protocol's `notifications/cancelled` for it. A server may already have acted, and the protocol does not say
+   * whether it did, which is why the caller is told "cancelled" and not "did not happen".
+   */
   async callTool(
     name: string,
     args: Record<string, unknown>,
-    options: { timeoutMs?: number } = {},
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<{ content: string }> {
-    const result = (await this.#request("tools/call", { name, arguments: args }, options.timeoutMs)) as {
+    const result = (await this.#request("tools/call", { name, arguments: args }, options.timeoutMs, options.signal)) as {
       content?: { type?: string; text?: string }[];
       isError?: boolean;
     };
@@ -240,8 +270,18 @@ export class StdioMcpTransport implements McpTransport {
   #failAll(error: Error): void {
     for (const [id, pending] of this.#pending) {
       clearTimeout(pending.timer);
+      pending.release?.();
       this.#pending.delete(id);
       pending.reject(error);
+    }
+  }
+
+  /** Tell the server a request is withdrawn. Best effort: a server that has gone cannot be told, and needs not be. */
+  #cancelled(id: number, reason: string): void {
+    try {
+      this.#notify("notifications/cancelled", { requestId: id, reason });
+    } catch {
+      // The server is not running, so there is nothing left to tell.
     }
   }
 
@@ -281,6 +321,7 @@ export class StdioMcpTransport implements McpTransport {
     const pending = this.#pending.get(message.id);
     if (!pending) return;
     clearTimeout(pending.timer);
+    pending.release?.();
     this.#pending.delete(message.id);
 
     if (message.error !== undefined) {
@@ -306,28 +347,54 @@ export class StdioMcpTransport implements McpTransport {
     this.#write({ jsonrpc: "2.0", method, params });
   }
 
-  #request(method: string, params: Record<string, unknown>, timeoutOverrideMs?: number): Promise<unknown> {
+  #request(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutOverrideMs?: number,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     const id = this.#nextId;
     this.#nextId += 1;
     const timeoutMs = timeoutOverrideMs ?? this.#options.requestTimeoutMs ?? 15_000;
 
     return new Promise<unknown>((resolve, reject) => {
+      if (signal?.aborted === true) {
+        // Withdrawn before it was sent: nothing reached the server, so there is nothing to tell it.
+        reject(new McpRequestCancelled(`${method} to mcp server ${this.#options.serverId} was cancelled before it was sent`));
+        return;
+      }
       const timer = setTimeout(() => {
+        const pending = this.#pending.get(id);
         this.#pending.delete(id);
+        pending?.release?.();
+        // The server is told, so one that is merely slow can stop rather than finish work nobody is waiting for. Never
+        // for `initialize`, which the protocol says a client must not cancel.
+        if (method !== "initialize") this.#cancelled(id, `no answer within ${String(timeoutMs)} ms`);
         // A timeout settles the request. Leaving it pending is what turns a stalled server into
         // an application that appears to be thinking.
         reject(
-          new Error(
+          new McpRequestTimeout(
             `mcp server ${this.#options.serverId} did not answer ${method} within ${timeoutMs} ms`,
           ),
         );
       }, timeoutMs);
 
-      this.#pending.set(id, { resolve, reject, timer });
+      const onAbort = (): void => {
+        if (!this.#pending.has(id)) return;
+        clearTimeout(timer);
+        this.#pending.delete(id);
+        this.#cancelled(id, "the caller withdrew the request");
+        reject(new McpRequestCancelled(`${method} to mcp server ${this.#options.serverId} was cancelled while it ran`));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      const release = signal === undefined ? undefined : (): void => signal.removeEventListener("abort", onAbort);
+
+      this.#pending.set(id, { resolve, reject, timer, ...(release === undefined ? {} : { release }) });
       try {
         this.#write({ jsonrpc: "2.0", id, method, params });
       } catch (cause) {
         clearTimeout(timer);
+        release?.();
         this.#pending.delete(id);
         reject(cause instanceof Error ? cause : new Error(String(cause)));
       }

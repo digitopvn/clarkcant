@@ -12,7 +12,10 @@ import { M1_VIEW_OPERATIONS, getCapability, invocationPreflight } from "@clarkca
 import { asJsonValue, type Database, payloadDigest } from "@clarkcant/storage";
 
 import type { ServiceHost } from "../service-host.ts";
+import { contextRefsProblem } from "./action-context.ts";
+import { effectiveLimits } from "./action-limits.ts";
 import { isGenerationOf, validateArgs } from "./capability-invoke.ts";
+import { stepProblem } from "./workflow-executor.ts";
 
 /**
  * Action bindings the host makes and reads for a widget: compiling what a model proposed, and saying whether a binding
@@ -104,7 +107,14 @@ function proposalProblem(issues: readonly { path: readonly PropertyKey[]; messag
  */
 export function compileWidgetAction(
   deps: ActionBindingDeps,
-  input: { definitionRef: WidgetInstance["definitionRef"]; label: string; action: unknown; carries?: ActionInputSpec },
+  input: {
+    definitionRef: WidgetInstance["definitionRef"];
+    label: string;
+    action: unknown;
+    carries?: ActionInputSpec;
+    /** Who is placing the button: a context reference to another widget must name one this person owns. */
+    ownerPrincipalId?: string;
+  },
 ): WidgetActionCompile {
   const carries = input.carries;
   // `contextRefs` is required by the proposal format; a model that has none to give may leave it out.
@@ -207,37 +217,47 @@ export function compileWidgetAction(
       break;
     }
     case "agent": {
-      if (proposal.contextRefs.length > 0) {
-        return {
-          ok: false,
-          message: "context references are not resolved for a button yet; put what the request needs in intent",
-        };
-      }
+      // Each reference is checked against the grammar now, and one naming another widget against who owns it, so a
+      // button is never made with a reference nothing on this node can read (`action-context.ts`).
+      const problem = contextRefsProblem(deps, proposal.contextRefs, input.ownerPrincipalId);
+      if (problem !== undefined) return { ok: false, message: `a context reference was refused: ${problem}` };
       if (carries !== undefined) inputKeys = carries.keys ?? [AGENT_ITEM_KEY];
       // Starting a turn changes nothing by itself; whatever the turn then does passes the policy on its own.
       break;
     }
     case "workflow": {
+      if (carries !== undefined) inputKeys = carries.keys ?? [AGENT_ITEM_KEY];
       const categories: EffectCategory[] = [];
+      const providers = new Set<string>();
       for (const step of proposal.steps) {
+        const problem = stepProblem(step, inputKeys);
+        if (problem !== undefined) return { ok: false, message: problem };
         if (step.kind !== "invoke" || step.capabilityRef === undefined) continue;
-        const descriptor = deps.serviceHost?.serves(step.capabilityRef as CapabilityRef)
-          ? getCapability({ db: deps.db, nodeId: deps.nodeId }, step.capabilityRef as CapabilityRef, deps.nodeId)
-          : undefined;
+        const served = deps.serviceHost?.serves(step.capabilityRef as CapabilityRef);
+        if (served === undefined) {
+          return {
+            ok: false,
+            message: `step ${step.stepId}: ${step.capabilityRef} is not provided by an active package's service on this node; a workflow can only call one that is`,
+          };
+        }
+        const descriptor = getCapability({ db: deps.db, nodeId: deps.nodeId }, step.capabilityRef as CapabilityRef, deps.nodeId);
         if (descriptor === undefined) continue;
         knownCapabilities.add(step.capabilityRef);
         categories.push(descriptor.effectCategory);
+        providers.add(served.generationId);
       }
+      // One package behind every step pins its generation, as an `invoke` does, so an update makes the button stale
+      // rather than retargeting it. Steps from several packages are each checked against the registry when they run.
+      const [only] = providers;
+      if (providers.size === 1 && only !== undefined) packageGeneration = only;
       effectCategory = SEVERITY.find((category) => categories.includes(category)) ?? "read";
       break;
     }
   }
 
-  // A workflow is kept but cannot run, so what it would take is recorded as nothing.
   const inputSchema =
-    carries === undefined || proposal.kind === "workflow"
-      ? { type: "object", properties: {}, additionalProperties: false }
-      : carries.schema(inputKeys);
+    carries === undefined ? { type: "object", properties: {}, additionalProperties: false } : carries.schema(inputKeys);
+  const limits = effectiveLimits(proposal.kind, proposal.kind === "view" ? undefined : proposal.limits);
   const compiled = compileActionBinding({
     bindingId: deps.newId("act"),
     instance: { instanceId: "pending", ownerNodeId: deps.nodeId, definitionRef: input.definitionRef, actionBindingRevision: 1 },
@@ -250,8 +270,8 @@ export function compileWidgetAction(
     effectCategory,
     // Whether a click needs an approval is the execution policy's decision at the click, not a flag frozen here.
     requiresApproval: false,
-    limits: {},
-    bindingDigest: `sha256:${payloadDigest(asJsonValue({ proposal, packageGeneration, effectCategory, label: input.label, inputSchema }))}`,
+    limits,
+    bindingDigest: `sha256:${payloadDigest(asJsonValue({ proposal, packageGeneration, effectCategory, label: input.label, inputSchema, limits }))}`,
     at: deps.now() as never,
     knownCapabilities,
   });
@@ -283,34 +303,49 @@ export function bindingAvailability(
         : { available: false, code: "UNSUPPORTED_ACTION", reason: `"${proposal.operation}" is not a view operation this node performs` };
     case "agent":
       return { available: true };
-    case "workflow":
-      return { available: false, code: "WORKFLOW_UNSUPPORTED", reason: "this node cannot run a workflow action yet" };
-    case "invoke": {
-      const ref = proposal.capabilityRef;
-      // The same first question the invoke path asks: a row the registry holds is not a service this node runs.
-      const served = deps.serviceHost?.serves(ref as CapabilityRef);
-      if (served === undefined) {
-        return {
-          available: false,
-          code: "NOT_A_SERVICE_CAPABILITY",
-          reason: `${ref} is not provided by an active package's service on this node`,
-          capabilityRef: ref,
-        };
+    case "workflow": {
+      // Runnable only when every step that calls a service could be called now: a workflow that would stop at its
+      // third step for a reason the node already knows is a disabled button with that step named, not a live one.
+      for (const step of proposal.steps) {
+        if (step.kind !== "invoke" || step.capabilityRef === undefined) continue;
+        const answer = capabilityAvailability(deps, binding, step.capabilityRef);
+        if (!answer.available) return { ...answer, reason: `step "${step.stepId}": ${answer.reason}` };
       }
-      if (binding.packageGeneration !== served.generationId && isGenerationOf(deps.db, served.packageId, binding.packageGeneration)) {
-        return {
-          available: false,
-          code: "BINDING_STALE",
-          reason: "the package behind this action changed since the action was made; ask for the widget again",
-          capabilityRef: ref,
-        };
-      }
-      const parsed = capabilityRefSchema.safeParse(ref);
-      if (!parsed.success) return { available: false, code: "CAPABILITY_MISSING", reason: `${ref} is not a capability reference`, capabilityRef: ref };
-      const preflight = invocationPreflight({ db: deps.db, nodeId: deps.nodeId }, parsed.data);
-      return preflight.ready
-        ? { available: true }
-        : { available: false, code: preflight.code, reason: preflight.message, capabilityRef: ref };
+      return { available: true };
     }
+    case "invoke":
+      return capabilityAvailability(deps, binding, proposal.capabilityRef);
   }
+}
+
+/** Whether one capability a binding calls could be called now: the checks the invoke path makes before it runs. */
+function capabilityAvailability(
+  deps: Pick<ActionBindingDeps, "db" | "nodeId" | "serviceHost">,
+  binding: ActionBinding,
+  ref: string,
+): BindingAvailability {
+  // The same first question the invoke path asks: a row the registry holds is not a service this node runs.
+  const served = deps.serviceHost?.serves(ref as CapabilityRef);
+  if (served === undefined) {
+    return {
+      available: false,
+      code: "NOT_A_SERVICE_CAPABILITY",
+      reason: `${ref} is not provided by an active package's service on this node`,
+      capabilityRef: ref,
+    };
+  }
+  if (binding.packageGeneration !== served.generationId && isGenerationOf(deps.db, served.packageId, binding.packageGeneration)) {
+    return {
+      available: false,
+      code: "BINDING_STALE",
+      reason: "the package behind this action changed since the action was made; ask for the widget again",
+      capabilityRef: ref,
+    };
+  }
+  const parsed = capabilityRefSchema.safeParse(ref);
+  if (!parsed.success) return { available: false, code: "CAPABILITY_MISSING", reason: `${ref} is not a capability reference`, capabilityRef: ref };
+  const preflight = invocationPreflight({ db: deps.db, nodeId: deps.nodeId }, parsed.data);
+  return preflight.ready
+    ? { available: true }
+    : { available: false, code: preflight.code, reason: preflight.message, capabilityRef: ref };
 }

@@ -30,6 +30,12 @@
           "effectCategory": "local-write"
         },
         {
+          "tool": "add_note_slowly",
+          "ref": "com.example.notes.add-slowly@1",
+          "summary": "Add a note after a wait, unless stopped first",
+          "effectCategory": "local-write"
+        },
+        {
           "tool": "list_notes",
           "ref": "com.example.notes.list@1",
           "summary": "List the notes the service keeps",

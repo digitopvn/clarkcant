@@ -16,8 +16,10 @@ import { migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import {
   type CapabilityInvokeDeps,
+  answerNeverCame,
   capabilityDigest,
   invokeCapability,
+  mayHaveRun,
   runApprovedCapability,
 } from "../src/application/capability-invoke.ts";
 import { describeCapabilityOutcome } from "../src/invoke-capability-tool.ts";
@@ -731,3 +733,57 @@ function readdir(path: string): string[] {
     return [];
   }
 }
+
+
+describe("a call its caller bounds", () => {
+  const SLOW = "com.example.notes.add-slowly@1" as CapabilityRef;
+
+  it("ends a call past the caller's deadline as timed out, says it may have run, and tells the service to drop it", async () => {
+    activate();
+    await running(start());
+
+    const late = await invokeCapability(invokeDeps(), { ref: SLOW, args: { text: "chậm", seconds: 2 }, source: "widget", timeoutMs: 300 });
+    expect(late).toMatchObject({ kind: "refused", status: 504, code: "SERVICE_TIMED_OUT" });
+    if (late.kind !== "refused") throw new Error("unreachable");
+    expect(mayHaveRun(late.code)).toBe(true);
+    expect(answerNeverCame(late.code)).toBe(true);
+    // The service was told the request is withdrawn, and this one honours it: the note is never written.
+    await new Promise((resolve) => setTimeout(resolve, 2_300));
+    expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "widget" })).toMatchObject({ kind: "done", output: "No notes yet." });
+  });
+
+  it("withdraws a call when the caller's signal aborts, as cancelled rather than as nothing having happened", async () => {
+    activate();
+    await running(start());
+
+    const controller = new AbortController();
+    const pending = invokeCapability(invokeDeps(), {
+      ref: SLOW,
+      args: { text: "dừng", seconds: 2 },
+      source: "widget",
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 100);
+    const stopped = await pending;
+    expect(stopped).toMatchObject({ kind: "refused", status: 409, code: "SERVICE_CANCELLED" });
+    if (stopped.kind !== "refused") throw new Error("unreachable");
+    expect(mayHaveRun(stopped.code)).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 2_300));
+    expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "widget" })).toMatchObject({ kind: "done", output: "No notes yet." });
+  });
+
+  it("never gives a call more time than the host's own ceiling, and answers a quick one as usual", async () => {
+    activate();
+    await running(start());
+    const quick = await invokeCapability(invokeDeps(), {
+      ref: SLOW,
+      args: { text: "nhanh", seconds: 1 },
+      source: "widget",
+      timeoutMs: 10 * 60_000,
+    });
+    expect(quick).toMatchObject({ kind: "done", output: "Saved. 1 note(s): nhanh" });
+    // A service error is the service's answer, not an unknown one.
+    expect(answerNeverCame("SERVICE_TOOL_FAILED")).toBe(false);
+    expect(answerNeverCame("SERVICE_UNREACHABLE")).toBe(false);
+  });
+});

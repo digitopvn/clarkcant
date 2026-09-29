@@ -238,6 +238,32 @@ export interface ActionInvocationResult {
   output?: string;
   /** Set when the policy asked first: the host placed an approval card in the conversation and nothing ran yet. */
   approvalRequired?: { approvalId: string };
+  /**
+   * What the action came to: `done`, `approval-required`, or `background` when the node's background lane took it and
+   * its result will arrive in the conversation. Absent from a node that predates it.
+   */
+  outcome?: "done" | "approval-required" | "background";
+  /** For a `background` outcome: the run the node started. */
+  background?: { workId: string; state: "running" | "queued" };
+  /** A sentence the node wrote about the outcome, such as a workflow's summary of its steps. */
+  message?: string;
+  /** For a workflow: what each step came to. */
+  workflow?: ActionWorkflowReport;
+}
+
+/** What a workflow action's run came to, step by step (`WorkflowRunReport` on the node). */
+export interface ActionWorkflowReport {
+  completed: boolean;
+  steps: {
+    stepId: string;
+    kind: "invoke" | "transform" | "condition";
+    status: "done" | "skipped" | "not-run" | "refused" | "failed" | "uncertain" | "awaiting-approval";
+    detail?: string;
+  }[];
+  stoppedAt?: string;
+  code?: string;
+  message: string;
+  output?: string;
 }
 
 export interface TimelineMessage {

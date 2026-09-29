@@ -407,7 +407,7 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       id: "action.unavailable",
       label: "Nút chưa dùng được",
       props: { label: "Chạy quy trình", emphasis: "secondary", icon: "play" },
-      state: { unavailableReason: "Máy này chưa chạy được quy trình nhiều bước." },
+      state: { unavailableReason: "Dịch vụ phía sau nút này không chạy trên máy này." },
       mode: "read-only",
     },
     {
