@@ -39,7 +39,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-storage-"));
 });
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 function freshDb() {
