@@ -129,6 +129,8 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
     emit?: (event: ConductorEmit) => void;
     /** See `UserMessageInput.channel`, carried through unchanged. */
     channel?: "voice" | "chat";
+    /** See `UserMessageInput.note`, carried through unchanged: a fixture standing in for the model reads it too. */
+    note?: string;
   }) => Promise<{ block: MessageBlock; text: string } | undefined>;
   /**
    * Choose between several usable capabilities, when there is a real choice.
@@ -536,6 +538,7 @@ export async function handleUserMessage(
       at,
       ...(input.emit === undefined ? {} : { emit: input.emit }),
       ...(input.channel === undefined ? {} : { channel: input.channel }),
+      ...(input.note === undefined ? {} : { note: input.note }),
     });
     if (composed !== undefined) {
       const message = appendAssistant(

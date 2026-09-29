@@ -4,6 +4,7 @@ import { type Instant, type VoiceCapabilities, type WidgetDefinition, nowInstant
 import {
   type ConductorDeps,
   type WidgetDeps,
+  getActionBinding,
   getInstance,
   listCapabilitySummaries,
   listPinsForConversation,
@@ -33,6 +34,7 @@ import {
   validateProps,
 } from "@clarkcant/widget-host";
 
+import { bindingAvailability } from "./application/action-bindings.ts";
 import { loadLocalEmbedder } from "./embeddings-local.ts";
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 import type { ServiceHost } from "./service-host.ts";
@@ -652,6 +654,25 @@ export interface TimelineInstanceView {
   ownerSurface?: "inline" | "pin" | "detached";
   /** Set when this instance is a composed surface, so the client can fetch its spec and bundle. */
   compositionId?: string;
+  /**
+   * The actions this instance holds, each with the digest a click must send back and whether it can run now.
+   *
+   * Present only when the instance holds one. The kind of each action is left out on purpose: a surface draws a button
+   * from what it shows and whether it is usable, and the node decides what pressing it does.
+   */
+  actions?: TimelineActionView[];
+}
+
+/** One bound action as a surface may show it. */
+export interface TimelineActionView {
+  actionBindingId: string;
+  label: string;
+  effectCategory: string;
+  bindingDigest: string;
+  available: boolean;
+  /** Why it cannot run now, when it cannot: the reason a click would be refused with. */
+  unavailableCode?: string;
+  unavailableReason?: string;
 }
 
 /**
@@ -715,7 +736,7 @@ function readDeps(services: Pick<NodeServices, "runtime">): WidgetDeps {
  * services bundle can still build a page.
  */
 export function buildTimeline(
-  services: Pick<NodeServices, "runtime">,
+  services: Pick<NodeServices, "runtime"> & Partial<Pick<NodeServices, "serviceHost">>,
   input: { conversationId: string; afterSequence: number; limit?: number },
 ): Timeline {
   const { db } = services.runtime;
@@ -737,6 +758,24 @@ export function buildTimeline(
     const state = liveStateOf(deps, instance.instanceId);
     const owner = liveOwnerOf(deps, instance.instanceId);
     const composition = findCompositionByInstance(db, instance.instanceId, instance.ownerPrincipalId);
+    const actions = instance.actionBindingIds.flatMap((bindingId): TimelineActionView[] => {
+      const binding = getActionBinding(deps, bindingId);
+      if (binding === undefined) return [];
+      const availability = bindingAvailability(
+        { db, nodeId: services.runtime.identity.nodeId, serviceHost: services.serviceHost },
+        binding,
+      );
+      return [
+        {
+          actionBindingId: binding.actionBindingId,
+          label: binding.label,
+          effectCategory: binding.effectCategory,
+          bindingDigest: binding.bindingDigest,
+          available: availability.available,
+          ...(availability.available ? {} : { unavailableCode: availability.code, unavailableReason: availability.reason }),
+        },
+      ];
+    });
     instances.push({
       instanceId: instance.instanceId,
       definitionId: instance.definitionRef.id,
@@ -750,6 +789,7 @@ export function buildTimeline(
       ...(state === undefined ? {} : { state: state.body, stateRevision: state.revision }),
       ...(owner === undefined ? {} : { ownerSurface: owner.surface }),
       ...(composition === undefined ? {} : { compositionId: composition.compositionId }),
+      ...(actions.length === 0 ? {} : { actions }),
     });
   }
 

@@ -151,7 +151,7 @@ function schemaProblem(error: z.ZodError): string {
     .join("; ");
 }
 
-function validateArgs(
+export function validateArgs(
   schema: Record<string, unknown> | undefined,
   args: Record<string, unknown>,
 ): { ok: true } | { ok: false; message: string } {
@@ -169,7 +169,7 @@ function validateArgs(
 }
 
 /** Whether an id is one of the generations this node has recorded for a package, active or not. */
-function isGenerationOf(db: Database, packageId: string, generationId: string): boolean {
+export function isGenerationOf(db: Database, packageId: string, generationId: string): boolean {
   return (
     oneRow(db, "SELECT 1 AS found FROM package_generations WHERE package_id = ? AND generation_id = ? LIMIT 1", packageId, generationId) !==
     undefined

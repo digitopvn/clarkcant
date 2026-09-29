@@ -49,9 +49,9 @@ Sau plan này:
 | # | Phase | Phụ thuộc | Trạng thái |
 |---|---|---|---|
 | A | [Manifest chuẩn v2 cùng tương thích v1](phase-a-canonical-manifest.md) | — | done (#220, PR #227) |
-| B | [Service facet runtime và capability](phase-b-service-facet-runtime.md) | A | in-review (#221) |
-| C | [Hợp đồng đầy đủ của `canvas.table@1`](phase-c-table-contract.md) | — | in-review (#222) |
-| D | [Action tổng quát `canvas.action@1`](phase-d-generic-action.md) | B (với invoke) | pending |
+| B | [Service facet runtime và capability](phase-b-service-facet-runtime.md) | A | done (#221, PR #234) |
+| C | [Hợp đồng đầy đủ của `canvas.table@1`](phase-c-table-contract.md) | — | done (#222, PR #228) |
+| D | [Action tổng quát `canvas.action@1`](phase-d-generic-action.md) | B (với invoke) | done (#223) |
 | E | [Layout primitive và cây composition có giới hạn](phase-e-layout-composition-tree.md) | — | pending |
 | F | [Primitive input, choice, search, form và list](phase-f-input-primitives.md) | E | pending |
 | G | [State/event graph của composition](phase-g-composition-state-graph.md) | E, F | pending |

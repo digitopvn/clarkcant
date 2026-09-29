@@ -138,9 +138,15 @@ const META: Record<string, CatalogMeta> = {
     status: "stable",
   },
   "canvas.cta@1": {
+    displayName: "Nút lưu khung nhìn",
+    tags: ["cta", "save"],
+    aliases: ["cta", "lưu", "ghim"],
+    status: "stable",
+  },
+  "canvas.action@1": {
     displayName: "Nút hành động",
-    tags: ["cta", "action"],
-    aliases: ["cta", "action", "nút", "lưu"],
+    tags: ["action", "button"],
+    aliases: ["action", "button", "nút", "hành động", "chạy"],
     status: "stable",
   },
   "canvas.note@1": {

@@ -1426,28 +1426,35 @@ interface InvokeRecord {
     | { kind: "approval-required"; approvalId: string };
 }
 
-export type InvokeActionCheck =
+/** What an action run outside this package came to, recorded so the same invocation id gets it back. */
+export type BoundActionResult = InvokeRecord["result"];
+
+export type BoundActionCheck =
   | { ok: false; code: MiniAppActionCode; message: string; currentRevision?: number }
   | {
       ok: true;
       /** The same invocation arriving again: its first outcome, returned rather than repeated. */
-      duplicate: InvokeRecord["result"] | undefined;
+      duplicate: BoundActionResult | undefined;
       instance: WidgetInstance;
       binding: ActionBinding;
-      proposal: InvokeProposal;
-      args: Record<string, unknown>;
       digest: string;
     };
 
 /**
- * Check a widget's `invoke` action before its capability is called.
+ * The gate every action that runs outside this package passes before it runs: an `invoke` calling a capability, an
+ * `agent` starting a turn.
  *
- * The same gate a view action passes — the instance's owner rather than the request's, the binding on this instance,
+ * The same checks a view action passes — the instance's owner rather than the request's, the binding on this instance,
  * one outcome per invocation id, and the revision and binding digest the person was shown — in the same order and for
- * the same reasons (see `invokeMiniAppAction`). What it does not do is call anything: the capability runs in the
- * runtime, behind the registry and the policy, and `recordInvokeAction` writes the outcome once it has one.
+ * the same reasons (see `invokeMiniAppAction`). `kind` is checked before the invocation record, so an id reused across
+ * kinds is refused as the wrong kind rather than answered with another action's outcome. Nothing is called here, and
+ * `recordBoundAction` writes the outcome once there is one.
  */
-export function checkInvokeAction(deps: WidgetDeps, request: MiniAppActionRequest): InvokeActionCheck {
+export function checkBoundAction(
+  deps: WidgetDeps,
+  request: MiniAppActionRequest,
+  kind: ActionProposal["kind"],
+): BoundActionCheck {
   const instance = getInstance(deps, request.instanceId);
   if (instance === undefined) {
     return { ok: false, code: "INSTANCE_UNKNOWN", message: `widget instance ${request.instanceId} does not exist` };
@@ -1463,10 +1470,9 @@ export function checkInvokeAction(deps: WidgetDeps, request: MiniAppActionReques
       message: `action binding ${request.actionBindingId} is not on this instance`,
     };
   }
-  if (binding.proposal.kind !== "invoke") {
-    return { ok: false, code: "UNSUPPORTED_ACTION", message: `a ${binding.proposal.kind} action is not an invoke action` };
+  if (binding.proposal.kind !== kind) {
+    return { ok: false, code: "UNSUPPORTED_ACTION", message: `a ${binding.proposal.kind} action is not an ${kind} action` };
   }
-  const proposal = binding.proposal;
 
   const digest = payloadDigest(
     asJsonValue({
@@ -1496,7 +1502,7 @@ export function checkInvokeAction(deps: WidgetDeps, request: MiniAppActionReques
         message: "the same invocation id was reused with different input; use a new id for a new operation",
       };
     }
-    return { ok: true, duplicate: prior.result, instance, binding, proposal, args: {}, digest };
+    return { ok: true, duplicate: prior.result, instance, binding, digest };
   }
 
   const precheck = precheckInvocation(deps, request);
@@ -1508,13 +1514,42 @@ export function checkInvokeAction(deps: WidgetDeps, request: MiniAppActionReques
       currentRevision: instance.revision,
     };
   }
+  return { ok: true, duplicate: undefined, instance, binding, digest };
+}
+
+export type InvokeActionCheck =
+  | { ok: false; code: MiniAppActionCode; message: string; currentRevision?: number }
+  | {
+      ok: true;
+      /** The same invocation arriving again: its first outcome, returned rather than repeated. */
+      duplicate: InvokeRecord["result"] | undefined;
+      instance: WidgetInstance;
+      binding: ActionBinding;
+      proposal: InvokeProposal;
+      args: Record<string, unknown>;
+      digest: string;
+    };
+
+/**
+ * Check a widget's `invoke` action before its capability is called: the shared gate, then the arguments the binding
+ * fixes composed with the ones the person supplied. The capability itself runs in the runtime, behind the registry and
+ * the policy.
+ */
+export function checkInvokeAction(deps: WidgetDeps, request: MiniAppActionRequest): InvokeActionCheck {
+  const checked = checkBoundAction(deps, request, "invoke");
+  if (!checked.ok) return checked;
+  const { instance, binding, digest } = checked;
+  const proposal = binding.proposal as InvokeProposal;
+  if (checked.duplicate !== undefined) {
+    return { ok: true, duplicate: checked.duplicate, instance, binding, proposal, args: {}, digest };
+  }
 
   const composed = composeInvokeArgs(proposal, request.input, readWidgetStateRow(deps.db, instance.instanceId)?.body ?? {});
   if (!composed.ok) return { ok: false, code: "INVALID_INPUT", message: composed.message };
   return { ok: true, duplicate: undefined, instance, binding, proposal, args: composed.args, digest };
 }
 
-/** Record what an `invoke` action came to, so the same invocation id arriving again gets this answer back. */
+/** Record what an `invoke` or `agent` action came to, so the same invocation id arriving again gets this answer back. */
 export function recordInvokeAction(
   deps: WidgetDeps,
   input: {

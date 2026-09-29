@@ -207,7 +207,7 @@ export interface ActionInvocationResult {
   state: Record<string, unknown>;
   pinId: string | null;
   timeline: Timeline;
-  /** What a service capability answered, when the binding called one and it ran. */
+  /** What the action answered: a service capability's output, or Clark's reply to a request the button made. */
   output?: string;
   /** Set when the policy asked first: the host placed an approval card in the conversation and nothing ran yet. */
   approvalRequired?: { approvalId: string };
@@ -227,6 +227,19 @@ export interface TimelineInstance {
   lifecycle: string;
   revision: number;
   props: Record<string, unknown>;
+  /** The actions the instance holds, when it holds any. What pressing one does is the node's to decide. */
+  actions?: TimelineAction[];
+}
+
+/** One bound action: what to show, what to send back, and whether it can run now. */
+export interface TimelineAction {
+  actionBindingId: string;
+  label: string;
+  effectCategory: string;
+  bindingDigest: string;
+  available: boolean;
+  unavailableCode?: string;
+  unavailableReason?: string;
 }
 
 /** A historical capture, separate from the live instance it came from. */

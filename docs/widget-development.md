@@ -183,10 +183,10 @@ input schema the service listed for the tool decides whether the input is accept
 policy that asks puts a host-owned approval card in the conversation. The refusals are the `CapabilityInvokeRefusal`
 codes in that file.
 
-Not built: a credential broker for services, VM isolation, and calling a service on another node. The composer does not
-yet place an installed package's widget with `invoke` bindings by itself
-([#223](https://github.com/digitopvn/clarkcant/issues/223)). The browser journey
-[`service-facet.spec.ts`](../apps/web/e2e/service-facet.spec.ts) creates them through a fixture model.
+Not built: a credential broker for services, VM isolation, and calling a service on another node. A model reaches a
+package service from the conversation by placing the generic action button with an `invoke` action (§8.1). The browser
+journey [`service-facet.spec.ts`](../apps/web/e2e/service-facet.spec.ts) still creates a package's own widget with
+`invoke` bindings through a fixture model.
 
 `publisher` is optional in the manifest. `clark widget publish` requires it, because a directory entry has to say who
 a package comes from. `dependencies` defaults to `[]`.
@@ -312,6 +312,38 @@ Every effect invocation needs:
 - double-click dedup.
 
 The label must describe the real operation. Do not use “Continue” for a destructive effect.
+
+### 8.1 The generic action button (`canvas.action@1`)
+
+One button for every kind of effect. A model places it with `show_view`; its props say what it shows (`label`,
+optional `description`, `emphasis` `primary|secondary`, and `icon` from a fixed set), and `props.action` says what it
+does. The host compiles `action` into an action binding before anything is stored and strips it from the props, so the
+renderer learns the label and nothing about the action. A proposal the host refuses is a sentence the model reads in the
+same turn, and no button is left behind.
+
+| `action.kind` | What a press does | Compiled from |
+| --- | --- | --- |
+| `view` (`view.save`) | Pins this button to the conversation. | Effect category `local-write`. |
+| `agent` | Starts a turn in the same conversation whose message is exactly the label; the `intent` goes to the model beside it. The reply is the press's outcome. | Starting a turn changes nothing by itself; what the turn then does passes the policy on its own. |
+| `invoke` | Calls a package service capability through `invokeCapability`, the same path as the agent's `invoke_capability` tool and voice. | The capability's own effect category and the package generation serving it now; the arguments are checked against its input schema. |
+| `workflow` | Nothing yet: this node cannot run a workflow, so the button is drawn disabled with that reason. | The most severe category among its steps. |
+
+The binding digest covers the proposal, the package generation, the effect category and the label. A package update
+makes the binding stale (`BINDING_STALE`) instead of retargeting it. Whether a press needs approval is the execution
+policy's decision at the press, not a flag frozen at compile time.
+
+Every surface reads availability from one function (`bindingAvailability` in
+`apps/runtime/src/application/action-bindings.ts`), and the timeline carries it beside the instance. A service that
+stopped, a capability that is not a service, a stale binding or a workflow is a disabled button with the reason in
+words, not a live one that fails. The press is still checked again when it arrives. A press shows pending, then the
+outcome in a `role="status"` line. The outcome is the service's output, the agent's reply, "pinned", "waiting for your
+approval", or the refusal reason. A second press while the first is pending sends nothing. An agent press while Clark is
+still answering is refused with `TURN_IN_PROGRESS` rather than interrupting.
+
+`canvas.cta@1` is kept so history renders. A model can no longer place it, because it had no action behind it.
+
+Tests: `apps/runtime/test/action-widget.spec.ts`, `packages/conversation-client/test/action-button.spec.ts`, and the
+browser journey `apps/web/e2e/action-widget.spec.ts`, which runs each kind against a real notes service in a container.
 
 ---
 

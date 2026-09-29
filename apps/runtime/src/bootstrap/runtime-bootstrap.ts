@@ -367,7 +367,15 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   // The model may now ask for these views. When there are none the `show_view` tool is not
   // registered at all, which is why this is reported rather than left to be discovered: a node
   // that cannot show anything should say so once at startup, not fail a turn later.
-  deps.viewCatalog.push(...buildViewCatalog(deps.services.conductor, deps.services.compose));
+  deps.viewCatalog.push(
+    ...buildViewCatalog(deps.services.conductor, deps.services.compose, () => ({
+      db: deps.services.runtime.db,
+      nodeId: deps.services.runtime.identity.nodeId,
+      serviceHost: deps.services.serviceHost,
+      now: () => new Date().toISOString(),
+      newId: deps.services.conductor.newId,
+    })),
+  );
   // Said out loud because it is a capability with a privacy shape: the model may search this machine's
   // files, the walk is read-only and bounded, and the lines it finds go to the provider as the tool's
   // result. An operator who did not want that should be able to learn it from the startup line.

@@ -269,6 +269,28 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       mode: "read-only",
     },
   ],
+  "canvas.action@1": [
+    {
+      id: "action.normal",
+      label: "Nút chính",
+      props: { label: "Tóm tắt tuần này", description: "Clark đọc các task của tuần và tóm tắt", emphasis: "primary", icon: "send" },
+      mode: "read-only",
+    },
+    {
+      id: "action.unavailable",
+      label: "Nút chưa dùng được",
+      props: { label: "Chạy quy trình", emphasis: "secondary", icon: "play" },
+      state: { unavailableReason: "Máy này chưa chạy được quy trình nhiều bước." },
+      mode: "read-only",
+    },
+    {
+      id: "action.pending",
+      label: "Nút đang chạy",
+      props: { label: "Thêm ghi chú", icon: "add" },
+      state: { pending: true },
+      mode: "read-only",
+    },
+  ],
   "canvas.note@1": [
     {
       id: "note.normal",

@@ -1400,6 +1400,87 @@ function CallToAction({ props, onAction }: RendererProps): ReactElement {
   );
 }
 
+/** Strokes on a 24-unit grid; the set is closed, so a model can pick an icon but never draw one. */
+const ACTION_ICON_PATHS: Record<string, string> = {
+  play: "M8 5v14l11-7z",
+  send: "M4 12l16-8-6 16-2.5-6.5z",
+  save: "M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6",
+  add: "M12 5v14M5 12h14",
+  refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6",
+  open: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
+  check: "M5 12.5l4.5 4.5L19 7",
+};
+
+/**
+ * One button bound to one action the host holds.
+ *
+ * It knows what to show and nothing about what the button does: whether pressing it pins the view, calls a package
+ * service, asks Clark or would run a workflow is the host's binding, which never reaches this renderer. It emits
+ * `activate`; the host checks the binding again, runs it, and hands back what to say in `state`. That split is why a
+ * button cannot claim an effect the host did not perform, and why the same markup serves every kind of action.
+ */
+function ActionButton({ props, onAction, state }: RendererProps): ReactElement {
+  const t = useT();
+  const label = String(props.label ?? "");
+  const description = typeof props.description === "string" && props.description !== "" ? props.description : undefined;
+  const iconPath = typeof props.icon === "string" ? ACTION_ICON_PATHS[props.icon] : undefined;
+  const pending = state?.pending === true;
+  const unavailableReason = typeof state?.unavailableReason === "string" ? state.unavailableReason : undefined;
+  const message = typeof state?.message === "string" && state.message !== "" ? state.message : undefined;
+  const tone = state?.tone === "refused" || state?.tone === "waiting" ? state.tone : "done";
+  // No `onAction`: history, a surface another tab holds, or an instance the host bound nothing to.
+  const actionable = onAction !== undefined && unavailableReason === undefined;
+  const notice = !actionable ? (unavailableReason ?? t("widgets.action.viewOnlyNotice")) : undefined;
+  const emphasis = props.emphasis === "secondary" ? "secondary" : "primary";
+  return (
+    <div className="cc-cta" data-action-widget="true" data-action-actionable={actionable ? "true" : "false"}>
+      <div>
+        <div className="cc-card-title">{label}</div>
+        {description !== undefined && <p className="cc-freshness">{description}</p>}
+        {notice !== undefined && (
+          <p className="cc-freshness" data-action-unavailable="true">
+            {notice}
+          </p>
+        )}
+        {/* Polite, so the outcome of a press is read out without taking focus from the button that caused it. */}
+        <p className="cc-freshness" data-action-result={message === undefined ? undefined : tone} role="status" aria-live="polite">
+          {pending ? t("widgets.action.pending") : (message ?? "")}
+        </p>
+      </div>
+      <button
+        type="button"
+        className="cc-action"
+        data-emphasis={emphasis}
+        disabled={!actionable}
+        // aria-disabled while pending keeps focus on the button that was pressed; `disabled` would drop it.
+        aria-disabled={pending ? "true" : undefined}
+        aria-busy={pending ? "true" : undefined}
+        onClick={() => {
+          if (!pending) onAction?.("activate", {});
+        }}
+      >
+        {iconPath !== undefined && (
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            style={{ verticalAlign: "-2px", marginInlineEnd: "var(--cc-space-xs)" }}
+          >
+            <path d={iconPath} />
+          </svg>
+        )}
+        {label}
+      </button>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Registry
  * ------------------------------------------------------------------ */
@@ -1426,6 +1507,7 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.youtube@1": YouTubeEmbed,
   "canvas.video@1": LocalVideo,
   "canvas.cta@1": CallToAction,
+  "canvas.action@1": ActionButton,
 };
 
 export function resolveRenderer(definitionId: string): CatalogRenderer | undefined {
