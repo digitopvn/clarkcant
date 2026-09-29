@@ -273,6 +273,12 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
    */
   mask-image: linear-gradient(to bottom, #000 0%, #000 58%, transparent 94%);
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 58%, transparent 94%);
+  /*
+   * The orb is wider than a phone. Cut here, at the stage's own box, rather than left for the shell to cut: the shell
+   * is a scroll container, and an orb overflowing it gave focus something to scroll sideways, which slid the whole
+   * conversation off the left edge of the screen. Clip, not hidden, so the stage itself cannot be scrolled either.
+   */
+  overflow: clip;
 }
 .cc-stage-orb {
   position: absolute;
