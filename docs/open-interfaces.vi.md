@@ -228,10 +228,12 @@ báo cho principal này: các thông báo cùng loại về sau vẫn được l
 báo. Chỉ loại đủ hẹp mới tắt báo được, tức loại gắn với một việc tự động, một nguồn tín hiệu, một gói, một node, hoặc
 việc nền của chính người dùng; loại khác sẽ tắt luôn cả lời nhắc và thông báo của mọi việc tự động khác, nên route từ
 chối bằng `409 SUPPRESSION_TOO_BROAD` và `actions` của thông báo không bao giờ đưa ra thao tác này. Mỗi route chỉ tác động lên thông báo của chính principal gọi nó.
-`POST /effects/:effectId/reconcile` với `{ "outcome": "confirmed" | "failed" }` ghi nhận điều người dùng thấy về
-một thao tác chưa rõ kết quả, tức câu trả lời mà thông báo chưa rõ kết quả đưa ra thành hai nút: `404` với effect
-thuộc task của principal khác hoặc không tồn tại, `409 EFFECT_NOT_UNKNOWN` khi nó không còn ở trạng thái chưa rõ; route
-này chỉ dành cho người dùng, như bên dưới. Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
+`POST /effects/:effectId/reconcile` với `{ "outcome": "confirmed" | "failed", "source"?: "click" | "chat" | "voice" }`
+ghi nhận điều người dùng thấy về một thao tác chưa rõ kết quả, tức câu trả lời mà thông báo chưa rõ kết quả đưa ra
+thành hai nút: `404 RESOURCE_NOT_FOUND` với effect thuộc task của principal khác, của node khác, hoặc không tồn tại,
+`409 EFFECT_NOT_UNKNOWN` khi nó không còn ở trạng thái chưa rõ; route này chỉ dành cho người dùng, như bên dưới.
+`source` là nhãn do bên gọi gửi để cho biết câu trả lời được đưa ra ở đâu và được lưu đúng như vậy, không phải
+nguồn gốc đã xác minh; ai trả lời là principal đã xác thực. Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
 [system-architecture.vi.md](system-architecture.vi.md) ở phần hộp thư.
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và

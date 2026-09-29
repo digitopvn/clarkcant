@@ -18,17 +18,19 @@ import {
   markEffectUnknown,
   prepareEffect,
   recordEvidence,
+  setPreference,
   settleDispatchedTask,
   type TaskServiceDeps,
 } from "@clarkcant/core";
 import { allRows, getEffect, getTask, upsertEffect } from "@clarkcant/storage";
 
-import { decideAppIntent } from "../src/app-intents.ts";
+import { consumeConfirmation, decideAppIntent, mintConfirmation } from "../src/app-intents.ts";
 import { sweepUnknownEffects, unknownEffectFollowUpKey } from "../src/effect-notices.ts";
+import { reconcileEffectForNode } from "../src/effect-reconciliation.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { recordNodeNotice } from "../src/notices.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
-import type { TaskDispatcher } from "../src/task-dispatch.ts";
+import { createTaskDispatcher, type TaskDispatcher } from "../src/task-dispatch.ts";
 
 /**
  * Answering an effect whose outcome nobody observed, over the wire (#273).
@@ -240,7 +242,7 @@ describe("POST /effects/:effectId/reconcile", () => {
   it("records without settling while the task's run is still going, and the run's own report settles it", async () => {
     const { taskId, conversationId } = runningTask("mở pull request");
     const effectId = unknownEffect(taskId, "gh pr create --fill — /work/repo");
-    services.taskDispatch = { holds: (id: string) => id === taskId } as unknown as TaskDispatcher;
+    services.taskDispatch = { reportPending: (id: string) => id === taskId } as unknown as TaskDispatcher;
 
     const response = await request("POST", `/effects/${effectId}/reconcile`, { outcome: "confirmed" });
 
@@ -250,6 +252,53 @@ describe("POST /effects/:effectId/reconcile", () => {
     const settled = settleDispatchedTask(services.conductor, taskId, { kind: "test-output", summary: "opened", verified: true });
     expect(settled.outcome).toBe("succeeded");
     expect(settled.message).toContain("đã có hiệu lực");
+  });
+
+  it("settles the task itself when the answer comes after the run reported but before the dispatcher let it go", async () => {
+    const { taskId, conversationId } = runningTask("mở pull request");
+    let effectId = "";
+    let answered: ReturnType<typeof reconcileEffectForNode> | undefined;
+    let heldWhenAnswered = false;
+    const dispatcher = createTaskDispatcher({
+      conductor: services.conductor,
+      projectRoots: () => [],
+      ownedRoots: () => [],
+      // The run's report is written; the dispatcher still holds the task while it tidies up. An answer given now has
+      // no later report to settle it.
+      onSettled: () => {
+        heldWhenAnswered = dispatcher.holds(taskId);
+        answered = reconcileEffectForNode(services, { effectId, outcome: "confirmed", source: "click", at: AT });
+      },
+      runWorker: async () => {
+        effectId = unknownEffect(taskId, "gh pr create --fill — /work/repo");
+        return {
+          adapter: "fake",
+          adapterVersion: "fake-1.0.0",
+          stopReason: "settled",
+          withheldCapabilities: [],
+          record: {
+            runId: "run_fake",
+            taskId,
+            taskRevision: 0,
+            executionNodeId: services.runtime.identity.nodeId,
+            leaseEpoch: 1,
+            startedAt: AT,
+            endedAt: AT,
+            evidence: [{ kind: "test-output", summary: "opened", verdict: "verified", observedAt: AT }],
+          },
+          usage: { turns: 1 },
+        };
+      },
+    });
+    services.taskDispatch = dispatcher;
+
+    dispatcher.dispatch({ taskId, capabilityRef: "project.command.run@1", executionNodeId: services.runtime.identity.nodeId });
+    for (let tick = 0; tick < 50 && dispatcher.holds(taskId); tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(heldWhenAnswered).toBe(true);
+    expect(answered).toMatchObject({ ok: true, response: { settled: "succeeded", taskState: "succeeded" } });
+    expect(getTask(services.runtime.db, taskId)?.state).toBe("succeeded");
+    expect(assistantTexts(conversationId).join("\n")).not.toContain("Việc vẫn đang chạy");
   });
 
   it("does not offer the answers on a notice a paired node sent about its own task", async () => {
@@ -275,24 +324,66 @@ describe("POST /effects/:effectId/reconcile", () => {
 
 describe("saying it took effect, typed or spoken", () => {
   const intentDeps = () => ({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => AT, newId: services.conductor.newId });
+  const principalId = () => services.runtime.identity.ownerPrincipalId;
   const decide = (text: string, source: "chat" | "voice" | "agent" | "voice-agent" = "chat") =>
-    decideAppIntent(intentDeps(), { principalId: services.runtime.identity.ownerPrincipalId, request: { text, source } }, () => {
-      throw new Error("no confirmation is minted for an answer");
-    });
+    decideAppIntent(intentDeps(), { principalId: principalId(), request: { text, source } }, (intent) =>
+      mintConfirmation(intentDeps(), { principalId: principalId(), intent, source }),
+    );
+  const inEnglish = () =>
+    setPreference({ db: services.runtime.db, now: () => AT }, { principalId: principalId(), key: "experience.language", scope: "global", value: "en", source: "user" });
 
-  it("names the one waiting effect in the decision and its read-back", () => {
+  it("typed, opens the inbox on the notice's buttons instead of recording, in Vietnamese and English", () => {
     const { taskId } = runningTask("đẩy nhánh");
     const effectId = unknownEffect(taskId, "git push origin HEAD — /work/repo");
 
     expect(decide("Đã có hiệu lực")).toEqual({
       kind: "intent",
-      intent: { kind: "effect.confirmed", effectId },
+      intent: { kind: "inbox.open" },
       requiresConfirmation: false,
-      readBack: "Tôi ghi nhận “git push origin HEAD” đã có hiệu lực nhé.",
+      readBack:
+        "Để ghi nhận “git push origin HEAD” đã có hiệu lực, bạn bấm “Đã có hiệu lực” ở thông báo của nó trong hộp thư. Ghi nhận xong thì không đổi lại được.",
     });
-    expect(decide("chưa có hiệu lực", "voice")).toMatchObject({ kind: "intent", intent: { kind: "effect.failed", effectId } });
-    // Only decided: nothing is recorded until the person's own screen calls the route.
+    inEnglish();
+    expect(decide("it went through")).toEqual({
+      kind: "intent",
+      intent: { kind: "inbox.open" },
+      requiresConfirmation: false,
+      readBack:
+        "To record that “git push origin HEAD” took effect, press “It took effect” on its notice in the inbox. Once recorded, it cannot be changed.",
+    });
+    expect(decide("it didn't take effect")).toMatchObject({ intent: { kind: "inbox.open" }, readBack: expect.stringContaining("press “It did not take effect”") });
     expect(getEffect(services.runtime.db, effectId)?.state).toBe("unknown");
+  });
+
+  it("spoken, asks back and answers only the named effect once the yes spends the token, in Vietnamese and English", () => {
+    const { taskId } = runningTask("đẩy nhánh");
+    const effectId = unknownEffect(taskId, "git push origin HEAD — /work/repo");
+
+    const asked = decide("chưa có hiệu lực", "voice");
+    expect(asked).toMatchObject({
+      kind: "needs-confirmation",
+      intent: { kind: "effect.failed", effectId },
+      readBack: "Ghi nhận “git push origin HEAD” chưa có hiệu lực? Ghi nhận xong thì không đổi lại được.",
+    });
+    if (asked.kind !== "needs-confirmation") throw new Error("unreachable");
+    // Nothing is recorded by the sentence; the yes turns the token into the one executable answer, once.
+    expect(getEffect(services.runtime.db, effectId)?.state).toBe("unknown");
+    expect(consumeConfirmation(intentDeps(), { principalId: principalId(), token: asked.confirmationToken })).toEqual({
+      ok: true,
+      intent: { kind: "effect.failed", effectId },
+      source: "voice",
+    });
+    expect(consumeConfirmation(intentDeps(), { principalId: principalId(), token: asked.confirmationToken })).toEqual({
+      ok: false,
+      code: "CONFIRMATION_ALREADY_USED",
+    });
+
+    inEnglish();
+    expect(decide("that took effect", "voice")).toMatchObject({
+      kind: "needs-confirmation",
+      intent: { kind: "effect.confirmed", effectId },
+      readBack: "Record that “git push origin HEAD” took effect? Once recorded, it cannot be changed.",
+    });
   });
 
   it("refuses rather than guesses when nothing, or more than one thing, is waiting", () => {

@@ -157,8 +157,10 @@ export function isReconcileAction(id: NoticeActionId): id is "reconcile-confirme
 /**
  * What a person records about an effect whose outcome nobody observed (`POST /effects/:effectId/reconcile`).
  *
- * `outcome` is what they saw on the other side; `source` is only where they said it, for the record. There is no field
- * naming who: the principal is the authenticated caller, never something the body claims.
+ * `outcome` is what they saw on the other side. `source` is a label the page supplies for where they said it (a press,
+ * typed, spoken) and is stored as given: it is not provenance, and nothing may decide anything from it. What the record
+ * can be trusted for is who and when: the principal is the authenticated caller, never something the body claims, and
+ * the route is person-only, so no machine surface reaches it at all.
  */
 export const effectReconcileRequestSchema = z.strictObject({
   outcome: z.enum(["confirmed", "failed"]),

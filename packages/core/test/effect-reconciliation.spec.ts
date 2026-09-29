@@ -60,10 +60,10 @@ function runningTask(principalId: string = OWNER): string {
 }
 
 /** Handed off, then never heard from: what the command broker leaves for a push that timed out. */
-function unknownEffect(taskId: string, intent = "git push origin HEAD — /work/repo"): string {
+function unknownEffect(taskId: string, intent = "git push origin HEAD — /work/repo", executorNodeId: string = NODE): string {
   const prepared = prepareEffect(deps, {
     taskId,
-    executorNodeId: NODE,
+    executorNodeId,
     category: "external-write",
     capabilityRef: "project.command.run@1" as CapabilityRef,
     intent,
@@ -119,6 +119,18 @@ describe("recording what an unknown effect did", () => {
     // Not answered either: the row is exactly as it was.
     expect(getEffect(deps.db, theirs)?.state).toBe("unknown");
     expect(answerableUnknownEffects({ db: deps.db, nodeId: NODE, principalId: OWNER }).map((effect) => effect.taskId)).toEqual([mine]);
+  });
+
+  it("is not found for an effect another node carried out, even for the person's own task", () => {
+    const taskId = runningTask();
+    // Carried out on a peer: only that node saw it handed off, so only that node's owner answers for it there.
+    const elsewhere = unknownEffect(taskId, "git push origin HEAD — /peer/repo", "node_peer");
+    const scope = { db: deps.db, nodeId: NODE, principalId: OWNER };
+
+    expect(answer(elsewhere, "confirmed")).toMatchObject({ ok: false, code: "EFFECT_NOT_FOUND" });
+    expect(getEffect(deps.db, elsewhere)?.state).toBe("unknown");
+    expect(answerableUnknownEffect(scope, taskId)).toBeUndefined();
+    expect(answerableUnknownEffects(scope)).toEqual([]);
   });
 
   it("refuses an effect that is not unknown, so a second answer cannot overwrite the first", () => {

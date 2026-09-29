@@ -191,8 +191,12 @@ export const appIntentSchema = z
   });
 export type AppIntent = z.infer<typeof appIntentSchema>;
 
-/** The one intent that is never executable from a single request. */
-export const CONFIRMATION_REQUIRED_KINDS: readonly AppIntentKind[] = ["app.quit"];
+/**
+ * The intents never executable from a single request: quitting, and an answer about an effect, which cannot be changed
+ * once recorded. The node turns a sentence answering an effect into its own question (spoken) or into the inbox's
+ * buttons (typed); see `answerAboutEffect` in the runtime.
+ */
+export const CONFIRMATION_REQUIRED_KINDS: readonly AppIntentKind[] = ["app.quit", "effect.confirmed", "effect.failed"];
 
 export function intentRequiresConfirmation(kind: AppIntentKind): boolean {
   return CONFIRMATION_REQUIRED_KINDS.includes(kind);

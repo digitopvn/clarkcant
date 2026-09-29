@@ -305,6 +305,11 @@ body {
 .cc-inbox-mark:active { transform: scale(0.97); }
 .cc-inbox-mark:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-inbox { display: flex; flex-direction: column; gap: var(--cc-space-md); }
+/* An answer that cannot be changed is warned about with the warning edge and full-strength text, not as muted body text. */
+.cc-inbox-reconcile-hint {
+  margin: 0; padding-inline-start: var(--cc-space-sm); border-inline-start: 2px solid var(--cc-warning);
+  color: var(--cc-text); font-size: var(--cc-text-label); line-height: var(--cc-leading-label); font-weight: 600;
+}
 .cc-inbox-section { display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-inbox-heading { margin: 0; font-size: var(--cc-text-label); font-weight: 600; color: var(--cc-text-muted); }
 .cc-inbox-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-sm); }

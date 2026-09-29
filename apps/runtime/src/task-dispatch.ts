@@ -169,6 +169,12 @@ export interface TaskDispatcher {
   stop(taskId: string): boolean;
   /** Whether this dispatcher holds the task, queued or admitted: its stop is then this dispatcher's to confirm. */
   holds(taskId: string): boolean;
+  /**
+   * Whether a run of the task has yet to report: queued, or admitted and its settlement not written yet. Narrower than
+   * `holds`, which stays true while the dispatcher tidies up after the report (taking worktrees away): a person's answer
+   * to one of the task's effects is left to the run's report only while that report is still to come.
+   */
+  reportPending(taskId: string): boolean;
   /** Running and queued tasks, as the node's work list shows them. */
   work(): WorkView[];
   runningCount(): number;
@@ -325,6 +331,8 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
   const active = new Map<string, { startedAt: string }>();
   /** Tasks a person stopped, so the report says "stopped" rather than a worker failure nobody caused. */
   const stopping = new Set<string>();
+  /** Admitted tasks whose run has reported: the settlement is written, though the run may still be tidying up. */
+  const reported = new Set<string>();
   let running = 0;
 
   const journal = (write: (journal: NonNullable<TaskDispatcherDeps["journal"]>) => void): void => {
@@ -365,11 +373,13 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       await refuse(job, "stopped before a worker was started for it");
       return;
     }
+    reported.delete(job.taskId);
     active.set(job.taskId, { startedAt: at() });
     try {
       await runAdmitted(job, task);
     } finally {
       active.delete(job.taskId);
+      reported.delete(job.taskId);
       stopping.delete(job.taskId);
     }
   }
@@ -757,6 +767,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     outcome: "succeeded" | "failed" | "uncertain" | "cancelled",
     message: string,
   ): void {
+    // Every path reports here straight after `runDispatchedTask` wrote the run's settlement, so from now on nothing this
+    // run does can settle the task: an answer to one of its effects has to settle it itself.
+    reported.add(job.taskId);
     const task = getTask(deps.conductor.db, job.taskId);
     if (task === undefined) return;
     deps.onSettled({ taskId: job.taskId, conversationId: task.conversationId, outcome, message });
@@ -818,6 +831,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     },
     holds(taskId) {
       return active.has(taskId) || queue.some((job) => job.taskId === taskId);
+    },
+    reportPending(taskId) {
+      return (active.has(taskId) && !reported.has(taskId)) || queue.some((job) => job.taskId === taskId);
     },
     work() {
       const view = (taskId: string, state: "running" | "queued", startedAt: string, position?: number): WorkView => {

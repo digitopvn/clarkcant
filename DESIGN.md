@@ -530,20 +530,25 @@ Shipped:
     again" reverses it; Undo does too.
   - **Waiting items are never snoozed or quieted.** Approvals, permission requests and Clark's questions are decisions,
     not notifications: they stay in "Waiting on you" until decided or expired.
-- **An action whose outcome nobody saw asks the person** (#273). When a command or a consequential browser action
-  that reaches outside the node (a push, a form submit) timed out or was stopped before it reported, the task waits as
-  uncertain and the inbox has one notice about it, pointing at the task and its conversation. While that action is still
-  unknown, and only then, the notice's two buttons are "It took effect" and "It did not take effect", with "Checked on
-  the receiving side? Once recorded, this cannot be changed." said before them. A press records the answer, with who
-  and when, on the effect ledger; the notice leaves the list, focus moves to the next notice, and the task's
-  conversation says how the task ended: succeeded only when the action took effect and the run had verified its
-  result, failed otherwise, cancelled when the person had asked it to stop. A task with another unknown action gets one
-  new notice naming that one; a task whose run is still going settles when the run reports. An answer someone already
-  gave (another screen, a sentence) is said as such and the list is read again. The same answer typed or spoken ("it
-  took effect", "đã có hiệu lực", "it did not take effect", "chưa có hiệu lực") reaches the same route when exactly one
-  action is waiting, named in the read-back; with none or several, Clark says so and records nothing. Clark cannot give
-  the answer itself: MCP, the WebSocket relay and `clarkcant api` refuse the route and `control_app` cannot name it,
-  because an agent that could say its own push landed could report its own success.
+- **An action whose outcome nobody saw asks the person** (#273). When a command that reaches outside the node (a push, a
+  deploy) timed out or was stopped before it reported, the task waits as uncertain and the inbox has one notice about
+  it, pointing at the task and its conversation. A consequential browser action (a form submit) is written to the same
+  ledger and leaves the same notice when it times out, but only where something drives the browser pack for a task, and
+  nothing does in production yet, so today only commands reach the person this way. While that action is still unknown,
+  and only then, the notice's two buttons are "It took effect" and "It did not take effect", with "Checked on the
+  receiving side? Once recorded, this cannot be changed." said before them in the warning tone, not as body text. A
+  press records the answer, with who and when, on the effect ledger; the notice leaves the list, focus moves to the next
+  notice, and the task's conversation says how the task ended: succeeded only when the action took effect and the run
+  had verified its result, failed otherwise, cancelled when the person had asked it to stop. A task with another unknown
+  action gets one new notice naming that one; a task whose run is still going settles when the run reports. An answer
+  someone already gave (another screen, a sentence) is said as such and the list is read again. Because an answer cannot
+  be changed, the same words typed or spoken ("it took effect", "đã có hiệu lực", "it did not take effect", "chưa có
+  hiệu lực") never record it alone. With exactly one action waiting, named in the read-back: spoken, Clark asks it back
+  ("Record that … took effect? Once recorded, it cannot be changed.") and records on a spoken yes; typed, Clark says
+  which button answers and opens the inbox on that notice, so the press beside the warning is the confirmation. With
+  none or several, Clark says so and records nothing. Clark cannot give the answer itself: MCP, the WebSocket relay and
+  `clarkcant api` refuse the route and `control_app` cannot name it, because an agent that could say its own push landed
+  could report its own success.
 - **Update notifications for the Pi SDK, installed packages and widgets** (`apps/runtime/src/update-checks.ts`), from a
   periodic job comparing the installed version against the directory index and the npm registry (a network error does
   not create an error notification). Content states current version → new version and risk lane, using the same

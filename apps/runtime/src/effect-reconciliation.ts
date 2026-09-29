@@ -33,9 +33,10 @@ export function reconcileEffectForNode(
 ): EffectReconcileResult {
   const principalId = services.runtime.identity.ownerPrincipalId;
   const before = getEffect(services.runtime.db, input.effectId);
-  // A run still going settles the task itself when it reports (`settleDispatchedTask`); settling it here as well would
-  // race the run's own report.
-  const runGoing = before !== undefined && services.taskDispatch?.holds(before.taskId) === true;
+  // A run whose report is still to come settles the task itself when it reports (`settleDispatchedTask`); settling it
+  // here as well would race that report. Not `holds`: the dispatcher keeps holding a task while it tidies up after the
+  // report, and an answer given then has no later report to settle it.
+  const runGoing = before !== undefined && services.taskDispatch?.reportPending(before.taskId) === true;
   const recorded = reconcileEffect(
     { ...services.conductor, now: () => input.at },
     { effectId: input.effectId, outcome: input.outcome, principalId, source: input.source, settle: !runGoing },

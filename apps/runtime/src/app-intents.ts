@@ -86,6 +86,8 @@ const TOKEN_TTL_MS = 120_000;
 interface PendingValue {
   kind: string;
   tab?: SettingsTab;
+  /** The effect an answer names, so the yes that confirms it answers that one effect and no other. */
+  effectId?: string;
   source?: AppIntentSource;
   at: Instant;
   usedAt?: Instant;
@@ -134,6 +136,7 @@ export function mintConfirmation(
   const value: PendingValue = {
     kind: input.intent.kind,
     ...(input.intent.tab === undefined ? {} : { tab: input.intent.tab }),
+    ...(input.intent.effectId === undefined ? {} : { effectId: input.intent.effectId }),
     source: input.source,
     at: deps.now(),
   };
@@ -181,9 +184,11 @@ export function consumeConfirmation(
     return { ok: false, code: "CONFIRMATION_EXPIRED" };
   }
 
-  const parsed = appIntentSchema.safeParse(
-    value.tab === undefined ? { kind: value.kind } : { kind: value.kind, tab: value.tab },
-  );
+  const parsed = appIntentSchema.safeParse({
+    kind: value.kind,
+    ...(value.tab === undefined ? {} : { tab: value.tab }),
+    ...(value.effectId === undefined ? {} : { effectId: value.effectId }),
+  });
   if (!parsed.success) {
     // A row that is not a shapeable intent is not permission; refusing it is the only safe reading.
     deletePreference(preferenceDeps(deps), where);
@@ -280,9 +285,13 @@ export function decideAppIntent(
  * "It took effect", "chưa có hiệu lực": the person's answer to an effect whose outcome nobody observed, as a sentence.
  *
  * A sentence names no effect, so the node names it: exactly one effect waiting for this person is the one the sentence
- * answers, and the read-back says which, before the page records it. None waiting, or several, is refused rather than
- * guessed — with several, the inbox is where each one can be answered by its own buttons. The agent's own sources are
- * refused outright: it is the person's answer (see `PERSON_ONLY_APP_INTENT_KINDS`).
+ * answers, and the read-back says which. None waiting, or several, is refused rather than guessed — with several, the
+ * inbox is where each one can be answered by its own buttons. The agent's own sources are refused outright: it is the
+ * person's answer (see `PERSON_ONLY_APP_INTENT_KINDS`).
+ *
+ * An answer cannot be changed once recorded, so a sentence never records one on its own. Spoken, it is asked back and a
+ * spoken yes spends a token (`needs-confirmation`, as for quitting). Typed, it opens the inbox, where the notice's own
+ * buttons and their warning are the confirmation.
  *
  * Only decided here. Recording is the page's, through the person-only `POST /effects/:effectId/reconcile`, so a
  * message sent through a machine surface can at most be told what would be answered, never answer it.
@@ -324,13 +333,28 @@ function answerAboutEffect(
   }
   const name = quotedEffectIntent(only);
   const confirmed = kind === "effect.confirmed";
+  if (input.request.source === "voice") {
+    // Asked back and answered with a spoken yes, through the same token a spoken quit uses (`CONFIRMATION_REQUIRED_KINDS`):
+    // a misheard sentence must not record an answer that cannot be changed.
+    return {
+      kind: "needs-confirmation",
+      intent: { kind, effectId: only.effectId },
+      readBack: en
+        ? `Record that ${name} ${confirmed ? "took effect" : "did not take effect"}? Once recorded, it cannot be changed.`
+        : `Ghi nhận ${name} ${confirmed ? "đã" : "chưa"} có hiệu lực? Ghi nhận xong thì không đổi lại được.`,
+      confirmationToken: resolution.kind === "needs-confirmation" ? resolution.confirmationToken : (randomUUID() as ConfirmationToken),
+    };
+  }
+  // Typed, the answer is given where the buttons are: the inbox opens on the notice, whose two buttons carry the warning
+  // that an answer cannot be changed. One press there is the confirmation, so nothing is recorded from the sentence alone.
+  const button = en ? (confirmed ? "It took effect" : "It did not take effect") : confirmed ? "Đã có hiệu lực" : "Chưa có hiệu lực";
   return {
     kind: "intent",
-    intent: { kind, effectId: only.effectId },
+    intent: { kind: "inbox.open" },
     requiresConfirmation: false,
     readBack: en
-      ? `Recording that ${name} ${confirmed ? "took effect" : "did not take effect"}.`
-      : `Tôi ghi nhận ${name} ${confirmed ? "đã" : "chưa"} có hiệu lực nhé.`,
+      ? `To record that ${name} ${confirmed ? "took effect" : "did not take effect"}, press “${button}” on its notice in the inbox. Once recorded, it cannot be changed.`
+      : `Để ghi nhận ${name} ${confirmed ? "đã" : "chưa"} có hiệu lực, bạn bấm “${button}” ở thông báo của nó trong hộp thư. Ghi nhận xong thì không đổi lại được.`,
   };
 }
 

@@ -944,7 +944,7 @@ export function InboxPanel({
                         {onReconcile !== undefined && noticeReconcileEffect(notice) !== undefined && (
                           // Said before the buttons, not after a press: an answer is recorded for good, and "did you
                           // look?" is the one question worth asking before it.
-                          <p className="cc-freshness" data-inbox-reconcile-hint={notice.noticeId} style={{ margin: 0 }}>
+                          <p className="cc-inbox-reconcile-hint" data-inbox-reconcile-hint={notice.noticeId}>
                             {t("inbox.reconcile.hint")}
                           </p>
                         )}

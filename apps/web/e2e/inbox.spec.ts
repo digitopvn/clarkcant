@@ -551,7 +551,7 @@ test("an approval from another conversation is decided from the inbox without le
  * The scripted sentence leaves real rows: a task, an effect marked unknown by the call the command broker makes, and
  * the notice the node's own sweep writes. What the browser proves is the surface: the two answers are the row's
  * buttons with the warning before them, a press records through the person-only route, the notice goes, the
- * conversation hears how the task ended, and the same words typed reach the same route.
+ * conversation hears how the task ended, and the same words typed open those buttons rather than record anything alone.
  */
 async function leaveUnknownEffect(page: Page): Promise<{ effectId: string; noticeId: string }> {
   const composer = page.locator("[data-composer]");
@@ -616,18 +616,38 @@ test("answering an unknown outcome from the inbox resolves its notice and tells 
   expect(inbox.notices.map((notice) => notice.noticeId)).not.toContain(noticeId);
 });
 
-test("saying it did not take effect, typed, records the same answer through the same route", async ({ page }) => {
+test("saying it did not take effect, typed, opens the inbox on the answer instead of recording it unasked", async ({ page }) => {
   await openApp(page);
-  const { effectId } = await leaveUnknownEffect(page);
-  const recorded = page.waitForRequest(
-    (request) => request.method() === "POST" && request.url().endsWith(`/effects/${effectId}/reconcile`),
-  );
+  const { effectId, noticeId } = await leaveUnknownEffect(page);
+  const reconciles: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith(`/effects/${effectId}/reconcile`)) reconciles.push(request.postData() ?? "");
+  });
 
   const composer = page.locator("[data-composer]");
   await composer.fill("chưa có hiệu lực");
   await composer.press("Enter");
 
-  expect((await recorded).postDataJSON()).toMatchObject({ outcome: "failed", source: "chat" });
+  // An answer cannot be changed, so the sentence alone records nothing: it says which button answers, and opens the
+  // inbox on it, where the warning stands before the buttons.
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(
+    "Để ghi nhận “git push origin fixture” chưa có hiệu lực, bạn bấm “Chưa có hiệu lực”",
+    { timeout: 20_000 },
+  );
+  const dialog = page.getByRole("dialog");
+  const row = dialog.locator(`[data-inbox-notice="${noticeId}"]`);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await expect(row.locator(`[data-inbox-reconcile-hint="${noticeId}"]`)).toBeVisible();
+  expect(reconciles).toEqual([]);
+
+  const recorded = page.waitForRequest(
+    (request) => request.method() === "POST" && request.url().endsWith(`/effects/${effectId}/reconcile`),
+  );
+  await row.locator(`[data-inbox-reconcile="failed"][data-inbox-reconcile-effect="${effectId}"]`).click();
+  expect((await recorded).postDataJSON()).toMatchObject({ outcome: "failed", source: "click" });
+  await expect(dialog.locator('[data-inbox-status="done"]')).toContainText("Đã ghi nhận là thao tác chưa có hiệu lực", { timeout: 20_000 });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
   await expect(page.locator('[data-role="assistant"]').last()).toContainText("bạn xác nhận “git push origin fixture” chưa có hiệu lực", {
     timeout: 20_000,
   });

@@ -226,10 +226,12 @@ the notice's kind for this principal: later notices of that kind are still liste
 notification. Only a narrow kind can be quieted, one tied to an automation, a signal source, a package, a node, or a
 person's own background work; any other kind would also silence reminders and every other automation's notices, so
 the route refuses it with `409 SUPPRESSION_TOO_BROAD` and the notice's `actions` never offer it. Each route acts only on the calling principal's own
-notices. `POST /effects/:effectId/reconcile` with `{ "outcome": "confirmed" | "failed" }` records what the person saw
-of an action whose outcome was unknown, the answer an unknown-outcome notice offers as its two buttons: `404` for an
-effect of another principal's task or none at all, `409 EFFECT_NOT_UNKNOWN` once it is no longer unknown; it is
-person-only, as below. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
+notices. `POST /effects/:effectId/reconcile` with `{ "outcome": "confirmed" | "failed", "source"?: "click" | "chat" |
+"voice" }` records what the person saw of an action whose outcome was unknown, the answer an unknown-outcome notice
+offers as its two buttons: `404 RESOURCE_NOT_FOUND` for an effect of another principal's task, of another node, or none
+at all, `409 EFFECT_NOT_UNKNOWN` once it is no longer unknown; it is person-only, as below. `source` is a label the
+caller supplies for where the answer was given and is stored as given, not provenance; who answered is the
+authenticated principal. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
 [system-architecture.md](system-architecture.md) under the inbox.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet

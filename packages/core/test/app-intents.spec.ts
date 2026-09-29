@@ -343,11 +343,11 @@ describe("a work request is not an app intent", () => {
   });
 });
 
-describe("quitting always asks first", () => {
-  it("makes every intent but app.quit executable, and app.quit a question", () => {
+describe("quitting and answering about an effect always ask first", () => {
+  it("makes every intent but app.quit and the effect answers executable, and those a question", () => {
     for (const kind of APP_INTENT_KINDS) {
       const resolution = resolveAppIntent({ intent: { kind }, mintConfirmationToken: mint });
-      if (kind === "app.quit") {
+      if (kind === "app.quit" || kind === "effect.confirmed" || kind === "effect.failed") {
         expect(resolution.kind, kind).toBe("needs-confirmation");
         expect("confirmationToken" in resolution).toBe(true);
       } else {
