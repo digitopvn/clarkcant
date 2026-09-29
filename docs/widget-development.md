@@ -705,7 +705,9 @@ If a migration fails:
 - offer a recovery choice.
 
 Uninstalling a presentation facet does not automatically delete the user's domain data. Removing a package only deactivates the running
-generation: instances go offline with a text fallback, and state and snapshots are kept. **Restore** reactivates exactly the
+generation: instances go offline with a text fallback, and state and snapshots are kept. That reaches every widget the manifest
+declares, including one whose definition this node could not load, and one whose package files are no longer on this node: the ids
+come from the manifest's `ui` facets and from the list the node recorded when the package was installed. **Restore** reactivates exactly the
 generation that was just removed; **Roll back** activates the most recently replaced generation. All three go through the same action from
 Settings, chat and voice.
 

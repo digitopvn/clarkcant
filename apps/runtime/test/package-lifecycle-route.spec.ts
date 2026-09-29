@@ -232,6 +232,75 @@ describe("uninstalling and restoring a package", () => {
   });
 });
 
+describe("uninstalling a package whose widget this node cannot load", () => {
+  const lifecycleOf = (instanceId: string) =>
+    allRows<{ lifecycle: string }>(
+      services.runtime.db,
+      "SELECT lifecycle FROM widget_instances WHERE instance_id = ?",
+      instanceId,
+    )[0]?.lifecycle;
+
+  /** Overwrite the widget's definition in every listed version, so no version of the package loads it. */
+  function breakDefinition(contents: string): void {
+    for (const version of ["board-1", "board-2"]) writeFileSync(join(dir, version, "widgets", "main", "widget.json"), contents);
+  }
+
+  /** Uninstall, then restore, and check both reach the instance and count its kept state. */
+  async function uninstallAndRestore(instanceId: string): Promise<void> {
+    const before = lifecycleOf(instanceId);
+    expect(before).not.toBe("offline");
+
+    const uninstalled = await change("uninstall");
+    expect(uninstalled.status).toBe(200);
+    expect(uninstalled.body).toMatchObject({ instancesOffline: 1, statesKept: 1 });
+    expect(lifecycleOf(instanceId)).toBe("offline");
+
+    const restored = await change("restore");
+    expect(restored.status).toBe(200);
+    expect(restored.body).toMatchObject({ instancesRestored: 1, statesKept: 1 });
+    expect(lifecycleOf(instanceId)).toBe(before);
+  }
+
+  function instanceWithState(): string {
+    const instanceId = makeInstance();
+    initialiseState(services.conductor, { instanceId, body: { items: ["kept"] }, stateVersion: 1 });
+    return instanceId;
+  }
+
+  it("takes offline, and brings back, an instance whose definition file is not JSON", async () => {
+    recordInstall("2.0.0");
+    const instanceId = instanceWithState();
+    breakDefinition("{ not json");
+
+    await uninstallAndRestore(instanceId);
+  });
+
+  it("takes offline, and brings back, an instance whose definition fails the widget schema", async () => {
+    recordInstall("2.0.0");
+    const instanceId = instanceWithState();
+    const withoutFallback: Partial<WidgetDefinition> = definition("2.0.0");
+    delete withoutFallback.textFallback;
+    breakDefinition(JSON.stringify(withoutFallback));
+
+    await uninstallAndRestore(instanceId);
+  });
+
+  it("takes offline, and brings back, the instances of a package whose files are no longer on this node", async () => {
+    const installed = await send("POST", "/packages/install", {
+      packageId: PACKAGE,
+      version: "2.0.0",
+      localDigest: "sha256:board-2.0.0",
+    });
+    expect(installed.status).toBe(200);
+    const instanceId = instanceWithState();
+    // The directory still lists the package, so it can be restored, but nothing here can read its files.
+    rmSync(join(dir, "board-1"), { recursive: true, force: true });
+    rmSync(join(dir, "board-2"), { recursive: true, force: true });
+
+    await uninstallAndRestore(instanceId);
+  });
+});
+
 describe("rolling back to the previous version", () => {
   it("serves the older version's code and reports which version a rollback would reach", async () => {
     recordInstall("1.0.0");

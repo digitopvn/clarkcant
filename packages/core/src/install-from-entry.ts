@@ -39,6 +39,8 @@ export interface InstallFromEntryRequest {
   grantedCapabilities?: readonly string[];
   /** The frozen dependency closure resolved before this call, if one was. */
   dependencyLock?: DependencyLockBinding;
+  /** The widget ids the fetched package's manifest declares; see `InstallFromSourceInput.widgetIds`. */
+  widgetIds?: readonly string[];
 }
 
 /**
@@ -62,6 +64,7 @@ export function installFromEntry(deps: InstallDeps, request: InstallFromEntryReq
     ...(request.localDigest === undefined ? {} : { localDigest: request.localDigest }),
     ownerPrincipalId: request.ownerPrincipalId,
     ...(request.dependencyLock === undefined ? {} : { dependencyLock: request.dependencyLock }),
+    ...(request.widgetIds === undefined ? {} : { widgetIds: request.widgetIds }),
     // One plan per package version, so two turns that ask for the same package share it rather than installing it
     // twice — which is what the requirement key exists for.
     requirementKey: `pkg:${request.entry.packageId}@${request.entry.version}`,

@@ -32,6 +32,7 @@ import {
   artifactMatchesPlan,
   decideApprovalWithinTransaction,
   decideExecution,
+  declaredWidgetIds,
   deriveGrantedCapabilities,
   directoryIndexPath,
   effectCategoryForLane,
@@ -553,6 +554,8 @@ export async function installPackage(
       ? {}
       : { requestedCapabilityRefs: request.requestedCapabilityRefs }),
     grantedCapabilities: grant.granted,
+    // Kept on the generation, so uninstalling can still reach these widgets' instances once the files are gone.
+    ...(resolvedEntry.source.kind === "local" ? { widgetIds: declaredWidgetIds(resolvedEntry.source.path) } : {}),
   });
 
   if (!outcome.ok) return { kind: "refused", status: 400, code: outcome.code, message: outcome.message };

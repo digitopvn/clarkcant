@@ -740,6 +740,14 @@ export const packageGenerationSchema = z.strictObject({
    * a different requirement) to find out what was actually approved.
    */
   grantedCapabilities: z.array(capabilityRefSchema).max(128),
+  /**
+   * The ids of the widgets (`ui` facets) the package declared when this generation was installed.
+   *
+   * Uninstall and restore find a package's widget instances by these ids, and the package's files are not always on
+   * this node by then: a fetched copy can leave the cache, a local folder can move. Recording them here means the
+   * answer does not depend on reading those files again. Absent on a generation installed before this was kept.
+   */
+  widgetIds: z.array(z.string().min(1).max(160)).max(64).optional(),
 });
 export type PackageGeneration = z.infer<typeof packageGenerationSchema>;
 

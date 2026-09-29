@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { nowInstant, type DirectoryEntry } from "@clarkcant/contracts";
 import {
   decideExecution,
+  declaredWidgetIds,
   directoryIndexPath,
-  installedWidgets,
   listInstalledPackages,
   readDirectoryIndex,
   readExecutionPolicy,
@@ -85,17 +85,15 @@ function entriesOf(entries: readonly DirectoryEntry[], packageId: string): Direc
  * Every widget definition id any listed version of the package declares.
  *
  * Every version rather than the active one: an instance created under 1.0 names the definition 1.0 declared, and
- * uninstalling 2.0 must take that instance offline too.
+ * uninstalling 2.0 must take that instance offline too. What the manifest declares rather than what loads: a widget
+ * whose definition this node cannot read still has instances, and they must go offline with the rest. A version
+ * whose files are not on this node adds nothing here; core adds the ids its generation recorded at install.
  */
 function widgetIdsOf(entries: readonly DirectoryEntry[], cacheRoot: string): string[] {
   const ids = new Set<string>();
   for (const entry of entries) {
-    const read = installedWidgets({
-      packageId: entry.packageId,
-      version: entry.version,
-      source: resolveLocalSource(entry, cacheRoot),
-    });
-    if (read.ok) for (const widget of read.widgets) ids.add(widget.definition.id);
+    const source = resolveLocalSource(entry, cacheRoot);
+    if (source.kind === "local") for (const id of declaredWidgetIds(source.path)) ids.add(id);
   }
   return [...ids];
 }

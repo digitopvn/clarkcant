@@ -202,6 +202,8 @@ export function activateGeneration(
     currentPlan: InstallPlan;
     codeGeneration: string;
     uiOnlyFacets: string[];
+    /** The widget ids the package declares, kept on the generation for uninstall; see `PackageGeneration.widgetIds`. */
+    widgetIds?: readonly string[];
     nativeExtensionChanged: boolean;
     skillOrPromptChanged: boolean;
   },
@@ -234,6 +236,7 @@ export function activateGeneration(
       activatedAt: at,
       uiOnlyFacets: input.uiOnlyFacets,
       grantedCapabilities: input.currentPlan.grantedCapabilities,
+      ...(input.widgetIds === undefined ? {} : { widgetIds: [...input.widgetIds] }),
       // Carried from the plan rather than re-derived: what is running and what was consented to are two rows.
       ...(input.currentPlan.lockRef === undefined
         ? {}
