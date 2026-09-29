@@ -55,6 +55,7 @@ import type { TerminalRegistry } from "./terminal-sessions.ts";
 import { rememberMemory, type MemoryDeps } from "./memory.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import { createSearchHistoryTool } from "./session-search.ts";
+import { type AutomationToolDeps, createAutomationTools } from "./automation-tools.ts";
 import { createWorkTools } from "./work-tools.ts";
 import type { HostControlAcks } from "./host-control-acks.ts";
 
@@ -198,6 +199,13 @@ export function createNodeTools(input: {
    * Absent means `inspect_ui` is not registered: a turn with no conversation has no screen of its own to read.
    */
   ui?: InspectUiDeps;
+  /**
+   * Standing requests the person sets up in this conversation (`automation-tools.ts`), when the turn belongs to one.
+   *
+   * Absent means the three automation tools are not registered: an automation reports where it was set up, and a turn
+   * with no conversation has nowhere for it to report.
+   */
+  automations?: AutomationToolDeps;
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -262,6 +270,7 @@ export function createNodeTools(input: {
     ...(input.work === undefined ? [] : createWorkTools(input.work)),
     ...(input.inbox === undefined ? [] : [createReadInboxTool(input.inbox)]),
     ...(input.ui === undefined ? [] : [createInspectUiTool(input.ui)]),
+    ...(input.automations === undefined ? [] : createAutomationTools(input.automations)),
   ];
 }
 

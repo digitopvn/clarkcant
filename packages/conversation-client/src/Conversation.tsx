@@ -321,6 +321,9 @@ export function Conversation({
     t: localeState.t,
     windowMode,
     onOpenInbox: () => appIntents.clickIntent("inbox.open"),
+    onNoticesArrived: (conversationIds) => {
+      if (conversationId !== undefined && conversationIds.includes(conversationId)) refreshTimeline();
+    },
   });
   // Re-derived from the current locale on every render rather than memoized: a language switch mid-typewriter
   // must show the new language's phrases, not finish the cycle in the one that was active when it started.

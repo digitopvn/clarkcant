@@ -89,6 +89,8 @@ describe("discovery", () => {
       "/conversations/{conversationId}/messages",
       "/conversations/{conversationId}/messages/stream",
       "/conversations/{conversationId}/timeline",
+      "/signals",
+      "/automations",
       "/stop",
     ]) {
       expect(document.paths).toHaveProperty([path]);

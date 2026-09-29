@@ -18,6 +18,7 @@ import { type ModelTurn, type ViewDescriptor, createModelTurn } from "../model-t
 import type { Runtime } from "../node.ts";
 import { createNodeTools, type CommandToolDeps } from "../node-tools.ts";
 import { type ProjectFinderDeps, resolveProject } from "../project-finder.ts";
+import { ownedResources } from "../preflight.ts";
 import type { RequestSecretDeps } from "../request-secret.ts";
 import { textOfMessage } from "../session-search.ts";
 import { registerSessionFile } from "../session-store.ts";
@@ -283,6 +284,19 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         inbox: () => readInbox(deps.services(), instantSchema.parse(new Date().toISOString())),
         // What the widgets the person changed show now, read from the same documents the turn's UI note is built from.
         ui: { deps: () => deps.services().conductor, conversationId: turn.conversationId },
+        // "From now on, when X happens, do Y": kept for the owner, reporting in the conversation it was set up in, and
+        // given only folders this node owns — the same set the dispatcher checks again before a worker starts.
+        automations: {
+          db: deps.services().runtime.db,
+          nodeId: deps.services().runtime.identity.nodeId,
+          principalId: search.principalId,
+          conversationId: turn.conversationId,
+          now: () => instantSchema.parse(new Date().toISOString()),
+          newId: deps.services().conductor.newId,
+          ownedRoots: () =>
+            ownedResources([...deps.services().projects.roots(), deps.services().runtime.dataDir, process.cwd()]).roots,
+          kick: () => deps.services().automation?.kick(),
+        },
         // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
         packages: {
           packages: packageInstallDepsOf(deps.services()),

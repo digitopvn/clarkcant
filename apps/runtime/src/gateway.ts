@@ -22,6 +22,7 @@ import { handlePreviewRoutes } from "./routes/previews.ts";
 import { handlePreferenceRoutes } from "./routes/preferences.ts";
 import { handlePackageRoutes } from "./routes/packages.ts";
 import { handleInboxRoutes } from "./routes/inbox.ts";
+import { handleSignalRoutes } from "./routes/signals.ts";
 import { handleInteractionRoutes } from "./routes/interactions.ts";
 import { handleMcpRoute } from "./routes/mcp.ts";
 import { handleConversationRoutes, handleRawCommand } from "./routes/conversations.ts";
@@ -218,6 +219,10 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   // offers goes back through the route that already owns that decision.
   const inboxResponse = handleInboxRoutes({ services, request, segments, at });
   if (inboxResponse !== undefined) return inboxResponse;
+
+  // Something happened that a standing request may answer. Recorded first, matched after, so the sender is answered at once.
+  const signalResponse = handleSignalRoutes({ services, request, segments, at });
+  if (signalResponse !== undefined) return signalResponse;
 
   const interactionResponse = await handleInteractionRoutes({ services, request, segments, at });
   if (interactionResponse !== undefined) return interactionResponse;

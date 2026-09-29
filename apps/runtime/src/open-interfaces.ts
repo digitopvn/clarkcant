@@ -192,6 +192,32 @@ export function openApiDocument(): Record<string, unknown> {
       "/conversations/{conversationId}/questions/{questionId}/cancel": {
         post: { summary: "Drop a waiting question", parameters: [conversationId, questionId], responses: { "200": ok("Cancelled"), ...refusals } },
       },
+      "/signals": {
+        post: {
+          summary: "Tell the node something happened",
+          description:
+            "One signal: { source: { kind, provider?, sourceId }, topic, subject?, payload, occurredAt, dedupeKey, " +
+            "provenance? }. A topic is dotted lower-case words; the payload is at most 64 KB. It is recorded before " +
+            "anything is matched, then answered against the standing requests the person set up in conversation. The " +
+            "same (source.sourceId, dedupeKey) again is 200 with the signal already recorded, never a second one. " +
+            "Timer and system signals are the node's own and are refused with 403 SOURCE_RESERVED.",
+          requestBody: { content: { "application/json": { schema: { type: "object" } } } },
+          responses: {
+            "202": ok("Recorded: { signalId, duplicate: false }"),
+            "200": ok("Already recorded: { signalId, duplicate: true }"),
+            "403": ok("SOURCE_RESERVED: timer and system signals come from the node itself"),
+            "413": ok("SIGNAL_TOO_LARGE"),
+            ...refusals,
+          },
+        },
+      },
+      "/automations": {
+        get: {
+          summary: "The standing requests set up in conversation, each with what it did lately",
+          description: "Read-only. An automation is created, paused, resumed and removed by asking Clark in conversation.",
+          responses: { "200": ok("{ automations: [{ intent, recentRuns }] }"), ...refusals },
+        },
+      },
       "/stop": {
         post: {
           summary: "Emergency stop",

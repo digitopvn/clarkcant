@@ -1,7 +1,7 @@
 ---
 phase: 2
 title: "Lõi Signal và persistent intent"
-status: pending
+status: done
 issues: [197, 172]
 ---
 
@@ -62,3 +62,11 @@ issues: [197, 172]
   - tạo, liệt kê, tạm dừng, xoá qua hội thoại (runtime spec với FakePiAdapter);
   - intent tạm dừng thì không match.
 - E2E: nói "từ giờ khi có signal X thì làm Y"; `POST /signals` giả lập; hội thoại báo việc đã bắt đầu.
+
+## Kết quả
+
+- Migration 29; `packages/core/src/automation.ts`; `apps/runtime/src/automation-service.ts`, `automation-tools.ts`, `routes/signals.ts`.
+- `intent_runs.task_id` là NOT NULL: id của task được chọn lúc ghi run, nên khởi động lại không bao giờ tạo task thứ hai.
+- Task chờ capability (pack còn đang nạp sau khi khởi động) được báo một lần, run giữ `pending`, và tick sau tự phát `capability.ready` khi capability dùng được.
+- Notice mới của một hội thoại làm hội thoại đang mở tự đọc lại timeline, nên lời nhắc hiện ra không cần tải lại.
+- Bằng chứng: `packages/core/test/automation.spec.ts` (21), `apps/runtime/test/automations.spec.ts` (7), `apps/web/e2e/automation.spec.ts`.

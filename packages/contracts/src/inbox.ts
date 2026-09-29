@@ -34,6 +34,8 @@ export const noticeSourceKindSchema = z.enum([
   "peer",
   /** This node: storage, credentials, the runtime. */
   "system",
+  /** Something the person set up earlier to happen on its own: "when X happens, do Y". */
+  "automation",
 ]);
 export type NoticeSourceKind = z.infer<typeof noticeSourceKindSchema>;
 

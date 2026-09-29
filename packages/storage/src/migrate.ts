@@ -1275,6 +1275,63 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 29,
+    name: "signals_and_persistent_intents",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Something that happened, recorded before anything is done about it. The same fact delivered twice has the
+        -- same (source, dedupe key) and is one row; a delivery is retried with backoff and ends processed or dead.
+        CREATE TABLE signal_deliveries (
+          signal_id        TEXT PRIMARY KEY,
+          source_id        TEXT NOT NULL,
+          dedupe_key       TEXT NOT NULL,
+          topic            TEXT NOT NULL,
+          document         TEXT NOT NULL,
+          state            TEXT NOT NULL CHECK (state IN ('pending', 'processed', 'dead')),
+          attempts         INTEGER NOT NULL DEFAULT 0,
+          next_attempt_at  TEXT NOT NULL,
+          last_error       TEXT,
+          received_at      TEXT NOT NULL,
+          settled_at       TEXT,
+          UNIQUE (source_id, dedupe_key)
+        );
+        CREATE INDEX idx_signal_deliveries_due ON signal_deliveries(state, next_attempt_at);
+
+        -- A person's standing request, as data a deterministic matcher reads.
+        CREATE TABLE persistent_intents (
+          intent_id        TEXT PRIMARY KEY,
+          principal_id     TEXT NOT NULL,
+          conversation_id  TEXT NOT NULL,
+          topic            TEXT NOT NULL,
+          state            TEXT NOT NULL CHECK (state IN ('active', 'paused', 'removed')),
+          document         TEXT NOT NULL,
+          revision         INTEGER NOT NULL,
+          next_fire_at     TEXT,
+          created_at       TEXT NOT NULL,
+          updated_at       TEXT NOT NULL
+        );
+        CREATE INDEX idx_persistent_intents_topic ON persistent_intents(state, topic);
+        CREATE INDEX idx_persistent_intents_due ON persistent_intents(state, next_fire_at);
+
+        -- One intent answering one signal, never twice. The task id is chosen when the run is recorded, so a crash
+        -- between recording it and creating the task finds the same task again instead of making a second.
+        CREATE TABLE intent_runs (
+          run_id      TEXT PRIMARY KEY,
+          intent_id   TEXT NOT NULL REFERENCES persistent_intents(intent_id),
+          signal_id   TEXT NOT NULL REFERENCES signal_deliveries(signal_id),
+          task_id     TEXT NOT NULL,
+          state       TEXT NOT NULL CHECK (state IN ('pending', 'started', 'reminded', 'failed')),
+          reason      TEXT,
+          created_at  TEXT NOT NULL,
+          updated_at  TEXT NOT NULL,
+          UNIQUE (intent_id, signal_id)
+        );
+        CREATE INDEX idx_intent_runs_intent ON intent_runs(intent_id, created_at);
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

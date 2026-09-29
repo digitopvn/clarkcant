@@ -25,6 +25,7 @@ import { composeMiniApp } from "../compose-mini-app.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { type ModelTurn, createModelTurn } from "../model-turn.ts";
 import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
+import { createAutomationTools } from "../automation-tools.ts";
 import { controlApp, createNodeTools, createRememberTool, type CommandToolDeps } from "../node-tools.ts";
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps } from "../project-finder.ts";
@@ -74,7 +75,7 @@ export interface FixtureModelDeps {
   /** The node this fixture stands in for, read when a turn asks rather than when the composer is built. */
   services: () => Pick<
     NodeServices,
-    "runtime" | "conductor" | "controlSessions" | "terminals" | "hostControl" | "serviceHost"
+    "runtime" | "conductor" | "controlSessions" | "terminals" | "hostControl" | "serviceHost" | "automation"
   >;
   dataDir: string;
   wiring: FixtureModelWiring;
@@ -468,6 +469,36 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       return { text: answer.text, block: first as unknown as MessageBlock };
     }
 
+    /*
+     * A reminder set up to happen on its own, through the real tool.
+     *
+     * The sentence is scripted; the automation is the node's own — stored, matched against a signal a journey sends to
+     * `POST /signals`, and said back in this conversation by the automation service — so the browser sees the path a
+     * real standing request takes.
+     */
+    const standing = /^nhắc tôi khi có ([a-z0-9._-]+):\s*(.+)$/iu.exec(input.text.trim());
+    if (standing !== null) {
+      const services = deps.services();
+      const topic = (standing[1] ?? "").toLowerCase();
+      const tool = createAutomationTools({
+        db: services.runtime.db,
+        nodeId: services.runtime.identity.nodeId,
+        principalId: services.runtime.identity.ownerPrincipalId,
+        conversationId: input.conversationId,
+        now: () => instantSchema.parse(new Date().toISOString()),
+        newId: services.conductor.newId,
+        ownedRoots: () => [deps.dataDir],
+        kick: () => services.automation?.kick(),
+      }).find((entry) => entry.name === "create_automation");
+      if (tool === undefined) return undefined;
+      const answer = await tool.execute({
+        summary: `Nhắc khi có ${topic}`,
+        topic,
+        action: "remind",
+        message: (standing[2] ?? "").trim(),
+      });
+      return { text: answer.text, block: { type: "text", format: "plain", content: answer.text, streaming: false } };
+    }
     /*
      * A terminal, opened through the real tool.
      *
