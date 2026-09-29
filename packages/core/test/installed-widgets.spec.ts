@@ -15,7 +15,13 @@ import { installedWidgets } from "../src/installed-widgets.ts";
  */
 
 function writePackage(
-  options: { facets?: number; omitManifest?: boolean; brokenSecondFacet?: boolean; dataset?: "valid" | "broken" | "none" } = {},
+  options: {
+    facets?: number;
+    omitManifest?: boolean;
+    brokenSecondFacet?: boolean;
+    unsafeSecondFacet?: boolean;
+    dataset?: "valid" | "broken" | "none";
+  } = {},
 ): string {
   const root = mkdtempSync(join(tmpdir(), "cc-installed-widgets-"));
   mkdirSync(join(root, "widgets", "main"), { recursive: true });
@@ -69,7 +75,14 @@ function writePackage(
         id: index === 0 ? "canvas.note@1" : `com.example.panel.extra@1`,
         version: "1.0.0",
         renderer: "catalog",
-        propsSchema: { type: "object", properties: { title: { type: "string" } }, required: ["title"] },
+        propsSchema: {
+          type: "object",
+          properties: {
+            title:
+              options.unsafeSecondFacet === true && index > 0 ? { type: "string", pattern: "^(a+)+$" } : { type: "string" },
+          },
+          required: ["title"],
+        },
         eventSchemas: {},
         semanticDescription: "A panel a package declares",
         requestedCapabilities: [],
@@ -178,6 +191,24 @@ describe("installed package widgets", () => {
     expect(outcome.widgets.map((widget) => widget.facetId)).toEqual(["canvas.note@1"]);
     expect(outcome.problems).toHaveLength(1);
     expect(outcome.problems[0]).toContain("widget-1.json");
+  });
+
+  it("keeps a widget whose props schema could stall the node out of the widgets, and says why and what to write", () => {
+    const outcome = installedWidgets({
+      packageId: "com.example.panel",
+      version: "1.0.0",
+      source: { kind: "local", path: writePackage({ facets: 2, unsafeSecondFacet: true }) },
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.widgets.map((widget) => widget.facetId)).toEqual(["canvas.note@1"]);
+    expect(outcome.problems).toHaveLength(1);
+    const [problem] = outcome.problems;
+    expect(problem).toContain("widget-1.json: the widget is not loaded");
+    expect(problem).toContain('"^(a+)+$" at propsSchema.properties.title.pattern');
+    expect(problem).toContain("could stall this node");
+    expect(problem).toContain("instead of (a+)+");
   });
 
   it("carries the dataset a package shipped beside its fixture", () => {
