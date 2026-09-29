@@ -134,6 +134,9 @@ export const MESSAGES_SHELL_VI = {
   "shell.intent.notOrb": "Bản dựng này không lưu được kiểu Orb, nên tôi chưa làm gì cả.",
   "shell.intent.orbProfileMissing": "Chưa rõ bạn muốn đổi Orb sang kiểu nào, nên tôi chưa làm gì cả.",
   "shell.intent.orbChanged": "Đã đổi Orb sang kiểu {name}.",
+  "shell.intent.orbSavedNotShown":
+    "Đã lưu kiểu {name}, nhưng Orb trên màn hình chưa đổi được vì không đọc lại được cài đặt ({reason}). Orb sẽ đổi khi đọc lại được hoặc khi tải lại trang.",
+  "shell.intent.orbShowsOther": "Đã lưu kiểu {name}, nhưng Orb trên màn hình đang hiện kiểu {shown}, nên tôi chưa xác nhận là đã đổi.",
 
   "shell.onboarding.tagline": "Nói điều bạn muốn làm.",
   "shell.onboarding.start": "Bắt đầu",
@@ -315,6 +318,9 @@ export const MESSAGES_SHELL_EN = {
   "shell.intent.notOrb": "This build cannot save an orb style, so nothing happened.",
   "shell.intent.orbProfileMissing": "It is not clear which orb style you want, so nothing happened.",
   "shell.intent.orbChanged": "The orb is now in the {name} style.",
+  "shell.intent.orbSavedNotShown":
+    "The {name} style is saved, but the orb on screen has not changed because the settings could not be read back ({reason}). It will change once they can, or on reload.",
+  "shell.intent.orbShowsOther": "The {name} style is saved, but the orb on screen shows the {shown} style, so I cannot confirm it changed.",
 
   "shell.onboarding.tagline": "Say what you want to do.",
   "shell.onboarding.start": "Get started",

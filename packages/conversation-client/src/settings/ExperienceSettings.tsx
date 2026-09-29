@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useId, useState, type ReactElement } from "react";
 
 import {
   ORB_MOTION_BOUNDS,
@@ -11,7 +11,7 @@ import {
 
 import { Orb } from "../Orb.tsx";
 import { orbPaletteGradient, resolveOrbProfile } from "../orb-profile.ts";
-import { prefersReducedMotion } from "../typewriter.ts";
+import { usePlatformReducedMotion } from "../typewriter.ts";
 import { THEME_CHOICES, type ThemeChoice } from "../theme.ts";
 import type { ThemeName } from "@clarkcant/design-tokens";
 import { InlineStatus, RangeField, SegmentedControl, SettingsRow } from "./controls/primitives.tsx";
@@ -128,6 +128,10 @@ export function ExperienceSettings({
   const [draftOpen, setDraftOpen] = useState(false);
   /** Whether the preview is drawn by WebGL, as the orb itself reports it rather than as guessed here. */
   const [previewMode, setPreviewMode] = useState<"gl" | "fallback">("gl");
+  /** Followed live, so the preview starts moving again when the platform switch is turned back off. */
+  const platformReducedMotion = usePlatformReducedMotion();
+  /** Unique per mounted instance, so two copies of this tab never share a description id. */
+  const presetNoteId = useId();
 
   /*
    * The preview.
@@ -139,14 +143,18 @@ export function ExperienceSettings({
   const preview = resolveOrbProfile({
     profile: profileName,
     custom,
-    reducedMotion: prefs.text("experience.motion", "system") === "reduced" || prefersReducedMotion(),
+    reducedMotion: prefs.text("experience.motion", "system") === "reduced" || platformReducedMotion,
   });
 
   /** Write one field of the custom patch, keeping the fields that were not touched. */
   const patchCustom = (group: "physics" | "optical" | "motion", key: string, value: number): void => {
+    const kept = numbers(custom[group]);
+    // A size stored before the registry refused one would make every later edit a refused write; the orb
+    // already ignores it, so it is dropped here rather than carried forward.
+    delete kept.radius;
     const next = {
       ...custom,
-      [group]: { ...numbers(custom[group]), [key]: value },
+      [group]: { ...kept, [key]: value },
     };
     // The orb on screen re-reads once the node has stored the value, not before: a refresh sent with the
     // write would read the value being replaced.
@@ -267,6 +275,18 @@ export function ExperienceSettings({
           label={t("settings.experience.orb.style.label")}
           description={t("settings.experience.orb.style.description")}
         >
+          {/*
+            Each style's description, as the accessible description of its button. `hidden` keeps them off screen
+            (the selected one is shown below as text), and a hidden element still supplies a description. The
+            title stays for a pointer hovering over a style it has not chosen.
+          */}
+          <div hidden>
+            {ORB_PRESETS.map((preset) => (
+              <span key={preset.value} id={`${presetNoteId}-${preset.value}`}>
+                {preset.note}
+              </span>
+            ))}
+          </div>
           <div className="cc-orb-presets" role="group" aria-label={t("settings.experience.orb.style.label")}>
             {ORB_PRESETS.map((preset) => (
               <button
@@ -274,6 +294,7 @@ export function ExperienceSettings({
                 type="button"
                 className="cc-orb-preset"
                 aria-pressed={profileName === preset.value}
+                aria-describedby={`${presetNoteId}-${preset.value}`}
                 data-selected={profileName === preset.value}
                 data-orb-preset={preset.value}
                 title={preset.note}

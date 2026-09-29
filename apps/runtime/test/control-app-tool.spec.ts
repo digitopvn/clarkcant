@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ModelTurnEvent } from "@clarkcant/core";
 
-import { controlApp, decideControlApp, type ControlAppDeps } from "../src/node-tools.ts";
+import { controlApp, controlAppRefusalSay, decideControlApp, type ControlAppDeps } from "../src/node-tools.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 /**
@@ -178,6 +178,15 @@ describe("control_app", () => {
       first.controlId,
       second.controlId,
     ]);
+  });
+
+  it("never refuses with nothing to say, even for a kind with no sentence of its own", () => {
+    // The kinds with a parameter have their own sentence; anything else still gets the kind and the contract's reason.
+    expect(controlAppRefusalSay("orb.select", [])).toContain("pearl");
+    const generic = controlAppRefusalSay("inbox.open", ["only orb.select may name an orb profile"]);
+    expect(generic).toContain("inbox.open");
+    expect(generic).toContain("only orb.select may name an orb profile");
+    expect(controlAppRefusalSay("inbox.open", []).trim()).not.toBe("");
   });
 });
 

@@ -125,8 +125,11 @@ const paletteShape = Object.fromEntries(
 
 export const orbPalettePreferenceSchema = z.strictObject(paletteShape);
 
+/**
+ * The optics a custom profile may change. `radius` is deliberately absent: the orb's size is part of what makes
+ * every profile recognisably the Orb, so no stored preference can reach it, and a write that tries is refused.
+ */
 export const orbOpticalPreferenceSchema = z.strictObject({
-  radius: bounded(ORB_OPTICAL_BOUNDS.radius).optional(),
   exposure: bounded(ORB_OPTICAL_BOUNDS.exposure).optional(),
   chromatic: bounded(ORB_OPTICAL_BOUNDS.chromatic).optional(),
   glow: bounded(ORB_OPTICAL_BOUNDS.glow).optional(),

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 /**
  * The composer's placeholder, typed and erased one sample phrase at a time.
@@ -106,8 +106,27 @@ export function useTypewriterPlaceholder(phrases: readonly string[], active: boo
   return still ? (phrases[0] ?? "") : typewriterText(state, phrases);
 }
 
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
 /** Whether the user has asked for less motion. Read at the moment it is asked for, not cached. */
 export function prefersReducedMotion(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return window.matchMedia(REDUCED_MOTION_QUERY).matches;
+}
+
+function subscribeToPlatformReducedMotion(onChange: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+  const query = window.matchMedia(REDUCED_MOTION_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+/**
+ * The platform's reduced-motion switch, followed live in both directions.
+ *
+ * The switch is flipped from the operating system while the app is open. Read once, an orb would either keep moving
+ * after it was turned on or stay still after it was turned off again, until the next reload.
+ */
+export function usePlatformReducedMotion(): boolean {
+  return useSyncExternalStore(subscribeToPlatformReducedMotion, prefersReducedMotion, () => false);
 }

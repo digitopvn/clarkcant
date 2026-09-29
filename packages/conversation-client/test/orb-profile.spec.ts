@@ -6,6 +6,7 @@ import {
   ORB_PALETTE_CHANNELS,
   ORB_PHYSICS_BOUNDS,
   ORB_PROFILE_NAMES,
+  orbCustomPreferenceSchema,
 } from "@clarkcant/contracts";
 
 import { orbFallbackBackground, orbPaletteGradient, resolveOrbProfile } from "../src/orb-profile.ts";
@@ -130,11 +131,20 @@ describe("every profile is deterministic and distinct", () => {
     expect(resolveOrbProfile({ profile: "plasma" }).style).toBe("plasma");
   });
 
-  it("never lets a preset change the orb's size", () => {
-    // Palette, effects and physics are personal; the silhouette is the identity.
+  it("never lets a preset or a stored custom patch change the orb's size", () => {
+    // Palette, effects and physics are personal; the silhouette is the identity. The patch is applied to every
+    // name, so custom is checked with a patch that actually asks for another size rather than with none.
+    const custom = { optical: { radius: 0.35, exposure: 3 } };
     for (const name of ORB_PROFILE_NAMES) {
-      expect(resolveOrbProfile({ profile: name }).optical.radius, name).toBe(ORB_SHAPE.radius);
+      expect(resolveOrbProfile({ profile: name, custom }).optical.radius, name).toBe(ORB_SHAPE.radius);
     }
+    // The rest of the patch still applies, so the size is ignored rather than the whole patch.
+    expect(resolveOrbProfile({ profile: "custom", custom }).optical.exposure).toBe(3);
+  });
+
+  it("refuses to store a custom patch that names a size", () => {
+    expect(orbCustomPreferenceSchema.safeParse({ optical: { radius: 0.5 } }).success).toBe(false);
+    expect(orbCustomPreferenceSchema.safeParse({ optical: { exposure: 3 } }).success).toBe(true);
   });
 
   it("falls back to the shipped orb for an unknown profile name, style and colours included", () => {

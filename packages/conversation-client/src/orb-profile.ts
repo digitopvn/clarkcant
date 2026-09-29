@@ -239,7 +239,9 @@ function readNumbers(value: unknown, keys: readonly string[]): Record<string, nu
   return numbers;
 }
 
-const OPTICAL_KEYS = ["radius", "exposure", "chromatic", "glow", "sheen"] as const;
+// No `radius`: the size is fixed for every profile. The registry refuses it on write, and a value stored before
+// that rule (or edited by hand) is not read here, so it cannot change the size either.
+const OPTICAL_KEYS = ["exposure", "chromatic", "glow", "sheen"] as const;
 const PHYSICS_KEYS = ["stiffness", "damping", "wobbleGain", "pointerResponse"] as const;
 
 /** Only the channels the shader has, only as 0..1 triples. Anything else is dropped, not coerced. */

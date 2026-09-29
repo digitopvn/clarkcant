@@ -352,6 +352,20 @@ const CONTROL_APP_MISSING_PARAMETER: Partial<Record<string, string>> = {
   "orb.select": `orb.select cần orbProfile là một trong: ${ORB_PROFILE_NAMES.join(", ")}.`,
 };
 
+/**
+ * The sentence a refused `control_app` call is answered with.
+ *
+ * Never empty: a kind added to the contract with a parameter and no entry above would otherwise be refused with
+ * nothing to say, and the model would be left guessing why. The fallback names the kind and the contract's own
+ * reason, which is enough for it to correct the call.
+ */
+export function controlAppRefusalSay(kind: string, issues: readonly string[]): string {
+  const specific = CONTROL_APP_MISSING_PARAMETER[kind];
+  if (specific !== undefined) return specific;
+  const why = issues.length === 0 ? "" : `: ${issues.join("; ")}`;
+  return `${kind} thiếu hoặc sai tham số theo hợp đồng app intent${why}.`;
+}
+
 const NO_ACTIVE_HOST_SURFACE_SAY =
   "Không có màn hình nào đang mở phiên trò chuyện này để tôi thực hiện lệnh, nên tôi chưa làm gì cả.";
 
@@ -466,7 +480,14 @@ export function decideControlApp(deps: ControlAppDeps, params: Record<string, un
       : {}),
   });
   if (!parsed.success) {
-    return { status: "refused", reason: "unsupported", say: CONTROL_APP_MISSING_PARAMETER[kind] ?? "" };
+    return {
+      status: "refused",
+      reason: "unsupported",
+      say: controlAppRefusalSay(
+        kind,
+        parsed.error.issues.map((issue) => issue.message),
+      ),
+    };
   }
 
   const intent = parsed.data;

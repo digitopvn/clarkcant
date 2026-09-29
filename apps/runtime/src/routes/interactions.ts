@@ -16,6 +16,7 @@ import {
   decideAppIntent,
   mintConfirmation,
   preferredAppIntentLocale,
+  requestedIntent,
 } from "../app-intents.ts";
 import type { HostControlAcks } from "../host-control-acks.ts";
 import { buildSuggestions } from "../suggestions.ts";
@@ -129,11 +130,16 @@ async function handleAppIntentRoutes(
       return fail(400, "INVALID_SCHEMA", "an app intent request needs text or a kind, and a source");
     }
     const asked = body.data;
+    // A kind that is missing what it needs (an `orb.select` naming no style) is the caller's mistake, answered as
+    // one, rather than a throw from inside the decision.
+    const named = requestedIntent(asked);
+    if (!named.ok) return fail(400, "INVALID_SCHEMA", `the app intent request is not valid: ${named.message}`);
     const decision = decideAppIntent(
       intentDeps,
       {
         principalId,
         request: asked,
+        ...(named.intent === undefined ? {} : { intent: named.intent }),
         ...(asked.conversationId === undefined ? {} : { conversationId: asked.conversationId as never }),
       },
       (intent: AppIntent) => mintConfirmation(intentDeps, { principalId, intent, source: asked.source }),

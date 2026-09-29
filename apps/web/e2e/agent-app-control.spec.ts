@@ -227,6 +227,36 @@ test("the agent changes the orb's style through the preference Settings writes, 
   }
 });
 
+test("an orb style the agent chooses while Settings is open becomes the selected style there", async ({
+  page,
+  request,
+}) => {
+  const headers = { authorization: `Bearer ${token()}` };
+  await openApp(page);
+  await startConversation(page);
+  const orb = page.locator(".cc-orb[data-orb]").first();
+  await expect(orb).toHaveAttribute("data-orb-profile", "clark");
+
+  try {
+    // One turn: Settings opens first and reads the preferences, and the style changes after that read, so the
+    // panel only shows the new style if it notices a change it did not make.
+    await page.locator('[data-composer="true"]').fill("agent control_app settings.open; orb.select pearl");
+    await page.locator('[data-send="true"]').click();
+    await expect(page.getByText(DONE).last()).toBeVisible({ timeout: 20_000 });
+    await expect(orb).toHaveAttribute("data-orb-profile", "pearl");
+
+    // Still open, never reopened: the panel followed the change rather than being read afresh.
+    await expect(page.locator('[data-orb-preset="pearl"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('[data-orb-preset="clark"]')).toHaveAttribute("aria-pressed", "false");
+  } finally {
+    for (let step = 0; step < 16; step += 1) {
+      const response = await request.post(`${GATEWAY}/preferences/orb.profile/undo`, { headers });
+      const answer = (await response.json()) as { preference?: { isDefault?: boolean } };
+      if (answer.preference?.isDefault === true) break;
+    }
+  }
+});
+
 test("the voice agent ends voice mode through the same contract, and the page confirms it", async ({ page, request }) => {
   await openApp(page);
   await startConversation(page);

@@ -289,6 +289,8 @@ test("the styles are chosen from the keyboard alone, with a visible focus ring",
   // Tab, not a programmatic focus, so the browser treats this as keyboard navigation and shows its ring.
   await page.keyboard.press("Tab");
   await expect(preset(page, "pearl")).toBeFocused();
+  // A screen reader hears what the style looks like, not only its name; the hover title alone would not reach it.
+  await expect(preset(page, "pearl")).toHaveAccessibleDescription("Những lớp xà cừ màu phấn, mỗi lớp một sắc, trôi chậm.");
   const outline = await preset(page, "pearl").evaluate((element) => getComputedStyle(element).outlineStyle);
   expect(outline).not.toBe("none");
 

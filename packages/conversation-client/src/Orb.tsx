@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement, t
 import { createOrbRenderer, orbPointerFromClient, type OrbOptions, type OrbPointerRect, type OrbPointerSample } from "./orb.ts";
 import { orbFallbackBackground, type ResolvedOrbProfile } from "./orb-profile.ts";
 import { readDocumentTheme, subscribeToDocumentTheme } from "./theme.ts";
-import { prefersReducedMotion } from "./typewriter.ts";
+import { usePlatformReducedMotion } from "./typewriter.ts";
 
 /**
  * The orb.
@@ -56,21 +56,6 @@ export interface OrbProps extends OrbOptions {
   onRenderMode?: (mode: "gl" | "fallback") => void;
 }
 
-const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
-
-/**
- * Follow the platform's reduced-motion switch while the orb is on screen.
- *
- * Read live rather than once, because the switch is flipped from the operating system while the app is
- * open, and an orb that kept moving until the next reload would be the one place the setting was ignored.
- */
-function subscribeToPlatformReducedMotion(onChange: () => void): () => void {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
-  const query = window.matchMedia(REDUCED_MOTION_QUERY);
-  query.addEventListener("change", onChange);
-  return () => query.removeEventListener("change", onChange);
-}
-
 /**
  * Parse a CSS colour into the 0..1 triple the shader expects.
  *
@@ -119,14 +104,11 @@ export function Orb({
 }: OrbProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [failed, setFailed] = useState<string | undefined>(undefined);
-  const platformReducedMotion = useSyncExternalStore(
-    subscribeToPlatformReducedMotion,
-    prefersReducedMotion,
-    () => false,
-  );
+  const platformReducedMotion = usePlatformReducedMotion();
   /*
-   * Either switch is enough. The profile carries the stored preference (and the platform's answer at the
-   * moment it was resolved); the live query covers the platform switch being flipped afterwards.
+   * Either switch is enough. The profile carries the stored preference; the live query covers the platform switch,
+   * including a profile resolved by a caller that does not follow it. Both follow the switch back off again: the
+   * shared hooks re-resolve the profile when the platform answer changes, so neither side holds a stale "reduced".
    */
   const reduceMotion = platformReducedMotion || profile?.reducedMotion === true;
 
