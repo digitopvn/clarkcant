@@ -173,6 +173,11 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.table.selectRow": "Chọn dòng {row}",
   "widgets.table.selectPage": "Chọn mọi dòng trên trang này",
   "widgets.table.selectedCount": "Đã chọn {count} dòng",
+  "widgets.table.selectedHidden": "Đã chọn {count} dòng · {hidden} dòng đang ẩn vì không khớp tìm kiếm",
+  "widgets.table.clearSelection": "Bỏ chọn",
+  "widgets.table.selectionFull": "Đã chọn {max} dòng, mức tối đa của một bảng. Bỏ chọn bớt để chọn dòng khác.",
+  "widgets.table.exportGone":
+    "Không xuất CSV được: dữ liệu của bảng này không còn trên máy. Bảng vẫn hiện như trước — nhờ Clark tạo lại bảng nếu cần xuất.",
   "widgets.table.yes": "Có",
   "widgets.table.no": "Không",
   "widgets.table.total.sum": "Tổng",
@@ -625,6 +630,11 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.table.selectRow": "Select row {row}",
   "widgets.table.selectPage": "Select every row on this page",
   "widgets.table.selectedCount": "{count} rows selected",
+  "widgets.table.selectedHidden": "{count} rows selected · {hidden} hidden because they do not match the search",
+  "widgets.table.clearSelection": "Clear selection",
+  "widgets.table.selectionFull": "{max} rows selected, the most a table holds. Clear some to select others.",
+  "widgets.table.exportGone":
+    "Can't export CSV: this table's data is no longer on this machine. The table still shows what it had — ask Clark to make it again if you need the file.",
   "widgets.table.yes": "Yes",
   "widgets.table.no": "No",
   "widgets.table.total.sum": "Sum",

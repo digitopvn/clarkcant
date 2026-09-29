@@ -1,7 +1,13 @@
 import type { MessageKey } from "./i18n/messages.ts";
 import { useCallback, useRef, useState, type ReactElement, type RefObject } from "react";
 
-import type { GatewayClient, ResolvedDataset, SnapshotPresentationResponse, Timeline } from "./api.ts";
+import {
+  GatewayError,
+  type GatewayClient,
+  type ResolvedDataset,
+  type SnapshotPresentationResponse,
+  type Timeline,
+} from "./api.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { tableExportRequestFrom } from "./table-model.ts";
@@ -56,7 +62,8 @@ function toSurfaceViewFromSnapshot(captured: SnapshotPresentationResponse, revis
   };
 }
 
-type ExportStatus = "pending" | "failed" | "done";
+/** `unavailable` is a refusal the node would repeat (the dataset or the instance is gone); `failed` may pass on retry. */
+type ExportStatus = "pending" | "failed" | "unavailable" | "done";
 
 const TABLE_DEFINITION_ID = "canvas.table@1";
 
@@ -129,9 +136,10 @@ export function useSurfaceRenderer({
           downloadBlob(blob, filename);
           setExports((current) => ({ ...current, [instanceId]: "done" }));
         })
-        .catch(() => {
-          // Shown in the table itself, next to the button, with what was kept and how to retry.
-          setExports((current) => ({ ...current, [instanceId]: "failed" }));
+        .catch((cause: unknown) => {
+          // Shown in the table itself, next to the button: what was kept, and whether trying again can help.
+          const lasting = cause instanceof GatewayError && (cause.status === 404 || cause.status === 409);
+          setExports((current) => ({ ...current, [instanceId]: lasting ? "unavailable" : "failed" }));
         });
     },
     [client],
@@ -245,6 +253,14 @@ export function useSurfaceRenderer({
                     onStateChange: (patch: Record<string, unknown>) => {
                       const id = instance.instanceId;
                       tableViews.current.set(id, { ...tableViews.current.get(id), ...patch });
+                      // "Downloaded" described the view that was exported; once the view changes it no longer does.
+                      if (exportStatus === "done") {
+                        setExports((current) => {
+                          if (current[id] !== "done") return current;
+                          const { [id]: _done, ...rest } = current;
+                          return rest;
+                        });
+                      }
                     },
                     canExport: conversationId !== undefined,
                   }

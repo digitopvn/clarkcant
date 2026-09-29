@@ -115,6 +115,12 @@ test("a table sorts, pages, searches, selects and exports a CSV with its formula
   await expect(widget.locator("[data-table-page-status]")).toHaveText("Trang 1/1 · 5 dòng");
   await expect(bodyRows(widget)).toHaveCount(5);
   await expect(widget.locator("tbody")).toContainText("Đồng Nai 1");
+  // The row still selected (P23, Hà Nội 2) does not match, so the status says it is hidden rather than counting a
+  // row nobody can see, and the selection can be cleared without first finding it again.
+  await expect(widget.locator("[data-table-selected-hidden='1']")).toHaveText(
+    "Đã chọn 1 dòng · 1 dòng đang ẩn vì không khớp tìm kiếm",
+  );
+  await expect(widget.locator("[data-table-clear-selection]")).toBeVisible();
 
   await page.screenshot({ path: join(EVIDENCE, "table-contract-02-desktop-search-selection.png"), fullPage: true });
 
@@ -137,6 +143,10 @@ test("a table sorts, pages, searches, selects and exports a CSV with its formula
   await expect(widget.locator("[data-table-export-done]")).toBeVisible();
 
   await page.screenshot({ path: join(EVIDENCE, "table-contract-03-desktop-exported.png"), fullPage: true });
+
+  await widget.locator("[data-table-clear-selection]").click();
+  await expect(widget.locator("[data-table-selected-count='0']")).toHaveText("");
+  await expect(widget.locator("[data-table-clear-selection]")).toHaveCount(0);
 });
 
 test("the table stays usable on a phone-sized screen", async ({ page }) => {
@@ -147,6 +157,14 @@ test("the table stays usable on a phone-sized screen", async ({ page }) => {
   await expect(widget.locator("[data-table-page-status]")).toHaveText("Trang 1/6 · 60 dòng");
   await widget.locator("[data-table-page='next']").click();
   await expect(widget.locator("[data-table-page-status]")).toHaveText("Trang 2/6 · 60 dòng");
+
+  // Paging to the end by keyboard keeps the focus on the button that did it, marked unavailable, not dropped.
+  const next = widget.locator("[data-table-page='next']");
+  await next.focus();
+  for (let press = 0; press < 5; press += 1) await page.keyboard.press("Enter");
+  await expect(widget.locator("[data-table-page-status]")).toHaveText("Trang 6/6 · 60 dòng");
+  await expect(next).toHaveAttribute("aria-disabled", "true");
+  await expect(next).toBeFocused();
 
   // The widget never makes anything around it scroll sideways: wide columns scroll inside the table's own region.
   // Every element wider than its box is named, so a failure says which one pushed the layout.
@@ -168,4 +186,22 @@ test("the table stays usable on a phone-sized screen", async ({ page }) => {
 
   await widget.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(EVIDENCE, "table-contract-04-mobile.png"), fullPage: true });
+
+  // The columns that do not fit are one sideways scroll away, and at the far edge the last column and its total are
+  // whole, not cut off by the region.
+  const region = widget.locator(".cc-table-scroll");
+  const overflow = await region.evaluate((element) => element.scrollWidth - element.clientWidth);
+  expect(overflow).toBeGreaterThan(0);
+  await region.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+  const regionBox = await region.boundingBox();
+  const lastTotal = widget.locator("tfoot td").last();
+  const lastHeader = widget.locator("thead th").last();
+  for (const cell of [lastTotal, lastHeader]) {
+    const cellBox = await cell.boundingBox();
+    expect(cellBox).not.toBeNull();
+    expect((cellBox?.x ?? 0) + (cellBox?.width ?? 0)).toBeLessThanOrEqual((regionBox?.x ?? 0) + (regionBox?.width ?? 0) + 1);
+  }
+  await page.screenshot({ path: join(EVIDENCE, "table-contract-05-mobile-scrolled.png"), fullPage: true });
 });

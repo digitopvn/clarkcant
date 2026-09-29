@@ -120,14 +120,25 @@ export function pageSelectionState(selected: readonly string[], pageIds: readonl
   return count === pageIds.length ? "all" : "some";
 }
 
-/** The header checkbox: selects every row on the page, or clears them when all already are. */
+/** Whether the selection holds as many rows as a table can, so no further row can be added to it. */
+export function tableSelectionFull(selected: readonly string[]): boolean {
+  return selected.length >= TABLE_LIMITS.maxSelectedIds;
+}
+
+/**
+ * The header checkbox: selects every row on the page, or clears them when all already are.
+ *
+ * A page that is only partly selected because the selection is full clears instead, so the header always does
+ * something: without that, a second press would add nothing and the checkbox would stay stuck half-checked.
+ */
 export function togglePageSelection(selected: readonly string[], pageIds: readonly string[]): string[] {
-  if (pageIds.length > 0 && pageSelectionState(selected, pageIds) === "all") {
+  const state = pageSelectionState(selected, pageIds);
+  if (pageIds.length > 0 && (state === "all" || (state === "some" && tableSelectionFull(selected)))) {
     return selected.filter((id) => !pageIds.includes(id));
   }
   const next = [...selected];
   for (const id of pageIds) {
-    if (next.length >= TABLE_LIMITS.maxSelectedIds) break;
+    if (tableSelectionFull(next)) break;
     if (!next.includes(id)) next.push(id);
   }
   return next;

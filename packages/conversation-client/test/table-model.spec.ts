@@ -13,6 +13,7 @@ import {
   tableExportRequest,
   tableExportRequestFrom,
   tablePageLabel,
+  tableSelectionFull,
   togglePageSelection,
   toggleTableSelection,
 } from "../src/table-model.ts";
@@ -110,6 +111,23 @@ describe("selection", () => {
     expect(pageSelectionState(["x", "a", "b"], ["a", "b"])).toBe("all");
     expect(togglePageSelection(["x", "a", "b"], ["a", "b"])).toEqual(["x"]);
     expect(pageSelectionState([], [])).toBe("none");
+  });
+
+  it("clears a page the full selection could only partly cover, so the header is never stuck", () => {
+    // 60 rows already selected elsewhere; the page has ten, of which only four fit.
+    const elsewhere = Array.from({ length: 60 }, (_, index) => `x${String(index)}`);
+    const page = Array.from({ length: 10 }, (_, index) => `p${String(index)}`);
+    const filled = togglePageSelection(elsewhere, page);
+    expect(filled).toHaveLength(64);
+    expect(tableSelectionFull(filled)).toBe(true);
+    expect(pageSelectionState(filled, page)).toBe("some");
+    // The second press takes the page's rows back out rather than doing nothing.
+    const cleared = togglePageSelection(filled, page);
+    expect(cleared).toEqual(elsewhere);
+    expect(pageSelectionState(cleared, page)).toBe("none");
+    // A partly selected page with room left still fills first.
+    expect(togglePageSelection(["p0"], page)).toHaveLength(10);
+    expect(tableSelectionFull(["p0"])).toBe(false);
   });
 });
 

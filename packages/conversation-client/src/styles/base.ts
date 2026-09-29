@@ -28,7 +28,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-.cc-shell { display: flex; flex-direction: column; height: 100vh; position: relative; overflow: hidden; isolation: isolate; }
+/*
+ * Clip, not hidden: the orb stage is wider than a phone and is cut at the shell's edge, and a hidden box is still
+ * a scroll container that focus can scroll sideways, which slid the whole conversation off the left edge of the screen.
+ * A clipped box cannot be scrolled at all.
+ */
+.cc-shell { display: flex; flex-direction: column; height: 100vh; position: relative; overflow: clip; isolation: isolate; }
 
 /*
  * The dotted field behind everything in the shell. The shell isolates its own stacking so the field can sit at -1:

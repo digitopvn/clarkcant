@@ -2,6 +2,7 @@ import {
   type ReactElement,
   type ReactNode,
   useCallback,
+  useDeferredValue,
   useEffect,
   useId,
   useMemo,
@@ -41,6 +42,7 @@ import {
   tableCellFormatter,
   tableExportRequest,
   tablePageLabel,
+  tableSelectionFull,
   type TableViewState,
   togglePageSelection,
   toggleTableSelection,
@@ -425,6 +427,9 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
     setView(JSON.parse(externalKey) as TableViewState);
   }, [externalKey]);
 
+  // Typing stays immediate in the box; the view over every row follows when the browser has time, so a large dataset
+  // never makes a keystroke wait for a full search.
+  const deferredQuery = useDeferredValue(view.query);
   const computed = useMemo(
     () =>
       tableView(rows, {
@@ -433,11 +438,11 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
         pageSize: props.pageSize,
         totals: props.totals,
         sort: view.sort,
-        query: view.query,
+        query: deferredQuery,
         filters: view.filters,
         page: view.page,
       }),
-    [rows, props.columns, props.rowIdField, props.pageSize, props.totals, view.sort, view.query, view.filters, view.page],
+    [rows, props.columns, props.rowIdField, props.pageSize, props.totals, view.sort, deferredQuery, view.filters, view.page],
   );
   const formatters = useMemo(
     () => new Map(computed.columns.map((column) => [column.key, tableCellFormatter(column, locale, { yes, no })])),
@@ -460,6 +465,21 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
   const firstRowNumber = (computed.page - 1) * computed.pageSize + 1;
   const columnCount = computed.columns.length + (multi ? 1 : 0);
   const format = (key: string, value: unknown): string => formatters.get(key)?.(value) ?? "";
+  // The column that names a row stays at the start edge while the rest scroll, so a phone never shows figures without
+  // saying whose they are.
+  const stickyClass = (index: number): string | undefined => (index === 0 ? "cc-table-sticky" : undefined);
+  const matchingIds = new Set(computed.rows.map((entry) => entry.id));
+  const hiddenSelected = selectedIds.filter((id) => !matchingIds.has(id)).length;
+  const count = (value: number): string => new Intl.NumberFormat(locale).format(value);
+  const full = multi && tableSelectionFull(selectedIds);
+  const selectionStatus =
+    selectedIds.length === 0 || (single && hiddenSelected === 0)
+      ? ""
+      : full
+        ? t("widgets.table.selectionFull").replace("{max}", count(selectedIds.length))
+        : hiddenSelected > 0
+        ? t("widgets.table.selectedHidden").replace("{count}", count(selectedIds.length)).replace("{hidden}", count(hiddenSelected))
+        : t("widgets.table.selectedCount").replace("{count}", count(selectedIds.length));
 
   const update = (patch: Partial<TableViewState>): void => {
     setView((current) => ({ ...current, ...patch }));
@@ -473,12 +493,16 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
 
   const exportStatus = state?.exportStatus;
   const exporting = exportStatus === "pending";
+  // A refusal the node will give again (the dataset is gone, the instance is not a table) is a reason the button
+  // cannot be used, not a failure to retry.
   const exportReason =
     onAction === undefined
       ? t("widgets.table.exportViewOnly")
-      : canExport === true
-        ? undefined
-        : t("widgets.table.exportUnavailable");
+      : canExport !== true
+        ? t("widgets.table.exportUnavailable")
+        : exportStatus === "unavailable"
+          ? t("widgets.table.exportGone")
+          : undefined;
 
   return (
     <Frame title={title} dataset={dataset} role="table">
@@ -497,14 +521,23 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
               />
             </label>
           )}
-          {/* The live region stays mounted while multi-select is on, so a screen reader hears every change,
-              including the selection being cleared; it is simply empty when nothing is selected. */}
-          {multi && (
-            <span className="cc-table-selected" role="status" data-table-selected-count={selectedIds.length}>
-              {selectedIds.length > 0
-                ? t("widgets.table.selectedCount").replace("{count}", new Intl.NumberFormat(locale).format(selectedIds.length))
-                : ""}
+          {/* The live region stays mounted while rows can be selected, so a screen reader hears every change,
+              including the selection being cleared; it is simply empty when there is nothing to say. A selected row
+              the search hides is counted out loud, since nothing on screen shows it any more. */}
+          {selection !== "none" && (
+            <span
+              className="cc-table-selected"
+              role="status"
+              data-table-selected-count={selectedIds.length}
+              data-table-selected-hidden={hiddenSelected}
+            >
+              {selectionStatus}
             </span>
+          )}
+          {selectedIds.length > 0 && (multi || hiddenSelected > 0) && (
+            <button type="button" className="cc-action" data-table-clear-selection="true" onClick={() => select([])}>
+              {t("widgets.table.clearSelection")}
+            </button>
           )}
           <button
             type="button"
@@ -537,7 +570,7 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
          * table never pushes the conversation wider than the window. Focusable so the scroll is reachable by keyboard.
          */}
         <div className="cc-table-scroll" role="region" aria-label={title} tabIndex={0}>
-          <table className="cc-table">
+          <table className="cc-table" data-multi={multi ? "true" : undefined}>
             <caption className="cc-sr-only">{title}</caption>
             <thead>
               <tr>
@@ -549,7 +582,7 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
                         data-table-select-page="true"
                         aria-label={t("widgets.table.selectPage")}
                         checked={pageState === "all"}
-                        disabled={pageIds.length === 0}
+                        disabled={pageIds.length === 0 || (full && pageState === "none")}
                         ref={(element) => {
                           if (element !== null) element.indeterminate = pageState === "some";
                         }}
@@ -558,10 +591,10 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
                     </label>
                   </th>
                 )}
-                {computed.columns.map((column) => {
+                {computed.columns.map((column, index) => {
                   const sorted = tableAriaSort(computed.sort, column.key);
                   return (
-                    <th key={column.key} scope="col" aria-sort={sorted} data-align={column.align}>
+                    <th key={column.key} scope="col" aria-sort={sorted} data-align={column.align} className={stickyClass(index)}>
                       {/* A real button, so click, Enter and Space all sort and the focus ring is the browser's own. */}
                       <button
                         type="button"
@@ -623,13 +656,15 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
                             data-table-select-row={entry.id}
                             aria-label={t("widgets.table.selectRow").replace("{row}", rowName)}
                             checked={isSelected}
+                            // A full selection takes no more rows; the status above says so and how to make room.
+                            disabled={full && !isSelected}
                             onChange={toggle}
                           />
                         </label>
                       </td>
                     )}
-                    {computed.columns.map((column) => (
-                      <td key={column.key} data-align={column.align} data-type={column.type}>
+                    {computed.columns.map((column, index) => (
+                      <td key={column.key} data-align={column.align} data-type={column.type} className={stickyClass(index)}>
                         {format(column.key, entry.row[column.key])}
                       </td>
                     ))}
@@ -641,8 +676,8 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
               <tfoot>
                 <tr data-table-totals="true">
                   {multi && <td className="cc-table-check-cell" />}
-                  {computed.columns.map((column) => (
-                    <td key={column.key} data-align={column.align} data-type={column.type}>
+                  {computed.columns.map((column, index) => (
+                    <td key={column.key} data-align={column.align} data-type={column.type} className={stickyClass(index)}>
                       {computed.totals
                         .filter((total) => total.column === column.key)
                         .map((total) => (
@@ -658,14 +693,20 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
             )}
           </table>
         </div>
+        {/*
+         * At the first or last page a button is marked unavailable rather than disabled: a disabled button drops the
+         * keyboard focus that just pressed it, and the person paging with Enter would land back at the top of the page.
+         */}
         <nav className="cc-table-pager" aria-label={t("widgets.table.pagination")}>
           {computed.pageCount > 1 && (
             <button
               type="button"
               className="cc-action"
               data-table-page="previous"
-              disabled={computed.page <= 1}
-              onClick={() => update({ page: computed.page - 1 })}
+              aria-disabled={computed.page <= 1}
+              onClick={() => {
+                if (computed.page > 1) update({ page: computed.page - 1 });
+              }}
             >
               {t("widgets.table.previousPage")}
             </button>
@@ -678,8 +719,10 @@ function DataTable({ props, dataset, state, onAction, onStateChange, canExport }
               type="button"
               className="cc-action"
               data-table-page="next"
-              disabled={computed.page >= computed.pageCount}
-              onClick={() => update({ page: computed.page + 1 })}
+              aria-disabled={computed.page >= computed.pageCount}
+              onClick={() => {
+                if (computed.page < computed.pageCount) update({ page: computed.page + 1 });
+              }}
             >
               {t("widgets.table.nextPage")}
             </button>
