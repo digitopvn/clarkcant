@@ -1,6 +1,8 @@
 import {
   type ReactElement,
   type ReactNode,
+  cloneElement,
+  isValidElement,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -21,6 +23,11 @@ import {
   diffFileCounts,
   type DiffLineKind,
   donutSlices,
+  type HiddenCharacter,
+  type HiddenCharacterKind,
+  hiddenCharacterCount,
+  hiddenCharacterMarker,
+  hiddenCharacterSegments,
   hunkHeader,
   numberedHunkLines,
   readArtifactViewer,
@@ -2259,17 +2266,20 @@ type CopyState = "idle" | "copied" | "failed";
  * Copying text that is already on the page, and saying in words what happened.
  *
  * A refused clipboard (no permission, an insecure page, an unfocused window) is said, with what to do instead, rather
- * than left as a button that seemed to work.
+ * than left as a button that seemed to work. Each attempt is counted: the status is reset when a copy starts and its
+ * words are drawn afresh for every result, so a screen reader hears the second "Code copied." as well as the first.
  */
-function useCopy(text: string): { state: CopyState; copy: () => void } {
-  const [state, setState] = useState<CopyState>("idle");
+function useCopy(text: string): { state: CopyState; attempt: number; copy: () => void } {
+  const [status, setStatus] = useState<{ state: CopyState; attempt: number }>({ state: "idle", attempt: 0 });
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   const copy = useCallback(() => {
+    clearTimeout(timer.current);
+    setStatus((previous) => ({ state: "idle", attempt: previous.attempt }));
     const settle = (next: CopyState): void => {
       clearTimeout(timer.current);
-      setState(next);
-      if (next === "copied") timer.current = setTimeout(() => setState("idle"), 4000);
+      setStatus((previous) => ({ state: next, attempt: previous.attempt + 1 }));
+      if (next === "copied") timer.current = setTimeout(() => setStatus((previous) => ({ ...previous, state: "idle" })), 4000);
     };
     const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
     if (clipboard === undefined) {
@@ -2281,11 +2291,11 @@ function useCopy(text: string): { state: CopyState; copy: () => void } {
       () => settle("failed"),
     );
   }, [text]);
-  return { state, copy };
+  return { ...status, copy };
 }
 
-function nonEmptyText(value: unknown): string | undefined {
-  return typeof value === "string" && value !== "" ? value : undefined;
+function nonEmptyText(value: string | undefined): string | undefined {
+  return value !== undefined && value !== "" ? value : undefined;
 }
 
 function ViewerUnreadable({ title, role, message }: { title: string; role: string; message: string }): ReactElement {
@@ -2298,15 +2308,72 @@ function ViewerUnreadable({ title, role, message }: { title: string; role: strin
   );
 }
 
+const HIDDEN_TITLE: Record<HiddenCharacterKind, MessageKey> = {
+  bidi: "widgets.hiddenChar.bidi",
+  invisible: "widgets.hiddenChar.invisible",
+  control: "widgets.hiddenChar.control",
+  "line-break": "widgets.hiddenChar.control",
+};
+
+/**
+ * Text with each hidden character drawn as its code point in brackets, never applied.
+ *
+ * A bidi control applied would reorder the code on screen while the bytes run in another order; an invisible one would
+ * hide inside a word. The marker shows exactly what is there, and its title says what kind of character it is.
+ */
+export function withHiddenMarkers(text: string, describe: (hidden: HiddenCharacter) => string): ReactNode {
+  const segments = hiddenCharacterSegments(text);
+  const [only] = segments;
+  if (segments.length <= 1 && (only === undefined || "text" in only)) return text;
+  return segments.map((segment) =>
+    "text" in segment ? (
+      segment.text
+    ) : (
+      <span key={segment.hidden.index} className="cc-hidden-char" data-hidden-char={segment.hidden.codePoint} title={describe(segment.hidden)}>
+        {hiddenCharacterMarker(segment.hidden.codePoint)}
+      </span>
+    ),
+  );
+}
+
+/** The same, through a tree of highlighted tokens: only the text inside them changes, never the tokens themselves. */
+export function markHiddenInTree(node: ReactNode, describe: (hidden: HiddenCharacter) => string): ReactNode {
+  if (typeof node === "string") return withHiddenMarkers(node, describe);
+  if (Array.isArray(node)) return node.map((child: ReactNode) => markHiddenInTree(child, describe));
+  if (isValidElement<{ children?: ReactNode }>(node) && node.props.children !== undefined) {
+    return cloneElement(node, undefined, markHiddenInTree(node.props.children, describe));
+  }
+  return node;
+}
+
+/** One warning line when the body holds hidden characters, drawn as markers; nothing when it holds none. */
+function HiddenWarning({ count, messageKey }: { count: number; messageKey: MessageKey }): ReactElement | null {
+  const t = useT();
+  if (count === 0) return null;
+  return (
+    <p className="cc-freshness cc-viewer-hidden" data-viewer-hidden={count} style={{ margin: 0 }}>
+      {t(messageKey).replace("{count}", String(count))}
+    </p>
+  );
+}
+
 /** A block of code with its line numbers, in a scroll that is bounded, focusable and named, with a copy button. */
 function CodeViewerView({ props }: RendererProps): ReactElement {
   const t = useT();
   const content = useMemo(() => readArtifactViewer("code", props), [props]);
   const card = content?.kind === "code" ? content.card : undefined;
   const highlighted = useMemo(() => (card === undefined ? undefined : highlightedCode(card.code, codeLanguage(card))), [card]);
-  const { state: copyState, copy } = useCopy(card?.code ?? "");
-  const title = nonEmptyText(props.title) ?? t("widgets.code.title");
-  if (card === undefined || highlighted === undefined) {
+  const describe = useCallback(
+    (hidden: HiddenCharacter) => t(HIDDEN_TITLE[hidden.kind]).replace("{codePoint}", hidden.codePoint),
+    [t],
+  );
+  const body = useMemo(
+    () => (card === undefined || highlighted === undefined ? undefined : markHiddenInTree(highlighted.nodes ?? card.code, describe)),
+    [card, highlighted, describe],
+  );
+  const { state: copyState, attempt, copy } = useCopy(card?.code ?? "");
+  const title = nonEmptyText(card?.title) ?? t("widgets.code.title");
+  if (card === undefined || highlighted === undefined || content === undefined) {
     return <ViewerUnreadable title={title} role="code" message={t("widgets.code.unreadable")} />;
   }
 
@@ -2315,13 +2382,20 @@ function CodeViewerView({ props }: RendererProps): ReactElement {
   const lines = t("widgets.code.lines").replace("{first}", String(first)).replace("{last}", String(last));
   return (
     <Frame title={title} dataset={undefined} role="code">
+      <HiddenWarning count={hiddenCharacterCount(content)} messageKey="widgets.code.hidden" />
       <div className="cc-code cc-viewer-code" data-code-lang={highlighted.language} data-viewer-state="ready">
         <div className="cc-code-head cc-viewer-head">
           <span className="cc-viewer-name">{name}</span>
           <span className="cc-viewer-meta">
             {card.path === undefined ? lines : `${highlighted.language} · ${lines}`}
           </span>
-          <button type="button" className="cc-action cc-viewer-copy" onClick={copy} data-viewer-copy={copyState}>
+          <button
+            type="button"
+            className="cc-action cc-viewer-copy"
+            onClick={copy}
+            aria-label={t("widgets.code.copyName").replace("{name}", name)}
+            data-viewer-copy={copyState}
+          >
             {t("widgets.code.copy")}
           </button>
         </div>
@@ -2337,7 +2411,7 @@ function CodeViewerView({ props }: RendererProps): ReactElement {
             {Array.from({ length: count }, (_, index) => String(first + index)).join("\n")}
           </pre>
           <pre className="cc-code-body">
-            <code>{highlighted.nodes ?? card.code}</code>
+            <code>{body}</code>
           </pre>
         </div>
       </div>
@@ -2346,8 +2420,11 @@ function CodeViewerView({ props }: RendererProps): ReactElement {
           {t("widgets.code.truncated")}
         </p>
       )}
+      {/* Always in the page, so a screen reader is already listening when the first result is written into it. */}
       <p className="cc-freshness cc-viewer-copy-status" role="status" data-copy-state={copyState}>
-        {copyState === "copied" ? t("widgets.code.copied") : copyState === "failed" ? t("widgets.code.copyFailed") : ""}
+        <span key={attempt}>
+          {copyState === "copied" ? t("widgets.code.copied") : copyState === "failed" ? t("widgets.code.copyFailed") : ""}
+        </span>
       </p>
     </Frame>
   );
@@ -2365,7 +2442,11 @@ const DIFF_SIGN: Record<DiffLineKind, string> = { add: "+", remove: "−", conte
 function DiffViewerView({ props }: RendererProps): ReactElement {
   const t = useT();
   const content = useMemo(() => readArtifactViewer("diff", props), [props]);
-  const title = nonEmptyText(props.title) ?? t("widgets.diff.title");
+  const describe = useCallback(
+    (hidden: HiddenCharacter) => t(HIDDEN_TITLE[hidden.kind]).replace("{codePoint}", hidden.codePoint),
+    [t],
+  );
+  const title = nonEmptyText(content?.card.title) ?? t("widgets.diff.title");
   if (content?.kind !== "diff") return <ViewerUnreadable title={title} role="diff" message={t("widgets.diff.unreadable")} />;
 
   const card = content.card;
@@ -2383,6 +2464,7 @@ function DiffViewerView({ props }: RendererProps): ReactElement {
           .replace("{additions}", String(counts.additions))
           .replace("{deletions}", String(counts.deletions))}
       </p>
+      <HiddenWarning count={hiddenCharacterCount(content)} messageKey="widgets.diff.hidden" />
       {card.files.map((file) => {
         const fileCounts = diffFileCounts(file);
         return (
@@ -2432,7 +2514,7 @@ function DiffViewerView({ props }: RendererProps): ReactElement {
                         <span className="cc-sr-only">
                           {t(`widgets.diff.line.${line.kind}` as MessageKey).replace("{line}", String(number ?? ""))}{" "}
                         </span>
-                        <code>{line.text}</code>
+                        <code>{withHiddenMarkers(line.text, describe)}</code>
                       </div>
                     );
                   })}
@@ -2461,7 +2543,7 @@ function fileMark(name: string): string {
 function FileViewerView({ props }: RendererProps): ReactElement {
   const t = useT();
   const content = useMemo(() => readArtifactViewer("file", props), [props]);
-  const title = nonEmptyText(props.title) ?? t("widgets.file.title");
+  const title = nonEmptyText(content?.card.title) ?? t("widgets.file.title");
   if (content?.kind !== "file") return <ViewerUnreadable title={title} role="file" message={t("widgets.file.unreadable")} />;
 
   const card = content.card;

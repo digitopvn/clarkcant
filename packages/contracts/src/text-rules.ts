@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /**
  * Characters a model may not put in the words a card shows.
  *
@@ -122,6 +124,81 @@ export function hiddenCharacterProblem(value: string, options: { lineBreaks?: bo
   const found = findHiddenCharacter(value, options);
   if (found === undefined) return undefined;
   return `contains ${found.codePoint}, ${WHAT[found.kind]}; remove it`;
+}
+
+/**
+ * One line of the model's words, as a card shows it.
+ *
+ * Refused when it holds a line break, a control, a bidi control or an invisible character, with a reason that names
+ * it; otherwise read in NFC and trimmed, so a label of spaces is empty and two labels that look the same are the same.
+ * The length is the model's own, before trimming, as its JSON Schema counts it.
+ */
+export function oneLineText(max: number, required: boolean) {
+  return z
+    .string()
+    .max(max, `is longer than ${String(max)} characters`)
+    .superRefine((value, ctx) => {
+      const problem = hiddenCharacterProblem(value);
+      if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+    })
+    .transform((value) => value.normalize("NFC").trim())
+    .refine((value) => !required || value !== "", "is empty");
+}
+
+/** At most this many schema problems in one refusal, so one bad list cannot flood it. */
+const MAX_SCHEMA_PROBLEMS = 5;
+
+/** Why a card's props failed its schema, one reason per problem, each saying where. */
+export function cardSchemaProblems(issues: readonly z.core.$ZodIssue[]): string[] {
+  return issues.slice(0, MAX_SCHEMA_PROBLEMS).map((issue) => {
+    const where = issue.path.length === 0 ? "props" : `"${issue.path.map(String).join(".")}"`;
+    return `${where}: ${issue.message}`;
+  });
+}
+
+/** How a hidden character is drawn where it cannot be refused: its code point, in brackets nobody types by accident. */
+export function hiddenCharacterMarker(codePoint: string): string {
+  return `⟨${codePoint}⟩`;
+}
+
+/** A run of ordinary text, or one hidden character. */
+export type HiddenCharacterSegment = { text: string } | { hidden: HiddenCharacter };
+
+/**
+ * `text` split around every hidden character in it, `\n` and `\t` aside.
+ *
+ * For text that is many lines by nature, such as code, where a hidden character cannot simply be refused: a bidi control
+ * can be a real part of a string literal. The page draws each one as a marker instead of applying it, so the code reads
+ * the way it is stored.
+ */
+export function hiddenCharacterSegments(text: string): HiddenCharacterSegment[] {
+  const segments: HiddenCharacterSegment[] = [];
+  let from = 0;
+  // One pass with a global expression: a block of code can hold thousands of them, and rescanning from each one would
+  // make that quadratic.
+  for (const match of text.matchAll(new RegExp(`[${HIDDEN_CHARACTER_CLASS}]`, "gu"))) {
+    const index = match.index;
+    const code = text.charCodeAt(index);
+    if (code === 0x0a || code === 0x09) continue;
+    if (index > from) segments.push({ text: text.slice(from, index) });
+    segments.push({ hidden: { codePoint: codePointLabel(match[0]), kind: kindOf(code), index } });
+    from = index + 1;
+  }
+  if (from < text.length) segments.push({ text: text.slice(from) });
+  return segments;
+}
+
+/** `text` with each hidden character written as its marker, and how many there were. */
+export function markHiddenCharacters(text: string): { text: string; count: number } {
+  let count = 0;
+  const marked = hiddenCharacterSegments(text)
+    .map((segment) => {
+      if ("text" in segment) return segment.text;
+      count += 1;
+      return hiddenCharacterMarker(segment.hidden.codePoint);
+    })
+    .join("");
+  return { text: marked, count };
 }
 
 /**

@@ -22,6 +22,9 @@ import { buildWidgetSemantic } from "../src/widget-semantic.ts";
  */
 
 const AT = "2026-09-30T05:00:00.000Z" as Instant;
+/** Written by code point, so no hidden character sits in this file's own source. */
+const BIDI = String.fromCodePoint(0x202e);
+const LINE_SEPARATOR = String.fromCodePoint(0x2028);
 
 let dir: string;
 let services: NodeServices;
@@ -133,6 +136,24 @@ describe("placing a card", () => {
     );
   });
 
+  it("places code holding a bidi control, keeping it in the props and writing it as a marker in the text", async () => {
+    const code = `const role = "user${BIDI} // admin";${LINE_SEPARATOR}grant();`;
+    const block = await place(CODE.id, { path: "src/role.ts", code });
+    expect(getInstance(services.conductor, block.snapshot.instanceId ?? "")?.props).toMatchObject({ code });
+    expect(block.snapshot.textAlternative).toBe(
+      [
+        "src/role.ts (ts, lines 1-2)",
+        "Holds 1 hidden character(s), each written here as ⟨U+…⟩ rather than applied.",
+        'const role = "user⟨U+202E⟩ // admin";',
+        "grant();",
+      ].join("\n"),
+    );
+    const doc = semanticOf(block);
+    expect(doc.summary).toContain("holds 1 hidden character(s), shown as markers");
+    expect(doc.values).toMatchObject({ lineCount: 2, hiddenCharacters: 1 });
+    expect(canonicalSemanticDoc(doc)).not.toContain(BIDI);
+  });
+
   it("names a file in words", async () => {
     const block = await place(FILE.id, { name: "report.pdf", mediaType: "application/pdf", sizeBytes: 2048, source: "Clark" });
     expect(block.snapshot.textAlternative).toBe("report.pdf (application/pdf, 2048 bytes), from Clark");
@@ -148,9 +169,52 @@ describe("placing a card", () => {
 
   it.each([
     ["code over the line limit", CODE.id, { code: Array.from({ length: 401 }, () => "x").join("\n") }, "the code has 401 lines"],
-    ["code over the character limit", CODE.id, { code: "x".repeat(20_001) }, "code"],
+    [
+      "code over the character limit",
+      CODE.id,
+      { code: "x".repeat(20_001) },
+      "the code is 20001 characters; a card shows at most 20000: cut it and set truncated",
+    ],
     ["a language that is markup", CODE.id, { code: "x", language: "<script>" }, "language"],
-    ["a path with a line break", CODE.id, { code: "x", path: "a\nb" }, "path"],
+    ["a path with a line break", CODE.id, { code: "x", path: "a\nb" }, 'property "path": contains U+000A, a line break'],
+    ["a path with a bidi control", CODE.id, { code: "x", path: `src/${BIDI}a.ts` }, 'property "path": contains U+202E'],
+    ["a title with an invisible character", CODE.id, { code: "x", title: `a${String.fromCodePoint(0x200b)}` }, 'property "title": contains U+200B'],
+    [
+      "a hunk section with a line separator",
+      DIFF.id,
+      { files: [{ path: "a", hunks: [{ oldStart: 1, newStart: 1, section: `fn${LINE_SEPARATOR}x`, lines: [{ kind: "add", text: "b" }] }] }] },
+      'property "files.0.hunks.0.section": contains U+2028',
+    ],
+    [
+      "a diff line holding a line separator",
+      DIFF.id,
+      { files: [{ path: "a", hunks: [{ oldStart: 1, newStart: 1, lines: [{ kind: "add", text: `b${LINE_SEPARATOR}c` }] }] }] },
+      "contains U+2028, a line break; give each line of the diff as a line of its own",
+    ],
+    [
+      "a diff line over its limit",
+      DIFF.id,
+      { files: [{ path: "a", hunks: [{ oldStart: 1, newStart: 1, lines: [{ kind: "add", text: "y".repeat(1001) }] }] }] },
+      "line 1 of hunk 1 of a is 1001 characters; a card shows at most 1000 a line: cut it and set truncated",
+    ],
+    [
+      "hunks whose numbers do not follow from each other",
+      DIFF.id,
+      {
+        files: [
+          {
+            path: "a",
+            hunks: [
+              { oldStart: 1, newStart: 1, lines: [{ kind: "context", text: "a" }, { kind: "add", text: "b" }] },
+              { oldStart: 10, newStart: 10, lines: [{ kind: "context", text: "c" }, { kind: "remove", text: "d" }] },
+            ],
+          },
+        ],
+      },
+      "hunk 2 of a starts at new line 10, but the hunks above it move old line 10 to new line 11",
+    ],
+    ["a file whose source has a bidi control", FILE.id, { name: "a.pdf", source: `Lan${BIDI}` }, 'property "source": contains U+202E'],
+    ["a file whose path is a mailto link", FILE.id, { name: "a.pdf", path: "mailto:lan@example.com" }, "a path that is a URL is refused"],
     [
       "a hunk at old line 0 that keeps lines",
       DIFF.id,

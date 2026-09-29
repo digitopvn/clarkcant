@@ -22,8 +22,19 @@ if (NODE_PORT === undefined || NODE_PORT === "") {
 }
 const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 
-type Which = "khối mã" | "bản diff" | "thẻ tệp";
-const ROLE: Record<Which, string> = { "khối mã": "code", "bản diff": "diff", "thẻ tệp": "file" };
+type Which = "khối mã" | "khối mã ẩn" | "bản diff" | "bản diff ẩn" | "thẻ tệp";
+const ROLE: Record<Which, string> = {
+  "khối mã": "code",
+  "khối mã ẩn": "code",
+  "bản diff": "diff",
+  "bản diff ẩn": "diff",
+  "thẻ tệp": "file",
+};
+
+/** Written by code point, so no hidden character sits in this file's own source. */
+const BIDI = String.fromCodePoint(0x202e);
+const ZERO_WIDTH = String.fromCodePoint(0x200b);
+const LINE_SEPARATOR = String.fromCodePoint(0x2028);
 
 function token(): string {
   const parsed = JSON.parse(readFileSync(join(DATA_DIR, "identity.json"), "utf8")) as { localToken?: unknown };
@@ -83,6 +94,27 @@ async function settled(target: Locator): Promise<void> {
   });
 }
 
+/**
+ * How far the last line number sits from the last line of code, in pixels. Each number is on its own line of the gutter,
+ * so a line the gutter did not count, or counted twice, moves the last number off the last line.
+ */
+async function lastLineDrift(code: Locator): Promise<number> {
+  return code.locator("[data-viewer-scroll='code']").evaluate((element) => {
+    const numbers = element.querySelector(".cc-viewer-gutter")?.firstChild;
+    const body = element.querySelector(".cc-code-body code");
+    if (numbers === null || numbers === undefined || body === null) throw new Error("the block has no numbers or no code");
+    const text = numbers.textContent ?? "";
+    const range = document.createRange();
+    range.setStart(numbers, text.lastIndexOf("\n") + 1);
+    range.setEnd(numbers, text.length);
+    const number = range.getBoundingClientRect();
+    const lines = body.getClientRects();
+    const line = lines[lines.length - 1];
+    if (line === undefined) throw new Error("the code has no lines");
+    return Math.abs((number.top + number.bottom) / 2 - (line.top + line.bottom) / 2);
+  });
+}
+
 async function horizontalOverflow(page: Page): Promise<number> {
   return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 }
@@ -110,36 +142,42 @@ test("code, a diff and a file show what the model wrote, as text, and nothing cl
   await expect(gutter).toHaveAttribute("aria-hidden", "true");
   await expect(gutter).toHaveText(["40\n41\n42\n43\n44"]);
   // Each number sits on its own line of code: the last number and the last line share a row, so none has drifted.
-  const drift = await code.locator("[data-viewer-scroll='code']").evaluate((element) => {
-    const numbers = element.querySelector(".cc-viewer-gutter")?.firstChild;
-    const body = element.querySelector(".cc-code-body code");
-    if (numbers === null || numbers === undefined || body === null) throw new Error("the block has no numbers or no code");
-    const text = numbers.textContent ?? "";
-    const range = document.createRange();
-    range.setStart(numbers, text.lastIndexOf("\n") + 1);
-    range.setEnd(numbers, text.length);
-    const number = range.getBoundingClientRect();
-    const lines = body.getClientRects();
-    const line = lines[lines.length - 1];
-    if (line === undefined) throw new Error("the code has no lines");
-    return Math.abs((number.top + number.bottom) / 2 - (line.top + line.bottom) / 2);
-  });
-  expect(drift, "the last line number sits beside the last line of code").toBeLessThan(3);
+  expect(await lastLineDrift(code), "the last line number sits beside the last line of code").toBeLessThan(3);
+
+  // The copy button is named after what it copies, starting with the word it shows.
+  await expect(code.locator("[data-viewer-copy]")).toHaveAccessibleName("Sao chép mã: packages/billing/src/format-money.ts");
+  // The status region is there before anything is copied, so the first result is announced; it takes no room while empty.
+  const status = code.locator("[data-copy-state]");
+  await expect(status).toHaveAttribute("role", "status");
+  await expect(status).toHaveAttribute("data-copy-state", "idle");
+  expect(await status.evaluate((element) => getComputedStyle(element).display)).not.toBe("none");
 
   // The bounded scroll is a named region a keyboard can reach.
   const scroll = code.locator("[data-viewer-scroll='code']");
   await expect(scroll).toHaveAttribute("role", "region");
   await expect(scroll).toHaveAccessibleName("Mã: packages/billing/src/format-money.ts");
+  await scroll.scrollIntoViewIfNeeded();
+  await settled(code);
+  const unfocused = await scroll.screenshot();
   // Tab from the copy button, the control just before it, so the focus arrives the way a keyboard user's does.
   await code.locator("[data-viewer-copy]").focus();
   await page.keyboard.press("Tab");
   await expect(scroll).toBeFocused();
   const ring = await scroll.evaluate((element) => {
     const style = getComputedStyle(element);
-    return { style: style.outlineStyle, width: style.outlineWidth };
+    return {
+      style: style.outlineStyle,
+      width: Number.parseFloat(style.outlineWidth),
+      offset: Number.parseFloat(style.outlineOffset),
+    };
   });
   expect(ring.style, "a focused scroll shows a ring").not.toBe("none");
-  expect(ring.width).not.toBe("0px");
+  expect(ring.width).toBeGreaterThan(0);
+  // The ring is drawn inside the scroll's own box, so a card that clips what overflows it cannot hide the ring.
+  expect(ring.offset + ring.width, "the ring sits inside the scroll").toBeLessThanOrEqual(0);
+  // And it is really painted: the focused scroll does not look like the unfocused one.
+  const focused = await scroll.screenshot();
+  expect(focused.equals(unfocused), "focus changes what the scroll looks like").toBe(false);
 
   // Copy puts the code itself on the clipboard, and says so in words.
   await code.locator("[data-viewer-copy]").click();
@@ -225,6 +263,133 @@ test("a diff whose hunk cannot be numbered is refused with the host's reason, an
   await say(page, "đặt bản diff sai");
   await expect(page.getByText("starts at old line 0, so it can only add lines").last()).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("[data-widget-role='diff']")).toHaveCount(before);
+});
+
+test("a line break inside one line of a diff is refused with the host's reason, and no card is drawn", async ({ page }) => {
+  test.setTimeout(60_000);
+  await openApp(page);
+  const before = await page.locator("[data-widget-role='diff']").count();
+  await say(page, "đặt bản diff xuống dòng");
+  await expect(page.getByText("contains U+2028, a line break").last()).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("[data-widget-role='diff']")).toHaveCount(before);
+});
+
+/** Check a card draws each hidden character as a visible marker, never the character itself, and warns about it. */
+async function expectMarked(card: Locator, body: string, markers: { codePoint: string; title: string }[], warning: string): Promise<void> {
+  for (const marker of markers) {
+    const drawn = card.locator(`${body} [data-hidden-char='${marker.codePoint}']`);
+    await expect(drawn).toHaveCount(1);
+    await expect(drawn).toHaveText(`⟨${marker.codePoint}⟩`);
+    await expect(drawn).toHaveAttribute("title", marker.title);
+  }
+  await expect(card.locator("[data-hidden-char]")).toHaveCount(markers.length);
+  const text = (await card.locator(body).textContent()) ?? "";
+  for (const hidden of [BIDI, ZERO_WIDTH, LINE_SEPARATOR]) expect(text, "no hidden character is drawn raw").not.toContain(hidden);
+  await expect(card.locator(`[data-viewer-hidden='${markers.length}']`)).toHaveText(warning);
+}
+
+const BIDI_TITLE = "U+202E: ký tự đổi hướng chữ, được hiện ra thay vì áp dụng";
+const ZERO_WIDTH_TITLE = "U+200B: ký tự vô hình, được hiện ra để không thể ẩn đi";
+
+test("hidden characters in code and a diff are drawn as markers with a warning, and a line separator counts as a line", async ({
+  page,
+  browser,
+}, testInfo) => {
+  test.setTimeout(150_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await openApp(page);
+  const code = await place(page, "khối mã ẩn");
+  const diff = await place(page, "bản diff ẩn");
+
+  await expect(code.locator(".cc-viewer-name")).toHaveText("src/auth/role.ts");
+  await expectMarked(
+    code,
+    ".cc-code-body",
+    [
+      { codePoint: "U+202E", title: BIDI_TITLE },
+      { codePoint: "U+200B", title: ZERO_WIDTH_TITLE },
+    ],
+    "Đoạn mã này có 2 ký tự ẩn có thể khiến mã đọc khác với vẻ ngoài. Mỗi ký tự được hiện thành ⟨U+…⟩ thay vì được áp dụng.",
+  );
+  // The four lines the model wrote hold a line separator, which breaks a line wherever the code is read: it is counted,
+  // so there are five numbered lines and the last number still sits beside the last line.
+  await expect(code.locator(".cc-viewer-gutter")).toHaveText(["10\n11\n12\n13\n14"]);
+  await expect(code.locator(".cc-viewer-meta")).toContainText("Dòng 10–14");
+  expect(await lastLineDrift(code), "the last line number sits beside the last line of code").toBeLessThan(3);
+
+  await expectMarked(
+    diff,
+    "[data-line-kind='add'] code",
+    [{ codePoint: "U+202E", title: BIDI_TITLE }],
+    "Bản diff này có 1 ký tự ẩn có thể khiến các dòng đọc khác với vẻ ngoài. Mỗi ký tự được hiện thành ⟨U+…⟩ thay vì được áp dụng.",
+  );
+  // A line with nothing hidden in it is drawn untouched.
+  await expect(diff.locator("[data-line-kind='remove'] code")).toHaveText('const role = "user";');
+
+  for (const colorScheme of ["dark", "light"] as const) {
+    await page.emulateMedia({ colorScheme });
+    await expect.poll(() => theme(page)).toBe(colorScheme);
+    for (const [name, card] of [
+      ["code", code],
+      ["diff", diff],
+    ] as const) {
+      await card.scrollIntoViewIfNeeded();
+      await settled(card);
+      await page.screenshot({ path: testInfo.outputPath(`artifact-hidden-${name}-1280-${colorScheme}.png`) });
+    }
+  }
+
+  // At phone width the markers and the warning still fit, and nothing widens the page.
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const phone = await context.newPage();
+  try {
+    await openApp(phone);
+    const phoneCode = await place(phone, "khối mã ẩn");
+    const phoneDiff = await place(phone, "bản diff ẩn");
+    for (const [name, card] of [
+      ["code", phoneCode],
+      ["diff", phoneDiff],
+    ] as const) {
+      await expect(card.locator("[data-viewer-hidden]")).toBeVisible();
+      const box = await card.boundingBox();
+      expect(box?.width ?? 0, "a card fits the phone's width").toBeLessThanOrEqual(390);
+      await card.scrollIntoViewIfNeeded();
+      await settled(card);
+      await phone.screenshot({ path: testInfo.outputPath(`artifact-hidden-${name}-390.png`) });
+    }
+    expect(await horizontalOverflow(phone)).toBeLessThanOrEqual(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a copy the browser refuses says so in words, and a second try is announced again", async ({ page }) => {
+  test.setTimeout(60_000);
+  await openApp(page);
+  const code = await place(page, "khối mã");
+  // The browser refuses the write, as it does when the page lacks permission or focus.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      configurable: true,
+      value: () => Promise.reject(new DOMException("Write permission denied.", "NotAllowedError")),
+    });
+  });
+  const status = code.locator("[data-copy-state]");
+  await expect(status).toHaveAttribute("data-copy-state", "idle");
+  await expect(status).toHaveAttribute("role", "status");
+
+  const failed = "Không sao chép được. Hãy chọn đoạn mã rồi tự sao chép.";
+  await code.locator("[data-viewer-copy]").click();
+  await expect(code.locator("[data-copy-state='failed']")).toHaveText(failed);
+  await expect(code.locator("[data-viewer-copy]")).toHaveAttribute("data-viewer-copy", "failed");
+  const first = await status.locator("span").elementHandle();
+  if (first === null) throw new Error("the status holds no message");
+
+  // The same words again are a new message: the old one is replaced rather than left in place, so it is read again.
+  await code.locator("[data-viewer-copy]").click();
+  await expect.poll(() => first.evaluate((element) => element.isConnected)).toBe(false);
+  await expect(code.locator("[data-copy-state='failed']")).toHaveText(failed);
 });
 
 test("the cards add no motion of their own when motion is reduced", async ({ page }) => {

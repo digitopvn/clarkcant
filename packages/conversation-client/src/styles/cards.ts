@@ -214,7 +214,6 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 /* The head is monospace for the path; the button is a control and keeps the interface's own face. */
 .cc-viewer-copy { font-family: "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif; }
 .cc-viewer-scroll { max-block-size: min(24rem, 60vh); overflow: auto; overscroll-behavior: contain; }
-.cc-viewer-scroll:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: -2px; }
 .cc-viewer-code .cc-viewer-scroll { display: grid; grid-template-columns: max-content minmax(max-content, 1fr); }
 /*
  * The block itself takes the code's size and leading, not only the <code> inside it: a line box is never shorter than
@@ -230,8 +229,25 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm);
   font-variant-numeric: tabular-nums; user-select: none;
 }
-.cc-viewer-copy-status:empty { display: none; }
+/*
+ * The copy status is always in the page, so a screen reader is already listening when a result is written into it. With
+ * nothing to say it takes no room and draws nothing, but stays in the accessibility tree, which display:none would not.
+ */
 .cc-viewer-copy-status { margin: 0; }
+.cc-viewer-copy-status[data-copy-state="idle"] {
+  position: absolute; inline-size: 1px; block-size: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+/*
+ * A hidden character drawn as its code point. Only horizontal room is added, so a marked line is exactly as tall as any
+ * other and the numbers beside the code stay on their lines.
+ */
+.cc-hidden-char {
+  padding-inline: 2px; border-radius: 3px; color: var(--cc-text);
+  background: color-mix(in oklab, var(--cc-warning) 22%, transparent);
+  outline: 1px solid color-mix(in oklab, var(--cc-warning) 55%, transparent); outline-offset: -1px;
+}
+.cc-viewer-hidden { color: var(--cc-text); border-inline-start: 3px solid var(--cc-warning); padding-inline-start: var(--cc-space-xs); }
 .cc-viewer-copy-status[data-copy-state="failed"] { color: var(--cc-danger); }
 .cc-viewer-diff-file { display: flex; flex-direction: column; gap: var(--cc-space-xxs); min-width: 0; }
 /* A long path wraps; the counts beside it do not, so "+2 −0" never splits across two lines. */

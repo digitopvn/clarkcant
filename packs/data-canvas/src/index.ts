@@ -889,8 +889,6 @@ export const STATUS_CARD_KIND: Readonly<Record<string, StatusCardKind>> = {
  * records; these are primitives beside them.
  */
 
-const onePathProp = (maxLength: number) => ({ type: "string", minLength: 1, maxLength, pattern: ONE_LINE_PATTERN });
-
 /** A block of code with its line numbers, in a bounded scroll, with a copy button. */
 export const CODE: WidgetDefinition = {
   id: "canvas.code@1",
@@ -900,8 +898,8 @@ export const CODE: WidgetDefinition = {
     type: "object",
     additionalProperties: false,
     properties: {
-      title: { type: "string", maxLength: 200 },
-      path: onePathProp(300),
+      title: oneLineProp(200),
+      path: oneLineProp(300, 1),
       language: { type: "string", maxLength: 40, pattern: LANGUAGE_PATTERN },
       code: { type: "string", minLength: 1, maxLength: MAX_CODE_CHARS },
       startLine: { type: "integer", minimum: 1, maximum: MAX_START_LINE },
@@ -927,7 +925,7 @@ export const DIFF: WidgetDefinition = {
     type: "object",
     additionalProperties: false,
     properties: {
-      title: { type: "string", maxLength: 200 },
+      title: oneLineProp(200),
       files: {
         type: "array",
         minItems: 1,
@@ -936,8 +934,8 @@ export const DIFF: WidgetDefinition = {
           type: "object",
           additionalProperties: false,
           properties: {
-            path: onePathProp(300),
-            oldPath: onePathProp(300),
+            path: oneLineProp(300, 1),
+            oldPath: oneLineProp(300, 1),
             hunks: {
               type: "array",
               minItems: 1,
@@ -948,7 +946,7 @@ export const DIFF: WidgetDefinition = {
                 properties: {
                   oldStart: { type: "integer", minimum: 0, maximum: MAX_START_LINE },
                   newStart: { type: "integer", minimum: 0, maximum: MAX_START_LINE },
-                  section: { type: "string", maxLength: 200 },
+                  section: oneLineProp(200),
                   lines: {
                     type: "array",
                     minItems: 1,
@@ -993,12 +991,12 @@ export const FILE: WidgetDefinition = {
     type: "object",
     additionalProperties: false,
     properties: {
-      title: { type: "string", maxLength: 200 },
-      name: onePathProp(200),
+      title: oneLineProp(200),
+      name: oneLineProp(200, 1),
       mediaType: { type: "string", maxLength: 128, pattern: MEDIA_TYPE_PATTERN },
       sizeBytes: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-      source: { type: "string", maxLength: 200 },
-      path: onePathProp(500),
+      source: oneLineProp(200),
+      path: oneLineProp(500, 1),
       summary: { type: "string", maxLength: 500 },
     },
     required: ["name"],

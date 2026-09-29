@@ -591,20 +591,35 @@ records. These three are catalog cards a model places beside them.
 What the node guarantees:
 
 - **Refused before anything is stored.** Props that do not fit are refused with the reason, in the same turn, and no
-  instance is left behind. Code or a diff over its limit is refused with a request to cut it and set `truncated`. A diff
-  is also refused for a hunk that changes nothing, a hunk at old line 0 that keeps or removes lines, a hunk at new line 0
-  that keeps or adds lines, a line holding a line break, hunks that overlap or are out of order, and a file given twice.
-  A file card is refused for a name that includes its folder, and for a `path` that is a URL. An unknown property, such
-  as `url` or `href`, is refused too.
+  instance is left behind. Code or a diff over a limit is refused with a reason that names the limit and where it was
+  passed (the code's length or line count, a file's hunks, one line of one hunk, or the diff's total) and asks the
+  model to cut it and set `truncated`. A diff is also refused for a hunk that changes nothing, a hunk at old line 0
+  that keeps or removes lines, a hunk at new line 0 that keeps or adds lines, hunks that overlap or are out of order,
+  and a file given twice. A file card is refused for a name that includes its folder, and for a `path` that is a URL
+  (anything that starts with a scheme such as `https:` or `file:`; a Windows drive such as `C:\` is a path and is
+  kept). An unknown property, such as `url` or `href`, is refused too.
+- **Hunks agree with each other.** Each hunk after the first must start where the ones above it leave the file: if
+  they move old line 30 to new line 32, the next hunk that starts at old line 40 starts at new line 42. The check is
+  skipped when `truncated` is set, because part of the change may be left out, and for a hunk with a count of 0 on
+  either side, because unified diffs number an add-only or remove-only hunk from the line before it.
+- **One-line text stays on one line and shows what it holds.** Paths, names, titles, sections, sources and media types
+  are refused if they hold a line break, a bidi control (U+202A–U+202E, U+2066–U+2069) or an invisible character that
+  can make text read differently from how it looks (U+200B, U+200E, U+200F, U+2028, U+2029, U+0085, U+FEFF). The reason
+  names the character. The zero-width joiner and non-joiner (U+200D, U+200C) are allowed, because emoji and several
+  scripts need them. A file's `summary` may run over several lines but is refused for the same hidden characters.
+- **Line breaks in code are lines.** `\r\n`, `\r`, U+2028, U+2029 and U+0085 in code each count as a line break and
+  are stored as `\n`, so the line numbers match the lines a person sees and the 400-line limit counts them. One line of
+  a diff is refused if it holds any line break: each line of the diff is given as a line of its own.
 - **Counts come from the lines.** Each hunk's `@@ -a,b +c,d @@` header and every count of lines added and removed are
   worked out from the lines themselves, so a diff cannot claim more or fewer changes than it shows.
 - **The text is the content.** Without the renderer, a reader gets the code, the diff with its headers, or the file's
-  name, type, size and source. It is cut at 4,000 characters with a note of how much more is on the card. The
-  caption is not used in its place.
+  name, type, size and source. It is cut at 4,000 characters with a note of how much more is on the card, never in
+  the middle of a character. The caption is not used in its place. A hidden character in code or a diff line is
+  written there as `⟨U+202E⟩` rather than applied, with a line that says how many there are.
 - **What voice and the next turn read has no body.** The semantic document names the path, the language and the line
   range of code, the files and counts of a diff, and a file's name, type and size. It never carries the code or the
-  lines themselves. Its freshness is `unknown`: the card shows what the model wrote when it placed it, and nothing is
-  read again.
+  lines themselves. It does say how many hidden characters the code or diff holds. Its freshness is `unknown`: the
+  card shows what the model wrote when it placed it, and nothing is read again.
 - **Not layout leaves.** They belong to the `artifact` family, which no layout region reads. A model places each one
   on its own.
 
@@ -612,10 +627,18 @@ What the page does:
 
 - Code and diffs are shown as text. The highlighter only splits the text into tokens and escapes it. Its output is
   built as React elements, so code that looks like markup, `<script>` included, is shown as the characters it is.
+- A bidi control or invisible character in code or a diff line is drawn as a visible marker, such as `⟨U+202E⟩`,
+  whose tooltip says what kind of character it is, instead of being applied. The card then carries one line warning
+  that it holds hidden characters that could make it read differently from how it looks. This is the "Trojan Source"
+  case, where a bidi control makes code run differently from how it reads.
 - A long block scrolls inside a bounded area (at most `min(24rem, 60vh)`) and does not wrap or widen the page. That
-  area is a named region a keyboard can reach and scroll, with a focus ring drawn inside it.
-- Copy puts the code itself on the clipboard. It says in words whether the copy worked, and if it did not, asks the
-  person to select the code and copy it.
+  area is a named region a keyboard can reach and scroll, with a focus ring drawn inside it so the card's rounded
+  edge cannot clip it.
+- Copy puts the code itself on the clipboard. The button is named after what it copies ("Copy code:
+  src/auth/role.ts"), starting with the word it shows. It says in words whether the copy worked, and if it did not,
+  asks the person to select the code and copy it. That message sits in a status region that is on the card from the
+  start and takes no room while empty, and each result replaces the last, so the same words are announced again on a
+  second try.
 - In a diff, a line is told apart by its sign and background, not by colour alone. A screen reader hears each line's
   kind and number in words ("Added, new line 41:") before its text; the signs and numbers it would otherwise read one
   character at a time are hidden from it. A rename says what the file was called before.
@@ -627,7 +650,9 @@ Tests: [artifact-viewers.spec.ts](../packages/contracts/test/artifact-viewers.sp
 [artifact-viewers.spec.ts](../apps/runtime/test/artifact-viewers.spec.ts) for the node,
 [artifact-viewers.spec.ts](../packages/conversation-client/test/artifact-viewers.spec.ts) for the page, and the
 browser journey [artifact-viewers.spec.ts](../apps/web/e2e/artifact-viewers.spec.ts). It runs in both themes, with
-reduced motion, at 390 px with touch, and in the library.
+reduced motion, at 390 px with touch, and in the library. It also covers hidden characters drawn as markers with
+their warning, a line separator in code that keeps the numbers beside their lines, a line break inside a diff line
+that is refused, a copy the browser refuses, and a focus ring that must be painted inside the scroll.
 
 ---
 

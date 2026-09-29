@@ -39,6 +39,7 @@ import {
   clipWithMarker,
   formInputSchema,
   parseFields,
+  artifactViewerLimitProblems,
   artifactViewerText,
   parseListItems,
   readStatusCard,
@@ -465,17 +466,20 @@ function statusCardViews(deps: WidgetDeps): ViewDescriptor[] {
     },
   }));
 }
+
 /** What the model is told about each artifact viewer's props. */
 const ARTIFACT_VIEWER_NOTES: Readonly<Record<string, string>> = {
   [CODE.id]:
     `props.code is the code itself (at most ${String(MAX_CODE_LINES)} lines and ${String(MAX_CODE_CHARS)} characters); ` +
     `optional props.path (shown as text), props.language (a name like "ts" or "python"; the path's extension otherwise), ` +
-    `props.startLine for an excerpt, props.title, and props.truncated:true when you cut the code to fit.`,
+    `props.startLine for an excerpt, props.title, and props.truncated:true when you cut the code to fit. A control, bidi or ` +
+    `invisible character in the code is shown as a marker such as ⟨U+202E⟩, and the card warns about it.`,
   [DIFF.id]:
     `props.files is 1-${String(MAX_DIFF_FILES)} of {"path":"...","oldPath"?,"hunks":[{"oldStart":n,"newStart":n,"section"?,` +
     `"lines":[{"kind":"${DIFF_LINE_KINDS.join('" | "')}","text":"<one line, without its +/- sign>"}]}]}, hunks in file order; ` +
-    `oldStart 0 for a new file, newStart 0 for a deleted one. At most ${String(MAX_DIFF_LINES)} lines in all: set props.truncated:true ` +
-    `when you left part of the change out. The card counts additions and removals itself.`,
+    `oldStart 0 for a new file, newStart 0 for a deleted one. Each hunk's numbers must follow from the hunks above it in the ` +
+    `same file. At most ${String(MAX_DIFF_LINES)} lines in all: set props.truncated:true when you left part of the change out. ` +
+    `The card counts additions and removals itself.`,
   [FILE.id]:
     `props.name is the file's own name; optional props.mediaType (type/subtype), props.sizeBytes, props.source (where it came from, in words), ` +
     `props.path (shown as text, never a URL), props.summary and props.title. The card has no link and cannot open or download the file.`,
@@ -485,7 +489,8 @@ const ARTIFACT_VIEWER_NOTES: Readonly<Record<string, string>> = {
  * The code, diff and file viewers.
  *
  * Nothing on them is read from the node and nothing links anywhere, so the model is told exactly that. The copy button on
- * a code card copies the text already on the page and reaches nothing on the node.
+ * a code card copies the text already on the page and reaches nothing on the node. Props over a limit are refused first,
+ * in words that say by how much and what to do, before the schema's generic "too long" could say it less usefully.
  */
 function artifactViews(deps: WidgetDeps): ViewDescriptor[] {
   return [CODE, DIFF, FILE].map((definition) => ({
@@ -494,7 +499,10 @@ function artifactViews(deps: WidgetDeps): ViewDescriptor[] {
     notes: ARTIFACT_VIEWER_NOTES[definition.id] ?? "",
     shownText: `Shown: ${definition.id}. It shows what you wrote, as text; it opens and fetches nothing.`,
     build: (request) => {
-      const kind = ARTIFACT_VIEWER_KIND[definition.id] ?? "file";
+      const kind = ARTIFACT_VIEWER_KIND[definition.id];
+      if (kind === undefined) throw new Error(`${definition.id} is not a code, diff or file viewer`);
+      const limits = artifactViewerLimitProblems(kind, request.props);
+      if (limits.length > 0) throw new Error(`${definition.id} cannot be shown: ${limits.join("; ")}`);
       const content = readArtifactViewer(kind, request.props);
       const text = content === undefined ? definition.textFallback : artifactViewerText(content);
       // The card's own content is its text alternative: a caption would say less than the code or diff it stands for.

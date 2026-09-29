@@ -17,6 +17,9 @@ export const PANELS_CSS = `
 /* Focus: never removed, only restyled. Keyboard users must be able to see where they are. */
 :focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: var(--cc-radius-badge); }
 button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* A code or diff scroll fills a card that clips whatever overflows it, so its ring is drawn inside the scroll. It is
+   here, after the rule above, because this layer comes last and an outer ring from above would be cut off. */
+.cc-viewer-scroll:focus-visible { outline-offset: -2px; }
 
 /* Screen-reader-only text: the text alternative for every rich surface. */
 .cc-sr-only {

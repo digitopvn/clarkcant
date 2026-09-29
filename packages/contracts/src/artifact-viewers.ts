@@ -1,6 +1,14 @@
 import { z } from "zod";
 
-import { ONE_LINE_REQUIRED_PATTERN } from "./text-rules.ts";
+import {
+  cardSchemaProblems,
+  codePointLabel,
+  findHiddenCharacter,
+  hiddenCharacterProblem,
+  markHiddenCharacters,
+  oneLineText,
+  sliceCodePoints,
+} from "./text-rules.ts";
 import type { SemanticValue } from "./widget-semantic.ts";
 
 /**
@@ -10,6 +18,10 @@ import type { SemanticValue } from "./widget-semantic.ts";
  * a file card names a file and says what it is, and has no link, no "open" and no download, because a reference to a
  * real artifact goes only through the node's own artifact broker, never through a URL a model wrote. The node's own
  * artifact and diff cards stay host-owned and are built from its records; these are catalog primitives beside them.
+ *
+ * One-line fields (a title, a path, a name, a section, a source) refuse any line break, control, bidi control or
+ * invisible character, with a reason naming it. Code and diff lines cannot refuse all of them, since a bidi control can
+ * be a real part of a string literal; the page draws each as a visible marker instead, and says the card holds them.
  *
  * One description serves the node and the page. The node refuses props that fail `artifactViewerProblems` before an
  * instance exists; the page reads the same props with `readArtifactViewer` and draws only what passes.
@@ -31,16 +43,49 @@ export type DiffLineKind = (typeof DIFF_LINE_KINDS)[number];
 export const LANGUAGE_PATTERN = "^[A-Za-z0-9][A-Za-z0-9_+#.-]{0,39}$";
 /** A media type as `type/subtype`, with no parameters. */
 export const MEDIA_TYPE_PATTERN = "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,63}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,63}$";
-const oneLine = (max: number) => z.string().min(1).max(max).regex(new RegExp(ONE_LINE_REQUIRED_PATTERN, "u"));
-const titleSchema = z.string().max(200);
-const pathSchema = oneLine(300);
+
+/**
+ * Every line break besides `\n`: CR LF, a lone CR, and the next-line, line and paragraph separators.
+ *
+ * A page may draw any of them as a new line, so code counts each as one. Left as they are, a separator would start a
+ * line on screen that the numbers beside it never counted, and every number below it would sit beside the wrong line.
+ */
+const OTHER_LINE_BREAKS = /\r\n?|\u0085|\u2028|\u2029/gu;
+const ANY_LINE_BREAK = /[\n\r\u0085\u2028\u2029]/u;
+
+/** Code with every line break written as `\n`. */
+export function normalizeLineBreaks(code: string): string {
+  return code.replace(OTHER_LINE_BREAKS, "\n");
+}
+
+const titleSchema = oneLineText(200, false);
+const pathSchema = oneLineText(300, true);
+
+/**
+ * A short token of a fixed shape, such as a language or a media type.
+ *
+ * The shape alone would refuse a hidden character, but only as a pattern that failed. Naming the character first says
+ * what to remove, and says it the way every other field of these cards does.
+ */
+function tokenText(pattern: string, max: number, example: string) {
+  const shape = new RegExp(pattern, "u");
+  return z
+    .string()
+    .max(max, `is longer than ${String(max)} characters`)
+    .superRefine((value, ctx) => {
+      const problem = hiddenCharacterProblem(value);
+      if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+      else if (!shape.test(value)) ctx.addIssue({ code: "custom", message: `is not in the form ${example}` });
+    });
+}
 
 export const codeViewerSchema = z.strictObject({
   title: titleSchema.optional(),
   /** Where the code comes from, shown as text. */
   path: pathSchema.optional(),
-  language: z.string().regex(new RegExp(LANGUAGE_PATTERN, "u")).optional(),
-  code: z.string().min(1).max(MAX_CODE_CHARS),
+  language: tokenText(LANGUAGE_PATTERN, 40, 'of a language name or extension, such as "ts" or "python"').optional(),
+  /** Read with every line break as `\n`, so a line is what the numbers beside it count. */
+  code: z.string().min(1).max(MAX_CODE_CHARS).transform(normalizeLineBreaks),
   /** The number of the first line shown, when the code is an excerpt. */
   startLine: z.number().int().min(1).max(MAX_START_LINE).optional(),
   /** The model cut the code to fit: the card says so. */
@@ -50,7 +95,19 @@ export type CodeViewer = z.infer<typeof codeViewerSchema>;
 
 export const diffLineSchema = z.strictObject({
   kind: z.enum(DIFF_LINE_KINDS),
-  text: z.string().max(MAX_DIFF_LINE_CHARS),
+  /** One line, without its sign. A line break of any kind is refused: each line is given on its own. */
+  text: z
+    .string()
+    .max(MAX_DIFF_LINE_CHARS)
+    .superRefine((value, ctx) => {
+      const found = ANY_LINE_BREAK.exec(value);
+      if (found !== null) {
+        ctx.addIssue({
+          code: "custom",
+          message: `contains ${codePointLabel(found[0])}, a line break; give each line of the diff as a line of its own`,
+        });
+      }
+    }),
 });
 export type DiffLine = z.infer<typeof diffLineSchema>;
 
@@ -60,7 +117,7 @@ export const diffHunkSchema = z.strictObject({
   /** The first line the hunk covers in the new file, 0 when the file is deleted. */
   newStart: z.number().int().min(0).max(MAX_START_LINE),
   /** The enclosing function or section, as a diff header names it. */
-  section: z.string().max(200).optional(),
+  section: oneLineText(200, false).optional(),
   lines: z.array(diffLineSchema).min(1).max(MAX_DIFF_LINES),
 });
 export type DiffHunk = z.infer<typeof diffHunkSchema>;
@@ -83,14 +140,22 @@ export type DiffViewer = z.infer<typeof diffViewerSchema>;
 
 export const fileViewerSchema = z.strictObject({
   title: titleSchema.optional(),
-  name: oneLine(200),
-  mediaType: z.string().max(128).regex(new RegExp(MEDIA_TYPE_PATTERN, "u")).optional(),
+  name: oneLineText(200, true),
+  mediaType: tokenText(MEDIA_TYPE_PATTERN, 128, 'type/subtype with no parameters, such as "application/pdf"').optional(),
   sizeBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   /** Where the file came from, in words: "Generated by Clark", "Attached by Lan". */
-  source: z.string().max(200).optional(),
+  source: oneLineText(200, false).optional(),
   /** Where the file is, as text. Never a link. */
-  path: oneLine(500).optional(),
-  summary: z.string().max(500).optional(),
+  path: oneLineText(500, true).optional(),
+  /** A few sentences; a line break is fine, a hidden character is not. */
+  summary: z
+    .string()
+    .max(500)
+    .superRefine((value, ctx) => {
+      const problem = hiddenCharacterProblem(value, { lineBreaks: true });
+      if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+    })
+    .optional(),
 });
 export type FileViewer = z.infer<typeof fileViewerSchema>;
 
@@ -107,7 +172,7 @@ export type ArtifactViewerContent =
 
 /** The lines of a block of code. A final line break ends the last line; it does not start another. */
 export function codeLines(code: string): string[] {
-  const lines = code.split(/\r\n|\n|\r/u);
+  const lines = normalizeLineBreaks(code).split("\n");
   if (lines.length > 1 && lines.at(-1) === "") lines.pop();
   return lines;
 }
@@ -191,94 +256,196 @@ export function diffCounts(card: DiffViewer): { files: number; additions: number
   return { files: card.files.length, additions, deletions };
 }
 
+/**
+ * How many hidden characters the code or the diff's lines hold, each drawn as a marker rather than applied.
+ *
+ * Zero for a file card: every word on it is one line and refuses them.
+ */
+export function hiddenCharacterCount(content: ArtifactViewerContent): number {
+  if (content.kind === "code") return markHiddenCharacters(content.card.code).count;
+  if (content.kind === "file") return 0;
+  let count = 0;
+  for (const file of content.card.files) {
+    for (const hunk of file.hunks) for (const line of hunk.lines) count += markHiddenCharacters(line.text).count;
+  }
+  return count;
+}
+
 /* ------------------------------------------------------------------ *
  * Reading and checking
  * ------------------------------------------------------------------ */
 
-function parsed(kind: ArtifactViewerKind, props: unknown): ArtifactViewerContent | undefined {
+type Parsed = { ok: true; content: ArtifactViewerContent } | { ok: false; issues: z.core.$ZodIssue[] };
+
+function parsed(kind: ArtifactViewerKind, props: unknown): Parsed {
   if (kind === "code") {
     const result = codeViewerSchema.safeParse(props);
-    return result.success ? { kind, card: result.data } : undefined;
+    return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, issues: result.error.issues };
   }
   if (kind === "diff") {
     const result = diffViewerSchema.safeParse(props);
-    return result.success ? { kind, card: result.data } : undefined;
+    return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, issues: result.error.issues };
   }
   const result = fileViewerSchema.safeParse(props);
-  return result.success ? { kind, card: result.data } : undefined;
+  return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, issues: result.error.issues };
 }
 
-function codeProblems(card: CodeViewer): string[] {
-  const { count, last } = codeLineRange(card);
+const CUT = "cut it and set truncated";
+const LEAVE_OUT = "leave some out and set truncated";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** A file named in a reason: by its path when that is safe to repeat, otherwise by its place in the list. */
+function fileLabel(file: Record<string, unknown>, index: number): string {
+  const path = file.path;
+  return typeof path === "string" && path.length <= 300 && path.trim() !== "" && findHiddenCharacter(path) === undefined
+    ? path
+    : `file ${String(index + 1)}`;
+}
+
+/**
+ * What is over a card's limits, each said with how far over it is and what to do.
+ *
+ * Read from the props as given, before the schema, so a model hears "the code is 25000 characters; a card shows at
+ * most 20000" rather than a bare "too big", whichever of the node's checks reaches the limit first.
+ */
+export function artifactViewerLimitProblems(kind: ArtifactViewerKind, props: unknown): string[] {
+  if (!isRecord(props) || kind === "file") return [];
   const problems: string[] = [];
-  if (count > MAX_CODE_LINES) {
-    problems.push(`the code has ${String(count)} lines; a card shows at most ${String(MAX_CODE_LINES)}: cut it and set truncated`);
+  if (kind === "code") {
+    if (typeof props.code !== "string") return [];
+    const chars = props.code.length;
+    const lines = codeLines(props.code).length;
+    if (chars > MAX_CODE_CHARS) {
+      problems.push(`the code is ${String(chars)} characters; a card shows at most ${String(MAX_CODE_CHARS)}: ${CUT}`);
+    }
+    if (lines > MAX_CODE_LINES) {
+      problems.push(`the code has ${String(lines)} lines; a card shows at most ${String(MAX_CODE_LINES)}: ${CUT}`);
+    }
+    return problems;
   }
-  if (last > MAX_START_LINE) problems.push(`the last line would be number ${String(last)}, above ${String(MAX_START_LINE)}`);
+  if (!Array.isArray(props.files)) return [];
+  if (props.files.length > MAX_DIFF_FILES) {
+    problems.push(`the diff has ${String(props.files.length)} files; a card shows at most ${String(MAX_DIFF_FILES)}: ${LEAVE_OUT}`);
+  }
+  let lines = 0;
+  let chars = 0;
+  let longLine: string | undefined;
+  props.files.forEach((file: unknown, fileIndex) => {
+    if (!isRecord(file) || !Array.isArray(file.hunks)) return;
+    const label = fileLabel(file, fileIndex);
+    if (file.hunks.length > MAX_DIFF_HUNKS) {
+      problems.push(`${label} has ${String(file.hunks.length)} hunks; a card shows at most ${String(MAX_DIFF_HUNKS)} a file: ${LEAVE_OUT}`);
+    }
+    file.hunks.forEach((hunk: unknown, hunkIndex) => {
+      if (!isRecord(hunk) || !Array.isArray(hunk.lines)) return;
+      lines += hunk.lines.length;
+      hunk.lines.forEach((line: unknown, lineIndex) => {
+        if (!isRecord(line) || typeof line.text !== "string") return;
+        chars += line.text.length;
+        if (longLine === undefined && line.text.length > MAX_DIFF_LINE_CHARS) {
+          longLine =
+            `line ${String(lineIndex + 1)} of hunk ${String(hunkIndex + 1)} of ${label} is ${String(line.text.length)} characters; ` +
+            `a card shows at most ${String(MAX_DIFF_LINE_CHARS)} a line: ${CUT}`;
+        }
+      });
+    });
+  });
+  if (longLine !== undefined) problems.push(longLine);
+  if (lines > MAX_DIFF_LINES) problems.push(`the diff has ${String(lines)} lines; a card shows at most ${String(MAX_DIFF_LINES)}: ${CUT}`);
+  if (chars > MAX_DIFF_CHARS) problems.push(`the diff holds ${String(chars)} characters; a card shows at most ${String(MAX_DIFF_CHARS)}: ${CUT}`);
   return problems;
 }
 
-function hunkProblems(file: DiffFile, hunk: DiffHunk, index: number, previous: DiffHunk | undefined): string[] {
+function codeProblems(card: CodeViewer): string[] {
+  const { last } = codeLineRange(card);
+  return last > MAX_START_LINE ? [`the last line would be number ${String(last)}, above ${String(MAX_START_LINE)}`] : [];
+}
+
+/**
+ * What is wrong with one hunk, on its own and beside the hunk above it.
+ *
+ * Two hunks of one file must agree: the lines the first adds and removes shift every line after it by the same amount,
+ * so the second's new start follows from its old start. The check is skipped when the diff says part of the change is
+ * left out, since a hunk left out between them shifts the lines too, and when either hunk only adds or only removes,
+ * since unified diffs number such a hunk from the line before it.
+ */
+function hunkProblems(file: DiffFile, hunk: DiffHunk, index: number, previous: DiffHunk | undefined, truncated: boolean): string[] {
   const where = `hunk ${String(index + 1)} of ${file.path}`;
   const problems: string[] = [];
   const { oldCount, newCount } = hunkCounts(hunk);
   if (hunk.lines.every((line) => line.kind === "context")) problems.push(`${where} changes nothing: it has no added or removed line`);
   if (hunk.oldStart === 0 && oldCount > 0) problems.push(`${where} starts at old line 0, so it can only add lines`);
   if (hunk.newStart === 0 && newCount > 0) problems.push(`${where} starts at new line 0, so it can only remove lines`);
-  if (hunk.lines.some((line) => /[\r\n]/u.test(line.text))) problems.push(`${where} has a line holding a line break; give each line on its own`);
-  if (previous !== undefined) {
-    const before = hunkCounts(previous);
-    if (hunk.oldStart < previous.oldStart + before.oldCount || hunk.newStart < previous.newStart + before.newCount) {
-      problems.push(`${where} overlaps or comes before the hunk above it; hunks go in file order`);
-    }
+  if (previous === undefined) return problems;
+  const before = hunkCounts(previous);
+  if (hunk.oldStart < previous.oldStart + before.oldCount || hunk.newStart < previous.newStart + before.newCount) {
+    problems.push(`${where} overlaps or comes before the hunk above it; hunks go in file order`);
+    return problems;
+  }
+  const comparable = !truncated && [before.oldCount, before.newCount, oldCount, newCount].every((count) => count > 0);
+  const shift = previous.newStart - previous.oldStart + before.newCount - before.oldCount;
+  if (comparable && hunk.newStart - hunk.oldStart !== shift) {
+    problems.push(
+      `${where} starts at new line ${String(hunk.newStart)}, but the hunks above it move old line ${String(hunk.oldStart)} ` +
+        `to new line ${String(hunk.oldStart + shift)}; fix the numbers, or set truncated if part of the change between them is left out`,
+    );
   }
   return problems;
 }
 
 function diffProblems(card: DiffViewer): string[] {
   const problems: string[] = [];
-  let lines = 0;
-  let chars = 0;
   const seen = new Set<string>();
   for (const file of card.files) {
     if (seen.has(file.path)) problems.push(`${file.path} appears twice; give each file once with all its hunks`);
     seen.add(file.path);
     file.hunks.forEach((hunk, index) => {
-      problems.push(...hunkProblems(file, hunk, index, index === 0 ? undefined : file.hunks[index - 1]));
-      lines += hunk.lines.length;
-      for (const line of hunk.lines) chars += line.text.length;
+      problems.push(...hunkProblems(file, hunk, index, index === 0 ? undefined : file.hunks[index - 1], card.truncated === true));
     });
   }
-  if (lines > MAX_DIFF_LINES) problems.push(`the diff has ${String(lines)} lines; a card shows at most ${String(MAX_DIFF_LINES)}: cut it and set truncated`);
-  if (chars > MAX_DIFF_CHARS) problems.push(`the diff holds ${String(chars)} characters; a card shows at most ${String(MAX_DIFF_CHARS)}: cut it and set truncated`);
   return problems;
 }
 
-/** A URL scheme at the start of a path: a file card names a file, it never links one. */
-const URL_LIKE = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u;
+/**
+ * A URL scheme at the start of a path, `mailto:` and `javascript:` as much as `https://`: a file card names a file, it
+ * never links one. A Windows drive (`C:\`, `D:/`) is a path, not a scheme.
+ */
+const URL_LIKE = /^[a-z][a-z0-9+.-]*:/iu;
+const WINDOWS_DRIVE = /^[a-z]:(?:[\\/]|$)/iu;
 
 function fileProblems(card: FileViewer): string[] {
   const problems: string[] = [];
   if (/[\\/]/u.test(card.name)) problems.push("the name is the file's own name; put the folder in path");
-  if (card.path !== undefined && URL_LIKE.test(card.path)) {
+  if (card.path !== undefined && URL_LIKE.test(card.path) && !WINDOWS_DRIVE.test(card.path)) {
     problems.push("a file card names a file and does not link one; a path that is a URL is refused");
   }
   return problems;
 }
 
-/** Everything wrong with a card's props: what the schema says, then what it cannot say. */
+/**
+ * Everything wrong with a card's props: what is over its limits, what the schema says, then what it cannot say.
+ *
+ * A limit is said once, in its own words: the schema's "too big" for the same field is left out beside it.
+ */
 export function artifactViewerProblems(kind: ArtifactViewerKind, props: unknown): string[] {
-  const content = parsed(kind, props);
-  if (content === undefined) return [`the props do not describe a ${kind} card`];
-  if (content.kind === "code") return codeProblems(content.card);
-  if (content.kind === "diff") return diffProblems(content.card);
-  return fileProblems(content.card);
+  const limits = artifactViewerLimitProblems(kind, props);
+  const result = parsed(kind, props);
+  if (!result.ok) {
+    const issues = limits.length === 0 ? result.issues : result.issues.filter((issue) => issue.code !== "too_big");
+    return [...limits, ...cardSchemaProblems(issues)];
+  }
+  if (result.content.kind === "code") return [...limits, ...codeProblems(result.content.card)];
+  if (result.content.kind === "diff") return [...limits, ...diffProblems(result.content.card)];
+  return [...limits, ...fileProblems(result.content.card)];
 }
 
 /** The card its props describe, or `undefined` when the node would refuse them. */
 export function readArtifactViewer(kind: ArtifactViewerKind, props: unknown): ArtifactViewerContent | undefined {
-  const content = parsed(kind, props);
-  return content !== undefined && artifactViewerProblems(kind, props).length === 0 ? content : undefined;
+  const result = parsed(kind, props);
+  return result.ok && artifactViewerProblems(kind, props).length === 0 ? result.content : undefined;
 }
 
 /* ------------------------------------------------------------------ *
@@ -295,18 +462,26 @@ function clipped(text: string, limit: number): string {
   // The note is shorter when fewer characters are left out, so keep grows until the two fill the limit exactly.
   let keep = limit - note(text.length).length;
   while (keep + 1 + note(text.length - keep - 1).length <= limit) keep += 1;
-  return `${text.slice(0, keep)}${note(text.length - keep)}`;
+  // A cut never falls inside a surrogate pair: half an emoji is not a character.
+  const kept = sliceCodePoints(text, keep);
+  return `${kept}${note(text.length - kept.length)}`;
 }
 
 function sizeText(bytes: number): string {
   return `${String(bytes)} byte${bytes === 1 ? "" : "s"}`;
 }
 
+/** The line a text alternative adds when the body holds hidden characters, written as markers in it. */
+function hiddenNote(count: number): string {
+  return count === 0 ? "" : `\nHolds ${String(count)} hidden character(s), each written here as ⟨U+…⟩ rather than applied.`;
+}
+
 /**
  * The card as plain text: the text alternative a reader gets when it cannot be drawn.
  *
  * Code and diffs keep their lines, so a transcript that outlives the renderer still holds the change; a body too long
- * for a snapshot says how much it left out.
+ * for a snapshot says how much it left out. A hidden character in the body is written as its marker, as the page draws
+ * it, so the transcript reads the way the card looks.
  */
 export function artifactViewerText(content: ArtifactViewerContent, limit = ARTIFACT_TEXT_LIMIT): string {
   const title = content.card.title !== undefined && content.card.title !== "" ? `${content.card.title}: ` : "";
@@ -314,24 +489,30 @@ export function artifactViewerText(content: ArtifactViewerContent, limit = ARTIF
     const card = content.card;
     const { first, last } = codeLineRange(card);
     const cut = card.truncated === true ? ", cut short" : "";
+    const body = markHiddenCharacters(card.code);
     const head = `${title}${card.path ?? "Code"} (${codeLanguage(card) ?? "text"}, lines ${String(first)}-${String(last)}${cut})`;
-    return clipped(`${head}\n${card.code}`, limit);
+    return clipped(`${head}${hiddenNote(body.count)}\n${body.text}`, limit);
   }
   if (content.kind === "diff") {
     const card = content.card;
     const counts = diffCounts(card);
     const cut = card.truncated === true ? "; part of the change is left out" : "";
     const head = `${title}${String(counts.files)} file(s) changed, +${String(counts.additions)} -${String(counts.deletions)}${cut}`;
+    let hidden = 0;
     const body = card.files.map((file) => {
       const fileCounts = diffFileCounts(file);
       const renamed = file.oldPath === undefined ? "" : `${file.oldPath} -> `;
       const hunks = file.hunks.map((hunk) => {
-        const lines = hunk.lines.map((line) => `${line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "}${line.text}`);
+        const lines = hunk.lines.map((line) => {
+          const marked = markHiddenCharacters(line.text);
+          hidden += marked.count;
+          return `${line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "}${marked.text}`;
+        });
         return [hunkHeader(hunk), ...lines].join("\n");
       });
       return [`${renamed}${file.path} +${String(fileCounts.additions)} -${String(fileCounts.deletions)}`, ...hunks].join("\n");
     });
-    return clipped([head, ...body].join("\n"), limit);
+    return clipped([`${head}${hiddenNote(hidden)}`, ...body].join("\n"), limit);
   }
   const card = content.card;
   const facts = [card.mediaType, card.sizeBytes === undefined ? undefined : sizeText(card.sizeBytes)].filter(
@@ -350,7 +531,8 @@ export function artifactViewerText(content: ArtifactViewerContent, limit = ARTIF
  * What the card means for voice and `inspect_ui`: names, a language, line counts; never the code itself.
  *
  * Bounded by `normalizeSemanticDoc` afterwards. The body stays out: a summary that read a whole file aloud would be a
- * worse answer to "what is this" than its name, language and size.
+ * worse answer to "what is this" than its name, language and size. How many hidden characters the body holds is said,
+ * since that is what a person asking "is anything odd about this code" needs to hear.
  */
 export function artifactViewerSemantic(content: ArtifactViewerContent): {
   title?: string;
@@ -358,6 +540,9 @@ export function artifactViewerSemantic(content: ArtifactViewerContent): {
   values: Record<string, SemanticValue>;
 } {
   const title = content.card.title !== undefined && content.card.title !== "" ? { title: content.card.title } : {};
+  const hidden = hiddenCharacterCount(content);
+  const hiddenSummary = hidden === 0 ? "" : `; holds ${String(hidden)} hidden character(s), shown as markers`;
+  const hiddenValue = hidden === 0 ? {} : { hiddenCharacters: hidden };
   if (content.kind === "code") {
     const card = content.card;
     const { first, last, count } = codeLineRange(card);
@@ -367,7 +552,7 @@ export function artifactViewerSemantic(content: ArtifactViewerContent): {
       ...title,
       summary:
         `Code as stated when shown: ${card.path ?? "untitled"} (${language}), ${String(count)} line(s), ` +
-        `lines ${String(first)}-${String(last)}${truncated ? ", cut short" : ""}`,
+        `lines ${String(first)}-${String(last)}${truncated ? ", cut short" : ""}${hiddenSummary}`,
       values: {
         ...(card.path === undefined ? {} : { path: card.path }),
         language,
@@ -375,6 +560,7 @@ export function artifactViewerSemantic(content: ArtifactViewerContent): {
         firstLine: first,
         lastLine: last,
         truncated,
+        ...hiddenValue,
       },
     };
   }
@@ -386,7 +572,7 @@ export function artifactViewerSemantic(content: ArtifactViewerContent): {
       ...title,
       summary:
         `Diff as stated when shown: ${String(counts.files)} file(s), ${String(counts.additions)} line(s) added, ` +
-        `${String(counts.deletions)} removed${truncated ? "; part of the change is left out" : ""}`,
+        `${String(counts.deletions)} removed${truncated ? "; part of the change is left out" : ""}${hiddenSummary}`,
       values: {
         fileCount: counts.files,
         linesAdded: counts.additions,
@@ -396,6 +582,7 @@ export function artifactViewerSemantic(content: ArtifactViewerContent): {
           return `${file.path} +${String(fileCounts.additions)} -${String(fileCounts.deletions)}`;
         }),
         truncated,
+        ...hiddenValue,
       },
     };
   }
