@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   AA_NORMAL_TEXT,
   LIGHT,
-  THEMES,
+  CLARK_SCHEMES,
   TYPE_SCALE,
-  auditAllThemes,
+  auditClarkSchemes,
   contrastRatio,
   parseHex,
   readableForeground,
@@ -42,21 +42,21 @@ describe("contrast maths", () => {
 
 describe("palette accessibility (WCAG AA)", () => {
   it("passes every required pair in every theme", () => {
-    const audits = auditAllThemes();
+    const audits = auditClarkSchemes();
     const failures = audits.flatMap((audit) =>
-      audit.failures.map((f) => `${audit.theme}: ${f.purpose} is ${f.ratio}:1 but needs ${f.minimum}:1`),
+      audit.failures.map((f) => `${audit.scheme}: ${f.purpose} is ${f.ratio}:1 but needs ${f.minimum}:1`),
     );
     expect(failures).toEqual([]);
   });
 
   it("checks a non-trivial number of pairs, so a passing audit means something", () => {
-    for (const audit of auditAllThemes()) {
+    for (const audit of auditClarkSchemes()) {
       expect(audit.checked).toBeGreaterThanOrEqual(12);
     }
   });
 
   it("keeps text and muted text distinguishable from each other", () => {
-    for (const theme of Object.values(THEMES)) {
+    for (const theme of Object.values(CLARK_SCHEMES)) {
       expect(contrastRatio(theme.text, theme.card)).toBeGreaterThan(
         contrastRatio(theme.textMuted, theme.card),
       );
@@ -64,7 +64,7 @@ describe("palette accessibility (WCAG AA)", () => {
   });
 
   it("orders the three text tiers, so tertiary is not quietly the same as muted", () => {
-    for (const theme of Object.values(THEMES)) {
+    for (const theme of Object.values(CLARK_SCHEMES)) {
       const primary = contrastRatio(theme.text, theme.card);
       const secondary = contrastRatio(theme.textMuted, theme.card);
       const tertiary = contrastRatio(theme.textTertiary, theme.card);
@@ -79,13 +79,13 @@ describe("palette accessibility (WCAG AA)", () => {
   });
 
   it("checks the same pairs in both themes, so neither is audited less than the other", () => {
-    const [dark, light] = auditAllThemes();
+    const [dark, light] = auditClarkSchemes();
     expect(dark!.checked).toBe(light!.checked);
   });
 
   it("picks a readable foreground for an arbitrary widget colour", () => {
-    expect(readableForeground("#111111", THEMES.dark)).toBe(THEMES.dark.text);
-    expect(readableForeground("#fefefe", THEMES.dark)).toBe(THEMES.dark.canvas);
+    expect(readableForeground("#111111", CLARK_SCHEMES.dark)).toBe(CLARK_SCHEMES.dark.text);
+    expect(readableForeground("#fefefe", CLARK_SCHEMES.dark)).toBe(CLARK_SCHEMES.dark.canvas);
   });
 
   it("keeps the type scale monotonic", () => {

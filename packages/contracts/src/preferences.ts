@@ -22,6 +22,7 @@ import { z } from "zod";
 
 import { GUARD_CLASSES, guardClassSchema, jevUnavailablePolicySchema } from "./execution.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
+import { BUILTIN_CLARK_THEME_REF, DEFAULT_COLOR_SCHEME, colorSchemeSchema, themeRefSchema } from "./themes.ts";
 
 /** Where a preference lives. A key declares one, and a write cannot choose another. */
 export const preferenceScopeNameSchema = z.enum(["global", "node", "conversation"]);
@@ -589,12 +590,24 @@ const normalizeNameList = (value: unknown): string[] | undefined => {
  * Experience before Developer without re-sorting a list whose meaning is its grouping.
  */
 export const PREFERENCE_REGISTRY = {
-  "experience.theme": {
-    key: "experience.theme",
+  /*
+   * The theme and the colour scheme are two preferences, not one. `experience.theme` held `system | light | dark`,
+   * which is only a colour scheme; storage migration 35 carried every stored value of it into `experience.colorScheme`
+   * unchanged, and nobody has chosen a theme yet, so `experience.themeRef` starts at Clark Default for everyone.
+   */
+  "experience.themeRef": {
+    key: "experience.themeRef",
     scope: "global",
     applies: "immediate",
-    default: "system",
-    schema: z.enum(["system", "light", "dark"]),
+    default: BUILTIN_CLARK_THEME_REF,
+    schema: themeRefSchema,
+  },
+  "experience.colorScheme": {
+    key: "experience.colorScheme",
+    scope: "global",
+    applies: "immediate",
+    default: DEFAULT_COLOR_SCHEME,
+    schema: colorSchemeSchema,
   },
   "experience.motion": {
     key: "experience.motion",

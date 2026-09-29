@@ -13,6 +13,8 @@
  * Every colour here has a measured ratio in `test/contrast.spec.ts`.
  */
 
+import type { ResolvedColorScheme } from "@clarkcant/contracts";
+
 export const TOKEN_VERSION = "2.0.0" as const;
 
 export interface ColorTokens {
@@ -109,8 +111,14 @@ export const LIGHT: ColorTokens = {
   focus: "#5B4FA0",
 };
 
-export const THEMES = { dark: DARK, light: LIGHT } as const;
-export type ThemeName = keyof typeof THEMES;
+/**
+ * Clark Default's palette in each colour scheme.
+ *
+ * The palettes of one theme, not two themes: light and dark are the colour scheme a person chose, and every theme —
+ * Clark Default included — is drawn in both. A theme package patches these values; it does not replace the scheme
+ * they belong to.
+ */
+export const CLARK_SCHEMES: Readonly<Record<ResolvedColorScheme, ColorTokens>> = { dark: DARK, light: LIGHT };
 
 /**
  * Type scale, in rem, with the line height each size is meant to be read at.

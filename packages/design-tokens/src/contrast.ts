@@ -1,4 +1,6 @@
-import { type ColorTokens, type ThemeName, THEMES } from "./tokens.ts";
+import { RESOLVED_COLOR_SCHEMES, type ResolvedColorScheme } from "@clarkcant/contracts";
+
+import { CLARK_SCHEMES, type ColorTokens } from "./tokens.ts";
 
 /**
  * WCAG contrast utilities.
@@ -105,26 +107,32 @@ export function requiredPairs(tokens: ColorTokens): ContrastPair[] {
 }
 
 export interface ContrastAudit {
-  theme: ThemeName;
+  scheme: ResolvedColorScheme;
   failures: { purpose: string; ratio: number; minimum: number }[];
   checked: number;
 }
 
-/** Audit one theme. Returns every failure rather than stopping at the first. */
-export function auditTheme(theme: ThemeName): ContrastAudit {
-  const tokens = THEMES[theme];
+/**
+ * Audit a palette drawn in one scheme. Returns every failure rather than stopping at the first.
+ *
+ * The palette is a parameter rather than looked up, so a theme a package provides is audited by exactly the rules
+ * Clark Default is, instead of by a second, looser check written for "other" palettes.
+ */
+export function auditColors(scheme: ResolvedColorScheme, tokens: ColorTokens): ContrastAudit {
+  const pairs = requiredPairs(tokens);
   const failures: ContrastAudit["failures"] = [];
-  for (const pair of requiredPairs(tokens)) {
+  for (const pair of pairs) {
     const ratio = contrastRatio(pair.foreground, pair.background);
     if (ratio < pair.minimum) {
       failures.push({ purpose: pair.purpose, ratio: Math.round(ratio * 100) / 100, minimum: pair.minimum });
     }
   }
-  return { theme, failures, checked: requiredPairs(tokens).length };
+  return { scheme, failures, checked: pairs.length };
 }
 
-export function auditAllThemes(): ContrastAudit[] {
-  return (Object.keys(THEMES) as ThemeName[]).map(auditTheme);
+/** Clark Default, audited in every scheme it is drawn in. */
+export function auditClarkSchemes(): ContrastAudit[] {
+  return RESOLVED_COLOR_SCHEMES.map((scheme) => auditColors(scheme, CLARK_SCHEMES[scheme]));
 }
 
 /**

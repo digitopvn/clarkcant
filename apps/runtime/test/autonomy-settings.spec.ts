@@ -286,6 +286,6 @@ describe("the two preference keys that still name the mode and the rules", () =>
   });
 
   it("does not touch a key that is not one of the two", () => {
-    expect(writePolicyPreference(deps, { principalId: PRINCIPAL, key: "experience.theme", value: "dark" })).toBeUndefined();
+    expect(writePolicyPreference(deps, { principalId: PRINCIPAL, key: "experience.colorScheme", value: "dark" })).toBeUndefined();
   });
 });

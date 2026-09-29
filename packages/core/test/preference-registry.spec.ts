@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { ORB_PROFILE_NAMES, PREFERENCE_KEYS } from "@clarkcant/contracts";
-import { migrate, openDatabase } from "@clarkcant/storage";
+import { MIGRATIONS, migrate, openDatabase } from "@clarkcant/storage";
 
 import { listPreferences, setPreference } from "../src/preferences.ts";
 import {
@@ -173,12 +173,12 @@ describe("a read answers for every registered key", () => {
   it("reports a stored value as a choice, with the revision that wrote it", () => {
     writeRegisteredPreference(deps, {
       principalId: PRINCIPAL,
-      key: "experience.theme",
+      key: "experience.colorScheme",
       value: "dark",
     });
     const preference = readRegisteredPreference(deps, {
       principalId: PRINCIPAL,
-      key: "experience.theme",
+      key: "experience.colorScheme",
     });
     expect(preference?.value).toBe("dark");
     expect(preference?.isDefault).toBe(false);
@@ -192,14 +192,14 @@ describe("a read answers for every registered key", () => {
     // key's current value, and reporting it as one would be a prefrence read from nowhere.
     setPreference(deps, {
       principalId: PRINCIPAL,
-      key: "experience.theme",
+      key: "experience.colorScheme",
       scope: "node",
       value: "dark",
       source: "user",
     });
     const preference = readRegisteredPreference(deps, {
       principalId: PRINCIPAL,
-      key: "experience.theme",
+      key: "experience.colorScheme",
     });
     expect(preference?.value).toBe("system");
     expect(preference?.isDefault).toBe(true);
@@ -232,12 +232,12 @@ describe("a read answers for every registered key", () => {
 
 describe("undo returns to what was there, or says there was nothing", () => {
   it("restores the previous value", () => {
-    writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.theme", value: "dark" });
-    writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.theme", value: "light" });
+    writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.colorScheme", value: "dark" });
+    writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.colorScheme", value: "light" });
 
     const outcome = undoRegisteredPreference(deps, {
       principalId: PRINCIPAL,
-      key: "experience.theme",
+      key: "experience.colorScheme",
     });
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) throw new Error("expected an undo");
@@ -303,10 +303,54 @@ describe("undo returns to what was there, or says there was nothing", () => {
   it("removes the row rather than restoring undefined when the history is exhausted", () => {
     // The store's own view of it: an exhausted history is a row that no longer exists, not one holding a
     // value nobody chose.
-    writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.theme", value: "dark" });
-    undoRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.theme" });
+    writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.colorScheme", value: "dark" });
+    undoRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.colorScheme" });
     expect(storedKeys()).toEqual([]);
-    expect(readRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.theme" })?.isDefault).toBe(true);
+    expect(readRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.colorScheme" })?.isDefault).toBe(true);
+  });
+});
+
+describe("a theme choice stored before the theme and the colour scheme were separate", () => {
+  /*
+   * The whole path a person's old choice takes: a row written by the build that knew only `experience.theme`, the
+   * storage upgrade, and then this build's registry reading it. The storage test proves the row is copied; this proves
+   * the registry answers with it as the person's choice, and that Undo still returns them to what they had before.
+   */
+  function upgradedFrom(rows: { value: string; revision: number; previous: string | null }): typeof deps {
+    const db = openDatabase({ path: ":memory:" });
+    migrate(
+      db,
+      MIGRATIONS.filter((migration) => migration.version < 35),
+    );
+    db.prepare(
+      `INSERT INTO preferences (principal_id, key, value, scope, source, revision, previous_value, created_at)
+       VALUES (?, 'experience.theme', ?, 'global', 'user', ?, ?, '2026-09-01T08:00:00.000Z')`,
+    ).run(PRINCIPAL, JSON.stringify(rows.value), rows.revision, rows.previous === null ? null : JSON.stringify(rows.previous));
+    migrate(db);
+    return { db, now: () => AT };
+  }
+
+  it("reads back as the person's colour-scheme choice, not as a default", () => {
+    for (const value of ["system", "light", "dark"]) {
+      const upgraded = upgradedFrom({ value, revision: 1, previous: null });
+      const scheme = readRegisteredPreference(upgraded, { principalId: PRINCIPAL, key: "experience.colorScheme" });
+      expect(scheme, value).toMatchObject({ value, isDefault: false, revision: 1, updatedAt: "2026-09-01T08:00:00.000Z" });
+    }
+  });
+
+  it("leaves the theme at Clark Default, because nobody has chosen one yet", () => {
+    const upgraded = upgradedFrom({ value: "light", revision: 1, previous: null });
+    const theme = readRegisteredPreference(upgraded, { principalId: PRINCIPAL, key: "experience.themeRef" });
+    expect(theme).toMatchObject({ value: "builtin:clark", isDefault: true });
+  });
+
+  it("keeps Undo: the choice before the upgrade is still one step back", () => {
+    const upgraded = upgradedFrom({ value: "light", revision: 2, previous: "dark" });
+    const outcome = undoRegisteredPreference(upgraded, { principalId: PRINCIPAL, key: "experience.colorScheme" });
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) throw new Error("expected an undo");
+    expect(outcome.undone).toBe(true);
+    expect(outcome.preference.value).toBe("dark");
   });
 });
 

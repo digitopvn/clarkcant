@@ -1058,7 +1058,11 @@ chỗ user sẽ tìm — im lặng bỏ qua còn tệ hơn, vì user sẽ tưở
 
 Dùng segmented controls, toggles và swatches:
 
-- Appearance: System / Light / Dark.
+- Appearance: System / Light / Dark. Đây là **chế độ màu** (`experience.colorScheme`), không phải theme. Theme là
+  một preference riêng (`experience.themeRef`, mặc định `builtin:clark`, tức Clark Default), và theme nào cũng được
+  vẽ theo chế độ màu mà lựa chọn này phân giải ra. Chế độ màu cũng được giữ trên thiết bị (`cc.theme`), nên trang
+  không bao giờ vẽ sai chế độ màu trong lúc chờ node trả lời. Hiện chưa có điều khiển chọn theme: nó chỉ xuất hiện
+  khi một theme đã cài thực sự chọn được (#201).
 - Ngôn ngữ: Tiếng Việt / English — segmented control, áp dụng ngay (không có nút lưu), đặt
   `<html lang>`, và được giữ qua reload và giữa các thiết bị nhờ preference registry
   (`experience.language`). Mặc định là tiếng Việt; không có tuỳ chọn "theo hệ thống", vì không có

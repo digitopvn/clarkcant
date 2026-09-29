@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { RESOLVED_COLOR_SCHEMES } from "@clarkcant/contracts";
+
 import { AA_LARGE_TEXT, AA_NORMAL_TEXT, contrastRatio } from "../src/contrast.ts";
-import { THEMES, type ThemeName } from "../src/tokens.ts";
+import { CLARK_SCHEMES } from "../src/tokens.ts";
 
 /**
  * Contrast, per theme, as a test rather than as an intention.
@@ -11,7 +13,7 @@ import { THEMES, type ThemeName } from "../src/tokens.ts";
  * checks by eye. The accessibility rules require a real ratio, so this asserts one.
  */
 
-const THEME_NAMES = Object.keys(THEMES) as ThemeName[];
+const THEME_NAMES = RESOLVED_COLOR_SCHEMES;
 
 /** Surfaces text sits on directly. */
 const SURFACES = ["canvas", "window", "card", "elevated", "code"] as const;
@@ -27,7 +29,7 @@ describe("text on the surfaces it is rendered on", () => {
     for (const surface of SURFACES) {
       for (const text of TEXT) {
         it(`${theme}: ${text.key} on ${surface} clears ${String(text.floor)} (${text.why})`, () => {
-          const tokens = THEMES[theme];
+          const tokens = CLARK_SCHEMES[theme];
           const ratio = contrastRatio(tokens[text.key], tokens[surface]);
 
           expect(ratio).toBeGreaterThanOrEqual(text.floor);
@@ -40,13 +42,13 @@ describe("text on the surfaces it is rendered on", () => {
 describe("accent and focus", () => {
   for (const theme of THEME_NAMES) {
     it(`${theme}: text on the accent is readable`, () => {
-      const tokens = THEMES[theme];
+      const tokens = CLARK_SCHEMES[theme];
       // `onAccent` exists precisely for this pair; if it were dropped the accent would be unreadable.
       expect(contrastRatio(tokens.onAccent, tokens.accent)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
     });
 
     it(`${theme}: the focus ring is distinguishable from the accent`, () => {
-      const tokens = THEMES[theme];
+      const tokens = CLARK_SCHEMES[theme];
 
       /*
        * The reason the token exists: a focus ring drawn in the accent colour disappears on an accent-coloured
@@ -63,7 +65,7 @@ describe("accent and focus", () => {
 describe("the palettes are not the same palette", () => {
   it("dark and light actually differ", () => {
     // A light theme that shares the dark theme's surfaces would pass every ratio above and still be the wrong theme.
-    expect(THEMES.light.canvas.toLowerCase()).not.toBe(THEMES.dark.canvas.toLowerCase());
-    expect(THEMES.light.text.toLowerCase()).not.toBe(THEMES.dark.text.toLowerCase());
+    expect(CLARK_SCHEMES.light.canvas.toLowerCase()).not.toBe(CLARK_SCHEMES.dark.canvas.toLowerCase());
+    expect(CLARK_SCHEMES.light.text.toLowerCase()).not.toBe(CLARK_SCHEMES.dark.text.toLowerCase());
   });
 });
