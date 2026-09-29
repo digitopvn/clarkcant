@@ -167,6 +167,29 @@ describe("stopping the reply being written", () => {
   });
 });
 
+describe("asking Clark about the latest notice", () => {
+  it("reaches the inbox's own Ask Clark, and says why when there is nothing to ask about", async () => {
+    let asked = 0;
+    const host: AppIntentHost = {
+      ...recordingHost().host,
+      askAboutLatestNotice: async () => {
+        asked += 1;
+        if (asked > 1) throw new Error("Hộp thư chưa có thông báo nào để hỏi.");
+      },
+    };
+    const decision = executable({ kind: "intent", intent: { kind: "inbox.ask" }, readBack: "hỏi" });
+
+    expect(await runAppIntent(decision, host)).toEqual({ ran: true, say: "hỏi" });
+    expect(await runAppIntent(decision, host)).toEqual({ ran: false, say: "Hộp thư chưa có thông báo nào để hỏi." });
+  });
+
+  it("is refused by a host with no inbox", async () => {
+    const run = await runAppIntent(executable({ kind: "intent", intent: { kind: "inbox.ask" }, readBack: "hỏi" }), recordingHost().host);
+    expect(run.ran).toBe(false);
+    expect(run.say).not.toBe("hỏi");
+  });
+});
+
 describe("what the executor will not do", () => {
   it("does not act on a question, even for an intent it could otherwise run", async () => {
     const { host, calls } = recordingHost(true);

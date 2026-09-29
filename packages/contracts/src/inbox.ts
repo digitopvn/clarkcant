@@ -49,6 +49,59 @@ export type NoticeSeverity = z.infer<typeof noticeSeveritySchema>;
 export const NOTICE_TITLE_MAX = 120;
 export const NOTICE_BODY_MAX = 500;
 
+const subjectIdSchema = z.string().min(1).max(200);
+
+/**
+ * What a notice is about, as a typed pointer to state the node already holds.
+ *
+ * A producer names the thing; it never names what can be done about it. What the inbox offers for a notice is worked
+ * out by the host from this pointer and the thing's current state (`noticeActionsFor` in the runtime), so a producer —
+ * a peer above all — cannot put a button in front of the person, and an action whose thing is gone is shown as
+ * unavailable with the reason rather than as a button that fails.
+ *
+ * Optional: a notice written before subjects existed, or by a producer with nothing more specific than its
+ * conversation, is read as being about that conversation.
+ */
+export const noticeSubjectSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("conversation"), conversationId: subjectIdSchema }),
+  z.strictObject({ kind: z.literal("background-work"), workId: subjectIdSchema, conversationId: subjectIdSchema }),
+  z.strictObject({ kind: z.literal("task"), taskId: subjectIdSchema, conversationId: subjectIdSchema.optional() }),
+  z.strictObject({ kind: z.literal("package"), packageId: subjectIdSchema, version: z.string().min(1).max(100).optional() }),
+  z.strictObject({ kind: z.literal("pi-update"), packageName: subjectIdSchema, version: z.string().min(1).max(100) }),
+  z.strictObject({ kind: z.literal("peer"), nodeId: subjectIdSchema }),
+]);
+export type NoticeSubject = z.infer<typeof noticeSubjectSchema>;
+
+/**
+ * The things a person can do with a notice. A closed list the host implements: none of them is a callback, a URL or a
+ * command a producer supplied.
+ *
+ *   - `open`: go to the conversation the notice points at.
+ *   - `ask-clark`: send Clark a message carrying the notice as a typed reference, so the turn reads what the notice
+ *     is about rather than a pasted copy of its text.
+ *   - `add-to-context`: put the same reference in the composer without sending.
+ *   - `mark-read` / `mark-unread`: attention state only; neither hides the notice.
+ *   - `dismiss`: take it out of the list, undoable for a short while.
+ */
+export const noticeActionIdSchema = z.enum(["open", "ask-clark", "add-to-context", "mark-read", "mark-unread", "dismiss"]);
+export type NoticeActionId = z.infer<typeof noticeActionIdSchema>;
+
+/**
+ * One action, where it goes and whether it can be taken now.
+ *
+ * At most one `primary` and one `secondary` per notice, drawn as buttons; the rest go behind "More". An action that
+ * cannot be taken is still listed, with why, because a control that silently disappears reads as a bug and one that
+ * looks usable but fails is worse. `unavailable` is a code rather than a sentence so the surface words it in the
+ * person's language; what only the surface knows (a reply being written, a draft that switching would drop) it adds
+ * itself.
+ */
+export const noticeActionSchema = z.strictObject({
+  id: noticeActionIdSchema,
+  placement: z.enum(["primary", "secondary", "menu"]),
+  unavailable: z.enum(["conversation-gone"]).optional(),
+});
+export type NoticeAction = z.infer<typeof noticeActionSchema>;
+
 export const noticeSchema = z.strictObject({
   noticeId: z.string().min(1).max(128),
   sourceKind: noticeSourceKindSchema,
@@ -62,6 +115,10 @@ export const noticeSchema = z.strictObject({
   originNodeId: z.string().min(1).max(128).optional(),
   createdAt: instantSchema,
   readAt: instantSchema.optional(),
+  /** What the notice is about, when its producer said. */
+  subject: noticeSubjectSchema.optional(),
+  /** What can be done with it now, worked out by the node when it was read. Absent where nothing resolved them. */
+  actions: z.array(noticeActionSchema).max(8).optional(),
 });
 export type Notice = z.infer<typeof noticeSchema>;
 
@@ -144,3 +201,9 @@ export const inboxReadRequestSchema = z.strictObject({
   noticeIds: z.array(z.string().min(1).max(128)).max(500).optional(),
 });
 export type InboxReadRequest = z.infer<typeof inboxReadRequestSchema>;
+
+/** `POST /inbox/unread`. Always with ids: nobody means "mark everything I have read unread again". */
+export const inboxUnreadRequestSchema = z.strictObject({
+  noticeIds: z.array(z.string().min(1).max(128)).min(1).max(500),
+});
+export type InboxUnreadRequest = z.infer<typeof inboxUnreadRequestSchema>;

@@ -49,6 +49,7 @@ export async function sweepTaskWorktrees(
         title: "Worktree còn thay đổi chưa commit",
         body: `Task ${task.taskId} đã kết thúc nhưng để lại thay đổi chưa commit. Clark giữ nguyên, không xoá gì; vị trí có trong cuộc trò chuyện.`,
         conversationId: task.conversationId,
+        subject: { kind: "task", taskId: task.taskId, conversationId: task.conversationId },
         dedupKey: `worktree-kept:${task.taskId}`,
         at: now(),
       }).created;

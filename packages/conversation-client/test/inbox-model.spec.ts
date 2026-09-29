@@ -11,7 +11,10 @@ import {
   inboxMarkText,
   inboxMarkVisible,
   nextNoticeFocusTarget,
+  noticeActionGroups,
+  noticeConversationTarget,
   noticeIdsToMarkRead,
+  noticeReference,
   noticesMayBeCapped,
   noticeTone,
   relativeAge,
@@ -217,5 +220,50 @@ describe("waiting items still cover the union", () => {
       expiresAt: READ_AT as Instant,
     };
     expect(waitingKey(capability)).toBe("capability-approval:cap-1");
+  });
+});
+
+describe("a notice's actions", () => {
+  it("draws at most two as buttons, primary first, and puts the rest behind More", () => {
+    const shown = {
+      ...notice("ntf_1"),
+      actions: [
+        { id: "add-to-context", placement: "menu" },
+        { id: "ask-clark", placement: "secondary" },
+        { id: "open", placement: "primary" },
+        { id: "dismiss", placement: "menu" },
+      ],
+    } satisfies Notice;
+    const { buttons, menu } = noticeActionGroups(shown);
+    expect(buttons.map((action) => action.id)).toEqual(["open", "ask-clark"]);
+    expect(menu.map((action) => action.id)).toEqual(["add-to-context", "dismiss"]);
+  });
+
+  it("keeps Open and Dismiss for a notice read from a node that does not work actions out", () => {
+    expect(noticeActionGroups({ ...notice("ntf_1"), conversationId: "conv_1" }).buttons.map((action) => action.id)).toEqual([
+      "open",
+      "dismiss",
+    ]);
+    expect(noticeActionGroups(notice("ntf_2")).buttons.map((action) => action.id)).toEqual(["dismiss"]);
+  });
+
+  it("opens the conversation its subject names before the one it was written in", () => {
+    expect(noticeConversationTarget({ ...notice("ntf_1"), conversationId: "conv_a" })).toBe("conv_a");
+    expect(
+      noticeConversationTarget({ ...notice("ntf_1"), conversationId: "conv_a", subject: { kind: "task", taskId: "task_1", conversationId: "conv_b" } }),
+    ).toBe("conv_b");
+    expect(noticeConversationTarget({ ...notice("ntf_1"), subject: { kind: "package", packageId: "demo" } })).toBeUndefined();
+  });
+
+  it("points at the notice with a label a reference can carry", () => {
+    const long = { ...notice("ntf_9"), title: `Việc nền  đã\nxong ${"rất dài ".repeat(30)}` };
+    const { key, ref } = noticeReference(long);
+    expect(key).toBe("notice:ntf_9");
+    expect(ref.kind).toBe("notice");
+    expect(ref.noticeId).toBe("ntf_9");
+    expect(ref.label.length).toBeLessThanOrEqual(120);
+    expect(ref.label.startsWith("Việc nền đã xong rất dài")).toBe(true);
+    expect(ref.label.endsWith("…")).toBe(true);
+    expect(noticeReference({ ...notice("ntf_3"), title: "Xong" }).ref.label).toBe("Xong");
   });
 });

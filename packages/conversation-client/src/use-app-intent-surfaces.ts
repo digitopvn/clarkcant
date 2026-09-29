@@ -74,6 +74,8 @@ export interface AppIntentSurfacesDeps {
   openVoice?: () => Promise<void>;
   /** Stops the reply being written, the same call the Stop button makes. */
   stopTurn?: () => void;
+  /** The inbox's "Ask Clark" for its newest notice; rejects with the reason when it cannot. */
+  askAboutLatestNotice?: () => Promise<void>;
   /**
    * The model switches the hotkey makes (`useModelAlias`), so an intent that switches the model updates
    * the alias and note on screen exactly as the hotkey does.
@@ -98,6 +100,7 @@ export function useAppIntentSurfaces({
   setVoiceOpen,
   openVoice,
   stopTurn,
+  askAboutLatestNotice,
   cycleModel,
   selectModel,
   t,
@@ -178,6 +181,7 @@ export function useAppIntentSurfaces({
       },
       ...(openVoice === undefined ? {} : { openVoice }),
       ...(stopTurn === undefined ? {} : { stopTurn }),
+      ...(askAboutLatestNotice === undefined ? {} : { askAboutLatestNotice }),
       ...(desktop
         ? {
             expandWindow: () => {
@@ -208,7 +212,7 @@ export function useAppIntentSurfaces({
           }
         : {}),
     };
-  }, [attachmentInput, restartSession, setVoiceOpen, openVoice, stopTurn, cycleModel, selectModel, t]);
+  }, [attachmentInput, restartSession, setVoiceOpen, openVoice, stopTurn, askAboutLatestNotice, cycleModel, selectModel, t]);
 
   const runIntent = useCallback(
     (decision: AppIntentDecision): void => {

@@ -13,7 +13,7 @@ import {
 } from "@clarkcant/core";
 import { GALLERY, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
 import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
-import { listLocalImages, upsertArtifact, upsertDataset } from "@clarkcant/storage";
+import { getNotification, listLocalImages, upsertArtifact, upsertDataset } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -295,7 +295,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * The references, as the turn would brief them.
      *
      * A fixture node has no model to follow a skill, so it answers with the reference section the model turn would have
-     * been given, built by the same eferenceBrief from the same stored blocks. That proves the pipeline from the
+     * been given, built by the same `referenceBrief` from the same stored blocks. That proves the pipeline from the
      * picker to the prompt; it does not prove a model would follow the skill, which needs a provider.
      */
     const referenced = referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId: input.conversationId });
@@ -305,6 +305,8 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         blocks: referenced,
         projects: deps.services().projects,
         skillBody: (name, revision) => skills.body(name, revision),
+        notice: (noticeId) =>
+          getNotification(deps.services().runtime.db, deps.services().runtime.identity.ownerPrincipalId, noticeId)?.notice,
       });
       const reply = `Fixture: lượt này được đưa phần tham chiếu sau.\n\n${brief}`;
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };

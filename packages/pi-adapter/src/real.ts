@@ -364,7 +364,7 @@ export class RealPiAdapter implements PiAdapter {
    * Read through a loader configured like the worker's, so the list is the set a worker session would load, including
    * skills from installed pi packages and from paths in pi's settings, rather than a guess at where they live.
    * Extensions, prompt templates, themes and context files are switched off: this is a listing, and loading an
-   * extension runs its code. A skill passed on a command line only (	emporary) is not offered, because nothing the
+   * extension runs its code. A skill passed on a command line only (`temporary`) is not offered, because nothing the
    * composer sends can rely on it still being there.
    */
   async skills(): Promise<readonly PiSkill[]> {

@@ -484,8 +484,24 @@ Shipped:
   `inbox.open`.
 - **Notifications** have a source (background task, worker, extension package, Pi, another device, ClarkCant), a
   severity, a relative age, and an "unread" label in words next to the dot. Opening the inbox marks read exactly the
-  notifications it displayed. "Dismiss" removes it from the list; "Open conversation" switches to the related
-  conversation without opening an extra session.
+  notifications it displayed. "Open conversation" switches to the related conversation without opening an extra
+  session.
+- **Each notification carries the actions the node worked out for it** (#196), from what the notification is about
+  (a task, background work, a conversation, a package, a Pi update) and how that thing is now — never from its text,
+  and never an action a producer invented. At most two are buttons; the rest sit behind "More", an inline disclosure
+  under the notification (not a floating menu) that Escape closes, returning focus to "More". Something that went well
+  leads with "Open conversation"; something that failed or needs attention leads with "Ask Clark". A notification
+  whose conversation was deleted says so in words instead of offering a button that fails.
+  - **Ask Clark** closes the inbox and sends a message of its own carrying the notification as a reference (the same
+    kind a person can pick after `@`, §6.2): the node reads the stored notification again and quotes its words to the
+    model as data. Whatever the person was writing, and its chips, stay as they are. While Clark is still answering,
+    the button is disabled with the reason written beside it. "Ask Clark about the latest notification" — typed or
+    spoken — does the same for the newest notification through the `inbox.ask` intent.
+  - **Add to context** puts the notification on the message being written as a chip and returns focus to the
+    composer; it says so when the message already holds as many references as it can.
+  - **Mark as read / Mark as unread** changes only that notification; the header mark comes back when something is unread.
+  - **Dismiss** removes it from the list and offers **Undo** for five minutes; a notification brought back returns
+    already read.
 - **Update notifications for the Pi SDK, installed packages and widgets** (`apps/runtime/src/update-checks.ts`), from a
   periodic job comparing the installed version against the directory index and the npm registry (a network error does
   not create an error notification). Content states current version → new version and risk lane, using the same

@@ -1784,6 +1784,16 @@ export class GatewayClient {
     return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/dismiss`);
   }
 
+  /** Marks notices unread again. Attention state only: it never brings back a dismissed one. */
+  markInboxUnread(noticeIds: readonly string[]): Promise<{ marked: number }> {
+    return this.#call("POST", "/inbox/unread", { noticeIds });
+  }
+
+  /** Undoes a dismissal the node still considers recent (`UNDO_EXPIRED` once it is not). */
+  restoreNotice(noticeId: string): Promise<{ restored: true }> {
+    return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/restore`);
+  }
+
   /**
    * Stop one piece of work by the id a listing showed: a background request, a command the model ran, or a task
    * worker. The same stop the agent's `stop_work` reaches, so a button and a sentence end the same way.

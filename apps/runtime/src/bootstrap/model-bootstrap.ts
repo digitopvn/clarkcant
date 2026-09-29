@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { instantSchema, type MessageRecord } from "@clarkcant/contracts";
 import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
-import { credentialNames, messagesSince, readPreference } from "@clarkcant/storage";
+import { credentialNames, getNotification, messagesSince, readPreference } from "@clarkcant/storage";
 
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
@@ -195,6 +195,8 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           blocks: referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
           projects: deps.services().projects,
           skillBody,
+          notice: (noticeId) =>
+            getNotification(deps.services().runtime.db, deps.services().runtime.identity.ownerPrincipalId, noticeId)?.notice,
         }),
     },
     // The node registers the sample dataset itself, so this is the complete set it holds rather

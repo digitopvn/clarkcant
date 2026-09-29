@@ -21,7 +21,17 @@ import {
   requestApproval,
   writeRegisteredPreference,
 } from "@clarkcant/core";
-import { appendMessage, getTask, nextMessageSequence, oneRow } from "@clarkcant/storage";
+import {
+  DISMISS_UNDO_WINDOW_MS,
+  appendMessage,
+  countUnreadNotifications,
+  getTask,
+  listNotifications,
+  markNotificationsRead,
+  nextMessageSequence,
+  oneRow,
+  recordNotification,
+} from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { QUESTION_TTL_MS, answerQuestion, createQuestion } from "../src/interactions.ts";
@@ -534,6 +544,125 @@ describe("notices", () => {
     expect((await readInboxOverHttp()).unread).toBe(0);
 
     expect((await request("POST", "/inbox/read", { noticeIds: "tat-ca" })).status).toBe(400);
+  });
+
+  it("marks a read notice unread again, and refuses an unread request without ids", async () => {
+    const shown = notice("background:bg_1");
+    await request("POST", "/inbox/read", {});
+    expect((await readInboxOverHttp()).unread).toBe(0);
+
+    const marked = await request("POST", "/inbox/unread", { noticeIds: [shown.notificationId] });
+    expect(marked.body).toEqual({ marked: 1 });
+    const inbox = await readInboxOverHttp();
+    expect(inbox.unread).toBe(1);
+    expect(inbox.notices[0]?.readAt).toBeUndefined();
+
+    expect((await request("POST", "/inbox/unread", {})).status).toBe(400);
+    expect((await request("POST", "/inbox/unread", { noticeIds: [] })).status).toBe(400);
+  });
+
+  it("undoes a dismissal while it is recent, and refuses once the window has passed", async () => {
+    const first = notice("background:bg_1");
+    const second = notice("background:bg_2");
+    await request("POST", `/inbox/notices/${first.notificationId}/dismiss`);
+    await request("POST", `/inbox/notices/${second.notificationId}/dismiss`);
+
+    now = new Date(Date.parse(AT) + 10_000).toISOString();
+    expect((await request("POST", `/inbox/notices/${first.notificationId}/restore`)).body).toEqual({ restored: true });
+    expect((await readInboxOverHttp()).notices.map((item) => item.noticeId)).toEqual([first.notificationId]);
+
+    now = new Date(Date.parse(AT) + DISMISS_UNDO_WINDOW_MS + 1_000).toISOString();
+    const late = await request("POST", `/inbox/notices/${second.notificationId}/restore`);
+    expect(late.status).toBe(409);
+    expect((late.body as { code: string }).code).toBe("UNDO_EXPIRED");
+    expect((await request("GET", `/inbox/notices/${first.notificationId}/restore`)).status).toBe(405);
+  });
+
+  it("changes nothing that belongs to another principal", async () => {
+    const theirs = recordNotification(services.runtime.db, {
+      notificationId: "ntf_theirs",
+      principalId: "someone_else",
+      sourceKind: "background",
+      category: "result",
+      severity: "success",
+      title: "Not yours",
+      dedupKey: "background:theirs",
+      at: now as Instant,
+    });
+    markNotificationsRead(services.runtime.db, { principalId: "someone_else", at: now as Instant });
+
+    expect((await request("POST", "/inbox/unread", { noticeIds: [theirs.notificationId] })).body).toEqual({ marked: 0 });
+    expect((await request("POST", `/inbox/notices/${theirs.notificationId}/dismiss`)).status).toBe(404);
+    expect((await request("POST", `/inbox/notices/${theirs.notificationId}/restore`)).status).toBe(404);
+    expect(countUnreadNotifications(services.runtime.db, "someone_else")).toBe(0);
+    expect(listNotifications(services.runtime.db, "someone_else")).toHaveLength(1);
+  });
+
+  it("gives each notice the actions its subject and state allow, worked out when it is read", async () => {
+    const conversationId = await createConversation();
+    recordNodeNotice(services, {
+      sourceKind: "background",
+      category: "result",
+      severity: "success",
+      title: "Việc nền đã xong",
+      conversationId,
+      subject: { kind: "background-work", workId: "work_1", conversationId },
+      dedupKey: "background:work_1",
+      at: now as Instant,
+    });
+    recordNodeNotice(services, {
+      sourceKind: "worker",
+      category: "result",
+      severity: "error",
+      title: "Việc chạy nền không xong",
+      conversationId,
+      subject: { kind: "task", taskId: "task_gone", conversationId },
+      dedupKey: "worker:task_gone",
+      at: now as Instant,
+    });
+    recordNodeNotice(services, {
+      sourceKind: "package",
+      category: "update",
+      severity: "info",
+      title: "Có bản cập nhật: demo",
+      subject: { kind: "package", packageId: "demo", version: "2.0.0" },
+      dedupKey: "update:npm:demo@2.0.0",
+      at: now as Instant,
+    });
+    recordNodeNotice(services, {
+      sourceKind: "system",
+      category: "alert",
+      severity: "info",
+      title: "Câu hỏi đã hết hạn",
+      conversationId: "conv_deleted",
+      dedupKey: "expired:question_1",
+      at: now as Instant,
+    });
+
+    const byTitle = new Map((await readInboxOverHttp()).notices.map((item) => [item.title, item.actions]));
+    // Something that went well is something to go and look at.
+    expect(byTitle.get("Việc nền đã xong")).toEqual([
+      { id: "open", placement: "primary" },
+      { id: "ask-clark", placement: "secondary" },
+      { id: "add-to-context", placement: "menu" },
+      { id: "mark-read", placement: "menu" },
+      { id: "dismiss", placement: "menu" },
+    ]);
+    // Something that went wrong is something to act on; its task is gone, but its conversation still opens.
+    expect(byTitle.get("Việc chạy nền không xong")?.slice(0, 2)).toEqual([
+      { id: "ask-clark", placement: "primary" },
+      { id: "open", placement: "secondary" },
+    ]);
+    // An update belongs to no conversation, so there is nothing to open.
+    expect(byTitle.get("Có bản cập nhật: demo")).toEqual([
+      { id: "ask-clark", placement: "primary" },
+      { id: "dismiss", placement: "secondary" },
+      { id: "add-to-context", placement: "menu" },
+      { id: "mark-read", placement: "menu" },
+    ]);
+    // A notice whose conversation is gone says so instead of offering a button that fails.
+    expect(byTitle.get("Câu hỏi đã hết hạn")).toContainEqual({ id: "open", placement: "menu", unavailable: "conversation-gone" });
+    expect(byTitle.get("Câu hỏi đã hết hạn")?.[0]).toEqual({ id: "ask-clark", placement: "primary" });
   });
 
   it("answers a wrong method honestly rather than falling through to another family", async () => {

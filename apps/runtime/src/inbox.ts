@@ -16,6 +16,7 @@ import {
 
 import { listPendingCapabilityApprovals } from "./application/package-install.ts";
 import { QUESTION_TTL_MS, pendingForConversation } from "./interactions.ts";
+import { noticeActionsFor } from "./notice-actions.ts";
 import { interactionDepsFor } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
 
@@ -239,7 +240,10 @@ export function readInbox(services: InboxServices, now: Instant, limit = 50): In
   const principalId = services.runtime.identity.ownerPrincipalId;
   return {
     waiting: waitingItems(services, now),
-    notices: listNotifications(services.runtime.db, principalId, limit),
+    notices: listNotifications(services.runtime.db, principalId, limit).map((notice) => ({
+      ...notice,
+      actions: noticeActionsFor(services.runtime.db, notice),
+    })),
     unread: countUnreadNotifications(services.runtime.db, principalId),
     readAt: now,
   };

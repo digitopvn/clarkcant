@@ -6,7 +6,7 @@ import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { followsBottom } from "./follow-bottom.ts";
-import type { AppIntentDecision } from "@clarkcant/contracts";
+import type { AppIntentDecision, ComposerReference } from "@clarkcant/contracts";
 
 /** The node's own sentence for a refused send; the code in front of it belongs in a log, not the status line. */
 function sendFailure(cause: unknown): string {
@@ -22,7 +22,12 @@ export interface TurnSendState {
   pendingUser: { text: string } | undefined;
   /** The reply as it arrives, in the order the turn produces it. */
   live: LiveSegment[];
-  send: (text: string, options?: { demo?: boolean }) => Promise<void>;
+  /**
+   * Sends a message. With `references`, the message is a standalone one a surface composed — "Ask Clark" about a
+   * notice — carrying exactly those references and leaving the composer as it was: the draft, its chips and its
+   * references are the person's, and a message they did not write must not send or clear them.
+   */
+  send: (text: string, options?: SendOptions) => Promise<void>;
   /**
    * Stops the reply being written, answering whether one was running.
    *
@@ -41,6 +46,11 @@ export interface TurnSendState {
   restartSession: () => void;
   /** The scroll container, and the reader's own decision to follow the bottom or not. */
   scroller: React.RefObject<HTMLDivElement | null>;
+}
+
+export interface SendOptions {
+  demo?: boolean;
+  references?: readonly ComposerReference[];
 }
 
 export interface TurnSendDeps {
@@ -155,9 +165,12 @@ export function useTurnSend({
   }, []);
 
   const send = useCallback(
-    async (text: string, options: { demo?: boolean } = {}) => {
+    async (text: string, options: SendOptions = {}) => {
       const trimmed = text.trim();
       if (trimmed === "") return;
+      const standalone = options.references !== undefined;
+      // A surface's own message waits for the reply being written; only something the person typed can be a command.
+      if (busy && standalone) return;
       if (busy) {
         /*
          * A command typed while a reply is being written, "dừng lại" above all.
@@ -180,7 +193,7 @@ export function useTurnSend({
       setError(undefined);
       // Cleared here, after the guard above: a send refused for being empty or for arriving while
       // another turn is busy keeps its text. A send that fails later gets it back from `onSendFailed`.
-      clearDraft();
+      if (!standalone) clearDraft();
       // Drawn from here rather than from the node's answer: the user's own message is not in
       // doubt, and waiting for the round trip to show it makes the interface feel slower than it
       // is.
@@ -191,8 +204,8 @@ export function useTurnSend({
       beginHeroExit();
       const generation = sessionGeneration.current;
       try {
-        const attachmentIds = readyAttachmentIds(chips);
-        const references = liveReferences(trimmed, chosenReferences).map((entry) => entry.ref);
+        const attachmentIds = standalone ? [] : readyAttachmentIds(chips);
+        const references = options.references ?? liveReferences(trimmed, chosenReferences).map((entry) => entry.ref);
         const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
         // The user may have restarted while the conversation was being created or the model was
         // answering. Everything after this point belongs to the session they left.
@@ -232,16 +245,18 @@ export function useTurnSend({
               }
             },
           },
-          { ...options, attachmentIds, references },
+          { ...(options.demo === undefined ? {} : { demo: options.demo }), attachmentIds, references: [...references] },
         );
         // Cleared only after the send succeeded: a failed send leaves the chips stored on the node,
         // so the person can press send again rather than attaching the same file a second time.
-        dispatchChips({ type: "sent" });
-        onReferencesSent();
+        if (!standalone) {
+          dispatchChips({ type: "sent" });
+          onReferencesSent();
+        }
       } catch (cause) {
         if (sessionGeneration.current !== generation) return;
-        // The draft is restored so a failed send does not lose the user's text.
-        onSendFailed(trimmed);
+        // The draft is restored so a failed send does not lose the user's text. A standalone message was never in it.
+        if (!standalone) onSendFailed(trimmed);
         setPendingUser(undefined);
         setLive([]);
         setError(sendFailure(cause));

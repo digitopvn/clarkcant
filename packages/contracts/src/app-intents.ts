@@ -58,6 +58,7 @@ export const APP_INTENT_KINDS = [
   "model.cycle",
   "model.select",
   "inbox.open",
+  "inbox.ask",
   "turn.stop",
 ] as const;
 
@@ -247,6 +248,8 @@ function describeAppIntentVi(intent: AppIntent): string {
     }
     case "inbox.open":
       return "Tôi mở hộp thư nhé.";
+    case "inbox.ask":
+      return "Tôi xem thông báo mới nhất rồi nói cho bạn nó nghĩa là gì nhé.";
     case "turn.stop":
       return "Tôi dừng câu trả lời đang chạy nhé; phần đã viết vẫn được giữ lại.";
     default: {
@@ -300,6 +303,8 @@ function describeAppIntentEn(intent: AppIntent): string {
     }
     case "inbox.open":
       return "Opening your inbox.";
+    case "inbox.ask":
+      return "Looking at your latest notice and saying what it means.";
     case "turn.stop":
       return "Stopping the reply in progress; what it already wrote is kept.";
     default: {

@@ -320,6 +320,14 @@ body {
 .cc-inbox-notice-title { margin: 0; overflow-wrap: anywhere; }
 .cc-inbox-notice[data-unread="true"] .cc-inbox-notice-title { font-weight: 600; }
 .cc-inbox-notice-body { margin: 0; color: var(--cc-text-muted); font-size: var(--cc-text-body-sm); overflow-wrap: anywhere; }
+/* The outcome of an action, with "Undo" beside it after a dismissal. */
+.cc-inbox-status { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
+/* "More" opens in place under the row's buttons rather than as a floating menu: nothing to position, nothing to clip. */
+.cc-inbox-more { display: inline-flex; align-items: center; gap: var(--cc-space-xs); }
+.cc-inbox-more-caret { display: inline-block; transition: transform var(--cc-motion-micro) var(--cc-motion-easing); }
+.cc-inbox-more-caret[data-open="true"] { transform: rotate(180deg); }
+.cc-inbox-menu { flex-basis: 100%; display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
+.cc-inbox-menu[hidden] { display: none; }
 @media (max-width: 520px) {
   /* The count words go on a narrow header; the dot and the button stay, and the label keeps the count. */
   .cc-inbox-mark > span:last-child { max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
