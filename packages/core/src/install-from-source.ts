@@ -73,6 +73,13 @@ export interface InstallFromSourceInput {
    * the closure itself, so "no lock" stays visible instead of becoming "resolved at build time".
    */
   dependencyLock?: DependencyLockBinding;
+  /**
+   * The widget ids the package's manifest declares, read by the caller from the bytes it is installing.
+   *
+   * Recorded on the generation so uninstall can find those widgets' instances after the files are gone. Not part of
+   * the plan or its consent: it names what the package ships, not anything it is allowed to do.
+   */
+  widgetIds?: readonly string[];
 }
 
 export type InstallOutcome =
@@ -260,6 +267,7 @@ export function installFromSource(deps: InstallDeps, input: InstallFromSourceInp
     uiOnlyFacets: input.isolationPlan
       .filter((facet) => facet.isolation === "isolated-ui" || facet.isolation === "declarative")
       .map((facet) => facet.facetKind),
+    ...(input.widgetIds === undefined ? {} : { widgetIds: input.widgetIds }),
     nativeExtensionChanged: input.isolationPlan.some((facet) => facet.isolation === "trusted-native"),
     skillOrPromptChanged: input.isolationPlan.some((facet) => facet.facetKind === "skills" || facet.facetKind === "prompts"),
   });

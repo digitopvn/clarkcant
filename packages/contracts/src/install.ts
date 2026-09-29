@@ -191,6 +191,9 @@ export const networkOriginSchema = z
  */
 export const PACKAGE_MANIFEST_SCHEMA_VERSION = 2;
 
+/** The most facets one package manifest may declare. */
+export const MAX_PACKAGE_FACETS = 64;
+
 /**
  * The one manifest a ClarkCant package has, at its root as `clarkcant.json`.
  *
@@ -207,7 +210,7 @@ export const packageManifestSchema = z.strictObject({
   hostApi: z
     .strictObject({ min: z.int().nonnegative(), max: z.int().nonnegative() })
     .refine((range) => range.min <= range.max, { error: "hostApi.min must not exceed hostApi.max" }),
-  facets: z.array(facetDeclarationSchema).min(1).max(64),
+  facets: z.array(facetDeclarationSchema).min(1).max(MAX_PACKAGE_FACETS),
   /**
    * What the package would like to be allowed to do. These are requests.
    * The install record stores what was actually granted, which may be narrower.
@@ -740,6 +743,17 @@ export const packageGenerationSchema = z.strictObject({
    * a different requirement) to find out what was actually approved.
    */
   grantedCapabilities: z.array(capabilityRefSchema).max(128),
+  /**
+   * The ids of the widgets (`ui` facets) the package declared when this generation was installed.
+   *
+   * Uninstall and restore find a package's widget instances by these ids, and the package's files are not always on
+   * this node by then: a fetched copy can leave the cache, a local folder can move. Recording them here means the
+   * answer does not depend on reading those files again. Absent on a generation installed before this was kept.
+   *
+   * Up to two ids per facet: the facet's own id and, when its definition names a different one (which the reader
+   * reports but does not refuse), the definition's, since that is the id an instance records.
+   */
+  widgetIds: z.array(z.string().min(1).max(160)).max(MAX_PACKAGE_FACETS * 2).optional(),
 });
 export type PackageGeneration = z.infer<typeof packageGenerationSchema>;
 

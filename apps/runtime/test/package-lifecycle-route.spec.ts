@@ -232,6 +232,144 @@ describe("uninstalling and restoring a package", () => {
   });
 });
 
+describe("uninstalling a package whose widget this node cannot load", () => {
+  const lifecycleOf = (instanceId: string) =>
+    allRows<{ lifecycle: string }>(
+      services.runtime.db,
+      "SELECT lifecycle FROM widget_instances WHERE instance_id = ?",
+      instanceId,
+    )[0]?.lifecycle;
+
+  /** Overwrite the widget's definition in every listed version, so no version of the package loads it. */
+  function breakDefinition(contents: string): void {
+    for (const version of ["board-1", "board-2"]) writeFileSync(join(dir, version, "widgets", "main", "widget.json"), contents);
+  }
+
+  /** Uninstall, then restore, and check both reach the instance and count its kept state. */
+  async function uninstallAndRestore(instanceId: string): Promise<void> {
+    const before = lifecycleOf(instanceId);
+    expect(before).not.toBe("offline");
+
+    const uninstalled = await change("uninstall");
+    expect(uninstalled.status).toBe(200);
+    expect(uninstalled.body).toMatchObject({ instancesOffline: 1, statesKept: 1 });
+    expect(lifecycleOf(instanceId)).toBe("offline");
+
+    const restored = await change("restore");
+    expect(restored.status).toBe(200);
+    expect(restored.body).toMatchObject({ instancesRestored: 1, statesKept: 1 });
+    expect(lifecycleOf(instanceId)).toBe(before);
+  }
+
+  function instanceWithState(): string {
+    const instanceId = makeInstance();
+    initialiseState(services.conductor, { instanceId, body: { items: ["kept"] }, stateVersion: 1 });
+    return instanceId;
+  }
+
+  it("takes offline, and brings back, an instance whose definition file is not JSON", async () => {
+    recordInstall("2.0.0");
+    const instanceId = instanceWithState();
+    breakDefinition("{ not json");
+
+    await uninstallAndRestore(instanceId);
+  });
+
+  it("takes offline, and brings back, an instance whose definition fails the widget schema", async () => {
+    recordInstall("2.0.0");
+    const instanceId = instanceWithState();
+    const withoutFallback: Partial<WidgetDefinition> = definition("2.0.0");
+    delete withoutFallback.textFallback;
+    breakDefinition(JSON.stringify(withoutFallback));
+
+    await uninstallAndRestore(instanceId);
+  });
+
+  it("takes offline, and brings back, an instance whose definition was refused for a props pattern that could stall the node", async () => {
+    recordInstall("2.0.0");
+    const instanceId = instanceWithState();
+    breakDefinition(
+      JSON.stringify({
+        ...definition("2.0.0"),
+        propsSchema: { type: "object", properties: { text: { type: "string", pattern: "^(a+)+$" } } },
+      }),
+    );
+
+    await uninstallAndRestore(instanceId);
+  });
+
+  it("takes offline, and brings back, the instances of a package whose files are no longer on this node", async () => {
+    const installed = await send("POST", "/packages/install", {
+      packageId: PACKAGE,
+      version: "2.0.0",
+      localDigest: "sha256:board-2.0.0",
+    });
+    expect(installed.status).toBe(200);
+    const instanceId = instanceWithState();
+    // The directory still lists the package, so it can be restored, but nothing here can read its files.
+    rmSync(join(dir, "board-1"), { recursive: true, force: true });
+    rmSync(join(dir, "board-2"), { recursive: true, force: true });
+
+    await uninstallAndRestore(instanceId);
+  });
+
+  it("records every declared id at install, even when each definition names a different id than its facet", async () => {
+    // 33 facets whose definitions each carry their own id: 66 ids, more than one per facet.
+    const root = join(dir, "board-many");
+    const facets = Array.from({ length: 33 }, (_, index) => {
+      const name = `w${String(index)}`;
+      mkdirSync(join(root, "widgets", name), { recursive: true });
+      writeFileSync(join(root, "widgets", name, "index.html"), "<!doctype html><div id=root></div>\n");
+      writeFileSync(
+        join(root, "widgets", name, "widget.json"),
+        JSON.stringify({ ...definition("2.0.0"), id: `com.example.board.${name}.definition@1` }),
+      );
+      return {
+        kind: "widget",
+        id: `com.example.board.${name}@1`,
+        entry: `widgets/${name}/index.html`,
+        definition: `widgets/${name}/widget.json`,
+        isolation: "isolated-ui",
+      };
+    });
+    writeFileSync(
+      join(root, "clarkcant.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: PACKAGE,
+        version: "2.0.0",
+        displayName: "Board",
+        description: "A task board.",
+        hostApi: { min: 1, max: 1 },
+        facets,
+        requestedCapabilities: [],
+        permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
+        platforms: ["darwin-arm64", "linux-x64", "win32-x64", "web"],
+        publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
+      }),
+    );
+    writeFileSync(process.env["CC_DIRECTORY_INDEX"]!, JSON.stringify([entry("2.0.0", root)]));
+
+    const installed = await send("POST", "/packages/install", {
+      packageId: PACKAGE,
+      version: "2.0.0",
+      localDigest: "sha256:board-2.0.0",
+    });
+
+    expect(installed.status).toBe(200);
+    const recorded = allRows<{ document: string }>(
+      services.runtime.db,
+      "SELECT document FROM package_generations WHERE package_id = ? AND superseded_at IS NULL",
+      PACKAGE,
+    ).map((row) => (JSON.parse(row.document) as { widgetIds?: string[] }).widgetIds);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toHaveLength(66);
+    expect(recorded[0]).toEqual(
+      expect.arrayContaining(["com.example.board.w0@1", "com.example.board.w0.definition@1", "com.example.board.w32.definition@1"]),
+    );
+  });
+});
+
 describe("rolling back to the previous version", () => {
   it("serves the older version's code and reports which version a rollback would reach", async () => {
     recordInstall("1.0.0");

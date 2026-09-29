@@ -12,8 +12,10 @@ import type { InstallDeps } from "./install-lifecycle.ts";
  * history keeps showing its text alternative, and restoring the package brings the same instances back with the
  * same state. Deleting a widget's data is a different action with its own consequences, and none of these is it.
  *
- * The widget ids are the caller's to supply: an instance names its definition, not the package that shipped it, and
- * which definitions a package declares is read from the package on disk, which is the runtime's to read.
+ * An instance names its definition, not the package that shipped it, so the widget ids tie the two together. They
+ * come from two places, and both are used: the caller reads the ids the package declares from its files on disk,
+ * which is the runtime's to read, and each generation records the ids the package declared when it was installed,
+ * which still answer once those files are gone.
  */
 
 export type PackageLifecycleRefusal =
@@ -90,6 +92,27 @@ function instancesOf(deps: InstallDeps, widgetIds: readonly string[]): { instanc
     deps.nodeId,
     ...widgetIds,
   );
+}
+
+/**
+ * The caller's widget ids, plus every id any generation of this package on this node recorded at install.
+ *
+ * Every generation rather than the active one, for the same reason the caller reads every listed version: an instance
+ * created under 1.0 names what 1.0 declared. A generation installed before the ids were recorded adds nothing.
+ */
+function widgetIdsFor(deps: InstallDeps, packageId: string, fromFiles: readonly string[]): string[] {
+  const ids = new Set(fromFiles);
+  const rows = allRows<{ document: string }>(
+    deps.db,
+    "SELECT document FROM package_generations WHERE package_id = ? AND node_id = ?",
+    packageId,
+    deps.nodeId,
+  );
+  for (const row of rows) {
+    const generation = parseJson<Partial<PackageGeneration>>(row.document, "package_generations.document");
+    for (const id of generation.widgetIds ?? []) ids.add(id);
+  }
+  return [...ids];
 }
 
 function writeLifecycle(deps: InstallDeps, row: { instance_id: string; document: string }, lifecycle: string): void {
@@ -171,7 +194,8 @@ export function uninstallPackage(
     deps.db
       .prepare("UPDATE package_generations SET superseded_at = ? WHERE generation_id = ?")
       .run(deps.now(), current.generation_id);
-    const offline = takeOffline(deps, input.packageId, input.widgetIds);
+    const widgetIds = widgetIdsFor(deps, input.packageId, input.widgetIds);
+    const offline = takeOffline(deps, input.packageId, widgetIds);
     return {
       ok: true as const,
       packageId: input.packageId,
@@ -179,7 +203,7 @@ export function uninstallPackage(
       previousVersion: current.version,
       instancesOffline: offline,
       instancesRestored: 0,
-      statesKept: statesKept(deps, input.widgetIds),
+      statesKept: statesKept(deps, widgetIds),
     };
   });
 }
@@ -220,7 +244,8 @@ export function restorePackage(
       };
     }
     deps.db.prepare("UPDATE package_generations SET superseded_at = NULL WHERE generation_id = ?").run(target.generation_id);
-    const restored = bringBack(deps, input.packageId, input.widgetIds);
+    const widgetIds = widgetIdsFor(deps, input.packageId, input.widgetIds);
+    const restored = bringBack(deps, input.packageId, widgetIds);
     return {
       ok: true as const,
       packageId: input.packageId,
@@ -228,7 +253,7 @@ export function restorePackage(
       previousVersion: undefined,
       instancesOffline: 0,
       instancesRestored: restored,
-      statesKept: statesKept(deps, input.widgetIds),
+      statesKept: statesKept(deps, widgetIds),
     };
   });
 }

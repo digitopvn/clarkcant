@@ -1,4 +1,4 @@
-import type { FixtureDataset, PackageSource, WidgetDefinition, WidgetFixture } from "@clarkcant/contracts";
+import type { FixtureDataset, PackageManifest, PackageSource, WidgetDefinition, WidgetFixture } from "@clarkcant/contracts";
 
 import { readPackage } from "./widget-package.ts";
 
@@ -75,6 +75,24 @@ export function installedWidgets(input: {
     })),
     problems: pkg.problems,
   };
+}
+
+/**
+ * Every widget id a package at this path declares, whether or not its definition loads here.
+ *
+ * The library shows only the definitions it can read, but an instance names its definition by id, and uninstalling
+ * the package has to reach every instance of every widget it shipped — including one whose definition file is
+ * missing, is not JSON or fails the schema, which the library leaves out. So this reads the ids the manifest's `ui`
+ * facets declare, plus the id each loaded definition carries in case the two disagree (the reader reports that
+ * mismatch; an instance records the definition's). Empty when the manifest itself cannot be read.
+ */
+export function declaredWidgetIds(root: string): string[] {
+  const pkg = readPackage(root);
+  const ids = new Set<string>();
+  // An unreadable package comes back with an empty manifest object rather than none.
+  for (const facet of (pkg.manifest as Partial<PackageManifest>).facets ?? []) if (facet.kind === "ui") ids.add(facet.id);
+  for (const facet of pkg.facets) ids.add(facet.definition.id);
+  return [...ids];
 }
 
 /** Sorted by name so two reads of the same package agree on the order. */

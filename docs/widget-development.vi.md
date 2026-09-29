@@ -704,7 +704,9 @@ Nếu migration fail:
 - đưa recovery choice.
 
 Uninstall presentation facet không tự xóa domain data của user. Gỡ package chỉ thôi kích hoạt generation đang
-chạy: instance chuyển offline với text fallback, state và snapshot được giữ. **Khôi phục** kích hoạt lại đúng
+chạy: instance chuyển offline với text fallback, state và snapshot được giữ. Việc này áp dụng cho mọi widget mà manifest
+khai báo, kể cả widget có definition node này không nạp được và widget của package không còn file trên node: id lấy từ
+các facet `ui` của manifest và từ danh sách node ghi lại lúc cài package. **Khôi phục** kích hoạt lại đúng
 generation vừa gỡ; **Quay về** kích hoạt generation bị thay gần nhất. Cả ba đi qua cùng một action từ
 Settings, chat và voice.
 
