@@ -7,6 +7,7 @@ import { commandEnvelopeSchema, instantSchema, nodeIdSchema } from "@clarkcant/c
 import {
   acceptCommand,
   activeGrants,
+  assertMigrationListIsSane,
   appendMessage,
   messagesSince,
   checkRestoreCompatibility,
@@ -71,6 +72,28 @@ describe("migrations", () => {
     const versions = MIGRATIONS.map((migration) => migration.version);
     expect(versions).toEqual([...versions].sort((a, b) => a - b));
     expect(new Set(versions).size).toBe(versions.length);
+  });
+
+  it("refuses a list whose versions leave a gap, before touching the database", () => {
+    const step = (version: number): Migration => ({
+      version,
+      name: `step-${String(version)}`,
+      reversible: true,
+      up: (target) => target.exec(`CREATE TABLE step_${String(version)} (id TEXT PRIMARY KEY)`),
+    });
+    // The shipped list, and any prefix of it a test migrates to, is consecutive from its first version.
+    expect(() => assertMigrationListIsSane()).not.toThrow();
+    expect(() => assertMigrationListIsSane([step(3), step(4), step(5)])).not.toThrow();
+    // Only the highest version applied is recorded, so a missing number would be skipped for good once a database is
+    // past it: the list is refused whole instead.
+    expect(() => assertMigrationListIsSane([step(1), step(2), step(4)])).toThrow(
+      "migration 4 (step-4) leaves a gap; expected version 3",
+    );
+    const db = openDatabase({ path: ":memory:" });
+    expect(() => migrate(db, [step(1), step(3)])).toThrow(/leaves a gap/);
+    expect(currentSchemaVersion(db)).toBe(0);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'step_1'").get()).toBeUndefined();
+    closeDatabase(db);
   });
 });
 

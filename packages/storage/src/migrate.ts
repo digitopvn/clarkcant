@@ -1454,7 +1454,13 @@ export function currentSchemaVersion(db: Database): number {
   return Number(row?.user_version ?? 0);
 }
 
-/** Validate the migration list before touching a database. */
+/**
+ * Validate the migration list before touching a database.
+ *
+ * Versions must be unique, increasing and consecutive from the first one. `migrate()` records only the highest version
+ * applied, so a gap would let a lower-numbered migration merged later be skipped for good on every database already
+ * past it, without a word.
+ */
 export function assertMigrationListIsSane(
   migrations: readonly Migration[] = MIGRATIONS,
 ): void {
@@ -1467,6 +1473,11 @@ export function assertMigrationListIsSane(
     if (migration.version <= previous) {
       throw new Error(
         `migration ${migration.version} (${migration.name}) is out of order; expected a version greater than ${previous}`,
+      );
+    }
+    if (seen.size > 0 && migration.version !== previous + 1) {
+      throw new Error(
+        `migration ${migration.version} (${migration.name}) leaves a gap; expected version ${previous + 1}`,
       );
     }
     seen.add(migration.version);
