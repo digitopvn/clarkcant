@@ -171,6 +171,13 @@ What the registry reports is what the host observed, not what the manifest hoped
 
 - a tool the service lists but the manifest does not declare is never registered;
 - a declared tool the service does not list stays not loaded, and the reason says so;
+- a declared tool whose input schema has a `pattern` or `patternProperties` that could make a check take unbounded time
+  stays not loaded, its schema is not stored, and the reason names the pattern and where it is
+  (`apps/runtime/src/application/schema-patterns.ts`). Refused are a repetition whose body can match more than one way,
+  such as `(a+)+`; a repeated choice between options that start with the same character, such as `(a|ab)+`; two
+  unbounded repetitions in a row over the same characters, such as `\d+\d+`; a backreference; a quantifier inside a
+  lookahead or lookbehind; and a pattern longer than 512 characters. A value or key the schema checks against a pattern
+  may be at most 1,000 characters;
 - a service that stops is restarted with backoff and left stopped if it keeps crashing, and the reason says which;
 - a ref the node or another package already registered is left as it is and not served by this package, and the node's
   log says so;
