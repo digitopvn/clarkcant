@@ -418,11 +418,13 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     chưa có route ghi lại việc một người đã đối soát một effect `unknown`.
   - **Nhắc việc và automation đến hạn** (`apps/runtime/src/automation-service.ts`). Một lời nhắc đến hạn ghi một thông
     báo cho mỗi lần đến hạn (`automation:<runId>`; một run là duy nhất theo automation và tín hiệu, và tín hiệu của
-    timer là duy nhất theo từng mốc giờ), subject `conversation`. Một run đến hạn nhưng không chạy được ghi một thông
-    báo cùng khoá đó: bị từ chối trước khi có task (subject `conversation`), không bắt đầu được (trỏ về hội thoại của
-    automation khi automation còn tồn tại), hoặc đã bắt đầu (subject `task`). Một run đang chờ capability dùng khoá
-    riêng, `automation:<runId>:waiting` (subject `task`), để thông báo rằng nó bắt đầu sau đó không bị nuốt mất. Một run
-    có automation đã bị tạm dừng hoặc xoá sau khi khớp thì không nói gì: người dùng đã yêu cầu nó dừng.
+    timer là duy nhất theo từng mốc giờ), subject `conversation`, nên một lời nhắc không bao giờ bị tắt thông báo. Một
+    run đến hạn nhưng không chạy được ghi một thông báo cùng khoá đó: bị từ chối trước khi có task, không bắt đầu được,
+    hoặc đã bắt đầu. Một run đang chờ capability dùng khoá riêng, `automation:<runId>:waiting`, để thông báo rằng nó
+    bắt đầu sau đó không bị nuốt mất. Bốn thông báo này mang subject `automation` (id của automation, phần tóm tắt của
+    nó làm nhãn, hội thoại của nó, và task khi đã có), nên tắt thông báo một automation chỉ tắt đúng automation đó; một
+    run không bắt đầu được sau khi automation của nó đã bị xoá thì không có automation nào để nêu tên và không có phạm
+    vi. Một run có automation đã bị tạm dừng hoặc xoá sau khi khớp thì không nói gì: người dùng đã yêu cầu nó dừng.
   - **Kiểm tra cập nhật** (`apps/runtime/src/update-checks.ts`) là một job định kỳ, khởi động từ
     `bootstrap/runtime-bootstrap.ts` bằng timer `unref()` (không giữ tiến trình sống), dừng lại khi node đóng. So
     version gói/widget đã cài (`listInstalledPackages`, `packages/core`) với directory index hiện có

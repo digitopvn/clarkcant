@@ -410,11 +410,13 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     reconciliation of an `unknown` effect.
   - **Reminders and automations that come due** (`apps/runtime/src/automation-service.ts`). A reminder that comes due
     records one notice per occurrence (`automation:<runId>`; a run is unique per automation and signal, and a timer's
-    signal per slot), subject `conversation`. A run that came due but cannot run records one notice under the same
-    key: refused before a task exists (subject `conversation`), failed to start (pointing at the automation's
-    conversation when the automation still exists), or started (subject `task`). A run waiting for a capability uses
-    its own key, `automation:<runId>:waiting` (subject `task`), so the notice that it later started is not swallowed.
-    A run whose automation was paused or removed after it matched says nothing: the person asked it to stop.
+    signal per slot), subject `conversation`, so a reminder can never be quieted. A run that came due but cannot run
+    records one notice under the same key: refused before a task exists, failed to start, or started. A run waiting
+    for a capability uses its own key, `automation:<runId>:waiting`, so the notice that it later started is not
+    swallowed. These four carry the subject `automation` (the automation's id, its summary as the label, its
+    conversation, and the task once one exists), so quieting one automation quiets only that one; a run that failed
+    to start after its automation was removed has no automation to name and stays unscoped. A run whose automation
+    was paused or removed after it matched says nothing: the person asked it to stop.
   - **Update checks** (`apps/runtime/src/update-checks.ts`) are a periodic job, started from
     `bootstrap/runtime-bootstrap.ts` on an `unref()` timer (it does not keep the process alive) and stopped when the
     node closes. It compares the version of installed packages/widgets (`listInstalledPackages`, `packages/core`)

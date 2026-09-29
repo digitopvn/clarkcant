@@ -110,6 +110,17 @@ function clean(text: string, max: number): string {
 }
 
 /**
+ * A subject's `label` is text a person reads in the list of quieted kinds, taken from what they typed (an automation's
+ * summary) or from outside (a repository name), so it goes through the same door as the title. Bounded rather than
+ * refused: an automation summary may run longer than a label, and refusing it would lose the notice, not just the label.
+ */
+function cleanSubjectLabel(subject: NoticeSubject): NoticeSubject {
+  if (subject.kind !== "automation" && subject.kind !== "signal-source") return subject;
+  const label = clean(subject.label, NOTICE_TITLE_MAX);
+  return { ...subject, label: label === "" ? "(không có tên)" : label };
+}
+
+/**
  * Write a notice, unless this producer already wrote this one.
  *
  * Idempotent on `(principalId, dedupKey)`: a second delivery of the same event — a resend, a retry, a check that
@@ -146,7 +157,7 @@ export function recordNotification(
     if (existing !== undefined) return { notificationId: existing.notification_id, created: false, suppressed: false };
 
     // Parsed before the suppression lookup reads it, so a subject of an unknown kind is refused before anything else.
-    const subject = input.subject === undefined ? undefined : noticeSubjectSchema.parse(input.subject);
+    const subject = input.subject === undefined ? undefined : noticeSubjectSchema.parse(cleanSubjectLabel(input.subject));
     // A kind the person asked not to be notified about is still written down — the record is not theirs to lose by
     // muting it — but read already, which is what keeps it out of the count and out of any notification. A kind too
     // wide to quiet never matches, whatever is stored.

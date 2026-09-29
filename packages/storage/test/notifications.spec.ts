@@ -512,5 +512,23 @@ describe("quieting a kind of notice", () => {
       const remoteWork = record({ originNodeId: "node_b" }).notificationId;
       expect(quiet(remoteWork, "nsp_w").scope).toBe("peer:node_b");
     });
+
+    it("bounds and redacts a label rather than losing the notice for it", () => {
+      // An automation's summary may be longer than a label, and a label is shown as-is in the list of quieted kinds.
+      // Ordinary words, so the length is what bounds it: one unbroken run of 32+ letters is secret-shaped and redacted.
+      const long = `Dọn   repo\n${"và sửa lỗi ".repeat(30)}`;
+      const { notificationId, created } = record({ ...warning, subject: automation("int_long", long) });
+      expect(created).toBe(true);
+      const subject = getNotification(db, "owner_1", notificationId)?.notice.subject;
+      const label = subject?.kind === "automation" ? subject.label : "";
+      expect(label.length).toBe(120);
+      expect(label.startsWith("Dọn repo và sửa lỗi")).toBe(true);
+      expect(label.endsWith("…")).toBe(true);
+      expect(quiet(notificationId, "nsp_long").scopeLabel).toBe(label);
+
+      const secret = record({ ...warning, subject: repository(`acme/x ghp_${"b".repeat(36)}`) }).notificationId;
+      const stored = getNotification(db, "owner_1", secret)?.notice.subject;
+      expect(stored?.kind === "signal-source" ? stored.label : "").toBe("acme/x [redacted]");
+    });
   });
 });
