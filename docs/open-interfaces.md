@@ -219,19 +219,28 @@ makes an earlier reference stale.
 The inbox routes are reachable with the same token but are **not** in `/openapi.json` yet and may change: `GET /inbox`
 (what waits on the person, the notices, the notices snoozed for later and the kinds quieted), `GET /inbox/summary`,
 `POST /inbox/read` and `/inbox/unread`, per notice `POST /inbox/notices/:id/<action>` where the action is `dismiss`,
-`restore`, `snooze`, `unsnooze`, `suppress` or `unsuppress`, and `DELETE /inbox/suppressions/:id`. `snooze` takes `{ "until": "<ISO instant>" }`, ahead of
+`restore`, `snooze`, `unsnooze`, `suppress`, `unsuppress`, `skip-version` or `unskip-version`, and
+`DELETE /inbox/suppressions/:id`. `snooze` takes `{ "until": "<ISO instant>" }`, ahead of
 now and at most 30 days away (else `400 SNOOZE_OUT_OF_RANGE`); the notice leaves the list and the unread count and comes
 back unread once that time has passed; `unsnooze` returns it at once, read or unread as it was before. `suppress` quiets
 the notice's kind for this principal: later notices of that kind are still listed but arrive read and raise no
 notification. Only a narrow kind can be quieted, one tied to an automation, a signal source, a package, a node, or a
 person's own background work; any other kind would also silence reminders and every other automation's notices, so
-the route refuses it with `409 SUPPRESSION_TOO_BROAD` and the notice's `actions` never offer it. Each route acts only on the calling principal's own
-notices. `POST /effects/:effectId/reconcile` with `{ "outcome": "confirmed" | "failed", "source"?: "click" | "chat" |
-"voice" }` records what the person saw of an action whose outcome was unknown, the answer an unknown-outcome notice
-offers as its two buttons: `404 RESOURCE_NOT_FOUND` for an effect of another principal's task, of another node, or none
-at all, `409 EFFECT_NOT_UNKNOWN` once it is no longer unknown; it is person-only, as below. `source` is a label the
-caller supplies for where the answer was given and is stored as given, not provenance; who answered is the
-authenticated principal. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
+the route refuses it with `409 SUPPRESSION_TOO_BROAD` and the notice's `actions` never offer it. `skip-version`
+stops update notices for the version the stored notice names, and anything older, for this principal, and dismisses
+the notice; any body is ignored, a notice that names no version answers `409 NOT_AN_UPDATE`, and `unskip-version`
+undoes it. Each route acts only on the calling principal's own notices. `POST /effects/:effectId/reconcile` with
+`{ "outcome": "confirmed" | "failed", "source"?: "click" | "chat" | "voice" }` records what the person saw of an action
+whose outcome was unknown, the answer an unknown-outcome notice offers as its two buttons: `404 RESOURCE_NOT_FOUND` for
+an effect of another principal's task, of another node, or none at all, `409 EFFECT_NOT_UNKNOWN` once it is no longer
+unknown; it is person-only, as below. `source` is a label the caller supplies for where the answer was given and is
+stored as given, not provenance; who answered is the authenticated principal. A notice's `actions` (at most 12) may
+also offer operations on the thing itself, each backed by a route: `retry` is `POST /work/:id/retry` (runs failed,
+stopped or interrupted background work again as new work in the same conversation, once), `ask-again` is
+`POST /conversations/:id/questions/:questionId/ask-again` (asks an expired question again as a new one), `update` is
+the ordinary `POST /packages/install` with the version the notice names, and `review-update` opens Settings. An action
+listed with `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) says why it cannot be
+taken now. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
 [system-architecture.md](system-architecture.md) under the inbox.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet

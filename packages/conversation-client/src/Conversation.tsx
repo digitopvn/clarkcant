@@ -582,6 +582,7 @@ export function Conversation({
         onAskClark={noticeActions.askClark}
         onAddToContext={noticeActions.addToContext}
         onReconcile={(effectId, outcome) => noticeActions.reconcile(effectId, outcome, "click")}
+        onOpenSettings={appIntents.openSettings}
       />
 
       {/* The Widget Library, beside the conversation rather than in place of it. */}

@@ -483,13 +483,18 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     `background-work`, `conversation`, `package`, `pi-update`, `peer`; later `automation` — one standing request by
     intent id, with its summary as `label` and the task a run started, if any, whose conversation "Open" follows as for
     a `task` subject — and `signal-source` — one polled or listening source by `sourceKey`, such as one GitHub
-    repository, with a `label`); a subject of an unknown kind is refused before
+    repository, with a `label` — and `question`, a question Clark asked that expired, by `questionId` and
+    `conversationId`; a `package` subject may also carry the `version` an update names and its `source` (`npm`, `git`,
+    `local`)); a subject of an unknown kind is refused before
     anything is written, and one stored by a later version that this node cannot read is dropped on read rather than
     failing the list. The actions a notice offers are **not stored**: `apps/runtime/src/notice-actions.ts`
     (`noticeActionsFor`) works them out on every read from the subject and the current state — the conversation a task
     now belongs to, whether that conversation still exists — from a closed list the host implements (`open`,
     `ask-clark`, `add-to-context`, `mark-read`/`mark-unread`, `dismiss`, `snooze`/`unsnooze`,
-    `suppress`/`unsuppress`), each placed `primary`, `secondary` or `menu`. A producer never contributes an action.
+    `suppress`/`unsuppress`, and the operations below: `retry`, `update`, `review-update`, `skip-version`,
+    `ask-again`), each placed `primary`, `secondary` or `menu`, at most 12 per notice. An action that cannot be taken
+    now may be listed under "More" with an `unavailable` reason (`conversation-gone`, `work-gone`, `package-gone`,
+    `already-current`) rather than offered. A producer never contributes an action.
     "Ask Clark" and "Add to context" carry the notice as a `notice` composer reference; `composer-references.ts`
     re-reads it for the owner and quotes its text in the turn brief as data.
   - **Snooze** (#196, migration 33: `notifications.snoozed_until`). The client offers four presets worked out on the
@@ -526,6 +531,39 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     repository, package or node, or every notice of a source, and at which level — with one example title. It is
     reversed from that list, from the notice's menu (`unsuppress`), or with Undo right after.
 
+  - **Operations** (#196, migration 35: `work_runs.retried_as`, `skipped_versions`). An operation on the subject
+    leads, ahead of the usual "Open"/"Ask Clark" pair, only while the node can still carry it out:
+    - `retry` on a `background-work` notice whose run is background work that `failed`, was `stopped` or was
+      `interrupted`, still has its request text, and has not been retried. `POST /work/:id/retry` claims the run
+      atomically (`claimWorkRunRetry` sets `retried_as` only while it is empty), starts the same request as new
+      background work in the same conversation, appends a host reply there, and dismisses the old notice by its
+      `dedupKey`. If the new work cannot start (`429 BACKGROUND_BUSY`, `409 BACKGROUND_UNAVAILABLE`) the claim is
+      released. Other refusals: `404 WORK_NOT_FOUND`, `409 WORK_NOT_RETRYABLE` (a command, a run still going, a
+      success, a run with no request text), `409 ALREADY_RETRIED`, `409 CONVERSATION_GONE`. Background work is
+      read-only with no project root, so this needs no approval. Worker tasks are not retried: `failed` is terminal
+      in the task state machine, the capability a task ran is not stored, the effect ledger of what it already did
+      must be respected, and a delegated task belongs to its peer.
+    - `update` and `review-update` on a `package` update notice while the package is installed below the
+      notice's `version`; only `review-update` for a `local` source, since installing from a folder needs its
+      digest. "Update" calls the ordinary `POST /packages/install` with the notice's version, so every install check
+      applies. "Review" opens Settings → Extensions. Updated or removed since, the notice lists `update` as
+      `already-current` or `package-gone`.
+    - `skip-version` (menu) on a `package` or `pi-update` update notice. `POST /inbox/notices/:id/skip-version`
+      reads the version from the stored subject — the body is ignored — writes a `skipped_versions` row for this
+      principal, and dismisses the notice; `unskip-version` deletes the row and restores the notice. `checkForUpdates`
+      reports nothing at or below a skipped version, and still reports anything newer. `409 NOT_AN_UPDATE` for a
+      notice that names no version.
+    - `ask-again` on a `question` notice (written by the expiry sweep) while the question is expired, not asked again,
+      and its conversation exists. `POST /conversations/:id/questions/:qid/ask-again` creates a new question with the
+      same prompt and options, records `decision: "asked-again"` (with `askedAs`) on the old one, and dismisses the
+      notice. Refusals: `404 QUESTION_NOT_FOUND`, `409 QUESTION_OPEN`, `409 QUESTION_CLOSED`,
+      `409 ALREADY_ASKED_AGAIN`. The client reads each question's last record to label a closed card as answered,
+      cancelled, expired or asked again.
+    - Not implemented: asking again for an expired approval (a task approval that expired has settled its task;
+      re-issuing a command approval would bypass Jev), replying to or navigating to a peer's message (there is no peer
+      message channel and peer notices carry no message id), and system-warning inspect/remediation (no surface lists
+      paired nodes' delivery state and there is no retry-now route).
+
 Routes: `GET /inbox`, `GET /inbox/summary` (two numbers for the header badge), `POST /inbox/read` (`noticeIds` or all),
 `POST /inbox/unread` (`noticeIds`, required and non-empty; only this principal's undismissed notices),
 `POST /inbox/notices/:id/dismiss`, `POST /inbox/notices/:id/restore` (undoes a dismissal within five minutes —
@@ -533,11 +571,13 @@ Routes: `GET /inbox`, `GET /inbox/summary` (two numbers for the header badge), `
 `POST /inbox/notices/:id/snooze` (`{ until }`; `400 SNOOZE_OUT_OF_RANGE` when not ahead of now or beyond 30 days),
 `POST /inbox/notices/:id/unsnooze`, `POST /inbox/notices/:id/suppress` (answers the `suppression`; idempotent;
 `409 SUPPRESSION_TOO_BROAD` for a kind too wide to quiet),
-`POST /inbox/notices/:id/unsuppress` and `DELETE /inbox/suppressions/:id`. `POST /effects/:effectId/reconcile` (`{ outcome: "confirmed" | "failed" }`) records the answer an unknown-outcome
-notice offers (`409 EFFECT_NOT_UNKNOWN` once answered) and is person-only. It settles the task in the same write unless
-a run of it has yet to report (`TaskDispatcher.reportPending`), whose own settlement then finishes it. A sentence
-answering one (`effect.confirmed` / `effect.failed`) never records it alone: spoken, it is asked back and a spoken yes
-spends a confirmation token; typed, it opens the inbox on the notice's buttons. All of them act only on this principal's
+`POST /inbox/notices/:id/unsuppress`, `POST /inbox/notices/:id/skip-version` and `/unskip-version`, and
+`DELETE /inbox/suppressions/:id`. `POST /effects/:effectId/reconcile` (`{ outcome: "confirmed" | "failed" }`) records
+the answer an unknown-outcome notice offers (`409 EFFECT_NOT_UNKNOWN` once answered) and is person-only. It settles the
+task in the same write unless a run of it has yet to report (`TaskDispatcher.reportPending`), whose own settlement then
+finishes it. A sentence answering one (`effect.confirmed` / `effect.failed`) never records it alone: spoken, it is asked
+back and a spoken yes spends a confirmation token; typed, it opens the inbox on the notice's buttons. All of them act
+only on this principal's
 notices and suppressions; another principal's id answers 404. These routes are not part of the stable
 open-interface description. The contract is in `packages/contracts/src/inbox.ts`. UI in
 DESIGN.md §6.7; opened with the `inbox.open` intent (text, voice, `control_app`), and `inbox.ask` asks Clark about the

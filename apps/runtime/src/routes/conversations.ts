@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 
 import {
@@ -48,15 +49,19 @@ import {
   type Database,
   appendAuditEvent,
   appendMessage,
+  claimWorkRunRetry,
   createConversation,
+  dismissNotificationByKey,
   findBundleForSnapshot,
   findCompositionByInstance,
   getConversation,
+  getWorkRun,
   latestMessages,
   listConversations,
   nextMessageSequence,
   oneRow,
   recordWidgetProposal,
+  releaseWorkRunRetry,
   touchWidgetSemantic,
 } from "@clarkcant/storage";
 
@@ -67,13 +72,14 @@ import { bindingAvailability } from "../application/action-bindings.ts";
 import { invokeWidgetAction } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
 import { resolveComposerReferences } from "../composer-references.ts";
-import { type InteractionDeps, answerQuestion, cancelQuestion } from "../interactions.ts";
+import { type InteractionDeps, answerQuestion, askQuestionAgain, cancelQuestion } from "../interactions.ts";
 import { resolveLiveSections } from "../mini-app-data.ts";
 import { WorkAbort, nodeWork } from "../work-supervisor.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "../jev-decider.ts";
 import { type OwnedResources, ownedResources } from "../preflight.ts";
 import { markProjectUsed, projectContext, resolveProject } from "../project-finder.ts";
 import { initialPrompt } from "../project-session.ts";
+import { retryableBackgroundRun } from "../notice-actions.ts";
 import { tryRecordNodeNotice } from "../notices.ts";
 import { receiptForModel, runApprovedCommand } from "../run-command.ts";
 import {
@@ -678,6 +684,79 @@ export function startBackgroundWork(
   };
 }
 
+export type RetryBackgroundOutcome =
+  | { ok: true; workId: string; retriedFrom: string; state: "running" | "queued"; position?: number }
+  | {
+      ok: false;
+      status: 404 | 409 | 429;
+      code: "WORK_NOT_FOUND" | "WORK_NOT_RETRYABLE" | "ALREADY_RETRIED" | "CONVERSATION_GONE" | "BACKGROUND_BUSY" | "BACKGROUND_UNAVAILABLE";
+      message: string;
+    };
+
+/**
+ * Run a background request again, from its notice's "Try again": the same words, in the same conversation, as a new
+ * piece of work with an id of its own.
+ *
+ * Only a background run that ended without a result — failed, stopped or cut off by a restart — and whose words were
+ * kept. A background worker has read-only tools and no project root (`work-supervisor.ts`), so running it again changes
+ * nothing outside this node, which is why no approval is asked: this is the person asking for the same thing again.
+ * Once per run: the run is claimed before the new one starts (`claimWorkRunRetry`), so a second press or a second
+ * surface is told it was already done, and a claim whose run the node refused (busy) is given back. The old run's
+ * notice is dismissed, because the new run reports for itself.
+ */
+export function retryBackgroundWork(
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl">,
+  principal: Principal,
+  at: () => Instant,
+  workId: string,
+): RetryBackgroundOutcome {
+  const { db } = services.runtime;
+  const run = getWorkRun(db, workId);
+  if (run === undefined) {
+    return { ok: false, status: 404, code: "WORK_NOT_FOUND", message: "Không còn bản ghi của việc này trên node, nên không chạy lại được." };
+  }
+  if (!retryableBackgroundRun(run) || run.requestText === undefined || run.conversationId === undefined) {
+    return {
+      ok: false,
+      status: 409,
+      code: "WORK_NOT_RETRYABLE",
+      message: "Chỉ chạy lại được việc nền đã dừng hoặc không xong; việc này đã xong, còn đang chạy, hoặc không phải việc nền.",
+    };
+  }
+  if (run.retriedAs !== undefined) {
+    return { ok: false, status: 409, code: "ALREADY_RETRIED", message: "Việc này đã được chạy lại rồi." };
+  }
+  const conversationId = run.conversationId;
+  if (getConversation(db, conversationId) === undefined) {
+    return { ok: false, status: 409, code: "CONVERSATION_GONE", message: "Hội thoại của việc này đã bị xoá, nên không chạy lại được." };
+  }
+  // The same shape the supervisor gives a new run.
+  const retryWorkId = `bg-${randomBytes(6).toString("hex")}`;
+  if (!claimWorkRunRetry(db, workId, retryWorkId)) {
+    return { ok: false, status: 409, code: "ALREADY_RETRIED", message: "Việc này đã được chạy lại rồi." };
+  }
+  const started = startBackgroundWork(services, principal, at, conversationId, run.requestText, { workId: retryWorkId });
+  if ("refusal" in started) {
+    releaseWorkRunRetry(db, workId, retryWorkId);
+    return started.busy === true
+      ? { ok: false, status: 429, code: "BACKGROUND_BUSY", message: started.refusal }
+      : { ok: false, status: 409, code: "BACKGROUND_UNAVAILABLE", message: started.refusal };
+  }
+  appendHostReply(services, {
+    conversationId,
+    text: `Đang chạy lại việc nền “${run.title}”; kết quả sẽ báo ở đây.`,
+    at: at(),
+  });
+  dismissNotificationByKey(db, { principalId: services.runtime.identity.ownerPrincipalId, dedupKey: `background:${workId}`, at: at() });
+  return {
+    ok: true,
+    workId: started.sessionId,
+    retriedFrom: workId,
+    state: started.state,
+    ...(started.position === undefined ? {} : { position: started.position }),
+  };
+}
+
 /** What the conversation is told when a background run ends without an answer, or nothing when the next boot says it. */
 function backgroundEndingReply(signal: AbortSignal, cause: unknown, title: string): string | undefined {
   const reason: unknown = signal.aborted ? signal.reason : undefined;
@@ -1127,6 +1206,33 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     const cancelled = cancelQuestion(interactionDepsFor(services, conversationId), questionId);
     if (!cancelled) return fail(404, "RESOURCE_NOT_FOUND", "that question is not waiting in this conversation");
     return json(200, { ok: true, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+  }
+
+  /*
+   * /conversations/:id/questions/:questionId/ask-again
+   *
+   * A question that expired with nobody answering, put back as a new question with the same words and choices. Refused
+   * while it is still open, once it was answered or dropped, and once it was already asked again (`askQuestionAgain`).
+   * The notice that said it expired is dismissed: the new card is now the thing waiting.
+   */
+  if (segments.length === 5 && segments[2] === "questions" && segments[4] === "ask-again" && request.method === "POST") {
+    const questionId = segments[3];
+    if (questionId === undefined) return fail(400, "INVALID_SCHEMA", "asking again needs the question it repeats");
+    const asked = askQuestionAgain(interactionDepsFor(services, conversationId), questionId);
+    if (!asked.ok) {
+      const status = asked.code === "QUESTION_NOT_FOUND" ? 404 : asked.code === "INVALID_QUESTION" || asked.code === "SECRET_REQUEST" ? 422 : 409;
+      return fail(status, asked.code, asked.message);
+    }
+    dismissNotificationByKey(services.runtime.db, {
+      principalId: services.runtime.identity.ownerPrincipalId,
+      dedupKey: `expired:${questionId}`,
+      at: at() as never,
+    });
+    return json(200, {
+      ok: true,
+      questionId: asked.questionId,
+      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    });
   }
 
 

@@ -671,6 +671,8 @@ describe("notices", () => {
       { id: "mark-read", placement: "menu" },
       { id: "snooze", placement: "menu" },
       { id: "suppress", placement: "menu" },
+      // It names a version of a package this node does not run, so there is nothing to update.
+      { id: "update", placement: "menu", unavailable: "package-gone" },
     ]);
     // A notice whose conversation is gone says so instead of offering a button that fails.
     expect(byTitle.get("Câu hỏi đã hết hạn")).toContainEqual({ id: "open", placement: "menu", unavailable: "conversation-gone" });

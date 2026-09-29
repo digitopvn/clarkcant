@@ -220,20 +220,30 @@ chỉ mang trạng thái (đang chạy, đang lỗi, chưa chạy), không bao g
 Các route hộp thư gọi được với cùng token nhưng **chưa** có trong `/openapi.json` và có thể thay đổi: `GET /inbox`
 (những gì đang chờ người dùng, các thông báo, các thông báo đang hoãn và các loại đang tắt báo), `GET /inbox/summary`,
 `POST /inbox/read` và `/inbox/unread`, với từng thông báo là `POST /inbox/notices/:id/<action>` trong đó action là
-`dismiss`, `restore`, `snooze`, `unsnooze`, `suppress` hoặc `unsuppress`, và `DELETE /inbox/suppressions/:id`.
+`dismiss`, `restore`, `snooze`, `unsnooze`, `suppress`, `unsuppress`, `skip-version` hoặc `unskip-version`, và
+`DELETE /inbox/suppressions/:id`.
 `snooze` nhận `{ "until": "<ISO instant>" }`, nằm sau hiện tại và không xa quá 30 ngày (nếu không thì
 `400 SNOOZE_OUT_OF_RANGE`); thông báo rời khỏi danh sách và số chưa đọc, rồi quay lại ở trạng thái chưa đọc khi đã qua
 thời điểm đó; `unsnooze` đưa nó trở lại ngay, đã đọc hay chưa đọc như trước khi hoãn. `suppress` tắt báo loại của thông
 báo cho principal này: các thông báo cùng loại về sau vẫn được liệt kê nhưng đến ở trạng thái đã đọc và không hiện thông
 báo. Chỉ loại đủ hẹp mới tắt báo được, tức loại gắn với một việc tự động, một nguồn tín hiệu, một gói, một node, hoặc
 việc nền của chính người dùng; loại khác sẽ tắt luôn cả lời nhắc và thông báo của mọi việc tự động khác, nên route từ
-chối bằng `409 SUPPRESSION_TOO_BROAD` và `actions` của thông báo không bao giờ đưa ra thao tác này. Mỗi route chỉ tác động lên thông báo của chính principal gọi nó.
+chối bằng `409 SUPPRESSION_TOO_BROAD` và `actions` của thông báo không bao giờ đưa ra thao tác này. `skip-version`
+ngừng báo cập nhật cho principal này về phiên bản mà thông báo đã lưu nêu, và mọi bản cũ hơn, rồi bỏ thông báo; body
+nào gửi kèm cũng bị bỏ qua, thông báo không nêu phiên bản thì trả `409 NOT_AN_UPDATE`, và `unskip-version` hoàn tác
+việc đó. Mỗi route chỉ tác động lên thông báo của chính principal gọi nó.
 `POST /effects/:effectId/reconcile` với `{ "outcome": "confirmed" | "failed", "source"?: "click" | "chat" | "voice" }`
 ghi nhận điều người dùng thấy về một thao tác chưa rõ kết quả, tức câu trả lời mà thông báo chưa rõ kết quả đưa ra
 thành hai nút: `404 RESOURCE_NOT_FOUND` với effect thuộc task của principal khác, của node khác, hoặc không tồn tại,
 `409 EFFECT_NOT_UNKNOWN` khi nó không còn ở trạng thái chưa rõ; route này chỉ dành cho người dùng, như bên dưới.
 `source` là nhãn do bên gọi gửi để cho biết câu trả lời được đưa ra ở đâu và được lưu đúng như vậy, không phải
-nguồn gốc đã xác minh; ai trả lời là principal đã xác thực. Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
+nguồn gốc đã xác minh; ai trả lời là principal đã xác thực. `actions` của một thông báo (tối đa 12) cũng có thể đưa
+ra thao tác trên chính thứ được nói tới, mỗi thao tác có route thật phía sau: `retry` là `POST /work/:id/retry` (chạy
+lại một lần việc nền bị lỗi, bị dừng hoặc bị gián đoạn thành việc mới trong cùng hội thoại), `ask-again` là
+`POST /conversations/:id/questions/:questionId/ask-again` (hỏi lại một câu hỏi đã hết hạn thành câu hỏi mới),
+`update` là `POST /packages/install` thông thường với phiên bản mà thông báo nêu, và `review-update` mở Cài đặt. Thao
+tác được liệt kê kèm `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) nói rõ vì
+sao lúc này không làm được. Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
 [system-architecture.vi.md](system-architecture.vi.md) ở phần hộp thư.
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và

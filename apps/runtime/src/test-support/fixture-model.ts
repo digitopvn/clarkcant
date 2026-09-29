@@ -1,5 +1,6 @@
-import { type CapabilityRef, type Instant, type MessageBlock, advanceEffect, instantSchema } from "@clarkcant/contracts";
+import { type CapabilityRef, type Instant, type MessageBlock, advanceEffect, instantSchema, platformForHost } from "@clarkcant/contracts";
 import {
+  HOST_API_VERSION,
   type ConductorDeps,
   type ConductorEmit,
   type CoordinationDeps,
@@ -12,6 +13,7 @@ import {
   modelReplyCard,
   prepareEffect,
   requestApproval,
+  listInstalledPackages,
   saveActionBinding,
   setPreference,
 } from "@clarkcant/core";
@@ -29,7 +31,9 @@ import { blobsDir, readBlob } from "../blobs.ts";
 import { composeMiniApp } from "../compose-mini-app.ts";
 import { sweepUnknownEffects } from "../effect-notices.ts";
 import { referenceBrief, referencesForLastUserMessage } from "../composer-references.ts";
-import { type InteractionDeps } from "../interactions.ts";
+import { QUESTION_TTL_MS, type InteractionDeps, createQuestion } from "../interactions.ts";
+import { sweepExpired } from "../expiry-notices.ts";
+import { checkForUpdates } from "../update-checks.ts";
 import { type ModelTurn, createModelTurn } from "../model-turn.ts";
 import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
 import { createAutomationTools } from "../automation-tools.ts";
@@ -82,7 +86,17 @@ export interface FixtureModelDeps {
   /** The node this fixture stands in for, read when a turn asks rather than when the composer is built. */
   services: () => Pick<
     NodeServices,
-    "runtime" | "conductor" | "controlSessions" | "terminals" | "hostControl" | "serviceHost" | "automation" | "projects" | "skills"
+    | "runtime"
+    | "conductor"
+    | "controlSessions"
+    | "terminals"
+    | "hostControl"
+    | "serviceHost"
+    | "automation"
+    | "projects"
+    | "skills"
+    | "search"
+    | "peerDelivery"
   >;
   dataDir: string;
   wiring: FixtureModelWiring;
@@ -397,6 +411,72 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       // SAFETY: the card was built against the credential-card schema in contracts; the adapter's shape is loose
       // because it must not depend on contracts, and the node validates blocks before they reach a transcript.
       return { text: answer.text, block: answer.hostCard as unknown as MessageBlock };
+    }
+
+    /*
+     * A question nobody answered in time, for the inbox's "Ask again".
+     *
+     * A question waits fifteen minutes, which no browser test should. The card is written through the same manager a
+     * turn uses, with the clock it was asked at set back past that deadline, and then the node's own expiry sweep runs
+     * once instead of on its next minute: the notice the inbox shows is the one the sweep writes, naming the question.
+     */
+    if (/để một câu hỏi hết hạn/i.test(input.text)) {
+      const interactions = deps.wiring.interactions(input.conversationId);
+      if (interactions === undefined) return undefined;
+      const askedAt = instantSchema.parse(new Date(Date.now() - QUESTION_TTL_MS - 60_000).toISOString());
+      const asked = createQuestion(
+        { ...interactions, now: () => askedAt },
+        {
+          question: "Chọn khu vực máy chủ cho bản thử.",
+          kind: "single-choice",
+          options: [
+            { id: "sg", label: "Singapore" },
+            { id: "hn", label: "Hà Nội" },
+          ],
+        },
+      );
+      const reply = asked.ok ? "Fixture: tui đã hỏi một câu và để nó hết hạn, không ai trả lời." : asked.message;
+      if (asked.ok) sweepExpired(deps.services(), instantSchema.parse(new Date().toISOString()));
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    /*
+     * An update check against a scripted directory, for the inbox's update actions.
+     *
+     * The browser suite's directory lists one version of each package, so nothing installed ever has an update and the
+     * update notice could never be drawn. This runs the node's own check once, against a directory that offers the
+     * next patch of every installed package from npm. The versions are not in the real directory, which is the point:
+     * "Update" then reaches the install route and is refused by name, and nothing installed changes. The Pi half is
+     * answered with a version that is not newer, so it says nothing.
+     */
+    if (/kiểm tra bản cập nhật thử/i.test(input.text)) {
+      const services = deps.services();
+      const platform = platformForHost(process.platform, process.arch);
+      const now = () => instantSchema.parse(new Date().toISOString());
+      const installed = listInstalledPackages({
+        db: services.runtime.db,
+        nodeId: services.runtime.identity.nodeId,
+        now,
+        newId: services.conductor.newId,
+      });
+      const report = await checkForUpdates({
+        services,
+        installedPackages: installed,
+        directory: installed.map((view) => ({
+          packageId: view.packageId,
+          version: nextPatch(view.version),
+          sourceKind: "npm" as const,
+          lane: view.lane,
+          digest: `sha256:fixture-next-${view.packageId}`,
+          hostApi: { min: HOST_API_VERSION, max: HOST_API_VERSION },
+          platforms: platform === undefined ? [] : [platform],
+        })),
+        piInstalledVersion: "1.0.0",
+        fetchImpl: async () => new Response(JSON.stringify({ version: "1.0.0" }), { status: 200 }),
+        now,
+      });
+      const reply = `Fixture: đã kiểm tra bản cập nhật thử, ${String(report.packageUpdates)} gói có bản mới.`;
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     }
 
     /*
@@ -1888,6 +1968,15 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
   return compose;
 }
 
+/** The requests that already failed once on purpose, so running the same words again succeeds. */
+const failedOnce = new Set<string>();
+
+/** The next patch release of a version, for a scripted directory that offers one. */
+function nextPatch(version: string): string {
+  const match = /^(\d+)\.(\d+)\.(\d+)/u.exec(version);
+  return match === null ? "0.0.1" : `${match[1]}.${match[2]}.${String(Number(match[3]) + 1)}`;
+}
+
 /**
  * A turn control for a fixture node.
  *
@@ -1913,6 +2002,9 @@ export function applyScriptedTurnControl(services: Pick<NodeServices, "turnContr
       // that asks for "việc nền dài" stays open for a minute, which is long enough for a browser to find and press its
       // stop; every other request finishes in a moment.
       const holdMs = input.text.includes("việc nền dài") ? 60_000 : 1_500;
+      // A request that asks to fail once does, the first time its words are run: what "Try again" is for.
+      const failFirst = input.text.includes("hỏng lần đầu") && !failedOnce.has(input.text);
+      if (failFirst) failedOnce.add(input.text);
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(resolve, holdMs);
         input.signal?.addEventListener(
@@ -1924,6 +2016,7 @@ export function applyScriptedTurnControl(services: Pick<NodeServices, "turnContr
           { once: true },
         );
       });
+      if (failFirst) throw new Error("Fixture: lần chạy đầu hỏng có chủ ý.");
       const reply = "Fixture: việc nền đã xong, tui đã đọc kết quả và tiếp tục công việc.";
       return reply;
     },

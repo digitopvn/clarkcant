@@ -1,6 +1,32 @@
-import { type Notice, type NoticeAction, noticeKindQuietable, noticeSuppressionKey } from "@clarkcant/contracts";
+import {
+  type Instant,
+  type MessageBlock,
+  type Notice,
+  type NoticeAction,
+  type NoticeActionId,
+  noticeKindQuietable,
+  noticeSuppressionKey,
+} from "@clarkcant/contracts";
 import { answerableUnknownEffect } from "@clarkcant/core";
-import { type Database, findNoticeSuppression, getConversation, getTask } from "@clarkcant/storage";
+import {
+  type Database,
+  type WorkRunRecord,
+  findNoticeSuppression,
+  getConversation,
+  getTask,
+  getWorkRun,
+  latestMessages,
+  oneRow,
+} from "@clarkcant/storage";
+
+import { askAgainState } from "./interactions.ts";
+import { isNewerVersion } from "./update-checks.ts";
+
+/** What the resolver needs to know about the node besides its database: whose packages, and what time it is. */
+export interface NoticeActionContext {
+  nodeId: string;
+  now: Instant;
+}
 
 /**
  * What the inbox offers for a notice, worked out by the host from what the notice is about and how that thing is now.
@@ -14,7 +40,9 @@ import { type Database, findNoticeSuppression, getConversation, getTask } from "
  * "Open" leads; one that says something went wrong or needs attention is mostly something to act on, so "Ask Clark"
  * leads. One exception outranks both: a notice about a task with an effect whose outcome is unknown is waiting for the
  * person to say whether it landed, so "It took effect" and "It did not" lead, for as long as that effect is unknown. At
- * most two actions are drawn as buttons; the rest go behind "More".
+ * most two actions are drawn as buttons; the rest go behind "More". An action on the thing itself — try the work again,
+ * install the update, ask the expired question again — is what the notice is for when it can be taken, so it leads
+ * ahead of Open and Ask Clark (`subjectOperations`).
  *
  * Snoozing and quieting a kind are always behind "More": they change when the person hears about things, not what the
  * notice is about. Which of "stop notifying about this kind" and "notify again" is offered is read from this principal's
@@ -22,18 +50,25 @@ import { type Database, findNoticeSuppression, getConversation, getTask } from "
  * (`noticeKindQuietable`: a reminder, a notice tied to no automation, source, package or node) offers neither. A notice
  * that is snoozed is not in the list at all; the one thing to do with it is bring it back.
  */
-export function noticeActionsFor(db: Database, principalId: string, notice: Notice, nodeId: string): NoticeAction[] {
+export function noticeActionsFor(
+  db: Database,
+  principalId: string,
+  notice: Notice,
+  context: NoticeActionContext,
+): NoticeAction[] {
   if (notice.snoozedUntil !== undefined) return [{ id: "unsnooze", placement: "primary" }];
   const target = conversationOf(db, notice);
+  const conversationExists = target !== undefined && getConversation(db, target) !== undefined;
   const open: NoticeAction | undefined =
     target === undefined
       ? undefined
-      : getConversation(db, target) === undefined
-        ? { id: "open", placement: "menu", unavailable: "conversation-gone" }
-        : { id: "open", placement: "secondary" };
+      : conversationExists
+        ? { id: "open", placement: "secondary" }
+        : { id: "open", placement: "menu", unavailable: "conversation-gone" };
   const canOpen = open !== undefined && open.unavailable === undefined;
   const look = canOpen && (notice.severity === "success" || notice.severity === "info");
-  const unknownEffect = reconcilableEffect(db, principalId, nodeId, notice);
+  const unknownEffect = reconcilableEffect(db, principalId, context.nodeId, notice);
+  const operations = subjectOperations(db, notice, context, conversationExists);
 
   const actions: NoticeAction[] = [];
   if (unknownEffect !== undefined) {
@@ -45,16 +80,20 @@ export function noticeActionsFor(db: Database, principalId: string, notice: Noti
       { id: "ask-clark", placement: "menu" },
     );
     if (canOpen) actions.push({ id: "open", placement: "menu" });
-  } else if (look) {
-    actions.push({ id: "open", placement: "primary" }, { id: "ask-clark", placement: "secondary" });
   } else {
-    actions.push({ id: "ask-clark", placement: "primary" });
-    if (canOpen) actions.push({ id: "open", placement: "secondary" });
-    else actions.push({ id: "dismiss", placement: "secondary" });
+    // Lead with what can be done about the thing, then the usual pair; the first two are buttons, the rest go to "More".
+    const leading: NoticeActionId[] = [
+      ...operations.lead,
+      ...(look ? (["open", "ask-clark"] as const) : (["ask-clark", canOpen ? "open" : "dismiss"] as const)),
+    ];
+    for (const [index, id] of leading.entries()) {
+      actions.push({ id, placement: index === 0 ? "primary" : index === 1 ? "secondary" : "menu" });
+    }
   }
   actions.push({ id: "add-to-context", placement: "menu" });
   actions.push({ id: notice.readAt === undefined ? "mark-read" : "mark-unread", placement: "menu" });
   actions.push({ id: "snooze", placement: "menu" });
+  for (const id of operations.menu) actions.push({ id, placement: "menu" });
   if (!actions.some((action) => action.id === "dismiss")) actions.push({ id: "dismiss", placement: "menu" });
   if (findNoticeSuppression(db, principalId, noticeSuppressionKey(notice)) !== undefined) {
     actions.push({ id: "unsuppress", placement: "menu" });
@@ -62,7 +101,116 @@ export function noticeActionsFor(db: Database, principalId: string, notice: Noti
     actions.push({ id: "suppress", placement: "menu" });
   }
   if (open !== undefined && !canOpen) actions.push(open);
+  actions.push(...operations.unavailable);
   return actions;
+}
+
+interface SubjectOperations {
+  /** Offered ahead of Open and Ask Clark, in this order. */
+  lead: NoticeActionId[];
+  /** Offered behind "More". */
+  menu: NoticeActionId[];
+  /** Listed with why they cannot be taken now, at the end of "More". */
+  unavailable: NoticeAction[];
+}
+
+const NONE: SubjectOperations = { lead: [], menu: [], unavailable: [] };
+
+/** A background run that ended in one of these can be run again; one that finished or is still going cannot. */
+const RETRYABLE_STATES: ReadonlySet<string> = new Set(["failed", "stopped", "interrupted"]);
+
+/**
+ * Whether a run is background work that ended without a result and kept the words it was asked with: what "Try again"
+ * needs, both to be offered here and to be carried out (`retryBackgroundWork`). Whether it was already tried again is
+ * asked separately, because the two answers are worded differently.
+ */
+export function retryableBackgroundRun(run: WorkRunRecord): boolean {
+  return run.kind === "background" && RETRYABLE_STATES.has(run.state) && run.requestText !== undefined;
+}
+
+/**
+ * The actions on what the notice is about, each derived from that thing's state now.
+ *
+ *   - Background work: "Try again" while its run is kept, ended without a result, carries the words it was asked with,
+ *     was not already tried again, and its conversation is still there. A run no longer kept says so, unless the
+ *     notice said it went well, where there is nothing to try again.
+ *   - A package update: "Update" and "Review" while the package is installed at an older version than the notice
+ *     names, and "Skip this version" with them; only "Review" for a version from a local folder, which cannot be
+ *     installed by id and version alone. A package no longer installed, or already at that version, says which.
+ *   - A Pi SDK update: "Skip this version". Updating the SDK is updating ClarkCant itself, which is not done from here.
+ *   - An expired question: "Ask again" while nobody has answered, dropped or re-asked it and its conversation is there.
+ */
+function subjectOperations(
+  db: Database,
+  notice: Notice,
+  context: NoticeActionContext,
+  conversationExists: boolean,
+): SubjectOperations {
+  const subject = notice.subject;
+  switch (subject?.kind) {
+    case "background-work": {
+      const run = getWorkRun(db, subject.workId);
+      if (run === undefined) {
+        return notice.severity === "success"
+          ? NONE
+          : { lead: [], menu: [], unavailable: [{ id: "retry", placement: "menu", unavailable: "work-gone" }] };
+      }
+      const retryable = retryableBackgroundRun(run) && run.retriedAs === undefined && conversationExists;
+      return retryable ? { lead: ["retry"], menu: [], unavailable: [] } : NONE;
+    }
+    case "package": {
+      if (notice.category !== "update" || subject.version === undefined) return NONE;
+      const installed = installedVersion(db, context.nodeId, subject.packageId);
+      if (installed === undefined) {
+        return { lead: [], menu: [], unavailable: [{ id: "update", placement: "menu", unavailable: "package-gone" }] };
+      }
+      if (!isNewerVersion(subject.version, installed)) {
+        return { lead: [], menu: [], unavailable: [{ id: "update", placement: "menu", unavailable: "already-current" }] };
+      }
+      // A version from a folder on this machine has no published digest to install it by, so it is reviewed instead.
+      if (subject.source === "local") return { lead: ["review-update"], menu: ["skip-version"], unavailable: [] };
+      return { lead: ["update", "review-update"], menu: ["skip-version"], unavailable: [] };
+    }
+    case "pi-update":
+      return { lead: [], menu: ["skip-version"], unavailable: [] };
+    case "question": {
+      if (!conversationExists) return NONE;
+      const state = askAgainState(recentBlocks(db, subject.conversationId), subject.questionId, context.now);
+      return state === "expired" ? { lead: ["ask-again"], menu: [], unavailable: [] } : NONE;
+    }
+    case "task":
+    case "peer":
+    case "automation":
+    case "signal-source":
+    case "conversation":
+    case undefined:
+      return NONE;
+    default: {
+      // A notice kind added later has to decide here what can be done about it, rather than silently offering nothing.
+      const unhandled: never = subject;
+      return unhandled;
+    }
+  }
+}
+
+/** The version of a package this node runs now, when it runs one. */
+export function installedVersion(db: Database, nodeId: string, packageId: string): string | undefined {
+  return oneRow<{ version: string }>(
+    db,
+    "SELECT version FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
+    packageId,
+    nodeId,
+  )?.version;
+}
+
+/**
+ * How far back a question is looked for: the same window a conversation's own question routes read
+ * (`OPEN_ITEM_MESSAGES`), so the inbox never offers "Ask again" for a question the route that does it cannot find.
+ */
+const QUESTION_WINDOW_MESSAGES = 2000;
+
+function recentBlocks(db: Database, conversationId: string): MessageBlock[] {
+  return latestMessages(db, conversationId, QUESTION_WINDOW_MESSAGES).flatMap((message) => message.blocks);
 }
 
 /**
@@ -95,6 +243,7 @@ export function conversationOf(db: Database, notice: Notice): string | undefined
     case "signal-source":
       return subject.conversationId ?? notice.conversationId;
     case "background-work":
+    case "question":
     case "conversation":
       return subject.conversationId;
     case "package":

@@ -489,13 +489,18 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     `task`, `background-work`, `conversation`, `package`, `pi-update`, `peer`; sau đó thêm `automation` — một yêu cầu
     thường trực theo intent id, kèm tóm tắt của nó trong `label` và task mà lần chạy đã tạo, nếu có, để "Mở" đi theo
     hội thoại của task đó như với subject `task` — và `signal-source` — một nguồn được poll hoặc lắng nghe theo
-    `sourceKey`, chẳng hạn một repository GitHub, kèm `label`); subject thuộc loại không biết bị từ chối
+    `sourceKey`, chẳng hạn một repository GitHub, kèm `label` — và `question`, một câu hỏi Clark đã hỏi mà hết hạn,
+    theo `questionId` và `conversationId`; subject `package` còn có thể mang `version` mà bản cập nhật nêu và `source`
+    của nó (`npm`, `git`, `local`)); subject thuộc loại không biết bị từ chối
     trước khi ghi bất cứ gì, còn subject do một phiên bản sau lưu mà node này không đọc được thì bị bỏ khi đọc thay vì
     làm hỏng cả danh sách. Thao tác của một thông báo **không được lưu**: `apps/runtime/src/notice-actions.ts`
     (`noticeActionsFor`) tính lại ở mỗi lần đọc từ subject và trạng thái hiện tại — hội thoại mà task giờ thuộc về, hội
     thoại đó còn tồn tại không — trong một danh sách đóng do host cài đặt (`open`, `ask-clark`, `add-to-context`,
-    `mark-read`/`mark-unread`, `dismiss`, `snooze`/`unsnooze`, `suppress`/`unsuppress`), mỗi thao tác đặt ở
-    `primary`, `secondary` hoặc `menu`. Nơi tạo thông báo không bao giờ góp thêm thao tác. "Hỏi Clark" và "Thêm vào
+    `mark-read`/`mark-unread`, `dismiss`, `snooze`/`unsnooze`, `suppress`/`unsuppress`, và các thao tác bên dưới:
+    `retry`, `update`, `review-update`, `skip-version`, `ask-again`), mỗi thao tác đặt ở `primary`, `secondary` hoặc
+    `menu`, tối đa 12 thao tác mỗi thông báo. Thao tác không làm được lúc này có thể được liệt kê trong "Khác" kèm lý
+    do `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) thay vì được đưa ra để bấm.
+    Nơi tạo thông báo không bao giờ góp thêm thao tác. "Hỏi Clark" và "Thêm vào
     ngữ cảnh" mang thông báo dưới dạng tham chiếu `notice` của ô soạn; `composer-references.ts` đọc lại nó cho chủ sở
     hữu và trích nội dung vào brief của lượt dưới dạng dữ liệu.
   - **Hoãn** (#196, migration 33: `notifications.snoozed_until`). Client đưa ra bốn mốc tính theo đồng hồ của thiết bị
@@ -533,17 +538,52 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     hay node nào, hoặc mọi thông báo của một nguồn, và ở mức nào — kèm một tiêu đề ví dụ. Có thể đảo lại từ danh sách
     đó, từ menu của thông báo (`unsuppress`), hoặc bằng Hoàn tác ngay sau đó.
 
+  - **Thao tác trên chính thứ được nói tới** (#196, migration 35: `work_runs.retried_as`, `skipped_versions`). Một
+    thao tác trên subject đứng đầu, trước cặp "Mở"/"Hỏi Clark" thường lệ, chỉ khi node còn thực hiện được nó:
+    - `retry` ở thông báo `background-work` mà lần chạy là việc nền `failed`, bị `stopped` hoặc bị
+      `interrupted`, vẫn còn nội dung yêu cầu, và chưa được chạy lại. `POST /work/:id/retry` giành lần chạy một cách
+      nguyên tử (`claimWorkRunRetry` chỉ đặt `retried_as` khi cột còn trống), chạy lại đúng yêu cầu đó thành việc nền
+      mới trong cùng hội thoại, thêm một câu trả lời của host vào đó, và bỏ thông báo cũ theo `dedupKey` của nó. Nếu
+      việc mới không bắt đầu được (`429 BACKGROUND_BUSY`, `409 BACKGROUND_UNAVAILABLE`) thì lần giành được trả lại. Các
+      lần từ chối khác: `404 WORK_NOT_FOUND`, `409 WORK_NOT_RETRYABLE` (một lệnh, một lần chạy chưa xong, một lần
+      thành công, một lần chạy không có nội dung yêu cầu), `409 ALREADY_RETRIED`, `409 CONVERSATION_GONE`. Việc nền
+      chỉ đọc và không có thư mục dự án, nên việc này không cần phê duyệt. Task của worker không được chạy lại:
+      `failed` là trạng thái cuối trong máy trạng thái của task, capability mà task đã chạy không được lưu, sổ ghi hiệu
+      ứng về những gì task đã làm phải được tôn trọng, và task được uỷ quyền thuộc về peer của nó.
+    - `update` và `review-update` ở thông báo cập nhật `package` khi gói đang cài ở bản thấp hơn `version` của thông
+      báo; chỉ có `review-update` với nguồn `local`, vì cài từ một thư mục cần digest của nó. "Cập nhật" gọi
+      `POST /packages/install` thông thường với bản mà thông báo nêu, nên mọi bước kiểm tra khi cài đều áp dụng. "Xem"
+      mở Cài đặt → Tiện ích. Nếu gói đã được cập nhật hoặc gỡ từ đó, thông báo liệt kê `update` với lý do
+      `already-current` hoặc `package-gone`.
+    - `skip-version` (trong menu) ở thông báo cập nhật `package` hoặc `pi-update`.
+      `POST /inbox/notices/:id/skip-version` đọc phiên bản từ subject đã lưu — bỏ qua body —, ghi một dòng
+      `skipped_versions` cho principal này và bỏ thông báo; `unskip-version` xoá dòng đó và đưa thông báo trở lại.
+      `checkForUpdates` không báo gì bằng hoặc thấp hơn một bản đã bỏ qua, và vẫn báo mọi bản mới hơn.
+      `409 NOT_AN_UPDATE` với thông báo không nêu phiên bản nào.
+    - `ask-again` ở thông báo `question` (do vòng quét hết hạn ghi) khi câu hỏi đã hết hạn, chưa được hỏi lại, và hội
+      thoại của nó còn. `POST /conversations/:id/questions/:qid/ask-again` tạo một câu hỏi mới với cùng nội dung và
+      lựa chọn, ghi `decision: "asked-again"` (kèm `askedAs`) lên câu hỏi cũ, và bỏ thông báo. Từ chối:
+      `404 QUESTION_NOT_FOUND`, `409 QUESTION_OPEN`, `409 QUESTION_CLOSED`, `409 ALREADY_ASKED_AGAIN`. Client đọc bản
+      ghi cuối của mỗi câu hỏi để ghi nhãn cho thẻ đã đóng: đã trả lời, đã huỷ, đã hết hạn hay đã được hỏi lại.
+    - Chưa làm: hỏi lại một approval đã hết hạn (approval hết hạn của một task đã khép lại task đó; đưa lại một
+      approval lệnh sẽ đi vòng qua Jev), trả lời hoặc đi tới tin nhắn của một peer (chưa có kênh tin nhắn giữa các peer
+      và thông báo từ peer không mang id tin nhắn), và xem/khắc phục cảnh báo hệ thống (chưa có bề mặt nào liệt kê
+      trạng thái chuyển tin của các node đã ghép và chưa có route thử lại ngay).
+
 Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `POST /inbox/read` (`noticeIds` hoặc tất cả),
 `POST /inbox/unread` (`noticeIds`, bắt buộc và không rỗng; chỉ các thông báo chưa bỏ của principal này),
 `POST /inbox/notices/:id/dismiss`, `POST /inbox/notices/:id/restore` (hoàn tác việc bỏ trong năm phút —
 `DISMISS_UNDO_WINDOW_MS` — quá hạn thì trả `409 UNDO_EXPIRED`; thông báo được đưa lại trở về ở trạng thái đã đọc),
 `POST /inbox/notices/:id/snooze` (`{ until }`; `400 SNOOZE_OUT_OF_RANGE` khi không nằm sau hiện tại hoặc xa quá 30
 ngày), `POST /inbox/notices/:id/unsnooze`, `POST /inbox/notices/:id/suppress` (trả về `suppression`; gọi lại không
-đổi gì; `409 SUPPRESSION_TOO_BROAD` với loại quá rộng để tắt báo), `POST /inbox/notices/:id/unsuppress` và `DELETE /inbox/suppressions/:id`. `POST /effects/:effectId/reconcile` (`{ outcome: "confirmed" | "failed" }`) ghi câu trả lời mà thông báo chưa rõ kết
+đổi gì; `409 SUPPRESSION_TOO_BROAD` với loại quá rộng để tắt báo), `POST /inbox/notices/:id/unsuppress`,
+`POST /inbox/notices/:id/skip-version` và `/unskip-version`, và `DELETE /inbox/suppressions/:id`.
+`POST /effects/:effectId/reconcile` (`{ outcome: "confirmed" | "failed" }`) ghi câu trả lời mà thông báo chưa rõ kết
 quả đưa ra (`409 EFFECT_NOT_UNKNOWN` khi đã được trả lời) và chỉ dành cho người dùng. Nó kết thúc task trong cùng lần
 ghi, trừ khi một lần chạy của task còn chưa báo lại (`TaskDispatcher.reportPending`), khi đó chính lần báo lại đó kết
 thúc task. Một câu trả lời bằng lời (`effect.confirmed` / `effect.failed`) không bao giờ tự ghi: nếu nói, Clark hỏi lại
-và một lời đồng ý bằng giọng nói dùng một confirmation token; nếu gõ, Clark mở hộp thư ở các nút của thông báo. Tất cả chỉ tác động lên thông
+và một lời đồng ý bằng giọng nói dùng một confirmation token; nếu gõ, Clark mở hộp thư ở các nút của thông báo. Tất cả
+chỉ tác động lên thông
 báo và mục tắt báo của principal này; id của principal khác trả 404. Các route này không thuộc mô tả open-interface
 ổn định. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.vi.md
 §6.7; mở bằng intent `inbox.open` (text, voice, `control_app`), còn `inbox.ask` hỏi Clark về thông báo mới nhất. Agent đọc cùng dữ liệu đó qua tool chỉ đọc `read_inbox`

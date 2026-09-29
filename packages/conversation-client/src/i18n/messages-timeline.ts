@@ -43,6 +43,12 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.question.answerPlaceholder": "Trả lời của bạn",
   "blocks.question.sending": "Đang gửi câu trả lời…",
   "blocks.question.recorded": "Câu trả lời đã được ghi vào hội thoại này.",
+  "blocks.question.cancelled": "Câu hỏi đã huỷ",
+  "blocks.question.cancelledNote": "Câu hỏi này đã bị huỷ trước khi có câu trả lời.",
+  "blocks.question.expired": "Câu hỏi đã hết hạn",
+  "blocks.question.expiredNote": "Không ai trả lời kịp nên câu hỏi này không còn nhận câu trả lời. Có thể hỏi lại từ hộp thư.",
+  "blocks.question.askedAgain": "Câu hỏi đã được hỏi lại",
+  "blocks.question.askedAgainNote": "Câu hỏi này đã được hỏi lại bên dưới; trả lời ở câu hỏi mới.",
 
   // blocks.tsx — approval card
   "blocks.approval.needsConfirm": "Cần bạn xác nhận",
@@ -633,6 +639,12 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.question.answerPlaceholder": "Your answer",
   "blocks.question.sending": "Sending your answer…",
   "blocks.question.recorded": "Your answer has been recorded in this conversation.",
+  "blocks.question.cancelled": "Question cancelled",
+  "blocks.question.cancelledNote": "This question was cancelled before it was answered.",
+  "blocks.question.expired": "Question expired",
+  "blocks.question.expiredNote": "Nobody answered in time, so this question no longer takes an answer. You can ask it again from the inbox.",
+  "blocks.question.askedAgain": "Question asked again",
+  "blocks.question.askedAgainNote": "This question was asked again below; answer the new one.",
 
   "blocks.approval.needsConfirm": "Needs your confirmation",
   "blocks.approval.commandLabel": "command to run",

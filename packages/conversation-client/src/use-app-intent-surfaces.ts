@@ -26,6 +26,8 @@ export interface AppIntentSurfacesState {
   uiCheckOpen: boolean;
   setUiCheckOpen: (open: boolean) => void;
   settingsTab: SettingsTab | undefined;
+  /** Opens Settings on a tab, closing the inbox: the same state an "open settings" intent lands on. */
+  openSettings: (tab?: SettingsTab) => void;
   widgetLibrary: WidgetLibraryState;
   setWidgetLibrary: React.Dispatch<React.SetStateAction<WidgetLibraryState>>;
   openWidgetLibrary: (mode: "browse" | "develop") => void;
@@ -124,6 +126,13 @@ export function useAppIntentSurfaces({
   const [liveRefresh, setLiveRefresh] = useState(0);
   const bumpLiveRefresh = useCallback(() => setLiveRefresh((count) => count + 1), []);
 
+  // Settings and the inbox are both modals, and modals do not nest: opening one closes the other.
+  const openSettings = useCallback((tab?: SettingsTab): void => {
+    setInboxOpen(false);
+    setSettingsTab(tab);
+    setUiCheckOpen(true);
+  }, []);
+
   const openWidgetLibrary = useCallback((mode: "browse" | "develop"): void => {
     // Modals do not nest (see openSettings/openInbox below and WidgetLibrarySurface's own note on the same rule):
     // the library is a `role="dialog" aria-modal="true"` surface itself, so it closes the inbox rather than
@@ -145,12 +154,7 @@ export function useAppIntentSurfaces({
     // Minimize and full screen need a shell new enough to have them; an older one leaves both intents refused.
     const windowControls = hasWindowControls();
     return {
-      // Settings and the inbox are both modals, and modals do not nest: opening one closes the other.
-      openSettings: (tab?: SettingsTab) => {
-        setInboxOpen(false);
-        setSettingsTab(tab);
-        setUiCheckOpen(true);
-      },
+      openSettings,
       openInbox: () => {
         setUiCheckOpen(false);
         setWidgetLibrary(CLOSED_LIBRARY);
@@ -225,6 +229,7 @@ export function useAppIntentSurfaces({
         : {}),
     };
   }, [
+    openSettings,
     attachmentInput,
     restartSession,
     setVoiceOpen,
@@ -294,6 +299,7 @@ export function useAppIntentSurfaces({
     uiCheckOpen,
     setUiCheckOpen,
     settingsTab,
+    openSettings,
     widgetLibrary,
     setWidgetLibrary,
     openWidgetLibrary,

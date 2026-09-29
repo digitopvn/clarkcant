@@ -146,6 +146,20 @@ describe("a question the conversation has moved past is read-only", () => {
     expect(textOf(tree)).toContain("Câu trả lời đã được ghi");
   });
 
+  it("says how a question closed without an answer, rather than claiming one was recorded", () => {
+    const closed = (outcome: "cancelled" | "expired" | "asked-again") =>
+      open({ onQuestionAnswer: () => {}, answeredQuestions: ["q_1"], questionOutcomes: { q_1: outcome } });
+
+    const expired = closed("expired");
+    expect(textOf(expired)).toContain("Câu hỏi đã hết hạn");
+    expect(textOf(expired)).toContain("Có thể hỏi lại từ hộp thư");
+    expect(textOf(expired)).not.toContain("Câu trả lời đã được ghi");
+    expect(textOf(closed("cancelled"))).toContain("Câu hỏi đã huỷ");
+    expect(textOf(closed("asked-again"))).toContain("trả lời ở câu hỏi mới");
+    expect(findAll(expired, "data-question-outcome")[0]?.props["data-question-outcome"]).toBe("expired");
+    expect(findAll(expired, "data-question-option")).toHaveLength(0);
+  });
+
   it("stops inviting a second press while the first answer is still travelling", () => {
     // The question the node is still waiting on is the one with no controls at all, and it is said in words rather
     // than left to a disabled look.

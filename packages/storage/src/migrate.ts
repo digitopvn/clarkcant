@@ -1437,6 +1437,30 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 35,
+    name: "notice_operations",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The work a person started again from its notice. Set once, in the same statement that checks it is still
+        -- unset, so two presses of "Try again" (or two surfaces) start one new run between them, not two.
+        ALTER TABLE work_runs ADD COLUMN retried_as TEXT;
+
+        -- "Don't tell me about this version", per principal. subject_kind is 'package' or 'pi'; name is the package id
+        -- or the npm package name. An update check reports nothing at or below a version skipped here, and still
+        -- reports anything newer.
+        CREATE TABLE skipped_versions (
+          principal_id  TEXT NOT NULL,
+          subject_kind  TEXT NOT NULL,
+          name          TEXT NOT NULL,
+          version       TEXT NOT NULL,
+          skipped_at    TEXT NOT NULL,
+          PRIMARY KEY (principal_id, subject_kind, name, version)
+        );
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

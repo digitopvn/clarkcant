@@ -246,8 +246,8 @@ export function waitingItems(services: InboxServices, now: Instant): WaitingItem
 export function readInbox(services: InboxServices, now: Instant, limit = 50): InboxResponse {
   const { db } = services.runtime;
   const principalId = services.runtime.identity.ownerPrincipalId;
-  const nodeId = services.runtime.identity.nodeId;
-  const withActions = (notice: Notice): Notice => ({ ...notice, actions: noticeActionsFor(db, principalId, notice, nodeId) });
+  const context = { nodeId: services.runtime.identity.nodeId, now };
+  const withActions = (notice: Notice): Notice => ({ ...notice, actions: noticeActionsFor(db, principalId, notice, context) });
   return {
     waiting: waitingItems(services, now),
     notices: listNotifications(db, principalId, limit, now).map(withActions),

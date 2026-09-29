@@ -407,6 +407,9 @@ export interface PackageInstallState {
   verified?: string;
 }
 
+/** How a question the agent asked stopped waiting, as the node recorded it in the transcript. */
+export type QuestionOutcome = "answered" | "cancelled" | "expired" | "asked-again";
+
 export interface BlockActions {
   onApprovalDecide?: (input: { approvalId: string; digest: string; decision: "granted" | "denied" }) => void;
   /**
@@ -449,6 +452,11 @@ export interface BlockActions {
    * question again — and the node would have to refuse a second answer rather than the card never asking.
    */
   answeredQuestions?: readonly string[];
+  /**
+   * How each closed question closed, from the same records: answered, cancelled, expired, or asked again as a new
+   * question. A card that only knew "closed" would tell someone whose question timed out that their answer was recorded.
+   */
+  questionOutcomes?: Readonly<Record<string, QuestionOutcome>>;
   /**
    * The answer to a question the agent asked, on its way back as the user's own message.
    *
@@ -575,6 +583,20 @@ export type TaskStopState =
  * Not a permission dialog. The agent asks because the work is under-specified — which project, which
  * environment — so the wording says what is being chosen rather than whether it may proceed.
  */
+/** What a closed question card says it is, and what became of it, by how it closed. */
+const QUESTION_OUTCOME_TITLE: Record<QuestionOutcome, MessageKey> = {
+  answered: "blocks.question.answered",
+  cancelled: "blocks.question.cancelled",
+  expired: "blocks.question.expired",
+  "asked-again": "blocks.question.askedAgain",
+};
+const QUESTION_OUTCOME_NOTE: Record<QuestionOutcome, MessageKey> = {
+  answered: "blocks.question.recorded",
+  cancelled: "blocks.question.cancelledNote",
+  expired: "blocks.question.expiredNote",
+  "asked-again": "blocks.question.askedAgainNote",
+};
+
 export function QuestionCardBlock({
   block,
   actions,
@@ -610,6 +632,7 @@ export function QuestionCardBlock({
    */
   const sending = actions?.questionPendingId === questionId;
   const answered = questionId !== "" && actions?.answeredQuestions?.includes(questionId) === true;
+  const outcome: QuestionOutcome = actions?.questionOutcomes?.[questionId] ?? "answered";
   const canAnswer = questionId !== "" && actions?.onQuestionAnswer !== undefined && !answered && !sending;
   const submit = (answer: { text?: string; optionIds?: string[]; confirmed?: boolean }): void => {
     if (!canAnswer) return;
@@ -628,10 +651,11 @@ export function QuestionCardBlock({
       data-question-id={questionId}
       data-question-kind={kind}
       data-answered={answered ? "true" : "false"}
+      data-question-outcome={answered ? outcome : undefined}
       aria-label={prompt}
     >
       <header className="cc-card-head">
-        <span className="cc-card-title">{answered ? t("blocks.question.answered") : t("blocks.question.needsChoice")}</span>
+        <span className="cc-card-title">{answered ? t(QUESTION_OUTCOME_TITLE[outcome]) : t("blocks.question.needsChoice")}</span>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{prompt}</p>
@@ -715,7 +739,7 @@ export function QuestionCardBlock({
 
         {answered && (
           <p className="cc-freshness" style={{ margin: 0 }}>
-            {t("blocks.question.recorded")}
+            {t(QUESTION_OUTCOME_NOTE[outcome])}
           </p>
         )}
 

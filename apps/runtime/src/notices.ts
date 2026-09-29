@@ -152,7 +152,7 @@ export function packageUpdateNotice(input: {
     severity: "info",
     title: `Có bản cập nhật: ${input.packageId}`,
     body: `${input.currentVersion} → ${input.newVersion} · nguồn ${input.sourceKind} · ${LANE_LABEL[input.lane]}`,
-    subject: { kind: "package", packageId: input.packageId, version: input.newVersion },
+    subject: { kind: "package", packageId: input.packageId, version: input.newVersion, source: input.sourceKind },
     dedupKey: `update:${input.sourceKind}:${input.packageId}@${input.newVersion}`,
     at: input.at,
   };
