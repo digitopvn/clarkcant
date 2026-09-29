@@ -1,16 +1,18 @@
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve } from "node:path";
 
-import type {
-  CapabilityDescriptor,
-  CapabilityReadiness,
-  CapabilityRef,
-  DirectoryEntry,
-  EffectCategory,
-  Instant,
-  PackageGeneration,
-  ServiceCapabilityDeclaration,
-  ToolsFacet,
+import {
+  type CapabilityDescriptor,
+  type CapabilityReadiness,
+  type CapabilityRef,
+  describeUnsafePattern,
+  type DirectoryEntry,
+  type EffectCategory,
+  type Instant,
+  type PackageGeneration,
+  type ServiceCapabilityDeclaration,
+  type ToolsFacet,
+  unsafeSchemaPattern,
 } from "@clarkcant/contracts";
 import {
   activeGenerations,
@@ -24,7 +26,6 @@ import {
 } from "@clarkcant/core";
 import { type McpToolMetadata, StdioMcpTransport, type StdioMcpTransportOptions } from "@clarkcant/mcp-adapters";
 
-import { describeUnsafePattern, unsafeSchemaPattern } from "./application/schema-patterns.ts";
 import {
   type ContainerEngineName,
   engineEnvironment,
@@ -60,7 +61,7 @@ export { engineEnvironment } from "./service-container.ts";
  * A tool the service lists but the manifest does not declare is never registered: consent covered the declaration,
  * not whatever the code turned out to offer. A declared tool the service does not list is registered as not loaded,
  * with that as the reason, so a person reads why the button is off rather than a generic failure. So is a declared tool
- * whose input schema holds a pattern that could take unbounded time to check (`application/schema-patterns.ts`): every
+ * whose input schema holds a pattern that could take unbounded time to check (`schema-patterns.ts` in `@clarkcant/contracts`): every
  * call is checked against that schema on the node's main thread, so the schema is refused rather than stored.
  *
  * A package only ever writes its own rows. A ref the registry already holds for something else — one of the node's own
@@ -617,7 +618,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       const unsafe = unsafeSchemaPattern(tool.inputSchema);
       if (unsafe !== undefined) {
         // Not run, and its schema not kept: every call would be checked against it on the node's main thread.
-        const reason = `the input schema the service lists for ${declaration.tool} was refused: ${describeUnsafePattern(unsafe)}. A version of the package with a simpler pattern will load`;
+        const reason = `the input schema the service lists for ${declaration.tool} was refused, and a version of the package with a simpler pattern will load: ${describeUnsafePattern(unsafe)}`;
         register(entry, declaration, { readiness: readiness({ loaded: false, healthy: true, blockedReason: reason.slice(0, 500) }) });
         log(`services: ${entry.key} ${reason}`);
         continue;

@@ -1,10 +1,14 @@
 import {
   type CapabilityRef,
+  describeUnsafePattern,
   type EffectCategory,
   effectCategorySchema,
   type Instant,
+  MAX_PATTERN_INPUT_LENGTH,
   type MessageBlock,
   nowInstant,
+  overlongPatternInput,
+  unsafeSchemaPattern,
 } from "@clarkcant/contracts";
 import {
   type ApprovalRecord,
@@ -19,7 +23,6 @@ import { z } from "zod";
 
 import { ServiceCallError, type ServiceHost } from "../service-host.ts";
 import type { NodeServices } from "../services.ts";
-import { describeUnsafePattern, MAX_PATTERN_INPUT_LENGTH, overlongPatternInput, unsafeSchemaPattern } from "./schema-patterns.ts";
 
 /**
  * Calling a package's service capability, whoever asked.
@@ -36,7 +39,7 @@ import { describeUnsafePattern, MAX_PATTERN_INPUT_LENGTH, overlongPatternInput, 
  *   - a call made on behalf of a binding compiled against a generation that is no longer the active one;
  *   - a capability the registry reports as not usable, with the registry's own reason;
  *   - arguments its schema does not accept, and any argument at all when the schema holds a pattern that could take
- *     unbounded time to check (`schema-patterns.ts`).
+ *     unbounded time to check (`schema-patterns.ts` in `@clarkcant/contracts`).
  *
  * When the policy asks, the question is a host-owned approval card in the conversation, bound to a digest of exactly
  * this ref and these arguments; nothing a widget or the model says can answer it.

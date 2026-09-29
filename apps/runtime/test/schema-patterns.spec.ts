@@ -2,18 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import { validateArgs } from "../src/application/capability-invoke.ts";
 import {
+  describeUnsafePattern,
   MAX_PATTERN_INPUT_LENGTH,
   MAX_PATTERN_LENGTH,
   overlongPatternInput,
   unsafePatternReason,
   unsafeSchemaPattern,
-} from "../src/application/schema-patterns.ts";
+} from "@clarkcant/contracts";
 
 /**
  * Which patterns a package's schema may ask the node to run.
  *
- * The node checks every call against a service's input schema on its main thread, and the JavaScript engine
- * backtracks, so a pattern that can backtrack without bound must never reach it.
+ * The node checks every call against a service's input schema, and every widget's props against its props schema, on its
+ * main thread, and the JavaScript engine backtracks, so a pattern that can backtrack without bound must never reach it.
+ * The checker lives in `@clarkcant/contracts`; the tests of `validateArgs` in front of it stay beside the runtime.
  */
 
 /** Long enough that a backtracking pattern would not finish, short enough to be a plausible argument. */
@@ -81,6 +83,32 @@ describe("a pattern the check lets through", () => {
     expect(unsafePatternReason(pattern)).toBeUndefined();
     // Whatever it lets through is a pattern the node's engine reads.
     expect(() => new RegExp(pattern)).not.toThrow();
+  });
+});
+
+describe("what a refusal tells the author to write instead", () => {
+  it.each([
+    ["^(a+)+$", "instead of (a+)+", ["a+", "\\w+(\\s\\w+)*"]],
+    ["^(ab|ac)+$", "Factor the common start out", ["(ab?)+", "(a[bc])+"]],
+    ["\\d+\\d+x", "Merge the two repetitions", ["\\d{2,}x"]],
+    ["(a)\\1", "Spell the repeated part out", []],
+    ["^(?=.*\\d)(?=.*[a-z]).{8,}$", "Split each lookahead into a separate check", ["\\d", "[a-z]", "^.{8,}$"]],
+    ["(a", "regular expression syntax", []],
+    ["a".repeat(MAX_PATTERN_LENGTH + 1), "Shorten it", []],
+  ] as const)("says what to write for %s, and what it suggests is let through", (pattern, advice, suggested) => {
+    const found = unsafeSchemaPattern({ pattern });
+    if (found === undefined) throw new Error(`${pattern} was not refused`);
+    expect(describeUnsafePattern(found)).toContain(advice);
+    for (const each of suggested) expect(unsafePatternReason(each)).toBeUndefined();
+  });
+
+  it("says what to write for a pattern that is not text and a schema nested too deep", () => {
+    expect(describeUnsafePattern({ at: "pattern", pattern: "1", why: "is not text" })).toContain("Make the pattern a string");
+    let schema: Record<string, unknown> = { type: "string" };
+    for (let depth = 0; depth < 100; depth += 1) schema = { items: schema };
+    const deep = unsafeSchemaPattern(schema);
+    if (deep === undefined) throw new Error("not refused");
+    expect(describeUnsafePattern(deep)).toContain("Flatten the schema");
   });
 });
 

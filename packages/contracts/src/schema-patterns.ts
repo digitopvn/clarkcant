@@ -1,13 +1,17 @@
 /**
  * Which regular expressions a package's JSON Schema may ask this node to run.
  *
- * A service lists an input schema for each tool, and the node checks every call against it on its main thread, where
- * `pattern` and `patternProperties` become JavaScript regular expressions. That engine backtracks, so a pattern such as
- * `^(a+)+$` can take exponential time on a short input and stall the whole node. A schema is therefore read before it is
- * used, and one whose patterns could backtrack without bound is refused.
+ * A package supplies JSON Schemas the node checks values against on its main thread: the input schema a service lists
+ * for each tool, and the props schema of each widget it defines. There `pattern` and `patternProperties` become
+ * JavaScript regular expressions. That engine backtracks, so a pattern such as `^(a+)+$` can take exponential time on a
+ * short input and stall the whole node. A schema is therefore read before it is used, and one whose patterns could
+ * backtrack without bound is refused.
+ *
+ * It lives in the contracts package because the node and the Widget Lab in a browser both check widget props, and this
+ * package reads no Node builtin: there is one copy of the rules.
  *
  * The check is deliberately conservative: it refuses some patterns that would in fact run quickly, and says which rule
- * each one broke so the package's author can write it another way. It refuses
+ * each one broke and what to write instead, so the package's author can write it another way. It refuses
  *
  *   - a repetition whose body can be matched more than one way from one repetition to the next, such as `(a+)+`,
  *     `(\w+\s?)*` or `(a?a)+` (a bounded repetition such as `(\d{1,3}\.?){4}` is allowed while its ways stay few);
@@ -115,6 +119,24 @@ const REFUSE = {
   lookaround: "repeats inside a lookahead or lookbehind, like (?=a+)",
   unreadable: "is not one this node can read",
 } as const;
+
+const TOO_LONG = `is longer than ${String(MAX_PATTERN_LENGTH)} characters`;
+const NOT_TEXT = "is not text";
+const TOO_DEEP = `is nested more than ${String(MAX_DEPTH)} levels deep`;
+
+/** What an author can write instead, for each rule a pattern or schema can break. */
+const INSTEAD: Readonly<Record<string, string>> = {
+  [REFUSE.nested]: "Write it so each repetition can be matched only one way, like a+ instead of (a+)+, or \\w+(\\s\\w+)* instead of (\\w+\\s?)*.",
+  [REFUSE.alternation]: "Factor the common start out of the options, like (ab?)+ instead of (a|ab)+, or (a[bc])+ instead of (ab|ac)+.",
+  [REFUSE.adjacent]: "Merge the two repetitions into one, like \\d{2,} instead of \\d+\\d+, or put a character between them that neither can match.",
+  [REFUSE.backreference]: "Spell the repeated part out, or check that the two parts are equal in the service rather than in the schema.",
+  [REFUSE.lookaround]:
+    'Split each lookahead into a separate check, like allOf: [{ "pattern": "\\\\d" }, { "pattern": "[a-z]" }] instead of (?=.*\\d)(?=.*[a-z]).',
+  [REFUSE.unreadable]: "Write it in the JavaScript regular expression syntax, without flags.",
+  [TOO_LONG]: "Shorten it, or split it into several patterns under allOf.",
+  [NOT_TEXT]: "Make the pattern a string.",
+  [TOO_DEEP]: "Flatten the schema, for example with $defs and $ref.",
+};
 
 const QUANTIFIER = /^\{(\d+)(?:(,)(\d*))?\}/u;
 
@@ -470,7 +492,7 @@ function shapeOf(node: Node): Shape {
  * undefined when it cannot.
  */
 export function unsafePatternReason(pattern: string): string | undefined {
-  if (pattern.length > MAX_PATTERN_LENGTH) return `is longer than ${String(MAX_PATTERN_LENGTH)} characters`;
+  if (pattern.length > MAX_PATTERN_LENGTH) return TOO_LONG;
   try {
     shapeOf(parsePattern(pattern));
     return undefined;
@@ -530,11 +552,11 @@ function member(path: string, key: string): string {
  */
 export function unsafeSchemaPattern(schema: unknown, path = "", depth = 0): UnsafeSchemaPattern | undefined {
   if (!isObject(schema)) return undefined;
-  if (depth > MAX_DEPTH) return { at: path, pattern: "", why: `is nested more than ${String(MAX_DEPTH)} levels deep` };
+  if (depth > MAX_DEPTH) return { at: path, pattern: "", why: TOO_DEEP };
   if (schema.pattern !== undefined) {
     const at = member(path, "pattern");
     // The validator turns whatever is there into a pattern, so text is the only thing it may be.
-    if (typeof schema.pattern !== "string") return { at, pattern: String(schema.pattern), why: "is not text" };
+    if (typeof schema.pattern !== "string") return { at, pattern: String(schema.pattern), why: NOT_TEXT };
     const why = unsafePatternReason(schema.pattern);
     if (why !== undefined) return { at, pattern: schema.pattern, why };
   }
@@ -567,11 +589,13 @@ export function unsafeSchemaPattern(schema: unknown, path = "", depth = 0): Unsa
   return undefined;
 }
 
-/** A refused pattern in words a person can act on. */
+/** A refused pattern in words a person can act on: what it is, why it was refused, and what to write instead. */
 export function describeUnsafePattern(found: UnsafeSchemaPattern): string {
-  if (found.pattern === "") return `the schema ${found.why}`;
+  const instead = INSTEAD[found.why];
+  const advice = instead === undefined ? "" : ` ${instead}`;
+  if (found.pattern === "") return `the schema ${found.why}.${advice}`;
   const shown = found.pattern.length > 60 ? `${found.pattern.slice(0, 60)}…` : found.pattern;
-  return `the pattern ${JSON.stringify(shown)} at ${found.at} ${found.why}, so checking an input against it could stall this node`;
+  return `the pattern ${JSON.stringify(shown)} at ${found.at} ${found.why}, so checking a value against it could stall this node.${advice}`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
