@@ -2,7 +2,7 @@
   "name": "@clarkcant/design-tokens",
   "version": "0.2.0",
   "private": true,
-  "description": "Versioned design tokens (colour, type, space, motion) plus WCAG contrast utilities shared by web and desktop.",
+  "description": "Versioned design tokens (colour, type, space, motion), the appearance compiler, and WCAG contrast utilities shared by web and desktop.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -18,5 +18,7 @@
   "scripts": {
     "typecheck": "tsc -p ../../tsconfig.json"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@clarkcant/contracts": "workspace:*"
+  }
 }

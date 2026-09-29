@@ -1,5 +1,9 @@
 /**
- * The theme choice.
+ * The colour-scheme choice: System, Light or Dark.
+ *
+ * This is the colour scheme, not the theme. A theme (Clark Default, or one a package provides) is a separate choice,
+ * `experience.themeRef`, and every theme is drawn in whichever scheme is resolved here. The names below predate that
+ * split and still say "theme" where they mean the scheme.
  *
  * Three things are separate here and keeping them separate is the whole design:
  *
@@ -16,10 +20,10 @@
  * runtime should not be dropped into a dark page.
  */
 
-import { type ThemeName } from "@clarkcant/design-tokens";
+import { type ColorScheme, type ResolvedColorScheme, colorSchemeSchema, resolveColorScheme } from "@clarkcant/contracts";
 
-/** What the user asked for. `system` is a choice, not a resolved theme. */
-export type ThemeChoice = "dark" | "light" | "system";
+/** What the user asked for. `system` is a choice, not a resolved scheme. */
+export type ThemeChoice = ColorScheme;
 
 export const THEME_CHOICES: readonly ThemeChoice[] = ["dark", "light", "system"] as const;
 
@@ -41,8 +45,9 @@ export const THEME_STORAGE_KEY = "cc.theme";
  */
 export const DEFAULT_THEME_CHOICE: ThemeChoice = "system";
 
+/** Whether a stored value is a choice, by the contract's own schema rather than a second list that could drift. */
 export function isThemeChoice(value: unknown): value is ThemeChoice {
-  return value === "dark" || value === "light" || value === "system";
+  return colorSchemeSchema.safeParse(value).success;
 }
 
 /**
@@ -88,9 +93,8 @@ function safeStorage(): Storage | undefined {
  * `system` resolves through the media query. When the query is unavailable the answer is dark,
  * matching the specification's default surface.
  */
-export function resolveTheme(choice: ThemeChoice, prefersLight: boolean): ThemeName {
-  if (choice === "system") return prefersLight ? "light" : "dark";
-  return choice;
+export function resolveTheme(choice: ThemeChoice, prefersLight: boolean): ResolvedColorScheme {
+  return resolveColorScheme(choice, prefersLight);
 }
 
 /**
@@ -109,7 +113,7 @@ export function systemPrefersLight(): boolean {
 }
 
 /** Write the resolved theme onto the document. */
-export function applyResolvedTheme(theme: ThemeName): void {
+export function applyResolvedTheme(theme: ResolvedColorScheme): void {
   if (typeof document === "undefined") return;
   document.documentElement.dataset[THEME_ATTRIBUTE] = theme;
 }
@@ -121,7 +125,7 @@ export function applyResolvedTheme(theme: ThemeName): void {
  * has no way to know which component last changed the theme — and it must agree with what the CSS
  * is actually painting, not with what someone intended.
  */
-export function readDocumentTheme(): ThemeName {
+export function readDocumentTheme(): ResolvedColorScheme {
   if (typeof document === "undefined") return "dark";
   return document.documentElement.dataset[THEME_ATTRIBUTE] === "light" ? "light" : "dark";
 }

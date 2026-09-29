@@ -13,7 +13,7 @@ import { Orb } from "../Orb.tsx";
 import { orbPaletteGradient, resolveOrbProfile } from "../orb-profile.ts";
 import { usePlatformReducedMotion } from "../typewriter.ts";
 import { THEME_CHOICES, type ThemeChoice } from "../theme.ts";
-import type { ThemeName } from "@clarkcant/design-tokens";
+import type { ResolvedColorScheme } from "@clarkcant/contracts";
 import { InlineStatus, RangeField, SegmentedControl, SettingsRow } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import { useT, useLocaleState } from "../i18n/locale-context.tsx";
@@ -80,7 +80,7 @@ function numbers(value: unknown): Record<string, number> {
 export interface ExperienceSettingsProps {
   prefs: PreferencesHandle;
   themeChoice: ThemeChoice;
-  resolvedTheme: ThemeName;
+  resolvedTheme: ResolvedColorScheme;
   onThemeChoice: (choice: ThemeChoice) => void;
   /** Called after a write that changes the orb, so the orb on screen follows the control that changed it. */
   onOrbChange: () => void;
@@ -206,7 +206,7 @@ export function ExperienceSettings({
           {t("settings.experience.theme.showingPrefix")} {THEME_LABELS[resolvedTheme]}
           {themeChoice === "system" ? ` ${t("settings.experience.theme.systemSuffix")}` : ""}
         </p>
-        <InlineStatus status={prefs.status} forKey="experience.theme" />
+        <InlineStatus status={prefs.status} forKey="experience.colorScheme" />
       </section>
 
       <section className="cc-panel-section">

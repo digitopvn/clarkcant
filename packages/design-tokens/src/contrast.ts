@@ -1,4 +1,6 @@
-import { type ColorTokens, type ThemeName, THEMES } from "./tokens.ts";
+import { RESOLVED_COLOR_SCHEMES, type ResolvedColorScheme } from "@clarkcant/contracts";
+
+import { CLARK_SCHEMES, type ColorTokens } from "./tokens.ts";
 
 /**
  * WCAG contrast utilities.
@@ -77,9 +79,21 @@ export function requiredPairs(tokens: ColorTokens): ContrastPair[] {
     { color: tokens.textTertiary, name: "tertiary text" },
   ];
 
+  /*
+   * The accent and the status colours are text too. The accent is a link in a message and a keyword in a code block,
+   * and a status colour is a badge's label on a card, a notice on the page or an error in a menu, so each is held to
+   * the text threshold on every surface text is drawn on rather than on the one surface it was first designed for.
+   */
+  const coloredText: { color: string; name: string }[] = [
+    { color: tokens.accent, name: "accent text" },
+    { color: tokens.success, name: "success status text" },
+    { color: tokens.warning, name: "warning status text" },
+    { color: tokens.danger, name: "error status text" },
+  ];
+
   const pairs: ContrastPair[] = [];
 
-  for (const tier of textTiers) {
+  for (const tier of [...textTiers, ...coloredText]) {
     for (const surface of surfaces) {
       pairs.push({
         foreground: tier.color,
@@ -92,9 +106,6 @@ export function requiredPairs(tokens: ColorTokens): ContrastPair[] {
 
   pairs.push(
     { foreground: tokens.onAccent, background: tokens.accent, minimum: AA_NORMAL_TEXT, purpose: "label on an accent button" },
-    { foreground: tokens.success, background: tokens.card, minimum: AA_NORMAL_TEXT, purpose: "success status text" },
-    { foreground: tokens.warning, background: tokens.card, minimum: AA_NORMAL_TEXT, purpose: "warning status text" },
-    { foreground: tokens.danger, background: tokens.card, minimum: AA_NORMAL_TEXT, purpose: "error status text" },
     { foreground: tokens.focus, background: tokens.canvas, minimum: AA_NON_TEXT, purpose: "focus ring against the page" },
     { foreground: tokens.focus, background: tokens.card, minimum: AA_NON_TEXT, purpose: "focus ring against a card" },
     { foreground: tokens.focus, background: tokens.elevated, minimum: AA_NON_TEXT, purpose: "focus ring against an elevated surface" },
@@ -105,26 +116,32 @@ export function requiredPairs(tokens: ColorTokens): ContrastPair[] {
 }
 
 export interface ContrastAudit {
-  theme: ThemeName;
+  scheme: ResolvedColorScheme;
   failures: { purpose: string; ratio: number; minimum: number }[];
   checked: number;
 }
 
-/** Audit one theme. Returns every failure rather than stopping at the first. */
-export function auditTheme(theme: ThemeName): ContrastAudit {
-  const tokens = THEMES[theme];
+/**
+ * Audit a palette drawn in one scheme. Returns every failure rather than stopping at the first.
+ *
+ * The palette is a parameter rather than looked up, so a theme a package provides is audited by exactly the rules
+ * Clark Default is, instead of by a second, looser check written for "other" palettes.
+ */
+export function auditColors(scheme: ResolvedColorScheme, tokens: ColorTokens): ContrastAudit {
+  const pairs = requiredPairs(tokens);
   const failures: ContrastAudit["failures"] = [];
-  for (const pair of requiredPairs(tokens)) {
+  for (const pair of pairs) {
     const ratio = contrastRatio(pair.foreground, pair.background);
     if (ratio < pair.minimum) {
       failures.push({ purpose: pair.purpose, ratio: Math.round(ratio * 100) / 100, minimum: pair.minimum });
     }
   }
-  return { theme, failures, checked: requiredPairs(tokens).length };
+  return { scheme, failures, checked: pairs.length };
 }
 
-export function auditAllThemes(): ContrastAudit[] {
-  return (Object.keys(THEMES) as ThemeName[]).map(auditTheme);
+/** Clark Default, audited in every scheme it is drawn in. */
+export function auditClarkSchemes(): ContrastAudit[] {
+  return RESOLVED_COLOR_SCHEMES.map((scheme) => auditColors(scheme, CLARK_SCHEMES[scheme]));
 }
 
 /**

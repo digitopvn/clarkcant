@@ -22,6 +22,7 @@ import { z } from "zod";
 
 import { GUARD_CLASSES, guardClassSchema, jevUnavailablePolicySchema } from "./execution.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
+import { BUILTIN_CLARK_THEME_REF, DEFAULT_COLOR_SCHEME, colorSchemeSchema, themeRefSchema } from "./themes.ts";
 
 /** Where a preference lives. A key declares one, and a write cannot choose another. */
 export const preferenceScopeNameSchema = z.enum(["global", "node", "conversation"]);
@@ -549,6 +550,15 @@ export interface PreferenceDefinition {
    * names the field the user got wrong instead of a normalization that silently did nothing.
    */
   readonly normalize?: (value: unknown) => object | undefined;
+  /**
+   * The key's own reader parses a stored value field by field, so the registry hands it the stored row as it is.
+   *
+   * Every other key's stored value is read through `schema`, and a value that fails it is answered as the default: a
+   * row written by an older build, or edited by hand, must not reach a surface as a choice this build cannot make.
+   * The execution policy is the exception because a row with one bad leaf still carries the user's other choices, and
+   * answering it with the default would replace a refusal the user set with the loosest mode.
+   */
+  readonly storedValueParsedByOwner?: true;
 }
 
 /** Trim-only. A user's own wording is theirs; this removes only what they cannot see. */
@@ -589,12 +599,25 @@ const normalizeNameList = (value: unknown): string[] | undefined => {
  * Experience before Developer without re-sorting a list whose meaning is its grouping.
  */
 export const PREFERENCE_REGISTRY = {
-  "experience.theme": {
-    key: "experience.theme",
+  /*
+   * The theme and the colour scheme are two preferences, not one. `experience.theme` held `system | light | dark`,
+   * which is only a colour scheme; storage migration 36 carried every valid stored value of it into
+   * `experience.colorScheme` unchanged, and nobody has chosen a theme yet, so `experience.themeRef` starts at Clark
+   * Default for everyone.
+   */
+  "experience.themeRef": {
+    key: "experience.themeRef",
     scope: "global",
     applies: "immediate",
-    default: "system",
-    schema: z.enum(["system", "light", "dark"]),
+    default: BUILTIN_CLARK_THEME_REF,
+    schema: themeRefSchema,
+  },
+  "experience.colorScheme": {
+    key: "experience.colorScheme",
+    scope: "global",
+    applies: "immediate",
+    default: DEFAULT_COLOR_SCHEME,
+    schema: colorSchemeSchema,
   },
   "experience.motion": {
     key: "experience.motion",
@@ -651,6 +674,7 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: DEFAULT_EXECUTION_POLICY_CONFIG,
     schema: executionPolicyConfigSchema,
+    storedValueParsedByOwner: true,
   },
   "execution.backgroundLimit": {
     key: "execution.backgroundLimit",

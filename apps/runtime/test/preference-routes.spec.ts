@@ -66,12 +66,12 @@ describe("the preferences route is behind the same token as every other route", 
   });
 
   it("refuses a write without one", async () => {
-    const response = await request("PUT", "/preferences/experience.theme", {
+    const response = await request("PUT", "/preferences/experience.colorScheme", {
       body: { value: "dark" },
       authed: false,
     });
     expect(response.status).toBe(401);
-    expect((await current("experience.theme"))?.value).toBe("system");
+    expect((await current("experience.colorScheme"))?.value).toBe("system");
   });
 });
 
@@ -79,7 +79,7 @@ describe("a read answers for every registered key", () => {
   it("marks the ones nobody has set as defaults", async () => {
     const listed = await preferences();
     expect(listed.map((preference) => preference.key)).toEqual([...PREFERENCE_KEYS]);
-    const theme = listed.find((preference) => preference.key === "experience.theme");
+    const theme = listed.find((preference) => preference.key === "experience.colorScheme");
     expect(theme).toMatchObject({ value: "system", isDefault: true, revision: 0, applies: "immediate" });
     expect(theme?.updatedAt).toBeNull();
   });
@@ -115,16 +115,16 @@ describe("a read answers for every registered key", () => {
   });
 
   it("reports a written value as a choice with the revision that wrote it", async () => {
-    const written = await request("PUT", "/preferences/experience.theme", { body: { value: "dark" } });
+    const written = await request("PUT", "/preferences/experience.colorScheme", { body: { value: "dark" } });
     expect(written.status).toBe(200);
     expect((written.body as { preference: RegisteredPreference }).preference).toMatchObject({
-      key: "experience.theme",
+      key: "experience.colorScheme",
       scope: "global",
       value: "dark",
       isDefault: false,
       revision: 1,
     });
-    expect(await current("experience.theme")).toMatchObject({ value: "dark", isDefault: false, revision: 1 });
+    expect(await current("experience.colorScheme")).toMatchObject({ value: "dark", isDefault: false, revision: 1 });
   });
 
   it("counts revisions so a surface can tell its write landed", async () => {
@@ -153,7 +153,7 @@ describe("a refusal names the key or the field, and changes nothing", () => {
   });
 
   it("refuses a body that names no value at all", async () => {
-    const response = await request("PUT", "/preferences/experience.theme", { body: {} });
+    const response = await request("PUT", "/preferences/experience.colorScheme", { body: {} });
     expect(response.status).toBe(400);
     expect(response.body).toMatchObject({ code: "INVALID_SCHEMA" });
   });
@@ -161,7 +161,7 @@ describe("a refusal names the key or the field, and changes nothing", () => {
   it("refuses a body that is not a JSON object", async () => {
     const response = await handleRequest(deps, {
       method: "PUT",
-      path: "/preferences/experience.theme",
+      path: "/preferences/experience.colorScheme",
       query: {},
       headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
       body: "[]",
@@ -173,14 +173,14 @@ describe("a refusal names the key or the field, and changes nothing", () => {
 
 describe("undo reports what it actually did", () => {
   it("restores the value the write replaced", async () => {
-    await request("PUT", "/preferences/experience.theme", { body: { value: "dark" } });
-    await request("PUT", "/preferences/experience.theme", { body: { value: "light" } });
+    await request("PUT", "/preferences/experience.colorScheme", { body: { value: "dark" } });
+    await request("PUT", "/preferences/experience.colorScheme", { body: { value: "light" } });
 
-    const undone = await request("POST", "/preferences/experience.theme/undo");
+    const undone = await request("POST", "/preferences/experience.colorScheme/undo");
     expect(undone.status).toBe(200);
     expect(undone.body).toMatchObject({ undone: true });
     expect((undone.body as { preference: RegisteredPreference }).preference).toMatchObject({ value: "dark" });
-    expect(await current("experience.theme")).toMatchObject({ value: "dark", isDefault: false });
+    expect(await current("experience.colorScheme")).toMatchObject({ value: "dark", isDefault: false });
   });
 
   it("says there was nothing to undo rather than reporting a change", async () => {

@@ -440,7 +440,11 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
-  packages/design-tokens: {}
+  packages/design-tokens:
+    dependencies:
+      '@clarkcant/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/execution-supervisor:
     dependencies:

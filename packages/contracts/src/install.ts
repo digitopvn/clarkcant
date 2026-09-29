@@ -50,7 +50,7 @@ export type IsolationClass = z.infer<typeof isolationClassSchema>;
  * the folder its private data lives in and the container it runs in, so it is a single path segment that no platform
  * reads as anything else: no separator, no `.` or `..`, no trailing dot, nothing a command line would split on.
  */
-const facetIdSchema = z
+export const facetIdSchema = z
   .string()
   .min(1)
   .max(160)

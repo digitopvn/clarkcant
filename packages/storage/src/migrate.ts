@@ -1461,6 +1461,35 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 36,
+    name: "split_theme_preference_into_color_scheme",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- experience.theme held system, light or dark, which is a colour scheme and not a theme. The registry now has
+        -- two keys, experience.themeRef and experience.colorScheme, and this carries every stored experience.theme row
+        -- into experience.colorScheme exactly as it is: the same value, scope and source, and the same revision,
+        -- previous value and time, so the choice reads back unchanged and one undo still returns to what it replaced.
+        -- The value is not reinterpreted, and no experience.themeRef row is written: nobody has chosen a theme yet, so
+        -- the theme is Clark Default by default rather than by a row that claims someone picked it.
+        --
+        -- Only the three values the old key could hold are carried. A row holding anything else ("blue", a number,
+        -- unreadable JSON) was never a choice any build could draw, so it is not turned into a colour-scheme row that
+        -- claims one; the scheme stays at its default, and the legacy row is kept as it is like every other.
+        --
+        -- OR IGNORE keeps a colour-scheme row that already exists, which only a build newer than this migration can
+        -- have written. The experience.theme row is left where it is: this build never reads a key it has not
+        -- registered, and a binary from before this migration still finds its own row, which is what makes the step
+        -- reversible.
+        INSERT OR IGNORE INTO preferences (principal_id, key, value, scope, source, revision, previous_value, created_at)
+          SELECT principal_id, 'experience.colorScheme', value, scope, source, revision, previous_value, created_at
+            FROM preferences
+           WHERE key = 'experience.theme'
+             AND value IN ('"system"', '"light"', '"dark"');
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

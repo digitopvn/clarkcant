@@ -41,7 +41,7 @@ describe("the registry describes itself consistently", () => {
   });
 
   it("answers nothing for a key it does not have", () => {
-    expect(preferenceDefinition("experience.theme")).toBeDefined();
+    expect(preferenceDefinition("experience.colorScheme")).toBeDefined();
     expect(preferenceDefinition("experience.colorway")).toBeUndefined();
   });
 

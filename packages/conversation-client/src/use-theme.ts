@@ -9,11 +9,11 @@ import {
   watchSystemTheme,
   type ThemeChoice,
 } from "./theme.ts";
-import type { ThemeName } from "@clarkcant/design-tokens";
+import type { ResolvedColorScheme } from "@clarkcant/contracts";
 
 export interface ThemeState {
   themeChoice: ThemeChoice;
-  resolvedTheme: ThemeName;
+  resolvedTheme: ResolvedColorScheme;
   /**
    * Apply the choice: store it, resolve it, and write the result onto the document.
    *
@@ -32,7 +32,7 @@ export interface ThemeState {
  */
 export function useTheme(): ThemeState {
   const [themeChoice, setThemeChoice] = useState<ThemeChoice>(() => readStoredTheme());
-  const [resolvedTheme, setResolvedTheme] = useState<ThemeName>(() =>
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedColorScheme>(() =>
     resolveTheme(readStoredTheme(), systemPrefersLight()),
   );
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 
 import { Modal } from "../Modal.tsx";
 import type { GatewayClient } from "../api.ts";
-import type { ThemeName } from "@clarkcant/design-tokens";
+import type { ResolvedColorScheme } from "@clarkcant/contracts";
 import type { ThemeChoice } from "../theme.ts";
 import { AiRoutingSettings } from "./AiRoutingSettings.tsx";
 import { ControlSettings } from "./ControlSettings.tsx";
@@ -92,7 +92,7 @@ export interface SettingsPanelProps {
   /** What the user chose, which may be `system`. */
   themeChoice: ThemeChoice;
   /** What is currently shown, which is always `dark` or `light`. */
-  resolvedTheme: ThemeName;
+  resolvedTheme: ResolvedColorScheme;
   onThemeChoice: (choice: ThemeChoice) => void;
   /**
    * Called after a write that changes the orb, so the orb on screen follows the control that changed it. Resolves
