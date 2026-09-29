@@ -19,6 +19,7 @@ import { z } from "zod";
 
 import { ServiceCallError, type ServiceHost } from "../service-host.ts";
 import type { NodeServices } from "../services.ts";
+import { describeUnsafePattern, MAX_PATTERN_INPUT_LENGTH, overlongPatternInput, unsafeSchemaPattern } from "./schema-patterns.ts";
 
 /**
  * Calling a package's service capability, whoever asked.
@@ -34,7 +35,8 @@ import type { NodeServices } from "../services.ts";
  *     is no longer active;
  *   - a call made on behalf of a binding compiled against a generation that is no longer the active one;
  *   - a capability the registry reports as not usable, with the registry's own reason;
- *   - arguments its schema does not accept.
+ *   - arguments its schema does not accept, and any argument at all when the schema holds a pattern that could take
+ *     unbounded time to check (`schema-patterns.ts`).
  *
  * When the policy asks, the question is a host-owned approval card in the conversation, bound to a digest of exactly
  * this ref and these arguments; nothing a widget or the model says can answer it.
@@ -157,6 +159,19 @@ export function validateArgs(
 ): { ok: true } | { ok: false; message: string } {
   // A service that listed no schema accepts an object; that is all MCP promises about arguments.
   if (schema === undefined) return { ok: true };
+  // Checked on every use, not only when the service registered the schema: a row an earlier version of the node wrote,
+  // or a binding compiled against it, reaches here too, and a backtracking pattern would stall the node's main thread.
+  const unsafe = unsafeSchemaPattern(schema);
+  if (unsafe !== undefined) {
+    return { ok: false, message: `the capability's input schema was refused: ${describeUnsafePattern(unsafe)}` };
+  }
+  const overlong = overlongPatternInput(schema, args);
+  if (overlong !== undefined) {
+    return {
+      ok: false,
+      message: `${overlong === "" ? "input" : overlong}: is longer than the ${String(MAX_PATTERN_INPUT_LENGTH)} characters a value checked against a pattern may have`,
+    };
+  }
   let parser: z.ZodType;
   try {
     parser = z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
