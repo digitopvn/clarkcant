@@ -32,8 +32,8 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *   POST /inbox/notices/:id/dismiss          take one notice out of the list
  *   POST /inbox/notices/:id/restore          undo a dismissal, while it is recent enough to be an undo
  *   POST /inbox/notices/:id/snooze { until } out of the list and the count until then; back unread after
- *   POST /inbox/notices/:id/unsnooze         bring a snoozed notice back now
- *   POST /inbox/notices/:id/suppress         stop notifying about notices of this one's kind
+ *   POST /inbox/notices/:id/unsnooze         take a snooze back: the notice returns as it was
+ *   POST /inbox/notices/:id/suppress         stop notifying about notices of this one's kind (409 when too broad)
  *   POST /inbox/notices/:id/unsuppress       notify about this one's kind again
  *   DELETE /inbox/suppressions/:id           the same, from the list of quieted kinds
  *
@@ -128,13 +128,13 @@ export function handleInboxRoutes(deps: InboxRouteDeps): GatewayResponse | undef
     if (ahead <= 0 || ahead > NOTICE_SNOOZE_MAX_MS) {
       return fail(400, "SNOOZE_OUT_OF_RANGE", "a notice is snoozed until a time after now and at most 30 days away");
     }
-    const snoozed = snoozeNotification(services.runtime.db, {
-      principalId,
-      notificationId: segments[2] ?? "",
-      until: parsed.data.until,
-    });
+    // Stored in one form, milliseconds included: storage compares instants as text, and `…T18:00:00Z` sorts after
+    // `…T18:00:00.500Z` although it is earlier.
+    // SAFETY: `toISOString` of a date parsed from a valid instant is itself a UTC instant.
+    const until = new Date(parsed.data.until).toISOString() as Instant;
+    const snoozed = snoozeNotification(services.runtime.db, { principalId, notificationId: segments[2] ?? "", until, at: now });
     if (!snoozed) return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
-    return json(200, { snoozedUntil: parsed.data.until });
+    return json(200, { snoozedUntil: until });
   }
 
   if (segments.length === 4 && segments[1] === "notices" && segments[3] === "unsnooze") {
@@ -147,14 +147,23 @@ export function handleInboxRoutes(deps: InboxRouteDeps): GatewayResponse | undef
 
   if (segments.length === 4 && segments[1] === "notices" && segments[3] === "suppress") {
     if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "a kind of notice is quieted with POST");
-    const suppression = suppressNoticeKind(services.runtime.db, {
+    const outcome = suppressNoticeKind(services.runtime.db, {
       principalId,
       notificationId: segments[2] ?? "",
       suppressionId: services.conductor.newId("nsp"),
       at: at(),
     });
-    if (suppression === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
-    return json(200, { suppression });
+    if (outcome === "not-found") return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
+    if (outcome === "too-broad") {
+      // Refused here, not only left off the menu: without a scope this would also quiet reminders the person asked for
+      // and every other automation's or source's notices of the same level.
+      return fail(
+        409,
+        "SUPPRESSION_TOO_BROAD",
+        "Không tắt báo được cho loại thông báo này: nó không gắn với một việc tự động, nguồn, gói hay node cụ thể, nên tắt báo sẽ tắt luôn cả lời nhắc và thông báo của những việc khác. Bạn vẫn có thể bỏ hoặc hoãn riêng thông báo này.",
+      );
+    }
+    return json(200, outcome);
   }
 
   if (segments.length === 4 && segments[1] === "notices" && segments[3] === "unsuppress") {

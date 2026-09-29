@@ -168,8 +168,11 @@ The inbox routes are reachable with the same token but are **not** in `/openapi.
 `POST /inbox/read` and `/inbox/unread`, per notice `POST /inbox/notices/:id/<action>` where the action is `dismiss`,
 `restore`, `snooze`, `unsnooze`, `suppress` or `unsuppress`, and `DELETE /inbox/suppressions/:id`. `snooze` takes `{ "until": "<ISO instant>" }`, ahead of
 now and at most 30 days away (else `400 SNOOZE_OUT_OF_RANGE`); the notice leaves the list and the unread count and comes
-back unread once that time has passed. `suppress` quiets the notice's kind for this principal: later notices of that
-kind are still listed but arrive read and raise no notification. Each route acts only on the calling principal's own
+back unread once that time has passed; `unsnooze` returns it at once, read or unread as it was before. `suppress` quiets
+the notice's kind for this principal: later notices of that kind are still listed but arrive read and raise no
+notification. Only a narrow kind can be quieted, one tied to an automation, a signal source, a package, a node, or a
+person's own background work; any other kind would also silence reminders and every other automation's notices, so
+the route refuses it with `409 SUPPRESSION_TOO_BROAD` and the notice's `actions` never offer it. Each route acts only on the calling principal's own
 notices. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
 [system-architecture.md](system-architecture.md) under the inbox.
 

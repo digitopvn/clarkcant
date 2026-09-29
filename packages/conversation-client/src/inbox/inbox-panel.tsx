@@ -20,8 +20,11 @@ import {
   noticeTone,
   relativeAge,
   sanitizeReason,
+  type SnoozePresetId,
   snoozePresetKey,
   snoozePresets,
+  snoozeUntil,
+  suppressionDescription,
   timeLeft,
   waitingKey,
 } from "./inbox-model.ts";
@@ -339,7 +342,15 @@ export function InboxPanel({
   const when = (instant: string | Date): string =>
     new Date(instant).toLocaleString(locale === "vi" ? "vi-VN" : "en-US", { weekday: "long", hour: "2-digit", minute: "2-digit" });
 
-  const snooze = (notice: Notice, until: Date) => {
+  const snooze = (notice: Notice, preset: SnoozePresetId) => {
+    // Worked out at the press, not when the menu was drawn: a menu left open past 17:00 no longer has an evening.
+    const until = snoozeUntil(preset, new Date());
+    if (until === undefined) {
+      setMenuFor(undefined);
+      setStatus({ tone: "failed", text: t("inbox.snooze.gone") });
+      setFocusTarget({ kind: "status" });
+      return;
+    }
     if (!lock(`notice:${notice.noticeId}`)) return;
     const noticeIdsBefore = load.state === "ready" ? load.inbox.notices.map((existing) => existing.noticeId) : [];
     void client
@@ -556,7 +567,7 @@ export function InboxPanel({
                 data-snooze-preset={preset.id}
                 title={when(preset.until)}
                 disabled={locked}
-                onClick={() => snooze(notice, preset.until)}
+                onClick={() => snooze(notice, preset.id)}
               >
                 {t(snoozePresetKey(preset.id))}
               </button>
@@ -938,32 +949,41 @@ export function InboxPanel({
                     {t("inbox.suppressions.note")}
                   </p>
                   <ul className="cc-inbox-list">
-                    {load.inbox.suppressions.map((suppression) => (
-                      <li
-                        key={suppression.suppressionId}
-                        className="cc-inbox-notice"
-                        data-inbox-suppression={suppression.suppressionId}
-                      >
-                        <div className="cc-inbox-notice-head">
-                          <span className="cc-badge" {...(noticeTone(suppression.severity) === undefined ? {} : { "data-tone": noticeTone(suppression.severity) })}>
-                            {t(noticeSourceKey(suppression.sourceKind))}
-                          </span>
-                        </div>
-                        <p className="cc-inbox-notice-title">{t("inbox.suppressions.example").replace("{title}", suppression.example)}</p>
-                        <div className="cc-card-actions">
-                          <button
-                            type="button"
-                            className="cc-action"
-                            data-inbox-remove-suppression={suppression.suppressionId}
-                            aria-label={t("inbox.suppressions.removeAria").replace("{title}", suppression.example)}
-                            disabled={busy !== undefined}
-                            onClick={() => removeSuppression(suppression.suppressionId)}
-                          >
-                            {t("inbox.suppressions.remove")}
-                          </button>
-                        </div>
-                      </li>
-                    ))}
+                    {load.inbox.suppressions.map((suppression) => {
+                      const parts = suppressionDescription(suppression);
+                      const covers = `${t(parts.scopeKey).replace("{label}", parts.label).replace("{source}", t(noticeSourceKey(suppression.sourceKind)))} — ${t(parts.levelKey)}`;
+                      return (
+                        <li
+                          key={suppression.suppressionId}
+                          className="cc-inbox-notice"
+                          data-inbox-suppression={suppression.suppressionId}
+                        >
+                          <div className="cc-inbox-notice-head">
+                            <span className="cc-badge" {...(noticeTone(suppression.severity) === undefined ? {} : { "data-tone": noticeTone(suppression.severity) })}>
+                              {t(noticeSourceKey(suppression.sourceKind))}
+                            </span>
+                          </div>
+                          <p className="cc-inbox-notice-title" data-inbox-suppression-covers={suppression.suppressionId}>
+                            {covers}
+                          </p>
+                          <p className="cc-freshness" style={{ margin: 0 }}>
+                            {t("inbox.suppressions.example").replace("{title}", suppression.example)}
+                          </p>
+                          <div className="cc-card-actions">
+                            <button
+                              type="button"
+                              className="cc-action"
+                              data-inbox-remove-suppression={suppression.suppressionId}
+                              aria-label={t("inbox.suppressions.removeAria").replace("{title}", covers)}
+                              disabled={busy !== undefined}
+                              onClick={() => removeSuppression(suppression.suppressionId)}
+                            >
+                              {t("inbox.suppressions.remove")}
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </details>
               )}

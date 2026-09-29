@@ -441,7 +441,10 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     version short of cloning it, and this module does not pretend to.
 
   - **Subject and actions** (#196). A notice may name what it is about in a typed `subject` (migration 31: `task`,
-    `background-work`, `conversation`, `package`, `pi-update`, `peer`); a subject of an unknown kind is refused before
+    `background-work`, `conversation`, `package`, `pi-update`, `peer`; later `automation` — one standing request by
+    intent id, with its summary as `label` and the task a run started, if any, whose conversation "Open" follows as for
+    a `task` subject — and `signal-source` — one polled or listening source by `sourceKey`, such as one GitHub
+    repository, with a `label`); a subject of an unknown kind is refused before
     anything is written, and one stored by a later version that this node cannot read is dropped on read rather than
     failing the list. The actions a notice offers are **not stored**: `apps/runtime/src/notice-actions.ts`
     (`noticeActionsFor`) works them out on every read from the subject and the current state — the conversation a task
@@ -453,30 +456,44 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
   - **Snooze** (#196, migration 33: `notifications.snoozed_until`). The client offers four presets worked out on the
     device's clock (`snoozePresets` in `inbox-model.ts`: in one hour, this evening at 18:00 — only before 17:00 —,
     tomorrow at 08:00, next Monday at 08:00); the node accepts any `until` ahead of now and at most 30 days away
-    (`NOTICE_SNOOZE_MAX_MS`). Snoozing also clears `read_at`. While `snoozed_until` is ahead of now the notice is left
-    out of the list, the unread count, "mark all read" and the cap's pruning, and `GET /inbox` returns it under
-    `snoozed` with only an `unsnooze` action. No timer runs: once the time passes, the next read lists it again,
-    unread, ordered by `COALESCE(snoozed_until, created_at)` so it comes back at the top. `unsnooze` sets
-    `snoozed_until` to now, with the same effect at once.
+    (`NOTICE_SNOOZE_MAX_MS`), stored in the node's own `toISOString()` form because instants are compared as text.
+    The client works a preset's time out when it is pressed, so a menu left open past 17:00 cannot snooze to an
+    evening that has gone. While `snoozed_until` is ahead of now the notice is left out of the list, the unread count,
+    "mark all read" and the cap's pruning, and `GET /inbox` returns it under `snoozed` with only an `unsnooze` action.
+    Snoozing leaves `read_at` as it was. No timer runs: once the time passes, the next read lists it again, ordered by
+    `COALESCE(snoozed_until, created_at)` so it comes back at the top, and unread — read off the two times (`read_at`
+    missing or earlier than `snoozed_until`) until it is read again. `unsnooze` (Undo, or "bring back now") clears
+    `snoozed_until`, so the notice returns exactly as it was: read or unread, in its old place. A notice of a quieted
+    kind that the person snoozed comes back unread and can notify like any returning snooze: snoozing it was a request
+    to be reminded of that one notice, which the kind's suppression does not override.
   - **Suppression** ("stop notifying me about this kind"; migration 33: `notification_suppressions`, one row per
     principal and key). The key is `(sourceKind, category, severity, scope)` (`noticeSuppressionKey` in the contract).
-    `scope` is set only where the subject names a recurring thing — `package:<packageId>`, `pi:<package name>`,
-    `peer:<nodeId>`, or, for any other notice from another node, its origin node as `peer:<nodeId>` — and is empty for
-    a local notice about a one-off subject (a task, a conversation, a piece of background work), where a narrower key
-    would never match again. Severity is part of the key so
-    quieting successes never quiets failures. The producer's `dedupKey` is deliberately not used: its shape is
-    internal to each producer and changes with each version or task. A matching notice is still recorded and listed
-    (it stays findable, dedups, can be asked about) but is written already read, so it raises no unread count and no
-    out-of-app notification. That keeps suppression distinct from dismiss (removes one notice) and snooze (hides one
-    notice for a while). It is reversed from the notice's menu (`unsuppress`), from the "quieted kinds" list the
-    inbox panel shows while any exist (`GET /inbox` → `suppressions`), or with Undo right after.
+    `scope` is set only where the subject names a recurring thing — `automation:<intentId>`, `source:<sourceKey>`,
+    `package:<packageId>`, `pi:<package name>`, `peer:<nodeId>`, or, for any other notice from another node except an
+    automation notice, its origin node as `peer:<nodeId>` (an automation notice is scoped only by its automation or
+    source, so quieting one never quiets the reminders set on that node) — and is empty for a local notice about a one-off subject (a task, a conversation, a piece
+    of background work), where a narrower key would never match again. Severity is part of the key so quieting
+    successes never quiets failures. The producer's `dedupKey` is deliberately not used: its shape is internal to each
+    producer and changes with each version or task. **Only a narrow key can be quieted** (`noticeKindQuietable`): a
+    scoped one, or an unscoped one from `background` or `worker`, whose every notice is the person's own work reporting
+    back. Any other unscoped key — an automation or system notice that names no automation, source, package or node —
+    would also quiet reminders the person asked for and every other automation's or source's notices at that level, so
+    the menu does not offer it and the route refuses it with `409 SUPPRESSION_TOO_BROAD`. A reminder is never
+    quietable: it has no automation scope. A matching notice is still recorded and listed (it stays findable, dedups,
+    can be asked about) but is written already read, so it raises no unread count and no out-of-app notification. That
+    keeps suppression distinct from dismiss (removes one notice) and snooze (hides one notice for a while). Each row
+    keeps the words for its scope (`scope_label`: the automation's summary, the repository, the package), and the
+    inbox panel's "quieted kinds" list (`GET /inbox` → `suppressions`) says what each covers — which automation,
+    repository, package or node, or every notice of a source, and at which level — with one example title. It is
+    reversed from that list, from the notice's menu (`unsuppress`), or with Undo right after.
 
 Routes: `GET /inbox`, `GET /inbox/summary` (two numbers for the header badge), `POST /inbox/read` (`noticeIds` or all),
 `POST /inbox/unread` (`noticeIds`, required and non-empty; only this principal's undismissed notices),
 `POST /inbox/notices/:id/dismiss`, `POST /inbox/notices/:id/restore` (undoes a dismissal within five minutes —
 `DISMISS_UNDO_WINDOW_MS` — and answers `409 UNDO_EXPIRED` after; a restored notice comes back read),
 `POST /inbox/notices/:id/snooze` (`{ until }`; `400 SNOOZE_OUT_OF_RANGE` when not ahead of now or beyond 30 days),
-`POST /inbox/notices/:id/unsnooze`, `POST /inbox/notices/:id/suppress` (answers the `suppression`; idempotent),
+`POST /inbox/notices/:id/unsnooze`, `POST /inbox/notices/:id/suppress` (answers the `suppression`; idempotent;
+`409 SUPPRESSION_TOO_BROAD` for a kind too wide to quiet),
 `POST /inbox/notices/:id/unsuppress` and `DELETE /inbox/suppressions/:id`. All of them act only on this principal's
 notices and suppressions; another principal's id answers 404. These routes are not part of the stable
 open-interface description. The contract is in `packages/contracts/src/inbox.ts`. UI in

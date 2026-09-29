@@ -446,7 +446,10 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     publisher không tự bump version — không có cách nào biết bản mới hơn của một git ref ngoài việc clone và xem,
     và module này không giả vờ làm được điều đó.
   - **Subject và thao tác** (#196). Một thông báo có thể nêu nó nói về cái gì qua `subject` có kiểu (migration 31:
-    `task`, `background-work`, `conversation`, `package`, `pi-update`, `peer`); subject thuộc loại không biết bị từ chối
+    `task`, `background-work`, `conversation`, `package`, `pi-update`, `peer`; sau đó thêm `automation` — một yêu cầu
+    thường trực theo intent id, kèm tóm tắt của nó trong `label` và task mà lần chạy đã tạo, nếu có, để "Mở" đi theo
+    hội thoại của task đó như với subject `task` — và `signal-source` — một nguồn được poll hoặc lắng nghe theo
+    `sourceKey`, chẳng hạn một repository GitHub, kèm `label`); subject thuộc loại không biết bị từ chối
     trước khi ghi bất cứ gì, còn subject do một phiên bản sau lưu mà node này không đọc được thì bị bỏ khi đọc thay vì
     làm hỏng cả danh sách. Thao tác của một thông báo **không được lưu**: `apps/runtime/src/notice-actions.ts`
     (`noticeActionsFor`) tính lại ở mỗi lần đọc từ subject và trạng thái hiện tại — hội thoại mà task giờ thuộc về, hội
@@ -458,22 +461,37 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
   - **Hoãn** (#196, migration 33: `notifications.snoozed_until`). Client đưa ra bốn mốc tính theo đồng hồ của thiết bị
     (`snoozePresets` trong `inbox-model.ts`: một giờ nữa, tối nay lúc 18:00 — chỉ khi chưa đến 17:00 —, sáng mai lúc
     08:00, thứ Hai tuần sau lúc 08:00); node nhận mọi `until` nằm sau hiện tại và không xa quá 30 ngày
-    (`NOTICE_SNOOZE_MAX_MS`). Hoãn cũng xoá `read_at`. Khi `snoozed_until` còn nằm sau hiện tại, thông báo không có trong
-    danh sách, không tính vào số chưa đọc, không bị "đánh dấu tất cả đã đọc" và không bị cắt khi vượt giới hạn;
-    `GET /inbox` trả nó trong `snoozed` với duy nhất thao tác `unsnooze`. Không có bộ hẹn giờ nào chạy: khi đến giờ,
-    lần đọc kế tiếp liệt kê lại nó, chưa đọc, sắp theo `COALESCE(snoozed_until, created_at)` nên nó trở về ở đầu danh
-    sách. `unsnooze` đặt `snoozed_until` thành hiện tại, cho cùng kết quả ngay lập tức.
+    (`NOTICE_SNOOZE_MAX_MS`), và lưu ở dạng `toISOString()` của chính node vì các thời điểm được so sánh như chuỗi.
+    Client tính thời điểm của một mốc lúc người dùng bấm, nên một menu để mở quá 17:00 không thể hoãn đến một buổi tối
+    đã qua. Khi `snoozed_until` còn nằm sau hiện tại, thông báo không có trong danh sách, không tính vào số chưa đọc,
+    không bị "đánh dấu tất cả đã đọc" và không bị cắt khi vượt giới hạn; `GET /inbox` trả nó trong `snoozed` với duy
+    nhất thao tác `unsnooze`. Hoãn giữ nguyên `read_at`. Không có bộ hẹn giờ nào chạy: khi đến giờ, lần đọc kế tiếp
+    liệt kê lại nó, sắp theo `COALESCE(snoozed_until, created_at)` nên nó trở về ở đầu danh sách, và ở trạng thái chưa
+    đọc — suy ra từ hai thời điểm (`read_at` trống hoặc sớm hơn `snoozed_until`) cho đến khi được đọc lại. `unsnooze`
+    (Hoàn tác, hoặc "Đưa trở lại ngay") xoá `snoozed_until`, nên thông báo trở về đúng như trước: đã đọc hay chưa đọc,
+    ở chỗ cũ. Một thông báo thuộc loại đang tắt báo mà người dùng đã hoãn vẫn quay lại ở trạng thái chưa đọc và có thể
+    hiện thông báo như mọi thông báo hoãn quay lại: hoãn nó là nhờ được nhắc lại đúng thông báo đó, và việc tắt báo
+    theo loại không ghi đè lên yêu cầu ấy.
   - **Tắt báo theo loại** ("không báo về loại này nữa"; migration 33: `notification_suppressions`, mỗi principal và
     khoá một dòng). Khoá là `(sourceKind, category, severity, scope)` (`noticeSuppressionKey` trong contract). `scope`
-    chỉ có khi subject nêu một thứ lặp lại — `package:<packageId>`, `pi:<tên gói>`, `peer:<nodeId>`, hoặc, với mọi thông báo khác đến
-    từ node khác, node gốc của nó dưới dạng `peer:<nodeId>` — và để trống với thông báo cục bộ về một subject chỉ xảy
-    ra một lần (một task, một hội thoại, một việc nền), vì khoá hẹp hơn sẽ không bao giờ khớp lại. Severity nằm trong khoá để tắt báo thành công không bao giờ tắt luôn
-    báo lỗi. `dedupKey` của nơi tạo thông báo cố ý không được dùng: dạng của nó là chuyện nội bộ của từng nơi tạo và đổi
-    theo từng phiên bản hay từng task. Thông báo khớp khoá vẫn được ghi và liệt kê (vẫn tìm được, vẫn khử trùng, vẫn
-    hỏi Clark được) nhưng được ghi ở trạng thái đã đọc, nên không làm tăng số chưa đọc và không hiện thông báo ngoài
-    ứng dụng. Nhờ vậy tắt báo khác với bỏ (xoá một thông báo) và hoãn (giấu một thông báo trong một lúc). Có thể đảo
-    lại từ menu của thông báo (`unsuppress`), từ danh sách "loại không báo" mà bảng hộp thư hiện khi còn loại nào bị
-    tắt (`GET /inbox` → `suppressions`), hoặc bằng Hoàn tác ngay sau đó.
+    chỉ có khi subject nêu một thứ lặp lại — `automation:<intentId>`, `source:<sourceKey>`, `package:<packageId>`,
+    `pi:<tên gói>`, `peer:<nodeId>`, hoặc, với mọi thông báo khác đến từ node khác trừ thông báo tự động, node gốc
+    của nó dưới dạng `peer:<nodeId>` (thông báo tự động chỉ được giới hạn theo việc tự động hay nguồn của nó, nên tắt
+    báo nó không bao giờ tắt luôn các lời nhắc đặt ở node đó) — và để trống với thông báo cục bộ về một subject chỉ xảy ra một lần (một task, một hội thoại, một
+    việc nền), vì khoá hẹp hơn sẽ không bao giờ khớp lại. Severity nằm trong khoá để tắt báo thành công không bao giờ
+    tắt luôn báo lỗi. `dedupKey` của nơi tạo thông báo cố ý không được dùng: dạng của nó là chuyện nội bộ của từng nơi
+    tạo và đổi theo từng phiên bản hay từng task. **Chỉ khoá đủ hẹp mới tắt báo được** (`noticeKindQuietable`): khoá có
+    scope, hoặc khoá không scope từ `background` hay `worker`, vì mọi thông báo của hai nguồn này đều là việc của chính
+    người dùng báo lại. Mọi khoá không scope khác — thông báo tự động hay hệ thống không gắn với việc tự động, nguồn,
+    gói hay node nào — sẽ tắt luôn cả lời nhắc người dùng đã đặt và thông báo cùng mức của mọi việc tự động hay nguồn
+    khác, nên menu không đưa ra và route từ chối bằng `409 SUPPRESSION_TOO_BROAD`. Lời nhắc không bao giờ tắt báo được:
+    nó không có scope việc tự động. Thông báo khớp khoá vẫn được ghi và liệt kê (vẫn tìm được, vẫn khử trùng, vẫn hỏi
+    Clark được) nhưng được ghi ở trạng thái đã đọc, nên không làm tăng số chưa đọc và không hiện thông báo ngoài ứng
+    dụng. Nhờ vậy tắt báo khác với bỏ (xoá một thông báo) và hoãn (giấu một thông báo trong một lúc). Mỗi dòng giữ
+    lời mô tả scope của nó (`scope_label`: tóm tắt của việc tự động, tên repository, tên gói), và danh sách "loại không
+    báo" trong bảng hộp thư (`GET /inbox` → `suppressions`) nói rõ mỗi dòng bao gồm gì — việc tự động, repository, gói
+    hay node nào, hoặc mọi thông báo của một nguồn, và ở mức nào — kèm một tiêu đề ví dụ. Có thể đảo lại từ danh sách
+    đó, từ menu của thông báo (`unsuppress`), hoặc bằng Hoàn tác ngay sau đó.
 
 Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `POST /inbox/read` (`noticeIds` hoặc tất cả),
 `POST /inbox/unread` (`noticeIds`, bắt buộc và không rỗng; chỉ các thông báo chưa bỏ của principal này),
@@ -481,7 +499,7 @@ Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `PO
 `DISMISS_UNDO_WINDOW_MS` — quá hạn thì trả `409 UNDO_EXPIRED`; thông báo được đưa lại trở về ở trạng thái đã đọc),
 `POST /inbox/notices/:id/snooze` (`{ until }`; `400 SNOOZE_OUT_OF_RANGE` khi không nằm sau hiện tại hoặc xa quá 30
 ngày), `POST /inbox/notices/:id/unsnooze`, `POST /inbox/notices/:id/suppress` (trả về `suppression`; gọi lại không
-đổi gì), `POST /inbox/notices/:id/unsuppress` và `DELETE /inbox/suppressions/:id`. Tất cả chỉ tác động lên thông
+đổi gì; `409 SUPPRESSION_TOO_BROAD` với loại quá rộng để tắt báo), `POST /inbox/notices/:id/unsuppress` và `DELETE /inbox/suppressions/:id`. Tất cả chỉ tác động lên thông
 báo và mục tắt báo của principal này; id của principal khác trả 404. Các route này không thuộc mô tả open-interface
 ổn định. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.vi.md
 §6.7; mở bằng intent `inbox.open` (text, voice, `control_app`), còn `inbox.ask` hỏi Clark về thông báo mới nhất. Agent đọc cùng dữ liệu đó qua tool chỉ đọc `read_inbox`

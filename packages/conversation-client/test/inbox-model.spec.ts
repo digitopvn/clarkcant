@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Instant, Notice, WaitingItem } from "@clarkcant/contracts";
+import type { Instant, Notice, NoticeSuppression, WaitingItem } from "@clarkcant/contracts";
 
 import { MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 import {
@@ -17,11 +17,14 @@ import {
   noticeKindQuieted,
   noticeReference,
   noticesMayBeCapped,
+  noticeSourceKey,
   noticeTone,
   relativeAge,
   sanitizeReason,
   snoozePresetKey,
   snoozePresets,
+  snoozeUntil,
+  suppressionDescription,
   timeLeft,
   waitingKey,
 } from "../src/inbox/inbox-model.ts";
@@ -106,6 +109,38 @@ describe("snoozing", () => {
     });
     expect(buttons.map((action) => action.id)).toEqual(["open", "ask-clark"]);
     expect(menu.map((action) => action.id)).toEqual(["snooze", "suppress"]);
+  });
+
+  it("works out a preset's time when it is pressed, so an evening that passed with the menu open is not offered", () => {
+    // Drawn at 16:50, pressed at 17:10: the evening the menu showed is less than an hour away by then.
+    expect(snoozeUntil("evening", local(29, 16, 50))?.getTime()).toBe(local(29, 18).getTime());
+    expect(snoozeUntil("evening", local(29, 17, 10))).toBeUndefined();
+    expect(snoozeUntil("hour", local(29, 17, 10))?.getTime()).toBe(local(29, 18, 10).getTime());
+  });
+});
+
+describe("a quieted kind, in words", () => {
+  const base = { suppressionId: "nsp_1", category: "alert", example: "Việc tự động bị từ chối", createdAt: READ_AT as Instant } as const;
+  const words = (suppression: NoticeSuppression): string => {
+    const parts = suppressionDescription(suppression);
+    return `${t(parts.scopeKey).replace("{label}", parts.label).replace("{source}", t(noticeSourceKey(suppression.sourceKind)))} — ${t(parts.levelKey)}`;
+  };
+
+  it("names the automation, repository, package or node it is limited to, and the level", () => {
+    expect(words({ ...base, sourceKind: "automation", severity: "warning", scope: "automation:int_a", scopeLabel: "Dọn repo A" })).toBe(
+      "Việc tự động “Dọn repo A” — mức cảnh báo",
+    );
+    expect(words({ ...base, sourceKind: "automation", severity: "warning", scope: "source:github:acme/x", scopeLabel: "acme/x" })).toBe(
+      "Nguồn tín hiệu “acme/x” — mức cảnh báo",
+    );
+    expect(words({ ...base, sourceKind: "package", category: "update", severity: "info", scope: "package:demo", scopeLabel: "demo" })).toBe(
+      "Gói “demo” — mức thông tin",
+    );
+  });
+
+  it("says plainly when it covers a whole source, and falls back to the scope itself when no label was stored", () => {
+    expect(words({ ...base, sourceKind: "background", category: "result", severity: "success" })).toBe("Mọi thông báo loại “Việc nền” — mức thành công");
+    expect(words({ ...base, sourceKind: "peer", severity: "error", scope: "peer:node_b" })).toBe("Node “node_b” — mức lỗi");
   });
 });
 

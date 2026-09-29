@@ -9,8 +9,10 @@ import {
   type NoticeSuppressionKey,
   NOTICE_BODY_MAX,
   NOTICE_TITLE_MAX,
+  noticeKindQuietable,
   noticeSubjectSchema,
   noticeSuppressionKey,
+  noticeSuppressionScopeLabel,
   redactSecrets,
 } from "@clarkcant/contracts";
 
@@ -86,6 +88,16 @@ const NOTIFICATION_COLUMNS = `notification_id, source_kind, category, severity, 
 /** SQL: the notice is not snoozed until a time still ahead of the bound instant. */
 const NOT_SNOOZED = "(snoozed_until IS NULL OR snoozed_until <= ?)";
 
+/**
+ * SQL: the notice came back from a snooze, at or before the bound instant, and has not been read since. Snoozing leaves
+ * `read_at` as it was, so taking a snooze back restores exactly the earlier state; a snooze that runs its course is
+ * what makes the notice unread, and that is read off the two times here rather than written by anything that runs then.
+ */
+const RETURNED_UNREAD = "(snoozed_until IS NOT NULL AND snoozed_until <= ? AND read_at IS NOT NULL AND read_at < snoozed_until)";
+
+/** SQL: unread as the person sees it, at the bound instant. */
+const UNREAD = `(read_at IS NULL OR ${RETURNED_UNREAD})`;
+
 /** The node's clock, for callers that read the inbox without one of their own. */
 function currentInstant(): Instant {
   return new Date().toISOString() as Instant;
@@ -136,10 +148,11 @@ export function recordNotification(
     // Parsed before the suppression lookup reads it, so a subject of an unknown kind is refused before anything else.
     const subject = input.subject === undefined ? undefined : noticeSubjectSchema.parse(input.subject);
     // A kind the person asked not to be notified about is still written down — the record is not theirs to lose by
-    // muting it — but read already, which is what keeps it out of the count and out of any notification.
+    // muting it — but read already, which is what keeps it out of the count and out of any notification. A kind too
+    // wide to quiet never matches, whatever is stored.
+    const kind = { ...input, ...(subject === undefined ? {} : { subject }) };
     const suppressed =
-      findNoticeSuppression(db, input.principalId, noticeSuppressionKey({ ...input, ...(subject === undefined ? {} : { subject }) })) !==
-      undefined;
+      noticeKindQuietable(kind) && findNoticeSuppression(db, input.principalId, noticeSuppressionKey(kind)) !== undefined;
     const title = clean(input.title, NOTICE_TITLE_MAX);
     const body = input.body === undefined ? "" : clean(input.body, NOTICE_BODY_MAX);
     db.prepare(
@@ -195,9 +208,13 @@ function subjectFromColumn(column: string | null): NoticeSubject | undefined {
   }
 }
 
-function noticeFromRow(row: NotificationRow, now?: Instant): Notice {
+function noticeFromRow(row: NotificationRow, now: Instant): Notice {
   const subject = subjectFromColumn(row.subject);
-  const snoozed = now !== undefined && row.snoozed_until !== null && row.snoozed_until > now;
+  const snoozed = row.snoozed_until !== null && row.snoozed_until > now;
+  // Back from a snooze and not read since: unread, whatever it was when it was put aside (see `RETURNED_UNREAD`).
+  const returnedUnread =
+    row.snoozed_until !== null && row.snoozed_until <= now && row.read_at !== null && row.read_at < row.snoozed_until;
+  const readAt = row.read_at === null || returnedUnread ? undefined : (row.read_at as Instant);
   // SAFETY: every column below was written by `recordNotification` from the contract's own enums, and the route
   // that serves the list parses the response with `inboxResponseSchema` in the client.
   return {
@@ -210,7 +227,7 @@ function noticeFromRow(row: NotificationRow, now?: Instant): Notice {
     ...(row.conversation_id === null ? {} : { conversationId: row.conversation_id }),
     ...(row.origin_node_id === null ? {} : { originNodeId: row.origin_node_id }),
     createdAt: row.created_at as Instant,
-    ...(row.read_at === null ? {} : { readAt: row.read_at as Instant }),
+    ...(readAt === undefined ? {} : { readAt }),
     ...(subject === undefined ? {} : { subject }),
     ...(snoozed && row.snoozed_until !== null ? { snoozedUntil: row.snoozed_until as Instant } : {}),
   };
@@ -232,7 +249,7 @@ export function listNotifications(db: Database, principalId: string, limit = 50,
     principalId,
     now,
     Math.max(1, Math.min(limit, MAX_NOTIFICATIONS)),
-  ).map((row) => noticeFromRow(row));
+  ).map((row) => noticeFromRow(row, now));
 }
 
 /** The notices snoozed until a time still ahead of `now`, soonest back first, each with that time. */
@@ -260,6 +277,7 @@ export function getNotification(
   db: Database,
   principalId: string,
   notificationId: string,
+  now: Instant = currentInstant(),
 ): { notice: Notice; dismissed: boolean } | undefined {
   const row = oneRow<NotificationRow & { dismissed_at: string | null }>(
     db,
@@ -267,7 +285,7 @@ export function getNotification(
     principalId,
     notificationId,
   );
-  return row === undefined ? undefined : { notice: noticeFromRow(row), dismissed: row.dismissed_at !== null };
+  return row === undefined ? undefined : { notice: noticeFromRow(row, now), dismissed: row.dismissed_at !== null };
 }
 
 /** Unread notices in the list. A snoozed notice is not counted until it is back, which is when it is unread again. */
@@ -275,8 +293,9 @@ export function countUnreadNotifications(db: Database, principalId: string, now:
   const row = oneRow<{ unread: number }>(
     db,
     `SELECT COUNT(*) AS unread FROM notifications
-      WHERE principal_id = ? AND dismissed_at IS NULL AND read_at IS NULL AND ${NOT_SNOOZED}`,
+      WHERE principal_id = ? AND dismissed_at IS NULL AND ${UNREAD} AND ${NOT_SNOOZED}`,
     principalId,
+    now,
     now,
   );
   return Number(row?.unread ?? 0);
@@ -296,18 +315,18 @@ export function markNotificationsRead(
   if (input.notificationIds === undefined) {
     return Number(
       db
-        .prepare(`UPDATE notifications SET read_at = ? WHERE principal_id = ? AND read_at IS NULL AND ${NOT_SNOOZED}`)
-        .run(input.at, input.principalId, input.at).changes,
+        .prepare(`UPDATE notifications SET read_at = ? WHERE principal_id = ? AND ${UNREAD} AND ${NOT_SNOOZED}`)
+        .run(input.at, input.principalId, input.at, input.at).changes,
     );
   }
   if (input.notificationIds.length === 0) return 0;
   return transaction(db, () => {
     const statement = db.prepare(
-      "UPDATE notifications SET read_at = ? WHERE principal_id = ? AND notification_id = ? AND read_at IS NULL",
+      `UPDATE notifications SET read_at = ? WHERE principal_id = ? AND notification_id = ? AND ${UNREAD}`,
     );
     let changed = 0;
     for (const id of input.notificationIds ?? []) {
-      changed += Number(statement.run(input.at, input.principalId, id).changes);
+      changed += Number(statement.run(input.at, input.principalId, id, input.at).changes);
     }
     return changed;
   });
@@ -320,10 +339,10 @@ export function dismissNotification(
 ): boolean {
   const result = db
     .prepare(
-      `UPDATE notifications SET dismissed_at = ?, read_at = COALESCE(read_at, ?)
+      `UPDATE notifications SET dismissed_at = ?, read_at = CASE WHEN ${UNREAD} THEN ? ELSE read_at END
         WHERE principal_id = ? AND notification_id = ? AND dismissed_at IS NULL`,
     )
-    .run(input.at, input.at, input.principalId, input.notificationId);
+    .run(input.at, input.at, input.at, input.principalId, input.notificationId);
   return Number(result.changes) > 0;
 }
 
@@ -376,25 +395,29 @@ export function restoreNotification(
 }
 
 /**
- * Put one notice aside until `until`. It leaves the list and the unread count now, and comes back unread then — unread
- * is set here rather than when it returns, because nothing runs when it returns: the next read simply finds it again.
- * Snoozing again moves the time. The caller checks that `until` is ahead and within `NOTICE_SNOOZE_MAX_MS`.
+ * Put one notice aside until `until`. It leaves the list and the unread count now, and comes back unread then, at the
+ * top. Its read state is left as it is, so taking the snooze back (`unsnoozeNotification`) restores exactly what the
+ * person had; a snooze that runs its course reads as unread from the times alone (`RETURNED_UNREAD`), with nothing
+ * running when it ends. A notice that is itself back from an earlier snooze and still unread is written unread here,
+ * so snoozing it again and taking that back does not turn it read. Snoozing again moves the time. `until` is compared
+ * as text with other instants, so the caller passes it in the node's own `toISOString()` form, ahead of `at` and
+ * within `NOTICE_SNOOZE_MAX_MS`.
  */
 export function snoozeNotification(
   db: Database,
-  input: { principalId: string; notificationId: string; until: Instant },
+  input: { principalId: string; notificationId: string; until: Instant; at: Instant },
 ): boolean {
   const result = db
     .prepare(
-      `UPDATE notifications SET snoozed_until = ?, read_at = NULL
+      `UPDATE notifications SET snoozed_until = ?, read_at = CASE WHEN ${RETURNED_UNREAD} THEN NULL ELSE read_at END
         WHERE principal_id = ? AND notification_id = ? AND dismissed_at IS NULL`,
     )
-    .run(input.until, input.principalId, input.notificationId);
+    .run(input.until, input.at, input.principalId, input.notificationId);
   return Number(result.changes) > 0;
 }
 
 /**
- * Bring a snoozed notice back now: the same as its time passing, so it returns unread and at the top of the list.
+ * Take a snooze back: the notice returns to the list as it was when it was snoozed — read or unread, in its old place.
  * "not-snoozed" for one already back — from a second press, or because its time came — which is what was asked for.
  */
 export function unsnoozeNotification(
@@ -410,8 +433,7 @@ export function unsnoozeNotification(
     );
     if (row === undefined) return "not-found";
     if (row.snoozed_until === null || row.snoozed_until <= input.at) return "not-snoozed";
-    db.prepare("UPDATE notifications SET snoozed_until = ? WHERE principal_id = ? AND notification_id = ?").run(
-      input.at,
+    db.prepare("UPDATE notifications SET snoozed_until = NULL WHERE principal_id = ? AND notification_id = ?").run(
       input.principalId,
       input.notificationId,
     );
@@ -429,11 +451,12 @@ interface SuppressionRow {
   category: string;
   severity: string;
   scope: string;
+  scope_label: string | null;
   example_title: string;
   created_at: string;
 }
 
-const SUPPRESSION_COLUMNS = "suppression_id, source_kind, category, severity, scope, example_title, created_at";
+const SUPPRESSION_COLUMNS = "suppression_id, source_kind, category, severity, scope, scope_label, example_title, created_at";
 
 function suppressionFromRow(row: SuppressionRow): NoticeSuppression {
   // SAFETY: every column was written by `suppressNoticeKind` from a stored notice's own enum columns.
@@ -443,6 +466,7 @@ function suppressionFromRow(row: SuppressionRow): NoticeSuppression {
     category: row.category as NoticeSuppression["category"],
     severity: row.severity as NoticeSuppression["severity"],
     ...(row.scope === "" ? {} : { scope: row.scope }),
+    ...(row.scope_label === null ? {} : { scopeLabel: row.scope_label }),
     example: row.example_title,
     createdAt: row.created_at as Instant,
   };
@@ -476,22 +500,24 @@ export function listNoticeSuppressions(db: Database, principalId: string): Notic
  *
  * Only future notices are affected: the ones already in the list keep their read state, because quieting a kind is
  * about interruptions still to come, not about what the person has or has not looked at. Setting it twice returns the
- * first. `undefined` when the notice is not this principal's or no longer in the inbox.
+ * first. "not-found" when the notice is not this principal's or no longer in the inbox; "too-broad" when its kind has
+ * no scope narrow enough to quiet (`noticeKindQuietable`), so nothing is stored.
  */
 export function suppressNoticeKind(
   db: Database,
   input: { principalId: string; notificationId: string; suppressionId: string; at: Instant },
-): NoticeSuppression | undefined {
+): { suppression: NoticeSuppression } | "not-found" | "too-broad" {
   return transaction(db, () => {
-    const stored = getNotification(db, input.principalId, input.notificationId);
-    if (stored === undefined || stored.dismissed) return undefined;
+    const stored = getNotification(db, input.principalId, input.notificationId, input.at);
+    if (stored === undefined || stored.dismissed) return "not-found";
+    if (!noticeKindQuietable(stored.notice)) return "too-broad";
     const key = noticeSuppressionKey(stored.notice);
     const existing = findNoticeSuppression(db, input.principalId, key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) return { suppression: existing };
     db.prepare(
       `INSERT INTO notification_suppressions
-         (suppression_id, principal_id, source_kind, category, severity, scope, example_title, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (suppression_id, principal_id, source_kind, category, severity, scope, scope_label, example_title, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       input.suppressionId,
       input.principalId,
@@ -499,10 +525,13 @@ export function suppressNoticeKind(
       key.category,
       key.severity,
       key.scope ?? "",
+      noticeSuppressionScopeLabel(stored.notice) ?? null,
       stored.notice.title,
       input.at,
     );
-    return findNoticeSuppression(db, input.principalId, key);
+    const created = findNoticeSuppression(db, input.principalId, key);
+    if (created === undefined) throw new Error("a suppression just written could not be read back");
+    return { suppression: created };
   });
 }
 

@@ -1405,7 +1405,8 @@ export const MIGRATIONS: readonly Migration[] = [
 
         -- "Stop notifying me about this kind", per principal. A notice matching one is still written and listed, but
         -- arrives read, so it raises no count and no notification outside the app. scope is '' rather than NULL where
-        -- the kind has no narrower thing to name, so the UNIQUE constraint holds for it too.
+        -- the kind has no narrower thing to name, so the UNIQUE constraint holds for it too. scope_label is the words
+        -- for that scope (which automation, repository, package or node), so the list can say what it quiets.
         CREATE TABLE notification_suppressions (
           suppression_id  TEXT PRIMARY KEY,
           principal_id    TEXT NOT NULL,
@@ -1413,6 +1414,7 @@ export const MIGRATIONS: readonly Migration[] = [
           category        TEXT NOT NULL,
           severity        TEXT NOT NULL,
           scope           TEXT NOT NULL DEFAULT '',
+          scope_label     TEXT,
           example_title   TEXT NOT NULL,
           created_at      TEXT NOT NULL,
           UNIQUE (principal_id, source_kind, category, severity, scope)

@@ -170,8 +170,11 @@ Các route hộp thư gọi được với cùng token nhưng **chưa** có tron
 `dismiss`, `restore`, `snooze`, `unsnooze`, `suppress` hoặc `unsuppress`, và `DELETE /inbox/suppressions/:id`.
 `snooze` nhận `{ "until": "<ISO instant>" }`, nằm sau hiện tại và không xa quá 30 ngày (nếu không thì
 `400 SNOOZE_OUT_OF_RANGE`); thông báo rời khỏi danh sách và số chưa đọc, rồi quay lại ở trạng thái chưa đọc khi đã qua
-thời điểm đó. `suppress` tắt báo loại của thông báo cho principal này: các thông báo cùng loại về sau vẫn được liệt kê
-nhưng đến ở trạng thái đã đọc và không hiện thông báo. Mỗi route chỉ tác động lên thông báo của chính principal gọi nó.
+thời điểm đó; `unsnooze` đưa nó trở lại ngay, đã đọc hay chưa đọc như trước khi hoãn. `suppress` tắt báo loại của thông
+báo cho principal này: các thông báo cùng loại về sau vẫn được liệt kê nhưng đến ở trạng thái đã đọc và không hiện thông
+báo. Chỉ loại đủ hẹp mới tắt báo được, tức loại gắn với một việc tự động, một nguồn tín hiệu, một gói, một node, hoặc
+việc nền của chính người dùng; loại khác sẽ tắt luôn cả lời nhắc và thông báo của mọi việc tự động khác, nên route từ
+chối bằng `409 SUPPRESSION_TOO_BROAD` và `actions` của thông báo không bao giờ đưa ra thao tác này. Mỗi route chỉ tác động lên thông báo của chính principal gọi nó.
 Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
 [system-architecture.vi.md](system-architecture.vi.md) ở phần hộp thư.
 

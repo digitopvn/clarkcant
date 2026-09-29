@@ -308,7 +308,7 @@ describe("snoozing", () => {
     const snoozed = record().notificationId;
     const other = record().notificationId;
     markNotificationsRead(db, { principalId: "owner_1", at: T0 });
-    expect(snoozeNotification(db, { principalId: "owner_1", notificationId: snoozed, until: at(HOUR) })).toBe(true);
+    expect(snoozeNotification(db, { principalId: "owner_1", notificationId: snoozed, until: at(HOUR), at: at(0) })).toBe(true);
 
     // Snoozed: gone from the list and the count, listed on its own with the time it comes back.
     expect(listNotifications(db, "owner_1", 50, at(1_000)).map((notice) => notice.noticeId)).toEqual([other]);
@@ -324,35 +324,75 @@ describe("snoozing", () => {
     expect(back[0]?.snoozedUntil).toBeUndefined();
     expect(countUnreadNotifications(db, "owner_1", at(HOUR))).toBe(1);
     expect(listSnoozedNotifications(db, "owner_1", at(HOUR))).toEqual([]);
+    expect(getNotification(db, "owner_1", snoozed, at(HOUR))?.notice.readAt).toBeUndefined();
+
+    // Once read again, it stays read: coming back unread happens once per snooze, not on every read after it.
+    expect(markNotificationsRead(db, { principalId: "owner_1", at: at(HOUR + 1_000) })).toBe(1);
+    expect(countUnreadNotifications(db, "owner_1", at(HOUR + 2_000))).toBe(0);
+    expect(listNotifications(db, "owner_1", 50, at(HOUR + 2_000))[0]?.readAt).toBe(at(HOUR + 1_000));
   });
 
   it("is not marked read by 'mark all read' while it is snoozed, so it still comes back unread", () => {
     const { notificationId } = record();
-    snoozeNotification(db, { principalId: "owner_1", notificationId, until: at(HOUR) });
+    snoozeNotification(db, { principalId: "owner_1", notificationId, until: at(HOUR), at: at(0) });
     expect(markNotificationsRead(db, { principalId: "owner_1", at: at(1_000) })).toBe(0);
     expect(countUnreadNotifications(db, "owner_1", at(HOUR + 1))).toBe(1);
   });
 
-  it("brings a snoozed notice back early, unread, and answers truthfully when there is nothing to bring back", () => {
-    const { notificationId } = record();
-    snoozeNotification(db, { principalId: "owner_1", notificationId, until: at(HOUR) });
-    expect(unsnoozeNotification(db, { principalId: "owner_1", notificationId, at: at(60_000) })).toBe("unsnoozed");
-    expect(listNotifications(db, "owner_1", 50, at(60_000)).map((notice) => notice.noticeId)).toEqual([notificationId]);
+  it("taken back early, returns exactly as it was — a read notice stays read, in its old place", () => {
+    const older = record().notificationId;
+    const newer = record().notificationId;
+    markNotificationsRead(db, { principalId: "owner_1", at: T0, notificationIds: [older] });
+    snoozeNotification(db, { principalId: "owner_1", notificationId: older, until: at(HOUR), at: at(0) });
+    expect(unsnoozeNotification(db, { principalId: "owner_1", notificationId: older, at: at(60_000) })).toBe("unsnoozed");
+
+    const list = listNotifications(db, "owner_1", 50, at(60_000));
+    expect(list.map((notice) => notice.noticeId)).toEqual([newer, older]);
+    expect(list[1]?.readAt).toBe(T0);
     expect(countUnreadNotifications(db, "owner_1", at(60_000))).toBe(1);
-    expect(unsnoozeNotification(db, { principalId: "owner_1", notificationId, at: at(61_000) })).toBe("not-snoozed");
-    expect(unsnoozeNotification(db, { principalId: "owner_2", notificationId, at: at(61_000) })).toBe("not-found");
+    // And past the time it had been snoozed to, nothing brings it back unread: the snooze was taken back.
+    expect(countUnreadNotifications(db, "owner_1", at(2 * HOUR))).toBe(1);
+
+    expect(unsnoozeNotification(db, { principalId: "owner_1", notificationId: older, at: at(61_000) })).toBe("not-snoozed");
+    expect(unsnoozeNotification(db, { principalId: "owner_2", notificationId: older, at: at(61_000) })).toBe("not-found");
+  });
+
+  it("taken back early, an unread notice stays unread", () => {
+    const { notificationId } = record();
+    snoozeNotification(db, { principalId: "owner_1", notificationId, until: at(HOUR), at: at(0) });
+    unsnoozeNotification(db, { principalId: "owner_1", notificationId, at: at(60_000) });
+    expect(countUnreadNotifications(db, "owner_1", at(60_000))).toBe(1);
+  });
+
+  it("snoozed again after coming back, and taken back, is still the unread notice it had come back as", () => {
+    const { notificationId } = record();
+    markNotificationsRead(db, { principalId: "owner_1", at: T0 });
+    snoozeNotification(db, { principalId: "owner_1", notificationId, until: at(HOUR), at: at(0) });
+    // Back and unread at HOUR, snoozed again before being read, then that snooze taken back.
+    snoozeNotification(db, { principalId: "owner_1", notificationId, until: at(3 * HOUR), at: at(2 * HOUR) });
+    unsnoozeNotification(db, { principalId: "owner_1", notificationId, at: at(2 * HOUR + 1_000) });
+    expect(countUnreadNotifications(db, "owner_1", at(2 * HOUR + 2_000))).toBe(1);
+  });
+
+  it("a dismissal of a notice back from a snooze marks it read, so Undo brings it back read", () => {
+    const { notificationId } = record();
+    markNotificationsRead(db, { principalId: "owner_1", at: T0 });
+    snoozeNotification(db, { principalId: "owner_1", notificationId, until: at(HOUR), at: at(0) });
+    dismissNotification(db, { principalId: "owner_1", notificationId, at: at(HOUR + 1_000) });
+    restoreNotification(db, { principalId: "owner_1", notificationId, at: at(HOUR + 2_000) });
+    expect(countUnreadNotifications(db, "owner_1", at(HOUR + 3_000))).toBe(0);
   });
 
   it("belongs to its principal, and a dismissed notice cannot be snoozed", () => {
     const mine = record().notificationId;
-    expect(snoozeNotification(db, { principalId: "owner_2", notificationId: mine, until: at(HOUR) })).toBe(false);
+    expect(snoozeNotification(db, { principalId: "owner_2", notificationId: mine, until: at(HOUR), at: at(0) })).toBe(false);
     dismissNotification(db, { principalId: "owner_1", notificationId: mine, at: T0 });
-    expect(snoozeNotification(db, { principalId: "owner_1", notificationId: mine, until: at(HOUR) })).toBe(false);
+    expect(snoozeNotification(db, { principalId: "owner_1", notificationId: mine, until: at(HOUR), at: at(0) })).toBe(false);
   });
 
   it("is never the notice the cap evicts while it is snoozed", () => {
     const { notificationId } = record();
-    snoozeNotification(db, { principalId: "owner_1", notificationId, until: "2099-01-01T00:00:00.000Z" as Instant });
+    snoozeNotification(db, { principalId: "owner_1", notificationId, until: "2099-01-01T00:00:00.000Z" as Instant, at: T0 });
     for (let index = 0; index < MAX_NOTIFICATIONS + 5; index += 1) record();
     expect(listSnoozedNotifications(db, "owner_1").map((notice) => notice.noticeId)).toEqual([notificationId]);
   });
@@ -361,16 +401,24 @@ describe("snoozing", () => {
 describe("quieting a kind of notice", () => {
   const T0 = "2026-09-24T09:00:00.000Z" as Instant;
 
+  /** The suppression made from this notice, failing the test when there is none. */
+  function quiet(notificationId: string, suppressionId: string) {
+    const outcome = suppressNoticeKind(db, { principalId: "owner_1", notificationId, suppressionId, at: T0 });
+    if (typeof outcome === "string") throw new Error(`expected a suppression, got ${outcome}`);
+    return outcome.suppression;
+  }
+
   it("writes later notices of the same kind read, so they are listed but not counted", () => {
     const first = record().notificationId;
-    const suppression = suppressNoticeKind(db, { principalId: "owner_1", notificationId: first, suppressionId: "nsp_1", at: T0 });
+    const suppression = quiet(first, "nsp_1");
     expect(suppression).toMatchObject({ suppressionId: "nsp_1", sourceKind: "background", category: "result", severity: "success" });
-    expect(suppression?.scope).toBeUndefined();
-    expect(suppression?.example).toBe("Việc nền đã xong");
+    expect(suppression.scope).toBeUndefined();
+    expect(suppression.scopeLabel).toBeUndefined();
+    expect(suppression.example).toBe("Việc nền đã xong");
 
-    const quiet = record();
-    expect(quiet.suppressed).toBe(true);
-    expect(getNotification(db, "owner_1", quiet.notificationId)?.notice.readAt).toBeDefined();
+    const later = record();
+    expect(later.suppressed).toBe(true);
+    expect(getNotification(db, "owner_1", later.notificationId)?.notice.readAt).toBeDefined();
     // The notice it was made from is left as it was: quieting is about what comes next.
     expect(getNotification(db, "owner_1", first)?.notice.readAt).toBeUndefined();
     expect(countUnreadNotifications(db, "owner_1")).toBe(1);
@@ -378,7 +426,7 @@ describe("quieting a kind of notice", () => {
 
   it("never quiets a different severity, and scopes a package to that package rather than every update", () => {
     const success = record().notificationId;
-    suppressNoticeKind(db, { principalId: "owner_1", notificationId: success, suppressionId: "nsp_1", at: T0 });
+    quiet(success, "nsp_1");
     expect(record({ severity: "error" }).suppressed).toBe(false);
 
     const update = record({
@@ -388,8 +436,9 @@ describe("quieting a kind of notice", () => {
       title: "Có bản cập nhật: demo",
       subject: { kind: "package", packageId: "demo", version: "2.0.0" },
     }).notificationId;
-    const scoped = suppressNoticeKind(db, { principalId: "owner_1", notificationId: update, suppressionId: "nsp_2", at: T0 });
-    expect(scoped?.scope).toBe("package:demo");
+    const scoped = quiet(update, "nsp_2");
+    expect(scoped.scope).toBe("package:demo");
+    expect(scoped.scopeLabel).toBe("demo");
     const packageUpdate = { sourceKind: "package", category: "update", severity: "info" } as const;
     expect(record({ ...packageUpdate, subject: { kind: "package", packageId: "demo", version: "3.0.0" } }).suppressed).toBe(true);
     expect(record({ ...packageUpdate, subject: { kind: "package", packageId: "other", version: "1.0.1" } }).suppressed).toBe(false);
@@ -397,18 +446,71 @@ describe("quieting a kind of notice", () => {
 
   it("is per principal, idempotent, and reversible", () => {
     const first = record().notificationId;
-    const once = suppressNoticeKind(db, { principalId: "owner_1", notificationId: first, suppressionId: "nsp_1", at: T0 });
-    const twice = suppressNoticeKind(db, { principalId: "owner_1", notificationId: first, suppressionId: "nsp_2", at: T0 });
-    expect(twice?.suppressionId).toBe(once?.suppressionId);
+    const once = quiet(first, "nsp_1");
+    const twice = quiet(first, "nsp_2");
+    expect(twice.suppressionId).toBe(once.suppressionId);
     expect(listNoticeSuppressions(db, "owner_1")).toHaveLength(1);
 
     // Another principal's notice of the same kind is untouched, and they cannot remove this one's suppression.
     expect(record({ principalId: "owner_2" }).suppressed).toBe(false);
-    expect(suppressNoticeKind(db, { principalId: "owner_2", notificationId: first, suppressionId: "nsp_3", at: T0 })).toBeUndefined();
+    expect(suppressNoticeKind(db, { principalId: "owner_2", notificationId: first, suppressionId: "nsp_3", at: T0 })).toBe("not-found");
     expect(removeNoticeSuppression(db, { principalId: "owner_2", suppressionId: "nsp_1" })).toBe(false);
 
     expect(removeNoticeSuppression(db, { principalId: "owner_1", suppressionId: "nsp_1" })).toBe(true);
     expect(record().suppressed).toBe(false);
     expect(findNoticeSuppression(db, "owner_1", { sourceKind: "background", category: "result", severity: "success" })).toBeUndefined();
+  });
+
+  describe("automations and signal sources", () => {
+    const warning = { sourceKind: "automation", category: "alert", severity: "warning" } as const;
+    const started = { sourceKind: "automation", category: "message", severity: "info" } as const;
+    const automation = (intentId: string, label: string, taskId?: string) =>
+      ({ kind: "automation", intentId, label, conversationId: "conv_1", ...(taskId === undefined ? {} : { taskId }) }) as const;
+    const repository = (name: string) => ({ kind: "signal-source", sourceKey: `github:${name}`, label: name, conversationId: "conv_1" }) as const;
+
+    it("quieting one automation leaves another automation's warnings and every reminder as loud as before", () => {
+      const a = record({ ...warning, title: "Việc tự động đang chờ", subject: automation("int_a", "Dọn repo A", "task_1") }).notificationId;
+      const suppression = quiet(a, "nsp_a");
+      expect(suppression).toMatchObject({ scope: "automation:int_a", scopeLabel: "Dọn repo A" });
+
+      expect(record({ ...warning, subject: automation("int_a", "Dọn repo A", "task_2") }).suppressed).toBe(true);
+      expect(record({ ...warning, subject: automation("int_b", "Báo cáo tuần", "task_3") }).suppressed).toBe(false);
+      // A reminder is an automation message with no automation scope: nothing quieted above reaches it.
+      expect(record({ ...started, title: "Họp lúc 3 giờ", subject: { kind: "conversation", conversationId: "conv_1" } }).suppressed).toBe(false);
+      expect(record({ ...started, title: "Họp lúc 3 giờ" }).suppressed).toBe(false);
+    });
+
+    it("quieting that an automation started never quiets its own reminders", () => {
+      const run = record({ ...started, title: "Dọn repo A", subject: automation("int_a", "Dọn repo A", "task_1") }).notificationId;
+      quiet(run, "nsp_a");
+      expect(record({ ...started, title: "Dọn repo A", subject: { kind: "conversation", conversationId: "conv_1" } }).suppressed).toBe(false);
+    });
+
+    it("quieting one repository's polling failures leaves another repository's as loud as before", () => {
+      const x = record({ ...warning, title: "Chưa theo dõi được acme/x", subject: repository("acme/x") }).notificationId;
+      expect(quiet(x, "nsp_x")).toMatchObject({ scope: "source:github:acme/x", scopeLabel: "acme/x" });
+      expect(record({ ...warning, subject: repository("acme/x") }).suppressed).toBe(true);
+      expect(record({ ...warning, subject: repository("acme/y") }).suppressed).toBe(false);
+    });
+
+    it("refuses to quiet an automation or system notice that names nothing narrower than its source, and stores nothing", () => {
+      const reminder = record({ ...started, title: "Họp lúc 3 giờ", subject: { kind: "conversation", conversationId: "conv_1" } }).notificationId;
+      const delegated = record({ ...started, title: "Việc một node khác giao" }).notificationId;
+      const expiry = record({ sourceKind: "system", category: "alert", severity: "warning", title: "Sắp hết hạn" }).notificationId;
+      for (const notificationId of [reminder, delegated, expiry]) {
+        expect(suppressNoticeKind(db, { principalId: "owner_1", notificationId, suppressionId: `nsp_${notificationId}`, at: T0 })).toBe("too-broad");
+      }
+      expect(listNoticeSuppressions(db, "owner_1")).toEqual([]);
+    });
+
+    it("never scopes another node's automation notice to that node alone, so its reminders cannot be quieted with it", () => {
+      const remoteReminder = record({ ...started, title: "Họp lúc 3 giờ", originNodeId: "node_b" }).notificationId;
+      expect(suppressNoticeKind(db, { principalId: "owner_1", notificationId: remoteReminder, suppressionId: "nsp_r", at: T0 })).toBe("too-broad");
+      // Its automation still scopes it, and another node's background work is still scoped to that node.
+      const remoteRun = record({ ...started, originNodeId: "node_b", subject: automation("int_c", "Sao lưu", "task_9") }).notificationId;
+      expect(quiet(remoteRun, "nsp_c").scope).toBe("automation:int_c");
+      const remoteWork = record({ originNodeId: "node_b" }).notificationId;
+      expect(quiet(remoteWork, "nsp_w").scope).toBe("peer:node_b");
+    });
   });
 });

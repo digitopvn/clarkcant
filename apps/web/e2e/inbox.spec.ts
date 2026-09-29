@@ -391,7 +391,8 @@ test("a snoozed notice leaves the inbox and the count, and comes back unread whe
   const more = row.locator(`[data-inbox-more="${noticeId}"]`);
   const choices = row.locator(`[data-inbox-snooze-group="${noticeId}"]`);
 
-  // Snoozed to tomorrow morning and taken back with Undo: it is in the list again, unread.
+  // Opening the panel marked it read. Snoozed to tomorrow morning and taken back with Undo, it is back as it was: read.
+  await expect.poll(async () => (await listedNotice(page, noticeId))?.readAt).toBeDefined();
   await more.click();
   await expect(choices).toBeVisible();
   await expect(choices).toHaveAttribute("role", "group");
@@ -399,11 +400,11 @@ test("a snoozed notice leaves the inbox and the count, and comes back unread whe
   await expect(row).toHaveCount(0, { timeout: 10_000 });
   await dialog.locator(`[data-inbox-undo="${noticeId}"][data-inbox-undo-kind="unsnooze"]`).click();
   await expect(row).toBeVisible({ timeout: 10_000 });
-  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Đã đưa thông báo trở lại, chưa đọc.");
-  await expect.poll(async () => (await listedNotice(page, noticeId))?.readAt).toBeUndefined();
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Đã đưa thông báo trở lại như trước khi hoãn.");
+  expect((await listedNotice(page, noticeId))?.readAt).toBeDefined();
 
   // "In 1 hour" is worked out on the browser's clock, which is set an hour and a few seconds back so the snooze ends
-  // within this test on the node's real clock. Set before "More" opens, so the choices are drawn at that time.
+  // within this test on the node's real clock. The press works the time out on that clock.
   const snoozeFor = 15_000;
   await page.clock.setFixedTime(new Date(Date.now() - 60 * 60_000 + snoozeFor));
   await more.click();
@@ -468,6 +469,8 @@ test("quieting a kind of notice keeps later ones out of the count, and notifying
     const kinds = reopened.locator("[data-inbox-suppressions]");
     await kinds.locator("summary").focus();
     await page.keyboard.press("Enter");
+    // The list says what the quieted kind covers — here every background-work success — not just one example title.
+    await expect(kinds.locator("[data-inbox-suppression-covers]").first()).toHaveText("Mọi thông báo loại “Việc nền” — mức thành công");
     const remove = kinds.locator("[data-inbox-remove-suppression]").first();
     await expect(remove).toBeVisible();
     await remove.click();

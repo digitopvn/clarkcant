@@ -1,4 +1,4 @@
-import { type Notice, type NoticeAction, noticeSuppressionKey } from "@clarkcant/contracts";
+import { type Notice, type NoticeAction, noticeKindQuietable, noticeSuppressionKey } from "@clarkcant/contracts";
 import { type Database, findNoticeSuppression, getConversation, getTask } from "@clarkcant/storage";
 
 /**
@@ -15,8 +15,9 @@ import { type Database, findNoticeSuppression, getConversation, getTask } from "
  *
  * Snoozing and quieting a kind are always behind "More": they change when the person hears about things, not what the
  * notice is about. Which of "stop notifying about this kind" and "notify again" is offered is read from this principal's
- * suppressions now, so the menu cannot offer to quiet a kind that is already quiet. A notice that is snoozed is not in
- * the list at all; the one thing to do with it is bring it back.
+ * suppressions now, so the menu cannot offer to quiet a kind that is already quiet; a kind too wide to quiet
+ * (`noticeKindQuietable`: a reminder, a notice tied to no automation, source, package or node) offers neither. A notice
+ * that is snoozed is not in the list at all; the one thing to do with it is bring it back.
  */
 export function noticeActionsFor(db: Database, principalId: string, notice: Notice): NoticeAction[] {
   if (notice.snoozedUntil !== undefined) return [{ id: "unsnooze", placement: "primary" }];
@@ -42,8 +43,11 @@ export function noticeActionsFor(db: Database, principalId: string, notice: Noti
   actions.push({ id: notice.readAt === undefined ? "mark-read" : "mark-unread", placement: "menu" });
   actions.push({ id: "snooze", placement: "menu" });
   if (!actions.some((action) => action.id === "dismiss")) actions.push({ id: "dismiss", placement: "menu" });
-  const quiet = findNoticeSuppression(db, principalId, noticeSuppressionKey(notice)) !== undefined;
-  actions.push({ id: quiet ? "unsuppress" : "suppress", placement: "menu" });
+  if (findNoticeSuppression(db, principalId, noticeSuppressionKey(notice)) !== undefined) {
+    actions.push({ id: "unsuppress", placement: "menu" });
+  } else if (noticeKindQuietable(notice)) {
+    actions.push({ id: "suppress", placement: "menu" });
+  }
   if (open !== undefined && !canOpen) actions.push(open);
   return actions;
 }
@@ -57,6 +61,15 @@ export function conversationOf(db: Database, notice: Notice): string | undefined
   switch (subject?.kind) {
     case "task":
       return getTask(db, subject.taskId)?.conversationId ?? subject.conversationId ?? notice.conversationId;
+    case "automation":
+      // A run that started a task leads where that task now belongs, exactly as a `task` subject would.
+      return (
+        (subject.taskId === undefined ? undefined : getTask(db, subject.taskId)?.conversationId) ??
+        subject.conversationId ??
+        notice.conversationId
+      );
+    case "signal-source":
+      return subject.conversationId ?? notice.conversationId;
     case "background-work":
     case "conversation":
       return subject.conversationId;

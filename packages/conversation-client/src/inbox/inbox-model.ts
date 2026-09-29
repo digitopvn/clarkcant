@@ -6,6 +6,7 @@ import type {
   NoticeAction,
   NoticeSeverity,
   NoticeSourceKind,
+  NoticeSuppression,
   WaitingItem,
 } from "@clarkcant/contracts";
 
@@ -313,6 +314,15 @@ export function snoozePresets(now: Date): Array<{ id: SnoozePresetId; until: Dat
   return presets;
 }
 
+/**
+ * When a preset ends if it is chosen at `now`. The surface asks this at the moment of the press, not when the menu was
+ * drawn, so a menu left open past 18:00 cannot snooze a notice to an evening that has already gone. Undefined when the
+ * preset is no longer offered at `now`.
+ */
+export function snoozeUntil(id: SnoozePresetId, now: Date): Date | undefined {
+  return snoozePresets(now).find((preset) => preset.id === id)?.until;
+}
+
 export function snoozePresetKey(id: SnoozePresetId): MessageKey {
   switch (id) {
     case "hour":
@@ -323,6 +333,45 @@ export function snoozePresetKey(id: SnoozePresetId): MessageKey {
       return "inbox.snooze.tomorrow";
     case "next-week":
       return "inbox.snooze.nextWeek";
+  }
+}
+
+/**
+ * What a quieted kind covers, in parts the surface words: which thing it is limited to (an automation, a signal
+ * source, a package, the Pi SDK, a node — or a whole source when it has no scope) and which level. One example title
+ * alone would not say whether quieting it also quiets anything else; this does.
+ */
+export function suppressionDescription(suppression: NoticeSuppression): { scopeKey: MessageKey; label: string; levelKey: MessageKey } {
+  const levelKey = suppressionLevelKey(suppression.severity);
+  const scope = suppression.scope;
+  if (scope === undefined) return { scopeKey: "inbox.suppressions.scope.all", label: "", levelKey };
+  const colon = scope.indexOf(":");
+  const prefix = colon === -1 ? scope : scope.slice(0, colon);
+  const label = suppression.scopeLabel ?? (colon === -1 ? scope : scope.slice(colon + 1));
+  switch (prefix) {
+    case "automation":
+      return { scopeKey: "inbox.suppressions.scope.automation", label, levelKey };
+    case "source":
+      return { scopeKey: "inbox.suppressions.scope.source", label, levelKey };
+    case "package":
+      return { scopeKey: "inbox.suppressions.scope.package", label, levelKey };
+    case "pi":
+      return { scopeKey: "inbox.suppressions.scope.pi", label, levelKey };
+    default:
+      return { scopeKey: "inbox.suppressions.scope.peer", label, levelKey };
+  }
+}
+
+function suppressionLevelKey(severity: NoticeSeverity): MessageKey {
+  switch (severity) {
+    case "info":
+      return "inbox.suppressions.level.info";
+    case "success":
+      return "inbox.suppressions.level.success";
+    case "warning":
+      return "inbox.suppressions.level.warning";
+    case "error":
+      return "inbox.suppressions.level.error";
   }
 }
 
