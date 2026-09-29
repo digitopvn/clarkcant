@@ -68,12 +68,12 @@ issues: [93, 129, 137, 169, 170, 171, 172, 173, 174, 190, 192, 195, 196, 197, 19
 | 03 | [Bảo mật: #137 và Stop một turn đang chạy](phase-03-security-confinement-stop.md) | 1 | 01 | done |
 | 04 | [#198 lõi: manifest hợp nhất, service facet, catalog P0](phase-04-widgets-v2-core.md) | 2 | 03 | done (A–G; #198 còn P1/P2 ở phase 10) |
 | 05 | [#195 semantic state của widget](phase-05-widget-semantic-state.md) | 2 | 04 (hợp đồng composition) | done (#195) |
-| 06 | [#197 phase 1–2: provenance, resource theo task, Signal/Intent](phase-06-reactive-automation-core.md) | 2 | 03 | pending |
-| 07 | [#210 A–D cùng #196 phase 1–2: hợp đồng reference chung](phase-07-composer-refs-actionable-inbox.md) | 2 | 01 | pending |
+| 06 | [#197 phase 1–2: provenance, resource theo task, Signal/Intent](phase-06-reactive-automation-core.md) | 2 | 03 | done (#240 #245, #241 #247) |
+| 07 | [#210 A–D cùng #196 phase 1–2: hợp đồng reference chung](phase-07-composer-refs-actionable-inbox.md) | 2 | 01 | in progress ([kế hoạch con](../260929-2100-210-composer-references/plan.md)) |
 | 08 | [#196 phase 3–5, #170, #172 phần còn lại](phase-08-inbox-completion.md) | 3 | 06, 07 | pending |
 | 09 | [#192 cá nhân hoá Orb](phase-09-orb-personalization.md) | 3 | 01 | pending |
 | 10 | [#198 P1/P2 và #200 (đã khử trùng lặp)](phase-10-widget-platform-expansion.md) | 4 | 04, 05 | pending |
-| 11 | [#197 phase 3–5 (fixture, tách live journey)](phase-11-reactive-automation-adapters.md) | 4 | 06 | pending |
+| 11 | [#197 phase 3–5 (fixture, tách live journey)](phase-11-reactive-automation-adapters.md) | 4 | 06 | done (#242 #249, #243 #252, #244 #254; còn #250 gated, #251, #253) |
 | 12 | [#201 nền tảng theme](phase-12-theme-platform.md) | 4 | 04, 09 | pending |
 | 13 | [Đối soát cuối và bàn giao](phase-13-final-reconciliation.md) | — | tất cả | pending |
 
