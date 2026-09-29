@@ -270,6 +270,8 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       worktreesDir: () => join(deps.services.runtime.dataDir, "worktrees"),
       // The same command path the conversation uses, so a worker's command is decided and recorded the same way.
       commandDeps: () => wiring.command.deps,
+      // A browser task's managed profile lives under the node's own data, one directory per task, removed when it ends.
+      browser: () => ({ services: deps.services, profilesDir: join(deps.services.runtime.dataDir, "browser-profiles") }),
       ...taskDispatchReports(deps.services),
       ...(deps.work === undefined ? {} : { journal: deps.work.journal }),
     });

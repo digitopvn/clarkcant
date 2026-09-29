@@ -8,7 +8,14 @@ import {
   type Observation,
   observationIdSchema,
 } from "@clarkcant/contracts";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import {
+  chromium,
+  type BrowserContext,
+  type Locator,
+  type Page,
+  type Request,
+  type Response,
+} from "playwright";
 
 import { SUPPORTED_OPERATIONS, managedProfileDescriptor, resolveLocator, reviewAction } from "./index.ts";
 
@@ -25,8 +32,11 @@ import { SUPPORTED_OPERATIONS, managedProfileDescriptor, resolveLocator, reviewA
  *    targets `[data-cc-ref="…"]`. If the attribute is gone at action time the element has
  *    been replaced and the plan is stale, which turns "the page moved" from a wrong click
  *    into an explicit re-observation.
- * 3. **Navigation is checked against the profile's declared origins** before it happens. The
- *    model does not get to name a new destination.
+ * 3. **Navigation is checked against the profile's declared origins** before it happens, the
+ *    page's own included: a link or a form pointing elsewhere is stopped before its request
+ *    leaves. The model does not get to name a new destination, directly or by clicking one.
+ * 4. **A click's outcome is the answer to what it sent.** A submit that was dispatched but
+ *    never answered is `unknown`, not `applied` (`watchClickRequests`).
  */
 
 export interface DriverProfile {
@@ -35,8 +45,31 @@ export interface DriverProfile {
   downloadRoot?: string;
 }
 
+/**
+ * One element an observation stamped, as a planner can name it.
+ *
+ * Everything here except `ref` is read from the page, so it is the page's own words: data to plan with, never an
+ * instruction to follow. `submits` is the driver's reading of the markup (a submit control, or a button that would
+ * submit its form), which is what a caller classifies a click as consequential from.
+ */
+export interface ObservedElement {
+  ref: string;
+  tag: string;
+  role: string | null;
+  /** The accessible name, as far as the markup says: `aria-label`, then `name`, then the visible text. */
+  name: string;
+  /** The `type` attribute, for inputs and buttons. */
+  type: string | null;
+  submits: boolean;
+}
+
 export interface ObserveResult {
   observation: Observation;
+  /** What each stamped reference is, in the order the page lists them. */
+  elements: ObservedElement[];
+  /** Where the page is now, so a caller can hold it to the declared origins. */
+  url: string;
+  title: string;
 }
 
 export interface ActResult {
@@ -44,9 +77,107 @@ export interface ActResult {
   verification: "observed-applied" | "observed-absent" | "not-observed" | "not-applicable";
   message: string;
   requiresReobservation: boolean;
+  /**
+   * Whether the action sent something that can carry an effect outside: a request other than a read. Set by a click,
+   * whatever the caller classified it as, so a click nobody marked consequential that turned out to submit is still
+   * known to have submitted.
+   */
+  sentEffect?: boolean;
 }
 
 const REF_ATTRIBUTE = "data-cc-ref";
+
+/** How long a click waits for the answers to the requests it sent, unless the profile says otherwise. */
+const DEFAULT_ANSWER_TIMEOUT_MS = 5000;
+/** How long after a click returns a request it started is still counted as the click's. */
+const REQUEST_GRACE_MS = 250;
+
+/** What came back for the requests one click sent. */
+type ClickAnswer =
+  | { kind: "none" }
+  | { kind: "answered"; statuses: number[] }
+  | { kind: "no-answer"; pending: number }
+  | { kind: "failed"; reason: string };
+
+/**
+ * Follow the requests one click sends, and hear whether each was answered.
+ *
+ * A click resolves when the browser has dispatched it, not when the form it submitted was answered: a plain form POST
+ * or a script's `fetch` returns control at once and the request is still on its way. "The click landed" then says
+ * nothing about the submission, and a server that never answers would read as done. So the requests that can carry an
+ * effect — anything but a read, and the page's own navigation — are followed until each has an answer or the deadline
+ * passes, and one still waiting at the deadline, or one that broke after it left, is what the driver calls unknown.
+ */
+function watchClickRequests(page: Page): {
+  settle: (timeoutMs: number) => Promise<ClickAnswer>;
+  stop: () => void;
+  /** Whether the click started a navigation of the page itself, which replaces every stamped reference. */
+  navigated: () => boolean;
+  /** How many requests other than reads the click started, answered or not. */
+  sent: () => number;
+} {
+  const pending = new Set<Request>();
+  let sent = 0;
+  const statuses: number[] = [];
+  const failures: string[] = [];
+  const mainFrame = page.mainFrame();
+  let navigated = false;
+  const isPageNavigation = (request: Request): boolean => {
+    try {
+      return request.isNavigationRequest() && request.frame() === mainFrame;
+    } catch {
+      // A service worker's request has no frame, and it is not the page's navigation.
+      return false;
+    }
+  };
+  const onRequest = (request: Request): void => {
+    // A redirect is the same submission answered with "go there": the first request has its answer.
+    const from = request.redirectedFrom();
+    if (from !== null && pending.delete(from)) statuses.push(302);
+    const pageNavigation = isPageNavigation(request);
+    if (pageNavigation) navigated = true;
+    const writes = !["GET", "HEAD", "OPTIONS"].includes(request.method());
+    if (pageNavigation || writes) pending.add(request);
+    // A redirect's follow-up is the same submission; a page's GET navigation is a read.
+    if (writes && from === null) sent += 1;
+  };
+  // The status line is the site's answer. A body that is cut off after it (Chromium aborts a 204's) changes nothing.
+  const onResponse = (response: Response): void => {
+    if (pending.delete(response.request())) statuses.push(response.status());
+  };
+  const onFinished = (request: Request): void => {
+    pending.delete(request);
+  };
+  const onFailed = (request: Request): void => {
+    if (pending.delete(request)) failures.push(request.failure()?.errorText ?? "the request failed");
+  };
+  page.on("request", onRequest);
+  page.on("response", onResponse);
+  page.on("requestfinished", onFinished);
+  page.on("requestfailed", onFailed);
+  const stop = (): void => {
+    page.off("request", onRequest);
+    page.off("response", onResponse);
+    page.off("requestfinished", onFinished);
+    page.off("requestfailed", onFailed);
+  };
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+  return {
+    stop,
+    navigated: () => navigated,
+    sent: () => sent,
+    async settle(timeoutMs) {
+      await sleep(REQUEST_GRACE_MS);
+      const deadline = Date.now() + timeoutMs;
+      while (pending.size > 0 && Date.now() < deadline) await sleep(50);
+      stop();
+      if (pending.size > 0) return { kind: "no-answer", pending: pending.size };
+      const [failure] = failures;
+      if (failure !== undefined) return { kind: "failed", reason: failure };
+      return statuses.length === 0 ? { kind: "none" } : { kind: "answered", statuses };
+    },
+  };
+}
 
 export class BrowserDriver {
   readonly #profile: DriverProfile;
@@ -66,11 +197,13 @@ export class BrowserDriver {
    * which is the act of finding out what actually happened.
    */
   readonly #unresolved = new Set<string>();
+  readonly #answerTimeoutMs: number;
   #targetVersion = "1";
 
-  constructor(input: { profile: DriverProfile; profileDir: string }) {
+  constructor(input: { profile: DriverProfile; profileDir: string; answerTimeoutMs?: number }) {
     this.#profile = input.profile;
     this.#profileDir = input.profileDir;
+    this.#answerTimeoutMs = input.answerTimeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS;
   }
 
   get target(): AutomationTarget {
@@ -86,6 +219,20 @@ export class BrowserDriver {
     return this.#targetVersion;
   }
 
+  #originAllowed(parsed: URL): boolean {
+    return this.#profile.allowedOrigins.some((origin) => parsed.origin === origin || parsed.hostname === origin);
+  }
+
+  /** Whether a page the browser is on, or is going to, is somewhere the profile declared. `about:blank` is nowhere. */
+  #pageAllowed(url: string): boolean {
+    if (url === "about:blank") return true;
+    try {
+      return this.#originAllowed(new URL(url));
+    } catch {
+      return false;
+    }
+  }
+
   /** Refuse to navigate anywhere the profile did not declare. */
   #assertOriginAllowed(url: string): void {
     let parsed: URL;
@@ -94,10 +241,7 @@ export class BrowserDriver {
     } catch {
       throw new Error(`${url} is not an absolute URL`);
     }
-    const allowed = this.#profile.allowedOrigins.some(
-      (origin) => parsed.origin === origin || parsed.hostname === origin,
-    );
-    if (!allowed) {
+    if (!this.#originAllowed(parsed)) {
       throw new Error(
         `navigation to ${parsed.origin} is outside this profile's declared origins [${this.#profile.allowedOrigins.join(", ")}]`,
       );
@@ -156,7 +300,7 @@ export class BrowserDriver {
     this.#unresolved.clear();
     const page = await this.#ensurePage();
 
-    const elements = await page.evaluate((attribute: string) => {
+    const elements: ObservedElement[] = await page.evaluate((attribute: string) => {
       const selector = 'a[href], button, input, select, textarea, [role], [data-testid]';
       const nodes = [...document.querySelectorAll(selector)].slice(0, 500);
       let index = 0;
@@ -165,17 +309,25 @@ export class BrowserDriver {
         const ref = `el_${Date.now().toString(36)}_${index}`;
         node.setAttribute(attribute, ref);
         const element = node as HTMLElement;
-        const name =
+        const tag = element.tagName.toLowerCase();
+        const type = element.getAttribute("type");
+        const name = (
           element.getAttribute("aria-label") ??
           element.getAttribute("name") ??
-          (element.textContent ?? "").trim().slice(0, 80);
-        return {
-          ref,
-          tag: element.tagName.toLowerCase(),
-          role: element.getAttribute("role"),
-          name,
-          hasPasswordType: element.getAttribute("type") === "password",
-        };
+          (element instanceof HTMLInputElement && (type === "submit" || type === "button") ? element.value : null) ??
+          (element.textContent ?? "")
+        )
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 80);
+        // What pressing it would submit: an input or button that is a submit control, where a button with no type is
+        // one when it sits in a form. A script can make anything submit, which is why a caller may still say a click
+        // is consequential when this says it is not; it can never say the opposite.
+        const lowerType = (type ?? "").toLowerCase();
+        const submits =
+          (tag === "input" && (lowerType === "submit" || lowerType === "image")) ||
+          (tag === "button" && (lowerType === "submit" || (lowerType === "" && element.closest("form") !== null)));
+        return { ref, tag, role: element.getAttribute("role"), name, type, submits };
       });
     }, REF_ATTRIBUTE);
 
@@ -204,7 +356,7 @@ export class BrowserDriver {
     };
 
     this.#observations.set(observation.observationId, observation);
-    return { observation };
+    return { observation, elements, url: page.url(), title: await page.title() };
   }
 
   /**
@@ -288,7 +440,7 @@ export class BrowserDriver {
       try {
         await page.goto(url, { waitUntil: "domcontentloaded" });
         // Navigation replaces every reference stamped on the previous document.
-        this.#targetVersion = `${Number.parseInt(this.#targetVersion, 10) + 1}`;
+        this.#bumpTargetVersion();
         return {
           status: "applied",
           verification: "not-applicable",
@@ -388,10 +540,9 @@ export class BrowserDriver {
             };
           }
           if (action.operation === "click") {
-            await locator.first().click({ timeout: 5000 });
-          } else {
-            await locator.first().fill(String(action.arguments.value ?? ""), { timeout: 5000 });
+            return await this.#click(page, locator, action, resolution.elementRef);
           }
+          await locator.first().fill(String(action.arguments.value ?? ""), { timeout: 5000 });
           // Reading the page back is what turns "the click landed" into an outcome claim.
           const stillThere = (await locator.count()) > 0;
           return {
@@ -423,6 +574,142 @@ export class BrowserDriver {
         requiresReobservation: true,
       };
     }
+  }
+
+  /**
+   * Click, and hear what the click sent.
+   *
+   * The outcome is the answer to the requests the click started, not the click's own return (see
+   * `watchClickRequests`): no answer by the deadline, or a request that broke after it left, is `unknown`, and the
+   * action joins the ones that may not be sent again until the page is observed. A server that answered with a client
+   * error refused it; one that answered with a server error or a 408 may have done part of it, so that is unknown as
+   * well. A click that broke after it sent something is unknown whatever the error said; one that broke before sending
+   * anything is thrown to the caller's handler, which calls a timeout unknown and anything else failed.
+   */
+  async #click(
+    page: Page,
+    locator: Locator,
+    action: AutomationAction,
+    elementRef: string,
+  ): Promise<ActResult> {
+    /*
+     * Where the click would take the page, when the markup says: a link's address, or the address a submit control
+     * sends its form to. Held to the declared origins before anything is pressed, so a link or a form on an allowed
+     * page cannot become the model naming a destination by other means. A script can still send anywhere, which is
+     * why the page is also checked after the click.
+     */
+    const destination = await locator
+      .first()
+      .evaluate((node: Element): string | null => {
+        const anchor = node.closest("a[href]");
+        if (anchor instanceof HTMLAnchorElement) return anchor.href;
+        if (!(node instanceof HTMLButtonElement || node instanceof HTMLInputElement) || node.form === null) return null;
+        const type = (node.getAttribute("type") ?? "").toLowerCase();
+        const submits =
+          node instanceof HTMLInputElement ? type === "submit" || type === "image" : type === "submit" || type === "";
+        if (!submits) return null;
+        const override = node.getAttribute("formaction");
+        return override !== null && override !== "" ? new URL(override, document.baseURI).href : node.form.action;
+      })
+      .catch(() => null);
+    if (destination !== null && !destination.startsWith("javascript:") && !this.#pageAllowed(destination)) {
+      return {
+        status: "refused",
+        verification: "not-applicable",
+        message: `click on ${elementRef} would go to ${destination.slice(0, 200)}, which is outside this profile's declared origins; nothing was pressed`,
+        requiresReobservation: false,
+      };
+    }
+
+    const watch = watchClickRequests(page);
+    try {
+      await locator.first().click({ timeout: 5000 });
+    } catch (cause) {
+      watch.stop();
+      // Broken after it sent something: whatever the error says, the submission left, and nothing says it was not kept.
+      if (watch.sent() > 0) {
+        this.#unresolved.add(action.actionId);
+        const reason = cause instanceof Error ? cause.message : String(cause);
+        return {
+          status: "unknown",
+          verification: "not-observed",
+          message: `click on ${elementRef} sent a request and then broke (${reason.split("\n")[0]?.slice(0, 200) ?? ""}); the outcome is unknown and must be observed before retrying`,
+          requiresReobservation: true,
+          sentEffect: true,
+        };
+      }
+      throw cause;
+    }
+    const answer = await watch.settle(this.#answerTimeoutMs);
+    const sentEffect = watch.sent() > 0;
+    const left = this.#pageAllowed(page.url()) ? undefined : page.url();
+    if (left !== undefined) {
+      // A redirect the allowed server answered with took the page somewhere undeclared. It is taken back, so nothing
+      // further is read from or done on a page this profile was never allowed to be on.
+      await page.goto("about:blank").catch(() => undefined);
+    }
+    // A new document replaced every reference the plan was made against.
+    if (watch.navigated() || left !== undefined) this.#bumpTargetVersion();
+    const leftNote =
+      left === undefined
+        ? ""
+        : `; the page ended on ${left.slice(0, 200)}, outside this profile's declared origins, and was taken back to a blank page`;
+    const unknown = (why: string): ActResult => {
+      this.#unresolved.add(action.actionId);
+      return {
+        status: "unknown",
+        verification: "not-observed",
+        message: `click on ${elementRef} ${why}; the outcome is unknown and must be observed before retrying${leftNote}`,
+        requiresReobservation: true,
+        sentEffect,
+      };
+    };
+    switch (answer.kind) {
+      case "no-answer":
+        return unknown(
+          `sent ${String(answer.pending)} request(s) that had no answer after ${String(this.#answerTimeoutMs)} ms`,
+        );
+      case "failed":
+        return unknown(`sent a request that broke after it left (${answer.reason.slice(0, 200)})`);
+      case "answered": {
+        const worst = Math.max(...answer.statuses);
+        // A server error, or a timeout some server on the way answered with, does not say what the site kept.
+        if (worst >= 500 || answer.statuses.includes(408)) {
+          const status = worst >= 500 ? worst : 408;
+          return unknown(`was answered with HTTP ${String(status)}, which does not say what was kept`);
+        }
+        if (worst >= 400) {
+          return {
+            status: "failed",
+            verification: "observed-absent",
+            message: `click on ${elementRef} was refused by the site with HTTP ${String(worst)}${leftNote}`,
+            requiresReobservation: true,
+            sentEffect,
+          };
+        }
+        return {
+          status: "applied",
+          verification: "observed-applied",
+          message: `click on ${elementRef} completed and the site answered (HTTP ${String(worst)})${leftNote}`,
+          requiresReobservation: true,
+          sentEffect,
+        };
+      }
+      case "none": {
+        const stillThere = left === undefined && (await locator.count()) > 0;
+        return {
+          status: "applied",
+          verification: stillThere ? "observed-applied" : "not-observed",
+          message: `click on ${elementRef} completed; it sent nothing that carries an effect${leftNote}`,
+          requiresReobservation: left !== undefined,
+          sentEffect: false,
+        };
+      }
+    }
+  }
+
+  #bumpTargetVersion(): void {
+    this.#targetVersion = `${Number.parseInt(this.#targetVersion, 10) + 1}`;
   }
 
   /**
@@ -474,6 +761,8 @@ export function createDriver(input: {
   allowedOrigins: string[];
   profileDir: string;
   downloadRoot?: string;
+  /** How long a click waits for the answers to what it sent before calling the outcome unknown. */
+  answerTimeoutMs?: number;
 }): { ok: true; driver: BrowserDriver } | { ok: false; refused: string } {
   const target = managedProfileDescriptor({
     profileName: input.profileName,
@@ -490,6 +779,7 @@ export function createDriver(input: {
         ...(input.downloadRoot === undefined ? {} : { downloadRoot: input.downloadRoot }),
       },
       profileDir: input.profileDir,
+      ...(input.answerTimeoutMs === undefined ? {} : { answerTimeoutMs: input.answerTimeoutMs }),
     }),
   };
 }

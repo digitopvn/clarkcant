@@ -75,11 +75,20 @@ export interface WorkerProcessOptions {
    * sends the request here and reads the reply. Absent means no channel, and the worker offers no command tool at all.
    */
   onCommand?: (request: unknown) => Promise<unknown>;
+  /**
+   * Where the worker's `use_browser` requests are answered, when this run may use the browser.
+   *
+   * The same channel as commands: present opens it, and the host drives the browser for the worker. A kind of request
+   * the host was given no answerer for is refused over the channel rather than left waiting.
+   */
+  onBrowser?: (request: unknown) => Promise<unknown>;
 }
 
-/** The two messages that cross the worker's IPC channel. Anything else on it is ignored. */
+/** The messages that cross the worker's IPC channel, a request and its reply per kind. Anything else is ignored. */
 export const WORKER_COMMAND_REQUEST = "clarkcant.command.request";
 export const WORKER_COMMAND_REPLY = "clarkcant.command.reply";
+export const WORKER_BROWSER_REQUEST = "clarkcant.browser.request";
+export const WORKER_BROWSER_REPLY = "clarkcant.browser.reply";
 
 export interface WorkerProcessResult {
   adapter: string;
@@ -133,28 +142,38 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       // profile allows cross the boundary, so a provider key or an SSH agent socket sitting in this
       // node's own environment is not handed to code the worker's tools may invoke on the user's behalf.
       const child = (options.spawnImpl ?? spawn)(process.execPath, args, {
-        stdio: options.onCommand === undefined ? ["ignore", "pipe", "pipe"] : ["ignore", "pipe", "pipe", "ipc"],
+        stdio:
+          options.onCommand === undefined && options.onBrowser === undefined
+            ? ["ignore", "pipe", "pipe"]
+            : ["ignore", "pipe", "pipe", "ipc"],
         env: buildEnvironment(WORKER_ENV_PROFILE),
         // Its own process group, so a stop reaches what the worker's tools started as well as the worker.
         detached: process.platform !== "win32",
         windowsHide: true,
       });
       options.onChild?.(child);
-      const onCommand = options.onCommand;
-      if (onCommand !== undefined) {
+      if (options.onCommand !== undefined || options.onBrowser !== undefined) {
+        const answerers = [
+          { request: WORKER_COMMAND_REQUEST, reply: WORKER_COMMAND_REPLY, answer: options.onCommand, what: "commands" },
+          { request: WORKER_BROWSER_REQUEST, reply: WORKER_BROWSER_REPLY, answer: options.onBrowser, what: "the browser" },
+        ];
         child.on("message", (message: unknown) => {
           if (message === null || typeof message !== "object") return;
           const envelope = message as { type?: unknown; id?: unknown; request?: unknown };
-          if (envelope.type !== WORKER_COMMAND_REQUEST || typeof envelope.id !== "string") return;
+          const kind = answerers.find((candidate) => candidate.request === envelope.type);
+          if (kind === undefined || typeof envelope.id !== "string") return;
           const id = envelope.id.slice(0, 64);
-          void onCommand(envelope.request)
+          const answer =
+            kind.answer ??
+            (async (): Promise<unknown> => ({ kind: "refused", text: `refused: this task was not given ${kind.what}` }));
+          void answer(envelope.request)
             .catch((cause: unknown) => ({
               kind: "refused",
               text: `the host could not run it: ${cause instanceof Error ? cause.message : String(cause)}`,
             }))
             .then((reply) => {
-              // A worker that exited while its command ran has nobody to read the reply.
-              if (child.connected) child.send({ type: WORKER_COMMAND_REPLY, id, reply }, () => undefined);
+              // A worker that exited while its request ran has nobody to read the reply.
+              if (child.connected) child.send({ type: kind.reply, id, reply }, () => undefined);
             });
         });
       }

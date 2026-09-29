@@ -117,6 +117,18 @@ Observe sau action để verify outcome; screenshot không có toast success kh�
 
 Computer Use giới hạn observation retention; audit có metadata+selected evidence theo consent. Agent không tự record toàn màn hình liên tục để “có đủ context”.
 
+### 8.1 Việc trên trình duyệt như đang được triển khai hôm nay
+
+Những gì node làm hiện nay, tách biệt với thiết kế mục tiêu ở trên:
+
+- **Điểm vào.** Công cụ model `start_browser_task` khởi động một việc chạy nền cho trình duyệt được quản lý. Mọi trang nó truyền vào, và mọi địa chỉ web viết trong mục tiêu, phải là host mà người dùng đã tự viết trong cuộc trò chuyện này; một trang do model hoặc do một trang web nêu ra sẽ bị từ chối và không có gì được khởi động. Hiện chưa có điểm vào từ một bước tự động hóa.
+- **Đồng ý.** Việc được giao cho `browser.playwright@1`, một capability `external-write` mà conductor không bao giờ tự chọn cho một tin nhắn. Dispatcher hỏi chính sách thực thi của chủ node trước khi có worker: `deny` thì từ chối, `ask` thì giữ việc lại chờ người dùng duyệt trong hộp thư, và chỉ sau đó worker mới khởi động. Mỗi lần bấm có hệ quả lại hỏi chính sách một lần nữa, và ở đó chỉ lời từ chối là quyết định cuối cùng; lần duyệt trước đó của người dùng đã bao gồm các trang của việc này.
+- **Worker nhận được gì.** Worker nhận công cụ `use_browser` và không có gì để chạy lệnh. Yêu cầu của nó đi qua kênh worker tới một broker trên node, broker này điều khiển một profile Playwright riêng nằm trong thư mục dữ liệu của node (không bao giờ là trình duyệt của người dùng). Profile chỉ truy cập được các origin có trong mục tiêu và bị xóa khi lượt chạy kết thúc. Nội dung trang đến model dưới dạng dữ liệu, không bao giờ là chỉ dẫn.
+- **Sổ ghi thao tác.** Một lần bấm vào nút gửi, hoặc một lần bấm mà model đánh dấu là có hệ quả, được ghi vào sổ ghi thao tác của việc ở trạng thái `submitted` trước khi trình duyệt bấm, rồi được chốt theo câu trả lời của trang: `confirmed`, `failed`, hoặc `unknown` khi câu trả lời không bao giờ đến, trang trả 408 hoặc 5xx, hoặc lần bấm bị lỗi sau khi đã gửi một yêu cầu. Một lần bấm không ai đánh dấu nhưng vẫn gửi đi một yêu cầu cũng được ghi lại theo cách đó, sau khi nó xảy ra.
+- **Kết quả chưa rõ.** Một dòng `unknown` chuyển việc sang `uncertain` và tạo đúng thông báo trong hộp thư mà luồng ghi nhận kết quả dùng, với lời lẽ dành cho một trang web („đã được gửi đi nhưng trang không trả lời … hãy kiểm tra trên trang đó”). Khi dòng còn ở trạng thái chưa rõ, không lần bấm nào tiếp theo của việc đó đến được trình duyệt, nên nút gửi không bao giờ bị bấm hai lần; việc vẫn có thể mở, đọc và quan sát trang. Chỉ người dùng trả lời thông báo, qua `POST /effects/:id/reconcile`; câu trả lời thứ hai bị từ chối.
+
+Giới hạn hiện nay: việc được giao trên một node vẫn chạy bộ chuyển đổi worker theo kịch bản của node, nên một model thật điều khiển `use_browser` từ đầu đến cuối chưa được nối. Chỉ những yêu cầu do chính trang gửi đi mới được quan sát; một tin nhắn WebSocket hoặc một lần ghi qua frame của bên thứ ba có thể không được thấy. Một POST chỉ để đọc vẫn có thể bị giữ ở trạng thái `unknown`. Hiện chưa có chế độ người dùng tiếp quản hay xem trực tiếp cho các việc này. Nơi chưa cài Chromium, các yêu cầu trình duyệt của việc bị từ chối kèm lý do từ driver.
+
 ## 9. Security residuals cần nói thẳng
 
 Browser prompt injection có thể hướng model làm sai; core consent và isolation giảm rủi ro chứ không chứng minh an toàn tuyệt đối. Native OS control có quyền rộng, website/app visuals có thể giả prompts. Một sign-in click thành công không chứng minh OAuth đúng account.

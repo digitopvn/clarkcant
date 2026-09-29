@@ -33,6 +33,9 @@ export const COMMAND_STOPPED_ON_REQUEST = "the command was stopped on request be
  */
 const UNKNOWN_EFFECT_WINDOW_MS = DISMISSED_RETENTION_MS;
 
+/** How the effect ledger names a browser action's capability (`browser-effects.ts`). */
+const BROWSER_CAPABILITY_PREFIX = "browser.";
+
 /** How long each quote may be, so what to do next still fits in the notice's 500 characters with both quotes full. */
 const QUOTE_MAX = 70;
 
@@ -49,7 +52,7 @@ function quote(text: string): string {
  * wrong on its own.
  */
 export function unknownEffectNotice(input: {
-  effects: readonly Pick<EffectRecord, "taskId" | "intent" | "reconciliationEvidence">[];
+  effects: readonly (Pick<EffectRecord, "taskId" | "intent" | "reconciliationEvidence"> & { capabilityRef?: string })[];
   task?: { conversationId: string; goal: string };
   at: Instant;
   /** The key it is recorded under: the task's own worker key, unless it follows an answer for an earlier effect. */
@@ -57,21 +60,29 @@ export function unknownEffectNotice(input: {
 }): NodeNotice | undefined {
   const [first] = input.effects;
   if (first === undefined) return undefined;
+  // A submission in the browser is checked on the site it went to, not on a remote a command pushed to. The browser's
+  // intent names the page itself, so the target it ran in is left off the quote.
+  const browser = first.capabilityRef?.startsWith(BROWSER_CAPABILITY_PREFIX) === true;
+  const intent = browser ? (first.intent.split(" — ")[0] ?? first.intent) : first.intent;
   const forTask = input.task === undefined ? "" : ` cho việc “${quote(input.task.goal)}”`;
   const what =
     first.reconciliationEvidence === COMMAND_STOPPED_ON_REQUEST
       ? "đã bị dừng theo yêu cầu trong lúc đang chạy"
-      : "đã được gửi đi nhưng không báo lại kết quả";
+      : browser
+        ? "đã được gửi đi nhưng trang không trả lời"
+        : "đã được gửi đi nhưng không báo lại kết quả";
   const others = input.effects.length > 1 ? ` (và ${String(input.effects.length - 1)} thao tác khác cũng vậy)` : "";
+  const next = browser
+    ? `Việc được giữ ở trạng thái chưa rõ kết quả và trình duyệt không gửi thêm gì, vì gửi lại có thể làm nó hai lần. ` +
+      `Hãy kiểm tra trên trang đó (ví dụ email xác nhận) rồi ghi nhận kết quả, trước khi làm lại.`
+    : `Việc được giữ ở trạng thái chưa rõ kết quả; mọi lệnh ra bên ngoài mà nó nhận ra đều bị từ chối, vì chạy lại có thể làm nó hai lần. ` +
+      `Hãy kiểm tra ở nơi nhận (ví dụ remote Git) rồi ghi nhận kết quả, trước khi chạy lại.`;
   return {
     sourceKind: "worker",
     category: "alert",
     severity: "warning",
     title: "Chưa rõ một thao tác đã có hiệu lực hay chưa",
-    body:
-      `“${quote(first.intent)}”${forTask} ${what}${others}, nên chưa rõ nó đã có hiệu lực hay chưa. ` +
-      `Việc được giữ ở trạng thái chưa rõ kết quả; mọi lệnh ra bên ngoài mà nó nhận ra đều bị từ chối, vì chạy lại có thể làm nó hai lần. ` +
-      `Hãy kiểm tra ở nơi nhận (ví dụ remote Git) rồi ghi nhận kết quả, trước khi chạy lại.`,
+    body: `“${quote(intent)}”${forTask} ${what}${others}, nên chưa rõ nó đã có hiệu lực hay chưa. ${next}`,
     ...(input.task === undefined ? {} : { conversationId: input.task.conversationId }),
     subject: {
       kind: "task",

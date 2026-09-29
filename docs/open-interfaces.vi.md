@@ -269,7 +269,8 @@ ngừng báo cập nhật cho principal này về phiên bản mà thông báo �
 nào gửi kèm cũng bị bỏ qua, thông báo không nêu phiên bản thì trả `409 NOT_AN_UPDATE`, và `unskip-version` hoàn tác
 việc đó. Mỗi route chỉ tác động lên thông báo của chính principal gọi nó.
 `POST /effects/:effectId/reconcile` với `{ "outcome": "confirmed" | "failed", "source"?: "click" | "chat" | "voice" }`
-ghi nhận điều người dùng thấy về một thao tác chưa rõ kết quả, tức câu trả lời mà thông báo chưa rõ kết quả đưa ra
+ghi nhận điều người dùng thấy về một thao tác chưa rõ kết quả (một lệnh do task chạy, hoặc một biểu mẫu mà việc trên
+trình duyệt đã gửi nhưng trang không bao giờ trả lời), tức câu trả lời mà thông báo chưa rõ kết quả đưa ra
 thành hai nút: `404 RESOURCE_NOT_FOUND` với effect thuộc task của principal khác, của node khác, hoặc không tồn tại,
 `409 EFFECT_NOT_UNKNOWN` khi nó không còn ở trạng thái chưa rõ; route này chỉ dành cho người dùng, như bên dưới.
 `source` là nhãn do bên gọi gửi để cho biết câu trả lời được đưa ra ở đâu và được lưu đúng như vậy, không phải

@@ -3,12 +3,13 @@ import { join } from "node:path";
 import { instantSchema, type MessageRecord } from "@clarkcant/contracts";
 import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
-import { credentialNames, getNotification, messagesSince, readPreference } from "@clarkcant/storage";
+import { credentialNames, getNotification, latestMessages, messagesSince, readPreference } from "@clarkcant/storage";
 
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
 import { referenceBrief, referencesForLastUserMessage } from "../composer-references.ts";
+import { personTextOf } from "../browser-task-tool.ts";
 import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { decideModelRoute } from "../jev-decider.ts";
@@ -316,6 +317,30 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           fingerprint: deps.services().runtime.identity.fingerprint,
           peerCapabilities: (peerNodeId) => askPeerCapabilities(deps.services().runtime, peerNodeId),
         },
+        // "Do this on example.com": a browser task, offered only by a node that runs background tasks. The sites it may act
+        // on are checked against what the person wrote in this conversation, read back when the tool is called.
+        ...(deps.services().taskDispatch === undefined
+          ? {}
+          : {
+              browserTasks: {
+                tasks: {
+                  db: deps.services().runtime.db,
+                  nodeId: deps.services().runtime.identity.nodeId,
+                  now: () => instantSchema.parse(new Date().toISOString()),
+                  newId: deps.services().conductor.newId,
+                },
+                principalId: search.principalId,
+                conversationId: turn.conversationId,
+                personText: () =>
+                  personTextOf(
+                    latestMessages(deps.services().runtime.db, turn.conversationId, 30).map((record) => ({
+                      role: record.role,
+                      text: textOfMessage(record),
+                    })),
+                  ),
+                dispatcher: () => deps.services().taskDispatch,
+              },
+            }),
         // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
         packages: {
           packages: packageInstallDepsOf(deps.services()),

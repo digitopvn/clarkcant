@@ -163,6 +163,39 @@ describe("an effect whose outcome is unknown", () => {
     expect(body).toContain("và 99 thao tác khác cũng vậy");
   });
 
+  it("tells the person to check a browser submission on the site it went to, within the same length", () => {
+    const notice = unknownEffectNotice({
+      effects: Array.from({ length: 100 }, (_, index) => ({
+        taskId: "task_browser",
+        capabilityRef: "browser.playwright@1",
+        intent: `click “${"Gửi đơn ".repeat(40)}” on shop.example/checkout — tgt_task-${String(index)}`,
+        reconciliationEvidence: "click on el_1 sent 1 request(s) that had no answer after 5000 ms",
+      })),
+      task: { conversationId: "conv_browser", goal: "đặt hàng ".repeat(100) },
+      at: AT,
+    });
+    const body = notice?.body ?? "";
+    expect(body.length).toBeLessThanOrEqual(500);
+    expect(body).toContain("trang không trả lời");
+    expect(body).toContain("Hãy kiểm tra trên trang đó");
+    expect(body).not.toContain("remote Git");
+    // The target the browser ran in says nothing to a person, so it is not quoted.
+    expect(body).not.toContain("tgt_task");
+    expect(body.endsWith("trước khi làm lại.")).toBe(true);
+
+    const short = unknownEffectNotice({
+      effects: [
+        {
+          taskId: "task_browser",
+          capabilityRef: "browser.playwright@1",
+          intent: "click “Send” on shop.example/checkout — tgt_task-1",
+        },
+      ],
+      at: AT,
+    });
+    expect(short?.body).toContain("“click “Send” on shop.example/checkout”");
+  });
+
   it("gives each task its own notice, and counts a task's other unknown effects in it", () => {
     const { taskId } = taskInConversation("gửi hai thay đổi");
     handOff(taskId, "git push origin a", "unknown");

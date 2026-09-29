@@ -117,6 +117,18 @@ Observe after an action to verify the outcome; a screenshot without a success to
 
 Computer Use limits observation retention; audit keeps metadata+selected evidence according to consent. The agent does not continuously record the whole screen on its own to "have enough context".
 
+### 8.1 Browser tasks as implemented today
+
+What the node does now, as distinct from the target design above:
+
+- **Entry point.** The model tool `start_browser_task` starts a background task for the managed browser. Every site it passes, and every web address written in the goal, must be a host the person wrote in this conversation; a site the model or a page names is refused and nothing starts. There is no automation-step entry point yet.
+- **Consent.** The task is dispatched to `browser.playwright@1`, an `external-write` capability the conductor never chooses for a message on its own. The dispatcher asks the owner's execution policy before a worker exists: `deny` refuses, `ask` parks the task for the person's approval in the inbox, and only then does a worker start. Each consequential click asks the policy again, and only a refusal is final there; the person's earlier approval covers the task's sites.
+- **What the worker gets.** The worker gets the `use_browser` tool and nothing that runs commands. Its requests cross the worker channel to a broker on the node, which drives a Playwright profile of its own under the node's data directory (never the person's browser). The profile only reaches the origins in the goal and is removed when the run ends. Page text reaches the model as data, never as instructions.
+- **Ledger.** A click on a submit control, or one the model marks consequential, is written to the task's effect ledger as `submitted` before the browser presses it, and settled from what the page answered: `confirmed`, `failed`, or `unknown` when the answer never came, the page answered 408 or 5xx, or the press broke after it sent a request. A click nobody marked but which still sent a request is written down after the fact the same way.
+- **Unknown outcome.** An `unknown` row turns the task `uncertain` and raises the same inbox notice the reconcile flow uses, worded for a page ("was sent but the page did not answer … check on that site"). While the row is unknown no further click of that task reaches the browser, so the submit is never pressed twice; the task can still open, read and observe pages. Only the person answers the notice, through `POST /effects/:id/reconcile`; a second answer is refused.
+
+Limitations today: tasks dispatched on a node still run the node's scripted worker adapter, so a real model driving `use_browser` end to end is not wired yet. Only requests the page itself sends are observed; a WebSocket message or a write through a third-party frame can go unseen. A POST that only reads can still be held as `unknown`. There is no human takeover or live preview for these tasks yet. Where Chromium is not installed, the task's browser requests are refused with the driver's reason.
+
 ## 9. Security residuals to state plainly
 
 Browser prompt injection can steer the model wrong; core consent and isolation reduce risk but do not prove absolute safety. Native OS control has broad rights, and website/app visuals can fake prompts. A successful sign-in click does not prove OAuth used the right account.

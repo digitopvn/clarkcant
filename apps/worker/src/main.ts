@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { FakePiAdapter, RealPiAdapter, modelFromEnv, type PiAdapter, type ScriptedTurn } from "@clarkcant/pi-adapter";
 
 import { runWorker, workerBriefEnvelopeSchema, type WorkerBriefEnvelope, type WorkerDeps } from "./index.ts";
-import { allWorkerTools, processCommandChannel } from "./tools.ts";
+import { allWorkerTools, processBrowserChannel, processCommandChannel } from "./tools.ts";
 
 interface Args {
   briefPath: string | undefined;
@@ -148,14 +148,17 @@ async function main(): Promise<number> {
     return 2;
   }
 
-  // Commands go to the host that started this process, over the channel it opened, and only when it opened one.
+  // Commands and the browser go to the host that started this process, over the channel it opened, and only when it
+  // opened one. The brief's capabilities still decide which of the tools this run is offered.
   const commands = processCommandChannel();
+  const browser = processBrowserChannel();
   const deps: WorkerDeps = {
     adapter,
     nodeId: args.nodeId,
     availableTools: allWorkerTools(envelope.projectRoots, {
       ...(envelope.writableRoots === undefined ? {} : { writableRoots: envelope.writableRoots }),
       ...(commands === undefined ? {} : { commands }),
+      ...(browser === undefined ? {} : { browser }),
     }),
   };
 

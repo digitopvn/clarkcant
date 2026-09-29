@@ -45,6 +45,15 @@ import type { CommandToolDeps } from "./node-tools.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { signalTree, stopTree } from "./process-tree.ts";
 import { stopCommandsForTask } from "./run-command.ts";
+import {
+  BROWSER_CAPABILITY,
+  type TaskBrowserBroker,
+  type TaskBrowserHost,
+  browserTaskOrigins,
+  createTaskBrowserBroker,
+  parseTaskBrowserRequest,
+  taskProfileDir,
+} from "./task-browser.ts";
 import { createWorkerCommandBroker, parseWorkerCommandRequest } from "./worker-command-broker.ts";
 import { runWorkerProcess, type WorkerProcessResult } from "./worker-process.ts";
 import type { WorkView } from "./work-supervisor.ts";
@@ -185,6 +194,13 @@ export interface TaskDispatcherDeps {
    * no way to run one. Read at dispatch, like everything else here, so the policy in force is the one that decides.
    */
   commandDeps?: () => CommandToolDeps | undefined;
+  /**
+   * The managed browser, for a task dispatched to the browser capability. Absent means this node gives no task a
+   * browser, and such a task is refused before its worker starts. The worker never drives it: its `use_browser` requests
+   * come back over its channel and are answered by a broker built here for the run, which writes each consequential
+   * click into the task's effect ledger.
+   */
+  browser?: () => TaskBrowserHost | undefined;
   /**
    * Reported when a finished task's worktree could not be taken away, which is what happens when it holds changes
    * nobody committed: those exist nowhere else, so they are kept and the person is told where.
@@ -378,6 +394,13 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
   const queue: (QueuedRun & { queuedAt: string })[] = [];
   const liveChildren = new Map<string, { taskId: string; child: ChildProcess }>();
+  /** The browser each running browser task was given, so a stop refuses its next action as it ends its worker. */
+  const browsers = new Map<string, TaskBrowserBroker>();
+  /** Everything a stop ends besides the worker: the commands it asked for, and its browser. */
+  const stopEffectsOf = (taskId: string): void => {
+    stopCommandsForTask(taskId);
+    browsers.get(taskId)?.stop();
+  };
   let closing = false;
   /** Tasks whose worker is running, by task id, with when it started — what `work()` lists. */
   const active = new Map<string, { startedAt: string }>();
@@ -608,7 +631,44 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       write.push(made.worktree.path);
     }
 
-    const commandDeps = write.length === 0 ? undefined : deps.commandDeps?.();
+    /*
+     * A browser task gets a browser and nothing that runs commands: the sites its goal names are the whole of what it
+     * may act on, and the broker built here for this run is where each of its clicks is decided and written down.
+     */
+    const browsing = job.capabilityRef === BROWSER_CAPABILITY;
+    let openedBrowser: TaskBrowserBroker | undefined;
+    if (browsing) {
+      const host = deps.browser?.();
+      const principalId = deps.ownerPrincipalId?.();
+      const origins = browserTaskOrigins(task.goal);
+      // Without an owner there is no policy to decide a click by, and the dispatch gate above never ran.
+      const refusal =
+        host === undefined || principalId === undefined
+          ? "this node gives no task a browser"
+          : origins.length === 0
+            ? "the task names no web address, so there is no site it could be allowed onto"
+            : undefined;
+      if (host === undefined || principalId === undefined || refusal !== undefined) {
+        releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        await refuse(job, `refused: ${refusal ?? "no browser"}; the worker was never started`);
+        return;
+      }
+      openedBrowser = createTaskBrowserBroker({
+        ledger: { services: host.services, taskId: job.taskId, runId },
+        conversationId: task.conversationId,
+        intent,
+        policy: () => readExecutionPolicy({ db: deps.conductor.db, now: at }, principalId),
+        principalId,
+        allowedOrigins: origins,
+        profileDir: taskProfileDir(host.profilesDir, job.taskId),
+        ...(host.answerTimeoutMs === undefined ? {} : { answerTimeoutMs: host.answerTimeoutMs }),
+        ...(host.openDriver === undefined ? {} : { openDriver: host.openDriver }),
+      });
+      browsers.set(job.taskId, openedBrowser);
+    }
+    const browser = openedBrowser;
+
+    const commandDeps = browsing || write.length === 0 ? undefined : deps.commandDeps?.();
     const broker =
       commandDeps === undefined
         ? undefined
@@ -646,7 +706,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             wallClockExceeded = true;
             const live = liveChildren.get(runId);
             if (live !== undefined) void stopTree(live.child);
-            stopCommandsForTask(job.taskId);
+            stopEffectsOf(job.taskId);
           }, maxWallClockMs);
     wallClockTimer?.unref();
     const wallClockRefusal = (): string =>
@@ -677,12 +737,23 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
                 return broker(request);
               },
             }),
+        ...(browser === undefined
+          ? {}
+          : {
+              onBrowser: async (raw: unknown) => {
+                const request = parseTaskBrowserRequest(raw);
+                if (request === undefined) {
+                  return { kind: "refused", text: "refused: the request was not a browser action this host can read" };
+                }
+                return browser(request);
+              },
+            }),
         onChild: (child) => {
           liveChildren.set(runId, { taskId: job.taskId, child });
           // A stop that arrived while the run was being prepared ends the worker as soon as it exists.
           if (stopping.has(job.taskId)) {
             void stopTree(child);
-            stopCommandsForTask(job.taskId);
+            stopEffectsOf(job.taskId);
           }
           journal((j) =>
             j.taskStarted({
@@ -695,8 +766,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         },
       });
       // Settled only once every command it asked the host for has ended and been written into the ledger: a task
-      // reported before then is reported without knowing whether one of its effects landed.
+      // reported before then is reported without knowing whether one of its effects landed. A browser action the same.
       await broker?.idle();
+      await browser?.idle();
 
       if (wallClockExceeded) {
         journal((j) => j.taskEnded(job.taskId, "failed"));
@@ -741,6 +813,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       // other refusal: a message alone would leave the task `running` until the next boot called it uncertain. A stop
       // ends the worker and its commands together, and the worker usually goes first; the report waits for the commands.
       await broker?.idle();
+      await browser?.idle();
       const stopped = stopping.has(job.taskId);
       journal((j) => j.taskEnded(job.taskId, wallClockExceeded ? "failed" : stopped ? "stopped" : "failed"));
       const refusal = wallClockExceeded
@@ -755,6 +828,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       }
     } finally {
       if (wallClockTimer !== undefined) clearTimeout(wallClockTimer);
+      // The run's browser goes with the run, profile and all; nothing is left open for a worker that no longer exists.
+      await browser?.close();
+      browsers.delete(job.taskId);
       liveChildren.delete(runId);
       releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
       await takeAwayWorktrees(job.taskId, task.conversationId, worktrees);
@@ -865,7 +941,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       for (const { taskId, child } of liveChildren.values()) {
         stopping.add(taskId);
         void stopTree(child);
-        stopCommandsForTask(taskId);
+        stopEffectsOf(taskId);
       }
       // A queued task is failed with a reason rather than dropped: dropped, it would stay `dispatched` with nothing
       // behind it, which is the state this module exists to end.
@@ -885,8 +961,8 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         if (entry.taskId === taskId) void stopTree(entry.child);
       }
       // The commands its worker asked the host to run are the task's too, and a stop that left them running would
-      // leave the effect the person meant to end still happening.
-      stopCommandsForTask(taskId);
+      // leave the effect the person meant to end still happening. Its browser takes no further action either.
+      stopEffectsOf(taskId);
       return true;
     },
     holds(taskId) {

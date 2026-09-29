@@ -36,7 +36,7 @@ beforeEach(() => {
 
 afterEach(() => {
   services.runtime.close();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 function runningTask(): { taskId: string; conversationId: string } {
@@ -155,12 +155,59 @@ describe("a consequential browser action in the ledger", () => {
     const { taskId } = runningTask();
     await actWithLedger({ services, taskId }, scripted(TIMED_OUT), click(true), { approvalGranted: true });
     const reader = scripted(APPLIED);
+    const fill: AutomationAction = { ...click(false, "ref_name"), actionId: "act_fill", operation: "fill", arguments: { elementRef: "ref_name", value: "Ada" } };
 
-    const result = await actWithLedger({ services, taskId }, reader, click(false), { approvalGranted: false });
+    const result = await actWithLedger({ services, taskId }, reader, fill, { approvalGranted: false });
 
     expect(result.status).toBe("applied");
     expect(reader.calls).toBe(1);
     expect(effectsForTask(services.runtime.db, taskId)).toHaveLength(1);
+  });
+
+  it("hands no click at all to the driver while an earlier one is unknown, even one nobody marked consequential", async () => {
+    const { taskId } = runningTask();
+    await actWithLedger({ services, taskId }, scripted(TIMED_OUT), click(true), { approvalGranted: true });
+    const next = scripted({ ...APPLIED, sentEffect: true });
+
+    const result = await actWithLedger({ services, taskId }, next, click(false, "ref_other"), { approvalGranted: false });
+
+    expect(result.status).toBe("refused");
+    expect(result.message).toContain("may or may not have taken effect");
+    expect(next.calls).toBe(0);
+    expect(effectsForTask(services.runtime.db, taskId)).toHaveLength(1);
+  });
+
+  it("writes down after the fact a click nobody classified that sent something, and its lost answer as unknown", async () => {
+    const { taskId } = runningTask();
+    const lost = scripted({ ...TIMED_OUT, sentEffect: true });
+
+    const result = await actWithLedger({ services, taskId }, lost, click(false, "ref_save"), {
+      approvalGranted: false,
+      describe: "click “Save” on shop.example/cart",
+    });
+
+    expect(result.status).toBe("unknown");
+    const [effect] = effectsForTask(services.runtime.db, taskId);
+    expect(effect).toMatchObject({ state: "unknown", category: "external-write", capabilityRef: "browser.playwright@1" });
+    expect(effect?.intent).toBe("click “Save” on shop.example/cart — tgt_form");
+    expect(getTask(services.runtime.db, taskId)?.state).toBe("uncertain");
+    expect(taskNotices(taskId)).toEqual([{ dedup_key: `worker:${taskId}` }]);
+  });
+
+  it("records an unclassified click the site answered as confirmed, and one that sent nothing not at all", async () => {
+    const { taskId } = runningTask();
+
+    await actWithLedger({ services, taskId }, scripted({ ...APPLIED, sentEffect: true }), click(false, "ref_save"), {
+      approvalGranted: false,
+    });
+    await actWithLedger({ services, taskId }, scripted({ ...APPLIED, sentEffect: false }), click(false, "ref_more"), {
+      approvalGranted: false,
+    });
+
+    expect(effectsForTask(services.runtime.db, taskId).map((effect) => [effect.state, effect.intent])).toEqual([
+      ["confirmed", "browser click ref_save — tgt_form"],
+    ]);
+    expect(getTask(services.runtime.db, taskId)?.state).toBe("running");
   });
 });
 

@@ -22,12 +22,14 @@ import type { NodeServices } from "./services.ts";
  *     notice in the inbox under the task's own key — the same notice, with the same "It took effect" / "It did not take
  *     effect" answer, a command that timed out leaves.
  *
- * Once a task has an unknown effect, no later consequential action of it is handed to the driver: whether the first one
- * landed decides whether the second would do it twice. A non-consequential action (navigate, read, type) leaves nothing
- * outside to reconcile and is passed straight through.
+ * Once a task has an unknown effect, no later consequential action or click of it is handed to the driver: whether the
+ * first one landed decides whether the second would do it twice. A non-consequential action (navigate, read, type) is passed
+ * straight through — unless the driver reports it sent something all the same (a button a script turned into a
+ * submission): that effect is written down after the fact, with the same settlement and the same notice, because an
+ * effect nobody classified still happened outside.
  *
- * No production path drives the browser pack for a task yet; this is the ledger seam that path calls when it lands, and
- * what the tests drive with a real browser and a real timeout.
+ * The task broker (`task-browser.ts`) is the production caller: every click and fill a task's worker asks for goes
+ * through here.
  */
 export interface BrowserActor {
   act(action: AutomationAction, options: { approvalGranted: boolean }): Promise<ActResult>;
@@ -40,7 +42,7 @@ export interface BrowserEffectLedger {
 }
 
 /** The capability a browser action is carried out under, which is how the effect ledger names it. */
-const BROWSER_CAPABILITY = "browser.playwright@1" as CapabilityRef;
+export const BROWSER_CAPABILITY = "browser.playwright@1" as CapabilityRef;
 
 /** The action as a person recognises it in a notice: what it did, to what, where. Never the typed value. */
 function browserIntent(action: AutomationAction): string {
@@ -50,7 +52,7 @@ function browserIntent(action: AutomationAction): string {
 }
 
 /** The exact operation, so the ledger can tell this action from another one; the typed value is hashed, not stored. */
-function browserDigest(action: AutomationAction): string {
+export function browserDigest(action: AutomationAction): string {
   const hash = createHash("sha256")
     .update(JSON.stringify({ targetId: action.targetId, operation: action.operation, arguments: action.arguments }))
     .digest("hex");
@@ -61,7 +63,7 @@ function refused(message: string): ActResult {
   return { status: "refused", verification: "not-applicable", message, requiresReobservation: false };
 }
 
-function openBrowserEffect(ledger: BrowserEffectLedger, action: AutomationAction): EffectRecord {
+function openBrowserEffect(ledger: BrowserEffectLedger, action: AutomationAction, described?: string): EffectRecord {
   const deps = ledger.services.conductor;
   return transaction(deps.db, () => {
     const prepared = prepareEffect(deps, {
@@ -70,7 +72,7 @@ function openBrowserEffect(ledger: BrowserEffectLedger, action: AutomationAction
       executorNodeId: deps.nodeId,
       category: "external-write",
       capabilityRef: BROWSER_CAPABILITY,
-      intent: browserIntent(action),
+      intent: described === undefined ? browserIntent(action) : `${described} — ${action.targetId}`.slice(0, 2000),
       operationDigest: browserDigest(action),
       externalSupportsDedup: false,
     });
@@ -120,23 +122,45 @@ export async function actWithLedger(
   ledger: BrowserEffectLedger,
   driver: BrowserActor,
   action: AutomationAction,
-  options: { approvalGranted: boolean },
+  options: {
+    approvalGranted: boolean;
+    /** What the action is in the words a person recognises — "browser click “Send” on example.com/form". */
+    describe?: string;
+  },
 ): Promise<ActResult> {
-  if (!action.consequential) return driver.act(action, options);
-
-  const unknown = effectsForTask(ledger.services.conductor.db, ledger.taskId).find((earlier) => earlier.state === "unknown");
-  if (unknown !== undefined) {
-    const earlier = unknown.intent.split(" — ")[0] ?? unknown.intent;
-    return refused(
-      `not run: an earlier action of this task ("${earlier}") may or may not have taken effect, and nothing on this ` +
-        `node can tell which; another consequential action could do the same thing twice`,
-    );
+  const act = { approvalGranted: options.approvalGranted };
+  // A click nobody classified can still send something, so while an earlier action's outcome is unknown no click is
+  // handed over at all; reading, filling in and opening a page stay possible, so the task can still look.
+  if (action.consequential || action.operation === "click") {
+    const unknown = effectsForTask(ledger.services.conductor.db, ledger.taskId).find((earlier) => earlier.state === "unknown");
+    if (unknown !== undefined) {
+      const earlier = unknown.intent.split(" — ")[0] ?? unknown.intent;
+      return refused(
+        `not run: an earlier action of this task ("${earlier}") may or may not have taken effect, and nothing on this ` +
+          `node can tell which; another action that sends something could do the same thing twice`,
+      );
+    }
+  }
+  if (!action.consequential) {
+    const result = await driver.act(action, act);
+    if (result.sentEffect === true) {
+      // Nobody classified it, and it sent something anyway: the ledger still has to hold it, settled on what came back.
+      // The click already happened, so a ledger that cannot be written is said, never turned into the click's result.
+      try {
+        settleBrowserEffect(ledger, openBrowserEffect(ledger, action, options.describe), result);
+      } catch (cause) {
+        process.stderr.write(
+          `effect ledger: could not record a browser action of task ${ledger.taskId} after the fact (${cause instanceof Error ? cause.message : String(cause)})\n`,
+        );
+      }
+    }
+    return result;
   }
 
-  const effect = openBrowserEffect(ledger, action);
+  const effect = openBrowserEffect(ledger, action, options.describe);
   let result: ActResult | undefined;
   try {
-    result = await driver.act(action, options);
+    result = await driver.act(action, act);
     return result;
   } finally {
     settleBrowserEffect(ledger, effect, result);
