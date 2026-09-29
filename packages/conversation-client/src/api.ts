@@ -21,6 +21,7 @@ import type {
 
 import {
   appIntentDecisionSchema,
+  composerSuggestionsResponseSchema,
   parseSseChunk,
   inboxResponseSchema,
   inboxSummarySchema,
@@ -29,6 +30,9 @@ import {
   type AppIntentDecision,
   type AppIntentKind,
   type AppIntentResolution,
+  type ComposerReference,
+  type ComposerSuggestionsResponse,
+  type ComposerTrigger,
   type ConfirmationDecision,
   type InboxResponse,
   type InboxSummary,
@@ -560,6 +564,33 @@ export class GatewayError extends Error {
   }
 }
 
+/** What a message carries besides its text. */
+export interface MessageOptions {
+  demo?: boolean;
+  attachmentIds?: readonly string[];
+  /** What the person picked after `/` or `@`, whose tokens are still in the text. */
+  references?: readonly ComposerReference[];
+}
+
+/**
+ * The body both message routes take.
+ *
+ * Empty lists are omitted rather than sent: a node that predates a field validates it when it is present, and an empty
+ * list is not worth an extra rule on either side.
+ */
+function messageBody(text: string, options: MessageOptions): Record<string, unknown> {
+  return {
+    text,
+    ...(options.demo === true ? { demo: true } : {}),
+    ...(options.attachmentIds === undefined || options.attachmentIds.length === 0
+      ? {}
+      : { attachmentIds: [...options.attachmentIds] }),
+    ...(options.references === undefined || options.references.length === 0
+      ? {}
+      : { references: { version: 1, items: [...options.references] } }),
+  };
+}
+
 export class GatewayClient {
   readonly #baseUrl: string;
   readonly #token: string;
@@ -727,15 +758,26 @@ export class GatewayClient {
   sendMessage(
     conversationId: string,
     text: string,
-    options: { demo?: boolean; attachmentIds?: readonly string[] } = {},
+    options: MessageOptions = {},
   ): Promise<SendMessageResult> {
-    return this.#call("POST", `/conversations/${conversationId}/messages`, {
-      text,
-      ...(options.demo === true ? { demo: true } : {}),
-      ...(options.attachmentIds === undefined || options.attachmentIds.length === 0
-        ? {}
-        : { attachmentIds: [...options.attachmentIds] }),
-    });
+    return this.#call("POST", `/conversations/${conversationId}/messages`, messageBody(text, options));
+  }
+
+  /**
+   * What the composer's picker offers after `/` or `@`.
+   *
+   * Parsed rather than trusted, like the suggestions above: a row is drawn and then sent back as a reference, so a shape
+   * this build does not know must fail here rather than become a reference the node refuses later.
+   */
+  async composerSuggestions(input: {
+    trigger: ComposerTrigger;
+    query: string;
+    conversationId?: string | undefined;
+  }): Promise<ComposerSuggestionsResponse> {
+    const params = new URLSearchParams({ trigger: input.trigger, q: input.query });
+    if (input.conversationId !== undefined) params.set("conversationId", input.conversationId);
+    const body = await this.#call<unknown>("GET", `/composer/suggestions?${params.toString()}`);
+    return composerSuggestionsResponseSchema.parse(body);
   }
 
   /**
@@ -764,7 +806,7 @@ export class GatewayClient {
     conversationId: string,
     text: string,
     listeners: { onEvent: (event: ReplyStreamEvent) => void; onDone: (result: SendMessageResult) => void; signal?: AbortSignal },
-    options: { demo?: boolean; attachmentIds?: readonly string[] } = {},
+    options: MessageOptions = {},
   ): Promise<void> {
     const response = await this.#fetch(`${this.#baseUrl}/conversations/${conversationId}/messages/stream`, {
       method: "POST",
@@ -773,15 +815,7 @@ export class GatewayClient {
         "content-type": "application/json",
         accept: "text/event-stream",
       },
-      body: JSON.stringify({
-        text,
-        ...(options.demo === true ? { demo: true } : {}),
-        // Omitted rather than sent as an empty array: a node that predates attachments validates this field
-        // when it is present, and an empty list is not worth an extra rule on either side.
-        ...(options.attachmentIds === undefined || options.attachmentIds.length === 0
-          ? {}
-          : { attachmentIds: [...options.attachmentIds] }),
-      }),
+      body: JSON.stringify(messageBody(text, options)),
       ...(listeners.signal === undefined ? {} : { signal: listeners.signal }),
     });
 

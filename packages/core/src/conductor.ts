@@ -8,6 +8,7 @@ import {
   type MessageBlock,
   type MessageRecord,
   type Principal,
+  type ReferenceBlock,
   type TaskRecord,
   type WidgetDefinition,
   assertBlockProvenance,
@@ -15,6 +16,7 @@ import {
   isTerminal,
   messageBlockSchema,
   nowInstant,
+  referenceBlockSchema,
 } from "@clarkcant/contracts";
 
 import {
@@ -308,6 +310,13 @@ export interface UserMessageInput {
    */
   attachmentRefs?: readonly AttachmentRef[];
   /**
+   * What this message points at: skills, projects, files and the rest (#210).
+   *
+   * Already checked by the gateway at send time, and stored on the message for the reason attachments are: the
+   * timeline and the prompt then read the same row.
+   */
+  referenceBlocks?: readonly ReferenceBlock[];
+  /**
    * Whether this message is the onboarding demo asking for a scripted sample.
    *
    * The samples are labelled and useful, and they are also fake data. A message in a real conversation that merely
@@ -457,6 +466,14 @@ function attachmentBlocks(refs: readonly AttachmentRef[]): MessageBlock[] {
   return blocks;
 }
 
+/** The reference blocks a message stores, re-validated for the reason attachment refs are. */
+function referenceBlocks(blocks: readonly ReferenceBlock[]): MessageBlock[] {
+  return blocks.flatMap((block) => {
+    const parsed = referenceBlockSchema.safeParse(block);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
 /**
  * Record a finished voice session, without answering it.
  *
@@ -519,7 +536,7 @@ export async function handleUserMessage(
     input.conversationId,
     input.text,
     at,
-    attachmentBlocks(input.attachmentRefs ?? []),
+    [...attachmentBlocks(input.attachmentRefs ?? []), ...referenceBlocks(input.referenceBlocks ?? [])],
   );
   void userMessage;
 

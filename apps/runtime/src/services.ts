@@ -37,6 +37,7 @@ import {
 import { bindingAvailability } from "./application/action-bindings.ts";
 import { loadLocalEmbedder } from "./embeddings-local.ts";
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
+import type { SkillCatalog } from "./composer-references.ts";
 import type { ServiceHost } from "./service-host.ts";
 import type { TaskDispatcher } from "./task-dispatch.ts";
 import {
@@ -149,6 +150,8 @@ export interface NodeServices {
 
   /** pi's own configuration, as far as it is safe to report it: scalars, secrets redacted. */
   piSettings?: () => Promise<readonly { readonly key: string; readonly value: string }[]>;
+  /** The skills pi offers on this node, for the composer's slash. Absent on a node with no model. */
+  skills?: SkillCatalog;
 
   /**
    * The words a scripted voice provider will say, when this node is running one.

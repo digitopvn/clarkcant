@@ -34,6 +34,8 @@ import {
   type ModelCatalogue,
   type PiExtension,
   type PiSetting,
+  type PiSkill,
+  type PiSkillBody,
   type PiAdapter,
   type ToolDefinition,
   type WorkerBrief,
@@ -167,6 +169,12 @@ export interface ModelTurn {
 
   /** pi's own configuration, as far as it is safe to report it. */
   piSettings: () => Promise<readonly PiSetting[]>;
+
+  /** The skills pi discovers for this node, which the composer offers after a slash. */
+  skills: () => Promise<readonly PiSkill[]>;
+
+  /** One skill's instructions, if it is still the version a message named. */
+  skillBody: (name: string, revision: string) => Promise<PiSkillBody>;
   answer: (input: ModelTurnInput) => Promise<ModelTurnReply>;
   dispose: () => Promise<void>;
 }
@@ -605,6 +613,15 @@ export async function createModelTurn(options: {
    */
   memoryBrief?: (conversationId: string) => string;
   /**
+   * What the message being answered points at: skills to follow and the things it names (#210).
+   *
+   * Read from the stored message, as attachments are, and given the adapter's own skill reader, so the instructions a
+   * turn follows come from the installation that runs it rather than from anything a client sent.
+   */
+  references?: {
+    briefFor: (conversationId: string, skillBody: (name: string, revision: string) => Promise<PiSkillBody>) => Promise<string>;
+  };
+  /**
    * The widgets a person changed in this conversation, each with what it means now and its revision (#195).
    *
    * Read when a turn starts, which is when the node works out what the changes since the last turn amounted to; this
@@ -935,6 +952,8 @@ export async function createModelTurn(options: {
     catalogue: (): Promise<ModelCatalogue> => adapter.catalogue(),
     extensions: (): Promise<readonly PiExtension[]> => adapter.extensions(),
     piSettings: (): Promise<readonly PiSetting[]> => adapter.piSettings(),
+    skills: (): Promise<readonly PiSkill[]> => adapter.skills(),
+    skillBody: (name: string, revision: string): Promise<PiSkillBody> => adapter.skillBody(name, revision),
 
     /** The conversations with a turn still running. */
     running: (): string[] => [...turns.values()].filter((turn) => turn.inFlight).map((turn) => turn.conversationId),
@@ -1066,7 +1085,11 @@ export async function createModelTurn(options: {
       // Read fresh every turn, not captured once: a record the person deleted must stop being sent on the next
       // turn, which is what the Memory tab's promise to let them see the source and delete it has to mean.
       const memoryPart = options.memoryBrief?.(input.conversationId) ?? "";
-      const brief = [attachmentPart, memoryPart].filter((part) => part !== "").join("\n\n");
+      const referencePart =
+        options.references === undefined
+          ? ""
+          : await options.references.briefFor(input.conversationId, (name, revision) => adapter.skillBody(name, revision));
+      const brief = [referencePart, attachmentPart, memoryPart].filter((part) => part !== "").join("\n\n");
       const ui = uiNoteFor(turn, input.conversationId);
       // Set before the prompt rather than after it, so a message arriving while the first tokens are being written
       // already sees a turn in flight.

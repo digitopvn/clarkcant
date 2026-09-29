@@ -1,9 +1,13 @@
+import { createHash } from "node:crypto";
+
 import type { Instant } from "@clarkcant/contracts";
 
 import type {
   ModelCatalogue,
   PiExtension,
   PiSetting,
+  PiSkill,
+  PiSkillBody,
   PiAdapter,
   ResourceRefreshRequest,
   ToolDefinition,
@@ -37,6 +41,30 @@ export type ScriptedTurn =
       callTools: ScriptedToolCall[];
       reply?: string;
     };
+
+/** A skill the fake offers: what a listing shows, plus the instructions a turn that names it is given. */
+export interface FakeSkill {
+  name: string;
+  description: string;
+  source: PiSkill["source"];
+  body: string;
+}
+
+/** Two skills from different places, so a picker has more than one row and more than one source to show. */
+export const DEFAULT_FAKE_SKILLS: readonly FakeSkill[] = [
+  {
+    name: "release-notes",
+    description: "Viết ghi chú phát hành từ các thay đổi gần đây.",
+    source: "project",
+    body: "Gom các thay đổi gần đây thành ghi chú phát hành ngắn, nhóm theo tính năng, sửa lỗi và việc còn lại.",
+  },
+  {
+    name: "review",
+    description: "Đọc một thay đổi và chỉ ra lỗi có thật trước khi gộp.",
+    source: "personal",
+    body: "Đọc thay đổi được chỉ tới. Chỉ nêu lỗi có bằng chứng, xếp theo mức nghiêm trọng.",
+  },
+];
 
 export interface ScriptedToolCall {
   name: string;
@@ -82,10 +110,21 @@ export class FakePiAdapter implements PiAdapter {
   #aborted = new Set<string>();
   readonly #options: { script?: ScriptedTurn[]; now?: () => Instant };
 
-  constructor(options: { script?: ScriptedTurn[]; now?: () => Instant } = {}) {
+  #skills: readonly FakeSkill[];
+
+  constructor(options: { script?: ScriptedTurn[]; now?: () => Instant; skills?: readonly FakeSkill[] } = {}) {
     // Assigned rather than declared as a constructor parameter property, because Node's
     // type-stripping loader cannot execute that syntax (enforced by `pnpm invariants`).
     this.#options = options;
+    this.#skills = options.skills ?? DEFAULT_FAKE_SKILLS;
+  }
+
+  /**
+   * Replace the skills this fake offers. A seam of the test double: it is how a test edits or removes a skill between
+   * a person choosing it and the message being sent, which is the case the revision exists for.
+   */
+  setSkills(skills: readonly FakeSkill[]): void {
+    this.#skills = skills;
   }
 
   async availability(): Promise<{ available: boolean; reason?: string; sdkVersion?: string }> {
@@ -129,6 +168,24 @@ export class FakePiAdapter implements PiAdapter {
       { key: "defaultModel", value: "fake-model" },
       { key: "providerApiKey", value: "[redacted]" },
     ];
+  }
+
+  async skills(): Promise<readonly PiSkill[]> {
+    return [...this.#skills]
+      .map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        source: skill.source,
+        revision: fakeSkillRevision(skill),
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async skillBody(name: string, revision: string): Promise<PiSkillBody> {
+    const skill = this.#skills.find((candidate) => candidate.name === name);
+    if (skill === undefined) return { ok: false, reason: "missing" };
+    if (fakeSkillRevision(skill) !== revision) return { ok: false, reason: "changed" };
+    return { ok: true, name, body: skill.body };
   }
 
   async createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle> {
@@ -337,4 +394,9 @@ function chunkText(text: string, size = 12): string[] {
   const chunks: string[] = [];
   for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size));
   return chunks.length > 0 ? chunks : [""];
+}
+
+/** The digest the fake reports for a skill: of everything a listing and a turn would see, so any edit changes it. */
+export function fakeSkillRevision(skill: FakeSkill): string {
+  return createHash("sha256").update(`${skill.name}\n${skill.description}\n${skill.body}`).digest("hex");
 }

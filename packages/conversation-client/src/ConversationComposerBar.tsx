@@ -1,9 +1,13 @@
 import type { ReactElement, RefObject } from "react";
 
+import { referenceToken } from "@clarkcant/contracts";
+
 import type { Timeline } from "./api.ts";
 import { formatFileSize, type AttachmentChip } from "./attachments.ts";
+import { COMPOSER_LISTBOX_ID, ComposerSuggestions, composerOptionId } from "./composer-suggestions.tsx";
 import { useT } from "./i18n/locale-context.tsx";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
+import type { ComposerReferencesState } from "./use-composer-references.ts";
 import { modelSwitchShortcut } from "./use-model-alias.ts";
 
 export interface ConversationComposerBarProps {
@@ -15,6 +19,8 @@ export interface ConversationComposerBarProps {
   addFiles: (files: readonly File[]) => Promise<void>;
   chips: readonly AttachmentChip[];
   onRemoveChip: (id: string) => void;
+  /** The `/` and `@` picker, and the references chosen with it. */
+  references: ComposerReferencesState;
   draft: string;
   setDraft: (draft: string) => void;
   placeholder: string;
@@ -45,6 +51,7 @@ export function ConversationComposerBar({
   addFiles,
   chips,
   onRemoveChip,
+  references,
   draft,
   setDraft,
   placeholder,
@@ -91,31 +98,57 @@ export function ConversationComposerBar({
         void addFiles(pasted);
       }}
     >
+      {references.live.length === 0 ? null : (
+        // What the message will carry besides its text, beside the files: the same row a person already reads before
+        // sending. Removing a chip also takes its token out of the draft, so the two never disagree.
+        <ul className="cc-tray" data-reference-chips="true" aria-label={t("composer.references.chips")}>
+          {references.live.map((entry) => (
+            <li
+              key={entry.key}
+              className="cc-tray-chip"
+              data-reference-chip={entry.ref.label}
+              data-reference-kind={entry.ref.kind}
+            >
+              <span className="cc-chip-name">{referenceToken(entry.ref)}</span>
+              <button
+                type="button"
+                className="cc-chip-remove"
+                aria-label={t("composer.references.remove").replace("{label}", referenceToken(entry.ref))}
+                data-reference-remove={entry.ref.label}
+                onClick={() => references.remove(entry.key)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {chips.length === 0 ? null : (
+        <ul className="cc-tray" data-attachment-chips="true">
+          {chips.map((chip) => (
+            <li key={chip.id} className="cc-tray-chip" data-attachment-chip={chip.filename} data-attachment-state={chip.state}>
+              <span className="cc-chip-name">{chip.filename}</span>
+              <span className="cc-chip-size">{formatFileSize(chip.sizeBytes)}</span>
+              {/* The node's own sentence, shown where the file is: a refusal the person cannot read is
+                  indistinguishable from a click that did nothing. */}
+              {chip.state === "failed" ? <span className="cc-chip-reason">{chip.reason}</span> : null}
+              <button
+                type="button"
+                className="cc-chip-remove"
+                aria-label={`Bỏ ${chip.filename}`}
+                data-attachment-remove={chip.id}
+                onClick={() => onRemoveChip(chip.id)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {/* The ring, drawn under the composer so the light travels around its edge rather than across it. */}
       <div className="cc-composer-shell">
         <span className="cc-composer-glow" aria-hidden="true" />
-        {chips.length === 0 ? null : (
-          <ul className="cc-chip-row" data-attachment-chips="true">
-            {chips.map((chip) => (
-              <li key={chip.id} className="cc-chip" data-attachment-chip={chip.filename} data-attachment-state={chip.state}>
-                <span className="cc-chip-name">{chip.filename}</span>
-                <span className="cc-chip-size">{formatFileSize(chip.sizeBytes)}</span>
-                {/* The node's own sentence, shown where the file is: a refusal the person cannot read is
-                    indistinguishable from a click that did nothing. */}
-                {chip.state === "failed" ? <span className="cc-chip-reason">{chip.reason}</span> : null}
-                <button
-                  type="button"
-                  className="cc-chip-remove"
-                  aria-label={`Bỏ ${chip.filename}`}
-                  data-attachment-remove={chip.id}
-                  onClick={() => onRemoveChip(chip.id)}
-                >
-                  ×
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <ComposerSuggestions state={references} />
         <form
           className="cc-composer"
           onSubmit={(event) => {
@@ -156,8 +189,27 @@ export function ConversationComposerBar({
             placeholder={placeholder === "" ? t("composer.placeholder") : placeholder}
             rows={1}
             data-composer="true"
-            onChange={(event) => setDraft(event.target.value)}
+            // The picker is a listbox this field controls, so focus stays where the person is typing.
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={references.open}
+            aria-controls={COMPOSER_LISTBOX_ID}
+            {...(references.open && references.suggestions.length > 0
+              ? { "aria-activedescendant": composerOptionId(references.activeIndex) }
+              : {})}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              references.track(event.currentTarget);
+            }}
+            onSelect={(event) => references.track(event.currentTarget)}
+            onBlur={references.leave}
+            onCompositionStart={() => references.setComposing(true)}
+            onCompositionEnd={(event) => {
+              references.setComposing(false);
+              references.track(event.currentTarget);
+            }}
             onKeyDown={(event) => {
+              if (references.onKeyDown(event)) return;
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 onSubmit();

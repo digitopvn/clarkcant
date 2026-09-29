@@ -505,7 +505,7 @@ function toCandidate(
  * string: a relative path from an approved root says where something is without saying where the
  * user's home is.
  */
-function relativePaths(deps: ProjectFinderDeps, path: string): string {
+export function relativePaths(deps: ProjectFinderDeps, path: string): string {
   const roots = deps.roots().map((root) => resolve(root));
   const containing = roots.find((root) => isWithinRoot(root, path));
   const relativeToRoot = relative(containing ?? deps.home(), path);

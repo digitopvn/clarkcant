@@ -22,6 +22,7 @@ import { handleAttachmentRoutes } from "./routes/attachments.ts";
 import { handlePreviewRoutes } from "./routes/previews.ts";
 import { handlePreferenceRoutes } from "./routes/preferences.ts";
 import { handlePackageRoutes } from "./routes/packages.ts";
+import { handleComposerRoutes } from "./routes/composer.ts";
 import { handleInboxRoutes } from "./routes/inbox.ts";
 import { handleSignalRoutes } from "./routes/signals.ts";
 import { handleGithubSignalRoute } from "./routes/github-signals.ts";
@@ -246,6 +247,10 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   // offers goes back through the route that already owns that decision.
   const inboxResponse = handleInboxRoutes({ services, request, segments, at });
   if (inboxResponse !== undefined) return inboxResponse;
+
+  // What the composer offers after / or @. Read only; a reference is checked again when the message is sent.
+  const composerResponse = await handleComposerRoutes({ services, request, segments });
+  if (composerResponse !== undefined) return composerResponse;
 
   // Something happened that a standing request may answer. Recorded first, matched after, so the sender is answered at once.
   const signalResponse = handleSignalRoutes({ services, request, segments, at });

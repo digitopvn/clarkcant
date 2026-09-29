@@ -10,6 +10,7 @@ import {
   type MessageBlock,
   type MessageRecord,
   type Principal,
+  type ReferenceBlock,
   capabilityRefSchema,
   commandEnvelopeSchema,
   graphSemanticState,
@@ -64,6 +65,7 @@ import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../app
 import { bindingAvailability } from "../application/action-bindings.ts";
 import { invokeWidgetAction } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
+import { resolveComposerReferences } from "../composer-references.ts";
 import { type InteractionDeps, answerQuestion, cancelQuestion } from "../interactions.ts";
 import { resolveLiveSections } from "../mini-app-data.ts";
 import { WorkAbort, nodeWork } from "../work-supervisor.ts";
@@ -832,6 +834,11 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       return json(200, { accepted: true, messageId: appended.messageId, appIntent: asked });
     }
 
+    // Checked before anything acts on the message, so a reference that no longer holds refuses the whole message by
+    // name instead of a turn starting without the thing it was asked about.
+    const references = await resolveComposerReferences(services, { value: parsed.value.references });
+    if (!references.ok) return fail(400, "REFERENCE_NOT_AVAILABLE", references.message);
+
     /*
      * A message sent while the assistant is still working.
      *
@@ -845,7 +852,11 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      * interrupt — the recoverable direction rather than the silent one.
      */
     const control = services.turnControl;
-    if (control !== undefined && control.running().includes(conversationId)) {
+    // A message that points at something is its own turn: its references are briefed into the turn it starts, and
+    // joining a running answer or a background worker would carry its words without them.
+    if (control !== undefined && control.running().includes(conversationId) && references.blocks.length > 0) {
+      control.interrupt(conversationId);
+    } else if (control !== undefined && control.running().includes(conversationId)) {
       const decided = await decideTurnAction(
         {
           jev: services.jev.deps,
@@ -907,6 +918,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       text: text.slice(0, 20_000),
       at: at_,
       attachmentRefs: attachments.refs,
+      referenceBlocks: references.blocks,
       // Only the demo path asks for a scripted sample; a real message never gets one.
       ...(parsed.value.demo === true ? { demo: true } : {}),
       emit: (event) => {
@@ -993,6 +1005,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       ids: parsed.value.attachmentIds,
     });
     if (!attachments.ok) return fail(400, "ATTACHMENT_NOT_AVAILABLE", attachments.message);
+    const references = await resolveComposerReferences(services, { value: parsed.value.references });
+    if (!references.ok) return fail(400, "REFERENCE_NOT_AVAILABLE", references.message);
     return {
       status: 200,
       body: null,
@@ -1007,6 +1021,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
               text: text.slice(0, 20_000),
               at: at_,
               attachmentRefs: attachments.refs,
+              referenceBlocks: references.blocks,
               ...(parsed.value.demo === true ? { demo: true } : {}),
             },
             send,
@@ -1703,6 +1718,7 @@ async function streamUserMessage(
     text: string;
     at: Instant;
     attachmentRefs?: readonly AttachmentRef[];
+    referenceBlocks?: readonly ReferenceBlock[];
     demo?: boolean;
   },
   send: (chunk: string) => void,
@@ -1714,6 +1730,7 @@ async function streamUserMessage(
       text: input.text,
       at: input.at,
       attachmentRefs: input.attachmentRefs ?? [],
+      referenceBlocks: input.referenceBlocks ?? [],
       ...(input.demo === true ? { demo: true } : {}),
       emit: (event) => {
         // One frame per event the turn produced, named as the turn named it. Translating here would

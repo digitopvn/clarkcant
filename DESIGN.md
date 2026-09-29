@@ -404,7 +404,12 @@ Required:
 - file chip states;
 - status/error near the relevant field;
 - typewriter placeholder only when empty/idle;
-- slash-command autocomplete is an optional enhancement, not the primary navigation.
+- `/` names a skill and `@` names a project, file, folder, MCP service, conversation or background task, from a list
+  the textarea drives as a combobox (arrows move, Enter adds, Tab opens a project or folder, Escape closes the list and
+  keeps the draft; pointer and touch choose too). A choice writes its token into the draft and shows as a chip beside
+  the file chips; deleting the token or the chip drops the reference, so a message never carries one the person cannot
+  see. A reference is a pointer, not a permission: the node checks it again at send time and refuses the send by name,
+  keeping the draft, when it has gone stale. This is an enhancement, not the primary navigation.
 
 While a turn is running:
 

@@ -184,6 +184,26 @@ export interface PiSetting {
   readonly value: string;
 }
 
+/**
+ * One skill pi would load for this node, as the composer offers it.
+ *
+ * evision is a digest of the skill's file, so a message that names a skill can say which version it meant: a skill
+ * edited between choosing it and sending the message is reported rather than silently run in its new form. No path is
+ * carried, because the composer and the model only ever need the name.
+ */
+export interface PiSkill {
+  readonly name: string;
+  readonly description: string;
+  /** personal is the person's own agent directory, project the node's working directory, package an installed pi package. */
+  readonly source: "personal" | "project" | "package";
+  readonly revision: string;
+}
+
+/** A skill's instructions, or why the version a message named cannot be read any more. */
+export type PiSkillBody =
+  | { readonly ok: true; readonly name: string; readonly body: string }
+  | { readonly ok: false; readonly reason: "missing" | "changed" };
+
 export interface PiAdapter {
   /** Whether the SDK is actually usable in this process. */
   availability(): Promise<{ available: boolean; reason?: string; sdkVersion?: string }>;
@@ -201,6 +221,16 @@ export interface PiAdapter {
 
   /** pi's own configuration, as far as it is safe to report it: scalars, with anything secret-sounding redacted. */
   piSettings(): Promise<readonly PiSetting[]>;
+
+  /** The skills pi discovers for this node, the same set a worker session loads. */
+  skills(): Promise<readonly PiSkill[]>;
+
+  /**
+   * The instructions of one skill, if it is still the version a message named.
+   *
+   * Frontmatter is removed: it describes the skill for a listing, and the model is given the listing's words already.
+   */
+  skillBody(name: string, revision: string): Promise<PiSkillBody>;
 
   createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle>;
 

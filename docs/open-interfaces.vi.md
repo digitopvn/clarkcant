@@ -40,7 +40,7 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 |---|---|---|
 | GET | `/node` | – |
 | GET / POST | `/conversations` | `{ title? }` |
-| POST | `/conversations/{id}/messages` | `{ text, attachmentIds? }` — chờ câu trả lời |
+| POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — chờ câu trả lời |
 | POST | `/conversations/{id}/messages/stream` | như trên, trả về dạng SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `error`, `done` |
 | POST | `/conversations/{id}/stop` | `{ source? }` — dừng câu trả lời đang viết; giữ phần đã viết, gắn nhãn đã dừng; trả về `{ stopped }` |
 | GET | `/conversations/{id}/timeline?after=N` | – |
@@ -50,6 +50,7 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 | POST | `/signals/github` | một lần giao webhook của GitHub, ký bằng webhook secret thay cho token — xem bên dưới |
 | POST | `/signals/webhook/{source}` | `{ id, topic, payload?, subject?, occurredAt? }` ký bằng secret của nguồn đó thay cho token — xem bên dưới |
 | GET | `/automations` | – những việc tự động đã đặt trong hội thoại, kèm các lần chạy gần nhất |
+| GET | `/composer/suggestions?trigger=/\|@&q=&conversationId=` | – những gì ô soạn tin gợi ý sau `/` hoặc `@` |
 | POST | `/stop` | – dừng khẩn cấp |
 
 ```bash
@@ -126,6 +127,24 @@ một route: chủ của node gửi nêu peer làm executor của task, và ch�
 mục, repository, effect). Hai node trao đổi grant, lần giao (`delegate`), câu trả lời (`result`) và lệnh dừng
 (`cancel.request`) bằng message NodeLink; bên nhận chỉ chạy task trong phạm vi cả hai cho phép, và mỗi chủ node nghe
 kết quả trong hội thoại của chính mình.
+
+Một tin nhắn có thể mang theo những gì người dùng chọn sau `/` hoặc `@` trong ô soạn tin dưới dạng `references`:
+`{ "version": 1, "items": [...] }`, tối đa 8 mục, mỗi mục là một trong `skill { skillId, source, revision }`,
+`project { projectId }`, `file|folder { projectId, path }` (đường dẫn tương đối trong dự án, không bao giờ là đường dẫn
+tuyệt đối), `mcp-server { serviceKey }`, `conversation { conversationId }`, `background-work { workId }` hoặc
+`notice { noticeId }`, tất cả đều có `label`. Node kiểm tra lại từng mục lúc gửi — kỹ năng vẫn còn ở đúng revision,
+đường dẫn vẫn nằm trong dự án sau khi đi theo liên kết, dự án vẫn nằm trong các thư mục được phép, thông báo vẫn còn trong
+hộp thư — và một tham chiếu không còn đúng sẽ khiến cả tin nhắn bị từ chối với `400 REFERENCE_NOT_AVAILABLE`, nêu rõ tên
+tham chiếu đó, trước khi bất cứ thứ gì được lưu. Những gì hợp lệ được giữ trên tin nhắn của người dùng thành block
+`reference` và được đưa vào lượt trả lời bằng đường dẫn tương đối trong dự án; chỉ dẫn của kỹ năng được đưa vào lượt đó.
+Tham chiếu là con trỏ, không phải quyền: đọc, chạy hay thay đổi thứ nó trỏ tới vẫn đi qua các bước kiểm tra thường lệ
+của node.
+
+`GET /composer/suggestions` là thứ lấp đầy bộ chọn: kỹ năng sau `/`; dự án, dịch vụ, hội thoại (theo tiêu đề, hoặc theo
+phần đầu tin nhắn đầu tiên khi tiêu đề chỉ là tên mặc định của client) và việc nền sau `@`; một thư mục của dự án sau
+`@<dự án>/`. Tối đa 8 dòng, xếp theo khớp chính xác, rồi khớp đầu, rồi khớp một phần, rồi theo loại (dự án, dịch vụ, hội
+thoại, việc nền), thứ dùng gần đây lên trước, gõ dấu hay không đều được. Khi chưa gõ gì sau `@`, mỗi loại đều có phần
+dòng của mình. Dòng không chọn được sẽ nói lý do trong `disabledReason`.
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.

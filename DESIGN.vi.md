@@ -404,7 +404,12 @@ Bắt buộc:
 - file chip states;
 - status/error gần field liên quan;
 - typewriter placeholder chỉ khi empty/idle;
-- command autocomplete khi user gõ slash là optional enhancement, không phải navigation chính.
+- `/` để gọi tên một skill và `@` để chỉ tới project, file, thư mục, MCP service, cuộc trò chuyện hay việc nền, chọn từ
+  một danh sách do textarea điều khiển như combobox (mũi tên để di chuyển, Enter để thêm, Tab để mở project hay thư mục,
+  Escape để đóng danh sách mà giữ nguyên bản nháp; chọn bằng chuột hay chạm cũng được). Lựa chọn ghi token vào bản nháp
+  và hiện thành chip cạnh chip tệp; xoá token hay chip là bỏ luôn reference, nên tin nhắn không bao giờ mang theo thứ
+  người dùng không nhìn thấy. Reference là con trỏ, không phải quyền: node kiểm lại lúc gửi, và nếu nó đã cũ thì từ chối
+  lượt gửi, nói rõ reference nào, đồng thời giữ nguyên bản nháp. Đây là tính năng bổ trợ, không phải navigation chính.
 
 Khi turn đang chạy:
 

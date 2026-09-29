@@ -61,6 +61,16 @@ const messageBody = {
         properties: {
           text: { type: "string", minLength: 1, maxLength: 20_000 },
           attachmentIds: { type: "array", items: { type: "string" } },
+          references: {
+            type: "object",
+            description:
+              "What the person picked after / or @ in the composer: { version: 1, items } with at most 8 items, each " +
+              "{ kind, label, ... } for a skill, project, file, folder, mcp-server, conversation, background-work or " +
+              "notice. Checked again when the message is sent; one that no longer holds refuses the message with 400 " +
+              "REFERENCE_NOT_AVAILABLE naming it. A reference is a pointer, not a permission.",
+            required: ["version", "items"],
+            properties: { version: { const: 1 }, items: { type: "array", maxItems: 8, items: { type: "object" } } },
+          },
         },
       },
     },
@@ -259,6 +269,21 @@ export function openApiDocument(): Record<string, unknown> {
           summary: "The standing requests set up in conversation, each with what it did lately",
           description: "Read-only. An automation is created, paused, resumed and removed by asking Clark in conversation.",
           responses: { "200": ok("{ automations: [{ intent, recentRuns }] }"), ...refusals },
+        },
+      },
+      "/composer/suggestions": {
+        get: {
+          summary: "What the composer offers after / or @",
+          description:
+            "Read-only and local: skills after /; projects, services, titled conversations and background work after @; " +
+            "one directory of a project after @<project>/. At most 8 rows, ranked exact, then prefix, then substring. " +
+            "A row that cannot be chosen says why in disabledReason. No row carries an absolute path.",
+          parameters: [
+            { name: "trigger", in: "query", required: true, schema: { type: "string", enum: ["/", "@"] } },
+            { name: "q", in: "query", required: false, schema: { type: "string", maxLength: 200 } },
+            { name: "conversationId", in: "query", required: false, schema: { type: "string" } },
+          ],
+          responses: { "200": ok("{ trigger, query, suggestions: [{ key, trigger, kind, label, note?, disabledReason?, ref }] }"), ...refusals },
         },
       },
       "/stop": {
