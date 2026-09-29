@@ -21,6 +21,8 @@ import {
   ORB_PALETTE,
   ORB_SHAPE,
   ORB_VERTEX_SHADER,
+  type OrbStyle,
+  orbStyleIndex,
 } from "./orb-shader.ts";
 
 export interface OrbOptions {
@@ -44,6 +46,8 @@ export interface OrbOptions {
    * the fragments the shader runs per frame for a difference nobody can point at.
    */
   maxPixelRatio?: number;
+  /** What is drawn inside the glass. The band, the signature orb, when absent. */
+  style?: OrbStyle;
   palette?: Partial<Record<keyof typeof ORB_PALETTE, readonly number[]>>;
   /**
    * The shell's spring and its pointer gains.
@@ -155,6 +159,7 @@ const UNIFORM_NAMES = [
   "u_chromatic",
   "u_glow",
   "u_sheen",
+  "u_style",
   "u_canvas",
   "u_glowColor",
   "u_highlight",
@@ -243,6 +248,7 @@ export function createOrbRenderer(
     glow: options.glow ?? ORB_SHAPE.glow,
     sheen: options.sheen ?? ORB_SHAPE.sheen,
   };
+  const style = orbStyleIndex(options.style);
   const speed = options.speed ?? 1.23;
   const physics = {
     stiffness: options.physics?.stiffness ?? ORB_PHYSICS_DEFAULTS.stiffness,
@@ -392,6 +398,7 @@ export function createOrbRenderer(
     gl.uniform1f(uniforms.u_chromatic ?? null, shape.chromatic);
     gl.uniform1f(uniforms.u_glow ?? null, shape.glow);
     gl.uniform1f(uniforms.u_sheen ?? null, shape.sheen);
+    gl.uniform1f(uniforms.u_style ?? null, style);
     gl.uniform2f(uniforms.u_pointer ?? null, pointer.x, pointer.y);
     gl.uniform1f(uniforms.u_pointerStrength ?? null, pointerStrength);
     gl.uniform1f(uniforms.u_wobble ?? null, wobble);

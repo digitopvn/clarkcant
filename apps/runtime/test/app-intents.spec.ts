@@ -116,6 +116,18 @@ describe("the same intent from three sources", () => {
     expect(auditRecords()).toHaveLength(0);
   });
 
+  it("answers a kind that is missing what it needs with a 400 that says why, and records nothing", async () => {
+    const response = await request("POST", "/app-intents", { kind: "orb.select", source: "click" });
+    expect(response.status).toBe(400);
+    expect(json(response).code).toBe("INVALID_SCHEMA");
+    expect(json(response).message).toContain("orb.select must name the orb profile");
+    // A style on a kind that does not take one is the same mistake the other way round.
+    const stray = await request("POST", "/app-intents", { kind: "settings.open", orbProfile: "plasma", source: "click" });
+    expect(stray.status).toBe(400);
+    expect(json(stray).message).toContain("only orb.select may name an orb profile");
+    expect(auditRecords()).toHaveLength(0);
+  });
+
   it("answers an intent that is not the registry's business with none, not a refusal", async () => {
     const response = await request("POST", "/app-intents", {
       text: "xem cài đặt của máy chủ này giúp tôi",

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement, t
 import { createOrbRenderer, orbPointerFromClient, type OrbOptions, type OrbPointerRect, type OrbPointerSample } from "./orb.ts";
 import { orbFallbackBackground, type ResolvedOrbProfile } from "./orb-profile.ts";
 import { readDocumentTheme, subscribeToDocumentTheme } from "./theme.ts";
+import { usePlatformReducedMotion } from "./typewriter.ts";
 
 /**
  * The orb.
@@ -45,6 +46,14 @@ export interface OrbProps extends OrbOptions {
    * Explicit props still win over the profile, so a caller that sizes the hero orb keeps that sizing.
    */
   profile?: ResolvedOrbProfile;
+  /**
+   * Told whether the orb is being drawn by WebGL or shown as its static fallback.
+   *
+   * For a surface that has to say so in words — the settings preview, where a person choosing a style on
+   * a machine without WebGL should learn why every choice looks still, rather than conclude the choice
+   * did nothing.
+   */
+  onRenderMode?: (mode: "gl" | "fallback") => void;
 }
 
 /**
@@ -84,9 +93,31 @@ function readCanvasColor(): readonly number[] | undefined {
   return raw === "" ? undefined : parseCssColor(raw);
 }
 
-export function Orb({ size, className, label, pointerTarget, profile, ...options }: OrbProps): ReactElement {
+export function Orb({
+  size,
+  className,
+  label,
+  pointerTarget,
+  profile,
+  onRenderMode,
+  ...options
+}: OrbProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [failed, setFailed] = useState<string | undefined>(undefined);
+  const platformReducedMotion = usePlatformReducedMotion();
+  /*
+   * Either switch is enough. The profile carries the stored preference; the live query covers the platform switch,
+   * including a profile resolved by a caller that does not follow it. Both follow the switch back off again: the
+   * shared hooks re-resolve the profile when the platform answer changes, so neither side holds a stale "reduced".
+   */
+  const reduceMotion = platformReducedMotion || profile?.reducedMotion === true;
+
+  // Held in a ref so a caller passing a fresh closure each render does not count as a change of mode.
+  const onRenderModeRef = useRef(onRenderMode);
+  onRenderModeRef.current = onRenderMode;
+  useEffect(() => {
+    onRenderModeRef.current?.(failed === undefined ? "gl" : "fallback");
+  }, [failed]);
   /*
    * The orb's background is baked into the renderer when it is created, and the renderer has no
    * setter for it, so a theme change has to recreate it. This dependency is what makes that happen;
@@ -111,6 +142,7 @@ export function Orb({ size, className, label, pointerTarget, profile, ...options
           sheen: profile.optical.sheen,
           speed: profile.speed,
           physics: profile.physics,
+          style: profile.style,
           ...(Object.keys(profile.palette).length === 0 ? {} : { palette: profile.palette }),
         };
   const effective: OrbOptions = { ...profileOptions, ...options };
@@ -131,11 +163,13 @@ export function Orb({ size, className, label, pointerTarget, profile, ...options
       setFailed(created.reason);
       return;
     }
+    // A rebuild that succeeds after one that failed — a restored context, a theme change — is drawn by
+    // WebGL again, and the published state has to say so.
+    setFailed(undefined);
 
     const renderer = created.renderer;
     renderer.resize();
 
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let frameHandle = 0;
     let visible = true;
 
@@ -239,7 +273,9 @@ export function Orb({ size, className, label, pointerTarget, profile, ...options
     // object identity arrived would drop and rebuild the GPU program on every keystroke in the composer. The
     // profile key is the one exception, and it is a value rather than an object: it changes exactly when the
     // resolved profile changes, so a personalized orb rebuilds once per profile change and never per render.
-  }, [theme, pointerTarget, profile?.key]);
+    // Reduced motion is a dependency for the same reason: it decides whether the loop runs at all, so a
+    // switch flipped while the orb is on screen stops (or restarts) it rather than waiting for a reload.
+  }, [theme, pointerTarget, profile?.key, reduceMotion]);
 
   /*
    * What the machine without WebGL shows.
@@ -280,7 +316,7 @@ export function Orb({ size, className, label, pointerTarget, profile, ...options
        */
       {...(profile === undefined
         ? {}
-        : { "data-orb-profile": profile.name, "data-orb-motion": profile.reducedMotion ? "reduced" : "full" })}
+        : { "data-orb-profile": profile.name, "data-orb-motion": reduceMotion ? "reduced" : "full" })}
       role="img"
       aria-label={label ?? "Orb"}
     />

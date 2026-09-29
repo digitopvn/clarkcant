@@ -16,6 +16,14 @@
  *
  * The colours are the ones the reference URL specified. They are uniforms rather than literals so
  * a caller can theme the orb without editing the shader.
+ *
+ * The interior has three styles, chosen by `u_style` (see `ORB_STYLES`): the spectral band above,
+ * which is the signature orb; mother-of-pearl contour layers; and plasma filaments reaching from a
+ * lit core to the glass. The last two take their idea from the orb catalogue at shadercn.run
+ * ("mother-of-pearl contour bands", "plasma globe") and none of its code: that catalogue publishes
+ * no licence, so both are written here from the description alone. Every style shares the same
+ * shell, rim, sheen, glow, pointer response and alpha, so a style changes what is inside the glass
+ * and never what the orb is.
  */
 
 export const ORB_VERTEX_SHADER = `
@@ -38,6 +46,9 @@ uniform float u_exposure;
 uniform float u_chromatic;
 uniform float u_glow;
 uniform float u_sheen;
+// Which interior to draw: 0 the spectral band, 1 nacre contours, 2 plasma filaments. A whole number
+// sent as a float, compared with a half-step margin so no rounding can land between two styles.
+uniform float u_style;
 
   /**
    * Where the pointer is, how close it is, and how much the shell is still ringing from it.
@@ -76,6 +87,138 @@ vec3 spectrum(float t) {
   c = mix(c, u_colorA, smoothstep(0.28, 0.52, t));
   c = mix(c, u_colorC, smoothstep(0.52, 0.76, t));
   return mix(c, u_colorD, smoothstep(0.76, 1.00, t));
+}
+
+/**
+ * The signature interior: a lens-shaped spectral band across the equator.
+ *
+ * nx is the horizontal position as a share of the radius and lens the band's vertical allowance at
+ * that position; both are also used by the glass body, so they are computed once by the caller.
+ */
+vec3 bandInterior(vec2 p, float nx, float lens, float touch) {
+  // A slow drift, so the band breathes instead of sitting still. Two frequencies keep it from
+  // looking like a single sine, and the lens weighting concentrates the movement towards the
+  // middle: the band is anchored where it meets the glass and moves most where it is widest.
+  float sway = pow(lens, 1.30);
+  float drift = sin(nx * 3.2 + u_time * 1.15) * 0.045 * sway
+              + sin(nx * 6.1 - u_time * 0.70) * 0.016 * sway;
+  // The band is dragged towards the pointer's height, most strongly right under it: this is the
+  // refraction a real bubble shows, where the thing behind it appears to bend towards the touch.
+  // Capped, because an uncapped pull would fold the band onto itself and read as a glitch.
+  float pull = clamp(u_pointer.y - p.y, -0.16, 0.16) * 0.9 * touch * u_pointerStrength;
+  float y = p.y - drift - pull;
+
+  // Two vertical profiles: a broad halo that lights the glass around the band, and a thin core
+  // that is the bright line itself. The exponents matter more than the amplitudes — a low power
+  // keeps the band the same thickness across the whole width, which reads as a stripe, while a
+  // higher one tapers it towards the ends and reads as a lens. The exponents are kept just under
+  // the exponent on the lens itself so the band is thickest in the middle.
+  float haloH = 0.270 * pow(lens, 1.40);
+  float coreH = 0.056 * pow(lens, 1.90);
+  // Gated by the lens itself, fading out well before the silhouette. Without the gate the profiles
+  // are evaluated with a vanishing denominator where the lens closes, so the gaussian is taken at
+  // zero over a near-zero width and returns one — a bright hairline running off the equator. The
+  // band also has to be gone by the edge rather than pinched at it: a coloured sliver sitting hard
+  // against the silhouette reads as a stripe painted across the ball, not as light inside glass.
+  float gate = step(abs(nx), 1.0) * smoothstep(0.30, 0.78, lens);
+  float halo = exp(-pow(y / max(haloH, 1e-4), 2.0)) * gate;
+  float core = exp(-pow(y / max(coreH, 1e-4), 2.0)) * gate;
+
+  // Horizontal position along the band, and the per-channel separation that gives the edges their
+  // colour fringing.
+  float t = nx * 0.5 + 0.5;
+  float disp = 0.055 * u_chromatic;
+  vec3 band = vec3(spectrum(t + disp).r, spectrum(t).g, spectrum(t - disp).b);
+
+  return band * halo * 0.42
+       + band * core * 0.32
+       // Raised to a high power so the centre concentrates into a line rather than washing the
+       // whole ball out.
+       + u_highlight * pow(core, 2.6) * 0.55;
+}
+
+/**
+ * A smooth scalar field over the disc that folds slowly: three waves, each bent by another, so the
+ * contours drawn from it curl rather than run in straight stripes.
+ */
+float nacreField(vec2 q) {
+  float t = u_time * 0.35;
+  float v = sin(q.x * 3.1 + t + sin(q.y * 2.3 - t * 0.7));
+  v += 0.60 * sin(q.y * 4.3 - t * 0.8 + sin(q.x * 3.7 + t * 0.5));
+  v += 0.35 * sin((q.x + q.y) * 6.1 + t * 1.3);
+  return v;
+}
+
+/** One contour layer's colour at a level of the field. */
+vec3 nacreLayer(float level) {
+  float layer = floor(level);
+  float within = level - layer;
+  // Each layer its own hue: a fixed stride through the spectrum, so neighbours never share one.
+  vec3 hue = spectrum(fract(layer * 0.382 + 0.15));
+  // A thin bright seam where one layer meets the next, which is what reads as nacre rather than as
+  // a map of coloured regions.
+  float seam = 1.0 - smoothstep(0.0, 0.09, min(within, 1.0 - within));
+  return hue * (0.34 + 0.30 * within) + u_highlight * seam * 0.30;
+}
+
+/** Mother-of-pearl: contour layers of a folding field, wrapped over the sphere. */
+vec3 pearlInterior(vec2 p, float R, float touch) {
+  vec2 q = p / R;
+  // The sphere's facing: 1 at the centre, 0 at the silhouette. Adding it to the level is what wraps
+  // the contours around the ball instead of printing them flat across it.
+  float facing = sqrt(max(0.0, 1.0 - dot(q, q)));
+  // The pointer draws the contours towards itself, the way a lens bends what is behind it.
+  q += (u_pointer / max(R, 1e-4) - q) * touch * 0.18 * u_pointerStrength;
+  float level = nacreField(q) * 1.6 + facing * 1.4;
+  // The same dispersion control as the band, so "chromatic fringe" means one thing in every style.
+  float disp = 0.12 * u_chromatic;
+  vec3 layers = vec3(nacreLayer(level + disp).r, nacreLayer(level).g, nacreLayer(level - disp).b);
+  // Brightest where the surface faces the viewer, falling off towards the rim.
+  return layers * (0.30 + 0.70 * facing);
+}
+
+/** The unsigned angle between two directions, in radians, wrapped to the short way round. */
+float angleGap(float a, float b) {
+  return abs(mod(a - b + 3.14159265, 6.28318531) - 3.14159265);
+}
+
+/** A plasma globe: filaments crawling from a lit core out to the glass, and one reaching for the pointer. */
+vec3 plasmaInterior(vec2 p, float R) {
+  vec2 q = p / R;
+  float rad = length(q);
+  // atan of the origin is undefined in GLSL and some drivers return NaN for it, which a later
+  // multiplication by zero does not remove; both angles are therefore only taken away from zero.
+  float ang = rad > 1e-4 ? atan(q.y, q.x) : 0.0;
+  float t = u_time;
+  // Filaments start clear of the core and reach the glass, where a real globe's discharge ends.
+  float reach = smoothstep(0.06, 0.24, rad) * (1.0 - smoothstep(0.93, 1.0, rad));
+  vec3 col = vec3(0.0);
+
+  // A constant bound, as GLSL ES 1.00 requires of a loop.
+  for (int i = 0; i < 6; i++) {
+    float fi = float(i);
+    // Six directions around the ball, each swinging slowly about its own place.
+    float base = fi * 1.0471976 + sin(t * 0.45 + fi * 1.7) * 0.55;
+    // The filament wanders as it travels out, more the further it has gone.
+    float bend = sin(rad * 7.0 - t * 2.4 + fi * 2.3) * 0.28 * rad
+               + sin(rad * 13.0 + t * 1.6 + fi) * 0.06 * rad;
+    float gap = angleGap(ang, base + bend) * rad;
+    float width = 0.018 + 0.030 * rad;
+    // A gentle shimmer, well under what reads as flashing even at the fastest animation rate.
+    float shimmer = 0.8 + 0.2 * sin(t * 5.0 + fi * 2.1);
+    float strand = exp(-(gap * gap) / (width * width)) * shimmer * reach;
+    col += spectrum(fract(fi * 0.23 + 0.1)) * strand * 0.55 + u_highlight * pow(strand, 3.0) * 0.35;
+  }
+
+  // The discharge a plasma globe sends to a finger on its glass, drawn only while the pointer is near.
+  float towards = length(u_pointer) > 1e-4 ? atan(u_pointer.y, u_pointer.x) : 0.0;
+  float gapP = angleGap(ang, towards + sin(rad * 9.0 - t * 3.0) * 0.12 * rad) * rad;
+  float strandP = exp(-(gapP * gapP) / 0.0016) * reach * u_pointerStrength;
+  col += (u_highlight * 0.6 + u_glowColor * 0.5) * strandP;
+
+  // The lit core the filaments leave from.
+  col += u_highlight * exp(-rad * 9.0) * 0.9 + u_shellEdge * exp(-rad * 3.0) * 0.22;
+  return col;
 }
 
 void main() {
@@ -121,59 +264,29 @@ void main() {
   float inside = 1.0 - smoothstep(R_local - edge, R_local + edge, r);
   float outside = 1.0 - inside;
 
-  // --- the band ---------------------------------------------------------
+  // --- the interior -----------------------------------------------------
   // A lens: widest at the equator, tapering to nothing at the left and right of the silhouette.
-  // The taper is what keeps the band from being clipped by the sphere edge.
+  // The band's taper follows it, which is what keeps the band from being clipped by the sphere
+  // edge, and the glass body below uses it for its equatorial tint whichever interior is drawn.
   float nx = p.x / R;
   float lens = sqrt(max(0.0, 1.0 - nx * nx));
 
-  // A slow drift, so the band breathes instead of sitting still. Two frequencies keep it from
-  // looking like a single sine, and the lens weighting concentrates the movement towards the
-  // middle: the band is anchored where it meets the glass and moves most where it is widest.
-  float sway = pow(lens, 1.30);
-  float drift = sin(nx * 3.2 + u_time * 1.15) * 0.045 * sway
-              + sin(nx * 6.1 - u_time * 0.70) * 0.016 * sway;
-  // The band is dragged towards the pointer's height, most strongly right under it: this is the
-  // refraction a real bubble shows, where the thing behind it appears to bend towards the touch.
-  // Capped, because an uncapped pull would fold the band onto itself and read as a glitch.
-  float pull = clamp(u_pointer.y - p.y, -0.16, 0.16) * 0.9 * touch * u_pointerStrength;
-  float y = p.y - drift - pull;
-
-  // Two vertical profiles: a broad halo that lights the glass around the band, and a thin core
-  // that is the bright line itself. The exponents matter more than the amplitudes — a low power
-  // keeps the band the same thickness across the whole width, which reads as a stripe, while a
-  // higher one tapers it towards the ends and reads as a lens. The exponents are kept just under
-  // the exponent on the lens itself so the band is thickest in the middle.
-  float haloH = 0.270 * pow(lens, 1.40);
-  float coreH = 0.056 * pow(lens, 1.90);
-  // Gated by the lens itself, fading out well before the silhouette. Without the gate the profiles
-  // are evaluated with a vanishing denominator where the lens closes, so the gaussian is taken at
-  // zero over a near-zero width and returns one — a bright hairline running off the equator. The
-  // band also has to be gone by the edge rather than pinched at it: a coloured sliver sitting hard
-  // against the silhouette reads as a stripe painted across the ball, not as light inside glass.
-  float gate = step(abs(nx), 1.0) * smoothstep(0.30, 0.78, lens);
-  float halo = exp(-pow(y / max(haloH, 1e-4), 2.0)) * gate;
-  float core = exp(-pow(y / max(coreH, 1e-4), 2.0)) * gate;
-
-  // Horizontal position along the band, and the per-channel separation that gives the edges their
-  // colour fringing.
-  float t = nx * 0.5 + 0.5;
-  float disp = 0.055 * u_chromatic;
-  vec3 band = vec3(spectrum(t + disp).r, spectrum(t).g, spectrum(t - disp).b);
+  // Everything the interior emits, gathered so the exposure uniform stays one real control over it
+  // rather than being multiplied into separate terms. Only the chosen interior is evaluated.
+  vec3 emissive;
+  if (u_style > 1.5) {
+    emissive = plasmaInterior(p, R);
+  } else if (u_style > 0.5) {
+    emissive = pearlInterior(p, R, touch);
+  } else {
+    emissive = bandInterior(p, nx, lens, touch);
+  }
 
   // --- composition ------------------------------------------------------
 
   // The glass body stays dark: barely above the surface it sits on, picking up the shell's violet
   // only near the equator. A lighter ball loses the glass and reads as a marble.
   vec3 body = u_canvas + u_shellEdge * (0.020 + 0.090 * lens);
-
-  // Everything the band emits, gathered so the exposure uniform stays one real control over it
-  // rather than being multiplied into three separate terms.
-  vec3 emissive = band * halo * 0.42
-                + band * core * 0.32
-                // Raised to a high power so the centre concentrates into a line rather than
-                // washing the whole ball out.
-                + u_highlight * pow(core, 2.6) * 0.55;
 
   // A soft brightening just inside the silhouette, kept low: the edge should read as glass, not
   // as a neon tube. It brightens where the pointer is, which is the rim of the bubble catching the
@@ -255,5 +368,19 @@ export const ORB_SHAPE = {
   glow: 0.30,
   sheen: 0.28,
 } as const;
+
+/**
+ * The interiors the shader can draw, in `u_style` order: index 0 is sent as 0.0, and so on.
+ *
+ * "band" is the signature orb and the default for anything that names no style.
+ */
+export const ORB_STYLES = ["band", "pearl", "plasma"] as const;
+export type OrbStyle = (typeof ORB_STYLES)[number];
+
+/** The number `u_style` carries for a style. An unknown style draws the band. */
+export function orbStyleIndex(style: OrbStyle | undefined): number {
+  const index = style === undefined ? 0 : ORB_STYLES.indexOf(style);
+  return index < 0 ? 0 : index;
+}
 
 export const ORB_SHADER_STATUS = "implemented-glsl-es-1";

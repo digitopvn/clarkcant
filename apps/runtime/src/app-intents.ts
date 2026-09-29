@@ -187,8 +187,40 @@ export function consumeConfirmation(
 
 export interface DecideInput {
   principalId: string;
+  /** Where the request came from, and its text when it is a sentence. Its `kind` fields are not read here. */
   request: AppIntentRequest;
+  /**
+   * The intent a request named directly, already validated by `requestedIntent` at the boundary that received
+   * it. Kept out of this function so a malformed kind is a 400 from the route rather than a throw from in here.
+   */
+  intent?: AppIntent;
   conversationId?: ConversationId;
+}
+
+export type RequestedIntent =
+  | { ok: true; intent: AppIntent | undefined }
+  | { ok: false; message: string };
+
+/**
+ * The intent a request names by kind, validated against the contract.
+ *
+ * A request that names a kind has to carry what that kind needs (`orb.select` a style, for one) and nothing another
+ * kind owns. The contract's refinements say which; this turns their verdict into a value the route can answer with,
+ * so a caller that got the shape wrong is told why instead of the node throwing.
+ */
+export function requestedIntent(request: AppIntentRequest): RequestedIntent {
+  if (request.kind === undefined) return { ok: true, intent: undefined };
+  const parsed = appIntentSchema.safeParse({
+    kind: request.kind,
+    ...(request.tab === undefined ? {} : { tab: request.tab }),
+    ...(request.definitionId === undefined ? {} : { definitionId: request.definitionId }),
+    ...(request.family === undefined ? {} : { family: request.family }),
+    ...(request.orbProfile === undefined ? {} : { orbProfile: request.orbProfile }),
+  });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues.map((issue) => issue.message).join("; ") };
+  }
+  return { ok: true, intent: parsed.data };
 }
 
 /**
@@ -207,16 +239,7 @@ export function decideAppIntent(
   const locale = preferredAppIntentLocale(deps, input.principalId);
   const resolution = resolveAppIntent({
     ...(input.request.text === undefined ? {} : { text: input.request.text }),
-    ...(input.request.kind === undefined
-      ? {}
-      : {
-          intent: appIntentSchema.parse({
-            kind: input.request.kind,
-            ...(input.request.tab === undefined ? {} : { tab: input.request.tab }),
-            ...(input.request.definitionId === undefined ? {} : { definitionId: input.request.definitionId }),
-            ...(input.request.family === undefined ? {} : { family: input.request.family }),
-          }),
-        }),
+    ...(input.intent === undefined ? {} : { intent: input.intent }),
     mintConfirmationToken: () => randomUUID() as ConfirmationToken,
     ...(deps.widgetTargets === undefined ? {} : { widgetTargets: deps.widgetTargets }),
     locale,

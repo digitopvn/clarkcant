@@ -160,8 +160,10 @@ describe("every documented way of asking maps to one intent", () => {
     // sentence needs the alias vocabulary injected the way a widget target does, and that is a runtime
     // concern (see apps/runtime/test/app-intents.spec.ts), not this matcher's own. `model.select` is
     // still reachable - by a click that already knows the alias, or by `control_app` - just not by a
-    // sentence this table alone resolves.
-    const coverableKinds = APP_INTENT_KINDS.filter((kind) => kind !== "model.select");
+    // sentence this table alone resolves. `orb.select` is the same shape: it needs the style's name,
+    // which the Settings control and `control_app` carry, and a phrase table naming every style in two
+    // languages would be a second copy of the preset list to keep in step.
+    const coverableKinds = APP_INTENT_KINDS.filter((kind) => kind !== "model.select" && kind !== "orb.select");
     expect(DOCUMENTED.map((entry) => entry.kind).sort()).toEqual([...coverableKinds].sort());
   });
 

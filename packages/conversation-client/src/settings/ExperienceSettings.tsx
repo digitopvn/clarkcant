@@ -1,9 +1,17 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useId, useState, type ReactElement } from "react";
 
-import { ORB_MOTION_BOUNDS, ORB_OPTICAL_BOUNDS, ORB_PHYSICS_BOUNDS } from "@clarkcant/contracts";
+import {
+  ORB_MOTION_BOUNDS,
+  ORB_OPTICAL_BOUNDS,
+  ORB_PHYSICS_BOUNDS,
+  ORB_PROFILE_LABELS,
+  ORB_PROFILE_NAMES,
+  type OrbProfileName,
+} from "@clarkcant/contracts";
 
 import { Orb } from "../Orb.tsx";
-import { orbFallbackBackground, resolveOrbProfile } from "../orb-profile.ts";
+import { orbPaletteGradient, resolveOrbProfile } from "../orb-profile.ts";
+import { usePlatformReducedMotion } from "../typewriter.ts";
 import { THEME_CHOICES, type ThemeChoice } from "../theme.ts";
 import type { ThemeName } from "@clarkcant/design-tokens";
 import { InlineStatus, RangeField, SegmentedControl, SettingsRow } from "./controls/primitives.tsx";
@@ -40,16 +48,23 @@ function motionOptions(
   ];
 }
 
-function orbPresets(
-  t: (key: MessageKey) => string,
-): readonly { value: "clark" | "calm" | "jelly" | "glass" | "custom"; label: string; note: string }[] {
-  return [
-    { value: "clark", label: "Clark", note: t("settings.experience.orb.clark.note") },
-    { value: "calm", label: "Calm", note: t("settings.experience.orb.calm.note") },
-    { value: "jelly", label: "Jelly", note: t("settings.experience.orb.jelly.note") },
-    { value: "glass", label: "Glass", note: t("settings.experience.orb.glass.note") },
-    { value: "custom", label: "Custom", note: t("settings.experience.orb.custom.note") },
-  ];
+const ORB_PRESET_NOTES: Readonly<Record<OrbProfileName, MessageKey>> = {
+  clark: "settings.experience.orb.clark.note",
+  calm: "settings.experience.orb.calm.note",
+  jelly: "settings.experience.orb.jelly.note",
+  glass: "settings.experience.orb.glass.note",
+  pearl: "settings.experience.orb.pearl.note",
+  plasma: "settings.experience.orb.plasma.note",
+  custom: "settings.experience.orb.custom.note",
+};
+
+/**
+ * Every profile the registry accepts, in its own order, so a preset added to the contract appears here
+ * without a second list to keep in step. Labels are the contract's proper names, the same words the agent
+ * and the read-back use.
+ */
+function orbPresets(t: (key: MessageKey) => string): readonly { value: OrbProfileName; label: string; note: string }[] {
+  return ORB_PROFILE_NAMES.map((value) => ({ value, label: ORB_PROFILE_LABELS[value], note: t(ORB_PRESET_NOTES[value]) }));
 }
 
 /** The patch's own shape, read defensively: a stored value may predate this control. */
@@ -111,28 +126,39 @@ export function ExperienceSettings({
   const customOptical = numbers(custom.optical);
   const customMotion = numbers(custom.motion);
   const [draftOpen, setDraftOpen] = useState(false);
+  /** Whether the preview is drawn by WebGL, as the orb itself reports it rather than as guessed here. */
+  const [previewMode, setPreviewMode] = useState<"gl" | "fallback">("gl");
+  /** Followed live, so the preview starts moving again when the platform switch is turned back off. */
+  const platformReducedMotion = usePlatformReducedMotion();
+  /** Unique per mounted instance, so two copies of this tab never share a description id. */
+  const presetNoteId = useId();
 
   /*
    * The preview.
    *
    * Resolved through the same function the running orb uses, from the values the node just confirmed, so what
-   * is shown is what will be drawn rather than a second implementation of the same idea. Reduced motion is
-   * taken from the stored preference here; the platform's own setting is applied inside the Orb itself.
+   * is shown is what will be drawn rather than a second implementation of the same idea. Reduced motion follows
+   * the same rule as the orb in the conversation: the stored preference or the platform's switch, either one.
    */
   const preview = resolveOrbProfile({
     profile: profileName,
     custom,
-    reducedMotion: prefs.text("experience.motion", "system") === "reduced",
+    reducedMotion: prefs.text("experience.motion", "system") === "reduced" || platformReducedMotion,
   });
 
   /** Write one field of the custom patch, keeping the fields that were not touched. */
   const patchCustom = (group: "physics" | "optical" | "motion", key: string, value: number): void => {
+    const kept = numbers(custom[group]);
+    // A size stored before the registry refused one would make every later edit a refused write; the orb
+    // already ignores it, so it is dropped here rather than carried forward.
+    delete kept.radius;
     const next = {
       ...custom,
-      [group]: { ...numbers(custom[group]), [key]: value },
+      [group]: { ...kept, [key]: value },
     };
-    prefs.write("orb.custom", next);
-    onOrbChange();
+    // The orb on screen re-reads once the node has stored the value, not before: a refresh sent with the
+    // write would read the value being replaced.
+    prefs.write("orb.custom", next, onOrbChange);
   };
 
   return (
@@ -195,10 +221,7 @@ export function ExperienceSettings({
             options={MOTION_OPTIONS}
             value={prefs.text("experience.motion", "system")}
             pending={prefs.pending === "experience.motion"}
-            onChange={(value) => {
-              prefs.write("experience.motion", value);
-              onOrbChange();
-            }}
+            onChange={(value) => prefs.write("experience.motion", value, onOrbChange)}
           />
         </SettingsRow>
         <InlineStatus status={prefs.status} forKey="experience.motion" />
@@ -209,25 +232,20 @@ export function ExperienceSettings({
         <p className="cc-panel-note">{t("settings.experience.orb.intro")}</p>
 
         {/*
-          One live orb, and the preset list beside it as flat swatches.
+          One live orb, and the preset list below it as flat swatches.
 
           A grid of preset previews would mean a WebGL context per preset, which is a GPU program each for a
-          difference the eye reads from the label anyway. The selected preset feeds this one renderer instead.
+          difference a still swatch already shows. The selected preset feeds this one renderer instead, and each
+          swatch is the preset's own palette as a gradient, so it cannot promise colours the orb would not draw.
         */}
-        <div className="cc-orb-preview" data-orb-preview="true">
-          <div
-            className="cc-orb-preview-stage"
-            style={
-              Object.keys(preview.palette).length === 0
-                ? undefined
-                : { background: orbFallbackBackground(preview.palette) }
-            }
-          >
+        <div className="cc-orb-preview" data-orb-preview="true" data-orb-preview-mode={previewMode}>
+          <div className="cc-orb-preview-stage">
             <Orb
               size={96}
               className="cc-orb-preview-canvas"
-              label={`${t("settings.experience.orb.previewLabelPrefix")} ${preview.name}`}
+              label={`${t("settings.experience.orb.previewLabelPrefix")} ${ORB_PROFILE_LABELS[preview.name]}`}
               profile={preview}
+              onRenderMode={setPreviewMode}
               // A small preview does not need a retina buffer: the difference is invisible and the fragments
               // are not free.
               maxPixelRatio={1.5}
@@ -235,36 +253,67 @@ export function ExperienceSettings({
           </div>
           <div className="cc-setting-text">
             <span className="cc-setting-label" data-orb-preview-name={preview.name}>
-              {ORB_PRESETS.find((preset) => preset.value === preview.name)?.label ?? preview.name}
+              {ORB_PROFILE_LABELS[preview.name]}
             </span>
-            <span className="cc-setting-desc">
-              {preview.reducedMotion ? t("settings.experience.orb.reducedMotion") : t("settings.experience.orb.moving")}
+            <span className="cc-setting-desc" data-orb-preview-motion={preview.reducedMotion ? "reduced" : "full"}>
+              {/* A fallback gradient never moves, so saying "animating" over it would report motion that is not there. */}
+              {previewMode === "fallback"
+                ? t("settings.experience.orb.still")
+                : preview.reducedMotion
+                  ? t("settings.experience.orb.reducedMotion")
+                  : t("settings.experience.orb.moving")}
             </span>
           </div>
         </div>
+        {previewMode === "fallback" ? (
+          <p className="cc-panel-note" data-orb-fallback-note="true">
+            {t("settings.experience.orb.fallback")}
+          </p>
+        ) : null}
 
         <SettingsRow
           label={t("settings.experience.orb.style.label")}
           description={t("settings.experience.orb.style.description")}
+          layout="stacked"
         >
-          <div className="cc-segmented" role="group" aria-label={t("settings.experience.orb.style.label")}>
+          {/*
+            Each style's description, as the accessible description of its button. `hidden` keeps them off screen
+            (the selected one is shown below as text), and a hidden element still supplies a description. The
+            title stays for a pointer hovering over a style it has not chosen.
+          */}
+          <div hidden>
+            {ORB_PRESETS.map((preset) => (
+              <span key={preset.value} id={`${presetNoteId}-${preset.value}`}>
+                {preset.note}
+              </span>
+            ))}
+          </div>
+          <div className="cc-orb-presets" role="group" aria-label={t("settings.experience.orb.style.label")}>
             {ORB_PRESETS.map((preset) => (
               <button
                 key={preset.value}
                 type="button"
-                className="cc-badge"
+                className="cc-orb-preset"
                 aria-pressed={profileName === preset.value}
+                aria-describedby={`${presetNoteId}-${preset.value}`}
                 data-selected={profileName === preset.value}
                 data-orb-preset={preset.value}
+                title={preset.note}
                 onClick={() => {
-                  prefs.write("orb.profile", preset.value);
                   // Opening the advanced controls on the way in, because choosing "custom" without being
                   // offered what to customise is a dead end.
                   if (preset.value === "custom") setDraftOpen(true);
-                  onOrbChange();
+                  prefs.write("orb.profile", preset.value, onOrbChange);
                 }}
               >
-                {preset.label}
+                <span
+                  className="cc-orb-preset-swatch"
+                  aria-hidden="true"
+                  style={{
+                    background: orbPaletteGradient(resolveOrbProfile({ profile: preset.value, custom }).palette),
+                  }}
+                />
+                <span className="cc-orb-preset-label">{preset.label}</span>
               </button>
             ))}
           </div>
@@ -289,9 +338,8 @@ export function ExperienceSettings({
             className="cc-chip"
             data-orb-reset="true"
             onClick={() => {
-              prefs.write("orb.profile", "clark");
-              prefs.undo("orb.custom");
-              onOrbChange();
+              prefs.write("orb.profile", "clark", onOrbChange);
+              prefs.undo("orb.custom", onOrbChange);
             }}
           >
             {t("settings.experience.orb.reset")}

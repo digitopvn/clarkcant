@@ -1,8 +1,11 @@
 import { type CSSProperties, type ReactElement, useRef, useState } from "react";
 
+import type { OrbProfileName } from "@clarkcant/contracts";
+
 import type { GatewayClient, Timeline } from "./api.ts";
 import { agentStateFrom, windowModeFrom } from "./input-modality.ts";
 import type { ResolvedOrbProfile } from "./orb-profile.ts";
+import { selectOrbProfileShown } from "./use-orb-profile.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
 import { useTypewriterPlaceholder } from "./typewriter.ts";
@@ -93,9 +96,10 @@ export interface ConversationProps {
    * Called after a settings write that changes the orb.
    *
    * Writing a profile has to change the orb that is on screen rather than the one that appears after a
-   * reload, and only the host that resolved the profile can re-resolve it.
+   * reload, and only the host that resolved the profile can re-resolve it. Resolves with the profile now drawn,
+   * and rejects when it could not be read back, so a caller never reports a change the screen did not make.
    */
-  onOrbChange?: () => void;
+  onOrbChange?: () => Promise<ResolvedOrbProfile>;
   /**
    * Whether this node has no model, so a turn that needs one would fail.
    *
@@ -280,6 +284,23 @@ export function Conversation({
     // The hotkey's own switches, so the alias and note on screen follow an agent's switch too.
     cycleModel,
     selectModel,
+    /*
+     * The orb style an agent or a spoken request asks for, saved with the same preference write the Settings
+     * control makes and then shown with the same refresh. Offered only when the host can refresh the orb: a
+     * style that was saved but not drawn until the next reload would make "done" untrue on screen.
+     *
+     * "Done" waits for the refresh to answer with the style now drawn; see `selectOrbProfileShown`.
+     */
+    ...(onOrbChange === undefined
+      ? {}
+      : {
+          selectOrbProfile: (profile: OrbProfileName) =>
+            selectOrbProfileShown(profile, {
+              write: (name) => client.writePreference("orb.profile", name),
+              refresh: onOrbChange,
+              t: localeState.t,
+            }),
+        }),
   });
 
   /**
@@ -520,6 +541,7 @@ export function Conversation({
         resolvedTheme={resolvedTheme}
         onThemeChoice={applyThemeChoice}
         {...(onOrbChange === undefined ? {} : { onOrbChange })}
+        orbProfileKey={orbProfile?.key}
         onPolicyChange={refreshPolicyMode}
         onOpenWidgetLibrary={appIntents.openWidgetLibrary}
       />
@@ -572,6 +594,7 @@ export function Conversation({
           onAppIntent={appIntents.runIntent}
           onWidgetActionResult={appIntents.bumpLiveRefresh}
           {...(focusedInstanceId === undefined ? {} : { focusedInstanceId })}
+          {...(orbProfile === undefined ? {} : { orbProfile })}
           onClose={({ focusComposer }) => {
             setVoiceOpen(false);
             if (focusComposer) composerInput.current?.focus();

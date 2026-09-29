@@ -125,8 +125,11 @@ const paletteShape = Object.fromEntries(
 
 export const orbPalettePreferenceSchema = z.strictObject(paletteShape);
 
+/**
+ * The optics a custom profile may change. `radius` is deliberately absent: the orb's size is part of what makes
+ * every profile recognisably the Orb, so no stored preference can reach it, and a write that tries is refused.
+ */
 export const orbOpticalPreferenceSchema = z.strictObject({
-  radius: bounded(ORB_OPTICAL_BOUNDS.radius).optional(),
   exposure: bounded(ORB_OPTICAL_BOUNDS.exposure).optional(),
   chromatic: bounded(ORB_OPTICAL_BOUNDS.chromatic).optional(),
   glow: bounded(ORB_OPTICAL_BOUNDS.glow).optional(),
@@ -158,9 +161,34 @@ export const orbCustomPreferenceSchema = z.strictObject({
 });
 export type OrbCustomPreference = z.infer<typeof orbCustomPreferenceSchema>;
 
-/** The orb's named profiles. `custom` is the one whose bounded patch is read from `orb.custom`. */
-export const orbProfileSchema = z.enum(["clark", "calm", "jelly", "glass", "custom"]);
+/**
+ * The orb's named profiles. `custom` is the one whose bounded patch is read from `orb.custom`.
+ *
+ * Six presets and `custom`. `clark` is the signature orb and the default; the others are named moods over the
+ * same closed set of channels — palette, optics, animation rate, shell physics and one of the renderer's own
+ * interior styles — so choosing one can never introduce code. A value a newer build wrote and this one does not
+ * know resolves to `clark` rather than failing.
+ */
+export const ORB_PROFILE_NAMES = ["clark", "calm", "jelly", "glass", "pearl", "plasma", "custom"] as const;
+export const orbProfileSchema = z.enum(ORB_PROFILE_NAMES);
 export type OrbProfileName = z.infer<typeof orbProfileSchema>;
+
+/**
+ * What each profile is called on screen and in a read-back.
+ *
+ * Proper names rather than translated words, in every UI language: a person who asks Clark for "Pearl" should hear
+ * "Pearl" back and find the same word on the Settings button. Declared once so the settings surface and the agent's
+ * read-back cannot name the same profile two ways.
+ */
+export const ORB_PROFILE_LABELS: Readonly<Record<OrbProfileName, string>> = {
+  clark: "Clark",
+  calm: "Calm",
+  jelly: "Jelly",
+  glass: "Glass",
+  pearl: "Pearl",
+  plasma: "Plasma",
+  custom: "Custom",
+};
 
 /**
  * How effects are decided.

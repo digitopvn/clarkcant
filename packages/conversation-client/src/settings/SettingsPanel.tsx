@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 
 import { Modal } from "../Modal.tsx";
 import type { GatewayClient } from "../api.ts";
@@ -94,8 +94,16 @@ export interface SettingsPanelProps {
   /** What is currently shown, which is always `dark` or `light`. */
   resolvedTheme: ThemeName;
   onThemeChoice: (choice: ThemeChoice) => void;
-  /** Called after a write that changes the orb, so the orb on screen follows the control that changed it. */
-  onOrbChange?: () => void;
+  /**
+   * Called after a write that changes the orb, so the orb on screen follows the control that changed it. Resolves
+   * once the orb has re-read the preference, and rejects when it could not.
+   */
+  onOrbChange?: () => Promise<unknown>;
+  /**
+   * The resolved key of the orb on screen. When it changes while the panel is open — the agent or a spoken request
+   * switched the style — the panel re-reads its preferences, so the selected style is the one being drawn.
+   */
+  orbProfileKey?: string | undefined;
   /**
    * Called after a write that changes the execution policy, so the shell's `data-policy-mode`
    * (DESIGN.md §4) follows the mode the control just saved, the same way `onOrbChange` does for the orb.
@@ -128,6 +136,7 @@ export function SettingsPanel({
   resolvedTheme,
   onThemeChoice,
   onOrbChange,
+  orbProfileKey,
   onPolicyChange,
   openAt,
   onOpenWidgetLibrary,
@@ -215,8 +224,24 @@ export function SettingsPanel({
   }, [open, tab]);
 
   const orbChanged = useCallback(() => {
-    onOrbChange?.();
+    onOrbChange?.().catch(() => {
+      // The control's own write was accepted and is reported beside it. Only the orb elsewhere on screen could not
+      // re-read it; that orb keeps drawing the profile it already showed, and the next successful read corrects it.
+    });
   }, [onOrbChange]);
+
+  /*
+   * The orb changed without this panel writing it: the agent, or a spoken request, switched the style while the
+   * panel was open. Re-read, so the selected style is the one on screen rather than the one the panel opened on.
+   * Compared with the previous key rather than run on every render, so opening the panel does not read twice.
+   */
+  const seenOrbKey = useRef(orbProfileKey);
+  useEffect(() => {
+    if (seenOrbKey.current === orbProfileKey) return;
+    seenOrbKey.current = orbProfileKey;
+    if (open) prefs.reload();
+    // `prefs.reload` is a fresh closure each render and would re-run this every time; the key is the trigger.
+  }, [orbProfileKey, open]);
 
   if (!open) return null;
 

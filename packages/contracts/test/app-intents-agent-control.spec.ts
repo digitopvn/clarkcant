@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { appIntentSchema, appIntentSourceSchema, describeAppIntent } from "../src/app-intents.ts";
+import { ORB_PROFILE_NAMES } from "../src/preferences.ts";
 
 /**
  * The kinds and source values issue #129 adds so the main agent and the voice agent can reach the same
@@ -46,6 +47,34 @@ describe("agent-control app intent contract", () => {
     }
     expect(sentences.size).toBe(4);
     expect(describeAppIntent({ kind: "model.select", modelAlias: "fast" })).toContain("fast");
+  });
+
+  it("accepts orb.select naming a style the registry knows", () => {
+    for (const orbProfile of ORB_PROFILE_NAMES) {
+      expect(appIntentSchema.safeParse({ kind: "orb.select", orbProfile }).success, orbProfile).toBe(true);
+    }
+  });
+
+  it("refuses orb.select with no style, or with a style the registry does not know", () => {
+    expect(appIntentSchema.safeParse({ kind: "orb.select" }).success).toBe(false);
+    expect(appIntentSchema.safeParse({ kind: "orb.select", orbProfile: "aurora" }).success).toBe(false);
+    // A style is a closed name, never shader source or a colour smuggled in as one.
+    expect(appIntentSchema.safeParse({ kind: "orb.select", orbProfile: "void main() {}" }).success).toBe(false);
+  });
+
+  it("refuses an orbProfile on any other kind", () => {
+    expect(appIntentSchema.safeParse({ kind: "settings.open", orbProfile: "pearl" }).success).toBe(false);
+    expect(appIntentSchema.safeParse({ kind: "model.select", modelAlias: "fast", orbProfile: "pearl" }).success).toBe(
+      false,
+    );
+  });
+
+  it("reads back orb.select naming the style, in both languages", () => {
+    expect(describeAppIntent({ kind: "orb.select", orbProfile: "plasma" })).toContain("Plasma");
+    expect(describeAppIntent({ kind: "orb.select", orbProfile: "plasma" }, "en")).toContain("Plasma");
+    expect(describeAppIntent({ kind: "orb.select", orbProfile: "pearl" })).not.toBe(
+      describeAppIntent({ kind: "orb.select", orbProfile: "plasma" }),
+    );
   });
 
   it("accepts \"agent\" as a source, distinct from chat, click and voice", () => {

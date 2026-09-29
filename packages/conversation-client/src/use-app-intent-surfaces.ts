@@ -10,7 +10,7 @@ import {
   requestWindowMode,
 } from "./desktop-compact.ts";
 import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
-import type { AppIntentDecision, AppIntentKind, SettingsTab } from "@clarkcant/contracts";
+import type { AppIntentDecision, AppIntentKind, OrbProfileName, SettingsTab } from "@clarkcant/contracts";
 import { CLOSED_LIBRARY, applyLibraryAction, type WidgetLibraryState } from "./widget-library/widget-library-state.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 
@@ -82,6 +82,12 @@ export interface AppIntentSurfacesDeps {
    */
   cycleModel: () => Promise<string>;
   selectModel: (alias: string) => Promise<string>;
+  /**
+   * Saves an orb style through the preference the Settings control writes, and refreshes the orb on screen.
+   * Resolves with the sentence to report; rejects with the node's reason. Optional so a host with nowhere to
+   * save it is refused with a sentence instead of reporting a change that would not survive a reload.
+   */
+  selectOrbProfile?: (profile: OrbProfileName) => Promise<string>;
 }
 
 /**
@@ -103,6 +109,7 @@ export function useAppIntentSurfaces({
   askAboutLatestNotice,
   cycleModel,
   selectModel,
+  selectOrbProfile,
   t,
 }: AppIntentSurfacesDeps): AppIntentSurfacesState {
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
@@ -182,6 +189,7 @@ export function useAppIntentSurfaces({
       ...(openVoice === undefined ? {} : { openVoice }),
       ...(stopTurn === undefined ? {} : { stopTurn }),
       ...(askAboutLatestNotice === undefined ? {} : { askAboutLatestNotice }),
+      ...(selectOrbProfile === undefined ? {} : { selectOrbProfile }),
       ...(desktop
         ? {
             expandWindow: () => {
@@ -212,7 +220,18 @@ export function useAppIntentSurfaces({
           }
         : {}),
     };
-  }, [attachmentInput, restartSession, setVoiceOpen, openVoice, stopTurn, askAboutLatestNotice, cycleModel, selectModel, t]);
+  }, [
+    attachmentInput,
+    restartSession,
+    setVoiceOpen,
+    openVoice,
+    stopTurn,
+    askAboutLatestNotice,
+    cycleModel,
+    selectModel,
+    selectOrbProfile,
+    t,
+  ]);
 
   const runIntent = useCallback(
     (decision: AppIntentDecision): void => {

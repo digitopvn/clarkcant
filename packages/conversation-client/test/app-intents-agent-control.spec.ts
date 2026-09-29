@@ -102,6 +102,49 @@ describe("the new app-control kinds, through the one executor", () => {
     expect(run.ran).toBe(false);
   });
 
+  it("runs orb.select through host.selectOrbProfile, carrying the style, and reports what the host says", async () => {
+    const chosen: string[] = [];
+    const host = baseHost({
+      selectOrbProfile: async (profile) => {
+        chosen.push(profile);
+        return `Orb: ${profile}`;
+      },
+    });
+    const run = await runAppIntent(decisionFor({ kind: "orb.select", orbProfile: "pearl" }), host);
+    expect(run).toEqual({ ran: true, say: "Orb: pearl" });
+    expect(chosen).toEqual(["pearl"]);
+  });
+
+  it("refuses orb.select honestly when the host has nowhere to save the style", async () => {
+    const run = await runAppIntent(decisionFor({ kind: "orb.select", orbProfile: "pearl" }), baseHost());
+    expect(run.ran).toBe(false);
+    expect(run.say).not.toBe("said");
+  });
+
+  it("refuses an orb.select that names no style instead of picking one", async () => {
+    let called = 0;
+    const host = baseHost({
+      selectOrbProfile: () => {
+        called += 1;
+      },
+    });
+    const run = await runAppIntent(decisionFor({ kind: "orb.select" }), host);
+    expect(run.ran).toBe(false);
+    expect(called).toBe(0);
+  });
+
+  it("reports a style the node refused to store as not run, with the node's reason", async () => {
+    const host = baseHost({
+      selectOrbProfile: async () => {
+        throw new Error("orb.profile: Invalid option");
+      },
+    });
+    expect(await runAppIntent(decisionFor({ kind: "orb.select", orbProfile: "plasma" }), host)).toEqual({
+      ran: false,
+      say: "orb.profile: Invalid option",
+    });
+  });
+
   it("never runs anything for a decision that is not kind: intent", async () => {
     let cycled = 0;
     const host = baseHost({

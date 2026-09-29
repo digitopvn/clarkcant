@@ -96,4 +96,12 @@ describe("a settings row", () => {
     expect(blocked.props["data-state"]).toBe("blocked");
     expect((SettingsRow({ label: "A" }) as ReactElement<Record<string, unknown>>).props["data-state"]).toBe("ok");
   });
+
+  it("sits beside its label unless asked to stack under it", () => {
+    const row = (layout?: "inline" | "stacked"): unknown =>
+      (SettingsRow({ label: "A", ...(layout === undefined ? {} : { layout }) }) as ReactElement<Record<string, unknown>>)
+        .props["data-layout"];
+    expect(row()).toBe("inline");
+    expect(row("stacked")).toBe("stacked");
+  });
 });

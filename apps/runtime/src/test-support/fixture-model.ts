@@ -201,7 +201,8 @@ function uiEchoModelTurn(conductor: () => NodeServices["conductor"]): Promise<Mo
  * The `control_app` call a scripted sentence stands for, if it is one.
  *
  * Two spellings: the original "go home" sentences the voice journey says, and `agent control_app <kind> [arg]`,
- * where the argument is the tab of `settings.tab` or the alias of `model.select`, so one fixture line covers every
+ * where the argument is the tab of `settings.tab`, the alias of `model.select` or the profile of `orb.select`, so one
+ * fixture line covers every
  * kind the tool offers without a sentence per kind. Several calls separated by `;` are made one after another in
  * the same turn, the way a model may call the tool twice before it answers - which is how a journey reaches an
  * action, such as `nav.conversation`, that only means something while a panel covers the composer.
@@ -218,7 +219,9 @@ export function controlAppFixtureCalls(text: string): Record<string, unknown>[] 
     if (call === null) return undefined;
     const [, kind = "", arg] = call;
     if (arg === undefined) calls.push({ kind });
-    else calls.push(kind === "model.select" ? { kind, modelAlias: arg } : { kind, tab: arg });
+    else if (kind === "model.select") calls.push({ kind, modelAlias: arg });
+    else if (kind === "orb.select") calls.push({ kind, orbProfile: arg });
+    else calls.push({ kind, tab: arg });
   }
   return calls;
 }
