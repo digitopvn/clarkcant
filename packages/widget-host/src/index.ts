@@ -81,71 +81,12 @@ export class CatalogRegistry {
  * Props validation and fallback
  * ------------------------------------------------------------------ */
 
-export type PropsValidation =
-  | { ok: true; props: Record<string, unknown> }
-  | { ok: false; fallback: MessageBlock; problems: string[] };
-
 /**
- * Validate props against the definition's schema.
- *
- * A minimal structural check rather than a full JSON Schema engine: the parts that
- * matter here are that unknown keys never reach the DOM, that a wrong type is
- * caught, and that a failure produces a text fallback so the timeline still reads
+ * One implementation, shared with the Widget Lab: the structural check that names unknown keys, missing keys and wrong
+ * types, then the definition's whole JSON Schema. A failure carries the text fallback so the timeline still reads
  * (acceptance test T44).
  */
-export function validateProps(
-  definition: WidgetDefinition,
-  props: Record<string, unknown>,
-): PropsValidation {
-  const schema = definition.propsSchema as {
-    properties?: Record<string, { type?: string; maxLength?: number }>;
-    required?: string[];
-    additionalProperties?: boolean;
-  };
-
-  const problems: string[] = [];
-  const allowed = schema.properties ?? {};
-
-  if (schema.additionalProperties === false) {
-    for (const key of Object.keys(props)) {
-      if (!(key in allowed)) problems.push(`unknown property "${key}"`);
-    }
-  }
-
-  for (const key of schema.required ?? []) {
-    if (!(key in props)) problems.push(`required property "${key}" is missing`);
-  }
-
-  for (const [key, value] of Object.entries(props)) {
-    const spec = allowed[key];
-    if (!spec) continue;
-    if (spec.type === "string" && typeof value !== "string") {
-      problems.push(`property "${key}" must be a string`);
-    }
-    if (spec.type === "number" && typeof value !== "number") {
-      problems.push(`property "${key}" must be a number`);
-    }
-    if (spec.type === "boolean" && typeof value !== "boolean") {
-      problems.push(`property "${key}" must be a boolean`);
-    }
-    if (spec.type === "string" && typeof value === "string" && spec.maxLength !== undefined && value.length > spec.maxLength) {
-      problems.push(`property "${key}" exceeds its maximum length of ${spec.maxLength}`);
-    }
-  }
-
-  if (problems.length === 0) return { ok: true, props };
-
-  return {
-    ok: false,
-    problems,
-    fallback: {
-      type: "text",
-      format: "plain",
-      content: definition.textFallback,
-      streaming: false,
-    },
-  };
-}
+export { type PropsValidation, validateProps } from "@clarkcant/contracts";
 
 /* ------------------------------------------------------------------ *
  * Sandbox policy

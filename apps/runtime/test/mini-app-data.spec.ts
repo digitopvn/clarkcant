@@ -566,6 +566,16 @@ describe("catalog definitions", () => {
       expect(validateProps(cta, { label: "Lưu", actionId: "act_1" }).ok).toBe(true);
       expect(validateProps(cta, { label: "Lưu" }).ok).toBe(false);
     }
+
+    // Held to the whole schema, not only its structure: a table allows at most 200 rows a page.
+    const table = registry.get("canvas.table@1")?.definition;
+    expect(table).toBeDefined();
+    if (table !== undefined) {
+      expect(validateProps(table, { datasetRef: "ds_x", pageSize: 200 }).ok).toBe(true);
+      const tooMany = validateProps(table, { datasetRef: "ds_x", pageSize: 1000 });
+      expect(tooMany.ok).toBe(false);
+      if (!tooMany.ok) expect(tooMany.problems.join(" ")).toContain('property "pageSize"');
+    }
   });
 
   it("refuses a spec that pins a digest the catalog has moved past", () => {

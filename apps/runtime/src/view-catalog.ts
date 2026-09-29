@@ -56,10 +56,9 @@ import {
   AGENT_ITEM_KEY,
   compileWidgetAction,
 } from "./application/action-bindings.ts";
-import { validateArgs } from "./application/capability-invoke.ts";
 import { COMPOSITION_TEMPLATES, type ComposeDeps, type ComposeInput, composeMiniApp } from "./compose-mini-app.ts";
 import { composeLayout, layoutLeafWidgets } from "./compose-layout.ts";
-import { definitionDigest } from "@clarkcant/widget-host";
+import { definitionDigest, validateProps } from "@clarkcant/widget-host";
 
 import type { ViewDescriptor } from "./model-turn.ts";
 
@@ -266,8 +265,8 @@ function placeSending(
   sending: { action: unknown; label: string; carries: ActionInputSpec } | undefined,
   textAlternative: string,
 ): ReturnType<ViewDescriptor["build"]> {
-  const full = validateArgs(definition.propsSchema, request.props);
-  if (!full.ok) throw new Error(`${definition.id} has props that do not fit its schema: ${full.message}`);
+  const full = validateProps(definition, request.props);
+  if (!full.ok) throw new Error(`${definition.id} has props that do not fit its schema: ${full.problems.join(", ")}`);
   const problems = primitivePropsProblems(definition.id, request.props);
   if (problems.length > 0) throw new Error(`${definition.id} cannot be shown: ${problems.join("; ")}`);
 

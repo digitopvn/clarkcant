@@ -32,7 +32,6 @@ import {
   replayComposition,
   rowsBySlotOf,
 } from "./compose-mini-app.ts";
-import { validateArgs } from "./application/capability-invoke.ts";
 import { publishMiniAppData } from "./mini-app-data.ts";
 
 /**
@@ -296,16 +295,10 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
     }
 
     const props = leafProps(slot, { ...(recipe?.fixed.find((region) => region.slot === slot)?.props ?? {}), ...node.props }, input);
+    // Held to the whole schema — ranges, enums and item shapes — the same check every stored instance passes.
     const validation = validateProps(entry.definition, props);
     if (!validation.ok) {
       problems.push(`${where} (${entry.definition.id}) has props that do not fit its schema: ${validation.problems.join(", ")}`);
-      return undefined;
-    }
-    // A model wrote these props, so they are held to the whole schema — ranges, enums and item shapes — not only to
-    // the structural check every stored instance passes.
-    const full = validateArgs(entry.definition.propsSchema, props);
-    if (!full.ok) {
-      problems.push(`${where} (${entry.definition.id}) has props that do not fit its schema: ${full.message}`);
       return undefined;
     }
     const meaning = primitivePropsProblems(entry.definition.id, props);
