@@ -86,6 +86,17 @@ export interface IsolatedFrameLiveResponse {
   frame: {
     /** Relative to the node, and served from the package path so the widget's own imports resolve. */
     url: string;
+    /**
+     * How long, from the node's answer, the grant in `url` lasts. A node that predates it leaves it out, and then there
+     * is no expiry to act on.
+     */
+    urlExpiresInMs?: number;
+    /**
+     * When the grant in `url` stops working, in this client's own clock (epoch ms). Not sent by the node: `liveWidget`
+     * stamps it from the moment the request went out, so it is never later than the node's own expiry however the two
+     * clocks disagree.
+     */
+    urlExpiresAt?: number;
     /** The document the URL loads, without its per-read grant: equal across reads until the widget's code changes. */
     document?: string;
     isolation: string;
@@ -1253,11 +1264,19 @@ export class GatewayClient {
   }
 
   /** Resolve the live surface for an instance: current state, sections and ownership. */
-  liveWidget(
+  async liveWidget(
     conversationId: string,
     instanceId: string,
   ): Promise<LiveWidgetResponse | IsolatedFrameLiveResponse> {
-    return this.#call("GET", `/conversations/${conversationId}/widgets/${instanceId}/live`);
+    // Read before the request goes out: the node starts the grant's lifetime later than this, so a deadline counted
+    // from here can only be early, never late.
+    const sentAt = Date.now();
+    const live = await this.#call<LiveWidgetResponse | IsolatedFrameLiveResponse>(
+      "GET",
+      `/conversations/${conversationId}/widgets/${instanceId}/live`,
+    );
+    if (live.kind !== "isolated-frame" || live.frame === null || typeof live.frame.urlExpiresInMs !== "number") return live;
+    return { ...live, frame: { ...live.frame, urlExpiresAt: sentAt + live.frame.urlExpiresInMs } };
   }
 
   /** The immutable presentation a message captured. Never carries an action binding. */

@@ -117,6 +117,12 @@ export default defineConfig({
               CC_MODEL_FIXTURE: "1",
               CC_SESSION_FIXTURE: "1",
               /*
+               * `CC_FRAME_GRANT_FIXTURE` lets a spec shorten the lifetime of the frame URLs minted next, so a frame whose
+               * URL has lapsed can be exercised in seconds instead of five minutes. It can only shorten the lifetime,
+               * and the node answers 404 on its route when started without it.
+               */
+              CC_FRAME_GRANT_FIXTURE: "1",
+              /*
                * Every variable `apps/runtime/src/readiness.ts` counts as a configured credential, blanked. Playwright
                * starts this node with the developer's shell environment underneath `env`, so a provider key exported
                * locally made the node report a credential CI's node does not have, and the credentials specs failed

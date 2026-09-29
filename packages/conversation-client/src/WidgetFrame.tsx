@@ -34,10 +34,27 @@ import { useT } from "./i18n/locale-context.tsx";
  * "is this frame allowed to say this", and the two would disagree the first time one was tightened.
  */
 
+/** A URL a frame can load its document from, and when the grant it carries stops working. */
+export interface FrameSource {
+  url: string;
+  /** Epoch ms in this client's clock. Absent when the node did not say, and then there is no expiry to act on. */
+  urlExpiresAt?: number | undefined;
+}
+
 export interface WidgetFrameProps {
   instanceId: string;
   /** Where the widget's document is served. Under the package path, so its own relative imports resolve. */
   url: string;
+  /** When the grant in `url` stops working (`FrameSource.urlExpiresAt`). */
+  urlExpiresAt?: number | undefined;
+  /**
+   * Re-read the instance for a fresh URL to the same document.
+   *
+   * The URL's grant is short-lived and the frame is not: a frame that has to load its document again after the grant
+   * has lapsed — mounted again from a kept answer, or reloaded by the browser — asks for a fresh one here instead of
+   * being refused. Absent, the frame loads what it was given and nothing more.
+   */
+  renewUrl?: () => Promise<FrameSource>;
   /** What the frame is a view of, for assistive technology and for the text a loading frame shows. */
   title: string;
   /** The document's declared type, used for the monospace-ish width a widget preview wants. */
@@ -111,6 +128,60 @@ export function frameHeight(requested: number): number {
   return Math.min(MAX_FRAME_HEIGHT, Math.max(MIN_FRAME_HEIGHT, Math.round(requested)));
 }
 
+/**
+ * Whether a URL's grant has lapsed by `nowMs`.
+ *
+ * The node refuses every request whose grant has lapsed, so a document loaded from such a URL after this is true was
+ * refused — which is what makes this a fact to act on rather than a guess. A URL with no known expiry has none.
+ */
+export function grantLapsed(urlExpiresAt: number | undefined, nowMs: number): boolean {
+  return urlExpiresAt !== undefined && nowMs >= urlExpiresAt;
+}
+
+/**
+ * Which URL the frame loads, for the document the parent handed over.
+ *
+ * `source` is undefined while a fresh URL is being read, and nothing is loaded meanwhile: loading a URL known to be
+ * refused would only put the node's refusal on screen. `renewed` is the one re-read a refused load is allowed before
+ * the failure is shown; it is spent until the widget next says `ready`, so a URL that keeps being refused ends in the
+ * failure and never in a loop.
+ */
+interface FrameMount {
+  /** The URL the parent handed over. A different one is a different document, and the mount starts over. */
+  given: string;
+  source: FrameSource | undefined;
+  renewed: boolean;
+  /** Present once loading has failed for good: the reason, possibly empty. */
+  failure: string | undefined;
+}
+
+/** A new mount. A URL whose grant has already lapsed is not loaded: a fresh one is read first, and that is the re-read. */
+export function startFrameMount(
+  input: Pick<WidgetFrameProps, "url" | "urlExpiresAt" | "renewUrl">,
+  nowMs: number,
+): FrameMount {
+  const lapsed = input.renewUrl !== undefined && grantLapsed(input.urlExpiresAt, nowMs);
+  return {
+    given: input.url,
+    source: lapsed ? undefined : { url: input.url, urlExpiresAt: input.urlExpiresAt },
+    renewed: lapsed,
+    failure: undefined,
+  };
+}
+
+/**
+ * What a finished load of the frame's document means for the mount.
+ *
+ * A load of a URL whose grant had lapsed was refused by the node: it gets one re-read for a fresh URL, or, when that
+ * re-read has been spent, it is the failure. Anything else is left alone — the widget says `ready` when it is running.
+ */
+export function afterFrameLoad(mount: FrameMount, canRenew: boolean, nowMs: number): FrameMount {
+  if (mount.source === undefined || mount.failure !== undefined) return mount;
+  if (!grantLapsed(mount.source.urlExpiresAt, nowMs)) return mount;
+  if (canRenew && !mount.renewed) return { ...mount, source: undefined, renewed: true };
+  return { ...mount, failure: "" };
+}
+
 export function WidgetFrame(input: WidgetFrameProps): ReactElement {
   const t = useT();
   const element = useRef<HTMLIFrameElement>(null);
@@ -130,6 +201,52 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [height, setHeight] = useState(DEFAULT_FRAME_HEIGHT);
   const semanticTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  /*
+   * The URL the frame actually loads.
+   *
+   * It starts as the one handed over and changes only when a document has to be loaded after that URL's grant lapsed —
+   * never because the parent re-read a running frame, which would reload it. A new URL from the parent is a new
+   * document, and the mount starts over (set during render, so the stale URL is never put on the element).
+   */
+  const [storedMount, setMount] = useState<FrameMount>(() => startFrameMount(input, Date.now()));
+  let mount = storedMount;
+  if (storedMount.given !== input.url) {
+    mount = startFrameMount(input, Date.now());
+    setMount(mount);
+  }
+  const currentMount = useRef(mount);
+  currentMount.current = mount;
+
+  /*
+   * The re-read, when the mount has no URL to load. The session is kept across it: the new document is the same
+   * widget, and the session already holds the state it has committed since the parent's read.
+   */
+  const needsUrl = mount.source === undefined && mount.failure === undefined;
+  const given = mount.given;
+  useEffect(() => {
+    if (!needsUrl) return;
+    const renew = latest.current.renewUrl;
+    if (renew === undefined) {
+      setMount((current) => (current.given === given ? { ...current, failure: "" } : current));
+      return;
+    }
+    let cancelled = false;
+    setStatus("loading");
+    renew().then(
+      (fresh) => {
+        if (!cancelled) setMount((current) => (current.given === given ? { ...current, source: fresh } : current));
+      },
+      (cause: unknown) => {
+        if (cancelled) return;
+        const reason = cause instanceof Error ? cause.message : String(cause);
+        setMount((current) => (current.given === given ? { ...current, failure: reason } : current));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [needsUrl, given]);
 
   useEffect(() => {
     const frame = element.current;
@@ -187,7 +304,11 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       if (accepted.ok) {
         // `ready` is the frame saying it has the init message, which is later than the element's `load` and is the
         // only signal that means the widget is actually running.
-        if (accepted.kind === "ready") setStatus("ready");
+        if (accepted.kind === "ready") {
+          setStatus("ready");
+          // Running again, so a later lapse of this URL gets its own re-read.
+          setMount((current) => (current.renewed ? { ...current, renewed: false } : current));
+        }
         return;
       }
       // A write that lost a race is a conflict, not misbehaviour: the session already answered the widget with the
@@ -240,18 +361,41 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
     const live = session.current;
     const frame = element.current;
     if (live === undefined || frame === null) return;
+    const loaded = currentMount.current;
+    // The blank document the element holds while a fresh URL is read: there is no widget in it to introduce.
+    if (loaded.source === undefined) return;
+    /*
+     * A document loaded after its URL's grant lapsed is the node's refusal, not the widget: it gets the one re-read, or
+     * the failure, and never the init message.
+     */
+    const next = afterFrameLoad(loaded, latest.current.renewUrl !== undefined, Date.now());
+    if (next !== loaded) {
+      currentMount.current = next;
+      setMount(next);
+      setStatus("loading");
+      return;
+    }
     // `init()` sends the message itself (via the session's `post`, wired to this frame's `contentWindow` above) and
     // returns what it sent only so a caller can inspect it. Posting the return value again here produced two init
     // messages for one load, and the widget runtime's `DUPLICATE_INIT` rejection was that second message arriving.
     live.init();
   };
 
+  /** Try once more, on the person's word: one re-read, and the failure again if that is refused too. */
+  const retry = (): void => {
+    setMount((current) => ({ ...current, source: undefined, renewed: true, failure: undefined }));
+  };
+
+  const failed = mount.failure !== undefined;
   return (
-    <div className="cc-widget-frame" data-widget-frame={input.instanceId} data-frame-status={status}>
+    <div className="cc-widget-frame" data-widget-frame={input.instanceId} data-frame-status={failed ? "failed" : status}>
       <iframe
         ref={element}
         className="cc-widget-frame-document"
-        src={input.url}
+        src={mount.source?.url}
+        // Nothing to show while a fresh URL is read or after loading failed: the element would only hold a blank page
+        // or the node's refusal. It stays mounted so the session keeps talking to the same window.
+        hidden={mount.source === undefined || failed}
         onLoad={start}
         /*
          * The line the whole feature rests on. `allow-scripts` lets the widget run; the *absence* of
@@ -261,9 +405,26 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
         sandbox="allow-scripts"
         style={{ height }}
         title={input.title}
-        data-frame-url={input.url}
+        data-frame-url={mount.source?.url}
       />
-      {status === "loading" && <p className="cc-freshness">{t("widgets.frame.opening")}</p>}
+      {status === "loading" && !failed && <p className="cc-freshness">{t("widgets.frame.opening")}</p>}
+      {/*
+        What failed, what is kept, and what can be done next — in place of a document that would only show the node's
+        refusal. Reached only after the one re-read, so it is not shown for a lapse the frame could recover from.
+      */}
+      {failed && (
+        <div className="cc-widget-frame-failure" data-frame-failure="true" role="alert">
+          <p>{t("widgets.frame.reloadFailed")}</p>
+          {mount.failure !== "" && (
+            <p data-frame-failure-reason="true">{t("widgets.frame.reloadFailedReason").replace("{reason}", mount.failure ?? "")}</p>
+          )}
+          {input.renewUrl !== undefined && (
+            <button type="button" data-frame-retry="true" onClick={retry}>
+              {t("widgets.frame.retry")}
+            </button>
+          )}
+        </div>
+      )}
       {notice !== undefined && (
         <p className="cc-freshness" data-frame-notice="true">
           {notice}

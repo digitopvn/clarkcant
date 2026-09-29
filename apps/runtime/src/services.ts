@@ -164,6 +164,16 @@ export interface NodeServices {
   voiceFixture?: { setWords(words: string): void };
 
   /**
+   * A shorter lifetime for the frame grants this node mints, when it is running the frame-grant fixture.
+   *
+   * Present only on a node started with `CC_FRAME_GRANT_FIXTURE=1`, and that presence is the gate, as with the voice
+   * fixture: a real node has no route that reaches it. It exists so a browser journey can watch a kept frame's grant
+   * expire without waiting five minutes, and it can only shorten the lifetime, never lengthen it
+   * (`test-support/fixture-frame-grant.ts`).
+   */
+  frameGrantFixture?: { lifetimeMs(): number | undefined; setLifetimeMs(lifetimeMs: number | undefined): void };
+
+  /**
    * Queue utterances for processing by the live voice provider (test infrastructure only).
    *
    * Present only when CC_LIVE_PROVIDER_TEST=1 (an explicit test-only flag).

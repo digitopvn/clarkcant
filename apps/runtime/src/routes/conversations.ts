@@ -32,6 +32,7 @@ import {
   liveOwnerOf,
   liveStateOf,
   applyWidgetStatePatch,
+  FRAME_GRANT_LIFETIME_MS,
   mintFrameGrant,
   pinInstance,
   prepareFrameState,
@@ -214,7 +215,7 @@ function touchWidget(db: Database, conversationId: string, instanceId: string): 
 }
 
 function resolveLiveWidget(
-  services: Pick<NodeServices, "runtime" | "conductor" | "serviceHost">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "serviceHost" | "frameGrantFixture">,
   conversationId: string,
   instanceId: string,
   principalId: string,
@@ -337,6 +338,12 @@ function resolveLiveWidget(
       });
     }
 
+    /*
+     * How long the URL below works. The production lifetime, or the frame-grant fixture's shorter one on a node started
+     * with it; never longer than the production lifetime, whatever the fixture holds.
+     */
+    const grantLifetimeMs = Math.min(services.frameGrantFixture?.lifetimeMs() ?? FRAME_GRANT_LIFETIME_MS, FRAME_GRANT_LIFETIME_MS);
+
     return json(200, {
       kind: "isolated-frame",
       instanceId,
@@ -351,16 +358,23 @@ function resolveLiveWidget(
         /*
          * Relative to this node, served from the package path so the widget's own relative imports resolve, and
          * carrying a grant: the frame is loaded by navigation, which cannot carry a bearer token, so this is what
-         * lets it fetch its own document — and only its own. Five minutes is longer than a frame takes to load and
-         * short enough that a URL somebody copied stops working.
+         * lets it fetch its own document — and only its own. Short-lived (`FRAME_GRANT_LIFETIME_MS`) so a URL somebody
+         * copied stops working.
          */
         url: `/frame/${mintFrameGrant({
           instanceId,
           packageId: isolated.packageId,
           version: isolated.version,
           secret: runtime.identity.localToken,
-          expiresAtMs: Date.parse(nowInstant()) + 5 * 60 * 1000,
+          expiresAtMs: Date.parse(nowInstant()) + grantLifetimeMs,
         })}/${isolated.entryPath}`,
+        /*
+         * How long, from this answer, the URL's grant lasts. A frame kept on screen outlives it, and a client that loads
+         * the document again after that — a remount, a reload — has to re-read for a fresh URL first rather than be
+         * refused. Carried beside the URL rather than read out of it, so the client never parses a credential, and as a
+         * duration rather than an instant, so a client whose clock disagrees with the node's still gets it right.
+         */
+        urlExpiresInMs: grantLifetimeMs,
         /*
          * Which document the URL loads, without the grant. The grant changes on every read, so a client that compared
          * URLs would remount a running widget each time it re-read availability; this changes only when the code does.

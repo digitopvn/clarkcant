@@ -14,6 +14,16 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * travels in one has to be worth nothing to whoever finds it.
  */
 
+/**
+ * How long a frame grant lasts: longer than a frame takes to load, short enough that a URL somebody copied stops
+ * working.
+ *
+ * A frame that outlives its grant is not stuck with it: the client re-reads the instance for a fresh URL before it
+ * loads the document again (`packages/conversation-client/src/WidgetFrame.tsx`), so a longer lifetime is never the fix
+ * for a kept frame.
+ */
+export const FRAME_GRANT_LIFETIME_MS = 5 * 60 * 1000;
+
 export type FrameGrantCheck =
   | { ok: true; instanceId: string; packageId: string; version: string }
   | { ok: false; code: "GRANT_MALFORMED" | "GRANT_TAMPERED" | "GRANT_EXPIRED"; message: string };

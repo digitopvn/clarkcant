@@ -54,6 +54,14 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-badge[data-tone="ok"] { color: var(--cc-success); border-color: color-mix(in oklab, var(--cc-success) 45%, transparent); }
 .cc-freshness { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-widget-frame-document { display: block; width: 100%; border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card); }
+.cc-widget-frame-document[hidden] { display: none; }
+/* A frame that could not load again: in place of the document, with the one way forward beside what failed. */
+.cc-widget-frame-failure { display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-sm); padding: var(--cc-space-sm) var(--cc-space-md); border: 1px solid color-mix(in oklab, var(--cc-danger) 45%, var(--cc-border)); border-radius: var(--cc-radius-card); color: var(--cc-text); overflow-wrap: anywhere; }
+.cc-widget-frame-failure p { margin: 0; }
+.cc-widget-frame-failure [data-frame-failure-reason] { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-widget-frame-failure button { cursor: pointer; font: inherit; min-height: 40px; padding: var(--cc-space-xs) var(--cc-space-md); border-radius: var(--cc-radius-button); border: 1px solid var(--cc-border); background: transparent; color: inherit; }
+.cc-widget-frame-failure button:hover { border-color: var(--cc-focus); background: var(--cc-elevated); }
+.cc-widget-frame-failure button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 
 /* Tables */
 .cc-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
