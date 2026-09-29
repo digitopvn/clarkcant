@@ -311,6 +311,34 @@ describe("what the host does with an accepted message", () => {
     expect(answer).toMatchObject({ kind: "action-result", actionBindingId: "act_1", status: "accepted" });
   });
 
+  it("passes a service's answer to the frame, and only when there is one", async () => {
+    const { session, posted } = makeSession({
+      invokeAction: async () => ({ status: "accepted", message: "ok", output: "Saved. 1 note(s): mua sữa" }),
+    });
+    session.init();
+
+    session.accept(
+      fromFrame({ kind: "action.invoke", actionBindingId: "act_1", expectedRevision: 0, input: {}, invocationId: "inv_1" }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(posted.find((message) => message.kind === "action-result")).toMatchObject({
+      status: "accepted",
+      output: "Saved. 1 note(s): mua sữa",
+    });
+
+    // An action with no answer sends no field, so a runtime from before outputs existed still reads the message.
+    const plain = makeSession();
+    plain.session.init();
+    plain.session.accept(
+      fromFrame({ kind: "action.invoke", actionBindingId: "act_1", expectedRevision: 0, input: {}, invocationId: "inv_2" }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(plain.posted.find((message) => message.kind === "action-result")).not.toHaveProperty("output");
+  });
+
   it("answers a repeated invocation id without running it again", async () => {
     const { session, ran } = makeSession();
     session.init();
@@ -385,5 +413,42 @@ describe("the frame lifecycle from the host side", () => {
     session.accept(fromFrame({ kind: "capability.request", capabilityRef: "fs@1", justification: "cần" }));
 
     expect(session.refused()).toEqual(["SOURCE_MISMATCH", "CAPABILITY_NOT_BROKERED"]);
+  });
+});
+
+describe("which service-backed actions can run", () => {
+  it("holds what it is told until init, then tells the frame once", () => {
+    const { session, posted } = makeSession();
+
+    session.announceActions([{ actionBindingId: "act_1", available: false, reason: "needs Docker or Podman" }]);
+    expect(posted).toHaveLength(0);
+
+    session.init();
+    expect(posted.map((message) => message.kind)).toEqual(["init", "actions"]);
+    expect(posted[1]).toEqual({
+      kind: "actions",
+      nonce: NONCE,
+      actions: [{ actionBindingId: "act_1", available: false, reason: "needs Docker or Podman" }],
+    });
+  });
+
+  it("sends a change and nothing for the same answer twice", () => {
+    const { session, posted } = makeSession();
+    session.init();
+
+    session.announceActions([{ actionBindingId: "act_1", available: true }]);
+    session.announceActions([{ actionBindingId: "act_1", available: true }]);
+    session.announceActions([{ actionBindingId: "act_1", available: false, reason: "the service stopped" }]);
+
+    const sent = posted.filter((message) => message.kind === "actions");
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toMatchObject({ actions: [{ available: false, reason: "the service stopped" }] });
+  });
+
+  it("says nothing for a frame with no service-backed actions, so an older widget runtime never sees the message", () => {
+    const { session, posted } = makeSession();
+    session.announceActions([]);
+    session.init();
+    expect(posted.filter((message) => message.kind === "actions")).toHaveLength(0);
   });
 });

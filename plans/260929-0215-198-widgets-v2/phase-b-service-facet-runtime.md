@@ -1,7 +1,7 @@
 ---
 phase: B
 title: "Service facet chạy trong container và đăng ký capability có kiểu"
-status: in-progress
+status: in-review
 issues: [221, 198]
 ---
 
@@ -38,10 +38,11 @@ Service host (`apps/runtime/src/service-host.ts`):
 - Handshake → `tools/list` → đối chiếu với khai báo. Tool khai báo mà service không có thì `loaded: false` kèm lý do.
   Tool service có mà không khai báo thì không bao giờ được đăng ký.
 - Readiness: `installed` = generation active; `loaded` = đã handshake và có tool; `authenticated` = true (chưa có
-  connection); `authorized` = ref thuộc `grantedCapabilities`; `healthy` = process sống và `ping` trả lời.
+  connection); `authorized` = true theo install consent (cài package là đồng ý với những gì manifest khai báo; mỗi lời
+  gọi vẫn do execution policy quyết định); `healthy` = process sống và `ping` trả lời.
 - Effect category = mức mạnh hơn giữa khai báo và annotation của tool.
 - Crash: đánh dấu không healthy ngay, restart với backoff 1s→60s, tối đa 5 lần trong 10 phút rồi dừng hẳn kèm lý do.
-- Dừng: đóng stdin, `docker kill` theo tên, `stopTree` cho process CLI; `closeAll()` khi node dừng và khi dừng khẩn cấp.
+- Dừng: đóng kết nối MCP, `rm --force` container theo tên; `stopAll()` khi node dừng và khi dừng khẩn cấp.
 
 Một đường gọi (`apps/runtime/src/application/capability-invoke.ts` `invokeCapability`):
 
@@ -50,7 +51,11 @@ Một đường gọi (`apps/runtime/src/application/capability-invoke.ts` `invo
   `recordEffectExecution` rồi gọi service.
 - Caller: binding `invoke` của widget (qua `invokeWidgetAction`, voice cũng vào đây), và model tool
   `invoke_capability` của main agent.
-- Từ chối: capability không phải `svc` cục bộ của node này, generation của binding không còn active.
+- Từ chối: capability không phải service capability cục bộ của node này (`NOT_A_SERVICE_CAPABILITY`); binding bị pin
+  vào generation cũ (`BINDING_STALE`).
+- Ngữ nghĩa `bindingGeneration`: chỉ trả `BINDING_STALE` khi binding ghi một generation đã được ghi nhận của chính
+  package cung cấp capability mà không phải generation hiện tại. Binding không pin generation (ví dụ ghi digest của
+  widget definition) thì đi theo generation hiện tại, và registry quyết định.
 
 UI:
 
@@ -80,3 +85,17 @@ UI:
 - E2E: widget gọi service, agent gọi cùng capability, voice gọi qua cùng binding; kill container thì widget vẫn đọc
   được và nút disabled kèm lý do.
 - `pnpm verify`, `pnpm verify:full`, CI xanh cả Windows.
+
+## Kết quả
+
+Các yêu cầu ở trên đã được implement trên branch `feat/221-service-facet`. Bằng chứng: unit test của service host
+chạy với một service process thật (`apps/runtime/test/service-host.spec.ts`), test tham số dòng lệnh container
+(`service-container.spec.ts`), test containment với engine thật (`service-container-engine.spec.ts`, bị skip khi máy
+không có engine chạy Linux container), và E2E `apps/web/e2e/service-facet.spec.ts` (widget, agent, voice, kill
+container rồi hồi phục). Phần SDK đi kèm: `actions.invoke` resolve với output của service,
+`actions.availability()`/`actions.subscribe()`, message `actions` từ host, và `host.resize` được host tôn trọng
+(80–1200 px). Docs trong repo đã cập nhật (`docs/widget-development{,.vi}.md` §4 và §10,
+`docs/widgets-and-extensions{,.vi}.md`, `docs/system-architecture{,.vi}.md` §7.1,
+`docs/conformance-traceability.md` V07/V08).
+
+Còn lại trước khi đánh dấu done: PR được review và merge với CI xanh (kể cả Windows), và docs `clarkcant-web`.

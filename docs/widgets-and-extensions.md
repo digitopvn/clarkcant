@@ -137,7 +137,7 @@ This records which parts of §4 are already in the repo and which are still desi
 - Pin = the same logical instance, one live owner with a lease (`widget_live_owners.lease_expires_at`), the remaining locations are read-only.
 - **Read-only blocks actions only, not view state**: a historical snapshot and a surface owned by another tab can still change the selected date / viewed period (that is presentation), but they have no `onAction`, so there is no path to the server; the CTA button shows a disabled state with a reason instead of pretending to be clickable.
 - A snapshot points at the message that contains it: `messageId` is issued **once** and then used for both the composer call and the recorded message, so there are no orphaned snapshots (the test `apps/web/e2e/mini-app.spec.ts` covers this history path).
-- M1 actions consist only of `period.change`, `date.select`, `view.save` (`view` kind). `invoke`/`agent`/`workflow` are rejected in `invokeMiniAppAction` and must go through the approval path.
+- M1 actions consist only of `period.change`, `date.select`, `view.save` (`view` kind). `agent`/`workflow` are rejected in `invokeMiniAppAction` and must go through the approval path. An `invoke` binding goes to `invokeCapability` and runs only when it names a package service capability on this node ([widget development §4](widget-development.md#4-package-manifest)).
 - The deterministic composer `CC_MODEL_FIXTURE=1` exists only so the browser suite can run the composed-surface path without calling a provider; the node prints a warning at startup and the answer states that it is a fixture.
 
 - **File attachments reach the agent**: the composer uploads, the bytes live in the shared blob store (`dataDir/blobs`, content-addressed, `mode: 0o600`), the quota is counted per principal, and the file type is decided by **magic bytes**, not by the file extension. The prompt carries only an opaque `att_…` and **never** a path; the agent reads the content through the host tool `read_attachment(attachmentId)`, which takes no path parameter, so there is no way to open another file. The stored message is the single source — the timeline and the prompt are two readings of the same row (`apps/web/e2e/attachments.spec.ts`; the prompt part is proven at the adapter boundary with `FakePiAdapter.promptsFor()`).
@@ -260,7 +260,8 @@ The agent is not allowed to hot-evaluate generated JSX in the app renderer. Writ
 props.read / props.subscribe
 state.get / state.update(expectedRevision)
 events.emit(typedEvent)
-actions.invoke(boundActionId, validatedInput)
+actions.invoke(boundActionId, validatedInput)  # resolves with a service's output
+actions.availability / actions.subscribe(handler)  # which service-backed actions can run, and why not
 capabilities.request(requestedCapability)  # opens host consent, not grants itself
 host.focus / host.resize(request) / host.requestPin
 host.openExternal(approvedUrl)
@@ -351,9 +352,9 @@ The release proves a custom editor and one conformance media fixture; it does no
   "platforms": ["linux-x64", "linux-arm64", "darwin-arm64"]
 }
 ```
-The shape is `packageManifestSchema` (`packages/contracts/src/install.ts`); [widget development §4](widget-development.md#4-package-manifest) lists the lane each facet kind runs in and the rules the reader enforces. A service facet's capabilities are declared in the manifest, so consent can show them before any code runs. The host validates and lists them today, but does not yet start the service ([#221](https://github.com/digitopvn/clarkcant/issues/221)).
+The shape is `packageManifestSchema` (`packages/contracts/src/install.ts`); [widget development §4](widget-development.md#4-package-manifest) lists the lane each facet kind runs in and the rules the reader enforces. A service facet's capabilities are declared in the manifest, so consent can show them before any code runs. Installing the package is the consent to them, and each call is still decided by the execution policy. The node runs the service facet of each active generation in a Docker or Podman container, registers the declared capabilities with the readiness it observes, and reaches them through one host path shared by widgets, the agent and voice. A node without an engine does not run the service. There is no process-only fallback. [Widget development §4](widget-development.md#4-package-manifest) owns the boundary and what is not built yet.
 
-The manifest is the package's proposal metadata; it does not grant the capabilities it declares. The install record adds resolved versions/digests, transitive dependencies, target node, auth/data recipients and approved grants. Fields have a strict schema, and no arbitrary lifecycle script auto-runs.
+The manifest is the package's proposal metadata; it does not by itself grant the host capabilities it requests. The install record adds resolved versions/digests, transitive dependencies, target node, auth/data recipients and approved grants. Fields have a strict schema, and no arbitrary lifecycle script auto-runs.
 
 Pi-compatible facets can package extensions/skills/prompts/themes according to the upstream manifest, but the app's own lifecycle must not be called an official Pi API [R02–R04]. Independent facets let a UI update happen without restarting Pi; a skill update can reload resources; a connector tool service can restart on its own. Chord is a P0 candidate for the composition implementation, not a security/federation shortcut [R05].
 

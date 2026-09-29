@@ -120,7 +120,7 @@ async function invokeCapabilityAction(
     args: checked.args,
     source,
     conversationId: request.conversationId,
-    expectedGeneration: checked.binding.packageGeneration,
+    bindingGeneration: checked.binding.packageGeneration,
   });
   if (outcome.kind === "refused") {
     // Not recorded: a refusal changed nothing, and a retry after the service recovers should be able to run.

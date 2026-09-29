@@ -86,6 +86,22 @@ function newNonce(): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/** The height a frame opens at, before its widget has said how tall it is. */
+export const DEFAULT_FRAME_HEIGHT = 200;
+const MIN_FRAME_HEIGHT = 80;
+const MAX_FRAME_HEIGHT = 1200;
+
+/**
+ * The height a widget's resize request gets.
+ *
+ * Bounded both ways: the widget is untrusted, so it may ask for its content's height but not for a frame that covers
+ * the conversation or collapses to nothing. A value that is not a number keeps the default.
+ */
+export function frameHeight(requested: number): number {
+  if (!Number.isFinite(requested)) return DEFAULT_FRAME_HEIGHT;
+  return Math.min(MAX_FRAME_HEIGHT, Math.max(MIN_FRAME_HEIGHT, Math.round(requested)));
+}
+
 export function WidgetFrame(input: WidgetFrameProps): ReactElement {
   const t = useT();
   const element = useRef<HTMLIFrameElement>(null);
@@ -103,6 +119,7 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
   latest.current = input;
   const [status, setStatus] = useState<"loading" | "ready" | "refused">("loading");
   const [notice, setNotice] = useState<string | undefined>(undefined);
+  const [height, setHeight] = useState(DEFAULT_FRAME_HEIGHT);
 
   useEffect(() => {
     const frame = element.current;
@@ -131,7 +148,12 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       invokeAction: (intent) => latest.current.invokeAction(intent),
       chrome: {
         focus: () => latest.current.chrome.focus(),
-        resize: (height) => latest.current.chrome.resize(height),
+        // The frame is sized here, within bounds, because the widget cannot see its own box from inside an opaque
+        // origin and a request nobody acts on leaves its content cut off at the browser's default iframe height.
+        resize: (requested) => {
+          setHeight(frameHeight(requested));
+          latest.current.chrome.resize(requested);
+        },
         requestPin: () => latest.current.chrome.requestPin(),
         openExternal: (url) => latest.current.chrome.openExternal(url),
       },
@@ -217,6 +239,7 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
          * cookies even though the host served both.
          */
         sandbox="allow-scripts"
+        style={{ height }}
         title={input.title}
         data-frame-url={input.url}
       />

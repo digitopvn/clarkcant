@@ -410,7 +410,9 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         };
       }
       const landedOn = typeof result.body.revision === "number" ? result.body.revision : target.revision;
-      return { ok: true, instanceId, revision: landedOn, say: `Đã ${action.label}.` };
+      // A service-backed action answers with what the service said, and that answer is what the person asked to hear.
+      const output = typeof result.body.output === "string" ? ` ${result.body.output.slice(0, 400)}` : "";
+      return { ok: true, instanceId, revision: landedOn, say: `Đã ${action.label}.${output}` };
     },
   });
   /*

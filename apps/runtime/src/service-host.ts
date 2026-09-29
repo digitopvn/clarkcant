@@ -389,8 +389,9 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     entry.epoch += 1;
     clearTimers(entry);
     entry.connection = undefined;
-    const why = reason.message.slice(0, 300);
-    log(`services: ${entry.key} stopped: ${why}`);
+    log(`services: ${entry.key} stopped: ${reason.message.slice(0, 300)}`);
+    // What a person reads: the MCP client names the server by its internal generation id, which says nothing to them.
+    const why = reason.message.replace(/^mcp server \S+ /u, "").slice(0, 300);
     // The container may outlive its command line on some engines; it is removed before a new one takes the name.
     const current = engine;
     const removal =

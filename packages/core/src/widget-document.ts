@@ -146,20 +146,22 @@ export function widgetDocument(input: WidgetDocumentInput): string {
     '  removeEventListener: (type, listener) => window.removeEventListener(type, listener),',
     "};",
     /*
-     * The host's `init` is buffered here, synchronously, because of an ordering problem this code created.
+     * What the host says before the runtime exists is buffered here, synchronously, in the order it arrived.
      *
      * The runtime starts listening when it is created, and it is created inside the dynamic import below — which
-     * resolves after the document's `load`. The host posts `init` on `load`, so the message can arrive before there is
-     * anything to receive it: the frame then waits for a handshake it already missed, shows `loading` forever, and
-     * reports nothing. Registering the listener during module evaluation and replaying what arrived closes that gap.
-     * It is the frame's own glue and not a second protocol, and `init` is idempotent on the runtime side, so a replay
-     * that turns out to be unnecessary does nothing.
+     * resolves after the document's `load`. The host posts `init` on `load`, and whatever it has to say next right
+     * behind it (which of the widget's service-backed actions can run, for one), so those messages can arrive before
+     * there is anything to receive them. Keeping only `init` left the frame initialized but never told the rest: a
+     * widget whose service was already running kept waiting to hear so. Registering the listener during module
+     * evaluation and replaying everything that arrived, in order, closes the gap. It is the frame's own glue and not
+     * a second protocol: the runtime reads the replayed messages exactly as it would have read the originals, and the
+     * buffer is bounded because a host that says more than this before the runtime loads is not one to keep up with.
      */
-    "let pendingInit = null;",
-    "const bufferInit = (event) => {",
-    '  if (event.data !== null && typeof event.data === "object" && event.data.kind === "init") pendingInit = event.data;',
+    "const pending = [];",
+    "const buffer = (event) => {",
+    '  if (event.data !== null && typeof event.data === "object" && pending.length < 64) pending.push(event.data);',
     "};",
-    'window.addEventListener("message", bufferInit);',
+    'window.addEventListener("message", buffer);',
     /*
      * A **dynamic** import, and that word is the whole fix.
      *
@@ -179,8 +181,8 @@ export function widgetDocument(input: WidgetDocumentInput): string {
     '  onRejected: (rejection) => window.dispatchEvent(new CustomEvent("clarkcant:rejected", { detail: rejection })),',
     "});",
     "window.clarkcantWidget = runtime;",
-    'window.removeEventListener("message", bufferInit);',
-    'if (pendingInit !== null) window.postMessage(pendingInit, "*");',
+    'window.removeEventListener("message", buffer);',
+    'for (const message of pending) window.postMessage(message, "*");',
     "    } catch (error) {",
     "      window.__clarkcantBridgeError = String(error && error.message ? error.message : error);",
     "    }",

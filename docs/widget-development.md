@@ -139,7 +139,7 @@ Each facet kind runs in exactly one lane, and the schema refuses any other pairi
 | `kind` | `isolation` | What it is |
 |---|---|---|
 | `ui` | `isolated-ui` | A widget drawn in its own frame. `id` must equal the id inside `definition`. |
-| `tools` | `service` | A separate process that speaks MCP over stdio and declares every capability it provides. |
+| `tools` | `service` | A service the node runs in a container, speaking MCP over stdio, that declares every capability it provides. |
 | `skills`, `prompts`, `themes`, `setup` | `declarative` | Data a host reads and never runs. |
 | `driver`, `voice` | `service` or `trusted-native` | Part of the vocabulary, so a listing can show the lane. No host runs one from a package yet. |
 
@@ -151,8 +151,35 @@ The reader also refuses a manifest when:
   capability is declared twice.
 
 A `tools` facet declares its capabilities in the manifest, so consent can show them before any of the package's code
-runs. The manifest is validated and listed today, including the facet's `service` risk lane. The host does not start
-service facets yet: that is [#221](https://github.com/digitopvn/clarkcant/issues/221).
+runs. Installing the package is the consent to what it declares; each call is still decided by the execution policy.
+
+**How the node runs a service facet.** The node runs one container for each `tools` facet of every active package
+generation, and stops it when the generation stops being active (`apps/runtime/src/service-host.ts`). A service is
+third-party code and a separate process is not a sandbox, so the container is the boundary. `serviceRunArgs` in
+`apps/runtime/src/service-container.ts` defines it: no network, a read-only root, every Linux capability dropped, no
+privilege escalation, a non-root user, the package mounted read-only at `/pkg`, one private writable folder at `/data`,
+and only the environment variables it names, never the node's own. The host speaks MCP over the container's stdio, so
+no port is opened. The engine is Docker running Linux containers, or Podman. A node with neither does not run the
+service. There is no process-only fallback. The capabilities are still registered, as not loaded, with the reason
+"needs Docker or Podman to run; this node has neither running".
+
+What the registry reports is what the host observed, not what the manifest hoped:
+
+- a tool the service lists but the manifest does not declare is never registered;
+- a declared tool the service does not list stays not loaded, and the reason says so;
+- a service that stops is restarted with backoff and left stopped if it keeps crashing, and the reason says which.
+
+The reason is what a person reads beside a disabled action. A widget's `invoke` binding, the agent's
+`invoke_capability` tool and a spoken command reach one host path, `invokeCapability`
+(`apps/runtime/src/application/capability-invoke.ts`). The registry decides whether the capability can run. The
+input schema the service listed for the tool decides whether the input is accepted. The execution policy decides whether it may run, and a
+policy that asks puts a host-owned approval card in the conversation. The refusals are the `CapabilityInvokeRefusal`
+codes in that file.
+
+Not built: a credential broker for services, VM isolation, and calling a service on another node. The composer does not
+yet place an installed package's widget with `invoke` bindings by itself
+([#223](https://github.com/digitopvn/clarkcant/issues/223)). The browser journey
+[`service-facet.spec.ts`](../apps/web/e2e/service-facet.spec.ts) creates them through a fixture model.
 
 `publisher` is optional in the manifest. `clark widget publish` requires it, because a directory entry has to say who
 a package comes from. `dependencies` defaults to `[]`.
@@ -319,6 +346,8 @@ Author-facing target:
     events.emit(name, payload)
 
     actions.invoke(bindingId, input, invocationId)
+    actions.availability()
+    actions.subscribe(handler)
 
     capabilities.request(ref, justification)
 
@@ -334,6 +363,20 @@ Author-facing target:
     lifecycle.onSuspend()
     lifecycle.onResume()
     lifecycle.onDispose()
+
+The shipped types are `WidgetAuthorApi` in `packages/widget-sdk/src/index.ts`. What the host does with them:
+
+- `actions.invoke` resolves with the service's text output when the binding calls a package service
+  (see [§4](#4-package-manifest)), and with `undefined` otherwise. It rejects with the host's reason, including when
+  the action waits on an approval card.
+- `actions.availability()` returns what the host last said about each service-backed binding: `available`, and the
+  reason when it is not. `actions.subscribe(handler)` is called when that changes. The host sends it only for
+  service-backed bindings, and only when the answer changed. Disable that control and show the reason; the rest of the
+  widget keeps working.
+- `host.resize({ height })` is honoured: the host sizes the frame to the request, clamped to 80–1200 px. A frame opens
+  at 200 px until the widget asks.
+- Messages the host sends before the SDK runtime has loaded are buffered and replayed in order, so an early
+  availability message is not lost.
 
 Do not expose:
 

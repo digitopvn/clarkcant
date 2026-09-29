@@ -161,7 +161,7 @@ const SERVICE_AVAILABILITY_MS = 5_000;
  * The URL carries a grant minted per read, so it differs every time; handing the new one to the frame would reload a
  * running widget — and lose its view state — merely because availability was re-read.
  */
-function keepMountedFrame(
+export function keepMountedFrame(
   previous: LiveWidgetResponse | IsolatedFrameLiveResponse | undefined,
   next: LiveWidgetResponse | IsolatedFrameLiveResponse,
 ): LiveWidgetResponse | IsolatedFrameLiveResponse {

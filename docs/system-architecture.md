@@ -168,6 +168,8 @@ By default the conductor sees only the capability summary and the short list of 
 
 The conductor must not have a tool that accepts consent on its own, reads secret values or patches core policy. Tool discovery metadata and externally supplied MCP descriptions are still untrusted input.
 
+A package's service facet is one source of capabilities: the node runs it in a container and registers only the tools its manifest declares, with the readiness the host observes (`apps/runtime/src/service-host.ts`). A widget binding, the agent's `invoke_capability` tool and voice reach it through one path, `invokeCapability`, which checks readiness, the tool's input schema and the execution policy before anything runs. The boundary and what is not built are in [widget-development.md §4](widget-development.md#4-package-manifest).
+
 ### 7.2 Memory & Search: a shared service, and Jev as the decision layer
 
 Memory & Search is a **shared service inside the runtime process**; it survives a Pi swap and does not live in a worker. Following the diagram, it has five layers: semantic retrieval (sqlite-vec, exact KNN), lexical retrieval (SQLite FTS5, BM25), structured filters (tasks, projects, source refs, time, principal), local embeddings (quantized E5-small ONNX), and rank + verify (RRF, branches, live status). The corpus is the Knowledge & History Store: the `messages`/summaries tables in SQLite and the workers' Pi JSONL sessions, both redacted before they are persisted.

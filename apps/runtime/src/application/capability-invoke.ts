@@ -7,7 +7,7 @@ import {
   recordEffectExecution,
   requestApproval,
 } from "@clarkcant/core";
-import { asJsonValue, type Database, payloadDigest } from "@clarkcant/storage";
+import { asJsonValue, type Database, oneRow, payloadDigest } from "@clarkcant/storage";
 import { z } from "zod";
 
 import { ServiceCallError, type ServiceHost } from "../service-host.ts";
@@ -85,8 +85,14 @@ export interface CapabilityInvokeRequest {
   args: Record<string, unknown>;
   source: CapabilityInvokeSource;
   conversationId?: string;
-  /** The generation a widget binding was compiled against. A binding for older code does not reach newer code. */
-  expectedGeneration?: string;
+  /**
+   * What a widget binding recorded as its package generation.
+   *
+   * When it names a generation of the package that provides the capability, the binding was made against that code
+   * and does not reach a newer one. A binding that recorded something else — a widget definition's digest, which is
+   * what a binding compiled without knowing the provider records — pinned no generation, and the registry alone decides.
+   */
+  bindingGeneration?: string;
   /**
    * Whether the policy's question has already been answered by a person on the host's approval card.
    *
@@ -135,6 +141,14 @@ function validateArgs(
   return parsed.success ? { ok: true } : { ok: false, message: schemaProblem(parsed.error) };
 }
 
+/** Whether an id is one of the generations this node has recorded for a package, active or not. */
+function isGenerationOf(db: Database, packageId: string, generationId: string): boolean {
+  return (
+    oneRow(db, "SELECT 1 AS found FROM package_generations WHERE package_id = ? AND generation_id = ? LIMIT 1", packageId, generationId) !==
+    undefined
+  );
+}
+
 export async function invokeCapability(
   deps: CapabilityInvokeDeps,
   request: CapabilityInvokeRequest,
@@ -150,7 +164,11 @@ export async function invokeCapability(
       `${request.ref} is not a service capability of an active package on this node`,
     );
   }
-  if (request.expectedGeneration !== undefined && request.expectedGeneration !== served.generationId) {
+  if (
+    request.bindingGeneration !== undefined &&
+    request.bindingGeneration !== served.generationId &&
+    isGenerationOf(deps.db, served.packageId, request.bindingGeneration)
+  ) {
     return refused(
       409,
       "BINDING_STALE",

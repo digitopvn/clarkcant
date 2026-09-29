@@ -137,7 +137,7 @@ Ghi rõ phần nào của §4 đã có trong repo và phần nào còn là thi�
 - Pin = cùng một logical instance, một live owner có lease (`widget_live_owners.lease_expires_at`), vị trí còn lại read-only.
 - **Read-only chỉ chặn action, không chặn view state**: snapshot lịch sử và surface do tab khác sở hữu vẫn đổi được ngày đang chọn / kỳ đang xem (đó là trình bày), nhưng không có `onAction` nên không có đường nào tới server; nút CTA hiện trạng thái disabled kèm lý do thay vì giả vờ bấm được.
 - Snapshot trỏ đúng message chứa nó: `messageId` được cấp **một lần** rồi dùng cho cả lời gọi composer và message được ghi, nên không có snapshot mồ côi (test `apps/web/e2e/mini-app.spec.ts` phủ đường lịch sử này).
-- Action M1 chỉ gồm `period.change`, `date.select`, `view.save` (`view` kind). `invoke`/`agent`/`workflow` bị từ chối ở `invokeMiniAppAction` và phải đi đường approval.
+- Action M1 chỉ gồm `period.change`, `date.select`, `view.save` (`view` kind). `agent`/`workflow` bị từ chối ở `invokeMiniAppAction` và phải đi đường approval. Binding `invoke` đi tới `invokeCapability` và chỉ chạy khi nó trỏ tới một capability do package service cung cấp trên node này ([Widget development §4](widget-development.vi.md#4-package-manifest)).
 - Composer tất định `CC_MODEL_FIXTURE=1` chỉ tồn tại để browser suite chạy được đường composed-surface mà không gọi provider; node in cảnh báo lúc khởi động và câu trả lời tự nói nó là fixture.
 
 - **Đính kèm tệp đi tới được agent**: composer tải lên, bytes nằm trong blob store dùng chung (`dataDir/blobs`, content-addressed, `mode: 0o600`), quota tính theo principal, và loại tệp do **magic bytes** quyết định chứ không do đuôi tên. Prompt chỉ mang `att_…` opaque và **không bao giờ** có path; agent đọc nội dung qua tool của host `read_attachment(attachmentId)`, tool này không nhận tham số path nên không có đường nào mở tệp khác. Tin nhắn đã lưu là nguồn duy nhất — timeline và prompt là hai cách đọc cùng một dòng (`apps/web/e2e/attachments.spec.ts`; phần prompt được chứng minh ở ranh giới adapter bằng `FakePiAdapter.promptsFor()`).
@@ -260,7 +260,8 @@ Không cho agent tự hot-evaluate generated JSX trong app renderer. Tự viết
 props.read / props.subscribe
 state.get / state.update(expectedRevision)
 events.emit(typedEvent)
-actions.invoke(boundActionId, validatedInput)
+actions.invoke(boundActionId, validatedInput)  # resolve với output của service
+actions.availability / actions.subscribe(handler)  # action nào có service phía sau chạy được, và vì sao không
 capabilities.request(requestedCapability)  # opens host consent, not grants itself
 host.focus / host.resize(request) / host.requestPin
 host.openExternal(approvedUrl)
@@ -351,9 +352,9 @@ Release chứng minh custom editor và một conformance media fixture, không c
   "platforms": ["linux-x64", "linux-arm64", "darwin-arm64"]
 }
 ```
-Dạng của manifest là `packageManifestSchema` (`packages/contracts/src/install.ts`). [Widget development §4](widget-development.vi.md#4-package-manifest) liệt kê lane mà mỗi loại facet chạy trong đó và các quy tắc reader áp dụng. Capability của service facet được khai báo ngay trong manifest, nhờ vậy màn hình đồng ý hiển thị được chúng trước khi bất kỳ đoạn code nào chạy. Hiện tại host đã kiểm tra và hiển thị chúng trong listing, nhưng chưa khởi chạy service ([#221](https://github.com/digitopvn/clarkcant/issues/221)).
+Dạng của manifest là `packageManifestSchema` (`packages/contracts/src/install.ts`). [Widget development §4](widget-development.vi.md#4-package-manifest) liệt kê lane mà mỗi loại facet chạy trong đó và các quy tắc reader áp dụng. Capability của service facet được khai báo ngay trong manifest, nhờ vậy màn hình đồng ý hiển thị được chúng trước khi bất kỳ đoạn code nào chạy. Việc cài package chính là sự đồng ý với các capability đó, và mỗi lời gọi vẫn do execution policy quyết định. Node chạy service facet của mỗi generation đang active trong một container Docker hoặc Podman, đăng ký các capability đã khai báo với readiness mà nó quan sát được, và gọi chúng qua một đường host duy nhất dùng chung cho widget, agent và voice. Node không có engine thì không chạy service. Không có fallback chỉ chạy process. [Widget development §4](widget-development.vi.md#4-package-manifest) là nơi mô tả ranh giới và những gì chưa xây.
 
-Manifest là proposal metadata của package; không tự cấp các capabilities kê khai. Install record bổ sung resolved versions/digests, transitive dependencies, target node, auth/data recipients và approved grants. Fields có schema strict, no arbitrary lifecycle script auto-run.
+Manifest là proposal metadata của package; tự nó không cấp các host capability mà package yêu cầu. Install record bổ sung resolved versions/digests, transitive dependencies, target node, auth/data recipients và approved grants. Fields có schema strict, no arbitrary lifecycle script auto-run.
 
 Pi-compatible facets có thể đóng extension/skills/prompts/themes theo manifest upstream, nhưng app lifecycle riêng không được gọi là Pi official API [R02–R04]. Facets độc lập giúp update UI không restart Pi; update skill có thể reload resources; connector tool service có thể restart riêng. Chord là P0 candidate cho composition implementation, không security/federation shortcut [R05].
 
