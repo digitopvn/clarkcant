@@ -1,7 +1,7 @@
 ---
 phase: B
 title: "Service facet chạy trong container và đăng ký capability có kiểu"
-status: in-review
+status: done
 issues: [221, 198]
 ---
 

@@ -1,7 +1,7 @@
 ---
 phase: A
 title: "Manifest chuẩn v2 cùng tương thích v1"
-status: in-progress
+status: done
 issues: [198, 220]
 ---
 

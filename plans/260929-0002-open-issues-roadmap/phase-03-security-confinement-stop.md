@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: "Bảo mật: #137 và Stop một turn đang chạy"
-status: pending
+status: done
 issues: [137]
 new_issues: ["P0: dừng một turn đang chạy"]
 ---

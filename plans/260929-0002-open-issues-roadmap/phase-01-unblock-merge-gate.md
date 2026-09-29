@@ -1,7 +1,7 @@
 ---
 phase: 1
 title: Gỡ kẹt merge gate và land PR mở
-status: pending
+status: done
 issues: [190]
 prs: [205, 206, 207, 188]
 ---

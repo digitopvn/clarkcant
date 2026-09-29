@@ -1,7 +1,7 @@
 ---
 phase: G
 title: "State/event graph của composition"
-status: in-review
+status: done
 issues: [198, 226, 195]
 ---
 
