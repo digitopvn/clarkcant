@@ -260,6 +260,18 @@ listed with `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `al
 taken now. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
 [system-architecture.md](system-architecture.md) under the inbox.
 
+The theme routes are reachable with the same token but are **not** in `/openapi.json` yet and may change.
+`GET /themes` answers `{ themes, problems, unchecked }`: Clark Default first, then every theme the `themes` facets of
+the installed packages provide, each with its `themeRef` (`package:<package id>#<theme id>`) and its provider (package
+id, version, digest, trust lane and source tier); `problems` names each theme that did not pass validation, and
+`unchecked` each installed package whose files this node could not read. `GET /appearance` answers what the page should
+draw: `selectedRef` (the `experience.themeRef` preference, chosen with `PUT /preferences/experience.themeRef`
+`{ "value": "<themeRef>" }`), `appliedRef`, the validated `theme` document (`null` for Clark Default), its `provider`,
+and a `fallback` `{ code, message }` when the choice cannot be drawn — `THEME_NOT_INSTALLED`, `THEME_INVALID`,
+`THEME_UNAVAILABLE` or `THEME_UNKNOWN` — in which case Clark Default is drawn and `selectedRef` is kept, so reinstalling
+the package brings the theme back. The node does not push package changes: a client re-reads `/appearance` after it
+changes a package and when its window comes back into view. The shapes are `packages/contracts/src/themes.ts`.
+
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.
 

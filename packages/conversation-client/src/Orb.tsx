@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement, t
 
 import { createOrbRenderer, orbPointerFromClient, type OrbOptions, type OrbPointerRect, type OrbPointerSample } from "./orb.ts";
 import { orbFallbackBackground, type ResolvedOrbProfile } from "./orb-profile.ts";
-import { readDocumentTheme, subscribeToDocumentTheme } from "./theme.ts";
+import { readDocumentAppearance, subscribeToDocumentTheme } from "./theme.ts";
 import { usePlatformReducedMotion } from "./typewriter.ts";
 
 /**
@@ -123,7 +123,7 @@ export function Orb({
    * setter for it, so a theme change has to recreate it. This dependency is what makes that happen;
    * without it the canvas keeps painting the old background and its edges become visible.
    */
-  const theme = useSyncExternalStore(subscribeToDocumentTheme, readDocumentTheme, () => "dark" as const);
+  const theme = useSyncExternalStore(subscribeToDocumentTheme, readDocumentAppearance, () => "dark");
 
   /*
    * The profile's values, under the caller's own props.

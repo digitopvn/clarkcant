@@ -4,6 +4,7 @@ import { Modal } from "../Modal.tsx";
 import type { GatewayClient } from "../api.ts";
 import type { ResolvedColorScheme } from "@clarkcant/contracts";
 import type { ThemeChoice } from "../theme.ts";
+import type { AppearanceState } from "../use-appearance.ts";
 import { AiRoutingSettings } from "./AiRoutingSettings.tsx";
 import { ControlSettings } from "./ControlSettings.tsx";
 import { DeveloperSettings } from "./DeveloperSettings.tsx";
@@ -94,6 +95,8 @@ export interface SettingsPanelProps {
   /** What is currently shown, which is always `dark` or `light`. */
   resolvedTheme: ResolvedColorScheme;
   onThemeChoice: (choice: ThemeChoice) => void;
+  /** The theme being drawn, and the way to re-read it after the person picks another. */
+  appearance: AppearanceState;
   /**
    * Called after a write that changes the orb, so the orb on screen follows the control that changed it. Resolves
    * once the orb has re-read the preference, and rejects when it could not.
@@ -135,6 +138,7 @@ export function SettingsPanel({
   themeChoice,
   resolvedTheme,
   onThemeChoice,
+  appearance,
   onOrbChange,
   orbProfileKey,
   onPolicyChange,
@@ -350,7 +354,9 @@ export function SettingsPanel({
 
         {tab === "experience" && (
           <ExperienceSettings
+            client={client}
             prefs={prefs}
+            appearance={appearance}
             themeChoice={themeChoice}
             resolvedTheme={resolvedTheme}
             onThemeChoice={onThemeChoice}

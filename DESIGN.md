@@ -1081,10 +1081,16 @@ Use segmented controls, toggles and swatches:
   scheme before anything else loads. The node also registers a key for it, `experience.colorScheme`, which the REST
   API reads and writes (`GET /preferences`, `PUT /preferences/experience.colorScheme`); the web client does not read
   or write that key yet, so a scheme chosen on one device does not follow the person to another. The theme is a
-  separate preference
-  (`experience.themeRef`, default `builtin:clark`, Clark Default), and every theme is drawn in whichever scheme the
-  choice resolves to. There is no theme control yet: one appears when an installed theme can actually be selected
-  (#201).
+  separate preference (`experience.themeRef`, default `builtin:clark`, Clark Default), and every theme is drawn in
+  whichever scheme the choice resolves to.
+- Theme: a list under the colour scheme, Clark Default first, then each theme an installed package provides. Every
+  entry names its provider — package, version, trust lane and a short digest — because a theme reaches the whole
+  window. Choosing one writes `experience.themeRef` and restyles the page in place by replacing only the token
+  stylesheet: no reload, and the conversation, a half-typed message and the Orb carry on (the Orb redraws in the new
+  colours). The page checks the document again before compiling it, and keeps a copy on the device (`cc.appearance`)
+  so the next load starts in it. When the chosen theme cannot be drawn — its package was removed, it failed validation,
+  or its files cannot be read — the page shows Clark Default and says so in a status notice where the choice is made,
+  with the node's reason under "Details"; the choice is kept, so restoring the package brings the theme back.
 - Language: Tiếng Việt / English — segmented control, applies immediately (no save button), sets
   `<html lang>`, and persists across reload and devices through the preference registry
   (`experience.language`). Default is Vietnamese; there is no "follow system" option, because no

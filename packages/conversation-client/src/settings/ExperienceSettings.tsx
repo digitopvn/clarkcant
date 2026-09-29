@@ -9,13 +9,16 @@ import {
   type OrbProfileName,
 } from "@clarkcant/contracts";
 
+import type { GatewayClient } from "../api.ts";
 import { Orb } from "../Orb.tsx";
 import { orbPaletteGradient, resolveOrbProfile } from "../orb-profile.ts";
 import { usePlatformReducedMotion } from "../typewriter.ts";
 import { THEME_CHOICES, type ThemeChoice } from "../theme.ts";
+import type { AppearanceState } from "../use-appearance.ts";
 import type { ResolvedColorScheme } from "@clarkcant/contracts";
 import { InlineStatus, RangeField, SegmentedControl, SettingsRow } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
+import { ThemeSettings } from "./ThemeSettings.tsx";
 import { useT, useLocaleState } from "../i18n/locale-context.tsx";
 import type { MessageKey } from "../i18n/messages.ts";
 
@@ -78,7 +81,10 @@ function numbers(value: unknown): Record<string, number> {
 }
 
 export interface ExperienceSettingsProps {
+  client: GatewayClient;
   prefs: PreferencesHandle;
+  /** The theme being drawn, kept by the conversation so it applies whether or not this panel is open. */
+  appearance: AppearanceState;
   themeChoice: ThemeChoice;
   resolvedTheme: ResolvedColorScheme;
   onThemeChoice: (choice: ThemeChoice) => void;
@@ -87,7 +93,9 @@ export interface ExperienceSettingsProps {
 }
 
 export function ExperienceSettings({
+  client,
   prefs,
+  appearance,
   themeChoice,
   resolvedTheme,
   onThemeChoice,
@@ -207,6 +215,7 @@ export function ExperienceSettings({
           {themeChoice === "system" ? ` ${t("settings.experience.theme.systemSuffix")}` : ""}
         </p>
         <InlineStatus status={prefs.status} forKey="experience.colorScheme" />
+        <ThemeSettings client={client} prefs={prefs} appearance={appearance} />
       </section>
 
       <section className="cc-panel-section">

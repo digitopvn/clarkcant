@@ -432,6 +432,48 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--cc-text) 14%, transparent);
 }
 
+/*
+ * The theme list.
+ *
+ * One column: each entry carries a provider line (package, version, trust lane, digest) that is the reason the list
+ * exists, and two columns would wrap it into noise. The line may break anywhere, so a long package id never widens the
+ * panel on a phone.
+ */
+.cc-theme-options { display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-theme-option {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-xxs);
+  min-width: 0; min-height: 44px; width: 100%; text-align: start;
+  padding: var(--cc-space-sm);
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  background: var(--cc-card); color: var(--cc-text-muted);
+  font: inherit; font-size: var(--cc-text-label); cursor: pointer;
+}
+.cc-theme-option:hover { color: var(--cc-text); border-color: color-mix(in oklab, var(--cc-text) 35%, var(--cc-border)); }
+.cc-theme-option[aria-pressed="true"] {
+  color: var(--cc-text); border-color: var(--cc-accent);
+  box-shadow: inset 0 0 0 1px var(--cc-accent);
+  background: color-mix(in oklab, var(--cc-accent) 12%, var(--cc-card));
+}
+.cc-theme-option:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-theme-option:disabled { cursor: progress; }
+.cc-theme-option-name { color: var(--cc-text); font-weight: 600; }
+.cc-theme-option-desc, .cc-theme-option-provider { overflow-wrap: anywhere; }
+.cc-theme-option-provider {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); color: var(--cc-text-tertiary);
+}
+.cc-theme-notice {
+  margin: var(--cc-space-sm) 0 0; padding: var(--cc-space-sm);
+  border: 1px solid var(--cc-border); border-left: 3px solid var(--cc-accent); border-radius: var(--cc-radius-badge);
+  background: var(--cc-card); font-size: var(--cc-text-label); color: var(--cc-text);
+}
+.cc-theme-notice p { margin: 0; }
+.cc-theme-notice details, .cc-theme-notice-detail { margin-top: var(--cc-space-xs); }
+.cc-theme-notice-detail { color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-theme-problems { margin: var(--cc-space-sm) 0 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-theme-problems ul { margin: var(--cc-space-xs) 0 0; padding-inline-start: var(--cc-space-lg); }
+.cc-theme-problems li { overflow-wrap: anywhere; }
+.cc-theme-problems code { color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); }
+
 .cc-effect-list { list-style: none; margin: var(--cc-space-sm) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 .cc-effect-list li { font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
 .cc-effect-list code { color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); }

@@ -9,6 +9,7 @@ import {
   THEME_ATTRIBUTE,
   THEME_STORAGE_KEY,
   isThemeChoice,
+  readDocumentAppearance,
   readDocumentTheme,
   readStoredTheme,
   resolveTheme,
@@ -234,6 +235,20 @@ describe("the document's theme attribute", () => {
     });
   });
 
+  it("changes what it reports when the theme changes within the same scheme", () => {
+    // A theme that repaints the canvas colour keeps the scheme, so a consumer keyed on the scheme alone would keep
+    // painting the previous theme's background.
+    withDocument((doc) => {
+      doc.documentElement.dataset.ccTheme = "dark";
+      doc.documentElement.dataset.ccAppearance = "aaaaaaaa-bbbbbbbb";
+      const before = readDocumentAppearance();
+      doc.documentElement.dataset.ccAppearance = "cccccccc-dddddddd";
+      expect(readDocumentAppearance()).not.toBe(before);
+      doc.documentElement.dataset.ccTheme = "light";
+      expect(readDocumentAppearance()).toBe("light:cccccccc-dddddddd");
+    });
+  });
+
   it("notifies on a theme change and stops when unsubscribed", () => {
     const observed: string[] = [];
     const disconnected: string[] = [];
@@ -269,8 +284,9 @@ describe("the document's theme attribute", () => {
         const stop = subscribeToDocumentTheme(() => {
           fired += 1;
         });
-        // The filter matters: observing every attribute would fire on each widget's own DOM churn.
-        expect(observed).toEqual(["data-cc-theme"]);
+        // The filter matters: observing every attribute would fire on each widget's own DOM churn. The scheme and the
+        // theme's revision are the two attributes the page is painted from, so they are the two observed.
+        expect(observed).toEqual(["data-cc-theme,data-cc-appearance"]);
 
         // The callback has to actually run when the attribute changes, or the orb would recreate
         // itself on every mutation of the page and never on the one change it cares about.

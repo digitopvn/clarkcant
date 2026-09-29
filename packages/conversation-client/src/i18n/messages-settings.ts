@@ -75,10 +75,28 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.experience.orb.fallback":
     "Máy này không vẽ được WebGL, nên Orb hiện ở dạng tĩnh bằng màu của kiểu đã chọn. Lựa chọn vẫn được lưu và sẽ chuyển động trên máy vẽ được.",
   "settings.experience.appearance.heading": "Giao diện",
-  "settings.experience.theme.label": "Chủ đề",
+  "settings.experience.theme.label": "Chế độ màu",
   "settings.experience.theme.description": "Áp dụng ngay, và giữ nguyên sau khi tải lại.",
   "settings.experience.theme.showingPrefix": "Đang hiển thị:",
   "settings.experience.theme.systemSuffix": "(theo hệ thống)",
+  "settings.experience.themePicker.label": "Chủ đề",
+  "settings.experience.themePicker.description":
+    "Màu sắc và độ bo góc của Clark. Chủ đề đến từ các gói đã cài, và đổi ngay mà không cần tải lại.",
+  "settings.experience.themePicker.builtIn": "Có sẵn trong Clark",
+  "settings.experience.themePicker.loading": "Đang đọc các chủ đề đã cài…",
+  "settings.experience.themePicker.unreachable":
+    "Không đọc được danh sách chủ đề từ node. Chủ đề đang dùng vẫn được giữ nguyên.",
+  "settings.experience.themePicker.fallback.notInstalled":
+    "Chủ đề bạn chọn không còn được cài, nên Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ: cài lại gói là chủ đề quay lại.",
+  "settings.experience.themePicker.fallback.invalid":
+    "Chủ đề bạn chọn không hợp lệ, nên Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ.",
+  "settings.experience.themePicker.fallback.unavailable":
+    "Node không đọc được gói chứa chủ đề bạn chọn, nên Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ.",
+  "settings.experience.themePicker.fallback.unknown":
+    "Bản Clark này không có chủ đề bạn chọn, nên Clark đang dùng Clark Default.",
+  "settings.experience.themePicker.details": "Chi tiết",
+  "settings.experience.themePicker.localProblem": "Trang này từ chối chủ đề node gửi về và đang dùng Clark Default:",
+  "settings.experience.themePicker.problems": "Chủ đề và gói Clark không đọc được",
   "settings.experience.motion.heading": "Chuyển động",
   "settings.experience.motion.label": "Mức chuyển động",
   "settings.experience.motion.description": "Giảm chuyển động luôn thắng thiết lập riêng của Orb.",
@@ -445,10 +463,28 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.experience.orb.fallback":
     "This machine cannot draw WebGL, so the orb is shown still, in the chosen style's colors. The choice is saved and moves on a machine that can draw it.",
   "settings.experience.appearance.heading": "Appearance",
-  "settings.experience.theme.label": "Theme",
+  "settings.experience.theme.label": "Color scheme",
   "settings.experience.theme.description": "Applies immediately, and stays after reload.",
   "settings.experience.theme.showingPrefix": "Showing:",
   "settings.experience.theme.systemSuffix": "(following the system)",
+  "settings.experience.themePicker.label": "Theme",
+  "settings.experience.themePicker.description":
+    "Clark's colors and corner radius. Themes come from installed packages, and a change applies at once, with no reload.",
+  "settings.experience.themePicker.builtIn": "Built into Clark",
+  "settings.experience.themePicker.loading": "Reading the installed themes…",
+  "settings.experience.themePicker.unreachable":
+    "Could not read the theme list from the node. The theme in use is kept as it is.",
+  "settings.experience.themePicker.fallback.notInstalled":
+    "The theme you chose is no longer installed, so Clark is shown in Clark Default. Your choice is kept: reinstall the package and the theme comes back.",
+  "settings.experience.themePicker.fallback.invalid":
+    "The theme you chose is not valid, so Clark is shown in Clark Default. Your choice is kept.",
+  "settings.experience.themePicker.fallback.unavailable":
+    "The node cannot read the package that holds the theme you chose, so Clark is shown in Clark Default. Your choice is kept.",
+  "settings.experience.themePicker.fallback.unknown":
+    "This build of Clark does not have the theme you chose, so Clark is shown in Clark Default.",
+  "settings.experience.themePicker.details": "Details",
+  "settings.experience.themePicker.localProblem": "This page refused the theme the node sent and is showing Clark Default:",
+  "settings.experience.themePicker.problems": "Themes and packages Clark could not read",
   "settings.experience.motion.heading": "Motion",
   "settings.experience.motion.label": "Motion level",
   "settings.experience.motion.description": "Reduced motion always wins over the orb's own setting.",

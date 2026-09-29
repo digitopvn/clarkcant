@@ -26,6 +26,7 @@ import { handleAttachmentRoutes } from "./routes/attachments.ts";
 import { handlePreviewRoutes } from "./routes/previews.ts";
 import { handlePreferenceRoutes } from "./routes/preferences.ts";
 import { handlePackageRoutes } from "./routes/packages.ts";
+import { handleThemeRoutes } from "./routes/themes.ts";
 import { handleComposerRoutes } from "./routes/composer.ts";
 import { handleInboxRoutes } from "./routes/inbox.ts";
 import { handleEffectRoutes } from "./routes/effects.ts";
@@ -309,6 +310,9 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   const packageResponse = await handlePackageRoutes({ services, request, segments });
   if (packageResponse !== undefined) return packageResponse;
+
+  const themeResponse = handleThemeRoutes({ services, request, segments });
+  if (themeResponse !== undefined) return themeResponse;
 
 
   /*

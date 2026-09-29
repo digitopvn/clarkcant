@@ -1062,9 +1062,17 @@ Dùng segmented controls, toggles và swatches:
   (khoá `localStorage` là `cc.theme`), cũng là thứ script chạy trước lần vẽ đầu tiên đọc, nên trang được vẽ đúng chế
   độ màu đã chọn trước khi mọi thứ khác tải xong. Node cũng đăng ký một khoá cho nó, `experience.colorScheme`, mà
   REST API đọc và ghi được (`GET /preferences`, `PUT /preferences/experience.colorScheme`); web client hiện chưa đọc
-  hay ghi khoá đó, nên chế độ màu chọn trên thiết bị này không đi theo người dùng sang thiết bị khác. Theme là một preference riêng (`experience.themeRef`, mặc định
-  `builtin:clark`, tức Clark Default), và theme nào cũng được vẽ theo chế độ màu mà lựa chọn này phân giải ra. Hiện
-  chưa có điều khiển chọn theme: nó chỉ xuất hiện khi một theme đã cài thực sự chọn được (#201).
+  hay ghi khoá đó, nên chế độ màu chọn trên thiết bị này không đi theo người dùng sang thiết bị khác. Theme là một
+  preference riêng (`experience.themeRef`, mặc định `builtin:clark`, tức Clark Default), và theme nào cũng được vẽ
+  theo chế độ màu mà lựa chọn này phân giải ra.
+- Theme: một danh sách nằm dưới chế độ màu, Clark Default đứng đầu, rồi đến từng theme mà một gói đã cài cung cấp. Mỗi
+  mục nêu rõ nơi cung cấp — gói, phiên bản, trust lane và digest rút gọn — vì theme tác động lên toàn bộ cửa sổ. Chọn
+  một theme sẽ ghi `experience.themeRef` và đổi kiểu trang tại chỗ bằng cách chỉ thay stylesheet token: không tải lại,
+  hội thoại, tin nhắn đang gõ dở và Orb vẫn tiếp tục (Orb vẽ lại theo màu mới). Trang kiểm tra lại tài liệu trước khi
+  biên dịch, và giữ một bản sao trên thiết bị (`cc.appearance`) để lần tải sau bắt đầu luôn bằng theme đó. Khi theme đã
+  chọn không vẽ được — gói của nó đã bị gỡ, nó không qua được kiểm tra, hoặc không đọc được tệp của nó — trang hiển thị
+  Clark Default và nói rõ điều đó bằng một thông báo trạng thái ngay chỗ chọn, kèm lý do của node trong mục "Chi tiết";
+  lựa chọn vẫn được giữ, nên khôi phục gói là theme quay lại.
 - Ngôn ngữ: Tiếng Việt / English — segmented control, áp dụng ngay (không có nút lưu), đặt
   `<html lang>`, và được giữ qua reload và giữa các thiết bị nhờ preference registry
   (`experience.language`). Mặc định là tiếng Việt; không có tuỳ chọn "theo hệ thống", vì không có

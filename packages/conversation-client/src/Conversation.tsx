@@ -27,6 +27,7 @@ import { ConversationComposerBar } from "./ConversationComposerBar.tsx";
 import { ConversationPinSurfaces } from "./ConversationPinSurfaces.tsx";
 import { ConversationLiveReplyRow } from "./ConversationLiveReplyRow.tsx";
 import { TimelineMessageRow } from "./TimelineMessageRow.tsx";
+import { useAppearance } from "./use-appearance.ts";
 import { useTheme } from "./use-theme.ts";
 import { useLocale } from "./i18n/use-locale.ts";
 import { LocaleProvider } from "./i18n/locale-context.tsx";
@@ -141,6 +142,7 @@ export function Conversation({
   const { policyMode, refresh: refreshPolicyMode } = usePolicyModeState(client);
   const connection = useConnectionStatus(client);
   const { themeChoice, resolvedTheme, applyThemeChoice } = useTheme();
+  const appearance = useAppearance(client);
   const localeState = useLocale();
   const { modelAlias, modelNote, cycleModel, selectModel } = useModelAlias(client, localeState.t);
   const dynamicSuggestions = useDynamicSuggestions(client);
@@ -564,6 +566,7 @@ export function Conversation({
         themeChoice={themeChoice}
         resolvedTheme={resolvedTheme}
         onThemeChoice={applyThemeChoice}
+        appearance={appearance}
         {...(onOrbChange === undefined ? {} : { onOrbChange })}
         orbProfileKey={orbProfile?.key}
         onPolicyChange={refreshPolicyMode}

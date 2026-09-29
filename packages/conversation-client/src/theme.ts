@@ -131,19 +131,30 @@ export function readDocumentTheme(): ResolvedColorScheme {
 }
 
 /**
- * Called when the document's theme changes.
+ * What the document is drawn in: the colour scheme and the revision of the theme's tokens.
+ *
+ * One string, so a consumer that has to redraw on either change compares one value. A theme change keeps the scheme
+ * and changes the revision; a scheme change keeps the theme and changes which of its two blocks applies.
+ */
+export function readDocumentAppearance(): string {
+  if (typeof document === "undefined") return "dark";
+  return `${readDocumentTheme()}:${document.documentElement.dataset.ccAppearance ?? ""}`;
+}
+
+/**
+ * Called when the document's colour scheme or theme changes.
  *
  * Exists for the WebGL orb. The orb paints its own background to match the page, and it reads that
- * colour once when it is created — so without a notification it keeps the previous theme's colour
- * and its square canvas becomes a visible rectangle on the new one. Nothing else needs this: the
- * rest of the interface is CSS and follows the attribute on its own.
+ * colour once when it is created — so without a notification it keeps the previous colour and its
+ * square canvas becomes a visible rectangle on the new one. Nothing else needs this: the rest of the
+ * interface is CSS and follows the attributes on its own.
  */
 export function subscribeToDocumentTheme(onChange: () => void): () => void {
   if (typeof document === "undefined" || typeof MutationObserver !== "function") return () => {};
   const observer = new MutationObserver(onChange);
   observer.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["data-cc-theme"],
+    attributeFilter: ["data-cc-theme", "data-cc-appearance"],
   });
   return () => observer.disconnect();
 }

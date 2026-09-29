@@ -263,6 +263,18 @@ tác được liệt kê kèm `unavailable` (`conversation-gone`, `work-gone`, `
 sao lúc này không làm được. Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
 [system-architecture.vi.md](system-architecture.vi.md) ở phần hộp thư.
 
+Các route theme gọi được với cùng token nhưng **chưa** có trong `/openapi.json` và có thể thay đổi. `GET /themes` trả
+về `{ themes, problems, unchecked }`: Clark Default đứng đầu, rồi đến mọi theme mà facet `themes` của các gói đã cài
+cung cấp, mỗi theme kèm `themeRef` (`package:<package id>#<theme id>`) và nơi cung cấp (package id, phiên bản, digest,
+trust lane và source tier); `problems` nêu tên từng theme không qua được kiểm tra, còn `unchecked` nêu từng gói đã cài
+mà node này không đọc được tệp. `GET /appearance` trả về thứ trang cần vẽ: `selectedRef` (preference
+`experience.themeRef`, được chọn bằng `PUT /preferences/experience.themeRef` `{ "value": "<themeRef>" }`),
+`appliedRef`, tài liệu `theme` đã kiểm tra (`null` với Clark Default), `provider` của nó, và `fallback`
+`{ code, message }` khi lựa chọn không vẽ được — `THEME_NOT_INSTALLED`, `THEME_INVALID`, `THEME_UNAVAILABLE` hoặc
+`THEME_UNKNOWN` — khi đó Clark Default được vẽ và `selectedRef` vẫn được giữ, nên cài lại gói là theme quay lại. Node
+không đẩy thay đổi gói về client: client đọc lại `/appearance` sau khi chính nó thay đổi một gói và khi cửa sổ được
+nhìn lại. Hình dạng dữ liệu ở `packages/contracts/src/themes.ts`.
+
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
 
