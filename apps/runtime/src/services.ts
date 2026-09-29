@@ -245,6 +245,13 @@ export interface NodeServices {
    */
   expirySweep?: { stop(): void };
   /**
+   * What makes a person's standing requests happen on their own: timers, signals matched into runs, runs started.
+   *
+   * Assigned after boot, like `expirySweep`. Absent in a test that builds `NodeServices` directly; a signal accepted
+   * there is still recorded, and is matched the next time a service ticks.
+   */
+  automation?: { kick(): void; tick(): void; stop(): void };
+  /**
    * The containers that run installed packages' service facets.
    *
    * Assigned after boot, like `taskDispatch`: it reads what is installed and registers capabilities, so it starts once

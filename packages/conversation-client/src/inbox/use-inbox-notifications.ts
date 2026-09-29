@@ -64,6 +64,12 @@ export interface UseInboxNotificationsInput {
   windowMode: WindowModeAttribute;
   /** Focuses the window (desktop click already did) and opens the inbox — the same path the header mark uses. */
   onOpenInbox: () => void;
+  /**
+   * The conversations that new notices belong to, once per poll that found any. Something the node said on its own —
+   * a reminder, work an automation started — lands in its conversation and in the inbox together; this is how a
+   * conversation that is open reads itself again rather than waiting for a reload.
+   */
+  onNoticesArrived?: (conversationIds: readonly string[]) => void;
 }
 
 /**
@@ -74,10 +80,18 @@ export interface UseInboxNotificationsInput {
  * this window opening, the same reasoning the header mark itself does not treat pre-existing counts as new
  * events.
  */
-export function useInboxNotifications({ client, t, windowMode, onOpenInbox }: UseInboxNotificationsInput): void {
+export function useInboxNotifications({
+  client,
+  t,
+  windowMode,
+  onOpenInbox,
+  onNoticesArrived,
+}: UseInboxNotificationsInput): void {
   const stateRef = useRef<NotifyState>({ initialized: false, knownIds: new Set(), remindedNearExpiryIds: new Set() });
   const onOpenInboxRef = useRef(onOpenInbox);
   onOpenInboxRef.current = onOpenInbox;
+  const onNoticesArrivedRef = useRef(onNoticesArrived);
+  onNoticesArrivedRef.current = onNoticesArrived;
   const windowModeRef = useRef(windowMode);
   windowModeRef.current = windowMode;
   const tRef = useRef(t);
@@ -158,6 +172,13 @@ export function useInboxNotifications({ client, t, windowMode, onOpenInbox }: Us
             return;
           }
 
+          const arrivedIn = new Set<string>();
+          for (const notice of inboxAnswer.notices) {
+            if (notice.conversationId !== undefined && !state.knownIds.has(`notice:${notice.noticeId}`)) {
+              arrivedIn.add(notice.conversationId);
+            }
+          }
+
           const now = new Date();
           const decided = decideInboxNotifications({
             preference,
@@ -173,6 +194,7 @@ export function useInboxNotifications({ client, t, windowMode, onOpenInbox }: Us
           state.knownIds = decided.seenIds;
           state.remindedNearExpiryIds = decided.remindedNearExpiryIds;
           for (const candidate of decided.candidates) deliver(candidate, preference);
+          if (arrivedIn.size > 0) onNoticesArrivedRef.current?.([...arrivedIn]);
         })
         .catch(() => {
           // A node that cannot answer this poll is not a reason to notify about nothing, or to crash the

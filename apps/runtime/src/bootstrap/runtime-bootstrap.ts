@@ -13,6 +13,7 @@ import { createModelCatalogue, type ModelTurn, type ViewDescriptor } from "../mo
 import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
+import { startAutomationService } from "../automation-service.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
 import { tryRecordNodeNotice, workerSettledNotice } from "../notices.ts";
 import { appendHostReply } from "../routes/conversations.ts";
@@ -313,6 +314,13 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    * route would race against.
    */
   deps.services.expirySweep = startExpiryNoticeSweep(deps.services);
+
+  /*
+   * Standing requests: "from now on, when X happens, do Y". Started after the dispatcher above so a run it starts has a
+   * worker to go to, and on a fixture node too, where a reminder needs no worker and a task stays honestly dispatched.
+   * Its first tick is asked for by the entry point once recovery has settled what the previous process left running.
+   */
+  deps.services.automation = startAutomationService(deps.services);
 
   /*
    * Installed packages' service facets, each in a container.

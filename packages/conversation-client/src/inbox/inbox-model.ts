@@ -75,6 +75,8 @@ export function noticeSourceKey(sourceKind: NoticeSourceKind): MessageKey {
       return "inbox.source.peer";
     case "system":
       return "inbox.source.system";
+    case "automation":
+      return "inbox.source.automation";
   }
 }
 

@@ -61,12 +61,17 @@ export interface CreateTaskInput {
   origin?: TaskRecord["origin"];
   /** What the task may touch. Absent means the node's roots, which only an interactive task may use. */
   resources?: TaskRecord["resources"];
+  /**
+   * An id chosen before the task existed. Work that records its task id ahead of creating it (an automation's run) passes
+   * it here, so a crash between the two ends in finding the task rather than making a second one.
+   */
+  taskId?: TaskRecord["taskId"];
 }
 
 export function createTask(deps: TaskServiceDeps, input: CreateTaskInput): TaskRecord {
   const at = deps.now();
   const task: TaskRecord = {
-    taskId: deps.newId("task") as TaskRecord["taskId"],
+    taskId: input.taskId ?? (deps.newId("task") as TaskRecord["taskId"]),
     conversationId: input.conversationId,
     homeNodeId: deps.nodeId as TaskRecord["homeNodeId"],
     state: "queued",

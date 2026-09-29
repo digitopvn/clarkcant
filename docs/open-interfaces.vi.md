@@ -46,6 +46,8 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 | GET | `/conversations/{id}/timeline?after=N` | – |
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
 | POST | `/conversations/{id}/questions/{questionId}/cancel` | – |
+| POST | `/signals` | `{ source, topic, subject?, payload, occurredAt, dedupeKey, provenance? }` — báo một việc vừa xảy ra; `202` đã ghi, `200` đã ghi từ trước |
+| GET | `/automations` | – những việc tự động đã đặt trong hội thoại, kèm các lần chạy gần nhất |
 | POST | `/stop` | – dừng khẩn cấp |
 
 ```bash
@@ -63,6 +65,25 @@ trong vài giây, agent được báo là hành động chưa được xác nh�
 nhận `404 HOST_CONTROL_NOT_EXPECTED`), và route `/messages` thường không bao giờ chờ câu trả lời. Bản ghi audit của
 một hành động agent yêu cầu khi đang trả lời một câu nói có `source: "voice-agent"`, khác với lệnh do chính người dùng
 nói (`source: "voice"`).
+
+Signal là cách mọi thứ bên ngoài hội thoại báo cho node biết một việc vừa xảy ra: một lần chạy CI, một script, một
+dịch vụ của riêng bạn. Signal được ghi lại trước khi đối chiếu bất cứ thứ gì, rồi mới đối chiếu với những yêu cầu lâu
+dài mà người dùng đã đặt bằng cách nói với Clark "khi X xảy ra thì làm Y". Topic là các từ chữ thường nối bằng dấu
+chấm (`build.finished`); payload tối đa 64 KB; cùng một `(source.sourceId, dedupeKey)` gửi lại thì nhận `200` kèm
+signal đã ghi từ trước, nên bên gửi có thử lại cũng không bao giờ khởi động công việc hai lần. Nguồn `timer` và
+`system` là của chính node và bị từ chối với `403 SOURCE_RESERVED`. Việc tự động được tạo, tạm dừng, chạy lại và xoá
+trong hội thoại; `/automations` chỉ để đọc.
+
+```bash
+curl -X POST localhost:8765/signals -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{
+  "source": { "kind": "external", "provider": "ci", "sourceId": "ci:my-repo" },
+  "topic": "build.finished",
+  "subject": { "type": "build", "id": "812" },
+  "payload": { "status": "failed" },
+  "occurredAt": "2026-09-29T08:00:00.000Z",
+  "dedupeKey": "build-812"
+}'
+```
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.

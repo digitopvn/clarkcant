@@ -46,3 +46,4 @@ export * from "./inbox.ts";
 
 export * from "./memory.ts";
 export * from "./implementation-status.ts";
+export * from "./signals.ts";

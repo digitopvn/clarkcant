@@ -25,3 +25,4 @@ export * from "./memory.ts";
 export * from "./work-runs.ts";
 export * from "./notifications.ts";
 export * from "./widget-semantic.ts";
+export * from "./signals.ts";

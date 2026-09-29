@@ -45,6 +45,8 @@ The stable surface is the one `/openapi.json` describes:
 | GET | `/conversations/{id}/timeline?after=N` | – |
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
 | POST | `/conversations/{id}/questions/{questionId}/cancel` | – |
+| POST | `/signals` | `{ source, topic, subject?, payload, occurredAt, dedupeKey, provenance? }` — something happened; `202` recorded, `200` already recorded |
+| GET | `/automations` | – the standing requests set up in conversation, each with its recent runs |
 | POST | `/stop` | – emergency stop |
 
 ```bash
@@ -62,6 +64,25 @@ a few seconds it is told the action is unconfirmed. Each `controlId` is answered
 `404 HOST_CONTROL_NOT_EXPECTED`), and the plain `/messages` route never waits for one. The audit record of an action
 the agent asked for while answering a spoken sentence has `source: "voice-agent"`, distinct from a person's own spoken
 command (`source: "voice"`).
+
+A signal is how anything outside the conversation tells the node that something happened: a CI run, a script, a
+service of your own. It is recorded before anything is matched, then answered against the standing requests the person
+set up by saying "when X happens, do Y" to Clark. A topic is dotted lower-case words (`build.finished`); the payload is
+at most 64 KB; the same `(source.sourceId, dedupeKey)` sent again is answered `200` with the signal already recorded,
+so a sender that retries never starts the work twice. `timer` and `system` sources are the node's own and are refused
+with `403 SOURCE_RESERVED`. Automations are created, paused, resumed and removed in conversation; `/automations` only
+reads them.
+
+```bash
+curl -X POST localhost:8765/signals -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{
+  "source": { "kind": "external", "provider": "ci", "sourceId": "ci:my-repo" },
+  "topic": "build.finished",
+  "subject": { "type": "build", "id": "812" },
+  "payload": { "status": "failed" },
+  "occurredAt": "2026-09-29T08:00:00.000Z",
+  "dedupeKey": "build-812"
+}'
+```
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.

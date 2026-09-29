@@ -270,6 +270,10 @@ async function main(): Promise<void> {
     process.stderr.write(`could not recover unfinished work: ${cause instanceof Error ? cause.message : String(cause)}\n`);
   }
 
+  // After recovery, so a task an automation started before the node stopped is already called uncertain rather than
+  // started a second time; the first tick also picks up signals and runs the previous process recorded.
+  services.automation?.kick();
+
   const server = createNodeServer({
     services,
     origin: `http://${options.host}:${options.port}`,
@@ -469,6 +473,7 @@ async function main(): Promise<void> {
     leaseSweeper.stop();
     runtimeHandles.stopUpdateChecks();
     services.expirySweep?.stop();
+    services.automation?.stop();
     void (async () => {
       try {
         const stopped = await performEmergencyStop({
