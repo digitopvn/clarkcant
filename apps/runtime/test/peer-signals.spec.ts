@@ -103,6 +103,9 @@ describe("a paired Clark's news", () => {
     expect(signalsOn(b)).toMatchObject([
       { topic: "peer.build.failed", source: { kind: "peer", provider: "clarkcant", sourceId: identityOf(a).nodeId } },
     ]);
+    // B records the news while it answers A, and A settles its outbox only once that answer arrives, so the
+    // acknowledgement is waited for rather than assumed to have landed with the reminder.
+    await waitUntil(() => pendingOutbox(a.services.runtime.db).length === 0, "A's acknowledgement");
     expect(pendingOutbox(a.services.runtime.db)).toEqual([]);
   });
 
