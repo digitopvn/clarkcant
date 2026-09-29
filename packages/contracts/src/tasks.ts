@@ -329,6 +329,11 @@ export const intentOriginSchema = z.discriminatedUnion("kind", [
     principalId: z.string().min(1).max(128),
     peerNodeId: z.string().min(1).max(128),
     delegationId: z.string().min(1).max(128),
+    /**
+     * The effects both sides allowed: what the sender's grant gave and what this node's owner allows that peer. A risky
+     * effect outside it waits for this node's owner, in every mode.
+     */
+    allowedCategories: z.array(effectCategorySchema).max(8),
   }),
   /** The node's own work, which no person asked for. */
   z.strictObject({ kind: z.literal("system"), reason: z.string().min(1).max(300) }),

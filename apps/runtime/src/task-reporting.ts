@@ -1,5 +1,6 @@
 import type { Instant } from "@clarkcant/contracts";
 
+import { reportDelegatedOutcome } from "./delegation.ts";
 import { tryRecordNodeNotice, workerSettledNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
@@ -39,6 +40,11 @@ export function taskDispatchReports(
       });
       // The pointer for a person who is not looking at that conversation.
       tryRecordNodeNotice(services, workerSettledNotice({ taskId, conversationId, outcome, message, at }));
+      // A task a peer handed over is answered there too, which is how its own task settles.
+      const { runtime, conductor } = services;
+      if (reportDelegatedOutcome({ db: runtime.db, identity: runtime.identity, now: () => at, newId: conductor.newId }, { taskId, outcome, message })) {
+        services.peerDelivery?.kick();
+      }
     },
     // A park is not a settlement: it is reported to the conversation so the wait is not silent, but never
     // through `tryRecordNodeNotice`/`workerSettledNotice` above - that dedup key (`worker:<taskId>`) belongs to

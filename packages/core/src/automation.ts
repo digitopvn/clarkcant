@@ -30,6 +30,7 @@ import {
   putPersistentIntent,
   recentIntentRuns,
   recordIntentRun,
+  recordRun,
   recordSignalDelivery,
   setIntentRunState,
   settleSignalDelivery,
@@ -315,6 +316,34 @@ function chooseCapability(deps: TaskServiceDeps, capabilityRef: CapabilityRef): 
   return usable.find((summary) => summary.executionNodeId === deps.nodeId) ?? usable[0];
 }
 
+/**
+ * Take a task just created on this node to dispatched and acknowledged, run by this node's own capability.
+ *
+ * For work a paired node handed over: it runs here or not at all, so a capability that is not usable here now is a
+ * refusal the sender hears, never a park nothing would come back to. The task fails in resolution, so it is not left
+ * queued.
+ */
+export function startTaskHere(
+  deps: TaskServiceDeps,
+  taskId: string,
+  capabilityRef: CapabilityRef,
+): { ok: true } | { ok: false; reason: string } {
+  const usable = listCapabilitySummaries(deps, { usableOnly: true, taskRunnersOnly: true }).some(
+    (summary) => summary.ref === capabilityRef && summary.executionNodeId === deps.nodeId,
+  );
+  const started = applyTaskEvent(deps, taskId, "resolve.start");
+  if (!started.ok) return { ok: false, reason: started.message };
+  if (!usable) {
+    const reason = `this node cannot run ${capabilityRef} right now`;
+    applyTaskEvent(deps, taskId, "resolve.failed");
+    return { ok: false, reason };
+  }
+  const ready = advanceResolving(deps, taskId, { kind: "ready", executionNodeId: deps.nodeId });
+  if (!ready.ok) return { ok: false, reason: ready.message };
+  const acknowledged = applyTaskEvent(deps, taskId, "dispatch.acknowledged");
+  return acknowledged.ok ? { ok: true } : { ok: false, reason: acknowledged.message };
+}
+
 function taskOrigin(intent: PersistentIntent, run: IntentRun, action: Extract<IntentAction, { kind: "task" }>, sourceRef?: string): TaskRecord["origin"] {
   return {
     kind: "persistent",
@@ -331,11 +360,15 @@ function taskOrigin(intent: PersistentIntent, run: IntentRun, action: Extract<In
  *
  * Safe to call again for the same run. The task is created under the id the run recorded, so a second call finds it
  * and continues from its state instead of making another.
+ *
+ * A task with an executor is resolved to that peer rather than to a capability here; `onAcknowledged` is how the caller
+ * hands it over, and it runs inside the write that marks the run started, so the hand-over is recorded exactly when the
+ * run is and never without it.
  */
 export function prepareIntentRun(
   deps: TaskServiceDeps,
   run: IntentRun,
-  context: { sourceRef?: string; trigger?: string } = {},
+  context: { sourceRef?: string; trigger?: string; onAcknowledged?: (task: TaskRecord) => void } = {},
 ): PreparedRun {
   const intent = getPersistentIntent(deps.db, run.intentId);
   if (intent === undefined) return { kind: "skipped", run, reason: "the automation no longer exists" };
@@ -364,9 +397,12 @@ export function prepareIntentRun(
   }
 
   const capabilityRef = automationCapabilityFor(action);
+  // The peer that runs it, or a usable capability here: a peer's capabilities are that peer's to resolve.
+  const choose = (): { executionNodeId: string } | undefined =>
+    action.executor === undefined ? chooseCapability(deps, capabilityRef) : { executionNodeId: action.executor };
   // Parked on a capability that has since become usable — a worker that finished loading after the node started, most
   // often — goes back to be resolved again, rather than waiting for something that already happened.
-  if (task.state === "waiting_capability" && chooseCapability(deps, capabilityRef) !== undefined) {
+  if (task.state === "waiting_capability" && choose() !== undefined) {
     const ready = applyTaskEvent(deps, task.taskId, "capability.ready");
     if (ready.ok) task = ready.task;
   }
@@ -377,7 +413,7 @@ export function prepareIntentRun(
   }
 
   if (task.state === "resolving") {
-    const chosen = chooseCapability(deps, capabilityRef);
+    const chosen = choose();
     if (chosen === undefined) {
       const parked = advanceResolving(deps, task.taskId, { kind: "needs-capability", capabilityRef });
       return {
@@ -397,8 +433,25 @@ export function prepareIntentRun(
     // Acknowledged the way the conductor does, and the run marked started in the same write: from here the task is the
     // dispatcher's, and a node that stops before handing it over finds a running task the boot calls uncertain, never
     // a pending run that would start it a second time.
-    const acknowledged = applyTaskEvent(deps, task.taskId, "dispatch.acknowledged", {}, () => {
-      setIntentRunState(deps.db, run.runId, "started", deps.now());
+    const dispatched = task;
+    // Work on a peer is held by the peer's run, which is what makes a stop here reach it rather than end only here.
+    const holding = action.executor === undefined ? {} : { activeRunId: run.runId as TaskRecord["activeRunId"] };
+    const acknowledged = applyTaskEvent(deps, task.taskId, "dispatch.acknowledged", holding, () => {
+      const at = deps.now();
+      setIntentRunState(deps.db, run.runId, "started", at);
+      // The peer's run, recorded as one here: it is what the task's evidence and a stop name.
+      if (action.executor !== undefined) {
+        recordRun(deps.db, {
+          runId: run.runId,
+          taskId: dispatched.taskId,
+          taskRevision: dispatched.revision,
+          executionNodeId: action.executor,
+          leaseEpoch: 0,
+          startedAt: at,
+          evidence: [],
+        });
+      }
+      context.onAcknowledged?.(dispatched);
     });
     if (acknowledged.ok) {
       return {

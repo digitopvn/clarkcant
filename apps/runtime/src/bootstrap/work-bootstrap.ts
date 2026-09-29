@@ -3,6 +3,7 @@ import { getPreference, readExecutionPolicy } from "@clarkcant/core";
 import { listSecretMetadata } from "@clarkcant/storage";
 
 import { withholdFromChildren } from "../child-env.ts";
+import { answerUncertain } from "../delegation-handlers.ts";
 import { machineBootId } from "../process-tree.ts";
 import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
 import { listRunningCommands, setCommandJournal, stopCommand } from "../run-command.ts";
@@ -143,6 +144,8 @@ export function attachNodeWork(input: {
           });
           return !("refusal" in started);
         },
+        // A task a peer handed over is answered too, or that peer's own task would wait for an answer that never comes.
+        onUncertain: answerUncertain(services, () => nowInstant()),
       }),
   };
 }

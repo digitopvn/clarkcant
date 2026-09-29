@@ -27,7 +27,7 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
 export interface ControlRouteDeps {
   services: Pick<
     NodeServices,
-    "runtime" | "conductor" | "controlSessions" | "search" | "turnControl" | "taskDispatch" | "terminals" | "serviceHost"
+    "runtime" | "conductor" | "controlSessions" | "search" | "turnControl" | "taskDispatch" | "terminals" | "serviceHost" | "peerDelivery"
   >;
   request: GatewayRequest;
   segments: string[];
@@ -151,6 +151,8 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
       taskId,
     );
     if (!outcome.ok) return fail(409, outcome.code, outcome.message, { taskId });
+    // A task running on a peer is stopped by a message to it, queued with the request: send it now.
+    if (!outcome.confirmed) services.peerDelivery?.kick();
     appendHostReply(services, {
       conversationId: outcome.task.conversationId,
       at: nowInstant(),

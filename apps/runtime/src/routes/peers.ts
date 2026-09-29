@@ -6,10 +6,11 @@ import {
   checkArtifactAcceptance,
   grantSchema,
 } from "@clarkcant/contracts";
-import { type Database, type JsonValue, activeGrants, upsertGrant } from "@clarkcant/storage";
+import { type Database, type JsonValue, activeGrants, getGrant, upsertGrant } from "@clarkcant/storage";
 import { type PeerGatewayDeps, receiveEnvelope } from "@clarkcant/node-link";
 
 import { extensionForMimeType, fetchArtifactFromPeer } from "../artifact-transfer.ts";
+import { writeGrant } from "../delegation.ts";
 import { queuePeerSignal, receivePeerSignal } from "../peer-signals.ts";
 import { blobPathForDigest, readBlob } from "../blobs.ts";
 import type { NodeIdentity } from "../node.ts";
@@ -53,6 +54,15 @@ export interface PeerUplinkDeps {
   request: GatewayRequest;
   /** A peer's signal was recorded for the first time: the standing requests can look at it now. */
   onSignal?: () => void;
+  /** Work handed over between paired nodes: absent on a node that takes none, which refuses it. */
+  delegation?: DelegationHandlers;
+}
+
+/** What a hand-over, its answer and a stop mean on this node. Each is answered once and the answer recorded. */
+export interface DelegationHandlers {
+  delegate: (envelope: PeerEnvelope) => unknown;
+  result: (envelope: PeerEnvelope) => unknown;
+  cancel: (envelope: PeerEnvelope) => unknown;
 }
 
 /**
@@ -110,7 +120,11 @@ function peerOfferFrom(body: Record<string, unknown>): { inviteId: string; peer:
  * node has seen the message. Its answer is stored with the inbox row, which is why a replay gets
  * these exact bytes rather than a second execution.
  */
-function peerHandler(pairing: PairingDeps, onSignal: () => void): (envelope: PeerEnvelope) => unknown {
+function peerHandler(
+  pairing: PairingDeps,
+  onSignal: () => void,
+  delegation: DelegationHandlers | undefined,
+): (envelope: PeerEnvelope) => unknown {
   return (envelope) => {
     const at = pairing.now();
 
@@ -136,14 +150,31 @@ function peerHandler(pairing: PairingDeps, onSignal: () => void): (envelope: Pee
       if (Date.parse(grant.expiresAt) <= Date.parse(at)) {
         return { accepted: false, reason: "the grant has already expired" };
       }
+      // A grant id already held for another sender, or one this node's owner wrote, is not this peer's to rewrite: the
+      // row would keep its sender and take this peer's scope.
+      const held = getGrant(pairing.db, grant.grantId);
+      if (grant.ownerPrincipalId === pairing.identity.ownerPrincipalId || (held !== undefined && (held.senderNodeId !== grant.senderNodeId || held.receiverNodeId !== grant.receiverNodeId))) {
+        return { accepted: false, reason: "that grant id belongs to another grant here" };
+      }
       upsertGrant(pairing.db, grant, at);
       return { accepted: true, grantId: grant.grantId, allowedDataClasses: grant.allowedDataClasses };
     }
 
     if (envelope.kind === "delegate") {
-      // The delegation id is the grant id, and the validator has already refused this envelope unless
-      // that grant is live for this sender. So the narrowing happened before anything ran.
-      return { accepted: true, acceptedAt: at, delegationId: envelope.delegationId ?? null };
+      // The delegation id is the grant id, and the validator has already refused this envelope unless that grant is
+      // live for this sender. What runs is decided against that grant and this node's owner's allowance, never here.
+      if (delegation === undefined) return { accepted: false, reason: "this node takes no work from peers" };
+      return delegation.delegate(envelope);
+    }
+
+    if (envelope.kind === "result") {
+      if (delegation === undefined) return { accepted: false, reason: "this node handed no work to peers" };
+      return delegation.result(envelope);
+    }
+
+    if (envelope.kind === "cancel.request") {
+      if (delegation === undefined) return { accepted: false, reason: "this node takes no work from peers" };
+      return delegation.cancel(envelope);
     }
 
     if (envelope.kind === "artifact.offer") {
@@ -249,7 +280,12 @@ function scheduleArtifactIntake(input: {
     });
 }
 
-function peerGateway(pairing: PairingDeps, peerNodeId: string, onSignal: () => void): PeerGatewayDeps {
+function peerGateway(
+  pairing: PairingDeps,
+  peerNodeId: string,
+  onSignal: () => void,
+  delegation: DelegationHandlers | undefined,
+): PeerGatewayDeps {
   return {
     db: pairing.db,
     nodeId: pairing.identity.nodeId,
@@ -259,7 +295,7 @@ function peerGateway(pairing: PairingDeps, peerNodeId: string, onSignal: () => v
     // silently downgraded (T11).
     supportedVersions: { min: 1, max: 2 },
     knownDelegationIds: new Set(activeGrants(pairing.db, peerNodeId, pairing.now()).map((grant) => grant.grantId)),
-    handler: peerHandler(pairing, onSignal),
+    handler: peerHandler(pairing, onSignal, delegation),
   };
 }
 
@@ -350,7 +386,7 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
     }
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
-    const outcome = receiveEnvelope(peerGateway(pairing, peer.peerNodeId, input.onSignal ?? (() => undefined)), parsed.value, {
+    const outcome = receiveEnvelope(peerGateway(pairing, peer.peerNodeId, input.onSignal ?? (() => undefined), input.delegation), parsed.value, {
       authenticatedSenderNodeId: peer.peerNodeId,
     });
     if (outcome.status === "gap") {
@@ -430,8 +466,8 @@ export function handlePairingRoutes(input: PairingRouteDeps): GatewayResponse | 
    */
   if (request.method === "POST" && request.path === "/grants") {
     // A grant is the owner's decision, so it is written here and travels to the peer as a
-    // `pair.confirm` envelope: the receiver stores it, and from then on a delegate envelope naming it
-    // is admissible while one naming anything else is refused.
+    // `pair.confirm` envelope, queued in the same write: the receiver stores it, and from then on a
+    // delegate envelope naming it is admissible while one naming anything else is refused.
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
     const candidate = grantSchema.safeParse(parsed.value);
@@ -439,17 +475,14 @@ export function handlePairingRoutes(input: PairingRouteDeps): GatewayResponse | 
       return fail(400, "INVALID_SCHEMA", "a grant must carry its id, both node ids, the data classes it allows and an expiry");
     }
     const grant = candidate.data;
-    if (grant.senderNodeId !== runtime.identity.nodeId) {
-      return fail(400, "GRANT_NOT_OURS", "a grant written here has to name this node as its sender");
+    const written = writeGrant(
+      { db: runtime.db, identity: runtime.identity, now: () => at() as Instant, newId: pairing.newId },
+      grant,
+    );
+    if (!written.ok) {
+      return fail(written.code === "GRANT_NOT_OURS" ? 400 : written.code === "NOT_THE_OWNER" ? 403 : 404, written.code, written.message);
     }
-    if (grant.ownerPrincipalId !== runtime.identity.ownerPrincipalId) {
-      return fail(403, "NOT_THE_OWNER", "a grant has to be written by this node's owner");
-    }
-    const receiver = findPeer(pairing, grant.receiverNodeId);
-    if (receiver === undefined || receiver.revokedAt !== null || receiver.trustedAt === null) {
-      return fail(404, "PEER_UNKNOWN", "a grant can only be written for a peer that is paired and confirmed");
-    }
-    upsertGrant(runtime.db, grant, at() as Instant);
+    input.onQueued?.();
     return json(201, { grantId: grant.grantId, receiverNodeId: grant.receiverNodeId, allowedDataClasses: grant.allowedDataClasses });
   }
 

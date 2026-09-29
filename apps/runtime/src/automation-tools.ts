@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, posix, resolve, win32 } from "node:path";
 
 import type {
   AutomationSchedule,
@@ -26,8 +26,18 @@ import {
   webhookSecretName,
   webhookSourceOfTopic,
 } from "@clarkcant/signal-sources";
-import { type Database, getSecretMetadata, secretBackendFor } from "@clarkcant/storage";
+import {
+  type Database,
+  getPeer,
+  getSecretMetadata,
+  listPeers,
+  livePeerAllowance,
+  putPeerAllowance,
+  revokePeerAllowance,
+  secretBackendFor,
+} from "@clarkcant/storage";
 
+import { TASK_GRANT_LIFETIME_MS, taskGrant, writeGrant } from "./delegation.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { GITHUB_SELF_LOGINS_PREFERENCE, GITHUB_SIGNAL_PATH, githubSelfLogins } from "./routes/github-signals.ts";
 import { WEBHOOK_SIGNAL_PATH_PREFIX } from "./routes/webhook-signals.ts";
@@ -55,6 +65,12 @@ export interface AutomationToolDeps {
   ownedRoots: () => readonly string[];
   /** Ask the service to look again now, so a new timer or an edit is picked up without waiting for the interval. */
   kick?: () => void;
+  /** This node's owner: only they hand work to a paired node, or let one run work here. The principal when absent. */
+  ownerPrincipalId?: string;
+  /** Wake the outbox, so what was just written for a peer reaches it now rather than on the next round. */
+  kickDelivery?: () => void;
+  /** This node's key fingerprint, which a grant it sends is confirmed under. Absent, no work is handed to a peer. */
+  fingerprint?: string;
 }
 
 const GIVABLE_EFFECTS: readonly EffectCategory[] = ["read", "local-write", "external-write", "communication"];
@@ -92,7 +108,8 @@ function describeDo(action: IntentAction): string {
   const places = action.resources.map((resource) =>
     resource.kind === "repository" ? `${resource.path} (repository, in its own worktree)` : `${resource.path} (${resource.access})`,
   );
-  return `task: ${action.goal} · in ${places.join(", ")} · may ${action.allowedCategories.join(", ") || "only read"}`;
+  const where = action.executor === undefined ? "" : ` · runs on ${action.executor}`;
+  return `task: ${action.goal} · in ${places.join(", ")} · may ${action.allowedCategories.join(", ") || "only read"}${where}`;
 }
 
 function describe(intent: PersistentIntent, runs: readonly { state: string; createdAt: string }[]): string {
@@ -132,19 +149,17 @@ function readSchedule(raw: unknown): { ok: true; schedule?: AutomationSchedule }
   return { ok: false, text: "schedule is { everyMinutes: number } or { at: an ISO time }" };
 }
 
-function readAction(
+/**
+ * The folders and repositories named, as task resources.
+ *
+ * On this node each has to be inside a folder it owns. On a paired node (`owned` absent) it is that node's path, which
+ * only that node can check, so it is kept exactly as written: absolute in that node's own terms, whichever system it
+ * runs.
+ */
+function readResources(
   params: Record<string, unknown>,
-  owned: ReturnType<typeof ownedResources>,
-): { ok: true; action: IntentAction } | { ok: false; text: string } {
-  if (params.action === "remind") {
-    const message = typeof params.message === "string" ? params.message.trim() : "";
-    if (message === "") return { ok: false, text: "a reminder needs the message to say" };
-    return { ok: true, action: { kind: "remind", message } };
-  }
-  if (params.action !== "task") return { ok: false, text: "action is task or remind" };
-  const goal = typeof params.goal === "string" ? params.goal.trim() : "";
-  if (goal === "") return { ok: false, text: "a task needs a goal: what to do when it matches" };
-
+  owned: ReturnType<typeof ownedResources> | undefined,
+): { ok: true; resources: TaskResource[] } | { ok: false; text: string } {
   const resources: TaskResource[] = [];
   const folders = Array.isArray(params.folders) ? params.folders : [];
   const repositories = Array.isArray(params.repositories) ? params.repositories : [];
@@ -166,13 +181,22 @@ function readAction(
     };
   }
   for (const resource of resources) {
+    if (owned === undefined) {
+      if (!posix.isAbsolute(resource.path) && !win32.isAbsolute(resource.path)) {
+        return { ok: false, text: `${resource.path} is not an absolute path on that node` };
+      }
+      continue;
+    }
     if (!isAbsolute(resource.path)) return { ok: false, text: `${resource.path} is not an absolute path` };
     if (containingRoot(owned, resource.path) === undefined) {
-      return { ok: false, text: `${resource.path} is not inside a folder this node owns, so an automation cannot be given it` };
+      return { ok: false, text: `${resource.path} is not inside a folder this node owns, so it cannot be given` };
     }
     resource.path = resolve(resource.path);
   }
+  return { ok: true, resources };
+}
 
+function readEffects(params: Record<string, unknown>): { ok: true; allowedCategories: EffectCategory[] } | { ok: false; text: string } {
   const effects = Array.isArray(params.allowedEffects) ? params.allowedEffects : ["read"];
   const allowedCategories: EffectCategory[] = [];
   for (const effect of effects) {
@@ -184,7 +208,47 @@ function readAction(
     }
     if (!allowedCategories.includes(effect as EffectCategory)) allowedCategories.push(effect as EffectCategory);
   }
-  return { ok: true, action: { kind: "task", goal, resources, allowedCategories } };
+  return { ok: true, allowedCategories };
+}
+
+function readAction(
+  params: Record<string, unknown>,
+  owned: ReturnType<typeof ownedResources>,
+): { ok: true; action: IntentAction } | { ok: false; text: string } {
+  if (params.action === "remind") {
+    const message = typeof params.message === "string" ? params.message.trim() : "";
+    if (message === "") return { ok: false, text: "a reminder needs the message to say" };
+    return { ok: true, action: { kind: "remind", message } };
+  }
+  if (params.action !== "task") return { ok: false, text: "action is task or remind" };
+  const goal = typeof params.goal === "string" ? params.goal.trim() : "";
+  if (goal === "") return { ok: false, text: "a task needs a goal: what to do when it matches" };
+  const executor = typeof params.executor === "string" && params.executor.trim() !== "" ? params.executor.trim() : undefined;
+  const resources = readResources(params, executor === undefined ? owned : undefined);
+  if (!resources.ok) return resources;
+  const effects = readEffects(params);
+  if (!effects.ok) return effects;
+  return {
+    ok: true,
+    action: {
+      kind: "task",
+      goal,
+      resources: resources.resources,
+      allowedCategories: effects.allowedCategories,
+      ...(executor === undefined ? {} : { executor }),
+    },
+  };
+}
+
+function confirmedPeer(db: Database, peerNodeId: string): boolean {
+  const peer = getPeer(db, peerNodeId);
+  return peer !== undefined && peer.trustedAt !== null && peer.revokedAt === null;
+}
+
+function describePlaces(resources: readonly TaskResource[]): string {
+  return resources
+    .map((resource) => (resource.kind === "repository" ? `${resource.path} (repository)` : `${resource.path} (${resource.access})`))
+    .join(", ");
 }
 
 function hasSecret(db: Database, principalId: string, name: string): boolean {
@@ -270,8 +334,53 @@ function rememberSelfLogins(deps: AutomationToolDeps, raw: unknown): { ok: true 
   return written.ok ? { ok: true } : { ok: false, text: `githubSelfLogins not kept: ${written.message}` };
 }
 
+const FOLDERS_SCHEMA = {
+  type: "array",
+  maxItems: 8,
+  items: {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "access"],
+    properties: { path: { type: "string" }, access: { type: "string", enum: ["read", "write"] } },
+  },
+};
+
 export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[] {
   const serviceDeps = { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.newId };
+  const owner = deps.ownerPrincipalId ?? deps.principalId;
+  const fingerprint = deps.fingerprint;
+  const grantExpiry = (): Instant => new Date(Date.parse(deps.now()) + TASK_GRANT_LIFETIME_MS).toISOString() as Instant;
+
+  /** Hand a task automation to a paired node: the grant this node's owner writes for it, sent to it now. */
+  const handOver = (
+    action: Extract<IntentAction, { kind: "task" }> & { executor: string },
+  ): { ok: true; send: () => boolean } | { ok: false; text: string } => {
+    if (deps.principalId !== owner) return { ok: false, text: "only this node's owner can hand work to another node" };
+    if (fingerprint === undefined) return { ok: false, text: "this node cannot hand work to another node from here" };
+    if (!confirmedPeer(deps.db, action.executor)) {
+      return { ok: false, text: `${action.executor} is not a paired node; call list_peers to see the nodes this one is paired with` };
+    }
+    const built = taskGrant({
+      grantId: deps.newId("grt"),
+      ownerPrincipalId: owner,
+      senderNodeId: deps.nodeId,
+      receiverNodeId: action.executor,
+      resources: action.resources,
+      allowedCategories: action.allowedCategories,
+      expiresAt: grantExpiry(),
+    });
+    if (!built.ok) return { ok: false, text: `that cannot be handed over: ${built.message}` };
+    return {
+      ok: true,
+      send: () => {
+        const identity = { nodeId: deps.nodeId, ownerPrincipalId: owner, fingerprint };
+        const written = writeGrant({ db: deps.db, identity, now: deps.now, newId: deps.newId }, built.grant);
+        if (written.ok) deps.kickDelivery?.();
+        return written.ok;
+      },
+    };
+  };
+
   return [
     {
       name: "create_automation",
@@ -283,7 +392,9 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         "HTTP POST becomes a source the user names: topic webhook.<source>.<what happened>, e.g. webhook.deploys.build.failed. " +
         "action task runs Clark work " +
         "in the folders/repositories named, with only the effects the user gave it (allowedEffects); action remind " +
-        "says a message in this conversation and the inbox. Ask the user for anything missing instead of guessing.",
+        "says a message in this conversation and the inbox. A task can run on another of the user's paired nodes " +
+        "(executor, from list_peers): its folders are then that node's paths, and it runs there only within what that " +
+        "node's owner allows this one. Ask the user for anything missing instead of guessing.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -301,21 +412,16 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
           action: { type: "string", enum: ["task", "remind"] },
           goal: { type: "string", description: "For task: what to do each time it matches." },
           message: { type: "string", description: "For remind: what to say." },
-          folders: {
-            type: "array",
-            maxItems: 8,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["path", "access"],
-              properties: { path: { type: "string" }, access: { type: "string", enum: ["read", "write"] } },
-            },
-          },
+          folders: FOLDERS_SCHEMA,
           repositories: {
             type: "array",
             maxItems: 8,
             items: { type: "string" },
             description: "Repositories to change; each run works in its own worktree, never in the user's tree.",
+          },
+          executor: {
+            type: "string",
+            description: "For task: the node id of a paired node that runs it instead of this one. Omit to run it here.",
           },
           allowedEffects: {
             type: "array",
@@ -348,6 +454,9 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         }
         const action = readAction(params, ownedResources(deps.ownedRoots()));
         if (!action.ok) return { text: action.text };
+        const task = action.action.kind === "task" ? action.action : undefined;
+        const handed = task?.executor === undefined ? undefined : handOver({ ...task, executor: task.executor });
+        if (handed !== undefined && !handed.ok) return { text: handed.text };
         const remembered = rememberSelfLogins(deps, params.githubSelfLogins);
         if (!remembered.ok) return { text: remembered.text };
         const created = createAutomation(serviceDeps, {
@@ -360,8 +469,18 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
           allowSelfTriggered: params.allowSelfTriggered === true,
         } as Parameters<typeof createAutomation>[1]);
         if (!created.ok) return { text: `Not set up: ${created.message}` };
+        if (handed !== undefined && !handed.send()) {
+          // The peer was confirmed a moment ago; whatever changed since, an automation that cannot hand over is not kept.
+          updateAutomation(serviceDeps, { intentId: created.intent.intentId, principalId: deps.principalId, change: { state: "removed" } });
+          return { text: `Not set up: ${task?.executor ?? ""} can no longer be handed work.` };
+        }
         deps.kick?.();
-        const setUp = `Set up. It reports in this conversation.\n${describe(created.intent, [])}`;
+        const there =
+          task?.executor === undefined
+            ? ""
+            : `\nIt runs on ${task.executor}, which runs it only within what its owner allows this node; until they allow ` +
+              `${describePlaces(task.resources)} there, each run is refused on that node and said here.`;
+        const setUp = `Set up. It reports in this conversation.${there}\n${describe(created.intent, [])}`;
         if (created.intent.when.topic.startsWith("github.")) return { text: `${setUp}\n${githubSetup(deps, created.intent)}` };
         const webhookSource = webhookSourceOfTopic(created.intent.when.topic);
         return { text: webhookSource === undefined ? setUp : `${setUp}\n${webhookSetup(deps, webhookSource)}` };
@@ -438,6 +557,96 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
             updated.intent.state === "removed"
               ? `Removed ${intentId}; it will not run again.`
               : `Changed.\n${describe(updated.intent, [])}`,
+        };
+      },
+    },
+    {
+      name: "list_peers",
+      label: "Xem các node đã ghép đôi",
+      description:
+        "List the user's other nodes this one is paired with, by node id, and what each may run here. Use it before " +
+        "handing a task automation to one (create_automation executor) or letting one run work here (allow_peer_tasks).",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+      promptSnippet: "list_peers — the paired nodes, and what each may run here",
+      execute: async (): Promise<{ text: string }> => {
+        const at = deps.now();
+        const peers = listPeers(deps.db).filter((peer) => peer.trustedAt !== null && peer.revokedAt === null);
+        if (peers.length === 0) return { text: "This node is not paired with any other node." };
+        return {
+          text: peers
+            .map((peer) => {
+              const allowance = livePeerAllowance(deps.db, peer.peerNodeId, at);
+              const here =
+                allowance === undefined
+                  ? "may not run work here"
+                  : `may run work here in ${allowance.grant.resources
+                      .map((resource) => `${resource.resourceId} (${resource.kind === "repository" ? "repository" : resource.access})`)
+                      .join(", ")}, may ${(allowance.grant.allowedEffectCategories ?? []).join(", ") || "only read"}`;
+              return `- ${peer.peerNodeId} · fingerprint ${peer.fingerprint} · ${here}`;
+            })
+            .join("\n"),
+        };
+      },
+    },
+    {
+      name: "allow_peer_tasks",
+      label: "Cho node khác chạy việc ở đây",
+      description:
+        "Let one of the user's paired nodes run the tasks it hands over on this node: only in the folders and " +
+        "repositories named here, and only with the effects given. Saying it again replaces what was allowed; stop " +
+        "withdraws it. Work a node hands over reports in this conversation. Use it only when the user says so.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["peer"],
+        properties: {
+          peer: { type: "string", description: "The node id, from list_peers." },
+          folders: FOLDERS_SCHEMA,
+          repositories: { type: "array", maxItems: 8, items: { type: "string" } },
+          allowedEffects: {
+            type: "array",
+            items: { type: "string", enum: [...GIVABLE_EFFECTS] },
+            description: "Only what the user said that node's work may do here without asking.",
+          },
+          stop: { type: "boolean", description: "Withdraw what that node was allowed. Tasks it hands over are refused after." },
+        },
+      },
+      promptSnippet: "allow_peer_tasks — let a paired node run its tasks here, in named folders only; stop withdraws it",
+      execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
+        if (deps.principalId !== owner) return { text: "Only this node's owner can let another node run work here." };
+        const peer = typeof params.peer === "string" ? params.peer.trim() : "";
+        if (!confirmedPeer(deps.db, peer)) return { text: `${peer || "That"} is not a paired node; call list_peers to see them.` };
+        if (params.stop === true) {
+          return {
+            text: revokePeerAllowance(deps.db, peer, deps.now())
+              ? `${peer} may no longer run work here. What it already started goes on until it ends or is stopped.`
+              : `${peer} was not allowed to run work here.`,
+          };
+        }
+        const resources = readResources(params, ownedResources(deps.ownedRoots()));
+        if (!resources.ok) return { text: resources.text };
+        if (resources.resources.length === 0) {
+          return { text: "name the folders or repositories that node's work may use here; ask the user which" };
+        }
+        const effects = readEffects(params);
+        if (!effects.ok) return { text: effects.text };
+        // Written as a grant from that node to this one, so it intersects with that node's own grant field by field.
+        const built = taskGrant({
+          grantId: deps.newId("alw"),
+          ownerPrincipalId: owner,
+          senderNodeId: peer,
+          receiverNodeId: deps.nodeId,
+          resources: resources.resources,
+          allowedCategories: effects.allowedCategories,
+          expiresAt: grantExpiry(),
+        });
+        if (!built.ok) return { text: `Not allowed: ${built.message}` };
+        putPeerAllowance(deps.db, { peerNodeId: peer, ownerPrincipalId: owner, conversationId: deps.conversationId, grant: built.grant, at: deps.now() });
+        return {
+          text:
+            `${peer} may now run the tasks it hands over here, in ${describePlaces(resources.resources)}, and may ` +
+            `${effects.allowedCategories.join(", ") || "only read"} without asking. Anything outside that is refused, a ` +
+            "risky effect outside it waits for the user, and that work reports in this conversation.",
         };
       },
     },

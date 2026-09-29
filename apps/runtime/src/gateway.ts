@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { type Instant, nowInstant } from "@clarkcant/contracts";
 import { verifyFrameGrant } from "@clarkcant/core";
 
+import { peerDelegationHandlers } from "./delegation-handlers.ts";
 import { type PairingDeps } from "./peers.ts";
 import { type NodeServices } from "./services.ts";
 import { type GatewayRequest, type GatewayResponse, bearer, fail, tokenMatches } from "./routes/http.ts";
@@ -145,7 +146,13 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     newId: (prefix) => `${prefix}_${randomUUID().replaceAll("-", "").slice(0, 24)}`,
   };
 
-  const peerUplinkResponse = handlePeerUplinkRoutes({ pairing, runtime, request, onSignal: () => services.automation?.kick() });
+  const peerUplinkResponse = handlePeerUplinkRoutes({
+    pairing,
+    runtime,
+    request,
+    onSignal: () => services.automation?.kick(),
+    delegation: peerDelegationHandlers(services, () => at() as Instant),
+  });
   if (peerUplinkResponse !== undefined) return peerUplinkResponse;
 
   /*

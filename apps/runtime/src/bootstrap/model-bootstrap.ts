@@ -290,12 +290,15 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           db: deps.services().runtime.db,
           nodeId: deps.services().runtime.identity.nodeId,
           principalId: search.principalId,
+          ownerPrincipalId: deps.services().runtime.identity.ownerPrincipalId,
           conversationId: turn.conversationId,
           now: () => instantSchema.parse(new Date().toISOString()),
           newId: deps.services().conductor.newId,
           ownedRoots: () =>
             ownedResources([...deps.services().projects.roots(), deps.services().runtime.dataDir, process.cwd()]).roots,
           kick: () => deps.services().automation?.kick(),
+          kickDelivery: () => deps.services().peerDelivery?.kick(),
+          fingerprint: deps.services().runtime.identity.fingerprint,
         },
         // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
         packages: {

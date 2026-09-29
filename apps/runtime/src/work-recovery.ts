@@ -54,6 +54,8 @@ export interface WorkRecoveryDeps {
   report: (conversationId: string, text: string) => void;
   /** Submit a background request again under its own work id. Answers whether it was accepted. */
   rerun: (run: WorkRunRecord & { conversationId: string; requestText: string }) => boolean;
+  /** A task moved to `uncertain`, for whoever else waits on it: the peer that handed it over, when one did. */
+  onUncertain?: (taskId: string, message: string) => void;
   /** Seams for a test: whether a pid is still the recorded process, and how a group is signalled. */
   isSameProcess?: (pid: number, procStartTime: string) => boolean;
   signalGroup?: (pgid: number) => void;
@@ -192,6 +194,11 @@ function interruptTasks(deps: WorkRecoveryDeps, at: Instant): number {
       continue;
     }
     moved += 1;
+    try {
+      deps.onUncertain?.(row.task_id, "Node chạy việc này đã khởi động lại giữa chừng, nên kết quả chưa rõ; nó sẽ không tự chạy lại.");
+    } catch {
+      // The task's state here says it; a peer that is not told still sees no answer rather than a wrong one.
+    }
     reportSafely(deps,
       row.conversation_id,
       `Task “${row.goal.slice(0, 120)}” đang chạy thì node khởi động lại, nên kết quả của nó chưa rõ. Tui đã ghi task là “chưa rõ kết quả” và sẽ không tự chạy lại; hãy kiểm tra hoặc yêu cầu đối chiếu trước khi chạy tiếp.`,

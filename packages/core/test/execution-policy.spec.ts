@@ -202,11 +202,35 @@ describe("an automation carries the user's intent only for what it was given", (
     );
   });
 
-  it("treats the node's own work as nobody's instruction and a delegated task as the grant's", () => {
+  it("treats the node's own work as nobody's instruction", () => {
     for (const category of RISKY) {
       expect(outcome("autonomous", category, { intent: { kind: "system" } }), category).toBe("ask");
-      expect(outcome("autonomous", category, { intent: { kind: "delegated" } }), category).toBe("execute");
     }
+  });
+
+  it("carries out a delegated task's effects only where both sides allowed them", () => {
+    // A peer's grant is its owner's word, not this node's owner's: what neither side named waits for this node's owner.
+    for (const category of RISKY) {
+      expect(outcome("autonomous", category, { intent: { kind: "delegated", allowedCategories: [] } }), category).toBe("ask");
+      expect(outcome("autonomous", category, { intent: { kind: "delegated", allowedCategories: [category] } }), category).toBe(
+        "execute",
+      );
+    }
+  });
+
+  it("asks before even local work a peer's task was not allowed, whatever a general rule says", () => {
+    // The allowance is this owner's decision about that peer; "it stays on this machine" does not stand in for it.
+    const none: ExecutionIntent = { kind: "delegated", allowedCategories: ["read"] };
+    const rules: ExecutionRule[] = [{ effectCategory: "local-write", decision: "execute" }];
+    expect(outcome("autonomous", "local-write", { intent: none })).toBe("ask");
+    expect(outcome("guarded", "local-write", { intent: none, rules })).toBe("ask");
+    expect(outcome("autonomous", "local-write", { intent: { kind: "delegated", allowedCategories: ["local-write"] } })).toBe(
+      "execute",
+    );
+    // A refusal still wins over asking.
+    expect(outcome("autonomous", "local-write", { intent: none, rules: [{ effectCategory: "local-write", decision: "deny" }] })).toBe(
+      "deny",
+    );
   });
 
   it("reads a task's origin, and a task with none as a person's request", () => {
@@ -223,8 +247,14 @@ describe("an automation carries the user's intent only for what it was given", (
     ).toEqual({ kind: "persistent", allowedCategories: ["external-write"] });
     expect(executionIntentOf({ kind: "system", reason: "maintenance" })).toEqual({ kind: "system" });
     expect(
-      executionIntentOf({ kind: "delegated", principalId: "prin_owner", peerNodeId: "node_2", delegationId: "dlg_1" }),
-    ).toEqual({ kind: "delegated" });
+      executionIntentOf({
+        kind: "delegated",
+        principalId: "prin_owner",
+        peerNodeId: "node_2",
+        delegationId: "dlg_1",
+        allowedCategories: ["local-write"],
+      }),
+    ).toEqual({ kind: "delegated", allowedCategories: ["local-write"] });
   });
 
   it("fails closed on an intent kind this build does not know", () => {

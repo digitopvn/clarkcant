@@ -74,14 +74,15 @@ export interface EffectAction {
  * Whose intent an effect carries out, which is the difference Autonomous turns on.
  *
  * - `interactive`: a person asked for this in the conversation.
- * - `delegated`: a paired node handed the work over under a grant, which was checked where the grant is.
+ * - `delegated`: a paired node handed the work over under a grant. Its owner's intent, but only for the effects both
+ *   the grant and this node's owner allowed that peer; anything else waits for this node's owner.
  * - `persistent`: an automation a person set up earlier. It is their intent, but only for the effects they gave
  *   it; anything outside `allowedCategories` is treated as the agent's own initiative.
  * - `system`: the node's own work, which nobody asked for.
  */
 export type ExecutionIntent =
   | { kind: "interactive" }
-  | { kind: "delegated" }
+  | { kind: "delegated"; allowedCategories: readonly EffectCategory[] }
   | { kind: "persistent"; allowedCategories: readonly EffectCategory[] }
   | { kind: "system" };
 
@@ -89,8 +90,8 @@ export type ExecutionIntent =
 export function intentCovers(intent: ExecutionIntent, category: EffectCategory): boolean {
   switch (intent.kind) {
     case "interactive":
-    case "delegated":
       return true;
+    case "delegated":
     case "persistent":
       return intent.allowedCategories.includes(category);
     case "system":
@@ -113,7 +114,7 @@ export function executionIntentOf(origin: IntentOrigin | undefined): ExecutionIn
     case "interactive":
       return { kind: "interactive" };
     case "delegated":
-      return { kind: "delegated" };
+      return { kind: "delegated", allowedCategories: origin.allowedCategories };
     case "persistent":
       return { kind: "persistent", allowedCategories: origin.allowedCategories };
     case "system":
@@ -240,6 +241,20 @@ export function decideExecution(question: ExecutionQuestion): PolicyDecision {
       kind: "deny",
       reason: `a rule refuses ${action.category} effects on this machine`,
     };
+  }
+
+  /*
+   * Work another node handed over is bounded by what this node's owner allowed that peer, in every mode.
+   *
+   * Nobody here asked for it, so "it stays on this machine" is not enough: the allowance is this owner's decision
+   * about that peer, and an effect outside it is theirs to make, even one a general rule would let through.
+   */
+  if (question.intent.kind === "delegated" && !intentCovers(question.intent, action.category)) {
+    return askFor(
+      action,
+      `another node handed this over and this node's owner did not allow it ${action.category} effects`,
+      "work a peer handed over runs only within what this node's owner allowed that peer",
+    );
   }
 
   switch (question.policy.mode) {

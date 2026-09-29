@@ -109,6 +109,11 @@ export const intentActionSchema = z.discriminatedUnion("kind", [
       resources: z.array(taskResourceSchema).min(1).max(8),
       /** The effects this automation was given. A risky one outside this list is asked about, in every mode. */
       allowedCategories: z.array(effectCategorySchema).max(8),
+      /**
+       * A paired node that runs the task instead of this one, under a grant this node's owner wrote for it. The folders
+       * are that node's, and it runs the task only within what its own owner allows this node.
+       */
+      executor: z.string().min(1).max(128).optional(),
     })
     .strict(),
   z.object({ kind: z.literal("remind"), message: z.string().min(1).max(2000) }).strict(),
