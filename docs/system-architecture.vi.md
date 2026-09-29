@@ -502,7 +502,7 @@ stateDiagram-v2
   reconciling --> cancelled
 ```
 
-Sơ đồ mô tả main paths; implementation phải có reducer/transition table đầy đủ: mọi nonterminal nhận cancel, resolving failures không treo vô hạn, terminal chỉ tạo run mới rõ lineage. `waiting_capability` giữ continuation, không chiếm worker liên tục hoặc tự lặp install prompts.
+Sơ đồ mô tả main paths; implementation phải có reducer/transition table đầy đủ: mọi nonterminal nhận cancel, resolving failures không treo vô hạn, terminal chỉ tạo run mới rõ lineage. `waiting_capability` giữ continuation, không chiếm worker liên tục hoặc tự lặp install prompts. Khi capability mà task chờ trở nên dùng được — thường nhất là lúc project-work pack tải xong sau khi node khởi động — node đưa mỗi task do người dùng yêu cầu qua resolution và dispatch lại đúng một lần, và báo trước trong hội thoại của task (`packages/core/src/capability-waiters.ts`, được gọi từ `apps/runtime/src/bootstrap/runtime-bootstrap.ts` sau khi pack tải xong). Task của automation thì do automation service tiếp tục ở tick của nó, còn task của node đã ghép cặp thì không bao giờ phải chờ.
 
 Worker idle, LLM kết thúc lượt hoặc socket đóng không là success. Outcome có evidence: exit status, file/diff version, API receipt/read-after-write, observed browser state; nếu không có số tests thì không bịa số tests.
 

@@ -132,6 +132,18 @@ export function listActiveTasks(db: Database, conversationId: string): TaskRecor
   return rows.map((row) => getTask(db, row.task_id)).filter((task): task is TaskRecord => task !== undefined);
 }
 
+/** The tasks this node homes that are parked on a capability, oldest first. */
+export function listTasksWaitingOnCapability(db: Database, homeNodeId: string): TaskRecord[] {
+  const rows = allRows<{ task_id: string }>(
+    db,
+    `SELECT task_id FROM tasks
+      WHERE home_node_id = ? AND state = 'waiting_capability'
+      ORDER BY created_at, task_id`,
+    homeNodeId,
+  );
+  return rows.map((row) => getTask(db, row.task_id)).filter((task): task is TaskRecord => task !== undefined);
+}
+
 /**
  * Record a run: something now holds this revision of the task.
  *
