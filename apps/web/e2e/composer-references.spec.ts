@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test, type Page, type Request } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page, type Request } from "@playwright/test";
 
 /**
  * Naming a skill with `/` and a project or file with `@`, in a real browser.
@@ -39,6 +39,10 @@ function token(): string {
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
   await expect(page.locator("[data-composer]")).toBeVisible();
+}
+
+function authorized(): { authorization: string } {
+  return { authorization: `Bearer ${token()}` };
 }
 
 function composer(page: Page) {
@@ -208,4 +212,128 @@ test("a file deleted after it was chosen refuses the send by name and keeps the 
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
   await expect(page.locator('.cc-row[data-role="user"]').last().locator('[data-reference-block="demo-app/docs/guide.md"]')).toBeVisible();
+});
+
+test("an input method's Enter finishes its word instead of choosing a row or sending, and Shift+Enter starts a line", async ({ page }) => {
+  await openApp(page);
+  let sends = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && /\/messages(\/stream)?$/u.test(request.url())) sends += 1;
+  });
+  // What an input method does while a word is being put together: the Enter that finishes the word arrives inside
+  // the composition, and belongs to it.
+  const composingEnter = () =>
+    composer(page).evaluate((field) => {
+      field.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+      field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true, isComposing: true }));
+      field.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "" }));
+    });
+
+  await composer(page).click();
+  await page.keyboard.type("@demo");
+  await expect(option(page, "demo-app")).toBeVisible();
+  await composingEnter();
+  await expect(composer(page)).toHaveValue("@demo");
+  await expect(option(page, "demo-app")).toBeVisible();
+  await expect(page.locator("[data-reference-chip]")).toHaveCount(0);
+
+  // The word is finished: Enter chooses the row.
+  await page.keyboard.press("Enter");
+  await expect(composer(page)).toHaveValue("@demo-app ");
+
+  // With the picker closed, a composing Enter still does not send.
+  await page.keyboard.type("dòng một");
+  await composingEnter();
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("dòng hai");
+  await expect(composer(page)).toHaveValue("@demo-app dòng một\ndòng hai");
+
+  const sent = nextMessage(page);
+  await page.keyboard.press("Enter");
+  const body = (await sent).postDataJSON() as { text: string; references?: { items: { kind: string }[] } };
+  expect(body.text).toBe("@demo-app dòng một\ndòng hai");
+  expect(body.references?.items).toEqual([expect.objectContaining({ kind: "project", label: "demo-app" })]);
+  expect(sends).toBe(1);
+});
+
+test("background work is pointed at with an at sign and briefed by what the node holds of it", async ({ page, request }) => {
+  const created = await request.post(`${GATEWAY}/conversations`, { headers: authorized(), data: { title: "Việc nền để nhắc tới" } });
+  const { conversationId } = (await created.json()) as { conversationId: string };
+  const started = await request.post(`${GATEWAY}/background-sessions`, {
+    headers: authorized(),
+    data: { conversationId, text: "tóm tắt nhật ký tuần" },
+  });
+  expect(started.status()).toBe(202);
+  const { sessionId } = (await started.json()) as { sessionId: string };
+
+  await openApp(page);
+  await composer(page).click();
+  await page.keyboard.type("kết quả của @tóm");
+  const row = option(page, "tóm tắt nhật ký tuần");
+  await expect(row).toHaveAttribute("data-reference-kind", "background-work");
+  await expect(row).toContainText("việc nền");
+  await page.screenshot({ path: join(EVIDENCE, "composer-references-05-work.png") });
+
+  await page.keyboard.press("Enter");
+  await expect(composer(page)).toHaveValue("kết quả của @tóm tắt nhật ký tuần ");
+  const sent = nextMessage(page);
+  await page.keyboard.press("Enter");
+  const body = (await sent).postDataJSON() as { references?: { items: unknown[] } };
+  expect(body.references?.items).toEqual([{ kind: "background-work", workId: sessionId, label: "tóm tắt nhật ký tuần" }]);
+
+  await expect(page.locator('.cc-row[data-role="user"]').last().locator('[data-reference-block="tóm tắt nhật ký tuần"]')).toBeVisible();
+  const reply = page.locator('.cc-row[data-role="assistant"]').last();
+  await expect(reply).toContainText(`Việc nền "tóm tắt nhật ký tuần"`);
+  await expect(reply).toContainText(`workId ${sessionId}`);
+});
+
+/** The notes package, whose service the node runs in a container; installed once, like the service journey does. */
+async function installNotes(request: APIRequestContext): Promise<void> {
+  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers: authorized() })).json()) as { packages: { packageId: string }[] };
+  if (listed.packages.some((entry) => entry.packageId === "com.example.notes")) return;
+  const installed = await request.post(`${GATEWAY}/packages/install`, {
+    headers: authorized(),
+    data: { packageId: "com.example.notes", version: "1.0.0", localDigest: "sha256:notes-service-digest" },
+  });
+  expect(installed.ok(), `install answered ${String(installed.status())}: ${await installed.text()}`).toBe(true);
+}
+
+test("a package's service is pointed at by its name and offered with its state only", async ({ page, request }) => {
+  await installNotes(request);
+  // The host picks the service up once it has looked for a container engine, after the install answered.
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(`${GATEWAY}/composer/suggestions`, {
+          headers: authorized(),
+          params: { trigger: "@", q: "com.example.notes" },
+        });
+        const body = (await response.json()) as { suggestions?: { kind: string }[] };
+        return body.suggestions?.some((row) => row.kind === "mcp-server") ?? false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  await openApp(page);
+  await composer(page).click();
+  await page.keyboard.type("dùng @com.example.notes.se");
+  const row = option(page, "com.example.notes.service");
+  await expect(row).toHaveAttribute("data-reference-kind", "mcp-server");
+  // Its state, in words; whatever it is, never why it is in it or what it was started with.
+  await expect(row).toContainText(/dịch vụ (đang chạy|đang lỗi|chưa chạy)/u);
+
+  await page.keyboard.press("Enter");
+  await expect(composer(page)).toHaveValue("dùng @com.example.notes.service ");
+  const sent = nextMessage(page);
+  await page.keyboard.press("Enter");
+  const body = (await sent).postDataJSON() as { references?: { items: { kind: string; serviceKey?: string; label?: string }[] } };
+  const [reference] = body.references?.items ?? [];
+  expect(reference).toMatchObject({ kind: "mcp-server", label: "com.example.notes.service" });
+  // Referenced by the key the host runs it under, which names the package generation; shown by the id a person reads.
+  expect(reference?.serviceKey).toMatch(/#com\.example\.notes\.service$/u);
+
+  await expect(page.locator('.cc-row[data-role="user"]').last().locator('[data-reference-block="com.example.notes.service"]')).toBeVisible();
+  const reply = page.locator('.cc-row[data-role="assistant"]').last();
+  await expect(reply).toContainText('Dịch vụ MCP "com.example.notes.service"');
+  await expect(reply).toContainText("Tham chiếu là con trỏ, không phải quyền");
 });

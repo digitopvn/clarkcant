@@ -98,9 +98,6 @@ export function rankCandidates<T extends { match: string; recency?: number; grou
   return tiered.filter((entry) => kept.has(entry)).map((entry) => entry.candidate);
 }
 
-/** Rows of the at-sign picker, grouped in this order. */
-const GROUP = { project: 0, service: 1, conversation: 2, work: 3 } as const;
-
 /** What a conversation is called in the picker: its title, or the start of what the person first said in it. */
 function conversationLabel(db: ReferenceServices["runtime"]["db"], conversationId: string, title: string | undefined): string {
   const named = clip(title ?? "", LABEL_MAX);
@@ -140,13 +137,14 @@ const WORK_STATE: Record<string, string> = {
 export async function composerSuggestions(
   services: ReferenceServices,
   input: { trigger: ComposerTrigger; query: string; conversationId?: string | undefined },
+  sources: readonly MentionSource[] = MENTION_SOURCES,
 ): Promise<ComposerSuggestionsResponse> {
   const suggestions =
     input.trigger === "/"
       ? await skillSuggestions(services, input.query)
       : input.query.includes("/")
         ? pathSuggestions(services, input.query)
-        : mentionSuggestions(services, input.query, input.conversationId);
+        : mentionSuggestions(services, input.query, { currentConversationId: input.conversationId }, sources);
   return { trigger: input.trigger, query: input.query, suggestions };
 }
 
@@ -165,86 +163,132 @@ async function skillSuggestions(services: ReferenceServices, query: string): Pro
 }
 
 /**
- * Projects, services, conversations and background work, ranked together.
+ * One kind of thing the at-sign picker offers.
  *
- * Only the rows that will be shown are checked on disk: verifying every indexed project on each keystroke would make
- * typing slower the more a person works, and a row that is shown and cannot be chosen says why.
+ * The picker asks every source in turn and ranks their rows together, so another kind — a paired Clark's sessions,
+ * once they can be listed (#255) — is one more source, not another branch here. A source lists only what this node
+ * already holds; whether a chosen row still stands is decided again when the message is sent.
  */
+export interface MentionSource {
+  candidates(services: ReferenceServices, context: MentionContext): MentionCandidate[];
+  /**
+   * Why a row about to be shown cannot be chosen, if it cannot.
+   *
+   * Asked only of the rows that will be shown: checking every project on disk on each keystroke would make typing
+   * slower the more a person works, and a row that is shown and cannot be chosen says why.
+   */
+  unavailable?(services: ReferenceServices, suggestion: ComposerSuggestion): string | undefined;
+}
+
+export interface MentionContext {
+  /** The conversation being written in, which is not offered as a reference to itself. */
+  currentConversationId?: string | undefined;
+}
+
+export type MentionCandidate = Omit<Candidate, "group">;
+
+const projectSource: MentionSource = {
+  candidates(services) {
+    return listProjects(services.runtime.db, services.projects.nodeId, 200).flatMap((project, index) =>
+      project.name.length > LABEL_MAX
+        ? []
+        : [
+            {
+              match: project.name,
+              ...(project.lastUsedAt === undefined ? {} : { recency: index }),
+              suggestion: row({ kind: "project", projectId: project.projectId, label: project.name }, { note: PROJECT_KIND[project.kind] }),
+            },
+          ],
+    );
+  },
+  unavailable(services, suggestion) {
+    if (suggestion.ref.kind !== "project") return undefined;
+    const verified = verifyProject(services.projects, suggestion.ref.projectId);
+    if (verified.ok || verified.code === "LEASED") return undefined;
+    return verified.code === "OUTSIDE_APPROVED_ROOTS"
+      ? "Không còn nằm trong thư mục được phép."
+      : verified.code === "PATH_MISSING"
+        ? "Thư mục không còn trên đĩa."
+        : "Không còn trong danh sách dự án.";
+  },
+};
+
+/**
+ * A service is offered with its state only: nothing it was configured with, and nothing it would answer.
+ *
+ * It is named by the id its package gave it; the key it is referenced by also names the package generation running
+ * it, which means nothing to a person and changes with every update.
+ */
+const serviceSource: MentionSource = {
+  candidates(services) {
+    return (services.serviceHost?.status() ?? []).flatMap((service) => {
+      const label = service.key.slice(service.key.indexOf("#") + 1);
+      return label === "" || label.length > LABEL_MAX
+        ? []
+        : [
+            {
+              match: label,
+              suggestion: row(
+                { kind: "mcp-server", serviceKey: service.key, label },
+                { note: service.state === "running" ? "dịch vụ đang chạy" : service.state === "failed" ? "dịch vụ đang lỗi" : "dịch vụ chưa chạy" },
+              ),
+            },
+          ];
+    });
+  },
+};
+
+const conversationSource: MentionSource = {
+  candidates(services, context) {
+    const { db } = services.runtime;
+    return listConversations(db, 50).flatMap((conversationId, index) => {
+      if (conversationId === context.currentConversationId) return [];
+      const label = conversationLabel(db, conversationId, getConversation(db, conversationId)?.title);
+      // A conversation with neither a title nor a word from the person has nothing to be found by, and "untitled"
+      // eight times is noise.
+      if (label === "") return [];
+      return [{ match: label, recency: index, suggestion: row({ kind: "conversation", conversationId, label }, { note: "hội thoại" }) }];
+    });
+  },
+};
+
+const workSource: MentionSource = {
+  candidates(services) {
+    const work = [...(services.work ?? (() => nodeWork().list({ includeFinished: true })))()].sort((left, right) =>
+      right.startedAt.localeCompare(left.startedAt),
+    );
+    return work.flatMap((entry, index) => {
+      const label = clip(entry.title, LABEL_MAX);
+      if (label === "") return [];
+      return [
+        {
+          match: label,
+          recency: index,
+          suggestion: row({ kind: "background-work", workId: entry.workId, label }, { note: `việc nền, ${WORK_STATE[entry.state] ?? entry.state}` }),
+        },
+      ];
+    });
+  },
+};
+
+/** The at-sign picker's sources, in the order their rows are grouped. */
+export const MENTION_SOURCES: readonly MentionSource[] = [projectSource, serviceSource, conversationSource, workSource];
+
+/** Every source's rows, ranked together, with the ones that cannot be chosen saying why. */
 function mentionSuggestions(
   services: ReferenceServices,
   query: string,
-  currentConversationId: string | undefined,
+  context: MentionContext,
+  sources: readonly MentionSource[],
 ): ComposerSuggestion[] {
-  const { db } = services.runtime;
-  const candidates: Candidate[] = [];
-
-  listProjects(db, services.projects.nodeId, 200).forEach((project, index) => {
-    if (project.name.length > LABEL_MAX) return;
-    candidates.push({
-      match: project.name,
-      group: GROUP.project,
-      ...(project.lastUsedAt === undefined ? {} : { recency: index }),
-      suggestion: row({ kind: "project", projectId: project.projectId, label: project.name }, { note: PROJECT_KIND[project.kind] }),
-    });
-  });
-
-  for (const service of services.serviceHost?.status() ?? []) {
-    if (service.key.length > LABEL_MAX) continue;
-    candidates.push({
-      match: service.key,
-      group: GROUP.service,
-      suggestion: row(
-        { kind: "mcp-server", serviceKey: service.key, label: service.key },
-        { note: service.state === "running" ? "dịch vụ đang chạy" : service.state === "failed" ? "dịch vụ đang lỗi" : "dịch vụ chưa chạy" },
-      ),
-    });
-  }
-
-  listConversations(db, 50).forEach((conversationId, index) => {
-    if (conversationId === currentConversationId) return;
-    const label = conversationLabel(db, conversationId, getConversation(db, conversationId)?.title);
-    // A conversation with neither a title nor a word from the person has nothing to be found by, and "untitled"
-    // eight times is noise.
-    if (label === "") return;
-    candidates.push({
-      match: label,
-      group: GROUP.conversation,
-      recency: index,
-      suggestion: row({ kind: "conversation", conversationId, label }, { note: "hội thoại" }),
-    });
-  });
-
-  const work = [...(services.work ?? (() => nodeWork().list({ includeFinished: true })))()].sort((left, right) =>
-    right.startedAt.localeCompare(left.startedAt),
+  const candidates: Candidate[] = sources.flatMap((source, group) =>
+    source.candidates(services, context).map((candidate) => ({ ...candidate, group })),
   );
-  work.forEach((entry, index) => {
-    const label = clip(entry.title, LABEL_MAX);
-    if (label === "") return;
-    candidates.push({
-      match: label,
-      group: GROUP.work,
-      recency: index,
-      suggestion: row({ kind: "background-work", workId: entry.workId, label }, { note: `việc nền, ${WORK_STATE[entry.state] ?? entry.state}` }),
-    });
-  });
-
   return rankCandidates(candidates, query).map((candidate) => {
-    const ref = candidate.suggestion.ref;
-    if (ref.kind !== "project") return candidate.suggestion;
-    const verified = verifyProject(services.projects, ref.projectId);
-    if (verified.ok || verified.code === "LEASED") return candidate.suggestion;
-    return {
-      ...candidate.suggestion,
-      disabledReason:
-        verified.code === "OUTSIDE_APPROVED_ROOTS"
-          ? "Không còn nằm trong thư mục được phép."
-          : verified.code === "PATH_MISSING"
-            ? "Thư mục không còn trên đĩa."
-            : "Không còn trong danh sách dự án.",
-    };
+    const reason = sources[candidate.group ?? 0]?.unavailable?.(services, candidate.suggestion);
+    return reason === undefined ? candidate.suggestion : { ...candidate.suggestion, disabledReason: reason };
   });
 }
-
 /**
  * `@<project>/<path>`: one directory of one project, listed once.
  *

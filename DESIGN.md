@@ -409,7 +409,9 @@ Required:
   keeps the draft; pointer and touch choose too). A choice writes its token into the draft and shows as a chip beside
   the file chips; deleting the token or the chip drops the reference, so a message never carries one the person cannot
   see. A reference is a pointer, not a permission: the node checks it again at send time and refuses the send by name,
-  keeping the draft, when it has gone stale. This is an enhancement, not the primary navigation.
+  keeping the draft, when it has gone stale. While an input method is composing a word, its Enter finishes the word:
+  it neither chooses a row nor sends. Shift+Enter starts a new line with the list open or closed. This is an
+  enhancement, not the primary navigation.
 
 While a turn is running:
 

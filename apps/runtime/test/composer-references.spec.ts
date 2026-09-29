@@ -10,7 +10,7 @@ import { DEFAULT_FAKE_SKILLS, FakePiAdapter, fakeSkillRevision } from "@clarkcan
 import { dismissNotification, messagesSince, recordNotification, upsertProject } from "@clarkcant/storage";
 
 import { referenceBrief, referencesForLastUserMessage, resolveComposerReferences } from "../src/composer-references.ts";
-import { rankCandidates } from "../src/composer-suggestions.ts";
+import { MENTION_SOURCES, type MentionSource, composerSuggestions, rankCandidates } from "../src/composer-suggestions.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { createModelTurn } from "../src/model-turn.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -360,6 +360,52 @@ describe("the picker", () => {
     expect(body.suggestions.find((row) => row.label === "clarkcant")?.disabledReason).toBe(
       "Không còn nằm trong thư mục được phép.",
     );
+  });
+
+  it("offers a service with its state and nothing else, and background work newest first", async () => {
+    const withBoth = {
+      ...services,
+      serviceHost: {
+        status: () => [
+          { key: "gen_7#com.example.notes.service", packageId: "com.example.notes", state: "failed" as const, reason: "C:\\Users\\me\\.secret token=abc", refs: [] },
+        ],
+      } as unknown as NonNullable<typeof services.serviceHost>,
+      work: () => [
+        { workId: "work_old", kind: "background" as const, title: "Dọn log", state: "done" as const, startedAt: "2026-09-29T05:00:00.000Z" },
+        { workId: "work_new", kind: "background" as const, title: "Đọc báo cáo", state: "running" as const, startedAt: AT },
+      ],
+    };
+    const { suggestions } = await composerSuggestions(withBoth, { trigger: "@", query: "" });
+    const service = suggestions.find((row) => row.kind === "mcp-server");
+        // Named by the id its package gave it, referenced by the key the host runs it under.
+    expect(service).toMatchObject({
+      label: "com.example.notes.service",
+      note: "dịch vụ đang lỗi",
+      ref: { kind: "mcp-server", serviceKey: "gen_7#com.example.notes.service", label: "com.example.notes.service" },
+    });
+    // Why it failed is diagnostics, not something to put in a draft.
+    expect(JSON.stringify(service)).not.toContain("secret");
+    expect(suggestions.filter((row) => row.kind === "background-work").map((row) => [row.label, row.note])).toEqual([
+      ["Đọc báo cáo", "việc nền, đang chạy"],
+      ["Dọn log", "việc nền, đã xong"],
+    ]);
+  });
+
+  it("ranks the rows of a source added to the list with the others, after them, and lets it say why a row cannot be chosen", async () => {
+    const elsewhere: MentionSource = {
+      candidates: () => [
+        { match: "clark ở văn phòng", suggestion: { key: "k1", trigger: "@", kind: "conversation", label: "clark ở văn phòng", ref: { kind: "conversation", conversationId: "remote_1", label: "clark ở văn phòng" } } },
+      ],
+      unavailable: () => "Máy này đang ngoại tuyến.",
+    };
+    const all = await composerSuggestions(services, { trigger: "@", query: "clark" }, [...MENTION_SOURCES, elsewhere]);
+    expect(all.suggestions.map((row) => [row.label, row.disabledReason])).toEqual([
+      ["clarkcant", undefined],
+      ["clark ở văn phòng", "Máy này đang ngoại tuyến."],
+    ]);
+    // Without it, the list is what the node's own sources give.
+    const own = await composerSuggestions(services, { trigger: "@", query: "clark" });
+    expect(own.suggestions.map((row) => row.label)).toEqual(["clarkcant"]);
   });
 
   it("refuses a trigger it does not know", async () => {
