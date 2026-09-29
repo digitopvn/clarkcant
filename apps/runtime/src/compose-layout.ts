@@ -12,11 +12,16 @@ import {
   MAX_LAYOUT_NODES,
   MAX_GRAPH_FEEDS,
   MAX_GRAPH_RULES,
+  SECTION_TEXT_LIMIT,
+  SNAPSHOT_TEXT_LIMIT,
   checkCompositionGraph,
   checkLayout,
+  clipWithMarker,
   describeLayout,
+  readStatusCard,
+  statusCardText,
 } from "@clarkcant/contracts";
-import { primitivePropsProblems } from "@clarkcant/data-canvas";
+import { STATUS_CARD_KIND, primitivePropsProblems } from "@clarkcant/data-canvas";
 import { type CatalogRegistry, definitionDigest, validateProps } from "@clarkcant/widget-host";
 
 import {
@@ -74,6 +79,8 @@ const SLOT_BY_FAMILY: Readonly<Record<string, CompositionSlot>> = {
   // A search box narrows the tables of the surface it sits in, on the page; a list shows the items the model wrote.
   search: "search",
   list: "list",
+  // A status, progress or details card shows what the model wrote in its props; it reads nothing from the node.
+  status: "status",
 };
 
 /** The widgets a layout leaf may name, for the model's instructions and for a refusal that lists them. */
@@ -325,7 +332,7 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
       props,
       dataRefs: props.datasetRef === undefined ? [] : [String(props.datasetRef)],
       ...(rows === undefined ? {} : { rows }),
-      textAlternative: describeSection(entry.definition, slot, rows),
+      textAlternative: sectionText(entry.definition, slot, props, rows),
     });
     return { kind: "widget", sectionId, ...(node.label === undefined ? {} : { label: node.label }) };
   };
@@ -348,7 +355,8 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
     ok: true,
     sections,
     layout,
-    textAlternative: describeLayout(layout, (sectionId) => textOf.get(sectionId) ?? ""),
+    // Twelve sections of up to 2000 characters each can say more than a snapshot keeps; past that the text says so.
+    textAlternative: clipWithMarker(describeLayout(layout, (sectionId) => textOf.get(sectionId) ?? ""), SNAPSHOT_TEXT_LIMIT),
     ...(graph.graph === undefined ? {} : { graph: graph.graph }),
   };
 }
@@ -379,6 +387,18 @@ function graphOf(
     }
   }
   return problems.length > 0 ? { ok: false, problems } : { ok: true, graph: graph as CompositionGraph };
+}
+
+/** A leaf's text alternative: a status card says what its props say, any other region what its rows hold. */
+function sectionText(
+  definition: Parameters<typeof describeSection>[0],
+  slot: CompositionSlot,
+  props: Record<string, unknown>,
+  rows: Record<string, unknown>[] | undefined,
+): string {
+  const kind = STATUS_CARD_KIND[definition.id];
+  const card = kind === undefined ? undefined : readStatusCard(kind, props);
+  return card === undefined ? describeSection(definition, slot, rows) : statusCardText(card, SECTION_TEXT_LIMIT);
 }
 
 function slotFor(definitionId: string, family: string, wired: boolean, where: string, problems: string[]): CompositionSlot | undefined {

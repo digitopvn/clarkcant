@@ -283,6 +283,67 @@ label.cc-list-main { cursor: pointer; }
 .cc-list-meta { font-size: var(--cc-text-label); color: var(--cc-text-muted); font-variant-numeric: tabular-nums; }
 .cc-list-item .cc-action { margin-inline-start: auto; }
 
+/* Status, progress and details cards. Tone is said in words and a symbol; the colour only repeats it. */
+.cc-badge[data-tone="info"] { color: var(--cc-accent); border-color: color-mix(in oklab, var(--cc-accent) 45%, transparent); }
+.cc-status-card { display: flex; align-items: flex-start; gap: var(--cc-space-sm); min-width: 0; }
+.cc-status-card-mark {
+  flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--cc-radius-pill);
+  font-weight: 700; color: var(--cc-text-muted); border: 1px solid var(--cc-border); background: var(--cc-elevated);
+}
+.cc-status-card[data-status-tone="info"] .cc-status-card-mark { color: var(--cc-accent); border-color: color-mix(in oklab, var(--cc-accent) 45%, transparent); }
+.cc-status-card[data-status-tone="success"] .cc-status-card-mark { color: var(--cc-success); border-color: color-mix(in oklab, var(--cc-success) 45%, transparent); }
+.cc-status-card[data-status-tone="warning"] .cc-status-card-mark { color: var(--cc-warning); border-color: color-mix(in oklab, var(--cc-warning) 45%, transparent); }
+.cc-status-card[data-status-tone="danger"] .cc-status-card-mark { color: var(--cc-danger); border-color: color-mix(in oklab, var(--cc-danger) 45%, transparent); }
+.cc-status-card-text { display: flex; flex-direction: column; gap: var(--cc-space-xs); min-width: 0; }
+.cc-status-card-label { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-xs) var(--cc-space-sm); }
+.cc-status-card-value { font-weight: 600; color: var(--cc-text); overflow-wrap: anywhere; }
+.cc-status-card-detail { margin: 0; font-size: var(--cc-text-body-sm); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-status-card-asof { margin: 0; }
+.cc-progress-subject { margin: 0; font-size: var(--cc-text-body-sm); color: var(--cc-text); overflow-wrap: anywhere; }
+.cc-progress-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-xs) var(--cc-space-sm); }
+.cc-progress-track {
+  flex: 1 1 160px; height: 8px; border-radius: var(--cc-radius-pill); overflow: hidden;
+  background: color-mix(in oklab, var(--cc-text-muted) 22%, transparent);
+}
+.cc-progress-fill { display: block; height: 100%; background: var(--cc-accent); border-radius: inherit; }
+.cc-progress-figure { font-size: var(--cc-text-label); color: var(--cc-text); font-variant-numeric: tabular-nums; }
+/* Named apart from the composer's .cc-steps plan list, whose later layer would otherwise restyle these. */
+.cc-progress-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.cc-progress-step {
+  display: flex; align-items: flex-start; gap: var(--cc-space-sm); padding: var(--cc-space-xs) 0;
+  border-bottom: 1px solid var(--cc-border);
+}
+.cc-progress-step:last-child { border-bottom: none; }
+.cc-progress-step-mark {
+  flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--cc-radius-pill);
+  font-size: var(--cc-text-label); font-weight: 700; color: var(--cc-text-muted); border: 1px solid var(--cc-border);
+}
+.cc-progress-step[data-step-status="done"] .cc-progress-step-mark { color: var(--cc-success); border-color: color-mix(in oklab, var(--cc-success) 45%, transparent); }
+.cc-progress-step[data-step-status="current"] .cc-progress-step-mark { color: var(--cc-accent); border-color: var(--cc-accent); }
+.cc-progress-step[data-step-status="failed"] .cc-progress-step-mark { color: var(--cc-danger); border-color: color-mix(in oklab, var(--cc-danger) 45%, transparent); }
+.cc-progress-step-text { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+.cc-progress-step-label { font-size: var(--cc-text-body-sm); color: var(--cc-text); overflow-wrap: anywhere; }
+.cc-progress-step[data-step-status="current"] .cc-progress-step-label { font-weight: 600; }
+.cc-progress-step[data-step-status="skipped"] .cc-progress-step-label { color: var(--cc-text-muted); }
+.cc-progress-step-detail { font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-progress-step-status { flex: none; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-progress-step[data-step-status="failed"] .cc-progress-step-status { color: var(--cc-danger); }
+/* Its own grid rather than .cc-fields, whose columns the later panels layer sets and would win over these.
+   Sized by the card's own width, not the window's: a details card in one column of a layout grid is narrow on a wide
+   screen. Labels take at most 40% so a long one wraps instead of pushing the values into a sliver, and a card too
+   narrow for two readable columns puts each value under its label. */
+.cc-details-box { container-type: inline-size; min-width: 0; }
+.cc-details { display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr); gap: var(--cc-space-xs) var(--cc-space-md); margin: 0; }
+.cc-details dt { color: var(--cc-text-muted); min-width: 0; }
+.cc-details dd { margin: 0; min-width: 0; }
+/* Each pair is a row of the parent grid, so a label and its value line up whatever their lengths. */
+.cc-details-row { display: contents; }
+.cc-details dt, .cc-details dd { overflow-wrap: anywhere; font-size: var(--cc-text-body-sm); }
+@container (max-width: 360px) {
+  .cc-details { grid-template-columns: minmax(0, 1fr); row-gap: 0; }
+  .cc-details dd { margin-bottom: var(--cc-space-sm); }
+}
+
 /* Pin shelf */
 .cc-pins {
   max-width: var(--cc-conversation-max-width); margin: 0 auto; width: 100%;

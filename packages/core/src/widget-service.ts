@@ -380,20 +380,33 @@ export function sweepExpiredLiveOwners(deps: WidgetDeps): number {
  * Snapshots
  * ------------------------------------------------------------------ */
 
+/**
+ * Keep what a message showed.
+ *
+ * The snapshot is checked against the schema it is read back with before it is stored. A row the reader refuses (a
+ * text alternative over its limit, say) would make every later read of the conversation throw, so it is refused here,
+ * where the caller can still turn it into a reason, rather than written and discovered when the conversation will not
+ * open.
+ */
 export function captureSnapshot(
   deps: WidgetDeps,
   input: { messageId: string; instance: WidgetInstance; textAlternative: string; presentationRef: string },
 ): WidgetSnapshot {
-  const snapshot: WidgetSnapshot = {
-    snapshotId: deps.newId("wsnap") as WidgetSnapshot["snapshotId"],
+  const checked = widgetSnapshotSchema.safeParse({
+    snapshotId: deps.newId("wsnap"),
     instanceId: input.instance.instanceId,
-    messageId: input.messageId as WidgetSnapshot["messageId"],
+    messageId: input.messageId,
     capturedRevision: input.instance.revision,
     capturedAt: deps.now(),
     textAlternative: input.textAlternative,
     presentationRef: input.presentationRef,
     stale: false,
-  };
+  });
+  if (!checked.success) {
+    const problems = checked.error.issues.map((issue) => `${issue.path.map(String).join(".") || "snapshot"}: ${issue.message}`);
+    throw new Error(`${input.presentationRef} cannot be kept in the conversation: ${problems.join("; ")}`);
+  }
+  const snapshot: WidgetSnapshot = checked.data;
 
   deps.db
     .prepare(
@@ -412,6 +425,33 @@ export function captureSnapshot(
     );
 
   return snapshot;
+}
+
+/**
+ * Place one widget in a message: the instance, the binding its action runs through if it has one, and the snapshot the
+ * message keeps.
+ *
+ * In one transaction. A snapshot the conversation could not read back is refused by `captureSnapshot`, and without the
+ * transaction that refusal would leave an instance and a live action binding that no message shows and nothing
+ * removes.
+ */
+export function placeInstance(
+  deps: WidgetDeps,
+  input: Parameters<typeof createInstance>[1] & {
+    messageId: string;
+    textAlternative: string;
+    presentationRef: string;
+    /** The binding for the new instance, made once its id exists. */
+    bind?: (instanceId: string) => ActionBinding;
+  },
+): { instance: WidgetInstance; snapshot: WidgetSnapshot } {
+  const { messageId, textAlternative, presentationRef, bind, ...creating } = input;
+  return transaction(deps.db, () => {
+    const instance = createInstance(deps, creating);
+    if (bind !== undefined) saveActionBindingWithinTransaction(deps, bind(instance.instanceId));
+    const snapshot = captureSnapshot(deps, { messageId, instance, textAlternative, presentationRef });
+    return { instance, snapshot };
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -749,40 +789,43 @@ export function markSnapshotsStale(deps: WidgetDeps, instanceId: string): number
  * ------------------------------------------------------------------ */
 
 export function saveActionBinding(deps: WidgetDeps, binding: ActionBinding): void {
-  transaction(deps.db, () => {
-    deps.db
-      .prepare(
-        `INSERT INTO action_bindings
-           (action_binding_id, instance_id, definition_id, package_generation, binding_digest, effect_category, requires_approval, document, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(action_binding_id) DO UPDATE SET
-           package_generation = excluded.package_generation,
-           binding_digest = excluded.binding_digest,
-           document = excluded.document`,
-      )
-      .run(
-        binding.actionBindingId,
-        binding.instanceId,
-        binding.definitionId,
-        binding.packageGeneration,
-        binding.bindingDigest,
-        binding.effectCategory,
-        binding.requiresApproval ? 1 : 0,
-        toJson(binding),
-        binding.createdAt,
-      );
+  transaction(deps.db, () => saveActionBindingWithinTransaction(deps, binding));
+}
 
-    const instance = getInstance(deps, binding.instanceId);
-    if (instance && !instance.actionBindingIds.includes(binding.actionBindingId)) {
-      const next: WidgetInstance = {
-        ...instance,
-        actionBindingIds: [...instance.actionBindingIds, binding.actionBindingId],
-      };
-      deps.db
-        .prepare("UPDATE widget_instances SET document = ? WHERE instance_id = ?")
-        .run(toJson(next), binding.instanceId);
-    }
-  });
+/** `saveActionBinding` for a caller that already holds the transaction the binding belongs to. */
+export function saveActionBindingWithinTransaction(deps: WidgetDeps, binding: ActionBinding): void {
+  deps.db
+    .prepare(
+      `INSERT INTO action_bindings
+         (action_binding_id, instance_id, definition_id, package_generation, binding_digest, effect_category, requires_approval, document, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(action_binding_id) DO UPDATE SET
+         package_generation = excluded.package_generation,
+         binding_digest = excluded.binding_digest,
+         document = excluded.document`,
+    )
+    .run(
+      binding.actionBindingId,
+      binding.instanceId,
+      binding.definitionId,
+      binding.packageGeneration,
+      binding.bindingDigest,
+      binding.effectCategory,
+      binding.requiresApproval ? 1 : 0,
+      toJson(binding),
+      binding.createdAt,
+    );
+
+  const instance = getInstance(deps, binding.instanceId);
+  if (instance && !instance.actionBindingIds.includes(binding.actionBindingId)) {
+    const next: WidgetInstance = {
+      ...instance,
+      actionBindingIds: [...instance.actionBindingIds, binding.actionBindingId],
+    };
+    deps.db
+      .prepare("UPDATE widget_instances SET document = ? WHERE instance_id = ?")
+      .run(toJson(next), binding.instanceId);
+  }
 }
 
 export function getActionBinding(deps: WidgetDeps, bindingId: string): ActionBinding | undefined {

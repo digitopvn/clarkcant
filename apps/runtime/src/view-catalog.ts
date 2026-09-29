@@ -9,14 +9,14 @@
  *
  * Two things are deliberately not here. There is no view that reports task or connection state —
  * the node builds those cards from its own records, and a model has no records to build one from.
+ * The status, progress and details cards below are not that: they show what the model states about
+ * something, carry no control and no freshness badge, and never stand in for the node's own cards.
  * And there is no way to pass rows inline: the catalog widgets take an opaque dataset reference,
  * so a large result set never enters the conversation transcript.
  */
 
 import {
   type WidgetDefinition,
-  type WidgetInstance,
-  type WidgetSnapshot,
   CHOICE_KINDS,
   INPUT_KINDS,
   MAX_COMPOSITION_SECTIONS,
@@ -25,27 +25,34 @@ import {
   MAX_GRID_COLUMNS,
   MAX_LAYOUT_DEPTH,
   MAX_LAYOUT_NODES,
+  MAX_DETAIL_ITEMS,
   MAX_LIST_ITEMS,
+  MAX_PROGRESS_STEPS,
+  SNAPSHOT_TEXT_LIMIT,
+  STATUS_TONES,
+  STEP_STATUSES,
+  clipWithMarker,
   formInputSchema,
   parseFields,
   parseListItems,
+  readStatusCard,
+  statusCardText,
 } from "@clarkcant/contracts";
-import {
-  type WidgetDeps,
-  captureSnapshot,
-  createInstance,
-  saveActionBinding,
-} from "@clarkcant/core";
+import { type WidgetDeps, placeInstance } from "@clarkcant/core";
 import {
   ACTION,
   ACTION_ICONS,
   CHOICE,
   CTA,
+  DETAILS,
   FORM,
   INPUT,
   LIST,
   OVERVIEW,
+  PROGRESS,
   SEARCH,
+  STATUS,
+  STATUS_CARD_KIND,
   WIDGETS as CATALOG_WIDGETS,
   primitivePropsProblems,
 } from "@clarkcant/data-canvas";
@@ -84,7 +91,22 @@ export function buildViewCatalog(
   // registered below, with the build that compiles its action. A form and a list are registered below as well, for the
   // same reason. A choice, an input and a search box do nothing on their own — a value set in one would go nowhere — so
   // a model places them as a form's fields and as a layout's search, never alone.
-  const placed = new Set([OVERVIEW.id, CTA.id, ACTION.id, CHOICE.id, INPUT.id, SEARCH.id, FORM.id, LIST.id]);
+  //
+  // The status cards are registered below too: what they show is all in their props, so their text alternative is
+  // written from those props rather than from the definition's generic sentence.
+  const placed = new Set([
+    OVERVIEW.id,
+    CTA.id,
+    ACTION.id,
+    CHOICE.id,
+    INPUT.id,
+    SEARCH.id,
+    FORM.id,
+    LIST.id,
+    STATUS.id,
+    PROGRESS.id,
+    DETAILS.id,
+  ]);
   const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
     id: definition.id,
@@ -103,19 +125,16 @@ export function buildViewCatalog(
      * better raised here than discovered by a user staring at a broken card.
      */
     build: ({ props, caption, principal, messageId }) => {
-      const instance: WidgetInstance = createInstance(deps, {
+      // The caption is what a reader sees if the renderer is gone, so it wins over the
+      // definition's generic fallback whenever the model supplied one.
+      const textAlternative = keptText(definition.id, caption, definition.textFallback);
+      const { snapshot } = placeInstance(deps, {
         definition,
         packageDigest: definitionDigest(definition),
         ownerPrincipalId: principal.principalId,
         props,
-      });
-
-      const snapshot: WidgetSnapshot = captureSnapshot(deps, {
         messageId,
-        instance,
-        // The caption is what a reader sees if the renderer is gone, so it wins over the
-        // definition's generic fallback whenever the model supplied one.
-        textAlternative: caption.trim() === "" ? definition.textFallback : caption,
+        textAlternative,
         presentationRef: `catalog:${definition.id}`,
       });
 
@@ -129,7 +148,7 @@ export function buildViewCatalog(
   );
 
   if (actions !== undefined) simple.push(actionView(deps, actions), formView(deps, actions));
-  simple.push(listView(deps, actions));
+  simple.push(listView(deps, actions), ...statusCardViews(deps));
   if (compose === undefined) return simple;
 
   const overview = OVERVIEW;
@@ -224,18 +243,16 @@ function actionView(deps: WidgetDeps, bindingDeps: () => ActionBindingDeps): Vie
         action,
       });
       if (!compiled.ok) throw new Error(compiled.message);
+      const textAlternative = keptText(ACTION.id, caption, `${String(shown.label)}. ${ACTION.textFallback}`);
 
-      const instance: WidgetInstance = createInstance(deps, {
+      const { snapshot } = placeInstance(deps, {
         definition: ACTION,
         packageDigest: definitionRef.packageDigest,
         ownerPrincipalId: principal.principalId,
         props: shown,
-      });
-      saveActionBinding(deps, compiled.bindTo(instance.instanceId));
-      const snapshot: WidgetSnapshot = captureSnapshot(deps, {
+        bind: compiled.bindTo,
         messageId,
-        instance,
-        textAlternative: caption.trim() === "" ? `${String(shown.label)}. ${ACTION.textFallback}` : caption,
+        textAlternative,
         presentationRef: `catalog:${ACTION.id}`,
       });
       return { type: "surface", definitionRef: { id: ACTION.id, version: ACTION.version }, snapshot };
@@ -249,6 +266,24 @@ const SENDING_ACTIONS =
   `{"kind":"invoke","capabilityRef":"<a package service capability>","args":{...}}`;
 
 type ViewRequest = Parameters<ViewDescriptor["build"]>[0];
+
+/**
+ * The text a widget's snapshot keeps: the model's caption, or the widget's own words when it wrote none.
+ *
+ * Checked before anything is stored. A snapshot with more text than a reader of the conversation accepts would make the
+ * whole conversation fail to open. A caption that long is the model's to shorten, so it is refused in the same turn with
+ * nothing left behind; the widget's own words are built by this node from props that already passed their schema, so
+ * they are shortened, and say so, rather than refusing a widget the model placed correctly.
+ */
+function keptText(definitionId: string, caption: string, fallback: string): string {
+  if (caption.trim() === "") return clipWithMarker(fallback, SNAPSHOT_TEXT_LIMIT);
+  if (caption.length > SNAPSHOT_TEXT_LIMIT) {
+    throw new Error(
+      `${definitionId} cannot be shown: its caption is ${String(caption.length)} characters and at most ${String(SNAPSHOT_TEXT_LIMIT)} are kept; write one short sentence`,
+    );
+  }
+  return caption;
+}
 
 /**
  * Store one widget whose action sends something: compile the action with what it carries, then make the instance, bind
@@ -278,18 +313,16 @@ function placeSending(
     if (!result.ok) throw new Error(result.message);
     compiled = result;
   }
+  const kept = keptText(definition.id, request.caption, textAlternative);
 
-  const instance: WidgetInstance = createInstance(deps, {
+  const { snapshot } = placeInstance(deps, {
     definition,
     packageDigest: definitionRef.packageDigest,
     ownerPrincipalId: request.principal.principalId,
     props: request.props,
-  });
-  if (compiled !== undefined) saveActionBinding(deps, compiled.bindTo(instance.instanceId));
-  const snapshot: WidgetSnapshot = captureSnapshot(deps, {
+    ...(compiled === undefined ? {} : { bind: compiled.bindTo }),
     messageId: request.messageId,
-    instance,
-    textAlternative: request.caption.trim() === "" ? textAlternative : request.caption,
+    textAlternative: kept,
     presentationRef: `catalog:${definition.id}`,
   });
   return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
@@ -378,4 +411,42 @@ function listView(deps: WidgetDeps, bindingDeps: (() => ActionBindingDeps) | und
       );
     },
   };
+}
+
+/** What the model is told about each status card's props. */
+const STATUS_CARD_NOTES: Readonly<Record<string, string>> = {
+  [STATUS.id]:
+    `props.label is the status in a few words and props.tone one of ${STATUS_TONES.join(", ")}; optional props.title, ` +
+    `props.detail and props.asOf (a day like 2026-09-30, or an instant with its offset like 2026-09-30T09:00:00+07:00). ` +
+    `Not for this node's own tasks, runs or connections: those already have live cards, and this card only repeats what you wrote.`,
+  [PROGRESS.id]:
+    `Either props.value and props.max (value 0 to max; optional props.unit), or props.steps: 1-${String(MAX_PROGRESS_STEPS)} of ` +
+    `{"label":"...","status":"${STEP_STATUSES.join('" | "')}","detail"?} with at most one current step. ` +
+    `Optional props.title, props.label (what is progressing) and props.asOf. Only a value you actually know: never a guess. ` +
+    `Not for this node's own tasks and runs: those already have a live task card, and this card only repeats what you wrote.`,
+  [DETAILS.id]:
+    `props.items is 1-${String(MAX_DETAIL_ITEMS)} of {"label":"...","value":"..."}, each label once; optional props.title and props.asOf.`,
+};
+
+/**
+ * The status, progress and details cards.
+ *
+ * Nothing on them acts and nothing on them is read from the node, so the model is told exactly that: the card shows what
+ * it wrote, and says "as of" only when the model gave a time.
+ */
+function statusCardViews(deps: WidgetDeps): ViewDescriptor[] {
+  return [STATUS, PROGRESS, DETAILS].map((definition) => ({
+    id: definition.id,
+    label: definition.semanticDescription,
+    notes: STATUS_CARD_NOTES[definition.id] ?? "",
+    shownText: `Shown: ${definition.id}. It shows what you wrote, not a live reading, and nothing on it acts.`,
+    build: (request) => {
+      const kind = STATUS_CARD_KIND[definition.id];
+      if (kind === undefined) throw new Error(`${definition.id} is not a status card`);
+      const content = readStatusCard(kind, request.props);
+      const text = content === undefined ? definition.textFallback : statusCardText(content);
+      // The card's own words are its text alternative: a caption would only repeat what the card says, less exactly.
+      return placeSending(deps, undefined, definition, { ...request, caption: "" }, undefined, text);
+    },
+  }));
 }

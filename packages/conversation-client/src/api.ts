@@ -279,6 +279,8 @@ export interface TimelineSnapshotView {
   bundleRef?: string;
   catalogDigest?: string;
   textAlternative: string;
+  /** The node could not read this snapshot back; its block is shown as unreadable, and the rest of the conversation opens. */
+  unreadable?: true;
 }
 
 export interface Timeline {

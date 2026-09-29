@@ -11,7 +11,7 @@ import {
   saveActionBinding,
   setPreference,
 } from "@clarkcant/core";
-import { GALLERY, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
+import { GALLERY, STATUS, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
 import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
 import { getNotification, listLocalImages, upsertArtifact, upsertDataset } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
@@ -645,6 +645,88 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           conversationId: input.conversationId,
         });
         return { text: `Fixture: đặt một ${isForm ? "biểu mẫu" : "danh sách"} (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
+
+    /*
+     * A status card kept by a node from before one-line labels were enforced: its label holds a line break, which this
+     * node refuses. Written straight to the conductor without this node's props check, as that older node wrote it, so
+     * the page's own check is what decides how it is drawn: it says it cannot read the card rather than drawing a forged
+     * second line.
+     */
+    if (/^(?:đặt|place)\s+thẻ\s+trạng thái cũ$/iu.test(input.text.trim())) {
+      const { validateProps: _thisNodesCheck, ...olderNode } = deps.services().conductor;
+      const instance = createInstance(olderNode, {
+        definition: STATUS,
+        packageDigest: definitionDigest(STATUS),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Bản dựng cũ", label: "Dòng một\nDòng hai", tone: "info" },
+      });
+      const snapshot = captureSnapshot(deps.services().conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: "Bản dựng cũ: Dòng một Dòng hai (info)",
+        presentationRef: `catalog:${STATUS.id}`,
+      });
+      return {
+        text: "Fixture: một thẻ trạng thái do node cũ lưu (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: STATUS.id, version: STATUS.version }, snapshot },
+      };
+    }
+
+    /*
+     * A status, progress or details card, placed through the same views `show_view` uses. "tiến độ sai" proposes a value
+     * above its maximum, so the refusal a model would read is the host's own sentence.
+     */
+    const card = /^(?:đặt|place)\s+thẻ\s+(trạng thái|tiến độ|các bước|chi tiết|tiến độ sai)$/iu.exec(input.text.trim());
+    if (card !== null) {
+      const which = (card[1] ?? "").toLowerCase();
+      const catalog = buildViewCatalog(deps.services().conductor);
+      const definitionId =
+        which === "trạng thái" ? "canvas.status@1" : which === "chi tiết" ? "canvas.details@1" : "canvas.progress@1";
+      const view = catalog.find((entry) => entry.id === definitionId);
+      if (view === undefined) return undefined;
+      const props: Record<string, unknown> =
+        which === "trạng thái"
+          ? {
+              title: "Bản dựng đêm qua",
+              label: "Chạy xong nhưng có 2 test chập chờn",
+              tone: "warning",
+              detail: "Hai test E2E phải chạy lại mới qua.",
+              asOf: "2026-09-30T07:30:00+07:00",
+            }
+          : which === "chi tiết"
+            ? {
+                title: "Đơn #1042",
+                items: [
+                  { label: "Khách hàng", value: "Nguyễn Thị Lan" },
+                  { label: "Tổng tiền", value: "1.250.000 ₫" },
+                  { label: "Trạng thái", value: "Đang giao" },
+                ],
+              }
+            : which === "các bước"
+              ? {
+                  title: "Chuyển nhà",
+                  steps: [
+                    { label: "Đóng thùng", status: "done" },
+                    { label: "Chuyển đồ", status: "current" },
+                    { label: "Lắp internet", status: "pending" },
+                  ],
+                }
+              : { title: "Nhập ảnh", label: "Ảnh đã nhập", value: which === "tiến độ sai" ? 130 : 42, max: 120, unit: "ảnh" };
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt thẻ ${which} (không phải model thật).`, block };
       } catch (cause) {
         const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
         return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
@@ -1459,10 +1541,11 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * The tree is scripted; the descriptor is the real one, so the compiler, the catalog lookup, the bounds and the
      * refusal sentence are the host's. `bảng điều khiển` is a grid of two metric tiles and a card holding a search box
      * above the table it narrows; `đầy đủ` uses every container kind; `có liên kết` connects a choice to the series a line
-     * chart plots and a search box to a table through declared state; `quá sâu`, `widget lạ` and `liên kết sai` are
-     * proposals the host refuses.
+     * chart plots and a search box to a table through declared state; `thẻ trạng thái` puts a status, a progress and a
+     * details card in the three columns of a grid; `quá sâu`, `widget lạ` and `liên kết sai` are proposals the host
+     * refuses.
      */
-    const arranged = /^bố cục\s+(bảng điều khiển|đầy đủ|có liên kết|liên kết sai|quá sâu|widget lạ)$/iu.exec(input.text.trim());
+    const arranged = /^bố cục\s+(bảng điều khiển|đầy đủ|có liên kết|liên kết sai|quá sâu|widget lạ|thẻ trạng thái)$/iu.exec(input.text.trim());
     if (arranged !== null) {
       const compose = deps.wiring.compose();
       if (compose === undefined) return undefined;
@@ -1558,12 +1641,36 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
                   }
                 : which === "quá sâu"
                   ? nested
-                  : { kind: "grid", children: [leaf("canvas.metrics@1"), leaf("canvas.sparkle@1")] };
+                  : which === "thẻ trạng thái"
+                    ? {
+                        kind: "grid",
+                        columns: 3,
+                        children: [
+                          leaf("canvas.status@1", { title: "Máy chủ", label: "Đang chạy", tone: "success" }),
+                          leaf("canvas.progress@1", { title: "Sao lưu", label: "Tệp đã chép", value: 640, max: 1000, unit: "tệp" }),
+                          leaf("canvas.details@1", {
+                            title: "Đơn #1042",
+                            items: [
+                              { label: "Khách hàng", value: "Nguyễn Thị Lan" },
+                              { label: "Địa chỉ giao hàng đầy đủ", value: "12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh" },
+                              { label: "Tổng tiền", value: "1.250.000 ₫" },
+                            ],
+                          }),
+                        ],
+                      }
+                    : { kind: "grid", children: [leaf("canvas.metrics@1"), leaf("canvas.sparkle@1")] };
       try {
         const block = await view.build({
           props: {
             layout,
-            title: which === "đầy đủ" ? "Mọi kiểu bố cục" : which === "có liên kết" ? "Bảng có liên kết" : "Bảng điều khiển",
+            title:
+              which === "đầy đủ"
+                ? "Mọi kiểu bố cục"
+                : which === "có liên kết"
+                  ? "Bảng có liên kết"
+                  : which === "thẻ trạng thái"
+                    ? "Tình hình hôm nay"
+                    : "Bảng điều khiển",
             ...(which === "có liên kết" || which === "liên kết sai" ? { state: linkedState } : {}),
           },
           caption: "",

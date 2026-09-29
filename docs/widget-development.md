@@ -293,9 +293,11 @@ Do not keep stale rows under a live label when a refresh fails.
 
 ---
 
-## 8. Actions
+## 8. Actions, input and read-only cards
 
-A hard distinction:
+This section covers what a widget does (§8.1), what a person gives Clark through one (§8.2), how widgets on one
+surface affect one another (§8.3), and the read-only cards that do nothing at all (§8.4). The first three rest on one
+hard distinction:
 
 ### Local view action
 
@@ -417,7 +419,8 @@ browser journey [input-primitives.spec.ts](../apps/web/e2e/input-primitives.spec
 
 ### 8.3 Connecting widgets on one surface
 
-A layout tree (§8.2, and [widgets and extensions](widgets-and-extensions.md)) places widgets. A state graph says how
+A layout tree ([widgets and extensions §4.1](widgets-and-extensions.md#41-implementation-status-2026-09-17)) places
+widgets. A state graph says how
 they affect one another: a choice picks the series a chart plots, a search box narrows a table, a table's selection
 counts into a number. The graph is data the host owns and checks, built from three closed parts, in
 [composition-graph.ts](../packages/contracts/src/composition-graph.ts):
@@ -478,6 +481,97 @@ Tests: [composition-graph.spec.ts](../packages/contracts/test/composition-graph.
 [composition-graph.spec.ts](../apps/runtime/test/composition-graph.spec.ts) for the compiler and the node,
 [surface-graph.spec.ts](../packages/conversation-client/test/surface-graph.spec.ts) for the page, and the browser
 journey [composition-graph.spec.ts](../apps/web/e2e/composition-graph.spec.ts), which also runs at 375 px.
+
+### 8.4 Status, progress and details cards
+
+Three read-only definitions show what a model knows about one thing: a status, how far along it is, or a few labelled
+facts. They are the "Text / status" row of [widgets and extensions §4](widgets-and-extensions.md#4-rich-built-in-catalog)
+for content the model states. They are not the host's task, connection or install cards, which stay host-owned. One
+set of functions, in [status-cards.ts](../packages/contracts/src/status-cards.ts), checks the props and writes the
+text. The node and the page both use it, so the page never draws a card the node would refuse.
+
+| Definition | What it is | Props |
+| --- | --- | --- |
+| `canvas.status@1` | One status with a tone. | `label` (1–120), `tone` (`neutral`, `info`, `success`, `warning`, `danger`), optional `title` (up to 200), `detail` (up to 500) and `asOf`. |
+| `canvas.progress@1` | The progress of one thing: a value of a maximum, or a list of steps. | Either `value` (0 or more) with `max` (above 0) and an optional `unit` (up to 20), or `steps` (1–12), each `{ label (1–120), status, detail? (up to 200) }` with status `done`, `current`, `pending`, `failed` or `skipped`. Optional `title` and `label` (each up to 200) and `asOf`. |
+| `canvas.details@1` | Labelled facts. | `items` (1–24), each `{ label (1–80), value (1–300) }`, with no label repeated. Optional `title` (up to 200) and `asOf`. |
+
+Every text prop is one line. This node counts a length in UTF-16 code units, so a character outside the Basic
+Multilingual Plane, such as most emoji, counts as two. JSON Schema's `maxLength` counts code points, so the node is
+the stricter of the two: a label of 120 emoji fits the schema as a standard validator reads it, and this node refuses
+it.
+
+A model places each card with `show_view`, or as a leaf of a layout tree
+([widgets and extensions §4.1](widgets-and-extensions.md#41-implementation-status-2026-09-17)), where the three take
+the `status` region.
+
+What the node guarantees:
+
+- **Nothing spins with nothing behind it.** A progress card needs a value and a maximum, or steps. A card with
+  neither, with both, with a value above its maximum, with a unit on steps, or with more than one current step is
+  refused with the reason in the same turn, and no instance is stored.
+- **What is drawn is what is read.** A text prop may not hold a line break, a control character, a bidi control
+  (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F, U+061C), an invisible character (U+200B, U+FEFF, U+00AD, U+180E,
+  U+2060–U+2064, U+FFF9–U+FFFB), a tag character (U+E0000–U+E007F) or a Hangul filler (U+115F, U+1160, U+3164,
+  U+FFA0). Each would make what a screen reader, a transcript or the next turn reads differ from what the page draws.
+  The refusal names the character, for example
+  `property "label": contains U+202E, a control that changes text direction …; remove it`. ZWJ, ZWNJ and the variation
+  selectors stay allowed, since scripts and emoji need them. The definition's JSON Schema carries the same rule as a
+  `pattern`, so a model can read it before it tries. The pattern is written for the way this node compiles it, without
+  the `u` flag, where a tag character is a pair of UTF-16 units; a validator that adds the `u` flag lets tag characters
+  through the pattern, and the node's own check still refuses them. The pattern decides any line in time linear in its
+  length. Text is trimmed and put in NFC before a label is checked for being empty or repeated.
+- **An "as of" time is never ambiguous.** `asOf` is a day (`2026-09-30`) or an instant with `Z` or an offset
+  (`2026-09-30T07:30:00+07:00`). A local time with no offset, or a date that does not exist, is refused.
+- **The text alternative is the card's own words.** It is built from the props, for example
+  `Build: Flaky (warning). 2 retries (as of 2026-09-30)` or `Photos: 42 of 120 photos (35%)`, and the caption does not
+  replace it. A layout section that holds a card uses the same words.
+- **The text is bounded.** A snapshot the conversation cannot read back would stop the whole conversation from
+  opening, so the node checks every snapshot before it stores it. A card's text keeps whole facts or steps up to 4000
+  characters, and ends with `…and N more facts` (or steps) when some did not fit. A layout section keeps up to 2000,
+  and a whole layout's text ends with `… (shortened)` past 4000. Any other widget's own words, such as a list's titles,
+  are shortened the same way. Only a caption the model wrote over 4000 characters is refused, since only the model can
+  say it in fewer words. The instance, its action binding and its snapshot are written in one transaction, so a refusal
+  leaves none of them behind.
+- **One unreadable snapshot does not close the conversation.** A snapshot stored before these checks existed may be
+  one this node cannot read back. The conversation still opens: that block says it could not be read and that the rest
+  of the conversation is kept, the others are drawn as usual, and the node logs which snapshot failed.
+- **A figure never overstates.** The percentage is rounded, and shows 99% rather than 100% while the value is still
+  below its maximum.
+- **Voice and `inspect_ui` read what was stated, not a live reading.** The semantic document (§9) is built from the
+  props. Its summary says "as stated when shown", and its freshness is `unknown` rather than `live`. The card has no
+  actions and no state.
+
+What the page does:
+
+- The tone is a word in a badge, next to a mark, so a colour is never the only signal. Each step shows its status in
+  words, and the current step carries `aria-current="step"`.
+- A value of a maximum is a `role="progressbar"` with `aria-valuemin`, `aria-valuemax`, `aria-valuenow` and an
+  `aria-valuetext` that matches the figure on screen.
+- An `asOf` day is shown as that day. An instant is shown in the reader's own time zone and locale, after "As of".
+- A card that looks like a reading says whose words it shows. A progress card always ends with "As Clark stated at
+  09:30", and a status card does when it has no `asOf`. The time is when the message was kept, in the reader's locale,
+  with the date when it was not today. A model is told not to use a status or progress card for the node's own tasks
+  and runs, which already have live cards. In the Widget Library a fixture says "Sample" there instead, since nobody
+  stated it.
+- The card shows no freshness badge, since what it shows is what the model wrote. It has no control, and it adds no
+  motion of its own.
+- Details line up as two columns, the labels taking at most 40% of the card. When the card itself is narrower than
+  360 px, on a phone or as one tile of a grid, each value goes under its label. Long values wrap rather than widen the
+  page.
+- Props the page cannot read, such as a label an older node stored with a line break in it, show an error state rather
+  than a guessed card.
+
+Tests: [status-cards.spec.ts](../packages/contracts/test/status-cards.spec.ts) for the rules,
+[status-cards.spec.ts](../apps/runtime/test/status-cards.spec.ts) for the node,
+[status-cards.spec.ts](../packages/conversation-client/test/status-cards.spec.ts) for the page, and the browser
+journey [status-cards.spec.ts](../apps/web/e2e/status-cards.spec.ts), which runs at 1280 px in dark and light themes,
+at 390 px with touch, as tiles of a grid asked for three columns (drawn as two in the conversation column at 1280 px,
+since a grid never makes a column narrower than 220 px, and as one on a phone), and in the Widget Library. The rules for hidden characters are
+in [text-rules.ts](../packages/contracts/src/text-rules.ts), tested by
+[text-rules.spec.ts](../packages/contracts/test/text-rules.spec.ts), and
+[status-card-schemas.spec.ts](../packages/widget-catalog/test/status-card-schemas.spec.ts) checks that the JSON Schema
+and the card's own checks accept and refuse the same props.
 
 ---
 

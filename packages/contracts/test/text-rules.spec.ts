@@ -1,0 +1,146 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  ONE_LINE_PATTERN,
+  ONE_LINE_REQUIRED_PATTERN,
+  clipWithMarker,
+  codePointLabel,
+  findHiddenCharacter,
+  hiddenCharacterProblem,
+  sliceCodePoints,
+} from "../src/index.ts";
+
+/**
+ * The characters a card refuses in the model's words, and the helpers that keep a long text honest when it is cut.
+ */
+
+const REFUSED = [
+  ["a line feed", "\n", "line-break"],
+  ["a carriage return", "\r", "line-break"],
+  ["a tab", "\t", "control"],
+  ["a NUL", "\u0000", "control"],
+  ["DEL", "\u007f", "control"],
+  ["NEL", "\u0085", "line-break"],
+  ["the line separator", " ", "line-break"],
+  ["the paragraph separator", " ", "line-break"],
+  ["a right-to-left override", "‮", "bidi"],
+  ["a left-to-right embedding", "‪", "bidi"],
+  ["a first-strong isolate", "⁨", "bidi"],
+  ["a pop directional isolate", "⁩", "bidi"],
+  ["a right-to-left mark", "‏", "bidi"],
+  ["an Arabic letter mark", "؜", "bidi"],
+  ["a zero-width space", "​", "invisible"],
+  ["a byte order mark", "﻿", "invisible"],
+  ["a soft hyphen", String.fromCodePoint(0xad), "invisible"],
+  ["the Mongolian vowel separator", String.fromCodePoint(0x180e), "invisible"],
+  ["a word joiner", String.fromCodePoint(0x2060), "invisible"],
+  ["an invisible plus", String.fromCodePoint(0x2064), "invisible"],
+  ["an interlinear annotation anchor", String.fromCodePoint(0xfff9), "invisible"],
+  ["an interlinear annotation terminator", String.fromCodePoint(0xfffb), "invisible"],
+  ["the Hangul choseong filler", String.fromCodePoint(0x115f), "filler"],
+  ["the Hangul jungseong filler", String.fromCodePoint(0x1160), "filler"],
+  ["the Hangul filler", String.fromCodePoint(0x3164), "filler"],
+  ["the halfwidth Hangul filler", String.fromCodePoint(0xffa0), "filler"],
+] as const;
+
+/** Tag characters are outside the Basic Multilingual Plane: two UTF-16 units each. */
+const TAGS = [
+  ["the language tag", String.fromCodePoint(0xe0001)],
+  ["tag latin small letter a", String.fromCodePoint(0xe0061)],
+  ["the cancel tag", String.fromCodePoint(0xe007f)],
+] as const;
+
+const MESSAGE = {
+  "line-break": "a line break, and this field is one line",
+  bidi: "a control that changes text direction, so the text would read differently from how it is drawn",
+  invisible: "an invisible character",
+  tag: "a tag character, which is invisible and can carry text no reader sees",
+  filler: "a Hangul filler, which draws as a blank",
+  control: "a control character",
+} as const;
+
+describe("hidden characters", () => {
+  it.each(REFUSED)("refuses %s and names it", (_name, character, kind) => {
+    const value = `ab${character}cd`;
+    expect(findHiddenCharacter(value)).toEqual({ codePoint: codePointLabel(character), kind, index: 2 });
+    expect(hiddenCharacterProblem(value)).toBe(`contains ${codePointLabel(character)}, ${MESSAGE[kind]}; remove it`);
+    expect(new RegExp(ONE_LINE_PATTERN, "u").test(value)).toBe(false);
+    expect(new RegExp(ONE_LINE_PATTERN).test(value)).toBe(false);
+    expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(value)).toBe(false);
+  });
+
+  it.each(TAGS)("refuses %s, as the node compiles a schema pattern and as a card reads the words", (_name, character) => {
+    const value = `ab${character}cd`;
+    const label = codePointLabel(character);
+    expect(label).toMatch(/^U\+E00[0-7][0-9A-F]$/u);
+    expect(findHiddenCharacter(value)).toEqual({ codePoint: label, kind: "tag", index: 2 });
+    expect(hiddenCharacterProblem(value)).toBe(`contains ${label}, ${MESSAGE.tag}; remove it`);
+    // The node compiles a schema's pattern without the `u` flag (zod's fromJSONSchema), reading the pair.
+    expect(new RegExp(ONE_LINE_PATTERN).test(value)).toBe(false);
+    expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(value)).toBe(false);
+    expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(character)).toBe(false);
+  });
+
+  it("allows the variation selectors that share the tag characters' first unit", () => {
+    const supplement = `a${String.fromCodePoint(0xe0100)}b${String.fromCodePoint(0xe01ef)}`;
+    expect(findHiddenCharacter(supplement)).toBeUndefined();
+    expect(new RegExp(ONE_LINE_PATTERN).test(supplement)).toBe(true);
+    expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(supplement)).toBe(true);
+    expect(new RegExp(ONE_LINE_PATTERN, "u").test(supplement)).toBe(true);
+  });
+
+  it("decides a long refused line in time linear in its length", () => {
+    // `^[^X]*[^\sX][^X]*$` tries every split of this line: about 60 ms for 200 runs here, against 0.1 ms for these.
+    const value = `${"a".repeat(1000)}${String.fromCodePoint(0)}`;
+    for (const pattern of [ONE_LINE_PATTERN, ONE_LINE_REQUIRED_PATTERN]) {
+      const compiled = new RegExp(pattern);
+      let matched = 0;
+      const started = performance.now();
+      for (let run = 0; run < 1000; run += 1) if (compiled.test(value)) matched += 1;
+      expect(performance.now() - started, pattern).toBeLessThan(50);
+      expect(matched).toBe(0);
+    }
+  });
+
+  it("leaves the joiners people write with alone, and ordinary text of any script", () => {
+    for (const value of ["نص عربي", "עברית", "नमस्ते", "👩‍💻", "می‌خواهم", "Tiếng Việt có dấu", "a b"]) {
+      expect(findHiddenCharacter(value), value).toBeUndefined();
+      expect(new RegExp(ONE_LINE_PATTERN, "u").test(value), value).toBe(true);
+    }
+  });
+
+  it("lets a line feed and a tab through where text is many lines, and nothing else", () => {
+    expect(findHiddenCharacter("a\n\tb", { lineBreaks: true })).toBeUndefined();
+    expect(findHiddenCharacter("a\nb c", { lineBreaks: true })).toEqual({ codePoint: "U+2028", kind: "line-break", index: 3 });
+    expect(findHiddenCharacter("a\r\nb", { lineBreaks: true })?.codePoint).toBe("U+000D");
+  });
+
+  it("requires a required line to hold more than spaces", () => {
+    const required = new RegExp(ONE_LINE_REQUIRED_PATTERN, "u");
+    expect(required.test("Owner")).toBe(true);
+    expect(required.test("  x ")).toBe(true);
+    expect(required.test("")).toBe(false);
+    expect(required.test("   ")).toBe(false);
+    expect(required.test("a‮b")).toBe(false);
+    for (const space of [" ", String.fromCodePoint(0xa0), String.fromCodePoint(0x3000), String.fromCodePoint(0x2003)]) {
+      expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(`${space}${space}x`), space).toBe(true);
+      expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(`${space}${space}`), space).toBe(false);
+    }
+  });
+});
+
+describe("cutting text", () => {
+  it("never cuts a surrogate pair in half", () => {
+    expect(sliceCodePoints("ab😀cd", 3)).toBe("ab");
+    expect(sliceCodePoints("ab😀cd", 4)).toBe("ab😀");
+    expect(sliceCodePoints("abc", 10)).toBe("abc");
+  });
+
+  it("says when it had to shorten, and stays within the limit", () => {
+    expect(clipWithMarker("short", 10)).toBe("short");
+    const clipped = clipWithMarker("x".repeat(50), 20);
+    expect(clipped.length).toBeLessThanOrEqual(20);
+    expect(clipped.endsWith("… (shortened)")).toBe(true);
+    expect(clipWithMarker(`${"x".repeat(5)}😀${"y".repeat(20)}`, 19)).toBe("xxxxx… (shortened)");
+  });
+});

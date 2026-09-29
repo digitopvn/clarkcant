@@ -435,6 +435,97 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       mode: "read-only",
     },
   ],
+  "canvas.status@1": [
+    {
+      id: "status.normal",
+      label: "Cảnh báo có chi tiết",
+      props: {
+        title: "Bản dựng đêm qua",
+        label: "Chạy xong nhưng có 2 test chập chờn",
+        tone: "warning",
+        detail: "Hai test E2E phải chạy lại mới qua.",
+        asOf: "2026-09-30T07:30:00+07:00",
+      },
+      mode: "read-only",
+    },
+    {
+      id: "status.success",
+      label: "Ổn, không có chi tiết",
+      props: { label: "Sao lưu đã hoàn tất", tone: "success" },
+      mode: "read-only",
+    },
+    {
+      id: "status.danger",
+      label: "Lỗi",
+      props: { title: "Đồng bộ lịch", label: "Không kết nối được", tone: "danger", detail: "Máy chủ lịch trả lỗi 503.", asOf: "2026-09-29" },
+      mode: "read-only",
+    },
+  ],
+  "canvas.progress@1": [
+    {
+      id: "progress.normal",
+      label: "Tiến độ theo giá trị",
+      props: { title: "Nhập ảnh", label: "Ảnh đã nhập", value: 42, max: 120, unit: "ảnh" },
+      mode: "read-only",
+    },
+    {
+      id: "progress.steps",
+      label: "Tiến độ theo bước",
+      props: {
+        title: "Chuyển nhà",
+        steps: [
+          { label: "Đóng thùng", status: "done" },
+          { label: "Thuê xe", status: "done" },
+          { label: "Chuyển đồ", status: "current", detail: "Đang ở chuyến thứ hai" },
+          { label: "Lắp internet", status: "pending" },
+          { label: "Sơn lại phòng", status: "skipped" },
+        ],
+        asOf: "2026-09-30",
+      },
+      mode: "read-only",
+    },
+    {
+      id: "progress.failed",
+      label: "Có bước lỗi",
+      props: {
+        label: "Phát hành bản 1.4",
+        steps: [
+          { label: "Build", status: "done" },
+          { label: "Ký gói", status: "failed", detail: "Chứng chỉ đã hết hạn" },
+          { label: "Đăng tải", status: "pending" },
+        ],
+      },
+      mode: "read-only",
+    },
+  ],
+  "canvas.details@1": [
+    {
+      id: "details.normal",
+      label: "Chi tiết một đơn hàng",
+      props: {
+        title: "Đơn #1042",
+        items: [
+          { label: "Khách hàng", value: "Nguyễn Thị Lan" },
+          { label: "Tổng tiền", value: "1.250.000 ₫" },
+          { label: "Trạng thái", value: "Đang giao" },
+          { label: "Địa chỉ", value: "12 Lý Tự Trọng, Quận 1, TP. Hồ Chí Minh" },
+        ],
+        asOf: "2026-09-30T10:15:00+07:00",
+      },
+      mode: "read-only",
+    },
+    {
+      id: "details.long",
+      label: "Giá trị dài",
+      props: {
+        items: [
+          { label: "Đường dẫn", value: "https://example.com/reports/2026/09/very-long-path-that-must-wrap-inside-the-card" },
+          { label: "Ghi chú", value: "Một giá trị dài phải xuống dòng bên trong thẻ, không đẩy trang rộng ra trên màn hình hẹp." },
+        ],
+      },
+      mode: "read-only",
+    },
+  ],
   "canvas.note@1": [
     {
       id: "note.normal",

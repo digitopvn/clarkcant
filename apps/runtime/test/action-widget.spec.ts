@@ -323,6 +323,27 @@ describe("placing a button through the model's view", () => {
     expect(instanceRows()).toBe(before);
   });
 
+  it("leaves no instance and no binding behind when the snapshot cannot be kept", async () => {
+    const rows = () =>
+      ["widget_instances", "action_bindings", "widget_snapshots"].map(
+        (table) => (services.runtime.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n,
+      );
+    const before = rows();
+    // A message id the snapshot schema refuses: the instance and its binding are written before the snapshot is checked.
+    await expect(
+      (async () =>
+        actionView().build({
+          props: { label: "Tóm tắt", action: { kind: "agent", intent: "Tóm tắt" } },
+          caption: "",
+          at: AT,
+          principal: { principalId: services.runtime.identity.ownerPrincipalId, kind: "user", nodeId: services.runtime.identity.nodeId } as never,
+          messageId: "",
+          conversationId,
+        }))(),
+    ).rejects.toThrow(`catalog:${ACTION.id} cannot be kept in the conversation: messageId:`);
+    expect(rows()).toEqual(before);
+  });
+
   it("puts each button's availability in the timeline, with the node's reason for one that cannot run", async () => {
     register(LIST, "read");
     served.set(LIST, { packageId: PACKAGE, generationId: GENERATION });

@@ -179,6 +179,24 @@ const META: Record<string, CatalogMeta> = {
     aliases: ["list", "danh sách", "việc", "mục", "chọn"],
     status: "stable",
   },
+  "canvas.status@1": {
+    displayName: "Trạng thái",
+    tags: ["status", "text"],
+    aliases: ["status", "badge", "trạng thái", "tình trạng", "cảnh báo"],
+    status: "stable",
+  },
+  "canvas.progress@1": {
+    displayName: "Tiến độ",
+    tags: ["status", "progress"],
+    aliases: ["progress", "steps", "tiến độ", "các bước", "phần trăm"],
+    status: "stable",
+  },
+  "canvas.details@1": {
+    displayName: "Chi tiết",
+    tags: ["status", "text"],
+    aliases: ["details", "key-value", "chi tiết", "thông tin", "thuộc tính"],
+    status: "stable",
+  },
   "canvas.note@1": {
     displayName: "Ghi chú",
     tags: ["note", "local"],

@@ -21,6 +21,7 @@ import {
   listSnapshotsForMessage,
   messagesSince,
   upsertDataset,
+  type UnreadableSnapshot,
 } from "@clarkcant/storage";
 import { readCredential } from "@clarkcant/storage";
 import type { ModelCatalogue } from "@clarkcant/pi-adapter";
@@ -724,7 +725,15 @@ export interface TimelineSnapshotView {
   presentationRef: string;
   bundleRef?: string;
   catalogDigest?: string;
+  /** Empty when the snapshot is unreadable. */
   textAlternative: string;
+  /**
+   * The stored snapshot could not be read back, so the message's widget is shown as unreadable rather than drawn.
+   *
+   * One such row must not stop the rest of the conversation from opening; it is logged on the node, and the page says
+   * what failed in the person's language.
+   */
+  unreadable?: true;
 }
 
 export interface Timeline {
@@ -829,7 +838,24 @@ export function buildTimeline(
 
   const snapshots: TimelineSnapshotView[] = [];
   for (const message of messages) {
-    for (const snapshot of listSnapshotsForMessage(db, message.messageId)) {
+    const unreadable = (row: UnreadableSnapshot): void => {
+      process.stderr.write(
+        `timeline: snapshot ${row.snapshotId} of message ${row.messageId} in ${input.conversationId} could not be read; ` +
+          `it is shown as unreadable and the rest of the conversation opens (${row.problem.replaceAll("\n", " ").slice(0, 500)})\n`,
+      );
+      snapshots.push({
+        snapshotId: row.snapshotId,
+        messageId: row.messageId,
+        ...(row.instanceId === undefined ? {} : { instanceId: row.instanceId }),
+        capturedRevision: row.capturedRevision,
+        capturedAt: row.capturedAt,
+        stale: row.stale,
+        presentationRef: "",
+        textAlternative: "",
+        unreadable: true,
+      });
+    };
+    for (const snapshot of listSnapshotsForMessage(db, message.messageId, unreadable)) {
       snapshots.push({
         snapshotId: snapshot.snapshotId,
         messageId: snapshot.messageId,

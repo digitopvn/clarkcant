@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { describeUnsafePattern, MAX_PATTERN_INPUT_LENGTH, overlongPatternInput, unsafeSchemaPattern } from "./schema-patterns.ts";
 import type { MessageBlock } from "./surfaces.ts";
+import { ONE_LINE_PATTERN, ONE_LINE_REQUIRED_PATTERN, hiddenCharacterProblem } from "./text-rules.ts";
 import type { WidgetDefinition } from "./widgets.ts";
 
 /**
@@ -102,6 +103,30 @@ function structuralProblems(schema: StructuralSchema, props: Record<string, unkn
   return { problems, keys };
 }
 
+/**
+ * Why a string failed its pattern, in words, when the pattern is a one-line field's.
+ *
+ * A one-line field's pattern (`ONE_LINE_PATTERN`) is a long character class; "must match pattern" with that class
+ * tells a model nothing it can fix, while "contains U+202E" or "is empty" does. Any other pattern keeps its own
+ * message: its author's rule is not this one, and a value can fail it for a reason that has nothing to do with a hidden
+ * character the value also holds.
+ */
+const ONE_LINE_PATTERNS: ReadonlySet<string> = new Set(
+  [ONE_LINE_PATTERN, ONE_LINE_REQUIRED_PATTERN].map((pattern) => new RegExp(pattern).toString()),
+);
+
+function patternProblemAt(props: Record<string, unknown>, issue: z.core.$ZodIssue): string | undefined {
+  if (issue.code !== "invalid_format" || issue.format !== "regex") return undefined;
+  if (issue.pattern === undefined || !ONE_LINE_PATTERNS.has(issue.pattern)) return undefined;
+  let value: unknown = props;
+  for (const key of issue.path) {
+    if (value === null || typeof value !== "object") return undefined;
+    value = (value as Record<PropertyKey, unknown>)[key];
+  }
+  if (typeof value !== "string") return undefined;
+  return hiddenCharacterProblem(value) ?? (value.trim() === "" ? "is empty" : undefined);
+}
+
 /** What the full schema refuses that the structural pass has not already named. */
 function schemaProblems(
   schema: Record<string, unknown>,
@@ -122,7 +147,7 @@ function schemaProblems(
     // Unknown top-level keys were already named one by one.
     if (issue.path.length === 0 && issue.code === "unrecognized_keys" && forbidsExtra) continue;
     const where = issue.path.length === 0 ? "props" : `property "${issue.path.map(String).join(".")}"`;
-    problems.push(`${where}: ${issue.message}`);
+    problems.push(`${where}: ${patternProblemAt(props, issue) ?? issue.message}`);
     if (problems.length === MAX_SCHEMA_PROBLEMS) break;
   }
   return problems;

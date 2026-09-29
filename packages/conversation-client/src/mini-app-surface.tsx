@@ -332,6 +332,7 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
             props={section.props}
             dataset={regionDataset(section, availability)}
             state={sectionState}
+            statedAt={view.capturedAt}
             {...(props.imageUrl === undefined ? {} : { imageUrl: props.imageUrl })}
             // Local view state stays interactive everywhere: which day is selected and which
             // period is on screen are presentation, not a change to the node. Only the action

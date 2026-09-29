@@ -10,7 +10,10 @@ import {
   describeSemanticDoc,
   graphSemanticState,
   normalizeSemanticDoc,
+  readStatusCard,
+  statusCardSemantic,
 } from "@clarkcant/contracts";
+import { STATUS_CARD_KIND } from "@clarkcant/data-canvas";
 import { type WidgetDeps, getActionBinding, getInstance, liveStateOf, semanticViewOf } from "@clarkcant/core";
 import {
   findCompositionByInstance,
@@ -50,8 +53,8 @@ function actionsOf(deps: SemanticDeps, bindingIds: readonly string[]): SemanticA
  * The document for one instance, or undefined when this node no longer holds it.
  *
  * A composition says its period, its selected day and its graph values, read from the state row the node stores. A
- * widget in its own frame says what it proposed about itself, cleaned and bounded, marked as its own words. Anything
- * else says what it is.
+ * status, progress or details card says what its props say. A widget in its own frame says what it proposed about
+ * itself, cleaned and bounded, marked as its own words. Anything else says what it is.
  */
 export function buildWidgetSemantic(
   deps: SemanticDeps,
@@ -79,6 +82,15 @@ export function buildWidgetSemantic(
       values: { period, ...(selectedDate === undefined ? {} : { selectedDate }), ...(graph?.values ?? {}) },
       availableActions,
     });
+  }
+
+  // A status, progress or details card means what its props say. Its freshness is unknown rather than live: the props
+  // are what the model stated when it placed the card, and nothing on this node keeps them current.
+  const cardKind = STATUS_CARD_KIND[definitionId];
+  const card = cardKind === undefined ? undefined : readStatusCard(cardKind, instance.props);
+  if (card !== undefined) {
+    const meaning = statusCardSemantic(card);
+    return normalizeSemanticDoc({ instanceId, definitionId, ...meaning, availableActions, freshness: "unknown" });
   }
 
   if (proposal !== undefined) {
