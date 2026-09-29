@@ -316,6 +316,24 @@ describe("the picker", () => {
     expect(folded.suggestions.map((row) => row.ref)).toContainEqual({ kind: "conversation", conversationId: other, label: "Dự án mới" });
   });
 
+  it("names a conversation the clients left untitled by what was said first, and keeps projects in view", async () => {
+    // What every client calls a conversation it opens: as a label it names none of them.
+    for (let index = 0; index < 10; index += 1) {
+      const id = await createConversation("Conversation");
+      if (index === 0) {
+        const sent = await call("POST", `/conversations/${id}/messages`, { text: "sửa lỗi đăng nhập trên Windows" });
+        expect(sent.status).toBe(200);
+      }
+    }
+    const body = (await suggest("@", "", { conversationId })).body as ComposerSuggestionsResponse;
+    const rows = body.suggestions.map((row) => [row.kind, row.label]);
+    expect(rows).toContainEqual(["project", "clarkcant"]);
+    expect(rows).toContainEqual(["conversation", "sửa lỗi đăng nhập trên Windows"]);
+    expect(rows.map(([, label]) => label)).not.toContain("Conversation");
+    // Grouped by kind, projects first.
+    expect(rows[0]).toEqual(["project", "clarkcant"]);
+  });
+
   it("lists one directory of a project, folders first, and never leaves it", async () => {
     const outside = join(dir, "secret");
     mkdirSync(outside);
@@ -362,6 +380,18 @@ describe("the ranking", () => {
     expect(ranked.slice(0, 3)).toEqual(["exact", "prefix-recent", "prefix-old"]);
     expect(ranked).toHaveLength(8);
     expect(ranked).not.toContain("substring");
+  });
+
+  it("gives every kind its share of the rows when nothing is typed, shown grouped", () => {
+    const rows = [
+      ...Array.from({ length: 20 }, (_, index) => ({ match: `hội thoại ${index}`, id: `c${index}`, group: 2, recency: index })),
+      { match: "clarkcant", id: "p0", group: 0 },
+      { match: "web", id: "p1", group: 0 },
+      { match: "nhập email", id: "w0", group: 3, recency: 0 },
+    ];
+    expect(rankCandidates(rows, "").map((row) => row.id)).toEqual(["p0", "p1", "c0", "c1", "c2", "c3", "c4", "w0"]);
+    // Typing narrows by match first; the kinds only order what matched equally well.
+    expect(rankCandidates(rows, "web").map((row) => row.id)).toEqual(["p1"]);
   });
 });
 

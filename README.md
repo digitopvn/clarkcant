@@ -52,7 +52,9 @@ These are exercised by tests in this repository, not described in prose:
   (`docs/research/compatibility-lock.md`)
 - **A conversation client.** A reply streams in as the model writes it, markdown and fenced
   code render with their language highlighted, a tool the turn calls appears as a widget the
-  reader can open, and the composer grows to five lines before it scrolls. The message frame
+  reader can open, and the composer grows to five lines before it scrolls. Typing `/` names a
+  skill and `@` a project, file, folder, service, conversation or background task; the node
+  checks each reference again when the message is sent. The message frame
   — a bubble for the user, the agent's own mark for a reply — follows the design reference in
   `docs/demo-ui`. Exercised end to end by `apps/web/e2e/`, which drives a production build
   against a real node. (`packages/conversation-client`)

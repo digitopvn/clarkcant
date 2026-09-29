@@ -1,7 +1,7 @@
 ---
 phase: 1
 title: "Hợp đồng ComposerReference, provider registry, resolver lúc gửi"
-status: pending
+status: done
 issues: [210]
 ---
 

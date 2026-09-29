@@ -33,6 +33,7 @@ import { usePolicyModeState } from "./use-policy-mode-state.ts";
 import { useConversationTimeline } from "./use-conversation-timeline.ts";
 import { useHeroOrbLayout, ORB_DRAW_SIZE, ORB_RADIUS } from "./use-hero-orb-layout.ts";
 import { useAttachmentComposer } from "./use-attachment-composer.ts";
+import { useComposerReferences } from "./use-composer-references.ts";
 import { useVoiceSession } from "./use-voice-session.ts";
 import { useAppIntentSurfaces } from "./use-app-intent-surfaces.ts";
 import { useTurnSend } from "./use-turn-send.ts";
@@ -202,6 +203,8 @@ export function Conversation({
     t: localeState.t,
   });
 
+  const references = useComposerReferences({ client, conversationId, draft, setDraft, input: composerInput });
+
   const {
     busy,
     error,
@@ -223,6 +226,8 @@ export function Conversation({
     setTimeline,
     chips,
     dispatchChips,
+    chosenReferences: references.chosen,
+    onReferencesSent: references.clear,
     beginHeroExit,
     resetHero,
     setDatasets,
@@ -422,6 +427,7 @@ export function Conversation({
           addFiles={addFiles}
           chips={chips}
           onRemoveChip={(id) => dispatchChips({ type: "remove", id })}
+          references={references}
           draft={draft}
           setDraft={setDraft}
           placeholder={placeholder}

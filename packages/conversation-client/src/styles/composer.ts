@@ -29,34 +29,99 @@ export const COMPOSER_CSS = `
  * Above the pill rather than inside it, because the pill is a fixed stadium whose height is the design's,
  * and chips that made it grow would move the send button away from where the eye left it. The row is inside
  * the drop target, though: a file dropped anywhere on the composer - including on a chip - is the same
- * gesture.
+ * gesture. It is outside the ring, though, which is drawn around the pill alone.
+ *
+ * Its own classes rather than .cc-chip: that one is the two-line suggestion button, and its layer comes later, so a
+ * shared name turned every file and reference here into a tall pill with its remove button on a second line.
  */
-.cc-chip-row {
+.cc-tray {
   display: flex; flex-wrap: wrap; gap: var(--cc-space-xs);
-  list-style: none; margin: 0 auto var(--cc-space-xs); padding: 0;
+  list-style: none; margin: 0 auto var(--cc-space-xs); padding: 0 var(--cc-space-md);
   max-width: var(--cc-composer-max-width);
 }
-.cc-chip {
+.cc-tray-chip {
   display: inline-flex; align-items: center; gap: var(--cc-space-xs);
-  padding: 2px var(--cc-space-xs); border-radius: var(--cc-radius-pill);
+  padding: 2px var(--cc-space-xs) 2px var(--cc-space-sm); border-radius: var(--cc-radius-pill);
   background: var(--cc-elevated); border: 1px solid var(--cc-border);
   font-size: var(--cc-text-label); color: var(--cc-text);
   max-width: 100%;
+  animation: cc-reference-in var(--cc-motion-normal) var(--cc-motion-easing);
 }
 .cc-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .cc-chip-size, .cc-chip-reason { color: var(--cc-text-muted); }
 /* A refusal is stated in words next to the file it is about, and in the warning colour rather than red:
    the file was not sent, which is not the same as the app having failed. */
-.cc-chip[data-attachment-state="failed"] { border-color: var(--cc-warning); }
-.cc-chip[data-attachment-state="failed"] .cc-chip-reason { color: var(--cc-warning); }
+.cc-tray-chip[data-attachment-state="failed"] { border-color: var(--cc-warning); }
+.cc-tray-chip[data-attachment-state="failed"] .cc-chip-reason { color: var(--cc-warning); }
 /* Still on its way. The chip is visible and removable the whole time, so an upload that is slow or stuck is
    never a click that did nothing. */
-.cc-chip[data-attachment-state="checking"] { opacity: 0.7; }
+.cc-tray-chip[data-attachment-state="checking"] { opacity: 0.7; }
 .cc-chip-remove {
   background: none; border: none; color: var(--cc-text-muted); cursor: pointer;
   font: inherit; line-height: 1; padding: 0 2px;
 }
 .cc-chip-remove:hover { color: var(--cc-text); }
+.cc-tray-chip[data-reference-chip] { border-color: color-mix(in oklab, var(--cc-accent) 45%, var(--cc-border)); }
+
+/*
+ * The / and @ picker.
+ *
+ * Right above the pill, the width of it, so the rows sit where the eye already is while typing; the textarea keeps
+ * focus the whole time and drives the list through aria-activedescendant.
+ */
+.cc-reference-picker {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + var(--cc-space-xs));
+  z-index: 6;
+  background: var(--cc-elevated); border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-card);
+  box-shadow: 0 12px 32px color-mix(in oklab, var(--cc-code) 42%, transparent);
+  padding: var(--cc-space-xs);
+  /* The popover motion: opacity and a short rise from the field that opened it, no bounce. The reduced token set
+     makes the duration zero, so a reduced-motion reader gets the list in place. */
+  transform-origin: bottom left;
+  animation: cc-reference-in var(--cc-motion-normal) var(--cc-motion-easing);
+}
+@keyframes cc-reference-in { from { opacity: 0; transform: translateY(4px); } }
+.cc-reference-list { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto; }
+.cc-reference-option {
+  display: flex; align-items: baseline; gap: var(--cc-space-sm);
+  padding: 6px var(--cc-space-sm); border-radius: var(--cc-radius-button);
+  cursor: pointer; min-height: 32px;
+}
+.cc-reference-option[data-active="true"] { background: var(--cc-card); outline: 1px solid var(--cc-focus); outline-offset: -1px; }
+.cc-reference-option[aria-disabled="true"] { cursor: default; opacity: 0.6; }
+.cc-reference-kind {
+  flex: none; min-width: 72px;
+  color: var(--cc-text-muted); font-size: var(--cc-text-label);
+}
+.cc-reference-label { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-reference-note {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--cc-text-muted); font-size: var(--cc-text-label);
+}
+.cc-reference-note[data-reference-disabled="true"] { color: var(--cc-warning); }
+.cc-reference-open {
+  flex: none; margin-left: auto; align-self: center;
+  width: 24px; height: 24px; border-radius: var(--cc-radius-pill);
+  border: 1px solid var(--cc-border); background: var(--cc-card); color: var(--cc-text);
+  font: inherit; line-height: 1; cursor: pointer;
+}
+.cc-reference-open:hover { border-color: var(--cc-accent); }
+.cc-reference-hint, .cc-reference-status {
+  margin: var(--cc-space-xs) var(--cc-space-sm) 0;
+  color: var(--cc-text-muted); font-size: var(--cc-text-label);
+}
+.cc-reference-status:first-child { margin-top: 0; }
+
+/* A reference in the timeline: the token the person saw, and what the node found when it checked. */
+.cc-reference-chip {
+  display: inline-flex; align-items: baseline; gap: var(--cc-space-xs);
+  margin: var(--cc-space-xs) var(--cc-space-xs) 0 0; padding: 2px var(--cc-space-sm);
+  border-radius: var(--cc-radius-pill); border: 1px solid color-mix(in oklab, var(--cc-accent) 45%, var(--cc-border));
+  background: var(--cc-elevated); font-size: var(--cc-text-label); max-width: 100%;
+}
+.cc-reference-chip-token { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-reference-chip-note { color: var(--cc-text-muted); }
 /* The drop target. A dashed outline appears only while a file is over it, so the composer is not permanently
    claiming a state the person is not in. */
 .cc-composer-wrap[data-composer-drop="true"]::after {

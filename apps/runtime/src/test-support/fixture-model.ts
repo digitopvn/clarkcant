@@ -15,6 +15,7 @@ import { GALLERY, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
 import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
 import { listLocalImages, upsertArtifact, upsertDataset } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createAskUserQuestionTool } from "../ask-user-question.ts";
@@ -29,7 +30,7 @@ import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
 import { createAutomationTools } from "../automation-tools.ts";
 import { controlApp, createNodeTools, createRememberTool, type CommandToolDeps } from "../node-tools.ts";
 import { extractPdfText } from "../pdf-text.ts";
-import { type ProjectFinderDeps } from "../project-finder.ts";
+import { type ProjectFinderDeps, indexDirectoryPath } from "../project-finder.ts";
 import { createInvokeCapabilityTool } from "../invoke-capability-tool.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "../request-secret.ts";
 import { commandDigest } from "../run-command.ts";
@@ -1729,4 +1730,21 @@ export function arrangeModelNode(deps: { services: NodeServices; dataDir: string
     list: () => skillSource.skills(),
     body: (name, revision) => skillSource.skillBody(name, revision),
   };
+
+  /*
+   * One small project for the composer's `@`, inside the approved root above.
+   *
+   * Written into the node's own data directory, which the suite wipes before every run, so the picker has something to
+   * list that is the same on every machine and never a developer's own folders. Indexed directly, as a person naming
+   * the folder would, rather than waiting on the background scan.
+   */
+  const demo = join(dataDir, "workspace", "demo-app");
+  mkdirSync(join(demo, "src"), { recursive: true });
+  mkdirSync(join(demo, "docs"), { recursive: true });
+  writeFileSync(join(demo, "package.json"), `${JSON.stringify({ name: "demo-app", private: true }, null, 2)}\n`);
+  writeFileSync(join(demo, "README.md"), "# demo-app\n");
+  writeFileSync(join(demo, "src", "app.ts"), "export const app = 1;\n");
+  writeFileSync(join(demo, "docs", "guide.md"), "# Hướng dẫn\n");
+  const indexed = indexDirectoryPath(services.projects, demo);
+  if (!indexed.ok) process.stderr.write(`fixture: the demo project was not indexed — ${indexed.message}\n`);
 }

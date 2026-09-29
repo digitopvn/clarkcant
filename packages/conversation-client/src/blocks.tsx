@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactElement } from "react";
 
-import { attachmentRefSchema, type AttachmentRef } from "@clarkcant/contracts";
+import { attachmentRefSchema, referenceBlockSchema, referenceToken, type AttachmentRef } from "@clarkcant/contracts";
 
 import { CodeBlock, Markdown, linkedText } from "./markdown.tsx";
 import { formatFileSize } from "./attachments.ts";
@@ -1470,6 +1470,24 @@ export interface SurfaceBlockRef {
  * here because a block read back from storage is not a type, and a renderer that trusted it would be the
  * place a forged name or a path first reached the DOM.
  */
+/**
+ * Something the person pointed at when they wrote the message: a skill, a project, a file, a conversation.
+ *
+ * A read-only chip with the token they saw in the composer, and what the node found when it checked the reference
+ * (a file's size, a task's state), so the message reads back the way it was sent.
+ */
+function ReferenceBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+  const parsed = referenceBlockSchema.safeParse(block);
+  if (!parsed.success) return null;
+  const { reference, note } = parsed.data;
+  return (
+    <span className="cc-reference-chip" data-reference-block={reference.label} data-reference-kind={reference.kind}>
+      <span className="cc-reference-chip-token">{referenceToken(reference)}</span>
+      {note === undefined ? null : <span className="cc-reference-chip-note">{note}</span>}
+    </span>
+  );
+}
+
 function AttachmentBlock({
   block,
   client,
@@ -1569,6 +1587,8 @@ export function renderBlock(
       // The client is what fetches the bytes: an attachment's content route needs the bearer token, so a block
       // drawn without one still shows the file rather than pretending it is missing.
       return <AttachmentBlock key={index} block={block} client={client} />;
+    case "reference":
+      return <ReferenceBlock key={index} block={block} />;
     case "tool-activity":
       return <ToolActivityBlock key={index} block={block} />;
     case "reasoning":

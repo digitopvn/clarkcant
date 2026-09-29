@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { GatewayClient, ResolvedDataset, SnapshotPresentationResponse, Timeline } from "./api.ts";
+import { GatewayError, type GatewayClient, type ResolvedDataset, type SnapshotPresentationResponse, type Timeline } from "./api.ts";
 import { readyAttachmentIds, type AttachmentChip } from "./attachments.ts";
+import { liveReferences } from "./composer-trigger.ts";
+import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { followsBottom } from "./follow-bottom.ts";
 import type { AppIntentDecision } from "@clarkcant/contracts";
+
+/** The node's own sentence for a refused send; the code in front of it belongs in a log, not the status line. */
+function sendFailure(cause: unknown): string {
+  if (cause instanceof GatewayError) return cause.reason;
+  return cause instanceof Error ? cause.message : String(cause);
+}
 
 export interface TurnSendState {
   busy: boolean;
@@ -46,6 +54,13 @@ export interface TurnSendDeps {
   setTimeline: (timeline: Timeline | undefined) => void;
   chips: readonly AttachmentChip[];
   dispatchChips: (action: { type: "sent" }) => void;
+  /**
+   * What the person chose after `/` or `@`. A send carries the ones whose token is in the text it sends, so a message
+   * sent from a suggestion chip or a card never picks up a reference that belongs to the draft.
+   */
+  chosenReferences: readonly ChosenReference[];
+  /** A send the node accepted used them up; a refused one keeps them, with the draft, for the next try. */
+  onReferencesSent: () => void;
   beginHeroExit: () => void;
   resetHero: () => void;
   setDatasets: (datasets: Record<string, ResolvedDataset>) => void;
@@ -82,6 +97,8 @@ export function useTurnSend({
   setTimeline,
   chips,
   dispatchChips,
+  chosenReferences,
+  onReferencesSent,
   beginHeroExit,
   resetHero,
   setDatasets,
@@ -175,6 +192,7 @@ export function useTurnSend({
       const generation = sessionGeneration.current;
       try {
         const attachmentIds = readyAttachmentIds(chips);
+        const references = liveReferences(trimmed, chosenReferences).map((entry) => entry.ref);
         const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
         // The user may have restarted while the conversation was being created or the model was
         // answering. Everything after this point belongs to the session they left.
@@ -214,18 +232,19 @@ export function useTurnSend({
               }
             },
           },
-          { ...options, attachmentIds },
+          { ...options, attachmentIds, references },
         );
         // Cleared only after the send succeeded: a failed send leaves the chips stored on the node,
         // so the person can press send again rather than attaching the same file a second time.
         dispatchChips({ type: "sent" });
+        onReferencesSent();
       } catch (cause) {
         if (sessionGeneration.current !== generation) return;
         // The draft is restored so a failed send does not lose the user's text.
         onSendFailed(trimmed);
         setPendingUser(undefined);
         setLive([]);
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(sendFailure(cause));
       } finally {
         setBusy(false);
       }
@@ -235,11 +254,13 @@ export function useTurnSend({
       beginHeroExit,
       busy,
       chips,
+      chosenReferences,
       clearDraft,
       client,
       conversationId,
       dispatchChips,
       onConversationReady,
+      onReferencesSent,
       onSendFailed,
       setConversationId,
       setPendingIntent,
@@ -271,7 +292,7 @@ export function useTurnSend({
     try {
       return (await client.stopTurn(conversationId)).stopped;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(sendFailure(cause));
       return false;
     }
   }, [busy, client, conversationId]);

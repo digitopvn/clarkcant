@@ -1,7 +1,7 @@
 ---
 phase: 2
 title: "Popover trong composer, token, chip, gửi kèm reference"
-status: pending
+status: done
 issues: [210]
 ---
 

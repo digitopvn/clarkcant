@@ -22,8 +22,8 @@ chữ vào prompt. Mỗi notice mang subject có kiểu, và host tự suy ra ac
 
 | Phase | Nội dung | Phụ thuộc | Trạng thái |
 | --- | --- | --- | --- |
-| 01 | [Hợp đồng `ComposerReference`, provider registry, resolver lúc gửi](phase-01-reference-contract-and-resolver.md) | — | pending |
-| 02 | [Popover trong composer, token, chip, gửi kèm reference](phase-02-composer-popover.md) | 01 | pending |
+| 01 | [Hợp đồng `ComposerReference`, provider registry, resolver lúc gửi](phase-01-reference-contract-and-resolver.md) | — | done |
+| 02 | [Popover trong composer, token, chip, gửi kèm reference](phase-02-composer-popover.md) | 01 | done |
 | 03 | [Inbox: đọc/chưa đọc, hoàn tác dismiss, Hỏi Clark, Thêm vào ngữ cảnh, `NoticeSubject`, action resolver](phase-03-actionable-inbox.md) | 01, 02 | pending |
 
 Phase 01 và 02 nằm chung một PR vì phần UI là bằng chứng của hợp đồng. Phase 03 là PR thứ hai.

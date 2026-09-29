@@ -138,10 +138,11 @@ anything is stored. What passes is kept on the user message as a `reference` blo
 project-relative path; a skill's instructions are included in that turn. A reference is a pointer, not a permission:
 reading, running or changing anything it names still goes through the node's usual checks.
 
-`GET /composer/suggestions` is what fills the picker: skills after `/`; projects, services, titled conversations and
-background work after `@`; one directory of a project after `@<project>/`. At most 8 rows, ranked exact, then prefix,
-then substring, recently used first, with diacritics optional when typing. A row that cannot be chosen says why in
-`disabledReason`.
+`GET /composer/suggestions` is what fills the picker: skills after `/`; projects, services, conversations (by title, or
+by the start of the first message when the title is the clients' placeholder) and background work after `@`; one
+directory of a project after `@<project>/`. At most 8 rows, ranked exact, then prefix, then substring, then by kind
+(projects, services, conversations, work), recently used first, with diacritics optional when typing. With nothing
+typed after `@`, each kind gets its share of the rows. A row that cannot be chosen says why in `disabledReason`.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.

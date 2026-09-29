@@ -7,10 +7,11 @@ import {
   type ComposerTrigger,
   projectRelativePathSchema,
 } from "@clarkcant/contracts";
-import { type ProjectRecord, getConversation, listConversations, listProjects } from "@clarkcant/storage";
+import { type ProjectRecord, getConversation, listConversations, listProjects, messagesSince } from "@clarkcant/storage";
 
 import { type ReferenceServices, insideProject, referenceIdentity } from "./composer-references.ts";
 import { SYSTEM_IGNORES, verifyProject } from "./project-finder.ts";
+import { textOfMessage } from "./session-search.ts";
 import { nodeWork } from "./work-supervisor.ts";
 
 /**
@@ -28,6 +29,14 @@ import { nodeWork } from "./work-supervisor.ts";
 export const COMPOSER_SUGGESTIONS_MAX = 8;
 
 const LABEL_MAX = 120;
+/** A conversation named by its first message is named by the start of it: a label, not a transcript. */
+const OPENING_LABEL_MAX = 60;
+/**
+ * The title the clients give a conversation they open, before anything is known about it.
+ *
+ * Every conversation has it, so as a label it names none of them; the first thing the person said does.
+ */
+const PLACEHOLDER_TITLES = new Set(["conversation"]);
 
 /** Folded for matching: case, and the diacritics a person may or may not type ("du an" finds "dự án"). */
 export function foldForMatch(text: string): string {
@@ -40,14 +49,18 @@ interface Candidate {
   match: string;
   /** Position in a most-recent-first list, when the source has one. */
   recency?: number;
+  /** Which kind of thing it is, in the order kinds are listed; one source's recency says nothing about another's. */
+  group?: number;
 }
 
 /**
- * Exact, then prefix, then substring; within each, the recently used first, then the order the source gave.
+ * Exact, then prefix, then substring; within each, by kind, then the recently used first, then the order the source
+ * gave.
  *
- * With no query every candidate is kept, so opening the picker shows the recent things rather than nothing.
+ * With no query every candidate is a match, so opening the picker shows recent things rather than nothing, and each
+ * kind gets its share of the rows: a node with fifty conversations still offers its projects.
  */
-export function rankCandidates<T extends { match: string; recency?: number }>(
+export function rankCandidates<T extends { match: string; recency?: number; group?: number }>(
   candidates: readonly T[],
   query: string,
   limit = COMPOSER_SUGGESTIONS_MAX,
@@ -61,10 +74,39 @@ export function rankCandidates<T extends { match: string; recency?: number }>(
   tiered.sort(
     (left, right) =>
       left.tier - right.tier ||
+      (left.candidate.group ?? 0) - (right.candidate.group ?? 0) ||
       (left.candidate.recency ?? Number.MAX_SAFE_INTEGER) - (right.candidate.recency ?? Number.MAX_SAFE_INTEGER) ||
       left.order - right.order,
   );
-  return tiered.slice(0, limit).map((entry) => entry.candidate);
+  if (folded !== "") return tiered.slice(0, limit).map((entry) => entry.candidate);
+
+  // Round by round, the next of each kind, until the rows are full; shown grouped, in the order ranked above.
+  const kinds = new Map<number, typeof tiered>();
+  for (const entry of tiered) {
+    const group = entry.candidate.group ?? 0;
+    kinds.set(group, [...(kinds.get(group) ?? []), entry]);
+  }
+  const kept = new Set<(typeof tiered)[number]>();
+  for (let round = 0; kept.size < limit; round += 1) {
+    const next = [...kinds.values()].flatMap((entries) => {
+      const entry = entries[round];
+      return entry === undefined ? [] : [entry];
+    });
+    if (next.length === 0) break;
+    for (const entry of next.slice(0, limit - kept.size)) kept.add(entry);
+  }
+  return tiered.filter((entry) => kept.has(entry)).map((entry) => entry.candidate);
+}
+
+/** Rows of the at-sign picker, grouped in this order. */
+const GROUP = { project: 0, service: 1, conversation: 2, work: 3 } as const;
+
+/** What a conversation is called in the picker: its title, or the start of what the person first said in it. */
+function conversationLabel(db: ReferenceServices["runtime"]["db"], conversationId: string, title: string | undefined): string {
+  const named = clip(title ?? "", LABEL_MAX);
+  if (named !== "" && !PLACEHOLDER_TITLES.has(named.toLowerCase())) return named;
+  const opening = messagesSince(db, conversationId, 0, 10).find((message) => message.role === "user");
+  return opening === undefined ? "" : clip(textOfMessage(opening), OPENING_LABEL_MAX);
 }
 
 function clip(text: string, max: number): string {
@@ -140,6 +182,7 @@ function mentionSuggestions(
     if (project.name.length > LABEL_MAX) return;
     candidates.push({
       match: project.name,
+      group: GROUP.project,
       ...(project.lastUsedAt === undefined ? {} : { recency: index }),
       suggestion: row({ kind: "project", projectId: project.projectId, label: project.name }, { note: PROJECT_KIND[project.kind] }),
     });
@@ -149,6 +192,7 @@ function mentionSuggestions(
     if (service.key.length > LABEL_MAX) continue;
     candidates.push({
       match: service.key,
+      group: GROUP.service,
       suggestion: row(
         { kind: "mcp-server", serviceKey: service.key, label: service.key },
         { note: service.state === "running" ? "dịch vụ đang chạy" : service.state === "failed" ? "dịch vụ đang lỗi" : "dịch vụ chưa chạy" },
@@ -158,12 +202,13 @@ function mentionSuggestions(
 
   listConversations(db, 50).forEach((conversationId, index) => {
     if (conversationId === currentConversationId) return;
-    const conversation = getConversation(db, conversationId);
-    const label = clip(conversation?.title ?? "", LABEL_MAX);
-    // A conversation with no title has nothing a person would type to find it, and "untitled" eight times is noise.
+    const label = conversationLabel(db, conversationId, getConversation(db, conversationId)?.title);
+    // A conversation with neither a title nor a word from the person has nothing to be found by, and "untitled"
+    // eight times is noise.
     if (label === "") return;
     candidates.push({
       match: label,
+      group: GROUP.conversation,
       recency: index,
       suggestion: row({ kind: "conversation", conversationId, label }, { note: "hội thoại" }),
     });
@@ -177,6 +222,7 @@ function mentionSuggestions(
     if (label === "") return;
     candidates.push({
       match: label,
+      group: GROUP.work,
       recency: index,
       suggestion: row({ kind: "background-work", workId: entry.workId, label }, { note: `việc nền, ${WORK_STATE[entry.state] ?? entry.state}` }),
     });
