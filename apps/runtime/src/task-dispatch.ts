@@ -477,7 +477,13 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           // approval whose task is not `waiting_approval` is refused by `decideTaskApprovalForNode` before
           // it writes anything, which would leave this one permanently pending for nothing.
           const parked = applyTaskEvent(deps.conductor, job.taskId, "run.needs_approval", { parkedReason });
-          if (!parked.ok) return;
+          if (!parked.ok) {
+            // Stopped before it could park: this dispatcher holds it, so the stop is confirmed here, not left waiting.
+            if (getTask(deps.conductor.db, job.taskId)?.state === "cancel_requested") {
+              await refuse(job, "stopped before a worker was started for it");
+            }
+            return;
+          }
           const approval = requestApproval(coordination, {
             taskId: job.taskId,
             operationDigest,
