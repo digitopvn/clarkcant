@@ -48,13 +48,15 @@ const AUTOMATION: IntentOrigin = {
 let cleanup: (() => void)[] = [];
 
 afterEach(() => {
-  for (const step of cleanup.reverse()) step();
+  // Taken first, so a step that throws never leaves its siblings to run again after the next test.
+  const steps = cleanup.reverse();
   cleanup = [];
+  for (const step of steps) step();
 });
 
 function tempDir(prefix: string): string {
   const path = mkdtempSync(join(tmpdir(), prefix));
-  cleanup.push(() => rmSync(path, { recursive: true, force: true }));
+  cleanup.push(() => rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
   return path;
 }
 
@@ -68,6 +70,7 @@ function makeRepo(parent: string): string {
   git(path, ["init", "--initial-branch=main"]);
   git(path, ["config", "user.email", "test@example.invalid"]);
   git(path, ["config", "user.name", "Test"]);
+  git(path, ["config", "core.autocrlf", "false"]);
   writeFileSync(join(path, "readme.txt"), "original\n", "utf8");
   git(path, ["add", "."]);
   git(path, ["commit", "-m", "initial"]);
@@ -342,7 +345,8 @@ describe("a repository is worked on in the task's own worktree", () => {
     expect(git(repo, ["log", "-1", "--format=%s", "main"])).toBe("initial");
     expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
     expect(readFileSync(join(repo, "readme.txt"), "utf8")).toBe("a person's unsaved thought\n");
-    // A clean worktree is taken away when the task ends; its branch stays.
+    // A clean worktree is taken away when the task ends — after it settles, so it is waited for — and its branch stays.
+    await waitUntil(() => !existsSync(givenRoots[0] ?? "") || kept.length > 0, 10_000);
     expect(existsSync(givenRoots[0] ?? "")).toBe(false);
     expect(kept).toEqual([]);
   }, 40_000);

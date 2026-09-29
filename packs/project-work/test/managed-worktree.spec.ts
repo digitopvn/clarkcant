@@ -34,6 +34,8 @@ function makeRepo(): string {
   git(path, ["init", "--initial-branch=main"]);
   git(path, ["config", "user.email", "test@example.invalid"]);
   git(path, ["config", "user.name", "Test"]);
+  // The bytes a checkout writes are the bytes committed, whatever line-ending conversion this machine's git applies.
+  git(path, ["config", "core.autocrlf", "false"]);
   writeFileSync(join(path, "readme.txt"), "original\n", "utf8");
   git(path, ["add", "."]);
   git(path, ["commit", "-m", "initial"]);
@@ -45,7 +47,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const path of dirs) rmSync(path, { recursive: true, force: true });
+  for (const path of dirs) rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe("a task works in its own worktree, never in the person's tree", () => {
