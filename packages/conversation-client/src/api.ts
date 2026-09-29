@@ -8,6 +8,8 @@
 
 import type {
   AutonomySettings,
+  CompositionGraph,
+  GraphSemanticState,
   LayoutNode,
   ModelPool,
   SseEvent,
@@ -153,6 +155,8 @@ export interface LiveWidgetResponse {
   revision: number;
   stateRevision: number;
   state: Record<string, unknown>;
+  /** The graph's values as the node holds them, with a one-line summary; null when the surface has no graph. */
+  semanticState: GraphSemanticState | null;
   ownerSurface: "inline" | "pin" | null;
   capturedAt: null;
   tombstone: null;
@@ -299,10 +303,12 @@ export interface CompositionResponse {
       textAlternative: string;
     }[];
     initialState: { period: "week" | "month"; selectedDate?: string; timezone: string };
-    actions: { actionBindingId: string; sectionId: string; label: string; kind: string; effectCategory: string }[];
+    actions: { actionBindingId: string; sectionId: string; label: string; kind: string; effectCategory: string; operation?: string }[];
     provenance: { createdAt: string };
     /** Present when the surface was arranged as a tree; its leaves name sections by id. */
     layout?: LayoutNode;
+    /** Present when its leaves write and read state; the values themselves live in the instance state under `graph`. */
+    graph?: CompositionGraph;
   };
   bundleRef: string | null;
   tombstone: { reason: string; at: string } | null;

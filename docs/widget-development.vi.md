@@ -356,9 +356,9 @@ dùng mô hình này, nên trang báo đúng lỗi mà node sẽ từ chối.
 | --- | --- | --- |
 | `canvas.form@1` | Các trường cùng một nút gửi, gắn với một hành động. | `show_view` với `props.fields` (1–20), `props.submitLabel` và `props.action` là hành động `agent` hoặc `invoke`. |
 | `canvas.list@1` | Các mục có id ổn định, có thể chọn một hoặc nhiều mục, chia trang (5–50 mục mỗi trang) và có câu hiển thị khi trống. | `show_view` với `props.items` (tối đa 200). `props.itemActionLabel` đi cùng `props.action` sẽ cho mỗi mục một nút chạy hành động đó. Nó cũng có thể là lá của bố cục, khi đó không có nút cho từng mục. |
-| `canvas.search@1` | Một ô tìm kiếm. | Chỉ làm lá của bố cục. Nó lọc mọi bảng trong cùng bề mặt, ngay trên trang. |
-| `canvas.choice@1` | Một lựa chọn: `chips`, `select`, `multiselect`, `radio`, `checkbox` hoặc `toggle`. | Không bao giờ đứng một mình, vì giá trị của nó chẳng đi đâu cả. Nó là một trường của biểu mẫu. |
-| `canvas.input@1` | Một ô nhập: `text`, `number`, `date`, `date-range`, `time` hoặc `slider`. | Không bao giờ đứng một mình, cùng lý do trên. |
+| `canvas.search@1` | Một ô tìm kiếm. | Chỉ làm lá của bố cục. Khi không khai báo state, nó lọc mọi bảng trong cùng bề mặt, ngay trên trang. Khi có state, nó ghi một khoá qua quy tắc `on` (§8.3). |
+| `canvas.choice@1` | Một lựa chọn: `chips`, `select`, `multiselect`, `radio`, `checkbox` hoặc `toggle`. | Một trường của biểu mẫu, hoặc một lá của bố cục có quy tắc `on` ghi vào state của bề mặt (§8.3). Không bao giờ đứng một mình khi giá trị của nó chẳng đi đâu cả. |
+| `canvas.input@1` | Một ô nhập: `text`, `number`, `date`, `date-range`, `time` hoặc `slider`. | Như lựa chọn. |
 
 Node bảo đảm:
 
@@ -394,6 +394,68 @@ Kiểm thử: [form-fields.spec.ts](../packages/contracts/test/form-fields.spec.
 [input-primitives.spec.ts](../apps/runtime/test/input-primitives.spec.ts) cho node,
 [input-primitives.spec.ts](../packages/conversation-client/test/input-primitives.spec.ts) cho trang, và journey trình
 duyệt [input-primitives.spec.ts](../apps/web/e2e/input-primitives.spec.ts), chạy ở 1440 px và ở 375 px có cảm ứng.
+
+### 8.3 Nối các widget trên cùng một bề mặt
+
+Cây bố cục (§8.2, và [widget và extension](widgets-and-extensions.vi.md)) đặt các widget. Đồ thị state nói chúng tác động
+lên nhau thế nào: một lựa chọn quyết định biểu đồ vẽ chuỗi nào, một ô tìm kiếm lọc một bảng, các dòng được chọn của một
+bảng được đếm thành một con số. Đồ thị là dữ liệu do host sở hữu và kiểm tra, gồm ba phần đóng, trong
+[composition-graph.ts](../packages/contracts/src/composition-graph.ts):
+
+- **State**: `props.state` trên `canvas.overview@1`, tối đa 16 khoá, mỗi khoá là `{ "type": "string" | "number" |
+  "boolean" | "string-list", "initial": … }`.
+- **On**: danh sách `on` của một lá. Mỗi mục nêu một sự kiện mà định nghĩa của lá phát ra, và các bước ghi state:
+  `set`, `toggle`, `copy`, `append`, `remove`, `select-field`, `map-field`, `take` và `count`.
+- **Feed**: danh sách `feed` của một lá. `{ "op": "query", "key" }` cho bảng hoặc danh sách, `{ "op": "filter-equals",
+  "field", "key" }` cho một cột của bảng, `title`, `subtitle` hay `meta` của danh sách, hoặc `series` của biểu đồ.
+
+| Định nghĩa | Sự kiện phát ra | Mang theo |
+| --- | --- | --- |
+| `canvas.search@1` | `query.change` | `query` |
+| `canvas.choice@1` | `choice.change` | `value` |
+| `canvas.input@1` | `input.change` | `value` |
+| `canvas.list@1` | `selection.change` | `selected` |
+| `canvas.table@1` | `row.select` | `rowIds` |
+| `canvas.calendar@1` | `date.select` | `date` |
+
+```json
+{
+  "state": { "metric": { "type": "string", "initial": "completed" } },
+  "layout": { "kind": "stack", "children": [
+    { "kind": "widget", "widget": "canvas.choice@1",
+      "props": { "label": "Chỉ số", "kind": "radio", "options": [
+        { "value": "completed", "label": "Việc xong" }, { "value": "created", "label": "Việc tạo" }] },
+      "on": [{ "event": "choice.change", "steps": [{ "op": "select-field", "key": "metric", "field": "value" }] }] },
+    { "kind": "widget", "widget": "canvas.line@1",
+      "feed": [{ "op": "filter-equals", "field": "series", "key": "metric" }] }
+  ] }
+}
+```
+
+Host bảo đảm:
+
+- **Lá không bao giờ gọi tên lá khác.** Nó chỉ nói nó ghi khoá nào và đọc khoá nào, nên hai widget chỉ nối với nhau qua
+  một giá trị host giữ và kiểm được.
+- **Kiểm trước khi lưu bất cứ thứ gì.** Khoá chưa khai báo, phép toán lạ, sự kiện mà định nghĩa không phát ra, input mà
+  lá không đọc, và bước ghi một kiểu mà khoá không chứa được đều bị từ chối kèm lý do, ngay trong lượt đó. Không có
+  callback, không có code.
+- **Node giữ những gì quy tắc nói.** Mỗi lá có quy tắc `on` được một view binding riêng, operation `state.event`. Trang
+  áp dụng sự kiện ngay để người dùng thấy, rồi gửi `{ "event", "payload" }` qua `POST …/widgets/{instanceId}/actions`
+  theo revision của bề mặt. Node áp lại đúng các quy tắc đó lên giá trị nó đã lưu và giữ kết quả; trang không thể ghi
+  thẳng một giá trị. Sự kiện mà quy tắc không cho phép được trả `400 INVALID_INPUT`, và không có gì của nó được giữ lại.
+- **Bản sống và lịch sử khác nhau có chủ đích.** Bề mặt sống đọc lại giá trị của nó sau khi tải lại trang. Bản sao trong
+  hội thoại vẽ đồ thị như lúc được ghi lại, với giá trị ban đầu, và vẫn khám phá được ngay trên trang mà không gửi gì đi.
+- **Agent đọc giá trị, không đọc trang.** Lần đọc bản sống trả về `semanticState`: các giá trị hiện tại, có giới hạn và
+  có kiểu, kèm một dòng tóm tắt. Đó là dữ liệu về view, không bao giờ là chỉ dẫn.
+- **Ô tìm kiếm không có đồ thị vẫn như trước.** Nó lọc mọi bảng trong bề mặt ngay trên trang, và không có gì được lưu hay
+  gửi đi vì nó.
+- Biểu đồ nhận chuỗi từ một lựa chọn sẽ nói nó đang hiển thị chuỗi nào, gọi bằng tên lựa chọn mà người dùng đã chọn.
+  Chuỗi mà dữ liệu không có cũng được nêu tên, và biểu đồ giữ chuỗi của chính nó.
+
+Kiểm thử: [composition-graph.spec.ts](../packages/contracts/test/composition-graph.spec.ts) cho các quy tắc,
+[composition-graph.spec.ts](../apps/runtime/test/composition-graph.spec.ts) cho trình biên dịch và node,
+[surface-graph.spec.ts](../packages/conversation-client/test/surface-graph.spec.ts) cho trang, và journey trình duyệt
+[composition-graph.spec.ts](../apps/web/e2e/composition-graph.spec.ts), cũng chạy ở 375 px.
 
 ---
 

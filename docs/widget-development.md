@@ -355,9 +355,9 @@ node both use it, so the page shows the same problem the node would refuse.
 | --- | --- | --- |
 | `canvas.form@1` | Fields plus one send button, bound to one action. | `show_view` with `props.fields` (1–20), `props.submitLabel` and `props.action`, an `agent` or `invoke` action. |
 | `canvas.list@1` | Items with stable ids, with optional single or multi selection, paging (5–50 per page) and an empty text. | `show_view` with `props.items` (up to 200). `props.itemActionLabel` together with `props.action` gives each item a button for that action. It can also be a layout leaf, which has no item button. |
-| `canvas.search@1` | A search box. | Only as a layout leaf. It narrows every table in the same surface, on the page. |
-| `canvas.choice@1` | One choice: `chips`, `select`, `multiselect`, `radio`, `checkbox` or `toggle`. | Never alone, because its value would go nowhere. It is a form's field. |
-| `canvas.input@1` | One input: `text`, `number`, `date`, `date-range`, `time` or `slider`. | Never alone, as above. |
+| `canvas.search@1` | A search box. | Only as a layout leaf. With no declared state it narrows every table in the same surface, on the page; with state it writes a key through an `on` rule (§8.3). |
+| `canvas.choice@1` | One choice: `chips`, `select`, `multiselect`, `radio`, `checkbox` or `toggle`. | A form's field, or a layout leaf with an `on` rule that writes the surface's state (§8.3). Never alone with nowhere for its value to go. |
+| `canvas.input@1` | One input: `text`, `number`, `date`, `date-range`, `time` or `slider`. | As a choice. |
 
 What the node guarantees:
 
@@ -393,6 +393,70 @@ Tests: [form-fields.spec.ts](../packages/contracts/test/form-fields.spec.ts),
 [input-primitives.spec.ts](../packages/conversation-client/test/input-primitives.spec.ts) for the page, and the
 browser journey [input-primitives.spec.ts](../apps/web/e2e/input-primitives.spec.ts), which runs at 1440 px and at
 375 px with touch.
+
+### 8.3 Connecting widgets on one surface
+
+A layout tree (§8.2, and [widgets and extensions](widgets-and-extensions.md)) places widgets. A state graph says how
+they affect one another: a choice picks the series a chart plots, a search box narrows a table, a table's selection
+counts into a number. The graph is data the host owns and checks, built from three closed parts, in
+[composition-graph.ts](../packages/contracts/src/composition-graph.ts):
+
+- **State**: `props.state` on `canvas.overview@1`, at most 16 keys, each `{ "type": "string" | "number" | "boolean" |
+  "string-list", "initial": … }`.
+- **On**: a leaf's `on` list. Each entry names an event its definition emits and the steps that write state:
+  `set`, `toggle`, `copy`, `append`, `remove`, `select-field`, `map-field`, `take` and `count`.
+- **Feed**: a leaf's `feed` list. `{ "op": "query", "key" }` for a table or a list, `{ "op": "filter-equals",
+  "field", "key" }` for a table column, a list's `title`, `subtitle` or `meta`, or a chart's `series`.
+
+| Definition | Event it emits | Carries |
+| --- | --- | --- |
+| `canvas.search@1` | `query.change` | `query` |
+| `canvas.choice@1` | `choice.change` | `value` |
+| `canvas.input@1` | `input.change` | `value` |
+| `canvas.list@1` | `selection.change` | `selected` |
+| `canvas.table@1` | `row.select` | `rowIds` |
+| `canvas.calendar@1` | `date.select` | `date` |
+
+```json
+{
+  "state": { "metric": { "type": "string", "initial": "completed" } },
+  "layout": { "kind": "stack", "children": [
+    { "kind": "widget", "widget": "canvas.choice@1",
+      "props": { "label": "Metric", "kind": "radio", "options": [
+        { "value": "completed", "label": "Done" }, { "value": "created", "label": "Created" }] },
+      "on": [{ "event": "choice.change", "steps": [{ "op": "select-field", "key": "metric", "field": "value" }] }] },
+    { "kind": "widget", "widget": "canvas.line@1",
+      "feed": [{ "op": "filter-equals", "field": "series", "key": "metric" }] }
+  ] }
+}
+```
+
+What the host guarantees:
+
+- **A leaf never names another leaf.** It says which key it writes and which key it reads, so two widgets are
+  connected only through a value the host holds and can check.
+- **Checked before anything is stored.** An undeclared key, an unknown operation, an event the definition does not
+  emit, an input it does not read, and a step that writes a type its key cannot hold are refused with the reason, in the
+  same turn. There is no callback and no code.
+- **The node keeps what the rules say.** Each leaf with an `on` rule gets its own view binding, operation
+  `state.event`. The page applies an event at once so the person sees it, then sends `{ "event", "payload" }` through
+  `POST …/widgets/{instanceId}/actions` under the surface's revision. The node applies the same rules again to the
+  value it stored and keeps the result; a page cannot write a value directly. An event its rules do not allow is
+  answered with `400 INVALID_INPUT`, and nothing of it is kept.
+- **Live and history differ on purpose.** The live surface reads its values back after a reload. The transcript's
+  copy draws the graph as it was captured, with its starting values, and can still be explored on the page without
+  sending anything.
+- **An agent reads the values, not the page.** The live read returns `semanticState`: the current values, bounded and
+  typed, with a one-line summary. It is data about the view, never instructions.
+- **A search box without a graph behaves as before.** It narrows every table in the surface on the page, and nothing
+  is stored or sent for it.
+- A chart fed by a choice says which series it shows, named by the option the person picked. A series the data does
+  not have is named too, and the chart keeps its own.
+
+Tests: [composition-graph.spec.ts](../packages/contracts/test/composition-graph.spec.ts) for the rules,
+[composition-graph.spec.ts](../apps/runtime/test/composition-graph.spec.ts) for the compiler and the node,
+[surface-graph.spec.ts](../packages/conversation-client/test/surface-graph.spec.ts) for the page, and the browser
+journey [composition-graph.spec.ts](../apps/web/e2e/composition-graph.spec.ts), which also runs at 375 px.
 
 ---
 

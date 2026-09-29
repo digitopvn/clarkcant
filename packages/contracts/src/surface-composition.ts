@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { checkCompositionGraph, compositionGraphSchema } from "./composition-graph.ts";
 import { checkLayout, layoutNodeSchema } from "./composition-layout.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 
@@ -49,6 +50,8 @@ export const compositionSlotSchema = z.enum([
   "metrics",
   "filter",
   "search",
+  "choice",
+  "input",
   "trend",
   "table",
   "list",
@@ -140,6 +143,11 @@ export const compositionActionRefSchema = z.strictObject({
   label: z.string().min(1).max(200),
   kind: z.enum(["view", "invoke", "agent", "workflow"]),
   effectCategory: effectCategorySchema,
+  /**
+   * The view operation the binding performs, when a section holds more than one: a calendar can both select a day and
+   * report it to the surface's graph, and a page routes each to its own binding by this.
+   */
+  operation: z.string().min(1).max(80).optional(),
 });
 export type CompositionActionRef = z.infer<typeof compositionActionRefSchema>;
 
@@ -195,6 +203,11 @@ export const surfaceCompositionSpecSchema = z.strictObject({
   provenance: compositionProvenanceSchema,
   /** Version 2 only: how the sections are arranged. Its leaves name sections by id and nothing else. */
   layout: layoutNodeSchema.optional(),
+  /**
+   * Version 2 only: the state the surface holds and how its leaves write and read it (`composition-graph.ts`). Data,
+   * never code: a leaf is connected to another only through a value the host declares, checks and stores.
+   */
+  graph: compositionGraphSchema.optional(),
 });
 export type SurfaceCompositionSpec = z.infer<typeof surfaceCompositionSpecSchema>;
 
@@ -370,6 +383,15 @@ export function checkSurfaceCompositionSpec(
   }
 
   if (spec.layout !== undefined) problems.push(...checkLayout(spec.layout, sectionIds));
+  if (spec.graph !== undefined) {
+    if (spec.layout === undefined) problems.push("a graph belongs to a composition with a layout");
+    problems.push(
+      ...checkCompositionGraph(
+        spec.graph,
+        spec.sections.map((section) => ({ sectionId: section.sectionId, definitionId: section.definitionRef.id })),
+      ),
+    );
+  }
 
   for (const action of spec.actions) {
     if (!sectionIds.has(action.sectionId)) {

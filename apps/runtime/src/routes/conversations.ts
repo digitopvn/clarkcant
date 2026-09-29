@@ -12,6 +12,7 @@ import {
   type Principal,
   capabilityRefSchema,
   commandEnvelopeSchema,
+  graphSemanticState,
   nowInstant,
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
@@ -418,6 +419,11 @@ function resolveLiveWidget(
     revision: instance.revision,
     stateRevision: state?.revision ?? 0,
     state: state?.body ?? {},
+    /*
+     * The graph's values as the node holds them, bounded and typed, so a client or an agent turn reads what the surface
+     * is showing without re-deriving it from a page. Data about the view, never instructions.
+     */
+    semanticState: graphSemanticState(composition.graph, state?.body.graph) ?? null,
     ownerSurface: owner?.surface ?? null,
     capturedAt: null,
     tombstone: null,
