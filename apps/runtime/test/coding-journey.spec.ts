@@ -115,7 +115,7 @@ function installGhShim(): string {
   writeFileSync(
     join(bin, "gh-shim.mjs"),
     [
-      'import { appendFileSync, existsSync, writeFileSync } from "node:fs";',
+      'import { appendFileSync, existsSync, renameSync, writeFileSync } from "node:fs";',
       'import { createHash } from "node:crypto";',
       'import { dirname, join } from "node:path";',
       'import { fileURLToPath } from "node:url";',
@@ -125,7 +125,7 @@ function installGhShim(): string {
       "const here = dirname(fileURLToPath(import.meta.url));",
       'appendFileSync(join(here, "calls.jsonl"), JSON.stringify(record) + "\\n");',
       // A GitHub that takes the request and never answers, while a test has left `hang` beside the shim.
-      'if (args[0] === "pr" && args[1] === "create" && existsSync(join(here, "hang"))) { writeFileSync(join(here, "hanging.pid"), String(process.pid)); setInterval(() => {}, 1000); }',
+      'if (args[0] === "pr" && args[1] === "create" && existsSync(join(here, "hang"))) { writeFileSync(join(here, "hanging.pid.tmp"), String(process.pid)); renameSync(join(here, "hanging.pid.tmp"), join(here, "hanging.pid")); setInterval(() => {}, 1000); }',
       `else if (args[0] === "pr" && args[1] === "create") { process.stdout.write(${JSON.stringify(`${PR_URL}\n`)}); process.exit(0); }`,
       'else { process.stderr.write("gh shim: unexpected call\\n"); process.exit(1); }',
       "",
@@ -177,6 +177,29 @@ async function waitUntil<T>(read: () => T | undefined, timeoutMs: number): Promi
     if (value !== undefined) return value;
     if (Date.now() > deadline) throw new Error(`condition not met within ${String(timeoutMs)}ms`);
     await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/**
+ * The pid of the `gh` that took a pull request and never answered, once it is running.
+ *
+ * It is the `node` the shim runs: the leaf of the tree a stop ends, on POSIX through `exec` in the shell script and on
+ * Windows as the batch file's child. The shim writes the file whole with a rename, so a read never sees half of it.
+ */
+function hangingGhPid(): number | undefined {
+  const file = join(dir, "bin", "hanging.pid");
+  if (!existsSync(file)) return undefined;
+  const pid = Number(readFileSync(file, "utf8"));
+  return Number.isInteger(pid) && pid > 1 ? pid : undefined;
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM is a process that exists and belongs to somebody else; only "no such process" is gone.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -483,10 +506,14 @@ describe("a labelled issue becomes a draft pull request", () => {
 
     const taskId = await waitUntil(taskIdOfRun, 10_000);
     // Stopped while `gh` has the request and has not answered: the push before it is done, the pull request may be.
+    // The command being listed is not enough: the shell is up before `gh` is, and a stop that lands before `gh` has
+    // started is a different moment — on POSIX it never writes its pid, and on Windows `taskkill /T` can walk the tree
+    // before the batch file has started `node`, leaving a `gh` nobody stopped. So the stop waits for `gh` itself.
     await waitUntil(
       () => (listRunningCommands().some((running) => running.taskId === taskId && running.command.includes("gh pr create")) ? true : undefined),
       80_000,
     );
+    const hangingPid = await waitUntil(hangingGhPid, 30_000);
     expect(dispatcher.stop(taskId)).toBe(true);
 
     const report = await waitUntil(
@@ -526,15 +553,12 @@ describe("a labelled issue becomes a draft pull request", () => {
     // Gone before the folder is removed: the `gh` that never answered, whose working directory is the task's worktree,
     // and the worktree itself, which the dispatcher takes away once the task has settled.
     await waitUntil(() => (listRunningCommands().some((running) => running.taskId === taskId) ? undefined : true), 15_000);
-    const hangingPid = Number(readFileSync(join(dir, "bin", "hanging.pid"), "utf8"));
-    await waitUntil(() => {
-      try {
-        process.kill(hangingPid, 0);
-        return undefined;
-      } catch {
-        return true;
-      }
-    }, 15_000);
+    try {
+      await waitUntil(() => (isAlive(hangingPid) ? undefined : true), 15_000);
+    } finally {
+      // A stop that missed it fails the line above; the process is still ended so a failing run leaves nothing behind.
+      if (isAlive(hangingPid)) process.kill(hangingPid, "SIGKILL");
+    }
     await waitUntil(
       () =>
         !existsSync(join(dir, "worktrees", taskId)) ||
