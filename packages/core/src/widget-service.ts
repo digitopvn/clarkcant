@@ -9,6 +9,7 @@ import {
   type CompositionProvenance,
   type ExecutionPolicyConfig,
   type Instant,
+  type LayoutNode,
   type PresentationBundle,
   type Principal,
   type SemanticView,
@@ -19,6 +20,8 @@ import {
   type WidgetSnapshot,
   bindingStillValid,
   checkPresentationBundle,
+  LAYOUT_COMPOSITION_SCHEMA_VERSION,
+  SURFACE_COMPOSITION_SCHEMA_VERSION,
   checkSurfaceCompositionSpec,
   compileActionBinding,
   nowInstant,
@@ -449,6 +452,8 @@ export interface CompositeCaptureInput {
   templateId: string;
   templateVersion: string;
   sections: readonly CompiledSection[];
+  /** How the sections are arranged, when a tree rather than a template's slots does it. Makes the spec version 2. */
+  layout?: LayoutNode;
   /** Container props. The leaf regions live in the spec, not here. */
   props: Record<string, unknown>;
   initialState: CompositionInitialState;
@@ -547,7 +552,7 @@ export function captureCompositeSurface(
   }));
 
   const composition: SurfaceCompositionSpec = {
-    schemaVersion: 1,
+    schemaVersion: input.layout === undefined ? SURFACE_COMPOSITION_SCHEMA_VERSION : LAYOUT_COMPOSITION_SCHEMA_VERSION,
     compositionId,
     instanceId,
     templateId: input.templateId,
@@ -557,6 +562,7 @@ export function captureCompositeSurface(
     initialState: input.initialState,
     actions,
     provenance: input.provenance,
+    ...(input.layout === undefined ? {} : { layout: input.layout }),
   };
 
   const specCheck = checkSurfaceCompositionSpec(composition, {

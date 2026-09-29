@@ -141,6 +141,62 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   .cc-surface-region[data-slot="calendar"] { grid-column: 1 / -1; }
 }
 
+/* ------------------------------------------------------------------ *
+ * A surface arranged as a tree
+ *
+ * Sized by the surface's own width, not the window's: the conversation column is narrower than the
+ * window whenever a panel is open, and a grid that measured the window would keep three columns in a
+ * column that has room for one. Reading order is the tree's order at every width.
+ * ------------------------------------------------------------------ */
+.cc-layout { container-type: inline-size; display: flex; flex-direction: column; gap: var(--cc-space-md); min-width: 0; }
+.cc-layout-stack, .cc-layout-row, .cc-layout-grid, .cc-layout-split, .cc-layout-tabs, .cc-layout-leaf {
+  display: flex; flex-direction: column; gap: var(--cc-space-xs); min-width: 0;
+}
+.cc-layout-stack-body { display: flex; flex-direction: column; gap: var(--cc-space-md); min-width: 0; }
+.cc-layout-row-body { display: flex; flex-wrap: wrap; gap: var(--cc-space-md); align-items: flex-start; min-width: 0; }
+.cc-layout-row-body > * { flex: 1 1 220px; }
+/* At most the columns the tree asked for, and never one narrower than a region can be read at: a three-column grid in
+   a 650px conversation column is two columns, and one on a phone. */
+.cc-layout-grid-body {
+  --cc-layout-gap: var(--cc-space-md);
+  display: grid; gap: var(--cc-layout-gap); align-items: start; min-width: 0;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(100%, max(220px, (100% - (var(--cc-layout-columns, 2) - 1) * var(--cc-layout-gap)) / var(--cc-layout-columns, 2))), 1fr)
+  );
+}
+/* A leaf's card header lets its freshness badge move under a long title instead of squeezing the title to a word a line. */
+.cc-layout .cc-card-head { flex-wrap: wrap; }
+.cc-layout-split-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--cc-space-md); align-items: start; }
+.cc-layout-label { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-layout-card {
+  display: flex; flex-direction: column; gap: var(--cc-space-sm); min-width: 0;
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card); padding: var(--cc-space-md);
+}
+.cc-layout-card-title { margin: 0; font-size: var(--cc-text-body-sm); font-weight: 600; color: var(--cc-text); }
+.cc-layout-tablist {
+  display: flex; flex-wrap: nowrap; gap: var(--cc-space-md); border-bottom: 1px solid var(--cc-border);
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+}
+.cc-layout-tablist::-webkit-scrollbar { display: none; }
+.cc-layout-tabpanel { padding-top: var(--cc-space-sm); min-width: 0; }
+.cc-layout-tabpanel:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: var(--cc-radius-badge); }
+.cc-layout-collapsible { min-width: 0; }
+/* The summary keeps a visible open/closed mark: a flex summary loses the browser's own disclosure triangle. */
+.cc-layout-summary {
+  cursor: pointer; min-height: 32px; display: flex; align-items: center; gap: var(--cc-space-xs); list-style: none;
+  width: fit-content; padding-right: var(--cc-space-xs); font-size: var(--cc-text-body-sm); font-weight: 600; color: var(--cc-text);
+}
+.cc-layout-summary::-webkit-details-marker { display: none; }
+.cc-layout-summary::before { content: "▸"; color: var(--cc-text-tertiary); font-size: var(--cc-text-meta); }
+.cc-layout-collapsible[open] > .cc-layout-summary::before { content: "▾"; }
+.cc-layout-summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: var(--cc-radius-badge); }
+.cc-layout-collapsible[open] > .cc-layout-summary { margin-bottom: var(--cc-space-sm); }
+.cc-layout-divider { border: 0; border-top: 1px solid var(--cc-border); margin: 0; width: 100%; }
+
+@container (max-width: 560px) {
+  .cc-layout-split-body { grid-template-columns: minmax(0, 1fr); }
+}
 .cc-metrics {
   list-style: none; margin: 0; padding: 0;
   display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--cc-space-sm);

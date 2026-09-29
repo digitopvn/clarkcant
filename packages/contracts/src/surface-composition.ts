@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { checkLayout, layoutNodeSchema } from "./composition-layout.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 
 /**
@@ -13,9 +14,11 @@ import { effectCategorySchema, instantSchema } from "./primitives.ts";
  * Three properties are worth naming, because the schemas below are what make them true
  * rather than merely intended:
  *
- * 1. **No recursion.** A section is a leaf. There is no `sections` field inside a section,
- *    and `props` is checked for a nested `sections` key, so a composition cannot contain a
- *    composition. One level, twelve sections, done.
+ * 1. **No recursion of content.** A section is a leaf. There is no `sections` field inside a
+ *    section, and `props` is checked for a nested `sections` or `layout` key, so a composition
+ *    cannot contain a composition. At most twelve sections. A version 2 spec arranges them with a
+ *    bounded `layout` tree (`composition-layout.ts`), but the tree only points at sections by id:
+ *    nesting is arrangement, never a second composition.
  * 2. **Nothing executable.** The spec carries definition ids, prop values, opaque data
  *    references and references to *server-compiled* action bindings. It carries no code, no
  *    URL, no capability name and no permission.
@@ -24,7 +27,10 @@ import { effectCategorySchema, instantSchema } from "./primitives.ts";
  *    values at capture time so history cannot be rewritten by a later revision.
  */
 
+/** The bundle format, and the composition version a template writes: sections in fixed slots. */
 export const SURFACE_COMPOSITION_SCHEMA_VERSION = 1;
+/** The composition version that carries a `layout` tree. Version 1 documents stay readable as they are. */
+export const LAYOUT_COMPOSITION_SCHEMA_VERSION = 2;
 
 /** Ceilings from docs/widgets-and-extensions.md §12 and the analysis report §3.2. */
 export const MAX_COMPOSITION_SECTIONS = 12;
@@ -175,7 +181,7 @@ export type CompositionProvenance = z.infer<typeof compositionProvenanceSchema>;
  * the fields that are not here are exactly the ones that would let a document do something.
  */
 export const surfaceCompositionSpecSchema = z.strictObject({
-  schemaVersion: z.literal(SURFACE_COMPOSITION_SCHEMA_VERSION),
+  schemaVersion: z.union([z.literal(SURFACE_COMPOSITION_SCHEMA_VERSION), z.literal(LAYOUT_COMPOSITION_SCHEMA_VERSION)]),
   compositionId: z.string().min(1).max(128),
   instanceId: z.string().min(1).max(128),
   templateId: z.string().min(1).max(120),
@@ -185,6 +191,8 @@ export const surfaceCompositionSpecSchema = z.strictObject({
   initialState: compositionInitialStateSchema,
   actions: z.array(compositionActionRefSchema).max(32),
   provenance: compositionProvenanceSchema,
+  /** Version 2 only: how the sections are arranged. Its leaves name sections by id and nothing else. */
+  layout: layoutNodeSchema.optional(),
 });
 export type SurfaceCompositionSpec = z.infer<typeof surfaceCompositionSpecSchema>;
 
@@ -304,6 +312,16 @@ export function checkSurfaceCompositionSpec(
 ): CompositionCheck {
   const problems: string[] = [];
 
+  // The version says which of the two layouts the document uses, so the two have to agree: a version 1
+  // document with a tree would be drawn by slot and lose the tree, and a version 2 one without a tree
+  // would have nothing to arrange its sections by.
+  if (spec.schemaVersion === LAYOUT_COMPOSITION_SCHEMA_VERSION && spec.layout === undefined) {
+    problems.push(`a version ${String(LAYOUT_COMPOSITION_SCHEMA_VERSION)} composition needs a layout`);
+  }
+  if (spec.schemaVersion === SURFACE_COMPOSITION_SCHEMA_VERSION && spec.layout !== undefined) {
+    problems.push(`a version ${String(SURFACE_COMPOSITION_SCHEMA_VERSION)} composition has no layout; a layout is version ${String(LAYOUT_COMPOSITION_SCHEMA_VERSION)}`);
+  }
+
   const sectionIds = new Set<string>();
   const slots = new Set<string>();
   for (const section of spec.sections) {
@@ -312,7 +330,9 @@ export function checkSurfaceCompositionSpec(
     }
     sectionIds.add(section.sectionId);
 
-    if (slots.has(section.slot)) {
+    // Slots are positions only when there is no tree. Under a layout the tree places each section, and
+    // two metrics tiles side by side are two sections that read the same kind of data.
+    if (spec.layout === undefined && slots.has(section.slot)) {
       problems.push(`slot "${section.slot}" is claimed by more than one section`);
     }
     slots.add(section.slot);
@@ -338,12 +358,16 @@ export function checkSurfaceCompositionSpec(
       }
     }
 
-    if (Object.hasOwn(section.props, "sections")) {
-      problems.push(
-        `section "${section.sectionId}" carries a nested "sections" prop; compositions are one level deep`,
-      );
+    for (const nested of ["sections", "layout"]) {
+      if (Object.hasOwn(section.props, nested)) {
+        problems.push(
+          `section "${section.sectionId}" carries a nested "${nested}" prop; compositions are one level deep, and a layout only arranges them`,
+        );
+      }
     }
   }
+
+  if (spec.layout !== undefined) problems.push(...checkLayout(spec.layout, sectionIds));
 
   for (const action of spec.actions) {
     if (!sectionIds.has(action.sectionId)) {

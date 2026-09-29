@@ -1261,6 +1261,79 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     }
 
+    /*
+     * A surface the model arranges itself, proposed through the composed view's `props.layout`.
+     *
+     * The tree is scripted; the descriptor is the real one, so the compiler, the catalog lookup, the bounds and the
+     * refusal sentence are the host's. `bảng điều khiển` is a grid of two metric tiles and a card holding a filter above a
+     * table; `đầy đủ` uses every container kind; `quá sâu` and `widget lạ` are proposals the host refuses.
+     */
+    const arranged = /^bố cục\s+(bảng điều khiển|đầy đủ|quá sâu|widget lạ)$/iu.exec(input.text.trim());
+    if (arranged !== null) {
+      const compose = deps.wiring.compose();
+      if (compose === undefined) return undefined;
+      const view = buildViewCatalog(deps.services().conductor, compose).find((entry) => entry.id === "canvas.overview@1");
+      if (view === undefined) return undefined;
+      const leaf = (widget: string, props: Record<string, unknown> = {}, label?: string): Record<string, unknown> => ({
+        kind: "widget",
+        widget,
+        props,
+        ...(label === undefined ? {} : { label }),
+      });
+      const which = (arranged[1] ?? "").toLowerCase();
+      let nested: Record<string, unknown> = leaf("canvas.metrics@1");
+      for (let level = 0; level < 6; level += 1) nested = { kind: "stack", children: [nested] };
+      const layout: Record<string, unknown> =
+        which === "bảng điều khiển"
+          ? {
+              kind: "grid",
+              columns: 3,
+              children: [
+                leaf("canvas.metrics@1", { title: "Việc trong kỳ" }),
+                leaf("canvas.metrics@1", { title: "Nhịp làm việc" }),
+                {
+                  kind: "card",
+                  label: "Chi tiết theo ngày",
+                  children: [leaf("canvas.filter@1"), leaf("canvas.table@1", { title: "Số việc xong theo ngày", searchable: true })],
+                },
+              ],
+            }
+          : which === "đầy đủ"
+            ? {
+                kind: "stack",
+                children: [
+                  { kind: "row", children: [leaf("canvas.metrics@1", { title: "Chỉ số" }), leaf("canvas.filter@1")] },
+                  { kind: "divider" },
+                  {
+                    kind: "tabs",
+                    label: "Xu hướng và bảng",
+                    children: [
+                      leaf("canvas.line@1", { title: "Xu hướng" }, "Biểu đồ"),
+                      leaf("canvas.table@1", { title: "Bảng số liệu" }, "Bảng"),
+                    ],
+                  },
+                  { kind: "split", children: [leaf("canvas.calendar@1"), leaf("canvas.cta@1")] },
+                  { kind: "collapsible", label: "Thêm biểu đồ cột", children: [leaf("canvas.bar@1", { title: "Cột theo ngày" })] },
+                ],
+              }
+            : which === "quá sâu"
+              ? nested
+              : { kind: "grid", children: [leaf("canvas.metrics@1"), leaf("canvas.sparkle@1")] };
+      try {
+        const block = await view.build({
+          props: { layout, title: which === "đầy đủ" ? "Mọi kiểu bố cục" : "Bảng điều khiển" },
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: "Fixture: một bố cục do model đề xuất, dựng trên dữ liệu thật của node (không phải model thật).", block };
+      } catch (cause) {
+        const reply = `Fixture không dựng được bố cục: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
     if (!/tổng quan|tong quan|overview/i.test(input.text)) return undefined;
     const compose = deps.wiring.compose();
     if (compose === undefined) return undefined;
