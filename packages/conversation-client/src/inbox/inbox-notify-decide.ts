@@ -177,7 +177,10 @@ export function decideInboxNotifications(input: DecideInboxNotificationsInput): 
   for (const notice of notices) {
     const id = `notice:${notice.noticeId}`;
     seenIds.add(id);
-    if (knownIds.has(id) || !mayNotify) continue;
+    // Already read by the time this poll first sees it: a kind the person asked not to hear about (the node writes
+    // those read), a dismissal brought back, or one read on another surface. Telling them about it again would be
+    // the interruption they already had or already turned down. A snoozed notice comes back unread, so it does notify.
+    if (knownIds.has(id) || !mayNotify || notice.readAt !== undefined) continue;
     const group = groupForNotice(notice);
     if (!preference.groups[group]) continue;
     candidates.push({

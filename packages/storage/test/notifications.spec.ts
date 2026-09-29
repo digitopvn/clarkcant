@@ -13,12 +13,19 @@ import {
   MAX_NOTIFICATIONS,
   countUnreadNotifications,
   dismissNotification,
+  findNoticeSuppression,
   getNotification,
+  listNoticeSuppressions,
   listNotifications,
+  listSnoozedNotifications,
   markNotificationsRead,
   markNotificationsUnread,
   recordNotification,
+  removeNoticeSuppression,
   restoreNotification,
+  snoozeNotification,
+  suppressNoticeKind,
+  unsnoozeNotification,
   type RecordNotificationInput,
 } from "../src/repositories/notifications.ts";
 
@@ -43,7 +50,8 @@ afterEach(() => {
 });
 
 let counter = 0;
-function record(overrides: Partial<RecordNotificationInput> = {}): { notificationId: string; created: boolean } {
+type Recorded = ReturnType<typeof recordNotification>;
+function record(overrides: Partial<RecordNotificationInput> = {}): Recorded {
   counter += 1;
   return recordNotification(db, {
     notificationId: `ntf_${counter}`,
@@ -76,8 +84,8 @@ describe("recording a notice", () => {
     markNotificationsRead(db, { principalId: "owner_1", at: "2026-09-24T08:00:00.000Z" as Instant });
     const second = record({ dedupKey: "worker:task_1", notificationId: "ntf_second", title: "khác" });
 
-    expect(first).toEqual({ notificationId: "ntf_first", created: true });
-    expect(second).toEqual({ notificationId: "ntf_first", created: false });
+    expect(first).toEqual({ notificationId: "ntf_first", created: true, suppressed: false });
+    expect(second).toEqual({ notificationId: "ntf_first", created: false, suppressed: false });
     const notices = listNotifications(db, "owner_1");
     expect(notices).toHaveLength(1);
     expect(notices[0]?.readAt).toBe("2026-09-24T08:00:00.000Z");
@@ -97,8 +105,8 @@ describe("recording a notice", () => {
     const longKey = `worker:${"a".repeat(400)}`;
     const first = record({ dedupKey: longKey, notificationId: "ntf_long_1" });
     const second = record({ dedupKey: longKey, notificationId: "ntf_long_2" });
-    expect(first).toEqual({ notificationId: "ntf_long_1", created: true });
-    expect(second).toEqual({ notificationId: "ntf_long_1", created: false });
+    expect(first).toEqual({ notificationId: "ntf_long_1", created: true, suppressed: false });
+    expect(second).toEqual({ notificationId: "ntf_long_1", created: false, suppressed: false });
     expect(listNotifications(db, "owner_1")).toHaveLength(1);
   });
 
@@ -113,7 +121,7 @@ describe("recording a notice", () => {
     for (let index = 0; index < MAX_NOTIFICATIONS + 20; index += 1) record();
 
     const again = record({ dedupKey: "update:pkg@9.9.9" });
-    expect(again).toEqual({ notificationId: "ntf_persistent", created: false });
+    expect(again).toEqual({ notificationId: "ntf_persistent", created: false, suppressed: false });
     expect(listNotifications(db, "owner_1").some((notice) => notice.noticeId === "ntf_persistent")).toBe(false);
   });
 
@@ -127,7 +135,7 @@ describe("recording a notice", () => {
       notificationId: "ntf_backdated",
       at: new Date(Date.UTC(2020, 0, 1)).toISOString() as Instant,
     });
-    expect(backdated).toEqual({ notificationId: "ntf_backdated", created: true });
+    expect(backdated).toEqual({ notificationId: "ntf_backdated", created: true, suppressed: false });
     const notices = listNotifications(db, "owner_1", MAX_NOTIFICATIONS + 50);
     expect(notices.some((notice) => notice.noticeId === "ntf_backdated")).toBe(true);
   });
@@ -156,8 +164,8 @@ describe("recording a notice", () => {
   });
 
   it("keeps at most the bound, dropping the oldest", () => {
-    let first: { notificationId: string; created: boolean } | undefined;
-    let newest: { notificationId: string; created: boolean } | undefined;
+    let first: Recorded | undefined;
+    let newest: Recorded | undefined;
     for (let index = 0; index < MAX_NOTIFICATIONS + 5; index += 1) {
       const result = record();
       first ??= result;
@@ -288,5 +296,119 @@ describe("subjects, unread and undo", () => {
     expect(listNotifications(db, "owner_1")).toHaveLength(0);
     expect(getNotification(db, "owner_1", notificationId)?.dismissed).toBe(true);
     expect(getNotification(db, "owner_2", notificationId)).toBeUndefined();
+  });
+});
+
+describe("snoozing", () => {
+  const T0 = "2026-09-24T09:00:00.000Z" as Instant;
+  const at = (ms: number): Instant => new Date(Date.parse(T0) + ms).toISOString() as Instant;
+  const HOUR = 60 * 60_000;
+
+  it("takes a notice out of the list and the count until its time, then brings it back unread at the top", () => {
+    const snoozed = record().notificationId;
+    const other = record().notificationId;
+    markNotificationsRead(db, { principalId: "owner_1", at: T0 });
+    expect(snoozeNotification(db, { principalId: "owner_1", notificationId: snoozed, until: at(HOUR) })).toBe(true);
+
+    // Snoozed: gone from the list and the count, listed on its own with the time it comes back.
+    expect(listNotifications(db, "owner_1", 50, at(1_000)).map((notice) => notice.noticeId)).toEqual([other]);
+    expect(countUnreadNotifications(db, "owner_1", at(1_000))).toBe(0);
+    const aside = listSnoozedNotifications(db, "owner_1", at(1_000));
+    expect(aside.map((notice) => notice.noticeId)).toEqual([snoozed]);
+    expect(aside[0]?.snoozedUntil).toBe(at(HOUR));
+
+    // Back once its time has passed, with nothing having run: unread, counted, first in the list, no longer "snoozed".
+    const back = listNotifications(db, "owner_1", 50, at(HOUR));
+    expect(back.map((notice) => notice.noticeId)).toEqual([snoozed, other]);
+    expect(back[0]?.readAt).toBeUndefined();
+    expect(back[0]?.snoozedUntil).toBeUndefined();
+    expect(countUnreadNotifications(db, "owner_1", at(HOUR))).toBe(1);
+    expect(listSnoozedNotifications(db, "owner_1", at(HOUR))).toEqual([]);
+  });
+
+  it("is not marked read by 'mark all read' while it is snoozed, so it still comes back unread", () => {
+    const { notificationId } = record();
+    snoozeNotification(db, { principalId: "owner_1", notificationId, until: at(HOUR) });
+    expect(markNotificationsRead(db, { principalId: "owner_1", at: at(1_000) })).toBe(0);
+    expect(countUnreadNotifications(db, "owner_1", at(HOUR + 1))).toBe(1);
+  });
+
+  it("brings a snoozed notice back early, unread, and answers truthfully when there is nothing to bring back", () => {
+    const { notificationId } = record();
+    snoozeNotification(db, { principalId: "owner_1", notificationId, until: at(HOUR) });
+    expect(unsnoozeNotification(db, { principalId: "owner_1", notificationId, at: at(60_000) })).toBe("unsnoozed");
+    expect(listNotifications(db, "owner_1", 50, at(60_000)).map((notice) => notice.noticeId)).toEqual([notificationId]);
+    expect(countUnreadNotifications(db, "owner_1", at(60_000))).toBe(1);
+    expect(unsnoozeNotification(db, { principalId: "owner_1", notificationId, at: at(61_000) })).toBe("not-snoozed");
+    expect(unsnoozeNotification(db, { principalId: "owner_2", notificationId, at: at(61_000) })).toBe("not-found");
+  });
+
+  it("belongs to its principal, and a dismissed notice cannot be snoozed", () => {
+    const mine = record().notificationId;
+    expect(snoozeNotification(db, { principalId: "owner_2", notificationId: mine, until: at(HOUR) })).toBe(false);
+    dismissNotification(db, { principalId: "owner_1", notificationId: mine, at: T0 });
+    expect(snoozeNotification(db, { principalId: "owner_1", notificationId: mine, until: at(HOUR) })).toBe(false);
+  });
+
+  it("is never the notice the cap evicts while it is snoozed", () => {
+    const { notificationId } = record();
+    snoozeNotification(db, { principalId: "owner_1", notificationId, until: "2099-01-01T00:00:00.000Z" as Instant });
+    for (let index = 0; index < MAX_NOTIFICATIONS + 5; index += 1) record();
+    expect(listSnoozedNotifications(db, "owner_1").map((notice) => notice.noticeId)).toEqual([notificationId]);
+  });
+});
+
+describe("quieting a kind of notice", () => {
+  const T0 = "2026-09-24T09:00:00.000Z" as Instant;
+
+  it("writes later notices of the same kind read, so they are listed but not counted", () => {
+    const first = record().notificationId;
+    const suppression = suppressNoticeKind(db, { principalId: "owner_1", notificationId: first, suppressionId: "nsp_1", at: T0 });
+    expect(suppression).toMatchObject({ suppressionId: "nsp_1", sourceKind: "background", category: "result", severity: "success" });
+    expect(suppression?.scope).toBeUndefined();
+    expect(suppression?.example).toBe("Việc nền đã xong");
+
+    const quiet = record();
+    expect(quiet.suppressed).toBe(true);
+    expect(getNotification(db, "owner_1", quiet.notificationId)?.notice.readAt).toBeDefined();
+    // The notice it was made from is left as it was: quieting is about what comes next.
+    expect(getNotification(db, "owner_1", first)?.notice.readAt).toBeUndefined();
+    expect(countUnreadNotifications(db, "owner_1")).toBe(1);
+  });
+
+  it("never quiets a different severity, and scopes a package to that package rather than every update", () => {
+    const success = record().notificationId;
+    suppressNoticeKind(db, { principalId: "owner_1", notificationId: success, suppressionId: "nsp_1", at: T0 });
+    expect(record({ severity: "error" }).suppressed).toBe(false);
+
+    const update = record({
+      sourceKind: "package",
+      category: "update",
+      severity: "info",
+      title: "Có bản cập nhật: demo",
+      subject: { kind: "package", packageId: "demo", version: "2.0.0" },
+    }).notificationId;
+    const scoped = suppressNoticeKind(db, { principalId: "owner_1", notificationId: update, suppressionId: "nsp_2", at: T0 });
+    expect(scoped?.scope).toBe("package:demo");
+    const packageUpdate = { sourceKind: "package", category: "update", severity: "info" } as const;
+    expect(record({ ...packageUpdate, subject: { kind: "package", packageId: "demo", version: "3.0.0" } }).suppressed).toBe(true);
+    expect(record({ ...packageUpdate, subject: { kind: "package", packageId: "other", version: "1.0.1" } }).suppressed).toBe(false);
+  });
+
+  it("is per principal, idempotent, and reversible", () => {
+    const first = record().notificationId;
+    const once = suppressNoticeKind(db, { principalId: "owner_1", notificationId: first, suppressionId: "nsp_1", at: T0 });
+    const twice = suppressNoticeKind(db, { principalId: "owner_1", notificationId: first, suppressionId: "nsp_2", at: T0 });
+    expect(twice?.suppressionId).toBe(once?.suppressionId);
+    expect(listNoticeSuppressions(db, "owner_1")).toHaveLength(1);
+
+    // Another principal's notice of the same kind is untouched, and they cannot remove this one's suppression.
+    expect(record({ principalId: "owner_2" }).suppressed).toBe(false);
+    expect(suppressNoticeKind(db, { principalId: "owner_2", notificationId: first, suppressionId: "nsp_3", at: T0 })).toBeUndefined();
+    expect(removeNoticeSuppression(db, { principalId: "owner_2", suppressionId: "nsp_1" })).toBe(false);
+
+    expect(removeNoticeSuppression(db, { principalId: "owner_1", suppressionId: "nsp_1" })).toBe(true);
+    expect(record().suppressed).toBe(false);
+    expect(findNoticeSuppression(db, "owner_1", { sourceKind: "background", category: "result", severity: "success" })).toBeUndefined();
   });
 });

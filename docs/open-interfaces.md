@@ -163,6 +163,16 @@ service is labelled with the id its package gave it and carries only its state (
 what it was started with or why it failed; its `serviceKey` also names the package generation running it, so an update
 makes an earlier reference stale.
 
+The inbox routes are reachable with the same token but are **not** in `/openapi.json` yet and may change: `GET /inbox`
+(what waits on the person, the notices, the notices snoozed for later and the kinds quieted), `GET /inbox/summary`,
+`POST /inbox/read` and `/inbox/unread`, per notice `POST /inbox/notices/:id/<action>` where the action is `dismiss`,
+`restore`, `snooze`, `unsnooze`, `suppress` or `unsuppress`, and `DELETE /inbox/suppressions/:id`. `snooze` takes `{ "until": "<ISO instant>" }`, ahead of
+now and at most 30 days away (else `400 SNOOZE_OUT_OF_RANGE`); the notice leaves the list and the unread count and comes
+back unread once that time has passed. `suppress` quiets the notice's kind for this principal: later notices of that
+kind are still listed but arrive read and raise no notification. Each route acts only on the calling principal's own
+notices. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
+[system-architecture.md](system-architecture.md) under the inbox.
+
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.
 

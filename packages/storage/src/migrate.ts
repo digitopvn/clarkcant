@@ -1392,6 +1392,34 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 33,
+    name: "notification_snooze_and_suppressions",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- When a snoozed notice comes back. While it is ahead, the notice is out of the list and out of the unread
+        -- count; once it has passed, the notice is read back on its own, with no timer, sorted by this time rather than
+        -- by when it was first written, so it returns at the top.
+        ALTER TABLE notifications ADD COLUMN snoozed_until TEXT;
+
+        -- "Stop notifying me about this kind", per principal. A notice matching one is still written and listed, but
+        -- arrives read, so it raises no count and no notification outside the app. scope is '' rather than NULL where
+        -- the kind has no narrower thing to name, so the UNIQUE constraint holds for it too.
+        CREATE TABLE notification_suppressions (
+          suppression_id  TEXT PRIMARY KEY,
+          principal_id    TEXT NOT NULL,
+          source_kind     TEXT NOT NULL,
+          category        TEXT NOT NULL,
+          severity        TEXT NOT NULL,
+          scope           TEXT NOT NULL DEFAULT '',
+          example_title   TEXT NOT NULL,
+          created_at      TEXT NOT NULL,
+          UNIQUE (principal_id, source_kind, category, severity, scope)
+        );
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

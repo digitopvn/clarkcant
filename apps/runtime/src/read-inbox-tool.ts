@@ -63,6 +63,10 @@ export function describeInbox(inbox: InboxResponse): string {
     }
     if (inbox.notices.length > notices.length) lines.push(`(${inbox.notices.length - notices.length} older notices not listed.)`);
   }
+  // Said, not listed: the user put these aside on purpose, and they come back on their own when their time comes.
+  if (inbox.snoozed.length > 0) {
+    lines.push(`${inbox.snoozed.length} more snoozed by the user until later; they return to the inbox on their own.`);
+  }
 
   lines.push("To show the user, open the inbox with control_app kind inbox.open.");
   return lines.join("\n");

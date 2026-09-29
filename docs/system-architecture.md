@@ -446,16 +446,40 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     failing the list. The actions a notice offers are **not stored**: `apps/runtime/src/notice-actions.ts`
     (`noticeActionsFor`) works them out on every read from the subject and the current state — the conversation a task
     now belongs to, whether that conversation still exists — from a closed list the host implements (`open`,
-    `ask-clark`, `add-to-context`, `mark-read`/`mark-unread`, `dismiss`), each placed `primary`, `secondary` or
-    `menu`. A producer never contributes an action. "Ask Clark" and "Add to context" carry the notice as a `notice`
-    composer reference; `composer-references.ts` re-reads it for the owner and quotes its text in the turn brief as
-    data.
+    `ask-clark`, `add-to-context`, `mark-read`/`mark-unread`, `dismiss`, `snooze`/`unsnooze`,
+    `suppress`/`unsuppress`), each placed `primary`, `secondary` or `menu`. A producer never contributes an action.
+    "Ask Clark" and "Add to context" carry the notice as a `notice` composer reference; `composer-references.ts`
+    re-reads it for the owner and quotes its text in the turn brief as data.
+  - **Snooze** (#196, migration 33: `notifications.snoozed_until`). The client offers four presets worked out on the
+    device's clock (`snoozePresets` in `inbox-model.ts`: in one hour, this evening at 18:00 — only before 17:00 —,
+    tomorrow at 08:00, next Monday at 08:00); the node accepts any `until` ahead of now and at most 30 days away
+    (`NOTICE_SNOOZE_MAX_MS`). Snoozing also clears `read_at`. While `snoozed_until` is ahead of now the notice is left
+    out of the list, the unread count, "mark all read" and the cap's pruning, and `GET /inbox` returns it under
+    `snoozed` with only an `unsnooze` action. No timer runs: once the time passes, the next read lists it again,
+    unread, ordered by `COALESCE(snoozed_until, created_at)` so it comes back at the top. `unsnooze` sets
+    `snoozed_until` to now, with the same effect at once.
+  - **Suppression** ("stop notifying me about this kind"; migration 33: `notification_suppressions`, one row per
+    principal and key). The key is `(sourceKind, category, severity, scope)` (`noticeSuppressionKey` in the contract).
+    `scope` is set only where the subject names a recurring thing — `package:<packageId>`, `pi:<package name>`,
+    `peer:<nodeId>`, or, for any other notice from another node, its origin node as `peer:<nodeId>` — and is empty for
+    a local notice about a one-off subject (a task, a conversation, a piece of background work), where a narrower key
+    would never match again. Severity is part of the key so
+    quieting successes never quiets failures. The producer's `dedupKey` is deliberately not used: its shape is
+    internal to each producer and changes with each version or task. A matching notice is still recorded and listed
+    (it stays findable, dedups, can be asked about) but is written already read, so it raises no unread count and no
+    out-of-app notification. That keeps suppression distinct from dismiss (removes one notice) and snooze (hides one
+    notice for a while). It is reversed from the notice's menu (`unsuppress`), from the "quieted kinds" list the
+    inbox panel shows while any exist (`GET /inbox` → `suppressions`), or with Undo right after.
 
 Routes: `GET /inbox`, `GET /inbox/summary` (two numbers for the header badge), `POST /inbox/read` (`noticeIds` or all),
 `POST /inbox/unread` (`noticeIds`, required and non-empty; only this principal's undismissed notices),
 `POST /inbox/notices/:id/dismiss`, `POST /inbox/notices/:id/restore` (undoes a dismissal within five minutes —
-`DISMISS_UNDO_WINDOW_MS` — and answers `409 UNDO_EXPIRED` after; a restored notice comes back read). These routes are
-not part of the stable open-interface description. The contract is in `packages/contracts/src/inbox.ts`. UI in
+`DISMISS_UNDO_WINDOW_MS` — and answers `409 UNDO_EXPIRED` after; a restored notice comes back read),
+`POST /inbox/notices/:id/snooze` (`{ until }`; `400 SNOOZE_OUT_OF_RANGE` when not ahead of now or beyond 30 days),
+`POST /inbox/notices/:id/unsnooze`, `POST /inbox/notices/:id/suppress` (answers the `suppression`; idempotent),
+`POST /inbox/notices/:id/unsuppress` and `DELETE /inbox/suppressions/:id`. All of them act only on this principal's
+notices and suppressions; another principal's id answers 404. These routes are not part of the stable
+open-interface description. The contract is in `packages/contracts/src/inbox.ts`. UI in
 DESIGN.md §6.7; opened with the `inbox.open` intent (text, voice, `control_app`), and `inbox.ask` asks Clark about the
 newest notice. The agent reads the same data through the read-only tool `read_inbox`
 (`apps/runtime/src/read-inbox-tool.ts`): it does not mark anything as read (the user has not seen it yet) and cannot decide anything

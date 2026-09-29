@@ -36,6 +36,7 @@ import {
   type ConfirmationDecision,
   type InboxResponse,
   type InboxSummary,
+  type NoticeSuppression,
   type MemoryRecord,
   type RegisteredPreference,
   type SemanticProposal,
@@ -1792,6 +1793,31 @@ export class GatewayClient {
   /** Undoes a dismissal the node still considers recent (`UNDO_EXPIRED` once it is not). */
   restoreNotice(noticeId: string): Promise<{ restored: true }> {
     return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/restore`);
+  }
+
+  /** Puts a notice aside until `until` (at most 30 days ahead); it comes back unread then. */
+  snoozeNotice(noticeId: string, until: string): Promise<{ snoozedUntil: string }> {
+    return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/snooze`, { until });
+  }
+
+  /** Brings a snoozed notice back now, unread. */
+  unsnoozeNotice(noticeId: string): Promise<{ unsnoozed: true }> {
+    return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/unsnooze`);
+  }
+
+  /** Stops notifying about notices of this one's kind; they still arrive in the list, already read. */
+  suppressNoticeKind(noticeId: string): Promise<{ suppression: NoticeSuppression }> {
+    return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/suppress`);
+  }
+
+  /** Notifies about this notice's kind again. */
+  unsuppressNoticeKind(noticeId: string): Promise<{ unsuppressed: true }> {
+    return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/unsuppress`);
+  }
+
+  /** The same, from the inbox's list of quieted kinds, for a kind with no notice left to act from. */
+  removeNoticeSuppression(suppressionId: string): Promise<{ removed: true }> {
+    return this.#call("DELETE", `/inbox/suppressions/${encodeURIComponent(suppressionId)}`);
   }
 
   /**

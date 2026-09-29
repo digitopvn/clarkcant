@@ -279,6 +279,61 @@ export function noticeReference(notice: Notice): { key: string; ref: Extract<Com
   return { key: `notice:${notice.noticeId}`, ref: { kind: "notice", noticeId: notice.noticeId, label: label === "" ? notice.noticeId : label } };
 }
 
+export type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
+
+/** "This evening" and "tomorrow morning", as local clock hours. */
+const EVENING_HOUR = 18;
+const MORNING_HOUR = 8;
+
+/**
+ * The times a notice can be snoozed to, worked out from the person's own clock and time zone: the node stores an instant
+ * and has no idea when "this evening" is for somebody.
+ *
+ *   - `hour`: an hour from now.
+ *   - `evening`: 18:00 today, offered only until 17:00, so it is never less than an hour away and never already past.
+ *   - `tomorrow`: 08:00 tomorrow.
+ *   - `next-week`: 08:00 on the next Monday — a week away when today is Monday.
+ *
+ * Local-time arithmetic through `Date`'s own setters, so a daylight-saving change in between still lands on the wall
+ * clock hour the label promises.
+ */
+export function snoozePresets(now: Date): Array<{ id: SnoozePresetId; until: Date }> {
+  const at = (days: number, hour: number): Date => {
+    const date = new Date(now.getTime());
+    date.setDate(date.getDate() + days);
+    date.setHours(hour, 0, 0, 0);
+    return date;
+  };
+  const presets: Array<{ id: SnoozePresetId; until: Date }> = [{ id: "hour", until: new Date(now.getTime() + 60 * 60_000) }];
+  if (now.getHours() < EVENING_HOUR - 1) presets.push({ id: "evening", until: at(0, EVENING_HOUR) });
+  presets.push({ id: "tomorrow", until: at(1, MORNING_HOUR) });
+  // getDay(): 0 is Sunday, 1 is Monday. Days until the next Monday, never zero.
+  const toMonday = ((8 - now.getDay()) % 7) || 7;
+  presets.push({ id: "next-week", until: at(toMonday, MORNING_HOUR) });
+  return presets;
+}
+
+export function snoozePresetKey(id: SnoozePresetId): MessageKey {
+  switch (id) {
+    case "hour":
+      return "inbox.snooze.hour";
+    case "evening":
+      return "inbox.snooze.evening";
+    case "tomorrow":
+      return "inbox.snooze.tomorrow";
+    case "next-week":
+      return "inbox.snooze.nextWeek";
+  }
+}
+
+/**
+ * Whether the node says this notice's kind is quieted: it offers "notify about this kind again" only then. Read from the
+ * actions it worked out, so the surface never keeps its own copy of the suppression list to disagree with.
+ */
+export function noticeKindQuieted(notice: Notice): boolean {
+  return notice.actions?.some((action) => action.id === "unsuppress") === true;
+}
+
 /**
  * A notice's actions split the way the row draws them: at most two buttons, and the rest behind "More". A notice read
  * from a node that does not work out actions yet keeps the two it always had, "Open" and "Dismiss".

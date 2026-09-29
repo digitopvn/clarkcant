@@ -1,5 +1,23 @@
-import { type Instant, inboxReadRequestSchema, inboxUnreadRequestSchema } from "@clarkcant/contracts";
-import { dismissNotification, markNotificationsRead, markNotificationsUnread, restoreNotification } from "@clarkcant/storage";
+import {
+  type Instant,
+  NOTICE_SNOOZE_MAX_MS,
+  inboxReadRequestSchema,
+  inboxSnoozeRequestSchema,
+  inboxUnreadRequestSchema,
+  noticeSuppressionKey,
+} from "@clarkcant/contracts";
+import {
+  dismissNotification,
+  findNoticeSuppression,
+  getNotification,
+  markNotificationsRead,
+  markNotificationsUnread,
+  removeNoticeSuppression,
+  restoreNotification,
+  snoozeNotification,
+  suppressNoticeKind,
+  unsnoozeNotification,
+} from "@clarkcant/storage";
 
 import { type InboxServices, inboxSummary, readInbox } from "../inbox.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -13,6 +31,11 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *   POST /inbox/unread      { noticeIds }    mark notices unread again
  *   POST /inbox/notices/:id/dismiss          take one notice out of the list
  *   POST /inbox/notices/:id/restore          undo a dismissal, while it is recent enough to be an undo
+ *   POST /inbox/notices/:id/snooze { until } out of the list and the count until then; back unread after
+ *   POST /inbox/notices/:id/unsnooze         bring a snoozed notice back now
+ *   POST /inbox/notices/:id/suppress         stop notifying about notices of this one's kind
+ *   POST /inbox/notices/:id/unsuppress       notify about this one's kind again
+ *   DELETE /inbox/suppressions/:id           the same, from the list of quieted kinds
  *
  * There is no route that decides anything. Approving a command, granting a capability and answering a question
  * each already have a route, and the inbox calls those: a second way to approve would be a second set of checks,
@@ -92,6 +115,63 @@ export function handleInboxRoutes(deps: InboxRouteDeps): GatewayResponse | undef
     const dismissed = dismissNotification(services.runtime.db, { principalId, notificationId: noticeId, at: at() });
     if (!dismissed) return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
     return json(200, { dismissed: true });
+  }
+
+  if (segments.length === 4 && segments[1] === "notices" && segments[3] === "snooze") {
+    if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "a notice is snoozed with POST");
+    const body = readJson(request);
+    if (!body.ok) return body.response;
+    const parsed = inboxSnoozeRequestSchema.safeParse(body.value);
+    if (!parsed.success) return fail(400, "INVALID_SCHEMA", "until must be a UTC instant such as 2026-09-29T18:00:00.000Z");
+    const now = at();
+    const ahead = Date.parse(parsed.data.until) - Date.parse(now);
+    if (ahead <= 0 || ahead > NOTICE_SNOOZE_MAX_MS) {
+      return fail(400, "SNOOZE_OUT_OF_RANGE", "a notice is snoozed until a time after now and at most 30 days away");
+    }
+    const snoozed = snoozeNotification(services.runtime.db, {
+      principalId,
+      notificationId: segments[2] ?? "",
+      until: parsed.data.until,
+    });
+    if (!snoozed) return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
+    return json(200, { snoozedUntil: parsed.data.until });
+  }
+
+  if (segments.length === 4 && segments[1] === "notices" && segments[3] === "unsnooze") {
+    if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "a snoozed notice is brought back with POST");
+    const outcome = unsnoozeNotification(services.runtime.db, { principalId, notificationId: segments[2] ?? "", at: at() });
+    // Already back, from a second press or because its time came: what was asked for is true.
+    if (outcome === "not-found") return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
+    return json(200, { unsnoozed: true });
+  }
+
+  if (segments.length === 4 && segments[1] === "notices" && segments[3] === "suppress") {
+    if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "a kind of notice is quieted with POST");
+    const suppression = suppressNoticeKind(services.runtime.db, {
+      principalId,
+      notificationId: segments[2] ?? "",
+      suppressionId: services.conductor.newId("nsp"),
+      at: at(),
+    });
+    if (suppression === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
+    return json(200, { suppression });
+  }
+
+  if (segments.length === 4 && segments[1] === "notices" && segments[3] === "unsuppress") {
+    if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "a quieted kind of notice is restored with POST");
+    const stored = getNotification(services.runtime.db, principalId, segments[2] ?? "");
+    if (stored === undefined || stored.dismissed) return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
+    const suppression = findNoticeSuppression(services.runtime.db, principalId, noticeSuppressionKey(stored.notice));
+    // Nothing quieted for this kind any more, from a second press or the list: what was asked for is true.
+    if (suppression !== undefined) removeNoticeSuppression(services.runtime.db, { principalId, suppressionId: suppression.suppressionId });
+    return json(200, { unsuppressed: true });
+  }
+
+  if (segments.length === 3 && segments[1] === "suppressions") {
+    if (request.method !== "DELETE") return fail(405, "METHOD_NOT_ALLOWED", "a quieted kind of notice is removed with DELETE");
+    const removed = removeNoticeSuppression(services.runtime.db, { principalId, suppressionId: segments[2] ?? "" });
+    if (!removed) return fail(404, "RESOURCE_NOT_FOUND", "nothing is quieted under that id");
+    return json(200, { removed: true });
   }
 
   return fail(404, "NOT_FOUND", `no inbox handler for ${request.method} ${request.path}`);

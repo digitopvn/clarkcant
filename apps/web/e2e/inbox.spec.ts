@@ -374,6 +374,120 @@ test("a notice can be marked unread, dismissed and brought back, added to a mess
   await expect(page.locator(`[data-reference-chip="${title}"]`)).toBeVisible();
 });
 
+/** A notice as the node reads it now, or undefined when it is not in the list (snoozed, dismissed or gone). */
+async function listedNotice(page: Page, noticeId: string): Promise<{ readAt?: string } | undefined> {
+  const response = await page.request.get(`${GATEWAY}/inbox`, { headers: { authorization: `Bearer ${token()}` } });
+  const inbox = (await response.json()) as { notices: Array<{ noticeId: string; readAt?: string }> };
+  return inbox.notices.find((notice) => notice.noticeId === noticeId);
+}
+
+test("a snoozed notice leaves the inbox and the count, and comes back unread when its time passes", async ({ page }) => {
+  await openApp(page);
+  const { noticeId } = await backgroundNotice(page, "hoãn thông báo này một lúc");
+  await page.locator("[data-inbox-mark]").click();
+  const dialog = page.getByRole("dialog");
+  const row = dialog.locator(`[data-inbox-notice="${noticeId}"]`);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  const more = row.locator(`[data-inbox-more="${noticeId}"]`);
+  const choices = row.locator(`[data-inbox-snooze-group="${noticeId}"]`);
+
+  // Snoozed to tomorrow morning and taken back with Undo: it is in the list again, unread.
+  await more.click();
+  await expect(choices).toBeVisible();
+  await expect(choices).toHaveAttribute("role", "group");
+  await choices.locator('[data-snooze-preset="tomorrow"]').click();
+  await expect(row).toHaveCount(0, { timeout: 10_000 });
+  await dialog.locator(`[data-inbox-undo="${noticeId}"][data-inbox-undo-kind="unsnooze"]`).click();
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Đã đưa thông báo trở lại, chưa đọc.");
+  await expect.poll(async () => (await listedNotice(page, noticeId))?.readAt).toBeUndefined();
+
+  // "In 1 hour" is worked out on the browser's clock, which is set an hour and a few seconds back so the snooze ends
+  // within this test on the node's real clock. Set before "More" opens, so the choices are drawn at that time.
+  const snoozeFor = 15_000;
+  await page.clock.setFixedTime(new Date(Date.now() - 60 * 60_000 + snoozeFor));
+  await more.click();
+  await choices.locator('[data-snooze-preset="hour"]').click();
+
+  // Gone from the list and from the count, the status line says until when, and it waits in the snoozed list.
+  await expect(row).toHaveCount(0, { timeout: 10_000 });
+  await expect(dialog.locator('[data-inbox-status="done"]')).toContainText("Đã hoãn đến");
+  const unreadWhileSnoozed = await unreadCount(page);
+  const aside = dialog.locator("[data-inbox-snoozed-list]");
+  await aside.locator("summary").click();
+  await expect(aside.locator(`[data-inbox-snoozed="${noticeId}"]`)).toBeVisible();
+  await expect(aside.locator(`[data-inbox-unsnooze="${noticeId}"]`)).toBeVisible();
+  expect(await listedNotice(page, noticeId)).toBeUndefined();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  // Nothing runs when its time comes: the next read finds it back, unread, and the header counts it again.
+  await expect.poll(async () => (await listedNotice(page, noticeId)) !== undefined, { timeout: 40_000 }).toBe(true);
+  expect((await listedNotice(page, noticeId))?.readAt).toBeUndefined();
+  expect(await unreadCount(page)).toBe(unreadWhileSnoozed + 1);
+  await expect(page.locator("[data-inbox-mark]")).toBeVisible({ timeout: 20_000 });
+  await page.locator("[data-inbox-mark]").click();
+  const back = page.getByRole("dialog").locator(`[data-inbox-notice="${noticeId}"]`);
+  await expect(back).toHaveAttribute("data-unread", "true", { timeout: 10_000 });
+  await expect(page.getByRole("dialog").locator("[data-inbox-snoozed-list]")).toHaveCount(0);
+});
+
+test("quieting a kind of notice keeps later ones out of the count, and notifying again is one press away", async ({ page }) => {
+  await openApp(page);
+  const headers = { authorization: `Bearer ${token()}` };
+  try {
+    const first = await backgroundNotice(page, "tắt báo loại thông báo này");
+    await page.locator("[data-inbox-mark]").click();
+    const dialog = page.getByRole("dialog");
+    const row = dialog.locator(`[data-inbox-notice="${first.noticeId}"]`);
+    await expect(row).toBeVisible({ timeout: 10_000 });
+    await row.locator(`[data-inbox-more="${first.noticeId}"]`).click();
+    await row.locator(`[data-inbox-suppress="${first.noticeId}"]`).click();
+
+    // The notice stays, says its kind is quiet, and offers the reverse; Undo is in the status line.
+    await expect(dialog.locator('[data-inbox-status="done"]')).toContainText("Sẽ không báo về loại thông báo này nữa");
+    await expect(row.locator(`[data-inbox-quiet-kind="${first.noticeId}"]`)).toBeVisible();
+    await expect(dialog.locator(`[data-inbox-undo="${first.noticeId}"][data-inbox-undo-kind="unsuppress"]`)).toBeVisible();
+    await expect(dialog.locator("[data-inbox-suppressions]")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+
+    // A later notice of the same kind is still written down, but arrives read: the count does not move for it.
+    const unreadBefore = await unreadCount(page);
+    const quiet = await backgroundNotice(page, "thông báo cùng loại khi đã tắt báo");
+    expect((await listedNotice(page, quiet.noticeId))?.readAt).toBeDefined();
+    expect(await unreadCount(page)).toBe(unreadBefore);
+
+    // Reversible from the list of quieted kinds, which is there even when no notice of the kind is left to act from.
+    await page.locator("[data-composer]").fill("mở hộp thư");
+    await page.locator("[data-composer]").press("Enter");
+    const reopened = page.getByRole("dialog");
+    const quietRow = reopened.locator(`[data-inbox-notice="${quiet.noticeId}"]`);
+    await expect(quietRow).toHaveAttribute("data-unread", "false", { timeout: 10_000 });
+    await expect(quietRow.locator(`[data-inbox-quiet-kind="${quiet.noticeId}"]`)).toBeVisible();
+    const kinds = reopened.locator("[data-inbox-suppressions]");
+    await kinds.locator("summary").focus();
+    await page.keyboard.press("Enter");
+    const remove = kinds.locator("[data-inbox-remove-suppression]").first();
+    await expect(remove).toBeVisible();
+    await remove.click();
+    await expect(reopened.locator('[data-inbox-status="done"]')).toHaveText("Sẽ báo lại về loại thông báo này.");
+    await expect(reopened.locator("[data-inbox-suppressions]")).toHaveCount(0);
+    await expect(quietRow.locator("[data-inbox-quiet-kind]")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    // And the next one of that kind counts again.
+    const loud = await backgroundNotice(page, "thông báo cùng loại sau khi bật lại");
+    expect((await listedNotice(page, loud.noticeId))?.readAt).toBeUndefined();
+  } finally {
+    // The node is shared by every spec that follows; none of them should find a kind quieted.
+    const inbox = (await (await page.request.get(`${GATEWAY}/inbox`, { headers })).json()) as { suppressions?: Array<{ suppressionId: string }> };
+    for (const suppression of inbox.suppressions ?? []) {
+      await page.request.delete(`${GATEWAY}/inbox/suppressions/${suppression.suppressionId}`, { headers });
+    }
+  }
+});
+
 test("asking Clark about the latest notice, typed, sends the newest notice as a reference", async ({ page }) => {
   await openApp(page);
   const { noticeId, title } = await backgroundNotice(page, "hỏi về thông báo mới nhất");

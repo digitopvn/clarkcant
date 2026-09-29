@@ -8,6 +8,7 @@ import {
   type CapabilityRef,
   type Instant,
   type Principal,
+  NOTICE_SNOOZE_MAX_MS,
   inboxResponseSchema,
   inboxSummarySchema,
   redactSecrets,
@@ -646,7 +647,9 @@ describe("notices", () => {
       { id: "ask-clark", placement: "secondary" },
       { id: "add-to-context", placement: "menu" },
       { id: "mark-read", placement: "menu" },
+      { id: "snooze", placement: "menu" },
       { id: "dismiss", placement: "menu" },
+      { id: "suppress", placement: "menu" },
     ]);
     // Something that went wrong is something to act on; its task is gone, but its conversation still opens.
     expect(byTitle.get("Việc chạy nền không xong")?.slice(0, 2)).toEqual([
@@ -659,10 +662,115 @@ describe("notices", () => {
       { id: "dismiss", placement: "secondary" },
       { id: "add-to-context", placement: "menu" },
       { id: "mark-read", placement: "menu" },
+      { id: "snooze", placement: "menu" },
+      { id: "suppress", placement: "menu" },
     ]);
     // A notice whose conversation is gone says so instead of offering a button that fails.
     expect(byTitle.get("Câu hỏi đã hết hạn")).toContainEqual({ id: "open", placement: "menu", unavailable: "conversation-gone" });
     expect(byTitle.get("Câu hỏi đã hết hạn")?.[0]).toEqual({ id: "ask-clark", placement: "primary" });
+  });
+
+  it("snoozes a notice out of the list and the count, and it comes back unread when the time passes", async () => {
+    const snoozed = notice("background:bg_1");
+    const other = notice("background:bg_2");
+    await request("POST", "/inbox/read", {});
+    const until = new Date(Date.parse(AT) + 60 * 60_000).toISOString();
+
+    const answer = await request("POST", `/inbox/notices/${snoozed.notificationId}/snooze`, { until });
+    expect(answer.status).toBe(200);
+    expect(answer.body).toEqual({ snoozedUntil: until });
+
+    const aside = await readInboxOverHttp();
+    expect(aside.notices.map((item) => item.noticeId)).toEqual([other.notificationId]);
+    expect(aside.snoozed.map((item) => item.noticeId)).toEqual([snoozed.notificationId]);
+    expect(aside.snoozed[0]?.snoozedUntil).toBe(until);
+    // The one thing to do with a snoozed notice is bring it back.
+    expect(aside.snoozed[0]?.actions).toEqual([{ id: "unsnooze", placement: "primary" }]);
+    expect(aside.unread).toBe(0);
+    expect((await request("GET", "/inbox/summary")).body).toEqual({ waiting: 0, unread: 0 });
+
+    // No timer: the next read after its time finds it back, unread, at the top.
+    now = until;
+    const back = await readInboxOverHttp();
+    expect(back.notices.map((item) => item.noticeId)).toEqual([snoozed.notificationId, other.notificationId]);
+    expect(back.notices[0]?.readAt).toBeUndefined();
+    expect(back.snoozed).toEqual([]);
+    expect(back.unread).toBe(1);
+  });
+
+  it("brings a snoozed notice back early, and refuses a time that is past, too far, or not a time", async () => {
+    const { notificationId } = notice("background:bg_1");
+    const inAnHour = new Date(Date.parse(AT) + 60 * 60_000).toISOString();
+    await request("POST", `/inbox/notices/${notificationId}/snooze`, { until: inAnHour });
+
+    expect((await request("POST", `/inbox/notices/${notificationId}/unsnooze`)).body).toEqual({ unsnoozed: true });
+    const inbox = await readInboxOverHttp();
+    expect(inbox.notices.map((item) => item.noticeId)).toEqual([notificationId]);
+    expect(inbox.unread).toBe(1);
+    // A second press: it is already back, which is what was asked for.
+    expect((await request("POST", `/inbox/notices/${notificationId}/unsnooze`)).status).toBe(200);
+
+    const past = await request("POST", `/inbox/notices/${notificationId}/snooze`, { until: AT });
+    expect(past.status).toBe(400);
+    expect((past.body as { code: string }).code).toBe("SNOOZE_OUT_OF_RANGE");
+    const tooFar = new Date(Date.parse(AT) + NOTICE_SNOOZE_MAX_MS + 60_000).toISOString();
+    expect((await request("POST", `/inbox/notices/${notificationId}/snooze`, { until: tooFar })).status).toBe(400);
+    expect((await request("POST", `/inbox/notices/${notificationId}/snooze`, { until: "tối nay" })).status).toBe(400);
+    expect((await request("POST", "/inbox/notices/ntf_missing/snooze", { until: inAnHour })).status).toBe(404);
+    expect((await request("GET", `/inbox/notices/${notificationId}/snooze`)).status).toBe(405);
+  });
+
+  it("quiets a kind of notice for this principal: later ones are listed read, and it can be undone two ways", async () => {
+    const first = notice("background:bg_1");
+    const suppressed = await request("POST", `/inbox/notices/${first.notificationId}/suppress`);
+    expect(suppressed.status).toBe(200);
+    const { suppression } = suppressed.body as { suppression: { suppressionId: string; example: string } };
+    expect(suppression.example).toBe("Việc nền đã xong: tóm tắt báo cáo");
+
+    // The menu now offers the reverse, and the kind is listed where it can be undone without any notice left.
+    let inbox = await readInboxOverHttp();
+    expect(inbox.suppressions.map((item) => item.suppressionId)).toEqual([suppression.suppressionId]);
+    expect(inbox.notices[0]?.actions).toContainEqual({ id: "unsuppress", placement: "menu" });
+    expect(inbox.notices[0]?.actions).not.toContainEqual({ id: "suppress", placement: "menu" });
+
+    // A later notice of the same kind is still written and listed, but already read: nothing new to count.
+    const quiet = notice("background:bg_2");
+    inbox = await readInboxOverHttp();
+    expect(inbox.notices.find((item) => item.noticeId === quiet.notificationId)?.readAt).toBe(now);
+    expect(inbox.unread).toBe(1);
+
+    // Undone from the notice…
+    expect((await request("POST", `/inbox/notices/${quiet.notificationId}/unsuppress`)).body).toEqual({ unsuppressed: true });
+    expect((await readInboxOverHttp()).suppressions).toEqual([]);
+    const loud = notice("background:bg_3");
+    inbox = await readInboxOverHttp();
+    expect(inbox.notices.some((item) => item.noticeId === loud.notificationId && item.readAt === undefined)).toBe(true);
+
+    // …or from the list, for a kind with no notice left to act from.
+    await request("POST", `/inbox/notices/${first.notificationId}/suppress`);
+    const listed = (await readInboxOverHttp()).suppressions[0]?.suppressionId ?? "";
+    expect((await request("DELETE", `/inbox/suppressions/${listed}`)).body).toEqual({ removed: true });
+    expect((await request("DELETE", `/inbox/suppressions/${listed}`)).status).toBe(404);
+    expect((await request("POST", `/inbox/suppressions/${listed}`)).status).toBe(405);
+  });
+
+  it("keeps snoozes and quieted kinds to the node's owner", async () => {
+    const theirs = recordNotification(services.runtime.db, {
+      notificationId: "ntf_theirs",
+      principalId: "someone_else",
+      sourceKind: "background",
+      category: "result",
+      severity: "success",
+      title: "Not yours",
+      dedupKey: "background:theirs",
+      at: now as Instant,
+    });
+    const until = new Date(Date.parse(AT) + 60 * 60_000).toISOString();
+    expect((await request("POST", `/inbox/notices/${theirs.notificationId}/snooze`, { until })).status).toBe(404);
+    expect((await request("POST", `/inbox/notices/${theirs.notificationId}/unsnooze`)).status).toBe(404);
+    expect((await request("POST", `/inbox/notices/${theirs.notificationId}/suppress`)).status).toBe(404);
+    expect((await request("POST", `/inbox/notices/${theirs.notificationId}/unsuppress`)).status).toBe(404);
+    expect(listNotifications(services.runtime.db, "someone_else")).toHaveLength(1);
   });
 
   it("answers a wrong method honestly rather than falling through to another family", async () => {
@@ -826,6 +934,22 @@ describe("the agent reads the inbox", () => {
     const { text } = await createReadInboxTool(() => readInbox(services, now as Instant)).execute({});
     expect(text).toContain("Nothing is waiting for the user's decision.");
     expect(text).toContain("No notices.");
+    expect(text).not.toContain("snoozed");
+  });
+
+  it("does not list what the user snoozed, but says it exists", async () => {
+    const { notificationId } = recordNodeNotice(services, {
+      sourceKind: "background",
+      category: "result",
+      severity: "success",
+      title: "Việc để sau",
+      dedupKey: "background:later",
+      at: now as Instant,
+    });
+    await request("POST", `/inbox/notices/${notificationId}/snooze`, { until: new Date(Date.parse(AT) + 60 * 60_000).toISOString() });
+    const { text } = await createReadInboxTool(() => readInbox(services, now as Instant)).execute({});
+    expect(text).not.toContain("Việc để sau");
+    expect(text).toContain("1 more snoozed by the user until later");
   });
 
   it("reports a read that failed as a failure, not as an empty inbox", async () => {

@@ -451,16 +451,39 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     làm hỏng cả danh sách. Thao tác của một thông báo **không được lưu**: `apps/runtime/src/notice-actions.ts`
     (`noticeActionsFor`) tính lại ở mỗi lần đọc từ subject và trạng thái hiện tại — hội thoại mà task giờ thuộc về, hội
     thoại đó còn tồn tại không — trong một danh sách đóng do host cài đặt (`open`, `ask-clark`, `add-to-context`,
-    `mark-read`/`mark-unread`, `dismiss`), mỗi thao tác đặt ở `primary`, `secondary` hoặc `menu`. Nơi tạo thông báo
-    không bao giờ góp thêm thao tác. "Hỏi Clark" và "Thêm vào ngữ cảnh" mang thông báo dưới dạng tham chiếu `notice`
-    của ô soạn; `composer-references.ts` đọc lại nó cho chủ sở hữu và trích nội dung vào brief của lượt dưới dạng dữ
-    liệu.
+    `mark-read`/`mark-unread`, `dismiss`, `snooze`/`unsnooze`, `suppress`/`unsuppress`), mỗi thao tác đặt ở
+    `primary`, `secondary` hoặc `menu`. Nơi tạo thông báo không bao giờ góp thêm thao tác. "Hỏi Clark" và "Thêm vào
+    ngữ cảnh" mang thông báo dưới dạng tham chiếu `notice` của ô soạn; `composer-references.ts` đọc lại nó cho chủ sở
+    hữu và trích nội dung vào brief của lượt dưới dạng dữ liệu.
+  - **Hoãn** (#196, migration 33: `notifications.snoozed_until`). Client đưa ra bốn mốc tính theo đồng hồ của thiết bị
+    (`snoozePresets` trong `inbox-model.ts`: một giờ nữa, tối nay lúc 18:00 — chỉ khi chưa đến 17:00 —, sáng mai lúc
+    08:00, thứ Hai tuần sau lúc 08:00); node nhận mọi `until` nằm sau hiện tại và không xa quá 30 ngày
+    (`NOTICE_SNOOZE_MAX_MS`). Hoãn cũng xoá `read_at`. Khi `snoozed_until` còn nằm sau hiện tại, thông báo không có trong
+    danh sách, không tính vào số chưa đọc, không bị "đánh dấu tất cả đã đọc" và không bị cắt khi vượt giới hạn;
+    `GET /inbox` trả nó trong `snoozed` với duy nhất thao tác `unsnooze`. Không có bộ hẹn giờ nào chạy: khi đến giờ,
+    lần đọc kế tiếp liệt kê lại nó, chưa đọc, sắp theo `COALESCE(snoozed_until, created_at)` nên nó trở về ở đầu danh
+    sách. `unsnooze` đặt `snoozed_until` thành hiện tại, cho cùng kết quả ngay lập tức.
+  - **Tắt báo theo loại** ("không báo về loại này nữa"; migration 33: `notification_suppressions`, mỗi principal và
+    khoá một dòng). Khoá là `(sourceKind, category, severity, scope)` (`noticeSuppressionKey` trong contract). `scope`
+    chỉ có khi subject nêu một thứ lặp lại — `package:<packageId>`, `pi:<tên gói>`, `peer:<nodeId>`, hoặc, với mọi thông báo khác đến
+    từ node khác, node gốc của nó dưới dạng `peer:<nodeId>` — và để trống với thông báo cục bộ về một subject chỉ xảy
+    ra một lần (một task, một hội thoại, một việc nền), vì khoá hẹp hơn sẽ không bao giờ khớp lại. Severity nằm trong khoá để tắt báo thành công không bao giờ tắt luôn
+    báo lỗi. `dedupKey` của nơi tạo thông báo cố ý không được dùng: dạng của nó là chuyện nội bộ của từng nơi tạo và đổi
+    theo từng phiên bản hay từng task. Thông báo khớp khoá vẫn được ghi và liệt kê (vẫn tìm được, vẫn khử trùng, vẫn
+    hỏi Clark được) nhưng được ghi ở trạng thái đã đọc, nên không làm tăng số chưa đọc và không hiện thông báo ngoài
+    ứng dụng. Nhờ vậy tắt báo khác với bỏ (xoá một thông báo) và hoãn (giấu một thông báo trong một lúc). Có thể đảo
+    lại từ menu của thông báo (`unsuppress`), từ danh sách "loại không báo" mà bảng hộp thư hiện khi còn loại nào bị
+    tắt (`GET /inbox` → `suppressions`), hoặc bằng Hoàn tác ngay sau đó.
 
 Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `POST /inbox/read` (`noticeIds` hoặc tất cả),
 `POST /inbox/unread` (`noticeIds`, bắt buộc và không rỗng; chỉ các thông báo chưa bỏ của principal này),
 `POST /inbox/notices/:id/dismiss`, `POST /inbox/notices/:id/restore` (hoàn tác việc bỏ trong năm phút —
-`DISMISS_UNDO_WINDOW_MS` — quá hạn thì trả `409 UNDO_EXPIRED`; thông báo được đưa lại trở về ở trạng thái đã đọc). Các
-route này không thuộc mô tả open-interface ổn định. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.vi.md
+`DISMISS_UNDO_WINDOW_MS` — quá hạn thì trả `409 UNDO_EXPIRED`; thông báo được đưa lại trở về ở trạng thái đã đọc),
+`POST /inbox/notices/:id/snooze` (`{ until }`; `400 SNOOZE_OUT_OF_RANGE` khi không nằm sau hiện tại hoặc xa quá 30
+ngày), `POST /inbox/notices/:id/unsnooze`, `POST /inbox/notices/:id/suppress` (trả về `suppression`; gọi lại không
+đổi gì), `POST /inbox/notices/:id/unsuppress` và `DELETE /inbox/suppressions/:id`. Tất cả chỉ tác động lên thông
+báo và mục tắt báo của principal này; id của principal khác trả 404. Các route này không thuộc mô tả open-interface
+ổn định. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.vi.md
 §6.7; mở bằng intent `inbox.open` (text, voice, `control_app`), còn `inbox.ask` hỏi Clark về thông báo mới nhất. Agent đọc cùng dữ liệu đó qua tool chỉ đọc `read_inbox`
 (`apps/runtime/src/read-inbox-tool.ts`): không đánh dấu đã đọc (người dùng chưa nhìn thấy) và không quyết định được gì
 (model không phải người dùng).

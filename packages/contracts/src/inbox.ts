@@ -82,8 +82,24 @@ export type NoticeSubject = z.infer<typeof noticeSubjectSchema>;
  *   - `add-to-context`: put the same reference in the composer without sending.
  *   - `mark-read` / `mark-unread`: attention state only; neither hides the notice.
  *   - `dismiss`: take it out of the list, undoable for a short while.
+ *   - `snooze` / `unsnooze`: take this one notice out of the list and the unread count until a chosen time, when it
+ *     comes back unread; or bring a snoozed one back now.
+ *   - `suppress` / `unsuppress`: stop notifying about notices of this kind (`noticeSuppressionKey`) from now on, or
+ *     start again. Future matching notices are still listed, but arrive read, so they raise no count and no
+ *     notification outside the app. Nothing already in the list changes.
  */
-export const noticeActionIdSchema = z.enum(["open", "ask-clark", "add-to-context", "mark-read", "mark-unread", "dismiss"]);
+export const noticeActionIdSchema = z.enum([
+  "open",
+  "ask-clark",
+  "add-to-context",
+  "mark-read",
+  "mark-unread",
+  "dismiss",
+  "snooze",
+  "unsnooze",
+  "suppress",
+  "unsuppress",
+]);
 export type NoticeActionId = z.infer<typeof noticeActionIdSchema>;
 
 /**
@@ -117,10 +133,84 @@ export const noticeSchema = z.strictObject({
   readAt: instantSchema.optional(),
   /** What the notice is about, when its producer said. */
   subject: noticeSubjectSchema.optional(),
+  /** When a snoozed notice comes back. Present only while that is still ahead, which is only in `snoozed`. */
+  snoozedUntil: instantSchema.optional(),
   /** What can be done with it now, worked out by the node when it was read. Absent where nothing resolved them. */
   actions: z.array(noticeActionSchema).max(8).optional(),
 });
 export type Notice = z.infer<typeof noticeSchema>;
+
+/**
+ * The longest a notice can be snoozed. A week covers "next week"; beyond a month a snooze is a dismissal that has not
+ * admitted it yet, and the notice would outlive the work it points at.
+ */
+export const NOTICE_SNOOZE_MAX_MS = 30 * 24 * 60 * 60_000;
+
+/**
+ * What "notices of this kind" means for a suppression: the narrowest key the stored data supports.
+ *
+ *   - `sourceKind`, `category` and `severity` together, so quieting "background work finished" never quiets "background
+ *     work failed": a failure is a different kind of notice, and the one a person would least want to lose by accident.
+ *   - `scope`, only where the subject names something that keeps producing notices of its own: one package's updates
+ *     (`package:<packageId>`, not the version, which changes with every update), the Pi SDK (`pi:<packageName>`), one
+ *     paired node (`peer:<nodeId>`, from the subject or the notice's origin). A task, a piece of background work or a
+ *     conversation produces one notice and is done, so scoping to it would quiet nothing that could still come; those
+ *     are quieted by source, category and severity alone.
+ *
+ * Not the dedup key: producers choose it for their own idempotency (`worker:<taskId>`, `automation:<runId>`), its shape is
+ * not a contract, and a prefix of it would silently change meaning the day a producer renames it.
+ */
+export interface NoticeSuppressionKey {
+  sourceKind: NoticeSourceKind;
+  category: NoticeCategory;
+  severity: NoticeSeverity;
+  scope?: string;
+}
+
+export function noticeSuppressionKey(
+  notice: Pick<Notice, "sourceKind" | "category" | "severity" | "subject" | "originNodeId">,
+): NoticeSuppressionKey {
+  const scope = suppressionScope(notice);
+  return {
+    sourceKind: notice.sourceKind,
+    category: notice.category,
+    severity: notice.severity,
+    ...(scope === undefined ? {} : { scope }),
+  };
+}
+
+function suppressionScope(notice: Pick<Notice, "subject" | "originNodeId">): string | undefined {
+  const subject = notice.subject;
+  switch (subject?.kind) {
+    case "package":
+      return `package:${subject.packageId}`;
+    case "pi-update":
+      return `pi:${subject.packageName}`;
+    case "peer":
+      return `peer:${subject.nodeId}`;
+    case "task":
+    case "background-work":
+    case "conversation":
+    case undefined:
+      return notice.originNodeId === undefined ? undefined : `peer:${notice.originNodeId}`;
+  }
+}
+
+/**
+ * One "stop notifying me about this kind", as the person set it. Belongs to one principal and is removed by deleting it;
+ * nothing else expires it. `example` is the title of the notice it was made from, so the list says what it quiets in
+ * the words the person saw rather than as a key.
+ */
+export const noticeSuppressionSchema = z.strictObject({
+  suppressionId: z.string().min(1).max(128),
+  sourceKind: noticeSourceKindSchema,
+  category: noticeCategorySchema,
+  severity: noticeSeveritySchema,
+  scope: z.string().min(1).max(260).optional(),
+  example: z.string().min(1).max(NOTICE_TITLE_MAX),
+  createdAt: instantSchema,
+});
+export type NoticeSuppression = z.infer<typeof noticeSuppressionSchema>;
 
 /**
  * Something that is waiting for the person to decide or answer.
@@ -185,6 +275,10 @@ export const inboxResponseSchema = z.strictObject({
   waiting: z.array(waitingItemSchema),
   notices: z.array(noticeSchema),
   unread: z.number().int().nonnegative(),
+  /** Notices snoozed until a time still ahead, soonest back first. Neither in `notices` nor in `unread`. */
+  snoozed: z.array(noticeSchema),
+  /** The kinds of notice this principal asked not to be notified about, newest first. */
+  suppressions: z.array(noticeSuppressionSchema),
   readAt: instantSchema,
 });
 export type InboxResponse = z.infer<typeof inboxResponseSchema>;
@@ -207,3 +301,8 @@ export const inboxUnreadRequestSchema = z.strictObject({
   noticeIds: z.array(z.string().min(1).max(128)).min(1).max(500),
 });
 export type InboxUnreadRequest = z.infer<typeof inboxUnreadRequestSchema>;
+
+/** `POST /inbox/notices/:id/snooze`. The surface works out "this evening" in the person's own time zone; the node only
+ * checks that the moment is ahead of it and within `NOTICE_SNOOZE_MAX_MS`. */
+export const inboxSnoozeRequestSchema = z.strictObject({ until: instantSchema });
+export type InboxSnoozeRequest = z.infer<typeof inboxSnoozeRequestSchema>;

@@ -14,11 +14,14 @@ import {
   noticeActionGroups,
   noticeConversationTarget,
   noticeIdsToMarkRead,
+  noticeKindQuieted,
   noticeReference,
   noticesMayBeCapped,
   noticeTone,
   relativeAge,
   sanitizeReason,
+  snoozePresetKey,
+  snoozePresets,
   timeLeft,
   waitingKey,
 } from "../src/inbox/inbox-model.ts";
@@ -52,6 +55,59 @@ function notice(id: string, readAt?: string): Notice {
     ...(readAt === undefined ? {} : { readAt: readAt as Instant }),
   };
 }
+
+describe("snoozing", () => {
+  // Local wall-clock dates, so these hold in whatever time zone the suite runs: the presets are about the person's clock.
+  const local = (day: number, hour: number, minute = 0) => new Date(2026, 8, day, hour, minute);
+
+  it("offers an hour, this evening, tomorrow morning and next Monday on a weekday morning", () => {
+    // 29 September 2026 is a Tuesday.
+    const presets = snoozePresets(local(29, 10, 30));
+    expect(presets.map((preset) => preset.id)).toEqual(["hour", "evening", "tomorrow", "next-week"]);
+    const until = Object.fromEntries(presets.map((preset) => [preset.id, preset.until]));
+    expect(until.hour?.getTime()).toBe(local(29, 11, 30).getTime());
+    expect(until.evening?.getTime()).toBe(local(29, 18).getTime());
+    expect(until.tomorrow?.getTime()).toBe(local(30, 8).getTime());
+    expect(until["next-week"]?.getTime()).toBe(new Date(2026, 9, 5, 8).getTime());
+  });
+
+  it("stops offering this evening once it is less than an hour away, and every choice is ahead of now", () => {
+    const now = local(29, 17, 5);
+    const presets = snoozePresets(now);
+    expect(presets.map((preset) => preset.id)).toEqual(["hour", "tomorrow", "next-week"]);
+    for (const preset of presets) expect(preset.until.getTime()).toBeGreaterThan(now.getTime());
+  });
+
+  it("makes next week a whole week away on a Monday, and the next day on a Sunday", () => {
+    // 5 October 2026 is a Monday, 4 October a Sunday.
+    expect(snoozePresets(local(35, 9)).find((preset) => preset.id === "next-week")?.until.getTime()).toBe(new Date(2026, 9, 12, 8).getTime());
+    expect(snoozePresets(local(34, 9)).find((preset) => preset.id === "next-week")?.until.getTime()).toBe(new Date(2026, 9, 5, 8).getTime());
+  });
+
+  it("names every preset in words", () => {
+    for (const preset of snoozePresets(local(29, 9))) expect(t(snoozePresetKey(preset.id)).length).toBeGreaterThan(0);
+  });
+
+  it("reads a quieted kind from the node's own actions rather than a copy of the list", () => {
+    expect(noticeKindQuieted({ ...notice("a"), actions: [{ id: "unsuppress", placement: "menu" }] })).toBe(true);
+    expect(noticeKindQuieted({ ...notice("b"), actions: [{ id: "suppress", placement: "menu" }] })).toBe(false);
+    expect(noticeKindQuieted(notice("c"))).toBe(false);
+  });
+
+  it("keeps snooze and quieting behind More, never as one of the two buttons", () => {
+    const { buttons, menu } = noticeActionGroups({
+      ...notice("d"),
+      actions: [
+        { id: "open", placement: "primary" },
+        { id: "ask-clark", placement: "secondary" },
+        { id: "snooze", placement: "menu" },
+        { id: "suppress", placement: "menu" },
+      ],
+    });
+    expect(buttons.map((action) => action.id)).toEqual(["open", "ask-clark"]);
+    expect(menu.map((action) => action.id)).toEqual(["snooze", "suppress"]);
+  });
+});
 
 describe("the header mark", () => {
   it("is absent at zero and while the node has not answered", () => {

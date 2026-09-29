@@ -164,6 +164,17 @@ dòng của mình. Dòng không chọn được sẽ nói lý do trong `disabled
 chỉ mang trạng thái (đang chạy, đang lỗi, chưa chạy), không bao giờ kèm thứ nó được khởi động cùng hay lý do nó lỗi;
 `serviceKey` của nó còn gắn với thế hệ gói đang chạy nó, nên một bản cập nhật làm tham chiếu cũ hết hiệu lực.
 
+Các route hộp thư gọi được với cùng token nhưng **chưa** có trong `/openapi.json` và có thể thay đổi: `GET /inbox`
+(những gì đang chờ người dùng, các thông báo, các thông báo đang hoãn và các loại đang tắt báo), `GET /inbox/summary`,
+`POST /inbox/read` và `/inbox/unread`, với từng thông báo là `POST /inbox/notices/:id/<action>` trong đó action là
+`dismiss`, `restore`, `snooze`, `unsnooze`, `suppress` hoặc `unsuppress`, và `DELETE /inbox/suppressions/:id`.
+`snooze` nhận `{ "until": "<ISO instant>" }`, nằm sau hiện tại và không xa quá 30 ngày (nếu không thì
+`400 SNOOZE_OUT_OF_RANGE`); thông báo rời khỏi danh sách và số chưa đọc, rồi quay lại ở trạng thái chưa đọc khi đã qua
+thời điểm đó. `suppress` tắt báo loại của thông báo cho principal này: các thông báo cùng loại về sau vẫn được liệt kê
+nhưng đến ở trạng thái đã đọc và không hiện thông báo. Mỗi route chỉ tác động lên thông báo của chính principal gọi nó.
+Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
+[system-architecture.vi.md](system-architecture.vi.md) ở phần hộp thư.
+
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
 

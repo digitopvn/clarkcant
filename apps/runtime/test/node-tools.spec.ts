@@ -76,7 +76,7 @@ describe("the node's tools", () => {
       projects: services.projects,
       inbox: () => {
         reads += 1;
-        return { waiting: [], notices: [], unread: 0, readAt: "2026-09-24T07:00:00.000Z" as never };
+        return { waiting: [], notices: [], unread: 0, snoozed: [], suppressions: [], readAt: "2026-09-24T07:00:00.000Z" as never };
       },
     });
     const tool = with_.find((candidate) => candidate.name === "read_inbox");
