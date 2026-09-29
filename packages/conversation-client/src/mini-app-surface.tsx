@@ -101,6 +101,16 @@ const AVAILABILITY_TEXT_KEY: Record<RegionAvailability, MessageKey | undefined> 
   loading: "widgets.surface.regionLoading",
 };
 
+const SEARCH_DEFINITION_ID = "canvas.search@1";
+const TABLE_DEFINITION_ID = "canvas.table@1";
+
+/**
+ * Events that only describe the view: a search's settled query and a list's selection. They stay on the page, like the
+ * table sort and the selected day, because nothing on the node answers them; forwarding one would reach the action
+ * route as if a person had pressed something.
+ */
+const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change"]);
+
 function regionDataset(section: CompositeSurfaceSection, availability: RegionAvailability): RendererDataset | undefined {
   if (availability === "missing" || availability === "denied" || availability === "error" || availability === "loading") {
     // No rows is the honest answer for every non-live state: passing the last known rows with a
@@ -128,6 +138,14 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
   const emit = (sectionId: string, action: string, input: Record<string, unknown>): void => {
     onIntent?.({ sectionId, action, input });
   };
+
+  /*
+   * A search box names the surface's current query, and the surface applies it to its own tables on the page: the rows
+   * are already here, so narrowing them needs no read and no action. The box's own props give the starting query.
+   */
+  const searchSection = view.sections.find((section) => section.definitionRef.id === SEARCH_DEFINITION_ID);
+  const searched = searchSection === undefined ? undefined : (state[searchSection.sectionId]?.query ?? searchSection.props.query);
+  const surfaceQuery = typeof searched === "string" ? searched : undefined;
 
   if (view.tombstone != null) {
     return (
@@ -183,8 +201,10 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
       period: view.initialState.period,
       ...(view.initialState.selectedDate === undefined ? {} : { selectedDate: view.initialState.selectedDate }),
       ...(busy === true ? { pending: true } : {}),
+      ...(section.definitionRef.id === TABLE_DEFINITION_ID && surfaceQuery !== undefined ? { query: surfaceQuery } : {}),
       ...(state[section.sectionId] ?? {}),
     };
+    const isSearch = section.definitionRef.id === SEARCH_DEFINITION_ID;
 
     return (
       <section
@@ -232,15 +252,25 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
             // period is on screen are presentation, not a change to the node. Only the action
             // channel is gated, because that is the one that would reach the server.
             onStateChange={(patch: Record<string, unknown>) => {
-              setState((current) => ({
-                ...current,
-                [section.sectionId]: { ...(current[section.sectionId] ?? {}), ...patch },
-              }));
+              setState((current) => {
+                const next = { ...current, [section.sectionId]: { ...(current[section.sectionId] ?? {}), ...patch } };
+                // A new query starts every table on its first page, as a table's own search box does. A query a table
+                // typed into its own box is dropped, so the one box the person just used is the one that counts.
+                if (isSearch && typeof patch.query === "string") {
+                  for (const other of view.sections) {
+                    if (other.definitionRef.id !== TABLE_DEFINITION_ID) continue;
+                    const { query: _own, ...kept } = current[other.sectionId] ?? {};
+                    next[other.sectionId] = { ...kept, page: 1 };
+                  }
+                }
+                return next;
+              });
             }}
             {...(readOnly
               ? {}
               : {
                   onAction: (action: string, payload: Record<string, unknown>) => {
+                    if (VIEW_EVENTS.has(action)) return;
                     emit(section.sectionId, action, payload);
                   },
                 })}

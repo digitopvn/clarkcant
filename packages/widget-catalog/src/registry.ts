@@ -149,6 +149,36 @@ const META: Record<string, CatalogMeta> = {
     aliases: ["action", "button", "nút", "hành động", "chạy"],
     status: "stable",
   },
+  "canvas.choice@1": {
+    displayName: "Lựa chọn",
+    tags: ["input", "choice"],
+    aliases: ["choice", "chips", "select", "radio", "checkbox", "toggle", "lựa chọn", "chọn", "bật tắt"],
+    status: "stable",
+  },
+  "canvas.input@1": {
+    displayName: "Ô nhập",
+    tags: ["input", "field"],
+    aliases: ["input", "text", "number", "date", "time", "slider", "ô nhập", "ngày", "giờ", "thanh trượt"],
+    status: "stable",
+  },
+  "canvas.search@1": {
+    displayName: "Ô tìm kiếm",
+    tags: ["input", "search"],
+    aliases: ["search", "query", "tìm", "tìm kiếm", "lọc"],
+    status: "stable",
+  },
+  "canvas.form@1": {
+    displayName: "Biểu mẫu",
+    tags: ["input", "form", "action"],
+    aliases: ["form", "biểu mẫu", "điền", "gửi", "đăng ký"],
+    status: "stable",
+  },
+  "canvas.list@1": {
+    displayName: "Danh sách",
+    tags: ["list", "data", "action"],
+    aliases: ["list", "danh sách", "việc", "mục", "chọn"],
+    status: "stable",
+  },
   "canvas.note@1": {
     displayName: "Ghi chú",
     tags: ["note", "local"],

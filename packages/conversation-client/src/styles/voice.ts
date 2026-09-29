@@ -268,6 +268,11 @@ export const VOICE_CSS = `
 /* aria-disabled looks the same as disabled: it is used where the button must keep the focus that pressed it. */
 .cc-action:disabled, .cc-action[aria-disabled="true"] { cursor: not-allowed; color: var(--cc-text-tertiary); }
 /*
+ * A thumb needs 44 px. Said here, in the layer that sets the 32 px a mouse is fine with, because a later layer wins
+ * whatever its specificity: a 44 px rule for a button in an earlier layer (a card's, a form's) never applies.
+ */
+@media (pointer: coarse) { .cc-action { min-height: 44px; } }
+/*
  * The one action a card is about. Filled, so "đang làm" looks different from the view controls beside it;
  * disabled, it drops back to the plain outline so a filled button never means "cannot".
  */

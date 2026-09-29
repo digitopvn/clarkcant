@@ -24,6 +24,7 @@ export * from "./widgets.ts";
 export * from "./widget-state.ts";
 export * from "./table-view.ts";
 export * from "./composition-layout.ts";
+export * from "./form-fields.ts";
 export * from "./surface-composition.ts";
 export * from "./period.ts";
 export * from "./automation.ts";

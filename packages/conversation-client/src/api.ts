@@ -241,6 +241,8 @@ export interface TimelineAction {
   available: boolean;
   unavailableCode?: string;
   unavailableReason?: string;
+  /** What a use sends goes under: a form's field names, or the key a list item's id is sent as. */
+  inputKeys?: string[];
 }
 
 /** A historical capture, separate from the live instance it came from. */

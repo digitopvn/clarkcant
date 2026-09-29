@@ -460,6 +460,96 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * A form and a list, placed through the views the model's `show_view` uses.
+     *
+     * The proposals are scripted; the descriptors are the real ones, so the fields are checked, the action is compiled
+     * with the input it accepts and the refusal of a form that asks for a secret is the host's own sentence. Both are
+     * bound to Clark rather than to a package service, so they run on a node with no container engine.
+     */
+    const primitive = /^(?:đặt|place)\s+(biểu mẫu|biểu mẫu bí mật|danh sách|danh sách trống)$/iu.exec(input.text.trim());
+    if (primitive !== null) {
+      const services = deps.services();
+      const which = (primitive[1] ?? "").toLowerCase();
+      const catalog = buildViewCatalog(services.conductor, undefined, () => ({
+        db: services.runtime.db,
+        nodeId: services.runtime.identity.nodeId,
+        serviceHost: services.serviceHost,
+        now: () => new Date().toISOString(),
+        newId: services.conductor.newId,
+      }));
+      const isForm = which.startsWith("biểu mẫu");
+      const view = catalog.find((entry) => entry.id === (isForm ? "canvas.form@1" : "canvas.list@1"));
+      if (view === undefined) return undefined;
+      const props: Record<string, unknown> = isForm
+        ? {
+            title: "Đặt lịch họp",
+            description: "Clark ghi cuộc họp vào việc cần làm khi bạn gửi.",
+            submitLabel: "Gửi cho Clark",
+            fields:
+              which === "biểu mẫu bí mật"
+                ? [{ name: "password", label: "Mật khẩu email", kind: "text", required: true }]
+                : [
+                    { name: "topic", label: "Chủ đề", kind: "text", required: true, maxLength: 120, placeholder: "Ví dụ: rà soát quý" },
+                    { name: "day", label: "Ngày họp", kind: "date", required: true },
+                    { name: "start", label: "Giờ bắt đầu", kind: "time" },
+                    { name: "minutes", label: "Thời lượng (phút)", kind: "slider", min: 15, max: 120, step: 15 },
+                    {
+                      name: "room",
+                      label: "Phòng",
+                      kind: "radio",
+                      options: [
+                        { value: "online", label: "Trực tuyến" },
+                        { value: "hq", label: "Văn phòng" },
+                      ],
+                    },
+                    {
+                      name: "people",
+                      label: "Người tham dự",
+                      kind: "chips",
+                      options: [
+                        { value: "an", label: "An" },
+                        { value: "binh", label: "Bình" },
+                        { value: "chi", label: "Chi" },
+                      ],
+                    },
+                    { name: "remind", label: "Nhắc trước 10 phút", kind: "toggle" },
+                  ],
+            action: { kind: "agent", intent: "Ghi cuộc họp này vào danh sách việc cần làm, với đúng những gì đã điền." },
+          }
+        : {
+            title: "Việc chờ xử lý",
+            selection: "multi",
+            pageSize: 5,
+            emptyText: "Không còn việc nào chờ.",
+            items:
+              which === "danh sách trống"
+                ? []
+                : Array.from({ length: 12 }, (_, index) => ({
+                    id: `task-${String(index + 1)}`,
+                    title: `Việc số ${String(index + 1)}`,
+                    subtitle: index % 2 === 0 ? "Cần xem lại" : "Đang chờ phản hồi",
+                    meta: `${String(index + 1)} ngày`,
+                  })),
+            itemActionLabel: "Nhờ Clark xử lý",
+            action: { kind: "agent", intent: "Xử lý việc được chọn và báo lại kết quả." },
+          };
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt một ${isForm ? "biểu mẫu" : "danh sách"} (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
+
+    /*
      * A question, scripted — the producer for the question card.
      *
      * The same reason the approval fixture exists: the browser half of this feature is a card whose answer
@@ -1265,8 +1355,9 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * A surface the model arranges itself, proposed through the composed view's `props.layout`.
      *
      * The tree is scripted; the descriptor is the real one, so the compiler, the catalog lookup, the bounds and the
-     * refusal sentence are the host's. `bảng điều khiển` is a grid of two metric tiles and a card holding a filter above a
-     * table; `đầy đủ` uses every container kind; `quá sâu` and `widget lạ` are proposals the host refuses.
+     * refusal sentence are the host's. `bảng điều khiển` is a grid of two metric tiles and a card holding a search box
+     * above the table it narrows; `đầy đủ` uses every container kind; `quá sâu` and `widget lạ` are proposals the host
+     * refuses.
      */
     const arranged = /^bố cục\s+(bảng điều khiển|đầy đủ|quá sâu|widget lạ)$/iu.exec(input.text.trim());
     if (arranged !== null) {
@@ -1294,7 +1385,10 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
                 {
                   kind: "card",
                   label: "Chi tiết theo ngày",
-                  children: [leaf("canvas.filter@1"), leaf("canvas.table@1", { title: "Số việc xong theo ngày", searchable: true })],
+                  children: [
+                    leaf("canvas.search@1", { label: "Tìm trong bảng", placeholder: "Ngày, số việc…" }),
+                    leaf("canvas.table@1", { title: "Số việc xong theo ngày" }),
+                  ],
                 },
               ],
             }

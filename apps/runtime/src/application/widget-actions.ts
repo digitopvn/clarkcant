@@ -1,4 +1,13 @@
-import { type ActionProposal, type Instant } from "@clarkcant/contracts";
+import {
+  type ActionBinding,
+  type ActionProposal,
+  type FormField,
+  type Instant,
+  type ListItem,
+  type WidgetInstance,
+  checkFormValues,
+  describeFieldValue,
+} from "@clarkcant/contracts";
 import {
   checkBoundAction,
   checkInvokeAction,
@@ -14,7 +23,56 @@ import {
 import { appendHostReply } from "../routes/conversations.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
-import { type CapabilityInvokeSource, capabilityInvokeDeps, invokeCapability, mayHaveRun } from "./capability-invoke.ts";
+import { AGENT_ITEM_KEY } from "./action-bindings.ts";
+import { type CapabilityInvokeSource, capabilityInvokeDeps, invokeCapability, mayHaveRun, validateArgs } from "./capability-invoke.ts";
+
+const FORM_DEFINITION_ID = "canvas.form@1";
+const LIST_DEFINITION_ID = "canvas.list@1";
+
+function fieldsOf(instance: WidgetInstance): FormField[] {
+  return Array.isArray(instance.props.fields) ? (instance.props.fields as FormField[]) : [];
+}
+
+function itemsOf(instance: WidgetInstance): ListItem[] {
+  return Array.isArray(instance.props.items) ? (instance.props.items as ListItem[]) : [];
+}
+
+/**
+ * Why the input a use of an action sent is not one it accepts, or `undefined` when it is.
+ *
+ * Checked by the node whatever the page already checked: the page can be bypassed, and the binding's recorded schema is
+ * the host's own statement of what it accepts. A form's values are held to its fields' own rules as well — a date range
+ * that ends before it starts is valid JSON — with the same function the page runs, so the two can only disagree when the
+ * page was not the one that sent them.
+ */
+export function actionInputProblem(instance: WidgetInstance, binding: ActionBinding, input: Record<string, unknown>): string | undefined {
+  if (instance.definitionRef.id === FORM_DEFINITION_ID) {
+    const fields = fieldsOf(instance);
+    const problems = checkFormValues(fields, input);
+    const named = Object.entries(problems).map(([name, problem]) => {
+      const label = fields.find((field) => field.name === name)?.label ?? name;
+      return `${label}: ${problem}`;
+    });
+    if (named.length > 0) return named.slice(0, 5).join("; ");
+  }
+  const checked = validateArgs(binding.inputSchema, input);
+  return checked.ok ? undefined : checked.message;
+}
+
+/** What a turn a form or a list item started says in the conversation: what the person pressed, and what they sent. */
+function agentActionText(instance: WidgetInstance, label: string, input: Record<string, unknown>): string {
+  if (instance.definitionRef.id === FORM_DEFINITION_ID) {
+    const lines = fieldsOf(instance)
+      .filter((field) => Object.hasOwn(input, field.name))
+      .map((field) => `${field.label}: ${describeFieldValue(field, input[field.name])}`);
+    return lines.length === 0 ? label : `${label}\n${lines.join("\n")}`;
+  }
+  if (instance.definitionRef.id === LIST_DEFINITION_ID) {
+    const item = itemsOf(instance).find((entry) => entry.id === input[AGENT_ITEM_KEY]);
+    return item === undefined ? label : `${label}: ${item.title}`;
+  }
+  return label;
+}
 
 /**
  * Widget actions: the cursor a spoken action is checked against, and the invocation itself.
@@ -101,6 +159,10 @@ async function invokeCapabilityAction(
       ...(checked.currentRevision === undefined ? {} : { currentRevision: checked.currentRevision }),
     };
   }
+  if (checked.duplicate === undefined) {
+    const problem = actionInputProblem(checked.instance, checked.binding, request.input);
+    if (problem !== undefined) return { ok: false, status: 400, code: "INVALID_INPUT", message: problem };
+  }
 
   const state = readWidgetStateRow(services.runtime.db, checked.instance.instanceId);
   const respond = (status: 200 | 202, extra: Record<string, unknown>, duplicate: boolean): WidgetActionResult => ({
@@ -179,10 +241,11 @@ async function invokeCapabilityAction(
 }
 
 /** What the model is told about a turn a button started, beside the label the person saw. */
-function agentActionNote(label: string, intent: string): string {
+function agentActionNote(label: string, intent: string, input: Record<string, unknown>): string {
+  const sent = Object.keys(input).length === 0 ? "" : `\nWhat they sent with it, as the host checked it: ${JSON.stringify(input)}`;
   return (
     `The person pressed the button "${label}" that you offered earlier in this conversation. ` +
-    `You offered it for: ${intent}\nDo that now.`
+    `You offered it for: ${intent}${sent}\nDo that now.`
   );
 }
 
@@ -230,6 +293,8 @@ async function invokeAgentAction(
   if (checked.duplicate !== undefined) {
     return respond(checked.duplicate.kind === "done" ? checked.duplicate.output : "", true);
   }
+  const problem = actionInputProblem(checked.instance, checked.binding, request.input);
+  if (problem !== undefined) return { ok: false, status: 400, code: "INVALID_INPUT", message: problem };
   if (inFlight.has(request.invocationId)) {
     return {
       ok: false,
@@ -256,9 +321,9 @@ async function invokeAgentAction(
     const outcome = await handleUserMessage(services.conductor, {
       conversationId: request.conversationId as never,
       principal: { principalId: request.principalId as never, kind: "user", nodeId: services.runtime.identity.nodeId as never },
-      text: checked.binding.label,
+      text: agentActionText(checked.instance, checked.binding.label, request.input),
       at,
-      note: agentActionNote(checked.binding.label, proposal.intent),
+      note: agentActionNote(checked.binding.label, proposal.intent, request.input),
       channel: source === "voice" ? "voice" : "chat",
     });
     indexMessages(services.search, { conversationId: request.conversationId, messages: outcome.messages, at });

@@ -33,6 +33,37 @@ export interface ActionBindingDeps {
 }
 
 /**
+ * What a use of an action sends, for the widgets that send something: a form its values, a list the item picked.
+ *
+ * `source` is how a field binding names where such a value comes from. `keys` are the names it is sent under — a form's
+ * field names; a list's are read from the action itself, because the capability decides which argument takes an item.
+ * `schema` turns those keys into the JSON Schema the binding records as the input it accepts, which the node checks
+ * every use against before anything runs.
+ */
+export interface ActionInputSpec {
+  source: "user-input" | "selected-row";
+  noun: string;
+  keys?: readonly string[];
+  schema: (keys: readonly string[]) => Record<string, unknown>;
+}
+
+/** The key an item's id is sent under when the action is Clark's rather than a capability's. */
+export const AGENT_ITEM_KEY = "itemId";
+
+/** A capability's schema with `omit` no longer required: those arguments arrive with each use, not at compile time. */
+function withoutRequired(schema: Record<string, unknown> | undefined, omit: readonly string[]): Record<string, unknown> | undefined {
+  if (schema === undefined || !Array.isArray(schema.required)) return schema;
+  return { ...schema, required: (schema.required as unknown[]).filter((name) => !omit.includes(String(name))) };
+}
+
+/** Arguments a capability's schema says it does not take, of the ones a use would send. */
+function notTaken(schema: Record<string, unknown> | undefined, keys: readonly string[]): string[] {
+  if (schema?.additionalProperties !== false) return [];
+  const properties = (schema.properties ?? {}) as Record<string, unknown>;
+  return keys.filter((key) => !Object.hasOwn(properties, key));
+}
+
+/**
  * A compiled action, not yet tied to an instance.
  *
  * Compiled before the instance exists so a proposal the host refuses leaves nothing behind: the model reads the refusal
@@ -73,8 +104,9 @@ function proposalProblem(issues: readonly { path: readonly PropertyKey[]; messag
  */
 export function compileWidgetAction(
   deps: ActionBindingDeps,
-  input: { definitionRef: WidgetInstance["definitionRef"]; label: string; action: unknown },
+  input: { definitionRef: WidgetInstance["definitionRef"]; label: string; action: unknown; carries?: ActionInputSpec },
 ): WidgetActionCompile {
+  const carries = input.carries;
   // `contextRefs` is required by the proposal format; a model that has none to give may leave it out.
   const raw =
     typeof input.action === "object" &&
@@ -85,7 +117,8 @@ export function compileWidgetAction(
       : input.action;
   const parsed = actionProposalSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, message: `the action is not one a button can hold: ${proposalProblem(parsed.error.issues)}` };
-  const proposal: ActionProposal = parsed.data;
+  let proposal: ActionProposal = parsed.data;
+  let inputKeys: readonly string[] = [];
 
   const instanceGeneration = input.definitionRef.packageDigest;
   let packageGeneration = instanceGeneration;
@@ -94,6 +127,12 @@ export function compileWidgetAction(
 
   switch (proposal.kind) {
     case "view": {
+      if (carries !== undefined) {
+        return {
+          ok: false,
+          message: `what a ${carries.noun} sends cannot go to a view operation; bind it to a package service ("invoke") or to Clark ("agent")`,
+        };
+      }
       if (proposal.operation !== BUTTON_VIEW_OPERATION) {
         return {
           ok: false,
@@ -119,15 +158,48 @@ export function compileWidgetAction(
         return { ok: false, message: `${proposal.capabilityRef} is not registered on this node yet` };
       }
       const fromInvocation = (proposal.bindings ?? []).filter((field) => field.source !== "literal");
-      if (fromInvocation.length > 0) {
+      if (carries === undefined && fromInvocation.length > 0) {
         return {
           ok: false,
           message: `a button carries no input, so ${fromInvocation.map((field) => field.target).join(", ")} must be fixed as a literal or in args`,
         };
       }
+      if (carries !== undefined) {
+        const wrong = fromInvocation.filter((field) => field.source !== carries.source);
+        if (wrong.length > 0) {
+          return {
+            ok: false,
+            message: `a ${carries.noun} sends ${carries.source} values, so ${wrong.map((field) => field.target).join(", ")} cannot come from ${wrong[0]?.source ?? ""}`,
+          };
+        }
+        if (carries.keys === undefined) {
+          // A list: the action names the one argument an item's id goes to.
+          if (fromInvocation.length !== 1) {
+            return {
+              ok: false,
+              message: `name the one argument that takes the item's id: "bindings":[{"target":"<argument>","source":"${carries.source}"}]`,
+            };
+          }
+          inputKeys = fromInvocation.map((field) => field.target);
+        } else {
+          // A form: each field goes to the argument of the same name, bound here when the model did not say so.
+          const stray = fromInvocation.filter((field) => !carries.keys?.includes(field.target));
+          if (stray.length > 0) {
+            return { ok: false, message: `${stray.map((field) => field.target).join(", ")} is not a field of this ${carries.noun}` };
+          }
+          inputKeys = carries.keys;
+          const bound = new Set(fromInvocation.map((field) => field.target));
+          const added = inputKeys.filter((key) => !bound.has(key)).map((target) => ({ target, source: carries.source }));
+          proposal = { ...proposal, bindings: [...(proposal.bindings ?? []), ...added] };
+        }
+        const refused = notTaken(descriptor.inputSchema, inputKeys);
+        if (refused.length > 0) {
+          return { ok: false, message: `${proposal.capabilityRef} does not take ${refused.join(", ")}` };
+        }
+      }
       const args: Record<string, unknown> = { ...proposal.args };
-      for (const field of proposal.bindings ?? []) args[field.target] = field.value;
-      const checked = validateArgs(descriptor.inputSchema, args);
+      for (const field of proposal.bindings ?? []) if (field.source === "literal") args[field.target] = field.value;
+      const checked = validateArgs(withoutRequired(descriptor.inputSchema, inputKeys), args);
       if (!checked.ok) return { ok: false, message: `${proposal.capabilityRef} does not accept those arguments: ${checked.message}` };
       packageGeneration = served.generationId;
       effectCategory = descriptor.effectCategory;
@@ -141,6 +213,7 @@ export function compileWidgetAction(
           message: "context references are not resolved for a button yet; put what the request needs in intent",
         };
       }
+      if (carries !== undefined) inputKeys = carries.keys ?? [AGENT_ITEM_KEY];
       // Starting a turn changes nothing by itself; whatever the turn then does passes the policy on its own.
       break;
     }
@@ -160,20 +233,25 @@ export function compileWidgetAction(
     }
   }
 
+  // A workflow is kept but cannot run, so what it would take is recorded as nothing.
+  const inputSchema =
+    carries === undefined || proposal.kind === "workflow"
+      ? { type: "object", properties: {}, additionalProperties: false }
+      : carries.schema(inputKeys);
   const compiled = compileActionBinding({
     bindingId: deps.newId("act"),
     instance: { instanceId: "pending", ownerNodeId: deps.nodeId, definitionRef: input.definitionRef, actionBindingRevision: 1 },
     packageGeneration,
     label: input.label,
     proposal,
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema,
     allowedDataRefs: [],
     fixedConstraints: {},
     effectCategory,
     // Whether a click needs an approval is the execution policy's decision at the click, not a flag frozen here.
     requiresApproval: false,
     limits: {},
-    bindingDigest: `sha256:${payloadDigest(asJsonValue({ proposal, packageGeneration, effectCategory, label: input.label }))}`,
+    bindingDigest: `sha256:${payloadDigest(asJsonValue({ proposal, packageGeneration, effectCategory, label: input.label, inputSchema }))}`,
     at: deps.now() as never,
     knownCapabilities,
   });
