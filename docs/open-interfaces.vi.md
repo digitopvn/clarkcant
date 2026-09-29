@@ -152,11 +152,32 @@ trước, mà không đẩy thông báo của chính node hay của peer khác r
 định như với mọi thông báo khác.
 
 Mọi phản hồi `200` từ `POST /peers/messages` đều mang `features` (những gì node trả lời nhận thêm ngoài các envelope
-cơ bản; hiện là `["notice"]`) và `label` (tên nó tự gọi mình). Bên gửi ghi cả hai cho peer đó, chỉ từ câu trả lời cho
-một thứ nó đã giao qua kênh đã xác thực; lời mời ghép cặp cũng có thể mang `features`. Feature lạ bị bỏ, label được làm
-sạch và cắt còn 64 ký tự, và một peer chưa cho biết gì — một bản dựng có trước thay đổi này — không được gửi thông báo
-cho tới khi một câu trả lời nói nó nhận. Bên gửi chỉ đọc tối đa 16 KiB của một câu trả lời, trong hạn 30 giây của lần
-giao; câu trả lời vượt một trong hai bị bỏ qua, và message vẫn được xác nhận khi mã của nó là `200`.
+cơ bản; hiện là `["notice", "skip"]`) và `label` (tên nó tự gọi mình), và phản hồi `409` `SEQUENCE_GAP` cũng vậy
+(`{ code, expected, received, features, label }`). Bên gửi ghi cả hai cho peer đó, chỉ từ câu trả lời cho một thứ nó đã
+giao qua kênh đã xác thực; lời mời ghép cặp cũng có thể mang `features`. Feature lạ bị bỏ, label được làm sạch và cắt
+còn 64 ký tự, và một peer chưa cho biết gì — một bản dựng có trước thay đổi này — không được gửi thông báo hay skip cho
+tới khi một câu trả lời nói nó nhận. Bên gửi chỉ đọc tối đa 16 KiB của một câu trả lời, trong hạn 30 giây của lần giao;
+câu trả lời vượt một trong hai bị bỏ qua, và message vẫn được xác nhận khi mã của nó là `200`.
+
+NodeLink đánh số thứ tự mọi envelope một node gửi cho một peer, và peer từ chối mọi thứ nằm sau một chỗ hổng bằng `409`
+`SEQUENCE_GAP`. Khi bên gửi bỏ một message (12 lần thử thất bại, hoặc ghép cặp đã bị thu hồi), một peer có quảng bá
+`skip` được gửi một message NodeLink `skip` thay cho nó; envelope vẫn ở phiên bản giao thức 1, và chính feature được
+quảng bá là thứ đánh phiên bản cho nó. Payload của nó là `skip` `{ through, lost: [{ sequence, messageId, kind, taskId?
+}] }` — một object chặt: `through` bằng chính `sourceSequence` của envelope (vị trí của message cuối cùng nó bỏ, nên nó
+không bao giờ vượt qua một message chưa gửi), `lost` liệt kê từ 1 tới 50 message đã bị bỏ theo thứ tự tăng dần, không
+cái nào sau `through`, không cái nào có kind `skip`, và `taskId` phải có dạng id; mọi thứ khác bị từ chối cả khối bằng
+`400` `SKIP_INVALID`. Bên gửi chỉ bao các message đã bỏ nằm trên số thứ tự cao nhất mà peer đã xác nhận và dưới số thấp
+nhất còn đang nợ, mỗi lần một skip. Bên nhận chỉ xử lý một skip nằm trước con trỏ của nó, dời con trỏ tới `through`, và
+trả lời `accepted: true` kèm `from` (số thứ tự đầu tiên nó chưa nhận), `through` và `settled` (các task nó đã giao cho
+bên gửi mà `result` bị mất đã được chốt là chưa rõ); một lần gửi lại được trả lời từ inbox của nó, và một skip mà mọi số
+thứ tự nó bao rốt cuộc đều đã tới được trả lời `200` `status: "stale"` với `code` `SKIP_STALE`, không thay đổi gì. Cả
+hai bên ghi một audit event loại `peer` và đặt một thông báo vào inbox của chủ mình (khóa
+`peer-lost:<peerNodeId>:out|in:<through>`), nêu cái gì bị mất và task của nó; bên nhận báo cho chủ tối đa 30 lần một
+phút cho mỗi peer. Một node không có handler cho skip trả lời `400` `UNSUPPORTED_KIND` và không quảng bá nó. Với một peer
+không quảng bá `skip`, việc giao vẫn như trước, và chủ của bên gửi được báo một lần cho mỗi quãng không có xác nhận
+(`peer-stuck:<peerNodeId>:<lastAck|never>`) rằng ghép cặp đang bị kẹt cho tới khi thiết bị đó cập nhật; `409` kế tiếp từ
+một peer đã cập nhật mang `skip`, và skip được gửi ngay sau đó. Với một peer nhận skip, các message đi theo số thứ tự
+thấp nhất trước và từng cái một, nên những gì chờ sau một message bị từ chối không bị từ chối theo.
 
 Task của một yêu cầu lâu dài cũng có thể chạy trên một node đã ghép cặp. Việc này được đặt trong hội thoại, không qua
 một route: chủ của node gửi nêu peer làm executor của task, và chủ của node nhận nói peer đó được chạy gì ở đó (thư

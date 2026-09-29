@@ -217,6 +217,41 @@ export function peerDeliveryState(db: Database, peerNodeId: string): PeerDeliver
   };
 }
 
+/** One message this node ever queued for a peer, and where it stands. */
+export interface OutboxLedgerEntry {
+  messageId: string;
+  document: unknown;
+  createdAt: Instant;
+  acknowledgedAt: Instant | null;
+  deadLetteredAt: Instant | null;
+}
+
+/**
+ * Everything this node ever queued for one peer, oldest first: what was acknowledged, what was given up on and what is
+ * still owed. The outbox never deletes a row, so this is the whole of what the stream to that peer carried.
+ */
+export function outboxLedger(db: Database, peerNodeId: string): OutboxLedgerEntry[] {
+  const rows = allRows<{
+    message_id: string;
+    document: string;
+    created_at: string;
+    acknowledged_at: string | null;
+    dead_lettered_at: string | null;
+  }>(
+    db,
+    `SELECT message_id, document, created_at, acknowledged_at, dead_lettered_at
+       FROM outbox WHERE peer_node_id = ? ORDER BY created_at, rowid`,
+    peerNodeId,
+  );
+  return rows.map((row) => ({
+    messageId: row.message_id,
+    document: parseJson<unknown>(row.document, "outbox.document"),
+    createdAt: row.created_at as Instant,
+    acknowledgedAt: (row.acknowledged_at ?? null) as Instant | null,
+    deadLetteredAt: (row.dead_lettered_at ?? null) as Instant | null,
+  }));
+}
+
 export interface DeadLetteredOutboxEntry {
   messageId: string;
   peerNodeId: string;

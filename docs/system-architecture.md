@@ -392,6 +392,15 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     that returns is said again. It names the peer by its label, falling back to the node id, shows times with the node's
     zone, and is dismissed when the peer acknowledges again or is revoked. One peer failing to reconcile does not stop the
     others.
+  - **A message given up on** (`apps/runtime/src/peer-skip.ts`, `peer-transport.ts`). To a peer that advertises the
+    `skip` feature, `deliverPending` sends lowest sequence first, one at a time, and when a message is dead-lettered (or
+    the peer answers `409` `SEQUENCE_GAP` for one) queues a NodeLink `skip` from the outbox ledger (`outboxLedger`),
+    covering only given-up messages between the highest acknowledged and the lowest still-owed sequence, at most 50.
+    The receiver's `receivePeerSkip` moves its cursor (`recordInbox` `closesGap`), settles a lost `result` as uncertain
+    (`settleLostResult`), audits (kind `peer`) and records `peer-lost:<peer>:in:<through>`; the sender audits and
+    records `peer-lost:<peer>:out:<through>` (`tellSkipped`). A peer without the feature keeps the old behaviour and its
+    owner gets `peer-stuck:<peer>:<lastAck|never>` (`tellStuck`), dismissed by the outage watch on the next
+    acknowledgement. No migration: `audit_log.kind` is text.
   - **Expired approvals/questions.** An approval or question that expires without a decision drops out of the
     pending list silently — right for the list, but someone who was not looking at that moment would never find
     out. `apps/runtime/src/expiry-notices.ts` sweeps periodically (an unref'd interval, started in `wireRuntime`,

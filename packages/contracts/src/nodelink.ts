@@ -49,6 +49,12 @@ export const peerMessageKindSchema = z.enum([
    * node that advertised `notice` among its features.
    */
   "notice",
+  /**
+   * The sender gave up on messages it sequenced for the receiver, and says so in their place: the receiver's cursor moves
+   * to this envelope's own sequence, and both owners are told what was lost. Sent only after the sender dead-lettered
+   * every sequence it covers, and only to a node that advertised `skip` among its features.
+   */
+  "skip",
 ]);
 export type PeerMessageKind = z.infer<typeof peerMessageKindSchema>;
 
@@ -68,12 +74,53 @@ export const peerNoticeSchema = z.strictObject({
 });
 export type PeerNotice = z.infer<typeof peerNoticeSchema>;
 
+/** The most given-up messages one `skip` envelope lists; a longer run is covered by consecutive skips. */
+export const PEER_SKIP_LOST_MAX = 50;
+
+/**
+ * One message a `skip` gives up on: its sequence, its id, its kind and the task it concerned. A task id is an id and
+ * nothing else, so it is held to an id's characters: the receiver shows it to its owner.
+ */
+export const peerSkipLostSchema = z.strictObject({
+  sequence: sequenceSchema,
+  messageId: z.string().min(1).max(128),
+  kind: peerMessageKindSchema.exclude(["skip"]),
+  taskId: z
+    .string()
+    .regex(/^[A-Za-z0-9_.:-]{1,128}$/)
+    .optional(),
+});
+export type PeerSkipLost = z.infer<typeof peerSkipLostSchema>;
+
+/**
+ * The payload of a `skip` envelope.
+ *
+ * `through` is the envelope's own `sourceSequence`, never more: a skip covers only sequences its sender already issued,
+ * so it cannot move the receiver's cursor over a message not yet sent. `lost` lists what the sender gave up on in that
+ * range, in sequence order. Strict, like a notice: a skip that carries anything else is refused whole.
+ */
+export const peerSkipSchema = z.strictObject({
+  through: sequenceSchema,
+  lost: z.array(peerSkipLostSchema).min(1).max(PEER_SKIP_LOST_MAX),
+});
+export type PeerSkip = z.infer<typeof peerSkipSchema>;
+
+/** Whether a skip lists each message once, in ascending sequence order, none past `through`. */
+function skipListsInOrder(skip: PeerSkip): boolean {
+  let previous = -1;
+  for (const lost of skip.lost) {
+    if (lost.sequence <= previous || lost.sequence > skip.through) return false;
+    previous = lost.sequence;
+  }
+  return true;
+}
+
 /**
  * What a node says it takes beyond the envelopes every build understands, so a peer sends a newer kind only to a node
  * that reads it. A closed list: a value this build does not know is dropped, never stored, so a peer cannot write
  * arbitrary words into this node's peer row by advertising them.
  */
-export const peerFeatureSchema = z.enum(["notice"]);
+export const peerFeatureSchema = z.enum(["notice", "skip"]);
 export type PeerFeature = z.infer<typeof peerFeatureSchema>;
 /** Every feature this build takes, in the order it advertises them. */
 export const PEER_FEATURES: readonly PeerFeature[] = peerFeatureSchema.options;
@@ -167,6 +214,7 @@ const REQUIRED_PAYLOAD_KEYS: Record<PeerMessageKind, readonly string[]> = {
   heartbeat: [],
   signal: ["signal"],
   notice: ["notice"],
+  skip: ["skip"],
 };
 
 export const peerValidationIssueSchema = z.strictObject({
@@ -179,6 +227,7 @@ export const peerValidationIssueSchema = z.strictObject({
     "DELEGATION_UNKNOWN",
     "REVISION_STALE",
     "GRANT_INVALID",
+    "SKIP_INVALID",
   ]),
   message: z.string().min(1).max(500),
   field: z.string().min(1).max(160).optional(),
@@ -285,6 +334,26 @@ export function validatePeerEnvelope(
     }
   }
 
+  if (envelope.kind === "skip" && "skip" in envelope.payload) {
+    const skip = peerSkipSchema.safeParse(envelope.payload["skip"]);
+    if (!skip.success) {
+      issues.push({ code: "SKIP_INVALID", message: "skip payload is not a skip this node can read", field: "payload.skip" });
+    } else if (skip.data.through !== envelope.sourceSequence) {
+      // Never past its own slot: a skip reaching further would move the cursor over messages not yet sent.
+      issues.push({
+        code: "SKIP_INVALID",
+        message: `skip covers through ${skip.data.through} but occupies sequence ${envelope.sourceSequence}`,
+        field: "payload.skip.through",
+      });
+    } else if (!skipListsInOrder(skip.data)) {
+      issues.push({
+        code: "SKIP_INVALID",
+        message: "skip lists a message outside its range, or out of sequence order",
+        field: "payload.skip.lost",
+      });
+    }
+  }
+
   if (
     envelope.expectedTaskRevision !== undefined &&
     context.currentTaskRevision !== undefined &&
@@ -334,6 +403,11 @@ export function decideInboxAction(
     return { action: "duplicate", key, previousMessageId: previous };
   }
   if (inbox.lastSequence === undefined || envelope.sourceSequence === inbox.lastSequence + 1) {
+    return { action: "process", key };
+  }
+  // A skip is the one envelope that closes a gap: it says the sequences before it were given up on, so it is processed
+  // past the cursor rather than waiting for them.
+  if (envelope.kind === "skip" && envelope.sourceSequence > inbox.lastSequence) {
     return { action: "process", key };
   }
   if (envelope.sourceSequence > inbox.lastSequence) {

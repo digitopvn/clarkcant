@@ -49,6 +49,11 @@ export type ReceiveOutcome =
   | { status: "processed"; responseJson: string }
   | { status: "duplicate"; responseJson: string }
   | { status: "gap"; expected: number; received: number }
+  /**
+   * A `skip` for sequences this node already has: what it gives up on arrived after all, and only its acknowledgement
+   * was lost. Nothing is recorded or done; the sender is answered so it stops sending the skip.
+   */
+  | { status: "stale"; lastSequence: number }
   | { status: "rejected"; code: string; message: string; issues: string[] };
 
 export function receiveEnvelope(
@@ -69,12 +74,24 @@ export function receiveEnvelope(
     }
   }
 
+  const lastSeenSequence = peerCursor(deps.db, transport.authenticatedSenderNodeId);
   const validation = validatePeerEnvelope(raw, {
     authenticatedSenderNodeId: transport.authenticatedSenderNodeId,
     supportedVersions: deps.supportedVersions,
-    lastSeenSequence: peerCursor(deps.db, transport.authenticatedSenderNodeId),
+    lastSeenSequence,
     knownDelegationIds: deps.knownDelegationIds,
   });
+
+  if (
+    !validation.valid &&
+    structural.success &&
+    structural.data.kind === "skip" &&
+    lastSeenSequence !== undefined &&
+    validation.issues.every((issue) => issue.code === "SEQUENCE_REGRESSION")
+  ) {
+    // Valid in every other way, from the authenticated sender, and entirely behind the cursor: nothing is left to skip.
+    return { status: "stale", lastSequence: lastSeenSequence };
+  }
 
   if (!validation.valid) {
     return {
@@ -112,6 +129,8 @@ export function receiveEnvelope(
     document: envelope,
     responseJson,
     receivedAt: deps.now() as never,
+    // Only a skip moves the cursor past a gap, and only to its own sequence, which the validator held to its `through`.
+    ...(envelope.kind === "skip" ? { closesGap: true } : {}),
   });
 
   return recorded.status === "duplicate"

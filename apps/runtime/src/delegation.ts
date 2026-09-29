@@ -390,6 +390,27 @@ export function settleUndelivered(
   return true;
 }
 
+/**
+ * A result the peer gave up delivering, and skipped: the task that waits on it is settled here, since the answer never
+ * comes. How it ended there is not known here, so it is called uncertain. Only a task this node handed that very peer,
+ * still open; anything else is left alone. Answers whether a task was settled.
+ */
+export function settleLostResult(deps: ResultReceiveDeps, lost: { peerNodeId: string; taskId: string }): boolean {
+  const task = getTask(deps.db, lost.taskId);
+  if (task === undefined || task.homeNodeId !== deps.nodeId || task.executionNodeId !== lost.peerNodeId || isTerminal(task.state)) {
+    return false;
+  }
+  const coordination = { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.conductor.newId };
+  if (!applyTaskEvent(coordination, task.taskId, "effect.unknown").ok) return false;
+  deps.onSettled({
+    taskId: task.taskId,
+    conversationId: task.conversationId,
+    outcome: "uncertain",
+    message: `kết quả của việc này từ ${lost.peerNodeId} bị mất trên đường gửi về sau nhiều lần thử; không rõ việc ở đó đã xong hay chưa`,
+  });
+  return true;
+}
+
 /* ------------------------------------------------------------------ *
  * The receiver's side
  * ------------------------------------------------------------------ */

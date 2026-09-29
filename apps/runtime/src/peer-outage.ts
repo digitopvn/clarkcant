@@ -8,6 +8,7 @@ import {
 } from "@clarkcant/storage";
 
 import { type NodeNotice, type NoticeServices, tryRecordNodeNotice } from "./notices.ts";
+import { peerStuckKey, peerStuckPrefix } from "./peer-skip.ts";
 import { answeredStatus } from "./peer-transport.ts";
 
 /**
@@ -160,9 +161,17 @@ function reconcilePeer(services: NoticeServices, peer: PeerRecord, at: Instant, 
   const prefix = offlinePrefix(peer.peerNodeId);
   if (peer.trustedAt === null || peer.revokedAt !== null) {
     dismissNotificationsByKeyPrefix(db, { principalId, dedupKeyPrefix: prefix, at });
+    dismissNotificationsByKeyPrefix(db, { principalId, dedupKeyPrefix: peerStuckPrefix(peer.peerNodeId), at });
     return;
   }
   const state = peerDeliveryState(db, peer.peerNodeId);
+  // A stuck pairing is over once the peer acknowledges anything again: only the current stretch's notice stands.
+  dismissNotificationsByKeyPrefix(db, {
+    principalId,
+    dedupKeyPrefix: peerStuckPrefix(peer.peerNodeId),
+    at,
+    except: peerStuckKey(peer.peerNodeId, state.lastAcknowledgedAt),
+  });
   const status = answeredStatus(state.lastError);
   const outage: { situation: Situation; since: Instant } | undefined =
     state.failingSince !== null
