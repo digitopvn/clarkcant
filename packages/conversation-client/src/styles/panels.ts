@@ -329,22 +329,29 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   border-radius: var(--cc-radius-badge); background: var(--cc-elevated); color: var(--cc-text);
   font: inherit; font-size: var(--cc-text-meta); text-align: left; cursor: pointer;
 }
-/* An all-day event is striped as well as labelled "all day", so it is told apart from a timed one without colour. */
+/*
+ * An all-day event is striped as well as labelled "all day", so it is told apart from a timed one without colour. The
+ * stripes are faint and the text on them is the full text colour, not the muted one, so it keeps AA contrast on either
+ * stripe whatever the accent.
+ */
 .cc-calendar-event[data-all-day="true"] {
   border-left-style: double; border-left-width: 4px;
-  background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--cc-accent) 12%, var(--cc-elevated)) 0 6px, var(--cc-elevated) 6px 12px);
+  background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--cc-accent) 8%, var(--cc-elevated)) 0 6px, var(--cc-elevated) 6px 12px);
 }
 .cc-calendar-event[aria-pressed="true"] {
   border-color: var(--cc-accent); box-shadow: inset 0 0 0 1px var(--cc-accent);
   background: color-mix(in oklab, var(--cc-accent) 18%, var(--cc-card)); font-weight: 600;
 }
 .cc-calendar-event-time, .cc-calendar-event-span { color: var(--cc-text-muted); font-variant-numeric: tabular-nums; }
+.cc-calendar-event[data-all-day="true"] :is(.cc-calendar-event-time, .cc-calendar-event-span) { color: var(--cc-text); }
 .cc-calendar-event-title { max-width: 100%; overflow-wrap: anywhere; }
 .cc-calendar-empty { color: var(--cc-text-tertiary); font-size: var(--cc-text-meta); }
 /* "Now" is a labelled line with a dot, not a tint: the time is written on it. */
 .cc-calendar-now { display: flex; align-items: center; gap: var(--cc-space-xs); font-size: var(--cc-text-meta); font-weight: 600; color: var(--cc-danger); }
 .cc-calendar-now::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 50%; background: currentColor; }
 .cc-calendar-now::after { content: ""; flex: 1; min-width: 12px; border-top: 2px solid currentColor; }
+/* The label never wraps: a wrapped label squeezes the line beside it to a stub. */
+.cc-calendar-now > span { white-space: nowrap; }
 .cc-calendar-agenda { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-calendar-agenda-day { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: var(--cc-space-sm); align-items: start; }
 .cc-calendar-agenda-date { margin: 0; display: flex; flex-direction: column; font-size: var(--cc-text-label); font-variant-numeric: tabular-nums; }

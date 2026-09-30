@@ -132,14 +132,16 @@ const FIXTURE_REVENUE_PLACES = [
 ];
 /**
  * The sample calendar's events in October 2026, shown in Ho Chi Minh City: a timed event, one that crosses midnight, an
- * all-day event over three days, one written in Berlin time, a single all-day day, one that ends at midnight, and a timed
- * event on the all-day day. Fixed instants, so what each view draws does not depend on when the test runs.
+ * all-day event over three days, one written in Berlin time, one written with no offset at all (a time in the calendar's
+ * own timezone), a single all-day day, one that ends at midnight, and a timed event on the all-day day. Fixed times, so
+ * what each view draws does not depend on when the test runs or on the timezone of the node or the browser.
  */
 const FIXTURE_CALENDAR_ROWS: Record<string, unknown>[] = [
   { eventId: "evt_standup", title: "Họp đầu tuần", startsAt: "2026-10-05T02:00:00Z", endsAt: "2026-10-05T03:00:00Z", timezone: "Asia/Ho_Chi_Minh" },
   { eventId: "evt_deploy", title: "Triển khai đêm", startsAt: "2026-10-06T15:00:00Z", endsAt: "2026-10-06T19:00:00Z", timezone: "Asia/Ho_Chi_Minh" },
   { eventId: "evt_offsite", title: "Hội thảo nhóm", allDay: true, startDate: "2026-10-07", endDate: "2026-10-10" },
   { eventId: "evt_berlin", title: "Gọi với Berlin", startsAt: "2026-10-08T08:00:00Z", endsAt: "2026-10-08T09:00:00Z", timezone: "Europe/Berlin" },
+  { eventId: "evt_local", title: "Họp giờ địa phương", startsAt: "2026-10-09T14:00:00", endsAt: "2026-10-09T15:00:00" },
   { eventId: "evt_review", title: "Rà soát cuối ngày", startsAt: "2026-10-12T15:00:00Z", endsAt: "2026-10-12T17:00:00Z", timezone: "Asia/Ho_Chi_Minh" },
   { eventId: "evt_holiday", title: "Ngày nghỉ", allDay: true, date: "2026-10-20" },
   { eventId: "evt_lunch", title: "Ăn trưa nhóm", startsAt: "2026-10-20T05:00:00Z", endsAt: "2026-10-20T06:00:00Z", timezone: "Asia/Ho_Chi_Minh" },

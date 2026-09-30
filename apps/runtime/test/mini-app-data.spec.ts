@@ -316,6 +316,37 @@ describe("local calendar", () => {
     expect(notABoolean).toMatchObject({ ok: false, code: "INVALID_DATE" });
   });
 
+  it("finds an all-day event on its dates even when it was written a day's worth of timezones away", () => {
+    const allDay = (title: string, timezone: string, startDate: string): void => {
+      const created = createLocalEvent(deps(), { principalId: PRINCIPAL, title, startsAt: undefined, endsAt: undefined, timezone, allDay: true, startDate });
+      expect(created.ok).toBe(true);
+    };
+    // UTC+14: 1 October there is 30 September 10:00 to 1 October 10:00 UTC.
+    allDay("First, from Kiritimati", "Pacific/Kiritimati", "2026-10-01");
+    // UTC-11: 31 October there is 31 October 11:00 to 1 November 11:00 UTC.
+    allDay("Last, from Pago Pago", "Pacific/Pago_Pago", "2026-10-31");
+    // The day before the month, from UTC+14: fetched by the wider query, and left out by its dates.
+    allDay("Before, from Kiritimati", "Pacific/Kiritimati", "2026-09-30");
+    // A timed event on the evening of 30 September in Pago Pago, which is 1 October in Kiritimati: in the wider window, and
+    // kept or left out by its instants.
+    createLocalEvent(deps(), {
+      principalId: PRINCIPAL,
+      title: "Timed, 30 September in Pago Pago",
+      startsAt: "2026-10-01T07:00:00.000Z",
+      endsAt: "2026-10-01T08:00:00.000Z",
+      timezone: "Pacific/Pago_Pago",
+    });
+
+    // October in UTC-11 starts at 1 October 11:00 UTC, after the Kiritimati event's instants end; in UTC+14 it ends at
+    // 31 October 10:00 UTC, before the Pago Pago event's begin. Both are October events wherever they are looked at.
+    const titles = (timezone: string): unknown[] =>
+      calendarRowsForRange(deps(), { principalId: PRINCIPAL, range: periodRange("month", new Date("2026-10-15T00:00:00.000Z"), timezone) }).map(
+        (row) => row.title,
+      );
+    expect(titles("Pacific/Pago_Pago")).toEqual(["First, from Kiritimati", "Last, from Pago Pago"]);
+    expect(titles("Pacific/Kiritimati")).toEqual(["First, from Kiritimati", "Timed, 30 September in Pago Pago", "Last, from Pago Pago"]);
+  });
+
   it("does not show one principal another principal's events", () => {
     createLocalEvent(deps(), {
       principalId: PRINCIPAL,

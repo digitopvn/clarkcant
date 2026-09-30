@@ -880,8 +880,11 @@ events, places them on their days, checks a view and writes the text. The node a
 A row is read in one of three shapes. Anything else, a row with no title and a row that ends before it starts are
 counted as not readable, and the calendar says how many:
 
-- **Timed**: `title`, `startsAt` and `endsAt`, ISO instants. The event is on every day from the one it starts on to the
-  one it is still running on, in the calendar's timezone. An event from 22:00 to 02:00 is on both days, marked "from
+- **Timed**: `title`, `startsAt` and `endsAt`. A time with `Z` or an offset such as `+07:00` is that instant. A time
+  with no offset, such as `2026-10-09T14:00`, is that time in the calendar's timezone, read the same way by the node
+  and by every page whatever timezone they run in. Anything else, such as `+0700` without the colon or a date alone, is
+  not readable. The event is on every day from the one it starts on to the one it is still running on, in the
+  calendar's timezone. An event from 22:00 to 02:00 is on both days, marked "from
   22:00" on the first and "until 02:00" on the second. An event that ends at midnight is not on the day that midnight
   begins.
 - **All day**: `title`, `allDay: true`, `startDate` and an optional `endDate`, the day after the last day, as iCalendar
@@ -890,8 +893,11 @@ counted as not readable, and the calendar says how many:
   drifts onto the day before.
 - **Dated**: `title` and `date`, on that day with no time.
 
-`eventId` (or `id`) names an event, and a row without one is named by its position. `timezone` is the timezone the
-event was written in. The calendar reads the first 500 rows and says when there are more.
+`eventId` (or `id`) names the row, and a row without one is named by its position (`row-3`). An event is named by its
+key: the row's name and where it starts, such as `evt_deploy@2026-10-06T15:00:00.000Z` or `evt_offsite@2026-10-07`.
+Two rows with the same name and start, such as a recurring event exported twice, get `#2`, `#3` in row order, so each
+row is its own event to select. `timezone` is the timezone the event was written in; it is shown beside the
+calendar's time and does not change how a time without an offset is read. The calendar reads the first 500 rows and says when there are more.
 
 A model places the calendar with `show_view`. Before an instance exists, the node refuses, with the reason, a month
 that is not a real `YYYY-MM`, a timezone it does not know, and a dataset that is not on this node or is not the
@@ -900,15 +906,20 @@ person's.
 What the node guarantees:
 
 - **What a person changes is a view the node keeps.** The view switcher, the days and the events write through the
-  calendar's one `calendar.view` binding: `{ view, selectedDate?, selectedEventId? }`. It is a view operation: it reads
+  calendar's one `calendar.view` binding: `{ view, selectedDate?, selectedEventId? }`, where `selectedEventId` is the
+  event's key. It is a view operation: it reads
   and changes nothing else, and never adds, moves or removes an event. The node checks each view against the calendar
   and the rows it holds now. The view is one of the three, a selected day is one the month draws, and a selected event
   is one of its events, on the selected day when a day is selected too. A view that does not fit is refused with the
-  reason, such as `"evt_deploy" is not an event on this calendar now`, and the state is left as it was. A view replaces
-  the last one whole.
+  reason, such as `"evt_deploy@2026-10-06T15:00:00.000Z" is not an event on this calendar now`, and the state is left
+  as it was. A bare row name is not a key and is refused the same way. A view replaces the last one whole.
 - **A calendar saved before there were views opens as a month.** The calendar's state is version 2. Version 1 held only
   `selectedDate`, and its declared migration step gives it `view: "month"`. The timeline and the semantic document read
   an older state in the current shape, and the row itself is written as version 2 only when the view next changes.
+- **A calendar placed before there were views gains its binding.** Such a calendar was placed with no binding. The
+  first time the node builds the conversation's timeline, it gives each calendar it owns over a dataset the same
+  `calendar.view` binding placement gives a new one, once, in one transaction; no database migration is involved. From
+  then on its view is kept, read back after a reload, and described by voice and `inspect_ui` as it is.
 - **The text alternative is the calendar's own words**: each event of the month and when it is, in the calendar's
   timezone, for example `Deploy (2026-10-06 at 22:00 to 2026-10-07 at 02:00)`.
 - **Voice and `inspect_ui` read the calendar as it is now.** The semantic document (§9) gives the view, the month, the
@@ -919,7 +930,8 @@ What the node guarantees:
 - **Local events can be all day.** The node's own events (`POST /calendar/events`) take `allDay: true`
   with `startDate` and an optional `endDate`, and refuse a date that is not real or an `endDate` that is not after
   `startDate` (`INVALID_DATE`, `INVALID_RANGE`). A change keeps an all-day event all day, on its dates, unless it says
-  `allDay: false`.
+  `allDay: false`. A query for a range of days finds an all-day event by its dates, even when the event was written
+  at the other end of the world's timezones (UTC+14 against UTC-11), and a timed event by its instants.
 
 What the page does:
 
@@ -933,25 +945,30 @@ What the page does:
 - Days and events are buttons. In the month, one day is in the tab order and the arrow keys move a day or a week; Home
   and End go to the ends of the week. In the week view, Left and Right move between the day headings. Up and Down move
   between events, Home and End go to the first and last, Enter or Space selects, and Escape clears the selected event.
-- The selected event is described under the view in a live region: when it is in the calendar's timezone, how many
-  days it lasts, when it is in its own timezone when that is another one, and a button that clears it.
-- When the node refuses a view, the calendar shows the node's reason, draws the view the node holds, and reads the
-  events again.
+- The selected event is described under the view in a live region: when it is in the calendar's timezone, how long
+  it lasts when that runs past a day, when it is in its own timezone when that is another one, and a button that
+  clears it. An all-day event over several days lasts "3 days"; a timed one lasts its real length, so 22:00 to 02:00
+  lasts "4 hours", not two days.
+- In the week view a day is narrow, so the "now" marker shows the time beside its line on one line; the whole label is
+  read out and shown on hover.
+- When the node refuses a view, the calendar says so in the person's language, draws the view the node holds, and
+  reads the events again. The node's English reason is for the model and the logs.
 - In a composed surface the view is held on the surface and `date.select` still feeds the layout (§8.3).
 - The calendar adds no motion of its own. Below 560 px the week's days and the agenda stack in one column, so the week
   is usable at 390 px. It follows the light and dark themes. In the Widget Library the month, week and agenda fixtures
   are usable without a node.
 
 Tests: [calendar-view.spec.ts](../packages/contracts/test/calendar-view.spec.ts) for the rules,
-[calendar-views.spec.ts](../apps/runtime/test/calendar-views.spec.ts) for the node,
-[mini-app-data.spec.ts](../apps/runtime/test/mini-app-data.spec.ts) for all-day local events,
+[calendar-views.spec.ts](../apps/runtime/test/calendar-views.spec.ts) for the node and a calendar placed before
+there were views,
+[mini-app-data.spec.ts](../apps/runtime/test/mini-app-data.spec.ts) for all-day local events and the range query,
 [calendar-layout.spec.ts](../packages/conversation-client/test/calendar-layout.spec.ts) for the keyboard, the week and
 the "now" marker, [calendar-schemas.spec.ts](../packages/widget-catalog/test/calendar-schemas.spec.ts), which checks the
 state version, its migration and that every library fixture is a view the node would keep, and the browser journey
 [calendar-views.spec.ts](../apps/web/e2e/calendar-views.spec.ts). The journey runs in a browser in New York over a
 calendar in Ho Chi Minh City. It covers each view, the keyboard, a selected event kept after a reload, today and "now"
-by the calendar's timezone, all-day and overnight events, the node's refusal of an event it no longer holds, a month
-that does not exist, reduced motion, 390 px with touch in the light theme, and the library.
+by the calendar's timezone, all-day and overnight events, a time without an offset read in the calendar's timezone by
+a browser in Los Angeles, the refusal of an event the node no longer holds, a month that does not exist, reduced motion, 390 px with touch in the light theme, and the library.
 
 ---
 

@@ -46,7 +46,6 @@ import {
   statusCardText,
   readArtifactViewer,
   CALENDAR_VIEWS,
-  CALENDAR_VIEW_OPERATION,
   MAX_CALENDAR_EVENTS,
   MAX_CHART_POINTS,
   MAX_CHART_SERIES,
@@ -95,6 +94,7 @@ import {
   AGENT_ITEM_KEY,
   compileWidgetAction,
 } from "./application/action-bindings.ts";
+import { calendarViewBinding } from "./calendar-binding.ts";
 import { COMPOSITION_TEMPLATES, type ComposeDeps, type ComposeInput, composeMiniApp } from "./compose-mini-app.ts";
 import { composeLayout, layoutLeafWidgets } from "./compose-layout.ts";
 import { definitionDigest, validateProps } from "@clarkcant/widget-host";
@@ -704,32 +704,12 @@ function calendarView(deps: WidgetDeps): ViewDescriptor {
         packageDigest,
         ownerPrincipalId: request.principal.principalId,
         props: request.props,
-        bind: (instanceId) => {
-          const compiled = compileActionBinding({
-            bindingId: deps.newId("act"),
-            instance: {
-              instanceId,
-              ownerNodeId: deps.nodeId,
-              definitionRef: { id: definition.id, version: definition.version, packageDigest },
-              actionBindingRevision: 1,
-            },
-            packageGeneration: packageDigest,
-            label: "Calendar view",
-            proposal: { kind: "view", operation: CALENDAR_VIEW_OPERATION, args: {} },
-            inputSchema: { type: "object" },
-            allowedDataRefs: [datasetRef],
-            fixedConstraints: {},
-            // A view operation reads and re-renders; it writes nothing outside the node's own state.
-            effectCategory: "read",
-            requiresApproval: false,
-            limits: {},
-            bindingDigest: `sha256:${CALENDAR_VIEW_OPERATION}:${instanceId}`,
-            at: deps.now(),
-            knownCapabilities: new Set(),
-          });
-          if (!compiled.ok) throw new Error(compiled.message);
-          return compiled.binding;
-        },
+        bind: (instanceId) =>
+          calendarViewBinding(deps, {
+            instanceId,
+            definitionRef: { id: definition.id, version: definition.version, packageDigest },
+            datasetRef,
+          }),
         messageId: request.messageId,
         textAlternative,
         presentationRef: `catalog:${definition.id}`,

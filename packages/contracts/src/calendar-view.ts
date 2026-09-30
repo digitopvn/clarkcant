@@ -1,4 +1,4 @@
-import { civilParts, monthGrid } from "./period.ts";
+import { civilParts, localTimeToUtc, monthGrid } from "./period.ts";
 import { clipWithMarker } from "./text-rules.ts";
 import type { StateMigrationStep } from "./widgets.ts";
 import type { SemanticValue } from "./widget-semantic.ts";
@@ -40,6 +40,11 @@ export const CALENDAR_STATE_MIGRATIONS: readonly StateMigrationStep[] = [
 /** Rows one calendar reads. A longer dataset is read from its first rows, and the calendar says how many it left out. */
 export const MAX_CALENDAR_EVENTS = 500;
 export const MAX_EVENT_ID = 200;
+/**
+ * The longest key an event is selected by: its id, `@` and the instant or date it starts, and `#n` when rows repeat
+ * both.
+ */
+export const MAX_EVENT_KEY = MAX_EVENT_ID + 40;
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -103,7 +108,14 @@ export function timeInZone(at: Date, timeZone: string): string {
 
 /** One event as the calendar draws it. */
 export interface CalendarEvent {
+  /**
+   * The key the event is selected and drawn by: the row's id, `@`, and the instant (or date) it starts, with `#2`, `#3`
+   * and so on for rows that repeat both. Recurring instances often share one id, so the id alone would select all of
+   * them at once; node and page read the same rows in the same order and so derive the same keys.
+   */
   id: string;
+  /** The id the row itself carries (`eventId` or `id`), or `row-N` for a row with none. */
+  rowId: string;
   title: string;
   /** An all-day event: a run of dates, the same wherever it is seen. */
   allDay: boolean;
@@ -131,10 +143,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function instant(value: unknown): number | undefined {
+/** An RFC 3339 instant: a date, a time and a `Z` or `±HH:MM` offset. */
+const WITH_OFFSET = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
+/** A floating date and time, with no offset: a wall-clock time, read in the calendar's timezone. */
+const FLOATING = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?$/;
+
+/**
+ * The instant a row's time names.
+ *
+ * A time with an offset is that instant. A time with none is a wall-clock time in the calendar's own timezone, as
+ * iCalendar reads a floating time: it is never read in the timezone of whichever process parses it, because the node and
+ * the page would then place the same event on different days. Any other form is not a time the calendar reads.
+ */
+function instant(value: unknown, timeZone: string): number | undefined {
   if (typeof value !== "string" || value.length > 40) return undefined;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : undefined;
+  if (WITH_OFFSET.test(value)) {
+    // A date the calendar does not have, such as 2026-02-30, is not one `Date.parse` should be left to roll over.
+    if (!isIsoDate(value.slice(0, 10))) return undefined;
+    const ms = Date.parse(value.toUpperCase().replace(" ", "T"));
+    return Number.isFinite(ms) ? ms : undefined;
+  }
+  const floating = FLOATING.exec(value);
+  if (floating === null) return undefined;
+  const [, date = "", hourText = "", minuteText = "", secondText = "0", fraction = ""] = floating;
+  const [hour, minute, second] = [Number(hourText), Number(minuteText), Number(secondText)];
+  if (!isIsoDate(date) || hour > 23 || minute > 59 || second > 59) return undefined;
+  const [year, month, day] = date.split("-").map(Number);
+  const at = localTimeToUtc(year ?? 1970, month ?? 1, day ?? 1, timeZone, hour, minute, second).getTime();
+  return at + Math.floor(Number(`0.${fraction === "" ? "0" : fraction}`) * 1000);
 }
 
 function eventId(row: Record<string, unknown>, index: number): string {
@@ -157,11 +193,19 @@ function eventId(row: Record<string, unknown>, index: number): string {
 export function readCalendarEvents(rows: readonly unknown[], timeZone: string): CalendarEvents {
   const read = rows.slice(0, MAX_CALENDAR_EVENTS);
   const events: CalendarEvent[] = [];
+  const seen = new Map<string, number>();
   let unreadable = 0;
   read.forEach((row, index) => {
     const event = isRecord(row) ? readEvent(row, index, timeZone) : undefined;
-    if (event === undefined) unreadable += 1;
-    else events.push(event);
+    if (event === undefined) {
+      unreadable += 1;
+      return;
+    }
+    // Keyed in row order, so the second of two rows that share an id and a start is `#2` on the node and the page alike.
+    const base = `${event.rowId}@${event.startsAt ?? event.startDate}`;
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    events.push({ ...event, id: count === 1 ? base : `${base}#${String(count)}` });
   });
   return { events: events.sort(compareEvents), unreadable, total: rows.length };
 }
@@ -169,8 +213,10 @@ export function readCalendarEvents(rows: readonly unknown[], timeZone: string): 
 function readEvent(row: Record<string, unknown>, index: number, timeZone: string): CalendarEvent | undefined {
   const title = typeof row.title === "string" ? row.title.trim() : "";
   if (title === "") return undefined;
+  const rowId = eventId(row, index);
   const common = {
-    id: eventId(row, index),
+    id: rowId,
+    rowId,
     title,
     ...(typeof row.timezone === "string" && row.timezone !== "" ? { timezone: row.timezone } : {}),
     ...(typeof row.source === "string" && row.source !== "" ? { source: row.source } : {}),
@@ -185,8 +231,8 @@ function readEvent(row: Record<string, unknown>, index: number, timeZone: string
     return { ...common, allDay: true, startDate, lastDate: addDaysIso(endDate, -1) };
   }
 
-  const start = instant(row.startsAt);
-  const end = instant(row.endsAt);
+  const start = instant(row.startsAt, timeZone);
+  const end = instant(row.endsAt, timeZone);
   if (start !== undefined && end !== undefined) {
     if (end < start) return undefined;
     // An event that ends at midnight is not on the day that midnight begins, so its last day is read a moment before.
@@ -229,6 +275,18 @@ export function eventsOnDay(events: readonly CalendarEvent[], date: string): Cal
 /** How many days an event covers. */
 export function eventDayCount(event: CalendarEvent): number {
   return Math.round((Date.parse(`${event.lastDate}T00:00:00Z`) - Date.parse(`${event.startDate}T00:00:00Z`)) / 86_400_000) + 1;
+}
+
+/**
+ * How long a timed event runs, in whole days, hours and minutes, or undefined for an all-day event or one with no time.
+ *
+ * Counted from its instants, so an event from 22:00 to 02:00 lasts four hours even though it is on two days, and a day
+ * a timezone shifts its clock does not stretch or shrink it.
+ */
+export function timedDuration(event: CalendarEvent): { days: number; hours: number; minutes: number } | undefined {
+  if (event.allDay || event.startsAt === undefined || event.endsAt === undefined) return undefined;
+  const totalMinutes = Math.round((Date.parse(event.endsAt) - Date.parse(event.startsAt)) / 60_000);
+  return { days: Math.floor(totalMinutes / 1440), hours: Math.floor((totalMinutes % 1440) / 60), minutes: totalMinutes % 60 };
 }
 
 /**
@@ -318,8 +376,8 @@ export function calendarViewProblems(month: string, input: unknown, events: read
 
   const selected = input.selectedEventId;
   if (selected !== undefined) {
-    if (typeof selected !== "string" || selected === "" || selected.length > MAX_EVENT_ID) {
-      problems.push("the selected event is named by its id");
+    if (typeof selected !== "string" || selected === "" || selected.length > MAX_EVENT_KEY) {
+      problems.push("the selected event is named by its key");
     } else {
       const event = events.find((candidate) => candidate.id === selected);
       if (event === undefined) problems.push(`"${clipWithMarker(selected, 64, "…")}" is not an event on this calendar now`);

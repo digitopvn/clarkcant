@@ -200,7 +200,7 @@ export function useSurfaceRenderer({
   /** A refusal said beside a widget, and how many there have been: each one sets the widget back to the node's view. */
   const [viewRefusals, setViewRefusals] = useState<Record<string, { message: string; count: number }>>({});
   const sendView = useCallback(
-    (conversation: string, instanceId: string, datasetRef: string | undefined, action: TimelineAction, revision: number, view: Record<string, unknown>): void => {
+    (conversation: string, instanceId: string, datasetRef: string | undefined, action: TimelineAction, revision: number, view: Record<string, unknown>, refused: MessageKey): void => {
       const queue = viewQueues.current.get(instanceId) ?? { inFlight: false };
       if (queue.inFlight) {
         viewQueues.current.set(instanceId, { inFlight: true, queued: view });
@@ -222,7 +222,7 @@ export function useSurfaceRenderer({
         .then((result) => {
           const queued = viewQueues.current.get(instanceId)?.queued;
           viewQueues.current.set(instanceId, { inFlight: false });
-          if (queued !== undefined) sendView(conversation, instanceId, datasetRef, action, result.revision, queued);
+          if (queued !== undefined) sendView(conversation, instanceId, datasetRef, action, result.revision, queued, refused);
           else applyTimeline(result.timeline);
         })
         .catch((cause: unknown) => {
@@ -232,7 +232,7 @@ export function useSurfaceRenderer({
           const message =
             code === "REVISION_MISMATCH"
               ? t("widgets.action.revisionMismatch")
-              : (bindingUnavailableMessage(t, code) ?? t("widgets.xyChart.viewRefused"));
+              : (bindingUnavailableMessage(t, code) ?? t(refused));
           setViewRefusals((current) => ({ ...current, [instanceId]: { message, count: (current[instanceId]?.count ?? 0) + 1 } }));
           // The node's view is what the widget draws again. A change that went through while a later one waited was not
           // applied yet, so the timeline is read back rather than trusted; and the node checked the view against the rows it
@@ -462,7 +462,7 @@ export function useSurfaceRenderer({
                       if (viewOperation !== undefined && action === viewOperation) {
                         if (boundAction !== undefined && boundAction.available && conversationId !== undefined) {
                           const datasetRef = instance.props.datasetRef;
-                          sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, boundAction, instance.revision, payload);
+                          sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, boundAction, instance.revision, payload, viewOperation === CALENDAR_VIEW_OPERATION ? "widgets.calendar.viewRefused" : "widgets.xyChart.viewRefused");
                         }
                         return;
                       }

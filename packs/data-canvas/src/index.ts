@@ -31,7 +31,7 @@ import {
   CALENDAR_STATE_VERSION,
   CALENDAR_VIEWS,
   CALENDAR_VIEW_OPERATION,
-  MAX_EVENT_ID,
+  MAX_EVENT_KEY,
   MAX_CHART_POINTS,
   MAX_CHART_SERIES,
   MAX_FIELD_NAME,
@@ -362,7 +362,7 @@ export const CALENDAR: WidgetDefinition = {
     properties: {
       view: { type: "string", enum: [...CALENDAR_VIEWS] },
       selectedDate: { type: "string", maxLength: 10 },
-      selectedEventId: { type: "string", maxLength: MAX_EVENT_ID },
+      selectedEventId: { type: "string", maxLength: MAX_EVENT_KEY },
     },
   },
   // Version 1 held only the selected day; a state saved then is a month view, which is what the step says.

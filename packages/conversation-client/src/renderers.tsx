@@ -64,6 +64,7 @@ import {
   stepCounts,
   tableView,
   timeInZone,
+  timedDuration,
   type TableTotalFn,
   XY_CHART_KIND,
   XY_CHART_VIEW_OPERATION,
@@ -1601,6 +1602,18 @@ function calendarWhen(t: Translate, event: CalendarEvent, timeZone: string): str
     : `${startDate} ${timeInZone(start, timeZone)} → ${endDate} ${timeInZone(end, timeZone)}`;
 }
 
+/** How long a timed event runs, in the person's language: "4 giờ", "1 hour 30 minutes", "2 days 2 hours". */
+function calendarDuration(t: Translate, duration: { days: number; hours: number; minutes: number }): string {
+  const parts: string[] = [];
+  const unit = (count: number, one: MessageKey, many: MessageKey): void => {
+    if (count > 0) parts.push(t(count === 1 ? one : many).replace("{count}", String(count)));
+  };
+  unit(duration.days, "widgets.calendar.duration.day", "widgets.calendar.duration.days");
+  unit(duration.hours, "widgets.calendar.duration.hour", "widgets.calendar.duration.hours");
+  unit(duration.minutes, "widgets.calendar.duration.minute", "widgets.calendar.duration.minutes");
+  return parts.length === 0 ? t("widgets.calendar.duration.minutes").replace("{count}", "0") : parts.join(" ");
+}
+
 /** What an event shows on one of its days: its hours that day, or that it is all day or runs through the day. */
 function calendarDayTime(t: Translate, event: CalendarEvent, date: string, timeZone: string): string {
   if (event.allDay) return t("widgets.calendar.allDay");
@@ -1754,26 +1767,40 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
     );
   };
 
-  const nowMarker = (key: string): ReactElement => (
-    <li key={key} className="cc-calendar-now" data-calendar-now="true">
-      <span>{t("widgets.calendar.now").replace("{time}", nowText)}</span>
+  // In a week's narrow day column the line carries the time alone, so it stays on one line; "now" is still read out.
+  const nowMarker = (key: string, compact = false): ReactElement => (
+    <li
+      key={key}
+      className="cc-calendar-now"
+      data-calendar-now="true"
+      // A week's narrow day shows only the time beside the line; a pointer can still read the whole label.
+      title={compact ? t("widgets.calendar.now").replace("{time}", nowText) : undefined}
+    >
+      {compact ? (
+        <>
+          <span className="cc-sr-only">{t("widgets.calendar.now").replace("{time}", nowText)}</span>
+          <span aria-hidden="true">{nowText}</span>
+        </>
+      ) : (
+        <span>{t("widgets.calendar.now").replace("{time}", nowText)}</span>
+      )}
     </li>
   );
 
   /** A day's events as a list, with the "now" line among them when the day is today. */
-  const dayList = (date: string, emptyText?: string): ReactElement => {
+  const dayList = (date: string, emptyText?: string, compactNow = false): ReactElement => {
     const events = eventsOnDay(read.events, date);
     const at = date === today ? nowIndex(events, date, now) : -1;
     const items: ReactElement[] = [];
     events.forEach((event, index) => {
-      if (index === at) items.push(nowMarker("now"));
+      if (index === at) items.push(nowMarker("now", compactNow));
       items.push(
         <li key={event.id} data-event-day={date}>
           {eventButton(event, date)}
         </li>,
       );
     });
-    if (at === events.length) items.push(nowMarker("now"));
+    if (at === events.length) items.push(nowMarker("now", compactNow));
     if (events.length === 0 && emptyText !== undefined) {
       items.push(
         <li key="empty" className="cc-calendar-empty">
@@ -1898,7 +1925,7 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
                   <span className="cc-calendar-week-date">{date}</span>
                   {isToday && <span className="cc-calendar-today-tag">{t("widgets.calendar.today")}</span>}
                 </button>
-                {dayList(date, t("widgets.calendar.noEvents"))}
+                {dayList(date, t("widgets.calendar.noEvents"), true)}
               </li>
             );
           })}
@@ -1946,6 +1973,16 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
 
   const eventDetail = (event: CalendarEvent): ReactElement => {
     const days = eventDayCount(event);
+    // A timed event says how long it runs; only an all-day event is counted in the days it covers.
+    const duration = timedDuration(event);
+    const lasts =
+      duration !== undefined
+        ? days > 1
+          ? t("widgets.calendar.detail.duration").replace("{duration}", calendarDuration(t, duration))
+          : undefined
+        : event.allDay && days > 1
+          ? t("widgets.calendar.detail.span").replace("{days}", String(days))
+          : undefined;
     const ownZone = event.timezone !== undefined && event.timezone !== timezone && isKnownTimeZone(event.timezone) ? event.timezone : undefined;
     return (
       <div className="cc-calendar-event-detail" data-calendar-selected-event={event.id} role="group" aria-label={t("widgets.calendar.selectedEvent")}>
@@ -1954,7 +1991,11 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
         {!event.allDay && event.startsAt !== undefined && (
           <span className="cc-freshness">{t("widgets.calendar.detail.shownIn").replace("{timezone}", timezone)}</span>
         )}
-        {days > 1 && <span className="cc-freshness">{t("widgets.calendar.detail.span").replace("{days}", String(days))}</span>}
+        {lasts !== undefined && (
+          <span className="cc-freshness" data-calendar-lasts="true">
+            {lasts}
+          </span>
+        )}
         {ownZone !== undefined && (
           <span className="cc-freshness" data-calendar-source-zone={ownZone}>
             {t("widgets.calendar.detail.sourceZone").replace("{timezone}", ownZone).replace("{when}", calendarWhen(t, event, ownZone))}

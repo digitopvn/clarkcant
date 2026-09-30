@@ -12,6 +12,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  * what a person does with the calendar: switch views, walk days and events with the keyboard, select an event and read
  * its details, find the calendar as they left it after a reload, see the node's refusal when a page asks for an event it
  * no longer holds, and use it all on a phone.
+ *
+ * Each event is named by its key: the row's own id and when it starts, so a row that repeats an id is still its own event.
  */
 
 const DATA_DIR = join(process.cwd(), ".data", "e2e");
@@ -27,6 +29,20 @@ const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 const NOW = new Date("2026-10-07T03:30:00Z");
 
 test.use({ timezoneId: "America/New_York" });
+
+/** The sample events by their keys: the row's id and where it starts. */
+const STANDUP = "evt_standup@2026-10-05T02:00:00.000Z";
+const DEPLOY = "evt_deploy@2026-10-06T15:00:00.000Z";
+const OFFSITE = "evt_offsite@2026-10-07";
+const BERLIN = "evt_berlin@2026-10-08T08:00:00.000Z";
+/** Written as 14:00 with no offset, which is 14:00 in Ho Chi Minh City, the calendar's timezone: 07:00 UTC. */
+const LOCAL = "evt_local@2026-10-09T07:00:00.000Z";
+const REVIEW = "evt_review@2026-10-12T15:00:00.000Z";
+const HOLIDAY = "evt_holiday@2026-10-20";
+const LUNCH = "evt_lunch@2026-10-20T05:00:00.000Z";
+
+const event = (key: string): string => `[data-calendar-event='${key}']`;
+const selectedEvent = (key: string): string => `[data-calendar-selected-event='${key}']`;
 
 type Which = "" | "tuần" | "lịch trình";
 
@@ -126,7 +142,8 @@ test("the month view places events by the calendar's timezone, walks days from t
   await expect(count("2026-10-06")).toHaveText("1");
   await expect(count("2026-10-07")).toHaveText("2");
   await expect(count("2026-10-08")).toHaveText("2");
-  await expect(count("2026-10-09")).toHaveText("1");
+  // The 9th has the offsite's last day and the meeting written with no offset, read in the calendar's timezone.
+  await expect(count("2026-10-09")).toHaveText("2");
   await expect(count("2026-10-10")).toHaveCount(0);
   // The review that ends at midnight is on the 12th only.
   await expect(count("2026-10-12")).toHaveText("1");
@@ -145,12 +162,12 @@ test("the month view places events by the calendar's timezone, walks days from t
   await page.keyboard.press("Enter");
   const detail = calendar.locator(".cc-calendar-detail");
   await expect(detail).toHaveAttribute("data-selected-date", "2026-10-08");
-  await expect(detail.locator("[data-calendar-event='evt_offsite']")).toContainText("ngày 2/3");
-  await expect(detail.locator("[data-calendar-event='evt_berlin']")).toContainText("15:00–16:00");
+  await expect(detail.locator(event(OFFSITE))).toContainText("ngày 2/3");
+  await expect(detail.locator(event(BERLIN))).toContainText("15:00–16:00");
 
   // An event written in Berlin shows the calendar's time and its own.
-  await detail.locator("[data-calendar-event='evt_berlin']").click();
-  const selected = calendar.locator("[data-calendar-selected-event='evt_berlin']");
+  await detail.locator(event(BERLIN)).click();
+  const selected = calendar.locator(selectedEvent(BERLIN));
   await expect(selected).toContainText("Gọi với Berlin");
   await expect(selected).toContainText("2026-10-08 15:00–16:00");
   await expect(selected.locator("[data-calendar-source-zone='Europe/Berlin']")).toHaveText("Theo giờ gốc (Europe/Berlin): 2026-10-08 10:00–11:00");
@@ -159,15 +176,15 @@ test("the month view places events by the calendar's timezone, walks days from t
   const instanceId = await instanceOf(calendar);
   await expect
     .poll(() => heldView(page, conversation(), instanceId), { timeout: 10_000 })
-    .toEqual({ view: "month", selectedDate: "2026-10-08", selectedEventId: "evt_berlin" });
+    .toEqual({ view: "month", selectedDate: "2026-10-08", selectedEventId: BERLIN });
 
   // After a reload the calendar opens as it was left.
   await openApp(page);
   const again = page.locator(CALENDARS).nth(before);
-  await expect(again.locator("[data-calendar-selected-event='evt_berlin']")).toBeVisible({ timeout: 20_000 });
+  await expect(again.locator(selectedEvent(BERLIN))).toBeVisible({ timeout: 20_000 });
 
   // Escape clears the event, and the node forgets it too.
-  await again.locator("[data-calendar-event='evt_berlin']").focus();
+  await again.locator(event(BERLIN)).focus();
   await page.keyboard.press("Escape");
   await expect(again.locator("[data-calendar-selected-event]")).toHaveCount(0);
   await expect.poll(() => heldView(page, conversation(), instanceId), { timeout: 10_000 }).toEqual({ view: "month", selectedDate: "2026-10-08" });
@@ -188,13 +205,13 @@ test("the week view shows all-day and overnight events on each of their days, wi
   await expect(week.locator("li.cc-calendar-week-day")).toHaveCount(7);
   const day = (date: string) => week.locator(`li[data-date='${date}']`);
 
-  await expect(day("2026-10-05").locator("[data-calendar-event='evt_standup']")).toContainText("09:00–10:00");
-  await expect(day("2026-10-06").locator("[data-calendar-event='evt_deploy']")).toContainText("từ 22:00");
-  await expect(day("2026-10-07").locator("[data-calendar-event='evt_deploy']")).toContainText("đến 02:00");
-  const offsite = day("2026-10-07").locator("[data-calendar-event='evt_offsite']");
+  await expect(day("2026-10-05").locator(event(STANDUP))).toContainText("09:00–10:00");
+  await expect(day("2026-10-06").locator(event(DEPLOY))).toContainText("từ 22:00");
+  await expect(day("2026-10-07").locator(event(DEPLOY))).toContainText("đến 02:00");
+  const offsite = day("2026-10-07").locator(event(OFFSITE));
   await expect(offsite).toContainText("Cả ngày");
   await expect(offsite).toContainText("ngày 1/3");
-  await expect(day("2026-10-09").locator("[data-calendar-event='evt_offsite']")).toContainText("ngày 3/3");
+  await expect(day("2026-10-09").locator(event(OFFSITE))).toContainText("ngày 3/3");
   await expect(day("2026-10-10").locator("[data-calendar-event]")).toHaveCount(0);
   await expect(day("2026-10-10")).toContainText("Không có sự kiện");
   // An all-day event is striped as well as labelled, so it is not told apart by colour alone.
@@ -203,18 +220,30 @@ test("the week view shows all-day and overnight events on each of their days, wi
 
   // Now is on today only, after the deploy that ended at 02:00.
   await expect(week.locator("[data-calendar-now]")).toHaveCount(1);
-  await expect(day("2026-10-07").locator("[data-calendar-now]")).toHaveText("Bây giờ 10:30");
+  // A week's day is narrow, so the line shows only the time, on one line; the whole label is what is read out.
+  const now = day("2026-10-07").locator("[data-calendar-now]");
+  await expect(now.locator(".cc-sr-only")).toHaveText("Bây giờ 10:30");
+  await expect(now.locator("[aria-hidden='true']")).toHaveText("10:30");
+  await expect(now).toHaveAttribute("title", "Bây giờ 10:30");
+  const lines = await now.locator("[aria-hidden='true']").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return element.getBoundingClientRect().height / Number.parseFloat(style.lineHeight === "normal" ? style.fontSize : style.lineHeight);
+  });
+  expect(lines, "the time beside the now line does not wrap").toBeLessThan(1.6);
   const order = await day("2026-10-07").locator(".cc-calendar-events > li").evaluateAll((items) =>
     items.map((item) => item.querySelector("[data-calendar-event]")?.getAttribute("data-calendar-event") ?? (item.hasAttribute("data-calendar-now") ? "now" : "")),
   );
-  expect(order).toEqual(["evt_offsite", "evt_deploy", "now"]);
+  expect(order).toEqual([OFFSITE, DEPLOY, "now"]);
 
   // Up and Down walk the events; Enter selects one.
-  await day("2026-10-05").locator("[data-calendar-event='evt_standup']").focus();
+  await day("2026-10-05").locator(event(STANDUP)).focus();
   await page.keyboard.press("ArrowDown");
-  expect(await focused(page, "data-calendar-event")).toBe("evt_deploy");
+  expect(await focused(page, "data-calendar-event")).toBe(DEPLOY);
   await page.keyboard.press("Enter");
-  await expect(calendar.locator("[data-calendar-selected-event='evt_deploy']")).toContainText("2026-10-06 22:00 → 2026-10-07 02:00");
+  await expect(calendar.locator(selectedEvent(DEPLOY))).toContainText("2026-10-06 22:00 → 2026-10-07 02:00");
+  // It runs four hours across midnight, which is not two days.
+  await expect(calendar.locator(selectedEvent(DEPLOY)).locator("[data-calendar-lasts]")).toHaveText("Kéo dài 4 giờ");
+  await expect(calendar.locator(selectedEvent(DEPLOY))).not.toContainText("Kéo dài 2 ngày");
   // Left and Right walk the days of the week from their headings.
   await day("2026-10-06").locator("[data-calendar-day]").focus();
   await page.keyboard.press("ArrowRight");
@@ -224,7 +253,7 @@ test("the week view shows all-day and overnight events on each of their days, wi
   await calendar.locator("[data-calendar-week='next']").click();
   const next = calendar.locator("ol[data-calendar-week-of='2026-10-12']");
   await expect(next).toBeVisible();
-  await expect(next.locator("li[data-date='2026-10-12'] [data-calendar-event='evt_review']")).toContainText("22:00–00:00");
+  await expect(next.locator(`li[data-date='2026-10-12'] ${event(REVIEW)}`)).toContainText("22:00–00:00");
   await expect(next.locator("li[data-date='2026-10-13'] [data-calendar-event]")).toHaveCount(0);
   await expect(next.locator("[data-calendar-now]")).toHaveCount(0);
 
@@ -257,27 +286,27 @@ test("the agenda lists the month's days with events, marks now, and switches vie
   // The keyboard walks every event in the agenda, from the first to the last.
   await agenda.locator("[data-calendar-event]").first().focus();
   await page.keyboard.press("End");
-  expect(await focused(page, "data-calendar-event")).toBe("evt_lunch");
+  expect(await focused(page, "data-calendar-event")).toBe(LUNCH);
   await page.keyboard.press("ArrowUp");
-  expect(await focused(page, "data-calendar-event")).toBe("evt_holiday");
+  expect(await focused(page, "data-calendar-event")).toBe(HOLIDAY);
   await page.keyboard.press("Space");
-  await expect(calendar.locator("[data-calendar-selected-event='evt_holiday']")).toContainText("2026-10-20, cả ngày");
+  await expect(calendar.locator(selectedEvent(HOLIDAY))).toContainText("2026-10-20, cả ngày");
 
   // The same calendar switches to the week and month views, keeping the selected day.
   await calendar.locator("[data-calendar-view-button='week']").click();
   await expect(calendar.locator("ol[data-calendar-week-of='2026-10-19']")).toBeVisible();
   await calendar.locator("[data-calendar-view-button='month']").click();
   await expect(calendar.locator("td[data-date='2026-10-20'] .cc-calendar-day")).toHaveAttribute("aria-pressed", "true");
-  await expect(calendar.locator("[data-calendar-selected-event='evt_holiday']")).toBeVisible();
+  await expect(calendar.locator(selectedEvent(HOLIDAY))).toBeVisible();
 });
 
-test("a page that asks for an event the node no longer holds shows the node's refusal", async ({ page }) => {
+test("a page that asks for an event the node no longer holds is told so in the person's language", async ({ page }) => {
   test.setTimeout(120_000);
   await page.clock.setFixedTime(NOW);
   await openApp(page);
   const calendar = await place(page, "");
   await calendar.locator("td[data-date='2026-10-06'] .cc-calendar-day").click();
-  await expect(calendar.locator(".cc-calendar-detail [data-calendar-event='evt_deploy']")).toBeVisible();
+  await expect(calendar.locator(`.cc-calendar-detail ${event(DEPLOY)}`)).toBeVisible();
 
   // The rows are replaced from another conversation, so this page still draws the deploy it was given.
   const created = await page.request.post(`${GATEWAY}/conversations`, { headers: authorized(), data: { title: "Dữ liệu lịch" } });
@@ -295,14 +324,45 @@ test("a page that asks for an event the node no longer holds shows the node's re
     }, { timeout: 20_000 })
     .toBe(true);
 
-  await calendar.locator(".cc-calendar-detail [data-calendar-event='evt_deploy']").click();
-  await expect(calendar.locator("[data-calendar-message]")).toContainText('"evt_deploy" is not an event on this calendar now', { timeout: 20_000 });
+  await calendar.locator(`.cc-calendar-detail ${event(DEPLOY)}`).click();
+  // Said in the person's language; the node's English sentence is for the model and the logs.
+  await expect(calendar.locator("[data-calendar-message]")).toHaveText(
+    "Lịch không giữ được lựa chọn này vì dữ liệu sự kiện đã đổi. Lịch đang hiện lại chế độ xem đã lưu.",
+    { timeout: 20_000 },
+  );
   // The refused selection is undrawn, and the calendar is drawn over the events the node holds.
   await expect(calendar.locator("[data-calendar-selected-event]")).toHaveCount(0);
   await expect(calendar.locator("td[data-date='2026-10-06'] .cc-calendar-count")).toHaveCount(0, { timeout: 20_000 });
   await expect(calendar.locator("td[data-date='2026-10-07'] .cc-calendar-count")).toHaveText("1");
 });
 
+test("an event written with no offset is at its time in the calendar's timezone, in the browser as on the node", async ({ browser }) => {
+  test.setTimeout(120_000);
+  // Neither the calendar's Ho Chi Minh City nor where the node runs: a browser that read the time as its own would put
+  // the meeting at 14:00 in Los Angeles, name it by another start, and the node would refuse it.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, timezoneId: "America/Los_Angeles" });
+  const page = await context.newPage();
+  try {
+    await page.clock.setFixedTime(NOW);
+    const conversation = watchConversation(page);
+    await openApp(page);
+    const calendar = await place(page, "");
+    await calendar.locator("td[data-date='2026-10-09'] .cc-calendar-day").click();
+    const local = calendar.locator(`.cc-calendar-detail ${event(LOCAL)}`);
+    await expect(local).toContainText("14:00–15:00");
+    await local.click();
+    await expect(calendar.locator(selectedEvent(LOCAL))).toContainText("2026-10-09 14:00–15:00");
+
+    // The node reads the same row the same way, so it keeps the selection rather than refusing it.
+    const instanceId = await instanceOf(calendar);
+    await expect
+      .poll(() => heldView(page, conversation(), instanceId), { timeout: 10_000 })
+      .toEqual({ view: "month", selectedDate: "2026-10-09", selectedEventId: LOCAL });
+    await expect(calendar.locator("[data-calendar-message]")).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
 test("a month that does not exist is refused with the host's reason, and no calendar is drawn", async ({ page }) => {
   test.setTimeout(60_000);
   await openApp(page);
@@ -347,9 +407,9 @@ test("the library previews the week and agenda fixtures through the production r
   await expect(preview.locator("[data-calendar-view='week']")).toBeVisible();
   await expect(preview.locator(".cc-freshness[data-freshness='sample']")).toHaveCount(1);
   await expect(preview.locator("ol[data-calendar-week-of='2026-09-14']")).toBeVisible();
-  await expect(preview.locator("[data-calendar-selected-event='cal-release']")).toBeVisible();
+  await expect(preview.locator(selectedEvent("cal-release@2026-09-16T20:30:00.000Z"))).toBeVisible();
   // The offsite ends the day before its end date, and is drawn on each of its three days.
-  await expect(preview.locator("[data-calendar-event='cal-offsite']")).toHaveCount(3);
+  await expect(preview.locator(event("cal-offsite@2026-09-15"))).toHaveCount(3);
 
   await page.locator("[data-widget-lab-fixture='true']").selectOption("calendar.agenda");
   await expect(preview.locator("[data-calendar-view='agenda']")).toBeVisible();
@@ -379,9 +439,9 @@ test("the week view is usable at phone width without scrolling sideways, in the 
     const widths = await calendar.locator("li.cc-calendar-week-day").evaluateAll((items) => items.map((item) => item.getBoundingClientRect().width));
     expect(widths).toHaveLength(7);
     for (const width of widths) expect(width).toBeGreaterThan(250);
-    await calendar.locator("li[data-date='2026-10-07'] [data-calendar-event='evt_offsite']").tap();
-    await expect(calendar.locator("[data-calendar-selected-event='evt_offsite']")).toContainText("Cả ngày, 2026-10-07 đến 2026-10-09");
-    await expect(calendar.locator("[data-calendar-selected-event='evt_offsite']")).toContainText("Kéo dài 3 ngày");
+    await calendar.locator(`li[data-date='2026-10-07'] ${event(OFFSITE)}`).tap();
+    await expect(calendar.locator(selectedEvent(OFFSITE))).toContainText("Cả ngày, 2026-10-07 đến 2026-10-09");
+    await expect(calendar.locator(selectedEvent(OFFSITE))).toContainText("Kéo dài 3 ngày");
     expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
     expect(await page.evaluate(() => document.documentElement.getAttribute("data-cc-theme"))).toBe("light");
   } finally {

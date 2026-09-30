@@ -39,8 +39,8 @@ describe("calendar keyboard and layout", () => {
       ],
       "Asia/Ho_Chi_Minh",
     );
-    const offsite = events.find((event) => event.id === "offsite");
-    const call = events.find((event) => event.id === "call");
+    const offsite = events.find((event) => event.rowId === "offsite");
+    const call = events.find((event) => event.rowId === "call");
     if (offsite === undefined || call === undefined) throw new Error("events not read");
     expect(eventSegment(offsite, "2026-10-07")).toEqual({ position: "first", day: 1, days: 3 });
     expect(eventSegment(offsite, "2026-10-08")).toEqual({ position: "middle", day: 2, days: 3 });
@@ -57,7 +57,7 @@ describe("calendar keyboard and layout", () => {
       ],
       "UTC",
     );
-    expect(events.map((event) => event.id)).toEqual(["holiday", "early", "late"]);
+    expect(events.map((event) => event.rowId)).toEqual(["holiday", "early", "late"]);
     expect(nowIndex(events, "2026-10-20", new Date("2026-10-20T00:30:00Z"))).toBe(1);
     expect(nowIndex(events, "2026-10-20", new Date("2026-10-20T03:00:00Z"))).toBe(2);
     expect(nowIndex(events, "2026-10-20", new Date("2026-10-20T07:00:00Z"))).toBe(3);

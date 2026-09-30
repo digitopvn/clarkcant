@@ -323,7 +323,7 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       id: "calendar.week",
       label: "Một tuần, có sự kiện nhiều ngày và qua đêm",
       props: { datasetRef: "fixture_calendar", month: "2026-09", timezone: "Europe/Berlin", view: "week" },
-      state: { view: "week", selectedDate: "2026-09-16", selectedEventId: "cal-release" },
+      state: { view: "week", selectedDate: "2026-09-16", selectedEventId: "cal-release@2026-09-16T20:30:00.000Z" },
       dataset: calendarDataset(),
       mode: "read-only",
     },

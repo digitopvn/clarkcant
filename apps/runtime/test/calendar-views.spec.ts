@@ -4,10 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type Instant, type MessageBlock, CALENDAR_STATE_VERSION, MAX_CALENDAR_EVENTS, SEMANTIC_LIMITS, canonicalSemanticDoc } from "@clarkcant/contracts";
-import { getActionBinding, getInstance, liveStateOf } from "@clarkcant/core";
+import { type Instant, type MessageBlock, type WidgetDefinition, CALENDAR_STATE_VERSION, MAX_CALENDAR_EVENTS, SEMANTIC_LIMITS, canonicalSemanticDoc } from "@clarkcant/contracts";
+import { getActionBinding, getInstance, liveStateOf, placeInstance } from "@clarkcant/core";
 import { CALENDAR } from "@clarkcant/data-canvas";
 import { appendMessage, upsertDataset } from "@clarkcant/storage";
+import { definitionDigest } from "@clarkcant/widget-host";
 
 import { invokeWidgetAction } from "../src/application/widget-actions.ts";
 import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
@@ -39,6 +40,11 @@ const ROWS = [
 ];
 
 const PROPS = { title: "Team", datasetRef: "ds_calendar", month: "2026-10", timezone: ZONE };
+
+/** The keys events are selected by: the row's id and when it starts. */
+const DEPLOY = "deploy@2026-10-06T15:00:00.000Z";
+const BERLIN = "berlin@2026-10-08T08:00:00.000Z";
+const OFFSITE = "offsite@2026-10-07";
 
 let dir: string;
 let services: NodeServices;
@@ -184,10 +190,10 @@ describe("placing a calendar", () => {
 describe("a person's view of a calendar", () => {
   it("switches view and selects a day and an event, and the state and meaning say so", async () => {
     const instanceId = await place(PROPS);
-    const outcome = await setView(instanceId, { view: "week", selectedDate: "2026-10-07", selectedEventId: "deploy" });
+    const outcome = await setView(instanceId, { view: "week", selectedDate: "2026-10-07", selectedEventId: DEPLOY });
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
-    expect(outcome.body.state).toEqual({ view: "week", selectedDate: "2026-10-07", selectedEventId: "deploy" });
+    expect(outcome.body.state).toEqual({ view: "week", selectedDate: "2026-10-07", selectedEventId: DEPLOY });
     expect(stateVersionOf(instanceId)).toBe(CALENDAR_STATE_VERSION);
 
     const doc = buildWidgetSemantic(services.conductor, instanceId);
@@ -195,7 +201,7 @@ describe("a person's view of a calendar", () => {
       definitionId: CALENDAR.id,
       title: "Team",
       freshness: "live",
-      selectedIds: ["deploy"],
+      selectedIds: [DEPLOY],
       values: {
         view: "week",
         month: "2026-10",
@@ -211,12 +217,12 @@ describe("a person's view of a calendar", () => {
     expect(canonicalSemanticDoc(doc).length).toBeLessThanOrEqual(SEMANTIC_LIMITS.bytes);
 
     // The timeline carries the state, so a reload opens the calendar the way the person left it.
-    expect(carriedState(instanceId)).toEqual({ view: "week", selectedDate: "2026-10-07", selectedEventId: "deploy" });
+    expect(carriedState(instanceId)).toEqual({ view: "week", selectedDate: "2026-10-07", selectedEventId: DEPLOY });
   });
 
   it("names the timezone an event was written in when it is not the calendar's", async () => {
     const instanceId = await place(PROPS);
-    expect((await setView(instanceId, { view: "agenda", selectedDate: "2026-10-08", selectedEventId: "berlin" })).ok).toBe(true);
+    expect((await setView(instanceId, { view: "agenda", selectedDate: "2026-10-08", selectedEventId: BERLIN })).ok).toBe(true);
     expect(buildWidgetSemantic(services.conductor, instanceId)?.values).toMatchObject({
       selectedEvent: "Berlin sync (2026-10-08 at 15:00–16:00)",
       selectedEventTimezone: "Europe/Berlin",
@@ -225,7 +231,7 @@ describe("a person's view of a calendar", () => {
 
   it("replaces the whole view, so clearing the event removes it", async () => {
     const instanceId = await place(PROPS);
-    expect((await setView(instanceId, { view: "month", selectedDate: "2026-10-08", selectedEventId: "offsite" })).ok).toBe(true);
+    expect((await setView(instanceId, { view: "month", selectedDate: "2026-10-08", selectedEventId: OFFSITE })).ok).toBe(true);
     expect((await setView(instanceId, { view: "month", selectedDate: "2026-10-08" })).ok).toBe(true);
     expect(liveStateOf(services.conductor, instanceId)?.body).toEqual({ view: "month", selectedDate: "2026-10-08" });
     expect(buildWidgetSemantic(services.conductor, instanceId)?.selectedIds).toEqual([]);
@@ -235,7 +241,7 @@ describe("a person's view of a calendar", () => {
     ["a view the calendar does not have", { view: "year" }, "the view is one of month, week, agenda"],
     ["a day off the calendar", { view: "month", selectedDate: "2026-12-01" }, "2026-12-01 is not on this calendar, which shows 2026-09-28 to 2026-11-08"],
     ["a day that is not a date", { view: "month", selectedDate: "2026-10-32" }, "the selected day is a date in YYYY-MM-DD form"],
-    ["an event on another day", { view: "week", selectedDate: "2026-10-05", selectedEventId: "deploy" }, '"Deploy" is not on 2026-10-05'],
+    ["an event on another day", { view: "week", selectedDate: "2026-10-05", selectedEventId: DEPLOY }, '"Deploy" is not on 2026-10-05'],
     ["an event that is not there", { view: "week", selectedEventId: "nope" }, '"nope" is not an event on this calendar now'],
     ["a key a view does not carry", { view: "week", zoom: 2 }, "a calendar view carries view, selectedDate and selectedEventId, not zoom"],
   ])("refuses %s with the reason and changes nothing", async (_name, input, reason) => {
@@ -259,16 +265,16 @@ describe("a person's view of a calendar", () => {
 
   it("checks an event against the rows the node holds now, and drops a kept selection whose event is gone", async () => {
     const instanceId = await place(PROPS);
-    expect((await setView(instanceId, { view: "week", selectedDate: "2026-10-06", selectedEventId: "deploy" })).ok).toBe(true);
+    expect((await setView(instanceId, { view: "week", selectedDate: "2026-10-06", selectedEventId: DEPLOY })).ok).toBe(true);
 
     dataset("ds_calendar", ROWS.filter((row) => row.eventId !== "deploy"));
     const doc = buildWidgetSemantic(services.conductor, instanceId);
     expect(doc?.selectedIds).toEqual([]);
     expect(doc?.values.selectedEvent).toBeUndefined();
     expect(doc?.values.selectedDayEvents).toEqual([]);
-    const outcome = await setView(instanceId, { view: "week", selectedDate: "2026-10-06", selectedEventId: "deploy" });
+    const outcome = await setView(instanceId, { view: "week", selectedDate: "2026-10-06", selectedEventId: DEPLOY });
     expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.message).toBe('the calendar view was refused: "deploy" is not an event on this calendar now');
+    if (!outcome.ok) expect(outcome.message).toBe(`the calendar view was refused: "${DEPLOY}" is not an event on this calendar now`);
   });
 
   it("says a calendar whose dataset is gone has no events available, rather than none", async () => {
@@ -280,7 +286,7 @@ describe("a person's view of a calendar", () => {
   });
 });
 
-describe("a calendar saved before it had views", () => {
+describe("a calendar state saved in the first shape", () => {
   it("reads as the month view it was, and the next change stores it in the current shape", async () => {
     const instanceId = await place(PROPS);
     // The only state the first calendar kept: a selected day, at state version 1.
@@ -299,5 +305,89 @@ describe("a calendar saved before it had views", () => {
     expect((await setView(instanceId, { view: "agenda", selectedDate: "2026-10-07" })).ok).toBe(true);
     expect(stateVersionOf(instanceId)).toBe(CALENDAR_STATE_VERSION);
     expect(liveStateOf(services.conductor, instanceId)?.body).toEqual({ view: "agenda", selectedDate: "2026-10-07" });
+  });
+});
+
+describe("a calendar placed before it had views", () => {
+  // The calendar as it was before it had views: no view prop or operation, state version 1, and placed through the
+  // generic path, which gave it no binding at all.
+  const { stateMigrations: _steps, ...current } = CALENDAR;
+  const LEGACY: WidgetDefinition = {
+    ...current,
+    version: "1.0.0",
+    propsSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        datasetRef: { type: "string", minLength: 1, maxLength: 200 },
+        month: { type: "string", maxLength: 10 },
+        timezone: { type: "string", maxLength: 60 },
+        title: { type: "string", maxLength: 200 },
+      },
+      required: ["datasetRef", "month"],
+    },
+    eventSchemas: { "date.select": { type: "object" } },
+    stateSchema: { type: "object", properties: { selectedDate: { type: "string" } } },
+    stateVersion: 1,
+    semanticDescription: "A month view of local calendar events, with event details for the selected day",
+  };
+
+  function placeLegacy(): string {
+    const messageId = `msg_${String(++counter)}`;
+    const { snapshot } = placeInstance(services.conductor, {
+      definition: LEGACY,
+      packageDigest: definitionDigest(LEGACY),
+      ownerPrincipalId: owner(),
+      props: PROPS,
+      messageId,
+      textAlternative: "Here is the calendar",
+      presentationRef: `catalog:${CALENDAR.id}`,
+    });
+    const block = { type: "surface", definitionRef: { id: CALENDAR.id, version: LEGACY.version }, snapshot };
+    appendMessage(
+      services.runtime.db,
+      { messageId, conversationId: CONVERSATION, role: "assistant", authorNodeId: services.runtime.identity.nodeId, delivery: "accepted", createdAt: AT, blocks: [block] } as never,
+      counter,
+    );
+    return snapshot.instanceId ?? "";
+  }
+
+  it("is given the view binding a new calendar has, once, when the node next reads it", () => {
+    const instanceId = placeLegacy();
+    expect(getInstance(services.conductor, instanceId)?.actionBindingIds).toEqual([]);
+
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const carried = timeline.instances.find((instance) => instance.instanceId === instanceId);
+    expect(carried?.actions).toEqual([expect.objectContaining({ label: "Calendar view", available: true })]);
+    const bindingIds = getInstance(services.conductor, instanceId)?.actionBindingIds ?? [];
+    expect(bindingIds).toHaveLength(1);
+    expect(getActionBinding(services.conductor, bindingIds[0] ?? "")).toMatchObject({
+      instanceId,
+      proposal: { kind: "view", operation: "calendar.view" },
+      effectCategory: "read",
+      requiresApproval: false,
+      packageGeneration: definitionDigest(LEGACY),
+    });
+
+    // Read again, by this page or another, it keeps the one binding.
+    buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    expect(getInstance(services.conductor, instanceId)?.actionBindingIds).toEqual(bindingIds);
+  });
+
+  it("keeps the view a person picks across a reload, and describes the view it keeps", async () => {
+    const instanceId = placeLegacy();
+    // Nothing picked yet: the month it was placed as, which is what it says.
+    expect(buildWidgetSemantic(services.conductor, instanceId)?.values.view).toBe("month");
+    // The page reads the timeline, and sends the view through the binding it finds there.
+    buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    expect((await setView(instanceId, { view: "week", selectedDate: "2026-10-07", selectedEventId: DEPLOY })).ok).toBe(true);
+
+    // A reload reads the timeline again, and the calendar opens where the person left it.
+    expect(carriedState(instanceId)).toEqual({ view: "week", selectedDate: "2026-10-07", selectedEventId: DEPLOY });
+    expect(stateVersionOf(instanceId)).toBe(CALENDAR_STATE_VERSION);
+    const doc = buildWidgetSemantic(services.conductor, instanceId);
+    expect(doc?.values).toMatchObject({ view: "week", selectedDate: "2026-10-07" });
+    expect(doc?.summary).toContain("week view");
+    expect(doc?.selectedIds).toEqual([DEPLOY]);
   });
 });

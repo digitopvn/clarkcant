@@ -437,17 +437,33 @@ export function removeLocalEvent(
     : { ok: false, code: "EVENT_NOT_FOUND", message: "that event is not on this principal's calendar" };
 }
 
-/** Calendar rows for the range, in the shape the calendar renderer draws. */
+/** The widest gap between two timezones' clocks, UTC-12 to UTC+14, so a query this much wider misses no all-day event. */
+const ZONE_SPREAD_MS = 26 * 3_600_000;
+
+/**
+ * Calendar rows for the range, in the shape the calendar renderer draws.
+ *
+ * An all-day event is stored with its instants at midnight in the timezone it was written in, but it is on its dates
+ * wherever it is looked at. Its instants can therefore sit up to a day either side of the range's own midnights, so the
+ * query is widened by the spread of timezones, and what it returns is then kept by dates for an all-day event and by
+ * instants for a timed one, exactly as the range says.
+ */
 export function calendarRowsForRange(
   deps: MiniAppDataDeps,
   input: { principalId: Principal["principalId"]; range: PeriodRange },
 ): Record<string, unknown>[] {
+  const { range } = input;
   const events = listCalendarEvents(deps.db, {
     principalId: input.principalId,
-    from: input.range.from,
-    to: input.range.to,
+    from: new Date(Date.parse(range.from) - ZONE_SPREAD_MS).toISOString(),
+    to: new Date(Date.parse(range.to) + ZONE_SPREAD_MS).toISOString(),
     limit: 500,
-  });
+  }).filter((event) =>
+    event.allDay === true && event.startDate !== undefined && event.endDate !== undefined
+      ? // The end date is the day after the last one.
+        event.startDate <= range.endDate && event.endDate > range.startDate
+      : event.startsAt <= range.to && event.endsAt >= range.from,
+  );
   return events.map((event) => ({
     eventId: event.eventId,
     date: event.localDate,

@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -18,6 +21,8 @@ import {
   readCalendarEvents,
   readCalendarState,
   stateMigrationGaps,
+  timeInZone,
+  timedDuration,
   weekDates,
 } from "../src/index.ts";
 
@@ -27,6 +32,9 @@ import {
  */
 
 const HCM = "Asia/Ho_Chi_Minh";
+
+/** The keys events are selected by: the row's id and when it starts. */
+const DEPLOY = "deploy@2026-10-06T15:00:00.000Z";
 
 const ROWS = [
   // 09:00–10:00 in Ho Chi Minh City on 5 October.
@@ -43,27 +51,27 @@ describe("reading calendar events", () => {
   it("places a timed event on every day it runs in the calendar's timezone, and not on the day a midnight end begins", () => {
     const { events, unreadable } = readCalendarEvents(ROWS, HCM);
     expect(unreadable).toBe(0);
-    const deploy = events.find((event) => event.id === "deploy");
+    const deploy = events.find((event) => event.rowId === "deploy");
     expect([deploy?.startDate, deploy?.lastDate]).toEqual(["2026-10-06", "2026-10-07"]);
-    const review = events.find((event) => event.id === "review");
+    const review = events.find((event) => event.rowId === "review");
     expect([review?.startDate, review?.lastDate]).toEqual(["2026-10-12", "2026-10-12"]);
-    expect(eventsOnDay(events, "2026-10-07").map((event) => event.id)).toEqual(["offsite", "deploy"]);
+    expect(eventsOnDay(events, "2026-10-07").map((event) => event.rowId)).toEqual(["offsite", "deploy"]);
     expect(eventsOnDay(events, "2026-10-13")).toEqual([]);
   });
 
   it("reads the same instants onto other days in another timezone", () => {
     const { events } = readCalendarEvents(ROWS, "America/Los_Angeles");
-    const deploy = events.find((event) => event.id === "deploy");
+    const deploy = events.find((event) => event.rowId === "deploy");
     // 08:00–12:00 on the 6th in Los Angeles.
     expect([deploy?.startDate, deploy?.lastDate]).toEqual(["2026-10-06", "2026-10-06"]);
-    const standup = events.find((event) => event.id === "standup");
+    const standup = events.find((event) => event.rowId === "standup");
     // 19:00 on the 4th in Los Angeles.
     expect(standup?.startDate).toBe("2026-10-04");
   });
 
   it("keeps an all-day event on its own dates in every timezone", () => {
     for (const zone of [HCM, "America/Los_Angeles", "Pacific/Kiritimati", "UTC"]) {
-      const offsite = readCalendarEvents(ROWS, zone).events.find((event) => event.id === "offsite");
+      const offsite = readCalendarEvents(ROWS, zone).events.find((event) => event.rowId === "offsite");
       expect([offsite?.allDay, offsite?.startDate, offsite?.lastDate]).toEqual([true, "2026-10-07", "2026-10-09"]);
     }
   });
@@ -109,7 +117,7 @@ describe("reading calendar events", () => {
   it("says when an event is in the calendar's timezone", () => {
     const { events } = readCalendarEvents(ROWS, HCM);
     const text = (id: string): string => {
-      const event = events.find((candidate) => candidate.id === id);
+      const event = events.find((candidate) => candidate.rowId === id);
       if (event === undefined) throw new Error(id);
       return eventWhenText(event, HCM);
     };
@@ -150,7 +158,7 @@ describe("the calendar view", () => {
 
   it("accepts a view the calendar can show", () => {
     expect(calendarViewProblems("2026-10", { view: "week" }, events)).toEqual([]);
-    expect(calendarViewProblems("2026-10", { view: "agenda", selectedDate: "2026-10-07", selectedEventId: "deploy" }, events)).toEqual([]);
+    expect(calendarViewProblems("2026-10", { view: "agenda", selectedDate: "2026-10-07", selectedEventId: DEPLOY }, events)).toEqual([]);
     // A leading day of the next month is on the month grid, so it can be selected.
     expect(calendarViewProblems("2026-10", { view: "month", selectedDate: "2026-11-01" }, events)).toEqual([]);
   });
@@ -165,7 +173,7 @@ describe("the calendar view", () => {
     expect(calendarViewProblems("2026-10", { view: "month", selectedEventId: "gone" }, events)).toEqual([
       '"gone" is not an event on this calendar now',
     ]);
-    expect(calendarViewProblems("2026-10", { view: "month", selectedDate: "2026-10-05", selectedEventId: "deploy" }, events)).toEqual([
+    expect(calendarViewProblems("2026-10", { view: "month", selectedDate: "2026-10-05", selectedEventId: DEPLOY }, events)).toEqual([
       '"Triển khai đêm" is not on 2026-10-05',
     ]);
     expect(calendarViewProblems("2026-10", { view: "month", zoom: 2 }, events)[0]).toContain("not zoom");
@@ -179,10 +187,10 @@ describe("the calendar view", () => {
     expect(readCalendarState({ view: "year", selectedDate: "2027-01-01", selectedEventId: "gone" }, "2026-10", undefined, events)).toEqual({
       view: "month",
     });
-    expect(readCalendarState({ view: "week", selectedDate: "2026-10-07", selectedEventId: "deploy" }, "2026-10", undefined, events)).toEqual({
+    expect(readCalendarState({ view: "week", selectedDate: "2026-10-07", selectedEventId: DEPLOY }, "2026-10", undefined, events)).toEqual({
       view: "week",
       selectedDate: "2026-10-07",
-      selectedEventId: "deploy",
+      selectedEventId: DEPLOY,
     });
   });
 
@@ -208,7 +216,7 @@ describe("what the calendar says", () => {
 
   it("gives the view, the selected day and the selected event as semantic state", () => {
     const read = readCalendarEvents(ROWS, HCM);
-    const semantic = calendarSemantic(subject, read, { view: "week", selectedDate: "2026-10-07", selectedEventId: "deploy" });
+    const semantic = calendarSemantic(subject, read, { view: "week", selectedDate: "2026-10-07", selectedEventId: DEPLOY });
     expect(semantic.values).toMatchObject({
       view: "week",
       month: "2026-10",
@@ -218,10 +226,10 @@ describe("what the calendar says", () => {
       selectedDayEvents: ["Hội thảo", "Triển khai đêm"],
       selectedEvent: "Triển khai đêm (2026-10-06 at 22:00 to 2026-10-07 at 02:00)",
     });
-    expect(semantic.selectedIds).toEqual(["deploy"]);
+    expect(semantic.selectedIds).toEqual([DEPLOY]);
     const doc = normalizeSemanticDoc({ instanceId: "w", definitionId: "canvas.calendar@1", ...semantic });
     expect(doc.values.view).toBe("week");
-    expect(doc.selectedIds).toEqual(["deploy"]);
+    expect(doc.selectedIds).toEqual([DEPLOY]);
   });
 
   it("says when the events are not on the node, instead of describing none", () => {
@@ -234,5 +242,158 @@ describe("what the calendar says", () => {
     const grid = calendarGridDates("2026-10");
     expect(grid).toHaveLength(42);
     expect([grid[0], grid.at(-1)]).toEqual(["2026-09-28", "2026-11-08"]);
+  });
+});
+
+describe("event keys", () => {
+  const RECURRING = [
+    // Recurring instances written with the UID they share, as iCalendar exports do.
+    { eventId: "weekly", title: "Họp tuần", startsAt: "2026-10-05T02:00:00Z", endsAt: "2026-10-05T03:00:00Z" },
+    { eventId: "weekly", title: "Họp tuần", startsAt: "2026-10-12T02:00:00Z", endsAt: "2026-10-12T03:00:00Z" },
+    // The same id and the same start twice: told apart by the order of the rows.
+    { eventId: "twin", title: "Trùng A", date: "2026-10-20" },
+    { eventId: "twin", title: "Trùng B", date: "2026-10-20" },
+    // An explicit id that looks like the name a row with no id is given.
+    { title: "Không có id", date: "2026-10-21" },
+    { eventId: "row-5", title: "Có id row-5", date: "2026-10-21" },
+  ];
+
+  it("gives every event its own key, the same on every read", () => {
+    const first = readCalendarEvents(RECURRING, HCM).events.map((event) => event.id);
+    expect(new Set(first).size).toBe(RECURRING.length);
+    expect(first).toEqual(expect.arrayContaining([
+      "weekly@2026-10-05T02:00:00.000Z",
+      "weekly@2026-10-12T02:00:00.000Z",
+      "twin@2026-10-20",
+      "twin@2026-10-20#2",
+      "row-5@2026-10-21",
+    ]));
+    expect(readCalendarEvents(RECURRING, HCM).events.map((event) => event.id)).toEqual(first);
+    expect(readCalendarEvents(RECURRING, HCM).events.filter((event) => event.rowId === "row-5")).toHaveLength(2);
+  });
+
+  it("selects one of two events that share an id, and describes only that one", () => {
+    const read = readCalendarEvents(RECURRING, HCM);
+    const second = "weekly@2026-10-12T02:00:00.000Z";
+    expect(calendarViewProblems("2026-10", { view: "week", selectedDate: "2026-10-12", selectedEventId: second }, read.events)).toEqual([]);
+    // The row's id alone is not a key: it would name both instances.
+    expect(calendarViewProblems("2026-10", { view: "week", selectedEventId: "weekly" }, read.events)).toEqual([
+      '"weekly" is not an event on this calendar now',
+    ]);
+    const semantic = calendarSemantic({ month: "2026-10", timeZone: HCM }, read, { view: "week", selectedDate: "2026-10-12", selectedEventId: second });
+    expect(semantic.selectedIds).toEqual([second]);
+    expect(semantic.values.selectedEvent).toBe("Họp tuần (2026-10-12 at 09:00–10:00)");
+    expect(readCalendarState({ view: "week", selectedEventId: "twin@2026-10-20#2" }, "2026-10", undefined, read.events).selectedEventId).toBe(
+      "twin@2026-10-20#2",
+    );
+  });
+});
+
+describe("times without an offset", () => {
+  it("reads a wall-clock time in the calendar's timezone", () => {
+    const rows = [{ eventId: "late", title: "Muộn", startsAt: "2026-10-05T23:30", endsAt: "2026-10-06 00:30:00.5" }];
+    const inHcm = readCalendarEvents(rows, HCM).events[0];
+    expect([inHcm?.startsAt, inHcm?.endsAt, inHcm?.startDate, inHcm?.lastDate]).toEqual([
+      "2026-10-05T16:30:00.000Z",
+      "2026-10-05T17:30:00.500Z",
+      "2026-10-05",
+      "2026-10-06",
+    ]);
+    const inLa = readCalendarEvents(rows, "America/Los_Angeles").events[0];
+    expect([inLa?.startsAt, inLa?.startDate]).toEqual(["2026-10-06T06:30:00.000Z", "2026-10-05"]);
+  });
+
+  it("does not guess at a time it cannot read", () => {
+    const unreadable = ["Oct 5, 2026 09:00", "2026-10-05T09:00+0700", "2026-10-05T24:00", "2026-02-30T09:00Z", "2026-02-30T09:00", "2026-10-05"];
+    const rows = unreadable.map((startsAt) => ({ title: startsAt, startsAt, endsAt: "2026-10-05T23:00:00Z" }));
+    expect(readCalendarEvents(rows, HCM)).toMatchObject({ events: [], unreadable: unreadable.length });
+    expect(readCalendarEvents([{ title: "Z", startsAt: "2026-10-05t09:00z", endsAt: "2026-10-05T17:00:00+07:00" }], HCM).events[0]?.startsAt).toBe(
+      "2026-10-05T09:00:00.000Z",
+    );
+  });
+
+  it("places the same rows on the same days whatever timezone the reading process is in", () => {
+    const module = fileURLToPath(new URL("../src/calendar-view.ts", import.meta.url));
+    const rows = [
+      { eventId: "a", title: "A", startsAt: "2026-10-05T23:30", endsAt: "2026-10-06T01:00" },
+      { eventId: "b", title: "B", startsAt: "2026-10-06 00:15", endsAt: "2026-10-06 02:00" },
+    ];
+    const script =
+      `const { readCalendarEvents } = await import(${JSON.stringify(`file:///${module.replaceAll("\\", "/").replace(/^\//, "")}`)});` +
+      `const read = readCalendarEvents(${JSON.stringify(rows)}, ${JSON.stringify(HCM)});` +
+      `process.stdout.write(JSON.stringify({ offset: new Date(2026, 9, 5, 12).getTimezoneOffset(), ` +
+      `events: read.events.map((e) => [e.id, e.startsAt, e.endsAt, e.startDate, e.lastDate]) }));`;
+    const readIn = (zone: string): { offset: number; events: unknown[] } =>
+      JSON.parse(
+        execFileSync(process.execPath, ["--input-type=module", "-e", script], { env: { ...process.env, TZ: zone }, encoding: "utf8" }),
+      ) as { offset: number; events: unknown[] };
+    // UTC+14 for the node, UTC-7 for a page: the two processes really are in different timezones.
+    const node = readIn("Pacific/Kiritimati");
+    const page = readIn("America/Los_Angeles");
+    expect(node.offset).not.toBe(page.offset);
+    expect(node.events).toEqual(page.events);
+    expect(node.events).toEqual(readCalendarEvents(rows, HCM).events.map((e) => [e.id, e.startsAt, e.endsAt, e.startDate, e.lastDate]));
+  });
+});
+
+describe("how long an event runs", () => {
+  it("counts a timed event's hours, not the days it touches, and leaves an all-day event to its dates", () => {
+    const { events } = readCalendarEvents(
+      [
+        ...ROWS,
+        { eventId: "long", title: "Dài", startsAt: "2026-10-14T01:00:00Z", endsAt: "2026-10-16T03:30:00Z" },
+        { eventId: "short", title: "Ngắn", startsAt: "2026-10-15T01:00:00Z", endsAt: "2026-10-15T01:45:00Z" },
+      ],
+      HCM,
+    );
+    const duration = (id: string): ReturnType<typeof timedDuration> => {
+      const event = events.find((candidate) => candidate.rowId === id);
+      if (event === undefined) throw new Error(id);
+      return timedDuration(event);
+    };
+    // 22:00 to 02:00 is on two days and lasts four hours.
+    expect(duration("deploy")).toEqual({ days: 0, hours: 4, minutes: 0 });
+    expect(duration("long")).toEqual({ days: 2, hours: 2, minutes: 30 });
+    expect(duration("short")).toEqual({ days: 0, hours: 0, minutes: 45 });
+    expect(duration("offsite")).toBeUndefined();
+  });
+});
+
+describe("a week across a daylight-saving change", () => {
+  const NY = "America/New_York";
+  // New York leaves daylight saving at 02:00 on Sunday 1 November 2026, so that day has 25 hours and 01:30 happens twice.
+  const rows = [
+    { eventId: "monday-before", title: "Before", startsAt: "2026-10-26T09:00", endsAt: "2026-10-26T10:00" },
+    { eventId: "twice", title: "The repeated hour", startsAt: "2026-11-01T01:30:00-04:00", endsAt: "2026-11-01T01:30:00-05:00" },
+    { eventId: "whole-sunday", title: "All of Sunday", startsAt: "2026-11-01T00:00", endsAt: "2026-11-02T00:00" },
+    { eventId: "monday-after", title: "After", startsAt: "2026-11-02T09:00", endsAt: "2026-11-02T10:00" },
+  ];
+  const { events } = readCalendarEvents(rows, NY);
+  const event = (id: string): NonNullable<(typeof events)[number]> => {
+    const found = events.find((candidate) => candidate.rowId === id);
+    if (found === undefined) throw new Error(id);
+    return found;
+  };
+
+  it("reads wall-clock times with the offset of their own side of the change", () => {
+    expect(event("monday-before").startsAt).toBe("2026-10-26T13:00:00.000Z");
+    expect(event("monday-after").startsAt).toBe("2026-11-02T14:00:00.000Z");
+  });
+
+  it("puts each event on its days of the week and gives it its real length", () => {
+    const week = weekDates("2026-10-28");
+    expect([week[0], week[6]]).toEqual(["2026-10-26", "2026-11-01"]);
+    const byDay = week.map((date) => eventsOnDay(events, date).map((candidate) => candidate.rowId));
+    expect(byDay).toEqual([["monday-before"], [], [], [], [], [], ["whole-sunday", "twice"]]);
+    expect(eventsOnDay(events, "2026-11-02").map((candidate) => candidate.rowId)).toEqual(["monday-after"]);
+
+    const twice = event("twice");
+    // Starts at the first 01:30 and ends at the second: an hour, shown as 01:30 both times.
+    expect(timedDuration(twice)).toEqual({ days: 0, hours: 1, minutes: 0 });
+    expect([timeInZone(new Date(twice.startsAt ?? ""), NY), timeInZone(new Date(twice.endsAt ?? ""), NY)]).toEqual(["01:30", "01:30"]);
+    const sunday = event("whole-sunday");
+    expect([sunday.startDate, sunday.lastDate]).toEqual(["2026-11-01", "2026-11-01"]);
+    expect(timedDuration(sunday)).toEqual({ days: 1, hours: 1, minutes: 0 });
+    expect(eventWhenText(sunday, NY)).toBe("2026-11-01 at 00:00 to 2026-11-02 at 00:00");
   });
 });
