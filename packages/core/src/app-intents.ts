@@ -588,7 +588,7 @@ const APPEARANCE_VERBS: readonly string[] = [
   "reset",
   "set",
   "go",
-  "make",
+  // Not "make", "create" or "build": "make a dark theme" is a request for work, not a change of scheme.
 ];
 
 /**
@@ -648,7 +648,7 @@ const APPEARANCE_GALLERY_PHRASES: readonly string[] = [
 const APPEARANCE_VOCABULARY: ReadonlySet<string> = new Set([
   // Verbs and particles.
   ..."doi chuyen bat mo xem hien dat khoi phuc lai cho sang qua ve thanh dung su theo".split(" "),
-  ..."switch change turn open show reset set go make use put back to the a an into on my please me for follow".split(" "),
+  ..."switch change turn open show reset set go use put back to the a an into on my please me for follow".split(" "),
   // The nouns of the look itself.
   ..."giao dien chu de che do nen mau toi he thong tu dong mac dinh danh sach thu vien cac".split(" "),
   ..."theme themes appearance mode dark light system automatic default gallery list of available color colour scheme".split(" "),
@@ -683,12 +683,20 @@ function containsAny(words: readonly string[], phrases: readonly string[]): bool
   return phrases.some((phrase) => containsPhrase(words, phrase));
 }
 
+/**
+ * The theme a sentence names, if any.
+ *
+ * A theme whose whole name is words of the appearance vocabulary is never matched by name: an installed theme called
+ * "Dark" or "Light Mode" would otherwise take "switch to dark mode" away from the scheme it has always meant. The
+ * built-in phrase wins; that theme is still chosen from the picker or by the agent, which checks it by reference.
+ */
 function findThemeTarget(bareWords: readonly string[], targets: readonly ThemeTarget[]): ThemeTarget | undefined {
   // Longest first, so a theme called "Dusk Pro" is not taken by one called "Dusk".
   const sorted = [...targets].sort((a, b) => b.phrase.length - a.phrase.length);
   return sorted.find((target) => {
     const phrase = normaliseIntentText(target.phrase);
-    return phrase !== "" && containsPhrase(bareWords, phrase);
+    if (phrase === "" || phrase.split(" ").every((word) => APPEARANCE_VOCABULARY.has(word))) return false;
+    return containsPhrase(bareWords, phrase);
   });
 }
 

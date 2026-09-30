@@ -444,10 +444,36 @@ describe("the appearance commands", () => {
       "open the themes folder",
       "chuyển sang chủ đề khác",
       "đổi chủ đề cuộc trò chuyện",
+      "make a dark theme",
+      "make me a light theme please",
+      "create a dark theme",
+      "build a dark mode theme",
     ]) {
       const resolution = resolveAppIntent({ text: request, mintConfirmationToken: mint, ...withThemes });
       expect(resolution.kind === "intent" && resolution.intent.kind.startsWith("appearance."), request).toBe(false);
     }
+  });
+
+  it("keeps the scheme phrases when an installed theme is named with their words", () => {
+    const colliding: readonly ThemeTarget[] = [
+      ...THEMES,
+      { phrase: "Dark", themeRef: "pkg:x@1.0.0#dark", name: "Dark" },
+      { phrase: "Light Mode", themeRef: "pkg:x@1.0.0#light-mode", name: "Light Mode" },
+      { phrase: "Dark Forest", themeRef: "pkg:x@1.0.0#dark-forest", name: "Dark Forest" },
+    ];
+    const options = { themeTargets: () => colliding };
+    for (const [sentence, colorScheme] of [
+      ["switch to dark mode", "dark"],
+      ["change the theme to dark", "dark"],
+      ["đổi giao diện sang dark", "dark"],
+      ["turn on light mode", "light"],
+    ] as const) {
+      const match = matchAppIntent(sentence, options);
+      expect(match?.kind === "intent" && match.intent, sentence).toEqual({ kind: "appearance.set-color-scheme", colorScheme });
+    }
+    // A name with a word of its own is still found, even when it begins with a scheme word.
+    const forest = matchAppIntent("switch the theme to dark forest", options);
+    expect(forest?.kind === "intent" && forest.intent).toMatchObject({ kind: "appearance.set-theme", themeRef: "pkg:x@1.0.0#dark-forest" });
   });
 
   it("asks for the installed themes only for a sentence about the look", () => {
