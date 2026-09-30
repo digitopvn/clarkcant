@@ -802,11 +802,13 @@ What the node guarantees:
   shown, a selected point is on a shown series, and its index is one of the points drawn. A view that does not fit is
   refused with `the chart view was refused: …`, and the state is left as it was. A view replaces the last one whole.
 - **The text alternative is the chart's own words.** It names the series, the x span, the number of points and each
-  series' range, for example `Runs by week: Area chart of Runs, Failures by week, 5 point(s); W36 to W40. Runs: 128 to
+  series' range. A scatter plot also names what each axis measures, from the field's label (or its name) and unit,
+  for example `(x axis: Load (%); y axis: Latency (ms))`. An area chart's text reads, for example `Runs by week: Area chart of Runs, Failures by week, 5 point(s); W36 to W40. Runs: 128 to
   164 runs; Failures: 3 to 9 runs.`
 - **Voice and `inspect_ui` read the chart as it is now.** The semantic document (§9) gives the series shown and
   hidden, whether the area is stacked, the number of points and any truncation, each shown series' range, the x range
-  and the selected point, with the point in `selectedIds` as `field#index`. It is built from the state and the rows the
+  and the selected point, with the point in `selectedIds` as `field#index`. A scatter plot adds `xAxis` and `yAxis`,
+  the same axis titles the page draws. It is built from the state and the rows the
   node holds now. A selected point that is no longer in the rows is said to be gone rather than described, and a
   dataset that is gone is said to be not available. Its freshness is the dataset's own.
 
@@ -820,10 +822,19 @@ What the page does:
   change series; Home and End go to the first and last point; Enter or Space selects, and Escape clears. The selected
   point is described beside the chart in a live region, with a button that clears it.
 - A change is drawn at once and sent to the node, one request at a time per chart; a change made meanwhile is sent
-  after it, and only the latest one. When the node refuses a view, the chart shows the node's reason, draws the view
+  after it, and only the latest one. When the node refuses a view, the chart says so in the person's language, draws the view
   the node holds, and reads the dataset again, since the rows the node checked against may not be the ones the page
   was given.
-- A table of the rows drawn, with the chart's names for its fields, is under the chart.
+- A scatter plot titles its axes: the y axis above the plot and the x axis under it, each with its label and unit.
+- A table of the rows drawn, with the chart's names for its fields, is under the chart. A field is read only from the
+  row itself, so a field named `constructor` or `toString` is plotted and named like any other.
+- Everything the chart says is in the person's language. Rows that no longer fit are described from the row, field
+  and value the shared checks found, not from the node's English sentence, and a refused view is said as a sentence
+  of the page's own. The node's English reasons are for the model and the logs.
+- The axes never do unbounded work. Ticks are counted before they are made, at most 50, and each is its index times a
+  round step. Values so close that no round step separates them, such as `0.3` and `0.1 + 0.2`, are drawn as one
+  value with room either side. Labels past a billion or finer than a millionth are written with an exponent and as
+  many significant digits as the step needs, so a `1e-12` scale is not labelled `0` throughout.
 - Above 60 points an area chart draws only the point that has focus and the one selected, so the line stays readable;
   every point can still be reached with the keyboard.
 - The chart adds no motion of its own, fits its width down to 390 px, and follows the light and dark themes. In the
@@ -831,12 +842,14 @@ What the page does:
 
 Tests: [xy-charts.spec.ts](../packages/contracts/test/xy-charts.spec.ts) for the rules,
 [xy-charts.spec.ts](../apps/runtime/test/xy-charts.spec.ts) for the node,
-[chart-layout.spec.ts](../packages/conversation-client/test/chart-layout.spec.ts) for the scales, point shapes and
+[chart-layout.spec.ts](../packages/conversation-client/test/chart-layout.spec.ts) for the scales (including values one
+float apart, `1e17` next to `1e17 + 16`, a single point, all-equal values and a `1e-12` scale), point shapes and
 keyboard order, [xy-chart-schemas.spec.ts](../packages/widget-catalog/test/xy-chart-schemas.spec.ts), which checks that
 the JSON Schema and the chart's own checks accept and refuse the same props and that every library fixture is one the
 node would place, and the browser journey [xy-charts.spec.ts](../apps/web/e2e/xy-charts.spec.ts). It covers the legend,
 keyboard selection, the view kept after a reload, a stacked area, 640 rows drawn as 500 with the label that says so,
-refusals for a missing field and a value that is not a number, the node's refusal of a point it no longer holds, reduced
+the scatter plot's axis titles, refusals for a missing field and a value that is not a number, the refusal of a point
+the node no longer holds said in Vietnamese, reduced
 motion, 390 px with touch in the light theme, and the library.
 
 ---

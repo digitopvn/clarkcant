@@ -228,10 +228,13 @@ export function useSurfaceRenderer({
         .catch((cause: unknown) => {
           chartQueues.current.set(instanceId, { inFlight: false });
           const code = cause instanceof GatewayError ? cause.code : undefined;
+          // Said in the person's language: the node's own sentence is English, written for the model and the logs.
           const message =
             code === "REVISION_MISMATCH"
               ? t("widgets.action.revisionMismatch")
-              : reasonFor(t, code, cause instanceof GatewayError ? cause.reason : undefined);
+              : code !== undefined && UNAVAILABLE_KEYS[code] !== undefined
+                ? reasonFor(t, code, undefined)
+                : t("widgets.xyChart.viewRefused");
           setChartRefusals((current) => ({ ...current, [instanceId]: { message, count: (current[instanceId]?.count ?? 0) + 1 } }));
           // The node's view is what the chart draws again. A change that went through while a later one waited was not
           // applied yet, so the timeline is read back rather than trusted; and the node checked the view against the rows it

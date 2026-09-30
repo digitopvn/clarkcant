@@ -7,7 +7,9 @@ import {
   normalizeSemanticDoc,
   readXyChart,
   readXyChartView,
+  xyAxisTitles,
   xyChartData,
+  xyChartDataIssues,
   xyChartDataProblems,
   xyChartProblems,
   xyChartSemantic,
@@ -232,5 +234,59 @@ describe("xy charts: text and semantic state", () => {
     const meaning = xyChartSemantic(chart, xyChartData(chart, rows), { hiddenSeries: [] });
     expect(meaning.values.truncated).toBe(`the first ${String(MAX_CHART_POINTS)} of ${String(MAX_CHART_POINTS + 1)} rows`);
     expect(meaning.values.xRange).toBe(`Minutes: 0 to ${String(MAX_CHART_POINTS - 1)} min`);
+  });
+});
+
+
+describe("xy charts: fields named like what every object inherits", () => {
+  const rows = [
+    { constructor: 1, toString: 10, valueOf: 5 },
+    { constructor: 2, toString: 12, valueOf: 7 },
+  ];
+
+  it("plots and names a field called constructor or toString as any other field", () => {
+    const props = { datasetRef: "ds", x: "constructor", y: ["toString", "valueOf"], labels: { valueOf: "Value" } };
+    expect(xyChartProblems("scatter", props, rows)).toEqual([]);
+    const chart = readXyChart("scatter", props);
+    if (chart === undefined) throw new Error("the props do not describe a chart");
+    const data = xyChartData(chart, rows);
+    expect(data.xs).toEqual([1, 2]);
+    expect(data.series.map((series) => series.label)).toEqual(["toString", "Value"]);
+    expect(data.series[0]?.values).toEqual([10, 12]);
+    const text = xyChartText(chart, data);
+    expect(text).not.toMatch(/function|native code/u);
+    expect(text).toContain("Scatter plot of toString, Value against constructor");
+    expect(JSON.stringify(xyChartSemantic(chart, data, { hiddenSeries: [] }))).not.toMatch(/function|native code/u);
+  });
+
+  it("does not find an inherited member in a row that lacks the field", () => {
+    const props = { datasetRef: "ds", x: "week", y: ["constructor"] };
+    expect(xyChartProblems("area", props, [{ week: "W1", runs: 3 }])).toEqual(['the dataset has no field "constructor"; its fields are "week", "runs"']);
+    expect(xyChartProblems("area", props, [{ week: "W1", constructor: 3 }, { week: "W2", runs: 4 }])).toEqual(['row 2 has no "constructor"']);
+  });
+});
+
+describe("xy charts: what the axes measure", () => {
+  it("names each axis of a scatter by its label and unit, on the text alternative and in the semantic document", () => {
+    const chart = scatter({ unit: "ms", labels: { minutes: "Minutes", runs: "Runs" } });
+    expect(xyAxisTitles(chart)).toEqual({ x: "Minutes (min)", y: "Runs (ms)" });
+    const data = xyChartData(chart, ROWS);
+    expect(xyChartText(chart, data)).toContain("(x axis: Minutes (min); y axis: Runs (ms))");
+    expect(xyChartSemantic(chart, data, { hiddenSeries: [] }).values).toMatchObject({ xAxis: "Minutes (min)", yAxis: "Runs (ms)" });
+    // With no labels and no units, the axes are named by their fields.
+    expect(xyAxisTitles(scatter({ labels: {}, xUnit: undefined, y: ["runs", "failures"] }))).toEqual({ x: "minutes", y: "runs, failures" });
+  });
+});
+
+describe("xy charts: row problems as data", () => {
+  it("gives the page the row, field and value behind each sentence the node says", () => {
+    const rows = ROWS.map((row, index) => (index === 2 ? { ...row, runs: "n/a" } : row));
+    expect(xyChartDataIssues(area(), rows)).toEqual([{ code: "not-a-number", row: 3, field: "runs", value: '"n/a"' }]);
+    const years = [{ year: 2021, v: 1 }, { year: 2019, v: 2 }];
+    const chart = readXyChart("area", { datasetRef: "ds", x: "year", y: ["v"] });
+    if (chart === undefined) throw new Error("the props do not describe a chart");
+    expect(xyChartDataIssues(chart, years)).toEqual([
+      { code: "x-not-rising", row: 2, field: "year", value: "2019", previousRow: 1, previousValue: "2021" },
+    ]);
   });
 });

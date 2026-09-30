@@ -12,6 +12,7 @@ import {
   markerPath,
   markerShape,
   MARKER_SHAPES,
+  MAX_TICKS,
   MIN_LABEL_SLOT,
   movePointCursor,
   niceRange,
@@ -247,5 +248,83 @@ describe("walking a chart's points with the keyboard", () => {
   it("leaves other keys to the page", () => {
     expect(movePointCursor("Tab", { series: 0, index: 0 }, [0], [0])).toBeUndefined();
     expect(movePointCursor("ArrowRight", { series: 0, index: 0 }, [0], [])).toBeUndefined();
+  });
+});
+
+describe("axes over values a round step cannot divide", () => {
+  /** Ticks an axis can draw: a bounded number of finite values, each above the one before. */
+  function expectDrawable(ticks: number[], covers: readonly number[]): void {
+    expect(ticks.length).toBeGreaterThanOrEqual(2);
+    expect(ticks.length).toBeLessThanOrEqual(MAX_TICKS + 1);
+    for (const tick of ticks) expect(Number.isFinite(tick)).toBe(true);
+    for (let index = 1; index < ticks.length; index += 1) expect(ticks[index]).toBeGreaterThan(ticks[index - 1] ?? 0);
+    for (const value of covers) {
+      expect(ticks[0]).toBeLessThanOrEqual(value);
+      expect(ticks.at(-1)).toBeGreaterThanOrEqual(value);
+    }
+  }
+
+  it("treats values one float apart as one value instead of stepping between them forever", () => {
+    // 0.1 + 0.2 is 0.30000000000000004: a step of 2e-17 added to 0.3 leaves it at 0.3.
+    const ticks = niceSpan(0.3, 0.1 + 0.2);
+    expectDrawable(ticks, [0.3, 0.1 + 0.2]);
+    expect(ticks.length).toBeLessThan(10);
+    expect(ticks[0]).toBeLessThan(0.3);
+    expect(ticks.at(-1)).toBeGreaterThan(0.1 + 0.2);
+  });
+
+  it("does the same at a magnitude where a whole number is below the gap between doubles", () => {
+    const ticks = niceSpan(1e17, 1e17 + 16);
+    expectDrawable(ticks, [1e17, 1e17 + 16]);
+    expect(ticks.length).toBeLessThan(10);
+    const labels = formatTicks(ticks);
+    expect(new Set(labels).size).toBe(labels.length);
+    for (const label of labels) expect(label.length).toBeLessThanOrEqual(8);
+  });
+
+  it("puts a single point and all-equal values inside a padded axis", () => {
+    for (const value of [42, -3.5, 0, 1e-12, 1e300]) {
+      const ticks = niceSpan(value, value);
+      expectDrawable(ticks, [value]);
+      expect(ticks[0]).toBeLessThan(value);
+      expect(ticks.at(-1)).toBeGreaterThan(value);
+    }
+    expectDrawable(niceRange(4, 4), [0, 4]);
+    expectDrawable(niceRange(-4, -4), [-4, 0]);
+    expectDrawable(niceTicks(4), [0, 4]);
+  });
+
+  it("keeps a 1e-12 scale apart, on the plot and in its labels", () => {
+    const ticks = niceSpan(1e-12, 5e-12);
+    expectDrawable(ticks, [1e-12, 5e-12]);
+    const labels = formatTicks(ticks);
+    expect(labels.some((label) => label !== "0")).toBe(true);
+    expect(new Set(labels).size).toBe(labels.length);
+    const geometry = chartGeometry(300, [1e-12, 5e-12], ticks);
+    expect(geometry.scaleY(5e-12)).toBeLessThan(geometry.scaleY(1e-12) - 50);
+    expectDrawable(niceTicks(3e-12), [0, 3e-12]);
+    expect(formatTicks(niceTicks(3e-12)).filter((label) => label === "0")).toHaveLength(1);
+  });
+
+  it("stays bounded at the edges of what a double holds", () => {
+    expectDrawable(niceSpan(0, 5e-324), [0, 5e-324]);
+    expectDrawable(niceSpan(-Number.MAX_VALUE, Number.MAX_VALUE), [-Number.MAX_VALUE, Number.MAX_VALUE]);
+    expectDrawable(niceRange(-Number.MAX_VALUE, Number.MAX_VALUE), [-Number.MAX_VALUE, Number.MAX_VALUE]);
+    expectDrawable(niceTicks(Number.MAX_VALUE), [0, Number.MAX_VALUE]);
+    expectDrawable(niceTicks(5e-324), [0, 5e-324]);
+    // Asked for more gridlines than an axis draws, it draws the ends instead of thousands of ticks.
+    expectDrawable(niceSpan(0, 1, 10_000), [0, 1]);
+    expectDrawable(niceRange(-1, 1, 10_000), [-1, 1]);
+  });
+
+  it("stays bounded for values near each other anywhere on the number line", () => {
+    for (let exponent = -300; exponent <= 300; exponent += 7) {
+      const base = 1.234 * 10 ** exponent;
+      for (const ulps of [1, 2, 16, 1000]) {
+        const next = base + Math.abs(base) * Number.EPSILON * ulps;
+        expectDrawable(niceSpan(base, next), [base, next]);
+        expectDrawable(niceSpan(-next, -base), [-next, -base]);
+      }
+    }
   });
 });

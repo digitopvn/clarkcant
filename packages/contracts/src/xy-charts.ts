@@ -104,7 +104,8 @@ function parsed(kind: XyChartKind, props: unknown): Parsed {
       datasetRef: data.datasetRef,
       x: data.x,
       y: data.y,
-      labels: data.labels ?? {},
+      // Without a prototype, so a field called "constructor" or "toString" has no label it did not get from the props.
+      labels: Object.assign(Object.create(null) as Record<string, string>, data.labels),
       ...(data.unit === undefined || data.unit === "" ? {} : { unit: data.unit }),
       ...(data.xUnit === undefined || data.xUnit === "" ? {} : { xUnit: data.xUnit }),
       stacked: data.stacked === true,
@@ -137,7 +138,17 @@ export function readXyChart(kind: XyChartKind, props: unknown): XyChart | undefi
 
 /** What to call a field: its label, or its own name. */
 export function xyFieldLabel(chart: XyChart, field: string): string {
-  return chart.labels[field] ?? field;
+  return Object.hasOwn(chart.labels, field) ? (chart.labels[field] ?? field) : field;
+}
+
+/**
+ * The value a row holds under `field`, read only from the row itself.
+ *
+ * A dataset's fields are names a person chose, and "constructor" or "toString" is as good a name as "runs": reading
+ * `row[field]` handed back the function every object inherits under those names.
+ */
+export function ownField(row: Readonly<Record<string, unknown>>, field: string): unknown {
+  return Object.hasOwn(row, field) ? row[field] : undefined;
 }
 
 /* ------------------------------------------------------------------ *
@@ -161,8 +172,29 @@ function finite(value: unknown): value is number {
 }
 
 function present(row: Record<string, unknown>, field: string): boolean {
-  return Object.hasOwn(row, field) && row[field] !== null && row[field] !== undefined;
+  const value = ownField(row, field);
+  return value !== null && value !== undefined;
 }
+
+/**
+ * One thing wrong with plotting the rows, as data: what kind of problem, the row (counted from 1, as a person counts
+ * them), the field and the value it holds.
+ *
+ * The node says these in English to the model that placed the chart (`xyDataIssueText`); the page says them in the
+ * person's language from the same fields, so no sentence is translated by matching its words.
+ */
+export type XyDataIssue =
+  | { code: "missing-field"; field: string; fields: string[] }
+  | { code: "not-an-object"; row: number }
+  | { code: "no-value"; row: number; field: string }
+  | { code: "not-a-number"; row: number; field: string; value: string }
+  | { code: "x-number-among-text"; row: number; field: string }
+  | { code: "x-text-among-numbers"; row: number; field: string }
+  | { code: "x-not-rising"; row: number; field: string; value: string; previousRow: number; previousValue: string }
+  | { code: "x-not-placeable"; row: number; field: string; value: string }
+  | { code: "negative-stacked"; row: number; field: string; value: string }
+  | { code: "not-a-label"; row: number; field: string; value: string }
+  | { code: "more"; count: number };
 
 /**
  * Everything wrong with plotting these rows: a named field no row has, a value that is not a number, an x that cannot be
@@ -170,9 +202,9 @@ function present(row: Record<string, unknown>, field: string): boolean {
  *
  * Only the rows the chart draws are read, so a dataset of a million rows costs what its first `MAX_CHART_POINTS` cost.
  * `columns` is the dataset's own list of fields when it has one; with it, an empty dataset can still say that a named
- * field is not one of them. Rows are counted from 1 in the reasons, as a person counts them.
+ * field is not one of them.
  */
-export function xyChartDataProblems(chart: XyChart, rows: readonly unknown[], columns?: readonly unknown[]): string[] {
+export function xyChartDataIssues(chart: XyChart, rows: readonly unknown[], columns?: readonly unknown[]): XyDataIssue[] {
   const fields = [chart.x, ...chart.y, ...(chart.pointLabel === undefined ? [] : [chart.pointLabel])];
   const drawn = rows.slice(0, MAX_CHART_POINTS);
   const known = new Set<string>((columns ?? []).filter((column): column is string => typeof column === "string"));
@@ -180,62 +212,95 @@ export function xyChartDataProblems(chart: XyChart, rows: readonly unknown[], co
 
   const missing = fields.filter((field) => !known.has(field));
   if (missing.length > 0 && (drawn.length > 0 || known.size > 0)) {
-    const list = [...known].slice(0, 12).map((field) => `"${field}"`).join(", ");
-    return missing.map((field) => `the dataset has no field "${field}"; its fields are ${list === "" ? "none" : list}`);
+    const list = [...known].slice(0, 12);
+    return missing.map((field) => ({ code: "missing-field", field, fields: list }));
   }
 
-  const problems: string[] = [];
+  const issues: XyDataIssue[] = [];
   let extra = 0;
-  const report = (problem: string): void => {
-    if (problems.length < MAX_ROW_PROBLEMS) problems.push(problem);
+  const report = (issue: XyDataIssue): void => {
+    if (issues.length < MAX_ROW_PROBLEMS) issues.push(issue);
     else extra += 1;
   };
 
   let firstKind: "number" | "text" | undefined;
   let previous: { row: number; value: number } | undefined;
   drawn.forEach((row, index) => {
-    const at = `row ${String(index + 1)}`;
+    const at = index + 1;
     if (!isRecord(row)) {
-      report(`${at} is not an object with fields`);
+      report({ code: "not-an-object", row: at });
       return;
     }
-    const x = row[chart.x];
-    if (!present(row, chart.x)) {
-      report(`${at} has no "${chart.x}"`);
+    const field = chart.x;
+    const x = ownField(row, field);
+    if (!present(row, field)) {
+      report({ code: "no-value", row: at, field });
     } else if (chart.kind === "scatter") {
-      if (!finite(x)) report(`${at}'s "${chart.x}" is ${shown(x)}, not a number`);
+      if (!finite(x)) report({ code: "not-a-number", row: at, field, value: shown(x) });
     } else if (finite(x)) {
-      if (firstKind === "text") report(`${at}'s "${chart.x}" is a number where the rows above hold text; the x values are all numbers or all text`);
+      if (firstKind === "text") report({ code: "x-number-among-text", row: at, field });
       firstKind ??= "number";
       if (previous !== undefined && x <= previous.value) {
-        report(`${at}'s "${chart.x}" (${String(x)}) is not after row ${String(previous.row)}'s (${String(previous.value)}); numbers on the x axis must rise row by row`);
+        report({ code: "x-not-rising", row: at, field, value: String(x), previousRow: previous.row, previousValue: String(previous.value) });
       }
-      previous = { row: index + 1, value: x };
+      previous = { row: at, value: x };
     } else if (typeof x === "string" && x.trim() !== "") {
-      if (firstKind === "number") report(`${at}'s "${chart.x}" is text where the rows above hold numbers; the x values are all numbers or all text`);
+      if (firstKind === "number") report({ code: "x-text-among-numbers", row: at, field });
       firstKind ??= "text";
     } else {
-      report(`${at}'s "${chart.x}" is ${shown(x)}, which is neither a number nor a label`);
+      report({ code: "x-not-placeable", row: at, field, value: shown(x) });
     }
 
-    for (const field of chart.y) {
-      const value = row[field];
-      if (!present(row, field)) report(`${at} has no "${field}"`);
-      else if (!finite(value)) report(`${at}'s "${field}" is ${shown(value)}, not a number`);
-      else if (chart.kind === "area" && chart.stacked && value < 0) {
-        report(`${at}'s "${field}" is ${String(value)}; a stacked area adds its series, so none of them can be negative`);
-      }
+    for (const series of chart.y) {
+      const value = ownField(row, series);
+      if (!present(row, series)) report({ code: "no-value", row: at, field: series });
+      else if (!finite(value)) report({ code: "not-a-number", row: at, field: series, value: shown(value) });
+      else if (chart.kind === "area" && chart.stacked && value < 0) report({ code: "negative-stacked", row: at, field: series, value: String(value) });
     }
 
     if (chart.pointLabel !== undefined && present(row, chart.pointLabel)) {
-      const name = row[chart.pointLabel];
-      if (typeof name !== "string" && !finite(name)) report(`${at}'s "${chart.pointLabel}" is ${shown(name)}, not a label`);
+      const name = ownField(row, chart.pointLabel);
+      if (typeof name !== "string" && !finite(name)) report({ code: "not-a-label", row: at, field: chart.pointLabel, value: shown(name) });
     }
   });
-  if (extra > 0) problems.push(`and ${String(extra)} more problem(s) in the same rows`);
-  return problems;
+  if (extra > 0) issues.push({ code: "more", count: extra });
+  return issues;
 }
 
+/** One issue as the node says it to a model: plain English with the row, the field and the value. */
+export function xyDataIssueText(issue: XyDataIssue): string {
+  if (issue.code === "missing-field") {
+    const list = issue.fields.map((field) => `"${field}"`).join(", ");
+    return `the dataset has no field "${issue.field}"; its fields are ${list === "" ? "none" : list}`;
+  }
+  if (issue.code === "more") return `and ${String(issue.count)} more problem(s) in the same rows`;
+  const at = `row ${String(issue.row)}`;
+  switch (issue.code) {
+    case "not-an-object":
+      return `${at} is not an object with fields`;
+    case "no-value":
+      return `${at} has no "${issue.field}"`;
+    case "not-a-number":
+      return `${at}'s "${issue.field}" is ${issue.value}, not a number`;
+    case "x-number-among-text":
+      return `${at}'s "${issue.field}" is a number where the rows above hold text; the x values are all numbers or all text`;
+    case "x-text-among-numbers":
+      return `${at}'s "${issue.field}" is text where the rows above hold numbers; the x values are all numbers or all text`;
+    case "x-not-rising":
+      return `${at}'s "${issue.field}" (${issue.value}) is not after row ${String(issue.previousRow)}'s (${issue.previousValue}); numbers on the x axis must rise row by row`;
+    case "x-not-placeable":
+      return `${at}'s "${issue.field}" is ${issue.value}, which is neither a number nor a label`;
+    case "negative-stacked":
+      return `${at}'s "${issue.field}" is ${issue.value}; a stacked area adds its series, so none of them can be negative`;
+    case "not-a-label":
+      return `${at}'s "${issue.field}" is ${issue.value}, not a label`;
+  }
+}
+
+/** `xyChartDataIssues` as the sentences the node refuses a placement with. */
+export function xyChartDataProblems(chart: XyChart, rows: readonly unknown[], columns?: readonly unknown[]): string[] {
+  return xyChartDataIssues(chart, rows, columns).map(xyDataIssueText);
+}
 /** Everything wrong with these props, then with plotting these rows under them. */
 export function xyChartProblems(kind: XyChartKind, props: unknown, rows?: readonly unknown[], columns?: readonly unknown[]): string[] {
   const result = parsed(kind, props);
@@ -275,20 +340,23 @@ export interface XyChartData {
 export function xyChartData(chart: XyChart, rows: readonly unknown[]): XyChartData {
   const drawn = rows.slice(0, MAX_CHART_POINTS).map((row) => (isRecord(row) ? row : {}));
   const xs = drawn.map((row) => {
-    const value = row[chart.x];
+    const value = ownField(row, chart.x);
     return finite(value) ? value : typeof value === "string" ? value : "";
   });
   return {
     xs,
     numericX: chart.kind === "scatter" || (xs.length > 0 && xs.every((value) => typeof value === "number")),
     names: drawn.map((row) => {
-      const value = chart.pointLabel === undefined ? undefined : row[chart.pointLabel];
+      const value = chart.pointLabel === undefined ? undefined : ownField(row, chart.pointLabel);
       return typeof value === "string" ? value : finite(value) ? String(value) : undefined;
     }),
     series: chart.y.map((field) => ({
       field,
       label: xyFieldLabel(chart, field),
-      values: drawn.map((row) => (finite(row[field]) ? (row[field] as number) : Number.NaN)),
+      values: drawn.map((row) => {
+        const value = ownField(row, field);
+        return finite(value) ? value : Number.NaN;
+      }),
     })),
     shown: drawn.length,
     total: rows.length,
@@ -416,6 +484,23 @@ function what(chart: XyChart, labels: readonly string[]): string {
     : `Scatter plot of ${labels.join(", ")} against ${xLabel}`;
 }
 
+/**
+ * What each axis of a scatter plot measures: the x field and the series on y, each named by its label with its unit.
+ *
+ * Drawn beside the axes and said in the text alternative and the semantic document, because tick numbers alone ("0 50
+ * 100") do not say that x is load in percent and y is latency in milliseconds.
+ */
+export function xyAxisTitles(chart: XyChart): { x: string; y: string } {
+  const titled = (label: string, unit: string | undefined): string => (unit === undefined ? label : `${label} (${unit})`);
+  const series = clipWithMarker(chart.y.map((field) => xyFieldLabel(chart, field)).join(", "), MAX_SERIES_LABEL * 2, "…");
+  return { x: titled(xyFieldLabel(chart, chart.x), chart.xUnit), y: titled(series, chart.unit) };
+}
+
+function axesText(chart: XyChart): string {
+  const axes = xyAxisTitles(chart);
+  return `x axis: ${axes.x}; y axis: ${axes.y}`;
+}
+
 function truncation(data: XyChartData): string {
   return data.total > data.shown ? `the first ${String(data.shown)} of ${String(data.total)} rows` : "";
 }
@@ -428,7 +513,8 @@ function truncation(data: XyChartData): string {
  */
 export function xyChartText(chart: XyChart, data: XyChartData, limit: number = SNAPSHOT_TEXT_LIMIT): string {
   const title = chart.title === undefined ? "" : `${chart.title}: `;
-  const head = `${title}${what(chart, data.series.map((series) => series.label))}`;
+  const described = `${title}${what(chart, data.series.map((series) => series.label))}`;
+  const head = chart.kind === "scatter" ? `${described} (${axesText(chart)})` : described;
   if (data.shown === 0) return clipWithMarker(`${head}. No data yet.`, limit);
   const span =
     chart.kind === "scatter"
@@ -466,6 +552,7 @@ export function xyChartSemantic(
     ...(hiddenLabels.length === 0 ? {} : { hiddenSeries: hiddenLabels }),
     ...(chart.kind === "area" ? { stacked: chart.stacked } : {}),
     ...(chart.unit === undefined ? {} : { unit: chart.unit }),
+    ...(chart.kind === "scatter" ? { xAxis: xyAxisTitles(chart).x, yAxis: xyAxisTitles(chart).y } : {}),
   };
   if (data === undefined) {
     return { ...title, summary: `${what(chart, visibleLabels)}; its dataset is not available on this node`, values, selectedIds: [] };

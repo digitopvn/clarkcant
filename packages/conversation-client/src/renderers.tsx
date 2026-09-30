@@ -54,11 +54,13 @@ import {
   type XyChart,
   type XyChartData,
   type XyChartView as XyChartViewState,
+  type XyDataIssue,
   readXyChart,
   readXyChartView,
   xyChartData,
-  xyChartDataProblems,
-  xyChartProblems,
+  ownField,
+  xyAxisTitles,
+  xyChartDataIssues,
   xyFieldLabel,
 } from "@clarkcant/contracts";
 
@@ -1078,6 +1080,17 @@ function withUnit(value: number | string | undefined, unit: string | undefined):
   return unit === undefined ? String(value ?? "") : `${String(value ?? "")} ${unit}`;
 }
 
+/** A message with each `{name}` filled from `values` in one pass, so a value that itself holds `{name}` stays as written. */
+function fillMessage(template: string, values: Readonly<Record<string, string | number>>): string {
+  return template.replace(/\{(\w+)\}/gu, (whole, name: string) => (Object.hasOwn(values, name) ? String(values[name]) : whole));
+}
+
+/** A row problem in the person's language, from the row, field and value the contract found, never the node's English. */
+function xyIssueText(t: (key: MessageKey) => string, issue: XyDataIssue): string {
+  const { code, ...values } = issue;
+  return fillMessage(t(`widgets.xyChart.issue.${code}`), Object.fromEntries(Object.entries(values).filter((entry): entry is [string, string | number] => typeof entry[1] !== "object")));
+}
+
 /** One point in the page's words: the series, where it is on x, and its value. */
 function xyPointLabel(chart: XyChart, data: XyChartData, seriesIndex: number, index: number): string {
   const series = data.series[seriesIndex];
@@ -1124,7 +1137,7 @@ function XyTable({ chart, rows }: { chart: XyChart; rows: readonly Record<string
             {rows.map((row, index) => (
               <tr key={index}>
                 {columns.map((column) => (
-                  <td key={column}>{String(row[column] ?? "")}</td>
+                  <td key={column}>{String(ownField(row, column) ?? "")}</td>
                 ))}
               </tr>
             ))}
@@ -1172,7 +1185,7 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
   if (chart === undefined) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
-        <Unavailable reason={t("widgets.xyChart.cannotDraw").replace("{reason}", xyChartProblems(kind, props).join("; "))} />
+        <Unavailable reason={t("widgets.xyChart.propsInvalid")} />
       </Frame>
     );
   }
@@ -1183,11 +1196,11 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
       </Frame>
     );
   }
-  const problems = xyChartDataProblems(chart, rows);
-  if (problems.length > 0) {
+  const issues = xyChartDataIssues(chart, rows);
+  if (issues.length > 0) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
-        <Unavailable reason={t("widgets.xyChart.cannotDraw").replace("{reason}", problems.join("; "))} />
+        <Unavailable reason={fillMessage(t("widgets.xyChart.cannotDraw"), { reason: issues.map((issue) => xyIssueText(t, issue)).join("; ") })} />
       </Frame>
     );
   }
@@ -1258,6 +1271,8 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
   const pathOf = (points: [number, number][]): string =>
     points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${Number(x.toFixed(2))} ${Number(y.toFixed(2))}`).join(" ");
   const indices = Array.from({ length: data.shown }, (_, index) => index);
+  // A scatter's tick numbers do not say what they measure; its axes are titled with the field and unit they plot.
+  const axes = chart.kind === "scatter" ? xyAxisTitles(chart) : undefined;
 
   return (
     <Frame title={title} dataset={dataset} role="chart">
@@ -1290,6 +1305,11 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
         {typeof state?.message === "string" && state.message !== "" && (
           <p className="cc-freshness" role="status" data-xy-message="true" style={{ margin: 0 }}>
             {state.message}
+          </p>
+        )}
+        {axes !== undefined && (
+          <p className="cc-xy-axis cc-xy-axis-y" data-xy-axis="y">
+            {fillMessage(t("widgets.xyChart.yAxis"), { title: axes.y })}
           </p>
         )}
         <div ref={measure} className="cc-chart-box">
@@ -1405,6 +1425,11 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
             })}
           </svg>
         </div>
+        {axes !== undefined && (
+          <p className="cc-xy-axis cc-xy-axis-x" data-xy-axis="x">
+            {fillMessage(t("widgets.xyChart.xAxis"), { title: axes.x })}
+          </p>
+        )}
         <span id={hintId} className="cc-sr-only">
           {t("widgets.xyChart.keyboardHint")}
         </span>

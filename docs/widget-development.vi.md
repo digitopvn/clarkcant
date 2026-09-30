@@ -801,11 +801,13 @@ Những gì node bảo đảm:
   Khung nhìn không khớp bị từ chối với `the chart view was refused: …`, và trạng thái được giữ nguyên. Một khung nhìn
   thay thế trọn vẹn khung nhìn trước.
 - **Văn bản thay thế là lời của chính biểu đồ.** Nó gọi tên các chuỗi, khoảng x, số điểm và khoảng giá trị của từng
-  chuỗi, ví dụ `Runs by week: Area chart of Runs, Failures by week, 5 point(s); W36 to W40. Runs: 128 to 164 runs;
+  chuỗi. Biểu đồ phân tán còn nói mỗi trục đo gì, lấy từ nhãn của trường (hoặc tên trường) và đơn vị, ví dụ
+  `(x axis: Load (%); y axis: Latency (ms))`. Văn bản của biểu đồ vùng, ví dụ `Runs by week: Area chart of Runs, Failures by week, 5 point(s); W36 to W40. Runs: 128 to 164 runs;
   Failures: 3 to 9 runs.`
 - **Voice và `inspect_ui` đọc biểu đồ như nó đang là.** Tài liệu ngữ nghĩa (§9) cho biết các chuỗi đang hiện và đang
   ẩn, biểu đồ vùng có xếp chồng hay không, số điểm và việc bị cắt bớt nếu có, khoảng giá trị của từng chuỗi đang hiện,
-  khoảng x và điểm được chọn, với điểm đó trong `selectedIds` dưới dạng `field#index`. Nó được dựng từ trạng thái và
+  khoảng x và điểm được chọn, với điểm đó trong `selectedIds` dưới dạng `field#index`. Biểu đồ phân tán có thêm
+  `xAxis` và `yAxis`, chính là tiêu đề trục mà trang vẽ. Nó được dựng từ trạng thái và
   các hàng node đang giữ lúc đó. Điểm được chọn mà không còn trong các hàng thì được nói là đã mất thay vì được mô tả,
   và dataset đã mất thì được nói là không còn. Độ tươi (freshness) của nó là độ tươi của chính dataset.
 
@@ -819,9 +821,18 @@ Những gì trang làm:
   Home và End tới điểm đầu và điểm cuối; Enter hoặc Space để chọn, và Esc để bỏ chọn. Điểm được chọn được mô tả bên
   cạnh biểu đồ trong một vùng live, kèm một nút bỏ chọn.
 - Một thay đổi được vẽ ngay và gửi tới node, mỗi biểu đồ một yêu cầu tại một thời điểm; thay đổi xảy ra trong lúc đó
-  được gửi sau, và chỉ thay đổi mới nhất. Khi node từ chối một khung nhìn, biểu đồ hiện lý do của node, vẽ khung nhìn
+  được gửi sau, và chỉ thay đổi mới nhất. Khi node từ chối một khung nhìn, biểu đồ nói điều đó bằng ngôn ngữ của người dùng, vẽ khung nhìn
   node đang giữ, và đọc lại dataset, vì các hàng node dùng để kiểm tra có thể không phải các hàng trang đã nhận.
-- Bên dưới biểu đồ có một bảng các hàng đã vẽ, với tên biểu đồ đặt cho các trường.
+- Biểu đồ phân tán có tiêu đề trục: trục y ở trên vùng vẽ và trục x ở dưới, mỗi trục kèm nhãn và đơn vị.
+- Bên dưới biểu đồ có một bảng các hàng đã vẽ, với tên biểu đồ đặt cho các trường. Một trường chỉ được đọc từ chính
+  hàng đó, nên trường tên `constructor` hay `toString` được vẽ và gọi tên như mọi trường khác.
+- Mọi điều biểu đồ nói đều bằng ngôn ngữ của người dùng. Các hàng không còn khớp được mô tả từ hàng, trường và giá trị
+  mà bộ kiểm tra dùng chung tìm ra, không phải từ câu tiếng Anh của node, và một khung nhìn bị từ chối được nói bằng
+  câu của chính trang. Lý do tiếng Anh của node dành cho model và nhật ký.
+- Các trục không bao giờ làm việc không giới hạn. Số vạch chia được đếm trước khi tạo, tối đa 50, và mỗi vạch là chỉ
+  số của nó nhân với một bước tròn. Các giá trị gần nhau tới mức không bước tròn nào tách được, như `0.3` và
+  `0.1 + 0.2`, được vẽ như một giá trị với khoảng trống hai bên. Nhãn vượt quá một tỷ hoặc nhỏ hơn một phần triệu được
+  viết với số mũ và đủ chữ số có nghĩa mà bước cần, nên thang `1e-12` không bị ghi `0` ở mọi vạch.
 - Khi có hơn 60 điểm, biểu đồ vùng chỉ vẽ điểm đang có focus và điểm được chọn, để đường vẫn dễ đọc; mọi điểm vẫn tới
   được bằng bàn phím.
 - Biểu đồ không tự thêm chuyển động nào, vừa với chiều rộng xuống tới 390 px, và theo theme sáng và tối. Trong Widget
@@ -829,13 +840,14 @@ Những gì trang làm:
 
 Kiểm thử: [xy-charts.spec.ts](../packages/contracts/test/xy-charts.spec.ts) cho các quy tắc,
 [xy-charts.spec.ts](../apps/runtime/test/xy-charts.spec.ts) cho node,
-[chart-layout.spec.ts](../packages/conversation-client/test/chart-layout.spec.ts) cho thang đo, hình dạng điểm và thứ
-tự bàn phím, [xy-chart-schemas.spec.ts](../packages/widget-catalog/test/xy-chart-schemas.spec.ts), kiểm tra rằng JSON
+[chart-layout.spec.ts](../packages/conversation-client/test/chart-layout.spec.ts) cho thang đo (gồm các giá trị chỉ
+cách nhau một số thực, `1e17` cạnh `1e17 + 16`, một điểm duy nhất, các giá trị bằng nhau và thang `1e-12`), hình dạng
+điểm và thứ tự bàn phím, [xy-chart-schemas.spec.ts](../packages/widget-catalog/test/xy-chart-schemas.spec.ts), kiểm tra rằng JSON
 Schema và các kiểm tra riêng của biểu đồ chấp nhận và từ chối cùng một bộ props, và mọi fixture trong thư viện đều là
 fixture node sẽ đặt, và journey trình duyệt [xy-charts.spec.ts](../apps/web/e2e/xy-charts.spec.ts). Journey bao gồm chú
 giải, chọn bằng bàn phím, khung nhìn được giữ sau khi tải lại, biểu đồ vùng xếp chồng, 640 hàng được vẽ thành 500 kèm
-nhãn nói điều đó, các lần từ chối vì thiếu trường và vì giá trị không phải số, việc node từ chối một điểm nó không còn
-giữ, giảm chuyển động, 390 px có cảm ứng ở theme sáng, và thư viện.
+nhãn nói điều đó, tiêu đề trục của biểu đồ phân tán, các lần từ chối vì thiếu trường và vì giá trị không phải số,
+việc từ chối một điểm node không còn giữ được nói bằng tiếng Việt, giảm chuyển động, 390 px có cảm ứng ở theme sáng, và thư viện.
 
 ---
 

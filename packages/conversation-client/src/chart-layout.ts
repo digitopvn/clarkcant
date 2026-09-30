@@ -30,14 +30,44 @@ export function labelStride(count: number, plotWidth: number, minSlot = MIN_LABE
  */
 export function niceTicks(max: number, target = 4): number[] {
   if (!Number.isFinite(max) || max <= 0) return [0, 1];
-  const rough = max / target;
+  return tickRun(0, max, target) ?? [0, max];
+}
+
+/** The most gridlines one axis draws. A step that would need more is not drawn as ticks at all. */
+export const MAX_TICKS = 50;
+
+/** A round step (1, 2 or 5 times a power of ten) of about `span / target`; not finite when `span` is too small to divide. */
+function niceStep(span: number, target: number): number {
+  const rough = span / target;
   const power = 10 ** Math.floor(Math.log10(rough));
   const residual = rough / power;
-  const step = (residual <= 1 ? 1 : residual <= 2 ? 2 : residual <= 5 ? 5 : 10) * power;
-  const top = Math.ceil(max / step) * step;
+  return (residual <= 1 ? 1 : residual <= 2 ? 2 : residual <= 5 ? 5 : 10) * power;
+}
+
+/**
+ * Round-stepped ticks from at or below `low` to at or above `high`, or `undefined` when no usable step exists.
+ *
+ * Each tick is its index times the step, never the previous tick plus the step: adding a step smaller than the gap
+ * between two neighbouring doubles leaves the value where it was, and a loop waiting for it to pass the top never ended.
+ * The count is known before a tick is made and is held to `MAX_TICKS`, and a tick is rounded to 15 significant digits,
+ * relative to its own size, so a tiny scale keeps its values and a large one loses only float noise.
+ */
+function tickRun(low: number, high: number, target: number): number[] | undefined {
+  const step = niceStep(high - low, target);
+  if (!Number.isFinite(step) || step <= 0) return undefined;
+  const firstIndex = Math.floor(low / step);
+  const count = Math.ceil(high / step) - firstIndex;
+  if (!Number.isFinite(count) || count < 1 || count > MAX_TICKS) return undefined;
   const ticks: number[] = [];
-  for (let value = 0; value <= top + step / 2; value += step) ticks.push(Number(value.toFixed(10)));
-  return ticks;
+  // `|| 0` turns -0 into 0, so the zero line is labelled "0".
+  for (let index = 0; index <= count; index += 1) ticks.push(Number(((firstIndex + index) * step).toPrecision(15)) || 0);
+  // A round step past the largest double overflows the outer tick; the ends themselves still fit.
+  return ticks.every((tick) => Number.isFinite(tick)) ? ticks : undefined;
+}
+
+/** The two ends as ticks when no round step fits them, or a unit range when they are not two different numbers. */
+function endsOnly(low: number, high: number): number[] {
+  return Number.isFinite(low) && Number.isFinite(high) && low < high ? [low, high] : [0, 1];
 }
 
 /** A tick value as the axis prints it: short, and without float noise. */
@@ -57,15 +87,7 @@ export function niceRange(min: number, max: number, target = 4): number[] {
   const low = Number.isFinite(min) ? Math.min(min, 0) : 0;
   const high = Number.isFinite(max) ? Math.max(max, 0) : 0;
   if (low === 0) return niceTicks(high, target);
-  const rough = (high - low) / target;
-  const power = 10 ** Math.floor(Math.log10(rough));
-  const residual = rough / power;
-  const step = (residual <= 1 ? 1 : residual <= 2 ? 2 : residual <= 5 ? 5 : 10) * power;
-  const first = Math.floor(low / step) * step;
-  const last = Math.ceil(high / step) * step;
-  const ticks: number[] = [];
-  for (let value = first; value <= last + step / 2; value += step) ticks.push(Number(value.toFixed(10)) || 0);
-  return ticks;
+  return tickRun(low, high, target) ?? endsOnly(low, high);
 }
 
 /**
@@ -76,6 +98,13 @@ export function niceRange(min: number, max: number, target = 4): number[] {
  */
 export function formatTicks(ticks: number[]): string[] {
   const largest = Math.max(0, ...ticks.map((tick) => Math.abs(tick)));
+  const gap = ticks.length > 1 ? Math.abs((ticks[1] ?? 0) - (ticks[0] ?? 0)) : 0;
+  // Past what a k or M reads well at, or finer than six decimals, a label is a number with an exponent and as many
+  // significant digits as the step needs: fixed decimals printed every tick of a 1e-12 scale as "0".
+  if (largest >= 1e9 || (gap > 0 && gap < 1e-6)) {
+    const digits = gap > 0 && largest > 0 ? Math.min(Math.max(0, Math.floor(Math.log10(largest)) - Math.floor(Math.log10(gap))), 14) : 2;
+    return ticks.map((tick) => (tick === 0 ? "0" : withExponent(tick, digits)));
+  }
   const [unit, suffix] = largest >= 1_000_000 ? [1_000_000, "M"] : largest >= 10_000 ? [1_000, "k"] : [1, ""];
   const step = ticks.length > 1 ? Math.abs((ticks[1] ?? 0) - (ticks[0] ?? 0)) / unit : 0;
   const decimals = step > 0 ? Math.min(Math.max(0, -Math.floor(Math.log10(step))), 6) : 2;
@@ -83,6 +112,12 @@ export function formatTicks(ticks: number[]): string[] {
     const scaled = Number((tick / unit).toFixed(decimals));
     return scaled === 0 ? "0" : `${scaled}${suffix}`;
   });
+}
+
+/** `value` as "1.25e-12": its significant digits and a power of ten, without trailing zeros or a plus sign. */
+function withExponent(value: number, digits: number): string {
+  const [mantissa = "0", power = "0"] = value.toExponential(digits).split("e");
+  return `${String(Number(mantissa))}e${String(Number(power))}`;
 }
 
 /** One plotted value and the category it belongs to, kept together so a missing value cannot shift the labels. */
@@ -136,7 +171,7 @@ export function chartGeometry(width: number, values: number[], ticks: number[] =
   const top = ticks.at(-1) ?? 1;
   const plotHeight = CHART_HEIGHT - CHART_PAD.top - CHART_PAD.bottom;
   const scaleY = (value: number): number =>
-    CHART_PAD.top + plotHeight - ((value - bottom) / Math.max(top - bottom, 1e-9)) * plotHeight;
+    CHART_PAD.top + plotHeight - ((value - bottom) / (top > bottom ? top - bottom : 1)) * plotHeight;
   return {
     width,
     plotWidth: Math.max(width - CHART_PAD.left - CHART_PAD.right, 1),
@@ -148,36 +183,35 @@ export function chartGeometry(width: number, values: number[], ticks: number[] =
   };
 }
 
-/** A round step (1, 2 or 5 times a power of ten) of about `span / target`. */
-function niceStep(span: number, target: number): number {
-  const rough = span / target;
-  const power = 10 ** Math.floor(Math.log10(rough));
-  const residual = rough / power;
-  return (residual <= 1 ? 1 : residual <= 2 ? 2 : residual <= 5 ? 5 : 10) * power;
-}
 
 /**
  * Gridline values covering `min` to `max` with a round step, without reaching for zero.
  *
  * For a number line whose values are not measured from zero, the x axis of a scatter plot or its y axis: points
- * between 3.4 and 4.6 squeezed into the top fifth of a scale from zero would read as one blob. A single value is given a
- * step either side, so it is drawn inside the plot rather than on its edge.
+ * between 3.4 and 4.6 squeezed into the top fifth of a scale from zero would read as one blob. A single value, or values
+ * so close that no round step tells them apart (0.3 and 0.1 + 0.2), is given a tenth of itself either side, so it is
+ * drawn inside the plot rather than on its edge.
  */
 export function niceSpan(min: number, max: number, target = 4): number[] {
   if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
   let low = Math.min(min, max);
   let high = Math.max(min, max);
-  if (high === low) {
-    const pad = low === 0 ? 1 : Math.abs(low) / 10;
-    low -= pad;
-    high += pad;
+  if (sameValue(low, high)) {
+    const middle = low + (high - low) / 2;
+    const pad = Math.abs(middle) > TINY ? Math.abs(middle) / 10 : 1;
+    low = middle - pad;
+    high = middle + pad;
   }
-  const step = niceStep(high - low, target);
-  const first = Math.floor(low / step) * step;
-  const last = Math.ceil(high / step) * step;
-  const ticks: number[] = [];
-  for (let value = first; value <= last + step / 2; value += step) ticks.push(Number(value.toFixed(10)) || 0);
-  return ticks;
+  return tickRun(low, high, target) ?? endsOnly(low, high);
+}
+
+/** Two values this close, relative to their size, are one value on an axis: no round step tells them apart. */
+const SAME_VALUE = 1e-9;
+/** Below this, a magnitude is zero for an axis: dividing it by a tick count underflows. */
+const TINY = 1e-300;
+
+function sameValue(low: number, high: number): boolean {
+  return high - low <= Math.max(Math.max(Math.abs(low), Math.abs(high)) * SAME_VALUE, TINY);
 }
 
 /** A map from `domain` onto `range`; a domain of one value maps to the middle of the range. */

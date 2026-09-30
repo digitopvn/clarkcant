@@ -216,6 +216,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-xy-key { width: 26px; height: 12px; flex: none; overflow: visible; }
 .cc-xy-selected { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-sm); min-height: 0; font-size: var(--cc-text-label); overflow-wrap: anywhere; }
 .cc-xy-selected:empty { display: none; }
+.cc-xy-axis { margin: 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-xy-axis-x { text-align: end; }
 .cc-xy-clear {
   min-height: 28px; padding: 0 var(--cc-space-sm); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
   background: transparent; color: var(--cc-text); font: inherit; font-size: var(--cc-text-label); cursor: pointer;

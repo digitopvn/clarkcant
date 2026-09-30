@@ -10,8 +10,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  * labelled as the sample they are, so a field the rows lack or a value that is not a number is refused with the host's
  * own reason. What only a browser can say is what a person does with one: hide and show a series from the legend, walk
  * the points with the keyboard and select one, find the chart as they left it after a reload, read the rows as a table,
- * be told when the chart draws only the first rows, see the node's refusal when a page asks for a point it no longer
- * holds, and use it all on a phone.
+ * be told when the chart draws only the first rows, read what a scatter plot's axes measure, be told in their own language
+ * when the node refuses a point it no longer holds, and use it all on a phone.
  */
 
 const DATA_DIR = join(process.cwd(), ".data", "e2e");
@@ -180,6 +180,9 @@ test("a stacked area says it is stacked, and a chart over more rows than it hold
   const big = await place(page, "phân tán lớn");
   await expect(big.locator("[data-xy-truncated]")).toHaveText("Đang vẽ 500 hàng đầu tiên trên tổng số 640 hàng.");
   await expect(big.locator("[data-series-points='latency'] [data-point]")).toHaveCount(500);
+  // The axes say what they measure, with their units, not only tick numbers.
+  await expect(big.locator("[data-xy-axis='x']")).toHaveText("Trục x: Tải (%)");
+  await expect(big.locator("[data-xy-axis='y']")).toHaveText("Trục y: Độ trễ (ms)");
   await expect(big.locator("[data-xy-table] tbody tr")).toHaveCount(500);
   // The points of a scatter plot are walked in the order of x, from the smallest to the largest.
   const entry = big.locator("[data-point][tabindex='0']");
@@ -203,7 +206,7 @@ test("a field the rows lack and a value that is not a number are refused with th
   await expect(page.locator(CHARTS)).toHaveCount(before);
 });
 
-test("a page that asks for a point the node no longer holds shows the node's refusal and draws the rows it holds", async ({ page }) => {
+test("a page that asks for a point the node no longer holds says it was refused and draws the rows it holds", async ({ page }) => {
   test.setTimeout(120_000);
   await openApp(page);
   const chart = await place(page, "vùng co lại");
@@ -227,7 +230,11 @@ test("a page that asks for a point the node no longer holds shows the node's ref
   await expect(chart.locator("[data-series-points='runs'] [data-point]")).toHaveCount(6);
 
   await chart.locator("[data-point='runs#5']").click();
-  await expect(chart.locator("[data-xy-message]")).toContainText("point 5 is not on this chart, which draws 3 point(s)", { timeout: 20_000 });
+  // Said in the person's language; the node's English sentence is for the model and the logs.
+  await expect(chart.locator("[data-xy-message]")).toHaveText(
+    "Nút không giữ được thay đổi này vì dữ liệu của biểu đồ đã đổi. Biểu đồ đang hiện lại chế độ xem mà nút đang giữ.",
+    { timeout: 20_000 },
+  );
   // The refused selection is undrawn, and the chart is drawn over the rows the node holds.
   await expect(chart.locator("[data-selected-point='']")).toHaveCount(1);
   await expect(chart.locator("[data-series-points='runs'] [data-point]")).toHaveCount(3, { timeout: 20_000 });
