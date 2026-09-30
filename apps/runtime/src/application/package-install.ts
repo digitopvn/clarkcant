@@ -47,7 +47,7 @@ import {
   resolveLocalSource,
   type CoordinationDeps,
 } from "@clarkcant/core";
-import { type Database, allRows, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
+import { type Database, allRows, appendEvent, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
 /**
  * Installing a package a directory listed.
@@ -300,9 +300,19 @@ export async function fetchRemoteArtifact(entry: DirectoryEntry, cacheRoot: stri
   };
 }
 
+/**
+ * An install the person already approved, from the inbox: the approval it was decided on and the artifact digest that
+ * approval was bound to. Only `decideInstallApproval` passes it, after it has claimed that approval as granted.
+ */
+export interface ApprovedInstall {
+  approvalId: string;
+  digest: string;
+}
+
 export async function installPackage(
   deps: PackageInstallDeps,
   request: PackageInstallRequest,
+  options: { approved?: ApprovedInstall } = {},
 ): Promise<PackageInstallOutcome> {
   const { runtime, conductor } = deps;
   const { packageId, version } = request;
@@ -367,10 +377,25 @@ export async function installPackage(
     };
   }
 
+  /*
+   * An approved install installs the artifact that was approved and nothing else. The same package and version can
+   * name a different artifact by now (the listing was republished), and an approval given for the old bytes is not
+   * an approval for the new ones: refused before anything is fetched, and the person is asked again on the next try.
+   */
+  const approved = options.approved;
+  if (approved !== undefined && entry.digest !== approved.digest) {
+    return {
+      kind: "refused",
+      status: 409,
+      code: "DIGEST_MISMATCH",
+      message: `${packageId}@${version} is no longer the artifact that was approved, so nothing was installed`,
+    };
+  }
+
   const principalId = runtime.identity.ownerPrincipalId;
   // Read at the request rather than captured at boot, so a mode the user just changed applies to this install.
   const policy = readExecutionPolicy({ db: runtime.db, now: () => nowInstant() }, principalId);
-  const decision = decideExecution({
+  const asked = decideExecution({
     policy,
     action: { kind: "effect", category: "local-write", operationDigest: entry.digest },
     /*
@@ -380,6 +405,15 @@ export async function installPackage(
      */
     intent: { kind: "interactive" },
   });
+  /*
+   * The question the policy asked has been answered by the person, so it is not asked again: `ask` becomes the
+   * decision they gave, audited. `deny` stays a refusal: a rule that forbids installing is not something an earlier
+   * approval can outvote, and neither can a policy the person tightened after they approved.
+   */
+  const decision =
+    approved !== undefined && asked.kind === "ask"
+      ? { kind: "execute" as const, reason: "the person approved this install", audit: true }
+      : asked;
 
   if (decision.kind === "deny") {
     return { kind: "refused", status: 403, code: "POLICY_REFUSED", message: decision.reason };
@@ -404,14 +438,29 @@ export async function installPackage(
         "SELECT approval_id FROM approvals WHERE operation_digest = ? AND decision = 'pending' AND task_id IS NULL AND expires_at > ? LIMIT 1",
       )
       .get(entry.digest, nowInstant()) as { approval_id: string } | undefined;
+    /*
+     * A new question is recorded together with what it asks about - the package, the version and the artifact - in
+     * one transaction, so an approval the inbox cannot name never exists. That record is what makes it an install
+     * approval: the inbox lists it and the decision route installs it from there (`install-approval.ts`).
+     */
     const approvalId =
       pending?.approval_id ??
-      requestApproval(coordination, {
-        operationDigest: entry.digest,
-        operationDescription: `cài ${entry.displayName} ${entry.version} (${entry.riskTier})`,
-        effectCategory: "local-write",
-        ttlMs: INSTALL_APPROVAL_TTL_MS,
-      }).approvalId;
+      transaction(runtime.db, () => {
+        const created = requestApproval(coordination, {
+          operationDigest: entry.digest,
+          operationDescription: `cài ${entry.displayName} ${entry.version} (${entry.riskTier})`,
+          effectCategory: "local-write",
+          ttlMs: INSTALL_APPROVAL_TTL_MS,
+        });
+        recordInstallApprovalEvent(deps, {
+          approvalId: created.approvalId,
+          packageId: entry.packageId,
+          version: entry.version,
+          digest: entry.digest,
+          result: "asked",
+        });
+        return created.approvalId;
+      });
     // 202 rather than an error: nothing failed, and the approval is the next step rather than a refusal.
     return { kind: "approval-required", message: decision.reason, approvalId };
   }
@@ -591,6 +640,90 @@ export async function installPackage(
     pendingCapabilities,
     deniedCapabilities: grant.denied,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * The record of an install the policy asked about
+ * ------------------------------------------------------------------ */
+
+/** The event stream an install approval's question and every outcome of it are written to. */
+export const INSTALL_APPROVAL_STREAM = "package.install-approval";
+
+/**
+ * What happened to one install approval: the question itself (`asked`), the person's answer (`installed` once the
+ * approved install ran, `denied`), a deadline nobody met (`expired`), an approval that could not be carried out
+ * (`refused`: the listing changed, the policy now forbids it, the approval was already decided) or an install that
+ * was approved and then failed (`failed`).
+ */
+export type InstallApprovalResult = "asked" | "installed" | "denied" | "expired" | "refused" | "failed";
+
+export interface InstallApprovalEvent {
+  approvalId: string;
+  packageId: string;
+  version: string;
+  /** The directory entry's artifact digest the question was asked about. */
+  digest: string;
+  result: InstallApprovalResult;
+  code?: string;
+  generationId?: string;
+}
+
+/**
+ * Append one install-approval record to the node's event log. Throws when the write fails: the `asked` record is
+ * written inside the transaction that creates the approval, and must fail that transaction rather than leave a
+ * question nobody can name. An outcome's audit goes through `auditInstallApproval`, which does not throw.
+ */
+export function recordInstallApprovalEvent(
+  deps: Pick<PackageInstallDeps, "runtime" | "conductor">,
+  event: InstallApprovalEvent,
+): void {
+  appendEvent(deps.runtime.db, {
+    eventId: deps.conductor.newId("evt"),
+    kind: INSTALL_APPROVAL_STREAM,
+    stream: INSTALL_APPROVAL_STREAM,
+    nodeId: deps.runtime.identity.nodeId,
+    document: event,
+    occurredAt: nowInstant(),
+  });
+}
+
+/** An outcome's audit record. A failed write is reported and does not undo the outcome it describes. */
+export function auditInstallApproval(
+  deps: Pick<PackageInstallDeps, "runtime" | "conductor">,
+  event: InstallApprovalEvent,
+): void {
+  try {
+    recordInstallApprovalEvent(deps, event);
+  } catch (cause) {
+    process.stderr.write(
+      `packages: could not record the ${event.result} install approval ${event.approvalId} (${cause instanceof Error ? cause.message : String(cause)})\n`,
+    );
+  }
+}
+
+/**
+ * The package, version and artifact an install approval asked about, from its `asked` record on this node. Undefined
+ * for any other approval: a command's, a task's or a capability's has no such record, so this is also how an install
+ * approval is told apart from the rest of the `approvals` table.
+ */
+export function findInstallApprovalRequest(
+  db: Database,
+  nodeId: string,
+  approvalId: string,
+): { packageId: string; version: string; digest: string } | undefined {
+  const row = oneRow<{ document: string }>(
+    db,
+    `SELECT document FROM events
+      WHERE source_node_id = ? AND stream = ? AND json_extract(document, '$.approvalId') = ?
+        AND json_extract(document, '$.result') = 'asked'
+      LIMIT 1`,
+    nodeId,
+    INSTALL_APPROVAL_STREAM,
+    approvalId,
+  );
+  if (row === undefined) return undefined;
+  const event = parseJson<InstallApprovalEvent>(row.document, "events.document");
+  return { packageId: event.packageId, version: event.version, digest: event.digest };
 }
 
 /* ------------------------------------------------------------------ *

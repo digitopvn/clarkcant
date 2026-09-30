@@ -435,7 +435,7 @@ test("clicking a desktop notification opens the inbox on the item it was about, 
     .toBe(true);
   for (const input of await page.evaluate(() => (window as unknown as ClickScope).__ccNotifyInputs)) {
     expect(`${input.title} ${input.body}`).not.toContain("node -e");
-    if (input.target !== undefined) expect(input.target).toMatch(/^(notice|question|command-approval|capability-approval|task-approval):[A-Za-z0-9._:@/-]{1,160}$/u);
+    if (input.target !== undefined) expect(input.target).toMatch(/^(notice|question|command-approval|capability-approval|install-approval|task-approval):[A-Za-z0-9._:@/-]{1,160}$/u);
   }
 
   await clickDesktopNotification(page, target);

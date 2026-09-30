@@ -10,6 +10,7 @@ import {
   isPersonOnlyNoticeOperation,
   noticeOperationRequestSchema,
   noticeOperationResponseSchema,
+  waitingItemSchema,
 } from "../src/inbox.ts";
 import { isPersonOnlyRoute } from "../src/machine-surfaces.ts";
 
@@ -54,6 +55,16 @@ describe("the node's notice operations", () => {
     for (const action of MACHINE_NOTICE_OPERATION_IDS) {
       expect(isPersonOnlyRoute("POST", `/inbox/notices/ntf_1/actions/${action}`), action).toBe(false);
     }
+  });
+
+  it("keep installing a package and deciding an install the person's own on the route, under any spelling", () => {
+    for (const path of ["/packages/install", "//packages//install/", "/packages/install?packageId=x", "/packages/approvals/appr_1/decision"]) {
+      expect(isPersonOnlyRoute("POST", path), path).toBe(true);
+    }
+    for (const path of ["/packages/installed", "/packages/uninstall", "/packages/approvals", "/packages/install/extra"]) {
+      expect(isPersonOnlyRoute("POST", path), path).toBe(false);
+    }
+    expect(isPersonOnlyRoute("GET", "/packages/install")).toBe(false);
   });
 
   it("take an optional snooze end and the surface the person used, and nothing else", () => {
@@ -116,11 +127,41 @@ describe("a notice action as an app intent", () => {
 describe("a notification's inbox target", () => {
   // The same vectors as apps/desktop/test/security.spec.ts: the shell and the page read one grammar.
   it("names one kind of inbox item and an id, and nothing else", () => {
-    for (const target of ["notice:ntf_1", "question:q_1", "command-approval:appr_1", "capability-approval:appr_2", "task-approval:task_1:appr_3", "notice:a.b-c_d@e/f"]) {
+    for (const target of ["notice:ntf_1", "question:q_1", "command-approval:appr_1", "capability-approval:appr_2", "install-approval:appr_4", "task-approval:task_1:appr_3", "notice:a.b-c_d@e/f"]) {
       expect(inboxTargetSchema.safeParse(target).success, target).toBe(true);
     }
     for (const target of ["", "notice:", "notice", "effect:eff_1", `${"java"}script:alert(1)`, "notice:a b", "notice:<script>", "notice:ntf\n1", `notice:${"a".repeat(161)}`]) {
       expect(inboxTargetSchema.safeParse(target).success, JSON.stringify(target)).toBe(false);
     }
+  });
+});
+
+describe("an install waiting for the person", () => {
+  const item = {
+    kind: "install-approval",
+    approvalId: "appr_1",
+    packageId: "com.example.calendar",
+    version: "1.2.0",
+    displayName: "Calendar Plus",
+    riskTier: "isolated-ui",
+    permissions: ["Reads your calendar"],
+    description: "cài Calendar Plus 1.2.0 (isolated-ui)",
+    operationDigest: "sha256:abc",
+    requestedAt: "2026-09-30T10:00:00.000Z",
+    expiresAt: "2026-09-30T10:10:00.000Z",
+  };
+
+  it("names the package, the version, what it asks for and the artifact the decision is bound to", () => {
+    expect(waitingItemSchema.safeParse(item).success).toBe(true);
+    expect(waitingItemSchema.safeParse({ ...item, permissions: [] }).success).toBe(true);
+  });
+
+  it("refuses an item missing what the person decides on, or carrying anything else", () => {
+    for (const field of ["packageId", "version", "operationDigest", "riskTier"] as const) {
+      const { [field]: _dropped, ...rest } = item;
+      expect(waitingItemSchema.safeParse(rest).success, field).toBe(false);
+    }
+    expect(waitingItemSchema.safeParse({ ...item, riskTier: "anything" }).success).toBe(false);
+    expect(waitingItemSchema.safeParse({ ...item, generationId: "gen_1" }).success).toBe(false);
   });
 });

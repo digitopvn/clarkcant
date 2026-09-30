@@ -141,6 +141,11 @@ describe("MCP endpoint", () => {
       ]),
     );
     expect(names.some((name) => name.includes("approv"))).toBe(false);
+    // Installing a package is the person's too: no tool installs one or decides an install.
+    expect(names.some((name) => name.includes("install") || name.includes("package"))).toBe(false);
+    expect(
+      (await mcp({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "install_package", arguments: { packageId: "com.example.x" } } })).body,
+    ).toMatchObject({ error: { code: -32602 } });
   });
 
   it("acknowledges a notification with a bare 202", async () => {
@@ -367,6 +372,10 @@ describe("WebSocket gateway", () => {
       "/artifacts/art_x/export",
       "//artifacts//art_x/export/",
       "/conversations/conv_x/widgets/winst_x/artifacts/pick",
+      // Installing a package puts new code on the machine and grants it what its manifest asks for.
+      "/packages/install",
+      "//packages//install/",
+      "/packages/install?packageId=com.example.x",
     ];
     for (const [index, path] of decisions.entries()) {
       client.send({ type: "request", id: index, method: "POST", path, body: {} });

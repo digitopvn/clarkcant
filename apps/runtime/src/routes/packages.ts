@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import { nowInstant } from "@clarkcant/contracts";
+import { PERSON_ONLY_REFUSAL, nowInstant } from "@clarkcant/contracts";
 import {
   INSTALL_VERIFICATION,
   activeGeneration,
@@ -25,8 +25,9 @@ import {
   listPendingCapabilityApprovals,
   packageInstallDepsOf,
 } from "../application/package-install.ts";
+import { decideInstallApproval, isInstallApproval } from "../application/install-approval.ts";
 import { changePackage } from "../application/package-lifecycle.ts";
-import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
+import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
 
 /**
  * The package family: what is installed, the widget definitions a directory lists, installing one, and
@@ -44,6 +45,17 @@ export interface PackageRouteDeps {
   };
   request: GatewayRequest;
   segments: string[];
+}
+
+/**
+ * Whether the node's own relay or MCP server forwarded this call. Both already refuse a person-only route by path
+ * (`isPersonOnlyRoute`); this is the same refusal a second time, at the route, so installing a package or deciding an
+ * install stays the person's even if a relay's path check were ever bypassed. The marker is only ever a reason to
+ * refuse more: its absence proves nothing, since any caller can leave it out.
+ */
+function cameThroughMachineSurface(request: GatewayRequest): boolean {
+  const marker = request.headers[SURFACE_HEADER];
+  return marker === "mcp" || marker === "relay";
 }
 
 export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<GatewayResponse | undefined> {
@@ -182,6 +194,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
    * lives in `application/package-install.ts`.
    */
   if (segments.length === 2 && segments[0] === "packages" && segments[1] === "install" && request.method === "POST") {
+    if (cameThroughMachineSurface(request)) return fail(403, PERSON_ONLY_REFUSAL.code, PERSON_ONLY_REFUSAL.message);
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
     const packageId = typeof parsed.value.packageId === "string" ? parsed.value.packageId : "";
@@ -284,6 +297,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
     segments[3] === "decision" &&
     request.method === "POST"
   ) {
+    if (cameThroughMachineSurface(request)) return fail(403, PERSON_ONLY_REFUSAL.code, PERSON_ONLY_REFUSAL.message);
     const approvalId = segments[2];
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
@@ -294,12 +308,39 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
       return fail(400, "INVALID_SCHEMA", "a decision must carry decision: granted|denied and the digest it was shown");
     }
 
+    const decidingPrincipal = { principalId: runtime.identity.ownerPrincipalId, kind: "user" as const, nodeId: runtime.identity.nodeId };
+
+    /*
+     * An install the person's policy asked about is decided here too, and approving it installs: the same person-only
+     * route, told apart by the record `installPackage` wrote when it asked (`isInstallApproval`).
+     */
+    if (isInstallApproval({ runtime }, approvalId)) {
+      const answered = await decideInstallApproval(packageInstallDepsOf(services), {
+        approvalId,
+        decision,
+        decidingPrincipal,
+        seenOperationDigest: digest,
+      });
+      if (!answered.ok) return fail(answered.status, answered.code, answered.message);
+      if (answered.decision === "denied") {
+        return json(200, { decision: "denied", packageId: answered.packageId, version: answered.version });
+      }
+      return json(200, {
+        decision: "granted",
+        installed: { packageId: answered.packageId, version: answered.version },
+        generationId: answered.generationId,
+        state: answered.state,
+        pendingCapabilities: answered.pendingCapabilities,
+        deniedCapabilities: answered.deniedCapabilities,
+      });
+    }
+
     const decided = decideInstallCapabilityApproval(
       { runtime, conductor: services.conductor },
       {
         approvalId,
         decision,
-        decidingPrincipal: { principalId: runtime.identity.ownerPrincipalId, kind: "user", nodeId: runtime.identity.nodeId },
+        decidingPrincipal,
         seenOperationDigest: digest,
       },
     );

@@ -80,14 +80,21 @@ function boundedText(text: string, max: number): string {
  * `cc-card-title` shows: the package id and capability ref are progressive disclosure behind the panel's own
  * `<details>`, so a notification that put them in the title would leak more than the panel's default row does.
  * A task approval's title names the category in the same shared label the rule editor and the panel use
- * (`effectCategoryLabels`), never the raw `EffectCategory` wire slug.
+ * (`effectCategoryLabels`), never the raw `EffectCategory` wire slug. An install approval's is the panel's own
+ * "Install {name} {version}?" title, and its body what the listing says the package asks for.
  */
+function installTitle(item: Extract<WaitingItem, { kind: "install-approval" }>, t: (key: MessageKey) => string): string {
+  return t("inbox.install.title").replace("{name}", item.displayName).replace("{version}", item.version);
+}
+
 function waitingTitle(item: WaitingItem, t: (key: MessageKey) => string): string {
   switch (item.kind) {
     case "command-approval":
       return t("inbox.command.title");
     case "capability-approval":
       return boundedText(item.description, NOTICE_TITLE_MAX);
+    case "install-approval":
+      return boundedText(installTitle(item, t), NOTICE_TITLE_MAX);
     case "task-approval":
       return t("inbox.task.title").replace("{capability}", effectCategoryLabels(t)[item.effectCategory]);
     case "question":
@@ -104,6 +111,11 @@ function waitingTitle(item: WaitingItem, t: (key: MessageKey) => string): string
  */
 function waitingBody(item: WaitingItem, now: string, t: (key: MessageKey) => string): string | undefined {
   if (item.kind === "command-approval") return timeLeft(item.expiresAt, now, t);
+  if (item.kind === "install-approval") {
+    const asks =
+      item.permissions.length === 0 ? t("inbox.install.asksNothing") : t("inbox.install.asks").replace("{permissions}", item.permissions.join(", "));
+    return boundedText(asks, NOTICE_BODY_MAX);
+  }
   const text = item.kind === "question" ? item.prompt : item.description;
   return text.length === 0 ? undefined : boundedText(text, NOTICE_BODY_MAX);
 }

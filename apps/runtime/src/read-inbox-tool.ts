@@ -138,6 +138,12 @@ function describeWaiting(item: WaitingItem): string {
       );
     case "capability-approval":
       return `extension ${item.packageId}@${item.version} asks for capability ${item.ref}: ${oneLine(item.description, BODY_REPORTED)} (expires ${item.expiresAt})`;
+    case "install-approval":
+      // Only the person approves it, in their inbox: said here so the model points there instead of trying.
+      return (
+        `install approval for ${oneLine(item.displayName, BODY_REPORTED)} (${item.packageId}@${item.version}, ${item.riskTier})` +
+        ` - only the user can approve or deny it, in the inbox (expires ${item.expiresAt})`
+      );
     case "question":
       return (
         `question in conversation ${item.conversationId}: ${oneLine(redactSecrets(item.prompt), BODY_REPORTED)}` +

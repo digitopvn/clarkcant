@@ -125,7 +125,7 @@ describe("a dev server is accepted only on loopback in an unpackaged app", () =>
 describe("a notification carries only an inbox target to the renderer", () => {
   // The same vectors as packages/contracts/test/notice-actions.spec.ts: the shell and the page read one grammar.
   it("keeps a target that names one kind of inbox item and an id", () => {
-    for (const target of ["notice:ntf_1", "question:q_1", "command-approval:appr_1", "capability-approval:appr_2", "task-approval:task_1:appr_3", "notice:a.b-c_d@e/f"]) {
+    for (const target of ["notice:ntf_1", "question:q_1", "command-approval:appr_1", "capability-approval:appr_2", "install-approval:appr_4", "task-approval:task_1:appr_3", "notice:a.b-c_d@e/f"]) {
       expect(reviewNotificationTarget(target), target).toBe(target);
     }
   });

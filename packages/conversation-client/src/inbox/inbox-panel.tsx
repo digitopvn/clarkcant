@@ -12,6 +12,7 @@ import type {
 } from "@clarkcant/contracts";
 
 import type { GatewayClient, Timeline } from "../api.ts";
+import { riskLaneLabel } from "../blocks.tsx";
 import { Modal } from "../Modal.tsx";
 import { useLocaleState, useT } from "../i18n/locale-context.tsx";
 import {
@@ -21,6 +22,7 @@ import {
   decideFailureCategory,
   decideFailureMessageKey,
   effectCategoryLabels,
+  gatewayErrorCode,
   nextNoticeFocusTarget,
   noticeActionGroups,
   noticeConversationTarget,
@@ -375,6 +377,40 @@ export function InboxPanel({
       .catch((cause: unknown) => settleDecideFailure(cause, key));
   };
 
+  /**
+   * An install the execution policy asked about. Approving installs exactly the version shown, through the node's own
+   * install with every check it makes; denying installs nothing. What the node answered is said in the package's name,
+   * and a refusal after approving says why and that what is installed did not change.
+   */
+  const decideInstall = (item: Extract<WaitingItem, { kind: "install-approval" }>, decision: "granted" | "denied") => {
+    const key = waitingKey(item);
+    if (inFlight.current !== undefined) return;
+    inFlight.current = key;
+    setBusy({ key, decision });
+    setStatus(undefined);
+    const named = (text: string) => text.replace("{name}", item.displayName).replace("{version}", item.version);
+    void client
+      .decideInstallApproval(item, decision)
+      .then(() =>
+        settle({
+          tone: "done",
+          text: named(t(decision === "granted" ? "inbox.install.decided.granted" : "inbox.install.decided.denied")),
+        }),
+      )
+      .catch((cause: unknown) => {
+        const code = gatewayErrorCode(cause);
+        if (code === "DIGEST_MISMATCH") {
+          settle({ tone: "failed", text: named(t("inbox.install.failed.changed")) });
+          return;
+        }
+        if (code === "APPROVAL_EXPIRED" || code === "APPROVAL_ALREADY_DECIDED") {
+          settleDecideFailure(cause, key);
+          return;
+        }
+        settle({ tone: "failed", text: named(t("inbox.install.failed")).replace("{reason}", failedReason(cause)) });
+      });
+  };
+
   const decideTask = (item: Extract<WaitingItem, { kind: "task-approval" }>, decision: "granted" | "denied") => {
     const key = waitingKey(item);
     if (inFlight.current !== undefined) return;
@@ -616,7 +652,8 @@ export function InboxPanel({
    * "Update": the notice's own action on the node, which installs the version the notice names through the same install
    * as any other — so its checks and any approval it needs are the same — and takes the notice out once it is installed.
    * The same action a spoken, confirmed "install the latest update" reaches; installing is the person's own decision, so
-   * no agent or machine surface can. When the execution mode asks first, the line says so and nothing is installed; a
+   * no agent or machine surface can. When the execution mode asks first, nothing is installed yet: the install waits in
+   * "Waiting for you" above, where the person approves or denies it, and the line says where; a
    * refusal says why and leaves the installed version as it was. A permission the update asked for and did not get yet
    * is said after "updated", since the package runs without it.
    */
@@ -630,6 +667,8 @@ export function InboxPanel({
       .actOnNotice(notice.noticeId, "update", { source: "click" })
       .then((answer) => {
         if (answer.outcome === "approval-required") {
+          // The install now waits above, under "Waiting for you": the line says so, and that row is marked.
+          if (answer.approvalId !== undefined) setHighlighted(`install-approval:${answer.approvalId}`);
           finish({ tone: "done", text: t("inbox.updateNeedsApproval") }, { kind: "status" });
           return;
         }
@@ -1134,7 +1173,14 @@ export function InboxPanel({
                         key={key}
                         ref={targetRow(key)}
                         tabIndex={-1}
-                        aria-label={t("inbox.row.waitingAria").replace("{title}", item.kind === "question" ? item.prompt : item.description)}
+                        aria-label={t("inbox.row.waitingAria").replace(
+                          "{title}",
+                          item.kind === "question"
+                            ? item.prompt
+                            : item.kind === "install-approval"
+                              ? t("inbox.install.title").replace("{name}", item.displayName).replace("{version}", item.version)
+                              : item.description,
+                        )}
                         className="cc-card cc-inbox-item"
                         data-inbox-waiting-item={item.kind}
                         data-inbox-waiting-key={key}
@@ -1215,6 +1261,53 @@ export function InboxPanel({
                                   onClick={() => decideCapability(item, "denied")}
                                 >
                                   {t("inbox.capability.deny")}
+                                </button>
+                              </div>
+                            </>
+                          )}
+                          {item.kind === "install-approval" && (
+                            <>
+                              <span className="cc-card-title">
+                                {t("inbox.install.title").replace("{name}", item.displayName).replace("{version}", item.version)}
+                              </span>
+                              {/* What the person decides on, in the listing's own words: what it asks for and where it runs. */}
+                              <p style={{ margin: 0 }} data-inbox-install-permissions="true">
+                                {item.permissions.length === 0
+                                  ? t("inbox.install.asksNothing")
+                                  : t("inbox.install.asks").replace("{permissions}", item.permissions.join(", "))}
+                              </p>
+                              <p style={{ margin: 0 }}>{t("inbox.install.lane").replace("{lane}", riskLaneLabel(t, item.riskTier))}</p>
+                              <p className="cc-freshness" style={{ margin: 0 }}>
+                                {t("inbox.install.note")}
+                                {left === undefined ? "" : ` · ${left}`}
+                              </p>
+                              <details className="cc-inbox-capability-details">
+                                <summary>{t("inbox.capability.details")}</summary>
+                                <p className="cc-freshness" style={{ margin: 0 }}>
+                                  {item.packageId}
+                                </p>
+                                <p className="cc-freshness" style={{ margin: 0 }}>
+                                  {t("inbox.capability.version").replace("{version}", item.version)}
+                                </p>
+                              </details>
+                              <div className="cc-card-actions">
+                                <button
+                                  type="button"
+                                  className="cc-action"
+                                  data-inbox-install-approve={item.approvalId}
+                                  disabled={busy !== undefined}
+                                  onClick={() => decideInstall(item, "granted")}
+                                >
+                                  {running ? t("inbox.install.installing") : t("inbox.install.approve")}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="cc-action"
+                                  data-inbox-deny={item.approvalId}
+                                  disabled={busy !== undefined}
+                                  onClick={() => decideInstall(item, "denied")}
+                                >
+                                  {denying ? t("inbox.command.denying") : t("inbox.install.deny")}
                                 </button>
                               </div>
                             </>
