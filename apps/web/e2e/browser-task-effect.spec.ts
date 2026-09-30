@@ -83,6 +83,16 @@ test("a submit the page never answers is held as unknown, heard in the inbox, an
   const effectId = notice.actions?.find((action) => action.id === "reconcile-failed")?.effectId;
   if (effectId === undefined) throw new Error("the notice names no effect to answer for");
 
+  // The press is in the activity log as data, so the Control tab words it in whichever language the person reads, and
+  // its fixed words are no one language's sentence.
+  const activity = await page.request.get(`${GATEWAY}/activity`, { headers: { authorization: `Bearer ${token()}` } });
+  expect(activity.ok()).toBe(true);
+  const pressed = ((await activity.json()) as { effects: Array<{ description: string; action?: { verb: string; label: string; page: string } }> }).effects.find(
+    (entry) => entry.action?.label === "Send application",
+  );
+  expect(pressed?.action).toMatchObject({ verb: "click", label: "Send application", page: expect.stringMatching(/^127\.0\.0\.1:\d+\//u) });
+  expect(pressed?.description).not.toMatch(/[À-ỹ]/u);
+
   // The answer is a press in the inbox, the person's own.
   await composer.fill("mở hộp thư");
   await composer.press("Enter");

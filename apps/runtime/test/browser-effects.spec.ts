@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { type ActResult, type BrowserDriver, createDriver } from "@clarkcant/browser-playwright";
 import { type AutomationAction, type Instant, type Principal, inboxResponseSchema, observationIdSchema } from "@clarkcant/contracts";
-import { advanceResolving, applyTaskEvent, createTask } from "@clarkcant/core";
+import { advanceResolving, applyTaskEvent, browserPress, createTask } from "@clarkcant/core";
 import { allRows, effectsForTask, getTask } from "@clarkcant/storage";
 
 import { type BrowserActor, actWithLedger } from "../src/browser-effects.ts";
@@ -183,13 +183,13 @@ describe("a consequential browser action in the ledger", () => {
 
     const result = await actWithLedger({ services, taskId }, lost, click(false, "ref_save"), {
       approvalGranted: false,
-      describe: "bấm “Save” trên shop.example/cart",
+      press: browserPress("Save", "shop.example/cart"),
     });
 
     expect(result.status).toBe("unknown");
     const [effect] = effectsForTask(services.runtime.db, taskId);
     expect(effect).toMatchObject({ state: "unknown", category: "external-write", capabilityRef: "browser.playwright@1" });
-    expect(effect?.intent).toBe("bấm “Save” trên shop.example/cart — tgt_form");
+    expect(effect?.intent).toBe("browser click “Save” on shop.example/cart — tgt_form");
     expect(getTask(services.runtime.db, taskId)?.state).toBe("uncertain");
     expect(taskNotices(taskId)).toEqual([{ dedup_key: `worker:${taskId}` }]);
   });

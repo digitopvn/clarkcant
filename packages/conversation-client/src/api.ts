@@ -66,6 +66,13 @@ import {
   terminalSocketUrl,
 } from "./terminal-socket.ts";
 
+/** A press on a page the node recorded in its activity log: what was pressed, and the page's host and path. */
+export interface RecentEffectAction {
+  verb: "click";
+  label: string;
+  page: string;
+}
+
 export interface GatewayClientOptions {
   baseUrl: string;
   token: string;
@@ -999,7 +1006,10 @@ export class GatewayClient {
       kind: string;
       mode: string;
       category: string;
+      /** Fixed words, for an effect the client has no wording of its own for. */
       description: string;
+      /** A press on a page, as data, which the client words in the person's language. */
+      action?: RecentEffectAction;
       operationDigest: string;
       because: string;
     }[];

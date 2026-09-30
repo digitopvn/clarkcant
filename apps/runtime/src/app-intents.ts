@@ -331,7 +331,7 @@ function answerAboutEffect(
         : `Có ${waiting.length} việc đang chờ bạn xác nhận kết quả. Bạn mở hộp thư và trả lời đúng việc bạn đã kiểm tra, để tôi không ghi nhầm.`,
     };
   }
-  const name = quotedEffectIntent(only);
+  const name = quotedEffectIntent(only, locale);
   const confirmed = kind === "effect.confirmed";
   if (input.request.source === "voice") {
     // Asked back and answered with a spoken yes, through the same token a spoken quit uses (`CONFIRMATION_REQUIRED_KINDS`):

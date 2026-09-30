@@ -12,7 +12,15 @@ import {
   type ExecutionPolicyConfig,
   observationIdSchema,
 } from "@clarkcant/contracts";
-import { type ExecutionIntent, type PolicyDecision, decideExecution, recordEffectExecution } from "@clarkcant/core";
+import {
+  type BrowserPress,
+  type ExecutionIntent,
+  type PolicyDecision,
+  browserPress,
+  decideExecution,
+  describeBrowserPress,
+  recordEffectExecution,
+} from "@clarkcant/core";
 
 import { BROWSER_CAPABILITY, actWithLedger, browserDigest, type BrowserEffectLedger } from "./browser-effects.ts";
 
@@ -492,7 +500,7 @@ export function createTaskBrowserBroker(input: TaskBrowserInput): TaskBrowserBro
   const act = async (
     current: TaskBrowserDriver,
     action: AutomationAction,
-    options: { approvalGranted: boolean; describe?: string },
+    options: { approvalGranted: boolean; press?: BrowserPress },
   ): Promise<ActResult | undefined> => {
     if (closed) return undefined;
     return actWithLedger(input.ledger, current, action, options);
@@ -605,7 +613,8 @@ export function createTaskBrowserBroker(input: TaskBrowserInput): TaskBrowserBro
         // The model may say a click is consequential; it can never say a submit control is not.
         const consequential = element.submits || request.consequential === true;
         const action = planned(current, latest, "click", ref, {}, consequential);
-        const describe = `bấm “${oneLine(element.name, 60)}” trên ${pageLabel(latest.url)}`;
+        // Kept as data rather than as one language's sentence: each surface that shows it words it then.
+        const press = browserPress(element.name, pageLabel(latest.url));
 
         /*
          * The policy is asked again for every click, and a deny stops any of them: a click nobody marked consequential
@@ -647,12 +656,13 @@ export function createTaskBrowserBroker(input: TaskBrowserInput): TaskBrowserBro
             category: "external-write",
             operationDigest,
             conversationId: input.conversationId,
-            description: `browser ${describe} (task ${taskId})`,
+            description: `browser ${describeBrowserPress(press, "en")} (task ${taskId})`,
+            action: press,
           });
         };
 
         if (!consequential) {
-          const clicked = await act(current, action, { approvalGranted: false, describe });
+          const clicked = await act(current, action, { approvalGranted: false, press });
           if (clicked === undefined) return stoppedReply();
           // A click nobody marked consequential that sent something is an effect all the same, and is audited as one.
           if (clicked.sentEffect === true) audit();
@@ -662,7 +672,7 @@ export function createTaskBrowserBroker(input: TaskBrowserInput): TaskBrowserBro
         if (closed) return stoppedReply();
         audit();
         // Approved by the policy decision above, never by the model: that is what the driver's approval flag means.
-        const clicked = await act(current, action, { approvalGranted: true, describe });
+        const clicked = await act(current, action, { approvalGranted: true, press });
         if (clicked === undefined) return stoppedReply();
         if (clicked.status === "applied" && clicked.sentEffect === false) {
           return {

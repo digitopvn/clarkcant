@@ -45,6 +45,7 @@ import {
 } from "@clarkcant/contracts";
 import { appendEvent, type Database } from "@clarkcant/storage";
 
+import type { BrowserPress } from "./browser-press.ts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, migrateExecutionPolicy } from "./execution-policy-migration.ts";
 import { readRegisteredPreference } from "./preference-registry.ts";
 import { deletePreference, type PreferenceDeps } from "./preferences.ts";
@@ -481,8 +482,10 @@ export function recordEffectExecution(
     category: EffectCategory;
     operationDigest: string;
     conversationId?: string;
-    /** What ran, in the words the interface shows. Never a credential. */
+    /** What ran, in fixed words any surface can show when it cannot word it itself. Never a credential. */
     description: string;
+    /** A press on a page, as data, so each surface can say it in the person's language. */
+    action?: BrowserPress;
   },
 ): number {
   return appendEvent(deps.db, {
@@ -497,6 +500,7 @@ export function recordEffectExecution(
       category: input.category,
       operationDigest: input.operationDigest,
       description: input.description,
+      ...(input.action === undefined ? {} : { action: input.action }),
       because: input.decision.reason,
       approvedBy: "policy",
     },

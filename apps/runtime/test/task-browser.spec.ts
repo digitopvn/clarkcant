@@ -13,7 +13,7 @@ import {
   type Principal,
   observationIdSchema,
 } from "@clarkcant/contracts";
-import { advanceResolving, applyTaskEvent, createTask } from "@clarkcant/core";
+import { advanceResolving, applyTaskEvent, browserPressOfIntent, createTask } from "@clarkcant/core";
 import { allRows, effectsForTask, getTask } from "@clarkcant/storage";
 
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -324,9 +324,13 @@ describe("a click that submits, in the task's ledger", () => {
     expect(click?.action.consequential).toBe(true);
     const [effect] = effectsForTask(services.runtime.db, taskId);
     expect(effect).toMatchObject({ state: "confirmed", capabilityRef: "browser.playwright@1", category: "external-write" });
-    // Named for the person: the page by host and path, never its query.
-    expect(effect?.intent).toBe("bấm “Send application” trên shop.example/form — tgt_fake");
-    expect(executedAudits()).toHaveLength(1);
+    // Recorded as data in one fixed form: the page by host and path, never its query, and no one language's sentence.
+    expect(effect?.intent).toBe("browser click “Send application” on shop.example/form — tgt_fake");
+    expect(browserPressOfIntent(effect?.intent ?? "")).toEqual({ verb: "click", label: "Send application", page: "shop.example/form" });
+    const audits = executedAudits().map((audit) => JSON.parse(audit.document) as { description?: string; action?: unknown });
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.action).toEqual({ verb: "click", label: "Send application", page: "shop.example/form" });
+    expect(audits[0]?.description).toBe(`browser click “Send application” on shop.example/form (task ${taskId})`);
     expect(getTask(services.runtime.db, taskId)?.state).toBe("running");
   });
 
@@ -427,9 +431,10 @@ describe("a click that submits, in the task's ledger", () => {
     await ask({ action: "open", url: "http://shop.example/form" });
     await ask({ action: "click", ref: "el_more" });
 
-    const audits = executedAudits().map((audit) => JSON.parse(audit.document) as { description?: string });
+    const audits = executedAudits().map((audit) => JSON.parse(audit.document) as { description?: string; action?: unknown });
     expect(audits).toHaveLength(1);
-    expect(audits[0]?.description).toContain("bấm “Show more” trên shop.example/form");
+    expect(audits[0]?.action).toEqual({ verb: "click", label: "Show more", page: "shop.example/form" });
+    expect(audits[0]?.description).toContain("click “Show more” on shop.example/form");
     expect(effectsForTask(services.runtime.db, taskId).map((effect) => effect.state)).toEqual(["confirmed"]);
   });
 

@@ -12,6 +12,7 @@
 
 export * from "./task-service.ts";
 export * from "./effect-reconciliation.ts";
+export * from "./browser-press.ts";
 export * from "./control-sessions.ts";
 export * from "./package-sources.ts";
 export * from "./package-fetch.ts";

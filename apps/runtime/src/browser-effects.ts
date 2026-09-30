@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { ActResult } from "@clarkcant/browser-playwright";
 import { type AutomationAction, type CapabilityRef, type EffectRecord, advanceEffect } from "@clarkcant/contracts";
-import { markEffectUnknown, prepareEffect } from "@clarkcant/core";
+import { type BrowserPress, browserPressIntent, markEffectUnknown, prepareEffect } from "@clarkcant/core";
 import { effectsForTask, transaction, upsertEffect } from "@clarkcant/storage";
 
 import { unknownEffectsNotice } from "./effect-notices.ts";
@@ -63,7 +63,7 @@ function refused(message: string): ActResult {
   return { status: "refused", verification: "not-applicable", message, requiresReobservation: false };
 }
 
-function openBrowserEffect(ledger: BrowserEffectLedger, action: AutomationAction, described?: string): EffectRecord {
+function openBrowserEffect(ledger: BrowserEffectLedger, action: AutomationAction, press?: BrowserPress): EffectRecord {
   const deps = ledger.services.conductor;
   return transaction(deps.db, () => {
     const prepared = prepareEffect(deps, {
@@ -72,7 +72,7 @@ function openBrowserEffect(ledger: BrowserEffectLedger, action: AutomationAction
       executorNodeId: deps.nodeId,
       category: "external-write",
       capabilityRef: BROWSER_CAPABILITY,
-      intent: described === undefined ? browserIntent(action) : `${described} — ${action.targetId}`.slice(0, 2000),
+      intent: press === undefined ? browserIntent(action) : browserPressIntent(press, action.targetId),
       operationDigest: browserDigest(action),
       externalSupportsDedup: false,
     });
@@ -130,8 +130,8 @@ export async function actWithLedger(
   action: AutomationAction,
   options: {
     approvalGranted: boolean;
-    /** What the action is in the words a person recognises — "browser click “Send” on example.com/form". */
-    describe?: string;
+    /** The press as data — what was pressed, on which page — which each notice and answer words in its own language. */
+    press?: BrowserPress;
   },
 ): Promise<ActResult> {
   const act = { approvalGranted: options.approvalGranted };
@@ -153,7 +153,7 @@ export async function actWithLedger(
       // Nobody classified it, and it sent something anyway: the ledger still has to hold it, settled on what came back.
       // The click already happened, so a ledger that cannot be written is said, never turned into the click's result.
       try {
-        settleBrowserEffect(ledger, openBrowserEffect(ledger, action, options.describe), result);
+        settleBrowserEffect(ledger, openBrowserEffect(ledger, action, options.press), result);
       } catch (cause) {
         process.stderr.write(
           `effect ledger: could not record a browser action of task ${ledger.taskId} after the fact (${cause instanceof Error ? cause.message : String(cause)})\n`,
@@ -163,7 +163,7 @@ export async function actWithLedger(
     return result;
   }
 
-  const effect = openBrowserEffect(ledger, action, options.describe);
+  const effect = openBrowserEffect(ledger, action, options.press);
   let result: ActResult | undefined;
   try {
     result = await driver.act(action, act);

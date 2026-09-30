@@ -168,7 +168,7 @@ describe("an effect whose outcome is unknown", () => {
       effects: Array.from({ length: 100 }, (_, index) => ({
         taskId: "task_browser",
         capabilityRef: "browser.playwright@1",
-        intent: `bấm “${"Gửi đơn ".repeat(40)}” trên shop.example/checkout — tgt_task-${String(index)}`,
+        intent: `browser click “${"Gửi đơn ".repeat(40)}” on shop.example/checkout — tgt_task-${String(index)}`,
         reconciliationEvidence: "click on el_1 sent 1 request(s) that had no answer after 5000 ms",
       })),
       task: { conversationId: "conv_browser", goal: "đặt hàng ".repeat(100) },
@@ -192,16 +192,18 @@ describe("an effect whose outcome is unknown", () => {
         {
           taskId: "task_browser",
           capabilityRef: "browser.playwright@1",
-          intent: "bấm “Send” trên shop.example/checkout — tgt_task-1",
+          intent: "browser click “Send” on shop.example/checkout — tgt_task-1",
         },
       ],
       task: { conversationId: "conv_browser", goal: "Đặt hàng\n\nBắt đầu từ: https://shop.example/checkout" },
       at: AT,
     });
-    // Vietnamese throughout, the request without its addresses line.
+    // The press is recorded as data and worded in the notice's language: Vietnamese throughout, the request without
+    // its addresses line.
     expect(short?.body).toContain(
       "Thao tác bấm “Send” trên shop.example/checkout cho việc “Đặt hàng” đã được gửi đi nhưng trang không trả lời",
     );
+    expect(short?.body).not.toContain("click");
   });
 
   it("gives each task its own notice, and counts a task's other unknown effects in it", () => {

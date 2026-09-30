@@ -1,4 +1,5 @@
 import type { EffectRecord, Instant } from "@clarkcant/contracts";
+import { browserPressOfIntent, describeBrowserPress } from "@clarkcant/core";
 import { DISMISSED_RETENTION_MS, type Database, effectsForTask, getTask, unknownEffectsSince } from "@clarkcant/storage";
 
 import { type NodeNotice, tryRecordNodeNotice, workerNoticeKey } from "./notices.ts";
@@ -67,10 +68,11 @@ export function unknownEffectNotice(input: {
 }): NodeNotice | undefined {
   const [first] = input.effects;
   if (first === undefined) return undefined;
-  // A submission in the browser is checked on the site it went to, not on a remote a command pushed to. The browser's
-  // intent names the page itself, so the target it ran in is left off the quote.
+  // A submission in the browser is checked on the site it went to, not on a remote a command pushed to. A press is
+  // recorded as data and worded here, in the notice's own language like the rest of it; the target it ran in is left off.
   const browser = first.capabilityRef?.startsWith(BROWSER_CAPABILITY_PREFIX) === true;
-  const intent = browser ? (first.intent.split(" — ")[0] ?? first.intent) : first.intent;
+  const press = browser ? browserPressOfIntent(first.intent) : undefined;
+  const intent = press !== undefined ? describeBrowserPress(press, "vi") : browser ? (first.intent.split(" — ")[0] ?? first.intent) : first.intent;
   // A browser task's goal ends with the addresses it starts at; the request before them is what the person asked for.
   const goal = input.task === undefined ? undefined : browser ? (input.task.goal.split("\n\n")[0] ?? input.task.goal) : input.task.goal;
   const forTask = goal === undefined ? "" : ` cho việc “${quote(goal)}”`;
@@ -91,7 +93,7 @@ export function unknownEffectNotice(input: {
     category: "alert",
     severity: "warning",
     title: "Chưa rõ một thao tác đã có hiệu lực hay chưa",
-    body: browser
+    body: press !== undefined
       ? browserBody(intent, `${forTask} ${what}${others}, nên chưa rõ nó đã có hiệu lực hay chưa. ${next}`)
       : `“${quote(intent)}”${forTask} ${what}${others}, nên chưa rõ nó đã có hiệu lực hay chưa. ${next}`,
     ...(input.task === undefined ? {} : { conversationId: input.task.conversationId }),
@@ -106,8 +108,8 @@ export function unknownEffectNotice(input: {
 }
 
 /**
- * A browser action is already a phrase with its own quoted button name (`bấm “Gửi” trên shop.example/apply`), so it is
- * said as the action it was rather than quoted again, and given as much of the body as the rest leaves.
+ * A press is worded as a phrase with its own quoted button name (`bấm “Gửi” trên shop.example/apply`), so it is said as
+ * the action it was rather than quoted again, and given as much of the body as the rest leaves.
  */
 function browserBody(intent: string, rest: string): string {
   const room = Math.max(40, BODY_MAX - rest.length - "Thao tác ".length);

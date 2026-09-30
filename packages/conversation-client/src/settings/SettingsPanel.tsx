@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 
 import { Modal } from "../Modal.tsx";
-import type { GatewayClient } from "../api.ts";
+import type { GatewayClient, RecentEffectAction } from "../api.ts";
 import type { ResolvedColorScheme } from "@clarkcant/contracts";
 import type { ThemeChoice } from "../theme.ts";
 import type { AppearanceState } from "../use-appearance.ts";
@@ -82,6 +82,7 @@ interface RecentEffect {
   mode: string;
   category: string;
   description: string;
+  action?: RecentEffectAction;
   operationDigest: string;
   because: string;
 }
