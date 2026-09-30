@@ -65,6 +65,39 @@ test("a package the directory does not list is refused by name, in place", async
   await expect(refused).not.toBeEmpty();
 });
 
+for (const [width, scheme] of [
+  [1280, "dark"],
+  [390, "light"],
+  [390, "dark"],
+] as const) {
+  test(`a result's source, risk lane and digest read apart at ${String(width)} px, ${scheme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: scheme });
+    await openSearch(page);
+
+    const meta = page.locator("[data-marketplace-package='com.acme.dashboard'] .cc-marketplace-meta");
+    await meta.scrollIntoViewIfNeeded();
+    const parts = await meta.locator(":scope > span").evaluateAll((spans) =>
+      spans.map((span) => {
+        const box = span.getBoundingClientRect();
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+      }),
+    );
+    expect(parts).toHaveLength(3);
+    // Each part either sits after the one before it with room between them, or starts on a line below it.
+    for (let index = 1; index < parts.length; index += 1) {
+      const before = parts[index - 1];
+      const part = parts[index];
+      if (before === undefined || part === undefined) throw new Error("unreachable");
+      const sameLine = part.top < before.bottom;
+      if (sameLine) expect(part.left - before.right).toBeGreaterThanOrEqual(8);
+      else expect(part.top).toBeGreaterThanOrEqual(before.bottom);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+    await meta.locator("xpath=ancestor::li[1]").screenshot({ path: testInfo.outputPath(`marketplace-meta-${String(width)}-${scheme}.png`) });
+  });
+}
+
 test("only the listing that was pressed reports an outcome", async ({ page }) => {
   await openSearch(page);
 
