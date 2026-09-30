@@ -45,7 +45,15 @@ import {
   TIMELINE_PAGE_SIZES,
   TIMELINE_SELECT_OPERATION,
   TIMELINE_TIMEZONE_PATTERN,
+  MAX_TREE_DEPTH,
+  MAX_TREE_LABEL,
+  MAX_TREE_NODES,
+  MAX_TREE_SECONDARY,
+  MAX_TREE_ID,
+  TREE_ID,
+  TREE_ICONS,
   timelineProblems,
+  treeProblems,
   MAX_CHART_POINTS,
   MAX_CHART_SERIES,
   MAX_FIELD_NAME,
@@ -796,6 +804,61 @@ export const LIST: WidgetDefinition = {
   datasetRefs: [],
 };
 
+function treeNodePropsSchema(depth: number): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: MAX_TREE_ID },
+      label: { type: "string", minLength: 1, maxLength: MAX_TREE_LABEL, pattern: ONE_LINE_REQUIRED_PATTERN },
+      secondary: { type: "string", maxLength: MAX_TREE_SECONDARY, pattern: ONE_LINE_PATTERN },
+      icon: { type: "string", enum: TREE_ICONS },
+      children: {
+        type: "array",
+        maxItems: MAX_TREE_NODES,
+        items: depth >= MAX_TREE_DEPTH ? false : treeNodePropsSchema(depth + 1),
+      },
+    },
+    required: ["id", "label"],
+  };
+}
+
+/** A bounded, host-rendered hierarchy whose selection and expansion are durable view state. */
+export const TREE: WidgetDefinition = {
+  id: TREE_ID,
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: { type: "string", maxLength: MAX_TREE_LABEL, pattern: ONE_LINE_PATTERN },
+      nodes: { type: "array", maxItems: MAX_TREE_NODES, items: treeNodePropsSchema(1) },
+      initiallyExpanded: { type: "array", maxItems: MAX_TREE_NODES, items: { type: "string", minLength: 1, maxLength: MAX_TREE_ID } },
+    },
+    required: ["nodes"],
+  },
+  eventSchemas: {
+    "tree.select": { type: "object", properties: { selectedId: { type: "string", maxLength: MAX_TREE_ID } }, required: ["selectedId"] },
+    "tree.toggle": { type: "object", properties: { nodeId: { type: "string", maxLength: MAX_TREE_ID }, expanded: { type: "boolean" } }, required: ["nodeId", "expanded"] },
+  },
+  stateSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      selectedId: { type: "string", maxLength: MAX_TREE_ID },
+      expandedIds: { type: "array", maxItems: MAX_TREE_NODES, items: { type: "string", maxLength: MAX_TREE_ID } },
+    },
+  },
+  stateVersion: 1,
+  semanticDescription: "A bounded, keyboard-accessible hierarchy whose expanded and selected node are preserved",
+  requestedCapabilities: [],
+  sizing: { compact: true, expanded: true, minHeight: 160 },
+  textFallback: "A hierarchy appears as an indented outline when the tree cannot be drawn.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
 /*
  * Status cards: a status, the progress of one thing, a few labelled facts.
  *
@@ -1319,6 +1382,7 @@ export const WIDGETS = [
   SEARCH,
   FORM,
   LIST,
+  TREE,
   STATUS,
   PROGRESS,
   DETAILS,
@@ -1377,6 +1441,7 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   // A timeline reads nothing from the node; a layout places it in its own region, where its selection can feed the
   // surface's state.
   "canvas.timeline@1": "timeline",
+  [TREE.id]: "hierarchy",
 };
 
 /**
@@ -1411,6 +1476,7 @@ export function primitivePropsProblems(definitionId: string, props: Readonly<Rec
   const chart = XY_CHART_KIND[definitionId];
   if (chart !== undefined) return xyChartProblems(chart, props);
   if (definitionId === TIMELINE.id) return timelineProblems(props);
+  if (definitionId === TREE.id) return treeProblems(props);
   return [];
 }
 export function familyOf(definitionId: string): string {

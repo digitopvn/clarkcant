@@ -1,5 +1,6 @@
 import {
   type ReactElement,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   cloneElement,
   isValidElement,
@@ -76,6 +77,12 @@ import {
   timelinePageCount,
   timelinePageOf,
   timelineRange,
+  TREE_ID,
+  TREE_SELECT_OPERATION,
+  TREE_TOGGLE_OPERATION,
+  type TreeNode,
+  readTree,
+  readTreeState,
   XY_CHART_KIND,
   XY_CHART_VIEW_OPERATION,
   type XyChart,
@@ -95,6 +102,7 @@ import type { ResolvedDataset } from "./api.ts";
 import { artifactReason } from "./artifact-messages.ts";
 import { formatFileSize } from "./attachments.ts";
 import { calendarWeek, eventSegment, moveDay, moveInList, nowIndex } from "./calendar-layout.ts";
+import { treeFocusTarget, treeTypeaheadTarget, visibleTreeNodes, type VisibleTreeNode } from "./tree-layout.ts";
 import type { SaveOutcome } from "./download.ts";
 import {
   CHART_HEIGHT,
@@ -3799,6 +3807,158 @@ function ListView({ props, state, onAction, onStateChange }: RendererProps): Rea
   );
 }
 
+const TREE_ICON_GLYPHS: Record<string, string> = {
+  branch: "◇",
+  document: "▤",
+  folder: "▱",
+  group: "◫",
+  person: "◉",
+  project: "⌘",
+  task: "□",
+};
+
+function TreeWidgetView({ props, state, onAction, onStateChange }: RendererProps): ReactElement {
+  const t = useT();
+  const locale = useLocale();
+  const tree = useMemo(() => readTree(props), [props]);
+  const stored = useMemo(() => (tree === undefined ? undefined : readTreeState(state, tree)), [state, tree]);
+  const [treeState, setTreeState] = useState(stored);
+  const [focusedId, setFocusedId] = useState(() => tree?.nodes[0]?.id ?? "");
+  const rows = useRef(new Map<string, HTMLDivElement>());
+  const typeahead = useRef("");
+  const typeaheadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => setTreeState(stored), [stored]);
+  useEffect(() => {
+    if (tree !== undefined && !visibleTreeNodes(tree.nodes, new Set(stored?.expandedIds ?? [])).some((row) => row.node.id === focusedId)) {
+      setFocusedId(visibleTreeNodes(tree.nodes, new Set(stored?.expandedIds ?? []))[0]?.node.id ?? "");
+    }
+  }, [focusedId, stored, tree]);
+  useEffect(() => () => clearTimeout(typeaheadTimer.current), []);
+
+  const title = typeof props.title === "string" && props.title !== "" ? props.title : t("widgets.tree.title");
+  if (tree === undefined || treeState === undefined) {
+    return (
+      <Frame title={title} dataset={undefined} role="group">
+        <p className="cc-freshness" data-tree-state="error" role="status" style={{ margin: 0 }}>{t("widgets.tree.unreadable")}</p>
+      </Frame>
+    );
+  }
+  const expanded = new Set(treeState.expandedIds);
+  const visible = visibleTreeNodes(tree.nodes, expanded);
+  const helpId = useId();
+  const focusRow = (id: string): void => {
+    setFocusedId(id);
+    rows.current.get(id)?.focus();
+  };
+  const updateState = (next: typeof treeState): void => {
+    setTreeState(next);
+    onStateChange?.({ ...next });
+  };
+  const selectNode = (id: string): void => {
+    updateState({ ...treeState, selectedId: id });
+    onAction?.(TREE_SELECT_OPERATION, { selectedId: id });
+  };
+  const setExpanded = (id: string, open: boolean): void => {
+    const nextIds = open ? [...new Set([...treeState.expandedIds, id])] : treeState.expandedIds.filter((entry) => entry !== id);
+    updateState({ ...treeState, expandedIds: nextIds });
+    onAction?.(TREE_TOGGLE_OPERATION, { nodeId: id, expanded: open });
+  };
+  const keyDown = (event: ReactKeyboardEvent<HTMLDivElement>, row: VisibleTreeNode): void => {
+    const child = row.node.children?.[0];
+    let target = treeFocusTarget(event.key, visible, row.node.id);
+    switch (event.key) {
+      case "ArrowRight":
+        if ((row.node.children?.length ?? 0) > 0 && !row.expanded) setExpanded(row.node.id, true);
+        else if (row.expanded) target = child?.id;
+        break;
+      case "ArrowLeft":
+        if (row.expanded) setExpanded(row.node.id, false);
+        else target = row.parentId;
+        break;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        selectNode(row.node.id);
+        return;
+      default:
+        if (event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey) {
+          event.preventDefault();
+          typeahead.current += event.key.toLocaleLowerCase(locale);
+          if ([...typeahead.current].every((character) => character === typeahead.current[0])) typeahead.current = event.key.toLocaleLowerCase(locale);
+          clearTimeout(typeaheadTimer.current);
+          typeaheadTimer.current = setTimeout(() => { typeahead.current = ""; }, 700);
+          target = treeTypeaheadTarget(visible, row.node.id, typeahead.current, locale);
+        }
+        break;
+    }
+    if (target !== undefined) {
+      event.preventDefault();
+      focusRow(target);
+    }
+  };
+  const renderNodes = (nodes: readonly TreeNode[], level: number, parentId?: string): ReactNode => (
+    <ul className={level === 1 ? "cc-tree-root" : "cc-tree-group"} role={level === 1 ? "tree" : "group"} aria-label={level === 1 ? title : undefined}>
+      {nodes.map((node, index) => {
+        const hasChildren = (node.children?.length ?? 0) > 0;
+        const isExpanded = expanded.has(node.id);
+        const isSelected = treeState.selectedId === node.id;
+        const current: VisibleTreeNode = { node, level, position: index + 1, setSize: nodes.length, ...(parentId === undefined ? {} : { parentId }), expanded: isExpanded };
+        const tabStop = focusedId === node.id || (focusedId === "" && visible[0]?.node.id === node.id);
+        return (
+          <li key={node.id} className="cc-tree-item" role="none" data-tree-item={node.id}>
+            <div
+              ref={(element) => { if (element === null) rows.current.delete(node.id); else rows.current.set(node.id, element); }}
+              className="cc-tree-row"
+              role="treeitem"
+              tabIndex={tabStop ? 0 : -1}
+              aria-level={level}
+              aria-posinset={index + 1}
+              aria-setsize={nodes.length}
+              aria-expanded={hasChildren ? isExpanded : undefined}
+              aria-selected={isSelected}
+              aria-describedby={helpId}
+              data-tree-row={node.id}
+              data-selected={isSelected ? "true" : undefined}
+              onFocus={() => setFocusedId(node.id)}
+              onClick={(event) => { if ((event.target as HTMLElement).closest("[data-tree-disclosure]") !== null) return; selectNode(node.id); }}
+              onKeyDown={(event) => keyDown(event, current)}
+            >
+              {hasChildren ? (
+                <span
+                  className="cc-tree-disclosure"
+                  aria-hidden="true"
+                  data-tree-disclosure="true"
+                  onClick={(event) => { event.stopPropagation(); setExpanded(node.id, !isExpanded); }}
+                >
+                  {isExpanded ? "▾" : "▸"}
+                </span>
+              ) : <span className="cc-tree-disclosure-spacer" aria-hidden="true" />}
+              {node.icon !== undefined && <span className="cc-tree-icon" aria-hidden="true">{TREE_ICON_GLYPHS[node.icon] ?? "◇"}</span>}
+              <span className="cc-tree-label">{node.label}</span>
+              {node.secondary !== undefined && node.secondary !== "" && <span className="cc-tree-secondary">{node.secondary}</span>}
+            </div>
+            {hasChildren && isExpanded && renderNodes(node.children ?? [], level + 1, node.id)}
+          </li>
+        );
+      })}
+    </ul>
+  );
+
+  return (
+    <Frame title={title} dataset={undefined} role="group">
+      {tree.nodes.length === 0 ? (
+        <p className="cc-freshness" data-tree-state="empty" role="status" style={{ margin: 0 }}>{t("widgets.tree.empty")}</p>
+      ) : (
+        <>
+          <span id={helpId} className="cc-sr-only">{t("widgets.tree.keyboardHelp")}</span>
+          {renderNodes(tree.nodes, 1)}
+        </>
+      )}
+    </Frame>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Status, progress and details cards
  * ------------------------------------------------------------------ */
@@ -4356,6 +4516,7 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.search@1": SearchBox,
   "canvas.form@1": FormView,
   "canvas.list@1": ListView,
+  [TREE_ID]: TreeWidgetView,
   "canvas.status@1": StatusCardView,
   "canvas.progress@1": ProgressCardView,
   "canvas.details@1": DetailsCardView,

@@ -1127,6 +1127,34 @@ placement, paging, reduced motion, the library, and 390 px with touch in the lig
 
 ---
 
+## 8.9 Tree and hierarchy
+
+`canvas.tree@1` is a host-rendered outline for bounded, already-known data. A tree holds at most 200 nodes and 12
+levels. IDs are at most 120 characters, labels 200, and secondary text 300. Placement refuses repeated node or
+expanded IDs, references to missing expanded nodes, cycles, over-depth or over-count trees, unknown icons, extra
+fields, and hidden characters. Text is rendered as text; the widget does not load children or edit the source.
+
+`initiallyExpanded` names branches open at placement. `tree.select` carries `{ selectedId }`; `tree.toggle` carries
+`{ nodeId, expanded }`. The node checks and persists both operations in widget state. A restored state ignores IDs
+that no longer occur in the current props. The renderer provides the WAI-ARIA tree roles and level/position/set-size,
+selected and expanded state; Arrow keys move and open or close branches, Home/End move to the ends, type-ahead finds a
+label, and Enter/Space selects. Focus remains visible. Selection and expansion also survive pin and conversation
+restoration.
+
+The semantic document reports bounded node count and depth, expanded count, and the selected node and its path. The
+text fallback is an indented outline. The tree has no motion of its own, follows both themes and reduced-motion
+preferences, and wraps within narrow viewports.
+
+Tests: [tree-view.spec.ts](../packages/contracts/test/tree-view.spec.ts) checks bounds, malformed trees, state and
+semantics; [tree-view.spec.ts](../apps/runtime/test/tree-view.spec.ts) checks placement, events and semantic output;
+[tree-view.spec.ts](../packages/conversation-client/test/tree-view.spec.ts) checks visible keyboard order, Home/End and
+locale-aware type-ahead; [tree-schemas.spec.ts](../packages/widget-catalog/test/tree-schemas.spec.ts) checks fixtures
+and schema agreement; the browser journey [tree-view.spec.ts](../apps/web/e2e/tree-view.spec.ts) covers the
+conversation, keyboard, persisted state across pin restoration, responsive layout, reduced motion and the Widget
+Library preview.
+
+---
+
 ## 9. Semantic contract for voice and the next turn
 
 What a widget shows now reaches Clark in two ways, both built from one document per widget:

@@ -459,6 +459,24 @@ label.cc-list-main { cursor: pointer; }
 .cc-list-meta { font-size: var(--cc-text-label); color: var(--cc-text-muted); font-variant-numeric: tabular-nums; }
 .cc-list-item .cc-action { margin-inline-start: auto; }
 
+.cc-tree-root, .cc-tree-group { list-style: none; margin: 0; padding: 0; min-width: 0; }
+.cc-tree-group { margin-inline-start: 12px; padding-inline-start: 12px; border-inline-start: 1px solid var(--cc-border); }
+.cc-tree-item { min-width: 0; }
+.cc-tree-row {
+  display: flex; align-items: center; gap: var(--cc-space-xs); min-width: 0; min-height: 44px;
+  padding: 4px var(--cc-space-xs); border-radius: var(--cc-radius-sm, 6px); cursor: default;
+}
+.cc-tree-row:hover { background: var(--cc-elevated); }
+.cc-tree-row[data-selected="true"] { background: color-mix(in oklab, var(--cc-accent) 12%, transparent); }
+.cc-tree-row:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-tree-disclosure, .cc-tree-disclosure-spacer {
+  display: inline-grid; place-items: center; flex: none; width: 28px; height: 32px; padding: 0;
+}
+.cc-tree-disclosure { border: 0; background: transparent; color: var(--cc-text-muted); cursor: pointer; font: inherit; }
+.cc-tree-icon { flex: none; width: 20px; color: var(--cc-text-muted); text-align: center; }
+.cc-tree-label { min-width: 0; overflow-wrap: anywhere; font-size: var(--cc-text-body-sm); }
+.cc-tree-secondary { min-width: 0; margin-inline-start: auto; color: var(--cc-text-muted); font-size: var(--cc-text-label); overflow-wrap: anywhere; }
+
 /* Status, progress and details cards. Tone is said in words and a symbol; the colour only repeats it. */
 .cc-badge[data-tone="info"] { color: var(--cc-accent); border-color: color-mix(in oklab, var(--cc-accent) 45%, transparent); }
 .cc-status-card { display: flex; align-items: flex-start; gap: var(--cc-space-sm); min-width: 0; }

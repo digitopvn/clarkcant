@@ -1128,6 +1128,33 @@ chuyển động, thư viện, và 390 px có cảm ứng ở theme sáng và t�
 
 ---
 
+## 8.9 Cây phân cấp
+
+`canvas.tree@1` là một outline do host dựng từ dữ liệu đã có và bị giới hạn kích thước. Cây có tối đa 200 node và 12
+cấp. ID dài tối đa 120 ký tự, nhãn 200 ký tự và chữ phụ 300 ký tự. Node từ chối ID node hoặc ID nhánh mở bị lặp,
+tham chiếu nhánh mở không tồn tại, vòng lặp, cây quá sâu hoặc quá nhiều node, icon không biết, trường dư và ký tự ẩn.
+Nội dung được vẽ dưới dạng chữ; widget không tải node con hay sửa dữ liệu nguồn.
+
+`initiallyExpanded` khai báo các nhánh mở khi đặt. `tree.select` mang `{ selectedId }`; `tree.toggle` mang
+`{ nodeId, expanded }`. Node kiểm tra và lưu cả hai thao tác trong trạng thái widget. State đã khôi phục sẽ bỏ qua ID
+không còn có trong props hiện tại. Renderer cung cấp các vai trò WAI-ARIA cùng cấp, vị trí, số mục trong nhóm, trạng
+thái chọn và mở; phím mũi tên di chuyển và mở/đóng nhánh, Home/End tới hai đầu, gõ chữ để tìm nhãn, Enter/Space để
+chọn. Tiêu điểm luôn nhìn thấy được. Lựa chọn và trạng thái mở vẫn còn sau khi khôi phục pin và hội thoại.
+
+Tài liệu semantic báo số node và cấp sâu trong giới hạn, số nhánh đang mở, node được chọn cùng đường dẫn của nó. Phần
+dự phòng dạng chữ là outline có thụt lề. Cây không tự tạo chuyển động, theo theme sáng/tối và tùy chọn giảm chuyển
+động, đồng thời xuống dòng trong viewport hẹp.
+
+Kiểm thử: [tree-view.spec.ts](../packages/contracts/test/tree-view.spec.ts) kiểm tra giới hạn, cây lỗi, state và
+semantic; [tree-view.spec.ts](../apps/runtime/test/tree-view.spec.ts) kiểm tra placement, event và semantic output;
+[tree-view.spec.ts](../packages/conversation-client/test/tree-view.spec.ts) kiểm tra thứ tự bàn phím của các node đang
+hiện, Home/End và tìm chữ theo locale; [tree-schemas.spec.ts](../packages/widget-catalog/test/tree-schemas.spec.ts)
+kiểm tra fixture và sự nhất quán của schema; journey trình duyệt [tree-view.spec.ts](../apps/web/e2e/tree-view.spec.ts)
+bao phủ hội thoại, bàn phím, state được giữ qua khôi phục pin, bố cục thích ứng, giảm chuyển động và bản xem trước
+trong Widget Library.
+
+---
+
 ## 9. Semantic contract cho voice và lượt kế tiếp
 
 Những gì widget đang hiển thị đến được với Clark theo hai đường, cả hai đều dựng từ một tài liệu cho mỗi widget:

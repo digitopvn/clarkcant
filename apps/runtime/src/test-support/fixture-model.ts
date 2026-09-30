@@ -1191,6 +1191,45 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * The bounded tree fixture exercises the same catalog path as show_view. The malformed variants let browser
+     * journeys check the host's rejection reason without relying on a provider account.
+     */
+    const hierarchy = /^(?:đặt|place)\s+cây phân cấp(?:\s+(trùng|quá sâu|ký tự ẩn))?$/iu.exec(input.text.trim());
+    if (hierarchy !== null) {
+      const which = (hierarchy[1] ?? "").toLowerCase();
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.tree@1");
+      const fixture = fixturesFor("canvas.tree@1").find((entry) => entry.id === "tree.normal");
+      if (view === undefined || fixture === undefined) return undefined;
+      const nodes = fixture.props.nodes as Record<string, unknown>[];
+      let deepNode: Record<string, unknown> = { id: "n13", label: "Mục" };
+      for (let level = 12; level >= 1; level -= 1) {
+        deepNode = { id: `n${String(level)}`, label: "Mục", children: [deepNode] };
+      }
+      const props: Record<string, unknown> =
+        which === "trùng"
+          ? { ...fixture.props, nodes: [...nodes, { ...nodes[0], id: "project" }] }
+          : which === "quá sâu"
+            ? { nodes: [deepNode] }
+            : which === "ký tự ẩn"
+              ? { ...fixture.props, nodes: [{ ...nodes[0], label: "Dự án ‮nói ngược" }, ...nodes.slice(1)] }
+              : fixture.props;
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt cây phân cấp${which === "" ? "" : ` ${which}`} (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
+
+    /*
      * An area or scatter chart over rows written to a dataset the person owns, placed through the same views
      * `show_view` uses. The rows are labelled `sample`, which is what they are. "lớn" draws more rows than a chart
      * holds, so the truncation label is seen; "thiếu trường" names a field the rows lack and "không phải số" plots a

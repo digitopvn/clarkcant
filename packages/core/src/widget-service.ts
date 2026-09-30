@@ -31,6 +31,13 @@ import {
   CALENDAR_ID,
   CALENDAR_STATE_VERSION,
   CALENDAR_VIEW_OPERATION,
+  TREE_ID,
+  TREE_SELECT_OPERATION,
+  TREE_TOGGLE_OPERATION,
+  type TreeNode,
+  readTree,
+  readTreeState,
+  treeStateProblems,
   MAX_CHART_POINTS,
   calendarViewProblems,
   isKnownTimeZone,
@@ -461,14 +468,17 @@ export function placeInstance(
     messageId: string;
     textAlternative: string;
     presentationRef: string;
-    /** The binding for the new instance, made once its id exists. */
-    bind?: (instanceId: string) => ActionBinding;
+    /** The bindings for the new instance, made once its id exists and saved atomically with it. */
+    bind?: (instanceId: string) => ActionBinding | readonly ActionBinding[];
   },
 ): { instance: WidgetInstance; snapshot: WidgetSnapshot } {
   const { messageId, textAlternative, presentationRef, bind, ...creating } = input;
   return transaction(deps.db, () => {
     const instance = createInstance(deps, creating);
-    if (bind !== undefined) saveActionBindingWithinTransaction(deps, bind(instance.instanceId));
+    if (bind !== undefined) {
+      const bindings = bind(instance.instanceId);
+      for (const binding of Array.isArray(bindings) ? bindings : [bindings]) saveActionBindingWithinTransaction(deps, binding);
+    }
     const snapshot = captureSnapshot(deps, { messageId, instance, textAlternative, presentationRef });
     return { instance, snapshot };
   });
@@ -1155,6 +1165,8 @@ export const M1_VIEW_OPERATIONS = [
   "chart.view",
   "calendar.view",
   "timeline.select",
+  TREE_SELECT_OPERATION,
+  TREE_TOGGLE_OPERATION,
 ] as const;
 
 /** Bumped when a filter changes the range, because the underlying rows are re-read. */
@@ -1170,6 +1182,8 @@ const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
   "calendar.view": "presentation",
   // Selecting an entry changes what the timeline shows, not the entries it holds.
   "timeline.select": "presentation",
+  [TREE_SELECT_OPERATION]: "presentation",
+  [TREE_TOGGLE_OPERATION]: "presentation",
 };
 
 export interface MiniAppActionRequest extends ActionInvocation {
@@ -1353,6 +1367,10 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
         ? calendarViewPatch(deps, instance, request.input)
         : operation === TIMELINE_SELECT_OPERATION
           ? timelineSelectPatch(instance, request.input)
+          : operation === TREE_SELECT_OPERATION
+            ? treeSelectPatch(instance, request.input)
+            : operation === TREE_TOGGLE_OPERATION
+              ? treeToggleInputPatch(instance, request.input)
           : validateViewInput(operation, request.input);
   if (!validation.ok) return { ok: false, code: "INVALID_INPUT", message: validation.message };
 
@@ -1374,6 +1392,19 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
     const at = deps.now();
     const current = readWidgetStateRow(deps.db, instance.instanceId);
     let patch = validation.patch;
+    if (operation === TREE_TOGGLE_OPERATION) {
+      const tree = readTree(instance.props);
+      const nodeId = request.input.nodeId;
+      const expanded = request.input.expanded;
+      if (tree === undefined || typeof nodeId !== "string" || typeof expanded !== "boolean") {
+        return { ok: false, code: "INVALID_INPUT", message: "the tree no longer holds the node to expand or collapse" };
+      }
+      const state = readTreeState(current?.body, tree);
+      const expandedIds = expanded
+        ? [...new Set([...state.expandedIds, nodeId])]
+        : state.expandedIds.filter((id) => id !== nodeId);
+      patch = { expandedIds, ...(state.selectedId === undefined ? {} : { selectedId: state.selectedId }) };
+    }
     if (operation === "state.event") {
       // Applied here, to the values the node holds, by the same rules the page ran: what is stored is what the graph
       // says the event does, never a value the page computed and sent.
@@ -1391,6 +1422,7 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
     // a selection cleared is a key removed.
     const replaces = operation === "chart.view" || operation === CALENDAR_VIEW_OPERATION || operation === TIMELINE_SELECT_OPERATION;
     const body: Record<string, unknown> = replaces ? patch : { ...(current?.body ?? {}), ...patch };
+    if (operation === TREE_SELECT_OPERATION && request.input.selectedId === "") delete body.selectedId;
     const stateRevision = (current?.revision ?? 0) + 1;
     // A calendar view is written in the calendar's current state shape, so the row says so; a row written in an older
     // shape is replaced whole, which is its migration. Every other operation keeps the version the row already has.
@@ -1912,6 +1944,40 @@ function timelineSelectPatch(instance: WidgetInstance, input: Record<string, unk
   if (problems.length > 0) return { ok: false, message: `the timeline selection was refused: ${problems.join("; ")}` };
   const selection = readTimelineSelection(input, timeline);
   return { ok: true, patch: selection.selectedId === undefined ? {} : { selectedId: selection.selectedId } };
+}
+
+function treeSelectPatch(instance: WidgetInstance, input: Record<string, unknown>): InputValidation {
+  if (instance.definitionRef.id !== TREE_ID) return { ok: false, message: "only a tree holds a tree selection" };
+  const tree = readTree(instance.props);
+  if (tree === undefined) return { ok: false, message: "the tree selection was refused: the tree's props do not describe a hierarchy" };
+  const problems = treeStateProblems(tree, input);
+  if (problems.length > 0) return { ok: false, message: `the tree selection was refused: ${problems.join("; ")}` };
+  const selectedId = input.selectedId;
+  if (typeof selectedId !== "string") return { ok: false, message: "selectedId names a tree node or is empty to clear the selection" };
+  return { ok: true, patch: selectedId === "" ? {} : { selectedId } };
+}
+
+function treeToggleInputPatch(instance: WidgetInstance, input: Record<string, unknown>): InputValidation {
+  if (instance.definitionRef.id !== TREE_ID) return { ok: false, message: "only a tree can expand or collapse a node" };
+  const tree = readTree(instance.props);
+  if (tree === undefined) return { ok: false, message: "the tree toggle was refused: the tree's props do not describe a hierarchy" };
+  const extra = Object.keys(input).filter((key) => key !== "nodeId" && key !== "expanded");
+  if (extra.length > 0 || typeof input.nodeId !== "string" || typeof input.expanded !== "boolean") {
+    return { ok: false, message: "a tree toggle carries nodeId and expanded" };
+  }
+  const findNode = (nodes: readonly TreeNode[]): TreeNode | undefined => {
+    for (const candidate of nodes) {
+      if (candidate.id === input.nodeId) return candidate;
+      const child = findNode(candidate.children ?? []);
+      if (child !== undefined) return child;
+    }
+    return undefined;
+  };
+  const node = findNode(tree.nodes);
+  if (node === undefined || (node.children?.length ?? 0) === 0) {
+    return { ok: false, message: "the node to expand or collapse is not a branch on this tree" };
+  }
+  return { ok: true, patch: { treeToggle: { nodeId: input.nodeId, expanded: input.expanded } } };
 }
 
 /**
