@@ -1146,6 +1146,38 @@ Use segmented controls, toggles and swatches:
   the choice is made, with the reason under "Details" in the reader's language — for colours, one failing pair per line,
   built from the pairs the node sends as data rather than from its English message; the choice is kept, so restoring the package, or an
   update that fixes it, brings the theme back.
+- Theme depth: a theme can change more than colour — fonts from a fixed set of profiles, heading weight, line width and
+  style, hard or no shadows, motion speed and easing, icon stroke, field radius, one host-owned recipe per button, card,
+  input, modal, badge and composer, a backdrop (dot grid, hard grid, scanlines, grain, paper) and a surface finish
+  (glass, soft glow, paper, grain). It picks each by name or bounded number; the host writes every value, so no theme
+  supplies a selector or a rule. What stays the host's whatever the theme says: the focus ring (always the focus
+  colour, never a recipe), disabled controls, the host's own cards (an approval, a credential, a connection keep their
+  edge and their plain card surface — no glass, texture, glow or shadow — when widget cards are drawn otherwise), the
+  buttons in those cards and in the inbox, and Stop (Clark's own button in the theme's colours, never the theme's button
+  recipe, so an approval's Approve stays filled with the accent and its Deny plain beside it), and
+  reduced motion (every duration none, the backdrop's pointer light off, the Orb still), whether it comes from the
+  operating system or from the Reduced choice under Settings → Experience → Motion. Glass frosts widget cards and the
+  composer as an opaque tint, so the Orb behind the composer never shows through; only the modal is translucent and
+  blurred, one surface at a time. The backdrop's pointer light is as strong as the theme's backdrop, never stronger. A
+  second audit refuses a theme that would make a protected state hard to tell apart — danger from warning or success,
+  a status from text, focus from other edges, disabled from enabled, an edge from its card or the page, any text,
+  status colour, accent or focus ring on a surface finished by an effect or on the page under the backdrop and its
+  pointer light (the modal measured over the brightest and darkest page its scrim can cover), and an Orb whose light
+  would vanish into the page — and lists what it hides one line per check, as the contrast audit does. Status is
+  never shown by colour alone: a recipe or an effect changes surfaces and edges, never the icon or the words a status
+  is shown with.
+- Theme Orb default: a theme may suggest one of the shipped Orb presets, with its own colours on every channel but the
+  page colour the Orb sits on, which the page always supplies. It applies only while the person has never chosen an
+  Orb; once they choose one, including Clark's own, theirs wins, and reduced motion wins over both. A palette dark
+  enough to disappear into a dark page is refused by the audit above.
+- Changing the look by sentence: "đổi giao diện sang Neo", "chuyển giao diện sang tối", "đặt lại giao diện", "mở danh
+  sách giao diện" (and the English equivalents), typed or spoken, and the agent's `control_app`, reach the same
+  preference write and the same colour-scheme call as the controls above. A sentence names only a theme this node can
+  draw; nothing asks for confirmation, because the change is undone by making it again. Opening the list by sentence
+  puts keyboard focus on the chosen theme.
+- Desktop: the desktop window's own shell page reads the same compiled tokens (`apps/desktop/src/appearance-tokens.css`,
+  generated from Clark Default) and follows the system's light or dark; the conversation window is the same page as the
+  web client, so a theme looks the same in normal, expanded, compact and Orb modes.
 - Language: Tiếng Việt / English — segmented control, applies immediately (no save button), sets
   `<html lang>`, and persists across reload and devices through the preference registry
   (`experience.language`). Default is Vietnamese; there is no "follow system" option, because no

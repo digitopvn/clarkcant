@@ -64,7 +64,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.experience.motion.full.label": "Đầy đủ",
   "settings.experience.motion.full.note": "Chuyển động như thiết kế.",
   "settings.experience.motion.reduced.label": "Giảm",
-  "settings.experience.motion.reduced.note": "Orb đứng yên và bỏ phản hồi theo con trỏ. Màu sắc vẫn giữ.",
+  "settings.experience.motion.reduced.note": "Orb đứng yên, ánh sáng nền thôi theo con trỏ và chuyển động của chủ đề dừng lại, như thiết lập của máy. Màu sắc vẫn giữ.",
   "settings.experience.orb.clark.note": "Orb gốc, đúng như bản phát hành.",
   "settings.experience.orb.calm.note": "Tông xanh mát, ít sáng, tắt dần nhanh hơn, phản hồi nhẹ.",
   "settings.experience.orb.jelly.note": "Tông ấm, lò xo mềm, rung rõ hơn nhưng vẫn trong giới hạn.",
@@ -92,6 +92,10 @@ export const MESSAGES_SETTINGS_VI = {
     "Chủ đề bạn chọn không hợp lệ, nên Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ.",
   "settings.experience.themePicker.fallback.lowContrast":
     "Màu của chủ đề bạn chọn quá sát nhau nên chữ khó đọc, vì vậy Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ: bản cập nhật của gói sửa được màu thì chủ đề quay lại.",
+  "settings.experience.themePicker.fallback.protected":
+    "Chủ đề bạn chọn làm mờ những tín hiệu Clark luôn phải giữ rõ, như nút Dừng, duyệt hay từ chối, viền tiêu điểm, màu trạng thái và chính Orb, nên Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ: bản cập nhật của gói sửa được điều này thì chủ đề quay lại.",
+  "settings.experience.themePicker.fallback.other":
+    "Không dùng được chủ đề bạn chọn, nên Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ.",
   "settings.experience.themePicker.fallback.unavailable":
     "Node không đọc được gói chứa chủ đề bạn chọn, nên Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ.",
   "settings.experience.themePicker.fallback.unknown":
@@ -126,6 +130,17 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.experience.themePicker.contrast.token.danger": "chữ trạng thái lỗi",
   "settings.experience.themePicker.contrast.token.focus": "viền tiêu điểm",
   "settings.experience.themePicker.contrast.accentButton": "nút màu nhấn",
+  "settings.experience.themePicker.protected.lead": "Những chỗ chủ đề làm mờ tín hiệu mà Clark luôn phải giữ rõ:",
+  "settings.experience.themePicker.protected.line": "{check}: {first} và {second} ({scheme}) cách nhau {value}, cần ít nhất {minimum}",
+  "settings.experience.themePicker.protected.lineRatio": "{check}: {first} trên {second} ({scheme}): {value}:1, cần {minimum}:1",
+  "settings.experience.themePicker.protected.check.status-distinct": "Các màu trạng thái quá giống nhau",
+  "settings.experience.themePicker.protected.check.status-vs-text": "Màu trạng thái lẫn vào chữ thường",
+  "settings.experience.themePicker.protected.check.focus-vs-border": "Viền tiêu điểm lẫn vào đường kẻ",
+  "settings.experience.themePicker.protected.check.disabled-distinct": "Chữ bị vô hiệu lẫn vào chữ thường",
+  "settings.experience.themePicker.protected.check.edge-visible": "Mép của thẻ và nút không còn thấy được",
+  "settings.experience.themePicker.protected.check.surface-readable": "Hiệu ứng bề mặt hoặc nền làm chữ khó đọc",
+  "settings.experience.themePicker.protected.check.orb-visible": "Orb chìm vào nền trang",
+  "settings.experience.themePicker.protected.orb": "ánh sáng của Orb",
   "settings.experience.themePicker.unchecked.NO_DIRECTORY": "Node này chưa có thư mục gói, nên chưa đọc được chủ đề của gói.",
   "settings.experience.themePicker.unchecked.NOT_IN_DIRECTORY":
     "Bản gói đã cài không có trong thư mục gói của node, nên node không tìm được tệp của nó.",
@@ -487,7 +502,7 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.experience.motion.full.label": "Full",
   "settings.experience.motion.full.note": "Motion as designed.",
   "settings.experience.motion.reduced.label": "Reduced",
-  "settings.experience.motion.reduced.note": "The orb stays still and drops pointer response. Colors are kept.",
+  "settings.experience.motion.reduced.note": "The orb stays still, the backdrop light stops following the pointer and the theme's motion stops, as with the machine's setting. Colors are kept.",
   "settings.experience.orb.clark.note": "The original orb, exactly as shipped.",
   "settings.experience.orb.calm.note": "Cool blues, dimmer, decays faster, lighter response.",
   "settings.experience.orb.jelly.note": "Warm tones, softer spring, more visible wobble, still within bounds.",
@@ -515,6 +530,10 @@ export const MESSAGES_SETTINGS_EN = {
     "The theme you chose is not valid, so Clark is shown in Clark Default. Your choice is kept.",
   "settings.experience.themePicker.fallback.lowContrast":
     "The colors of the theme you chose are too close to read text in, so Clark is shown in Clark Default. Your choice is kept: an update of the package that fixes its colors brings the theme back.",
+  "settings.experience.themePicker.fallback.protected":
+    "The theme you chose blurs signals Clark always keeps clear, such as Stop, approve or refuse, the focus ring, status colors and the Orb itself, so Clark is shown in Clark Default. Your choice is kept: an update of the package that fixes this brings the theme back.",
+  "settings.experience.themePicker.fallback.other":
+    "The theme you chose cannot be used, so Clark is shown in Clark Default. Your choice is kept.",
   "settings.experience.themePicker.fallback.unavailable":
     "The node cannot read the package that holds the theme you chose, so Clark is shown in Clark Default. Your choice is kept.",
   "settings.experience.themePicker.fallback.unknown":
@@ -549,6 +568,17 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.experience.themePicker.contrast.token.danger": "error status text",
   "settings.experience.themePicker.contrast.token.focus": "focus ring",
   "settings.experience.themePicker.contrast.accentButton": "an accent button",
+  "settings.experience.themePicker.protected.lead": "Where the theme blurs signals Clark always keeps clear:",
+  "settings.experience.themePicker.protected.line": "{check}: {first} and {second} ({scheme}) are {value} apart, need at least {minimum}",
+  "settings.experience.themePicker.protected.lineRatio": "{check}: {first} on {second} ({scheme}): {value}:1, needs {minimum}:1",
+  "settings.experience.themePicker.protected.check.status-distinct": "Status colors are too alike",
+  "settings.experience.themePicker.protected.check.status-vs-text": "A status color blends into body text",
+  "settings.experience.themePicker.protected.check.focus-vs-border": "The focus ring blends into hairlines",
+  "settings.experience.themePicker.protected.check.disabled-distinct": "Disabled text blends into body text",
+  "settings.experience.themePicker.protected.check.edge-visible": "Card and button edges are no longer visible",
+  "settings.experience.themePicker.protected.check.surface-readable": "A surface or backdrop effect makes text hard to read",
+  "settings.experience.themePicker.protected.check.orb-visible": "The Orb disappears into the page",
+  "settings.experience.themePicker.protected.orb": "the Orb's light",
   "settings.experience.themePicker.unchecked.NO_DIRECTORY": "This node has no package directory yet, so the package's themes were not read.",
   "settings.experience.themePicker.unchecked.NOT_IN_DIRECTORY":
     "The installed build of the package is not in this node's package directory, so the node cannot find its files.",

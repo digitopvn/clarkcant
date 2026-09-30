@@ -42,7 +42,7 @@ export const COMPOSER_CSS = `
 .cc-tray-chip {
   display: inline-flex; align-items: center; gap: var(--cc-space-xs);
   padding: 2px var(--cc-space-xs) 2px var(--cc-space-sm); border-radius: var(--cc-radius-pill);
-  background: var(--cc-elevated); border: 1px solid var(--cc-border);
+  background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border);
   font-size: var(--cc-text-label); color: var(--cc-text);
   max-width: 100%;
   animation: cc-reference-in var(--cc-motion-normal) var(--cc-motion-easing);
@@ -72,9 +72,9 @@ export const COMPOSER_CSS = `
 .cc-reference-picker {
   position: absolute; left: 0; right: 0; bottom: calc(100% + var(--cc-space-xs));
   z-index: 6;
-  background: var(--cc-elevated); border: 1px solid var(--cc-border);
+  background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border);
   border-radius: var(--cc-radius-card);
-  box-shadow: 0 12px 32px color-mix(in oklab, var(--cc-code) 42%, transparent);
+  box-shadow: var(--cc-shadow-raised, 0 12px 32px color-mix(in oklab, var(--cc-code) 42%, transparent));
   padding: var(--cc-space-xs);
   /* The popover motion: opacity and a short rise from the field that opened it, no bounce. The reduced token set
      makes the duration zero, so a reduced-motion reader gets the list in place. */
@@ -103,7 +103,7 @@ export const COMPOSER_CSS = `
 .cc-reference-open {
   flex: none; margin-left: auto; align-self: center;
   width: 24px; height: 24px; border-radius: var(--cc-radius-pill);
-  border: 1px solid var(--cc-border); background: var(--cc-card); color: var(--cc-text);
+  border: var(--cc-line, 1px solid) var(--cc-border); background: var(--cc-card); color: var(--cc-text);
   font: inherit; line-height: 1; cursor: pointer;
 }
 .cc-reference-open:hover { border-color: var(--cc-accent); }
@@ -126,7 +126,7 @@ export const COMPOSER_CSS = `
    claiming a state the person is not in. */
 .cc-composer-wrap[data-composer-drop="true"]::after {
   content: ""; position: absolute; inset: var(--cc-space-xs) var(--cc-space-md);
-  border: 1px dashed var(--cc-accent); border-radius: var(--cc-radius-pill);
+  border: 1px dashed var(--cc-accent); border-radius: var(--cc-composer-radius, var(--cc-radius-pill));
   pointer-events: none; z-index: 3;
 }
 
@@ -134,7 +134,7 @@ export const COMPOSER_CSS = `
 .cc-attachment {
   display: flex; align-items: center; gap: var(--cc-space-sm);
   margin: var(--cc-space-xs) 0; padding: var(--cc-space-xs) var(--cc-space-sm);
-  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card);
   background: var(--cc-elevated); max-width: 100%;
 }
 figure.cc-attachment { display: block; }
@@ -155,8 +155,9 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
   position: relative;
   max-width: var(--cc-composer-max-width); margin: 0 auto;
   /* A stadium, as the design draws it: the radius is half the height for a single line, and the shape
-     stays a pill as it grows because the radius is larger than half of the tallest it gets. */
-  border-radius: var(--cc-radius-pill);
+     stays a pill as it grows because the radius is larger than half of the tallest it gets. A composer recipe may
+     square it off; the glow and the drop target follow. */
+  border-radius: var(--cc-composer-radius, var(--cc-radius-pill));
 }
 .cc-composer-glow {
   position: absolute; inset: -1.5px; border-radius: inherit; overflow: hidden;
@@ -194,12 +195,16 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
    */
   align-items: center;
   gap: var(--cc-space-sm);
-  background: var(--cc-card); border: 1px solid var(--cc-border);
-  border-radius: var(--cc-radius-pill);
+  /* Opaque under every effect: the Orb sits behind the composer, and typed text is never drawn over it. */
+  background: var(--cc-surface-fill, var(--cc-card));
+  background-image: var(--cc-surface-image, none);
+  background-size: var(--cc-surface-size, auto);
+  border: var(--cc-composer-line, var(--cc-line, 1px solid)) var(--cc-composer-edge, var(--cc-border));
+  border-radius: var(--cc-composer-radius, var(--cc-radius-pill));
   /* A heavier padding than the composer's own inline spacing, because a pill that floats needs a
      silhouette rather than a box, and a soft shadow is what separates it from the transcript behind. */
   padding: var(--cc-space-sm) var(--cc-space-md);
-  box-shadow: 0 12px 32px color-mix(in oklab, var(--cc-code) 42%, transparent);
+  box-shadow: var(--cc-composer-shadow, var(--cc-shadow-raised, 0 12px 32px color-mix(in oklab, var(--cc-code) 42%, transparent)));
 }
 .cc-composer textarea {
   flex: 1; background: none; border: none; color: var(--cc-text); font: inherit;
@@ -212,10 +217,12 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
 .cc-icon-btn {
   display: grid; place-items: center;
   width: 28px; height: 28px; border-radius: var(--cc-radius-pill);
-  border: 1px solid var(--cc-border); background: var(--cc-elevated);
+  border: var(--cc-line, 1px solid) var(--cc-border); background: var(--cc-elevated);
   color: var(--cc-text); cursor: pointer; font: inherit;
 }
 .cc-icon-btn:disabled { opacity: 0.45; cursor: default; }
+/* Line icons are drawn at the theme's stroke; the attribute on each icon is the same value, for a page without this sheet. */
+.cc-icon { stroke-width: var(--cc-icon-stroke, 1.8); }
 .cc-hint {
   max-width: var(--cc-composer-max-width); margin: var(--cc-space-xs) auto 0;
   font-size: var(--cc-text-label); color: var(--cc-text-muted);
@@ -245,7 +252,7 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
   position: fixed; top: calc(var(--cc-desktop-chrome-height, 0px) + 56px); left: 50%; transform: translateX(-50%);
   z-index: 75; margin: 0; max-width: min(560px, calc(100vw - 32px));
   padding: var(--cc-space-xs) var(--cc-space-md);
-  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
+  background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card);
   box-shadow: var(--cc-shadow-soft, 0 12px 32px rgb(0 0 0 / 35%));
   color: var(--cc-text); font-size: var(--cc-text-label); line-height: 1.45; overflow-wrap: anywhere;
 }
@@ -282,13 +289,13 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
 .cc-model-note-summary::before { content: "▸"; color: var(--cc-text-tertiary); font-size: var(--cc-text-meta); }
 .cc-model-note[open] > .cc-model-note-summary::before { content: "▾"; }
 .cc-model-note-summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: var(--cc-radius-badge); }
-.cc-model-note-meta { color: var(--cc-text-tertiary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-meta); }
+.cc-model-note-meta { color: var(--cc-text-tertiary); font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-meta); }
 .cc-model-note-body { padding: var(--cc-space-xs) 0 0 var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 
 .cc-changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xxs); font-size: var(--cc-text-label); }
 .cc-changes li { display: flex; gap: var(--cc-space-sm); align-items: baseline; }
 .cc-change-kind { flex: none; width: 5.5rem; color: var(--cc-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; font-size: var(--cc-text-meta); }
-.cc-changes code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-changes code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text-muted); overflow-wrap: anywhere; }
 .cc-changes li[data-change-kind="deleted"] code { color: var(--cc-danger); }
 .cc-changes li[data-change-kind="created"] code { color: var(--cc-success); }
 
@@ -305,12 +312,12 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
  */
 .cc-diff-file { display: flex; flex-direction: column; gap: var(--cc-space-xxs); margin-bottom: var(--cc-space-sm); }
 .cc-diff-file-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--cc-space-sm); }
-.cc-diff-file-head code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text); overflow-wrap: anywhere; }
-.cc-diff-hunk { background: var(--cc-code); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge); overflow-x: auto; }
-.cc-diff-header { padding: 0 var(--cc-space-sm); color: var(--cc-text-tertiary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-meta); line-height: var(--cc-leading-meta); background: var(--cc-elevated); }
+.cc-diff-file-head code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text); overflow-wrap: anywhere; }
+.cc-diff-hunk { background: var(--cc-code); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-badge); overflow-x: auto; }
+.cc-diff-header { padding: 0 var(--cc-space-sm); color: var(--cc-text-tertiary); font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-meta); line-height: var(--cc-leading-meta); background: var(--cc-elevated); }
 .cc-diff-line { display: flex; gap: var(--cc-space-sm); padding: 0 var(--cc-space-sm); white-space: pre; }
-.cc-diff-line code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text-muted); }
-.cc-diff-gutter { flex: none; width: 1ch; color: var(--cc-text-tertiary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); }
+.cc-diff-line code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text-muted); }
+.cc-diff-gutter { flex: none; width: 1ch; color: var(--cc-text-tertiary); font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); }
 .cc-diff-line[data-line-kind="add"] { background: color-mix(in oklab, var(--cc-success) 14%, transparent); }
 .cc-diff-line[data-line-kind="add"] .cc-diff-gutter { color: var(--cc-success); }
 .cc-diff-line[data-line-kind="remove"] { background: color-mix(in oklab, var(--cc-danger) 14%, transparent); }
@@ -425,7 +432,7 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
  * did not.
  */
 .cc-tool {
-  border: 1px solid var(--cc-border); background: var(--cc-card);
+  border: var(--cc-line, 1px solid) var(--cc-border); background: var(--cc-card);
   border-radius: var(--cc-radius-card); overflow: hidden;
 }
 .cc-reasoning { background: var(--cc-elevated); }
@@ -443,11 +450,11 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
 @keyframes cc-tool-spin { to { transform: rotate(1turn); } }
 .cc-tool-label { flex: 1; min-width: 0; color: var(--cc-text); }
 .cc-tool-path {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-meta);
+  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-meta);
   color: var(--cc-text-muted); overflow-wrap: anywhere;
 }
 .cc-tool-body { padding: 0 var(--cc-space-md) var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-sm); }
-.cc-tool[open] > .cc-tool-body { border-top: 1px solid var(--cc-border); padding-top: var(--cc-space-sm); }
+.cc-tool[open] > .cc-tool-body { border-top: var(--cc-line, 1px solid) var(--cc-border); padding-top: var(--cc-space-sm); }
 .cc-reasoning-body { color: var(--cc-text-muted); }
 /*
  * The reasoning block, while the model is still writing it.

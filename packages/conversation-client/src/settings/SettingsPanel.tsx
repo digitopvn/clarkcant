@@ -121,6 +121,11 @@ export interface SettingsPanelProps {
    */
   openAt?: TabId | undefined;
   /**
+   * Counts requests to open the list of themes. A new count lands on Experience (through `openAt`) with focus on the
+   * theme in use, which is where "mở danh sách chủ đề" - typed, spoken or asked by the agent - has to arrive.
+   */
+  themeGalleryRequest?: number | undefined;
+  /**
    * Opens the Widget Library. The settings panel closes itself first.
    *
    * `Modal` registers a document-level Escape handler and a Tab trap with no notion of nesting, so a
@@ -144,6 +149,7 @@ export function SettingsPanel({
   orbProfileKey,
   onPolicyChange,
   openAt,
+  themeGalleryRequest,
   onOpenWidgetLibrary,
 }: SettingsPanelProps): ReactElement | null {
   const [facts, setFacts] = useState<NodeFacts | undefined>(undefined);
@@ -212,10 +218,11 @@ export function SettingsPanel({
    * command was understood and quietly ignored, which reads as the microphone not working. The decision, the
    * schema, the executor and the host were all correct; the loss was here.
    */
+  // A new request for the list of themes lands on Experience again, even when Settings was already open elsewhere.
   useEffect(() => {
     if (!open) return;
     setTab(openAt ?? "experience");
-  }, [open, openAt]);
+  }, [open, openAt, themeGalleryRequest]);
 
   /*
    * Keep the selected tab in view.
@@ -362,6 +369,7 @@ export function SettingsPanel({
             resolvedTheme={resolvedTheme}
             onThemeChoice={onThemeChoice}
             onOrbChange={orbChanged}
+            themeGalleryRequest={themeGalleryRequest}
           />
         )}
         {tab === "ai" && <AiRoutingSettings client={client} prefs={prefs} facts={facts} />}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  APPEARANCE_API_OLDEST,
   APPEARANCE_API_VERSION,
   BUILTIN_CLARK_THEME_REF,
   PREFERENCE_REGISTRY,
@@ -118,7 +119,7 @@ describe("theme documents", () => {
   it("refuses a theme written for an appearance API this build does not provide, and says which", () => {
     const future = checkThemeDocument({ ...minimal, appearanceApi: { min: APPEARANCE_API_VERSION + 1, max: APPEARANCE_API_VERSION + 1 } });
     expect(future.ok).toBe(false);
-    if (!future.ok) expect(future.problems[0]).toContain(`provides ${String(APPEARANCE_API_VERSION)}`);
+    if (!future.ok) expect(future.problems[0]).toContain(`provides ${String(APPEARANCE_API_OLDEST)}–${String(APPEARANCE_API_VERSION)}`);
     expect(checkThemeDocument({ ...minimal, appearanceApi: { min: 2, max: 1 } }).ok).toBe(false);
   });
 
@@ -126,5 +127,99 @@ describe("theme documents", () => {
     const result = checkThemeDocument({ appearanceApi: { min: 1, max: 1 }, id: "", displayName: "", colors: { dark: { accent: "red" } } });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.problems.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("theme identity: recipes, effects and the rest of the look", () => {
+  const v2 = { appearanceApi: { min: 2, max: 2 }, id: "neo", displayName: "Neo" };
+
+  /** Refused, with a problem naming `path`. */
+  function refusedAt(document: unknown, path: string): void {
+    const result = checkThemeDocument(document);
+    expect(result.ok, JSON.stringify(document)).toBe(false);
+    if (!result.ok) expect(result.problems.join("\n"), JSON.stringify(document)).toContain(path);
+  }
+
+  it("accepts every recipe, effect and bounded parameter the host ships", () => {
+    const full = checkThemeDocument({
+      ...v2,
+      typography: { body: "system", display: "serif", mono: "typewriter", headingWeight: 800 },
+      border: { width: 3, style: "dashed" },
+      shadow: { style: "hard", offset: 8, color: "accent" },
+      motion: { speed: 0.5, easing: "stepped" },
+      icons: { stroke: 2.5 },
+      radius: { field: 0 },
+      recipes: { button: "beveled", card: "raised", input: "underlined", modal: "framed", badge: "square", composer: "framed" },
+      effects: { backdrop: { kind: "scanlines", intensity: 1, scale: 48 }, surface: { kind: "glass", intensity: 0 } },
+      orb: { profile: "plasma", palette: { glowColor: [1, 0.5, 0] } },
+    });
+    expect(full.ok, full.ok ? "" : full.problems.join("\n")).toBe(true);
+  });
+
+  it("refuses selectors, CSS and markup wherever a recipe or effect is named", () => {
+    for (const value of [
+      ".cc-button { display: none }",
+      "outlined; } .cc-approve { opacity: 0",
+      "url(https://x.test/a.png)",
+      "var(--cc-danger)",
+      "<style>",
+    ]) {
+      refusedAt({ ...v2, recipes: { button: value } }, "recipes.button");
+      refusedAt({ ...v2, effects: { backdrop: { kind: value } } }, "effects.backdrop.kind");
+      refusedAt({ ...v2, effects: { surface: { kind: value } } }, "effects.surface.kind");
+      refusedAt({ ...v2, typography: { body: value } }, "typography.body");
+    }
+    // A field for raw styling does not exist, at the top or inside a group.
+    refusedAt({ ...v2, recipes: { button: "solid", css: "* { color: red }" } }, "recipes");
+    refusedAt({ ...v2, effects: { backdrop: { kind: "grain", image: "url(x)" } } }, "effects.backdrop");
+    refusedAt({ ...v2, selectors: { ".cc-stop": { display: "none" } } }, "document");
+  });
+
+  it("refuses a recipe, effect or component the host does not ship", () => {
+    refusedAt({ ...v2, recipes: { button: "invisible" } }, "recipes.button");
+    refusedAt({ ...v2, recipes: { approval: "flat" } }, "recipes");
+    refusedAt({ ...v2, recipes: { card: "beveled" } }, "recipes.card");
+    refusedAt({ ...v2, effects: { backdrop: { kind: "video" } } }, "effects.backdrop.kind");
+    refusedAt({ ...v2, effects: { surface: { kind: "scanlines" } } }, "effects.surface.kind");
+    refusedAt({ ...v2, orb: { profile: "custom" } }, "orb.profile");
+    refusedAt({ ...v2, orb: { profile: "plasma", palette: { glowColor: [2, 0, 0] } } }, "orb.palette");
+    refusedAt({ ...v2, orb: { profile: "plasma", palette: { fragmentShader: [0, 0, 0] } } }, "orb.palette");
+    refusedAt({ ...v2, orb: { profile: "plasma", shader: "void main(){}" } }, "orb");
+  });
+
+  it("keeps every parameter inside its bounds", () => {
+    for (const [document, path] of [
+      [{ typography: { headingWeight: 900 } }, "typography.headingWeight"],
+      [{ typography: { headingWeight: 450 } }, "typography.headingWeight"],
+      [{ border: { width: 0 } }, "border.width"],
+      [{ border: { width: 4 } }, "border.width"],
+      [{ shadow: { offset: 9 } }, "shadow.offset"],
+      [{ shadow: { offset: 0 } }, "shadow.offset"],
+      [{ motion: { speed: 0.1 } }, "motion.speed"],
+      [{ motion: { speed: 3 } }, "motion.speed"],
+      [{ icons: { stroke: 4 } }, "icons.stroke"],
+      [{ effects: { backdrop: { kind: "grain", intensity: 1.5 } } }, "effects.backdrop.intensity"],
+      [{ effects: { backdrop: { kind: "grain", intensity: -0.1 } } }, "effects.backdrop.intensity"],
+      [{ effects: { backdrop: { kind: "dot-grid", scale: 4 } } }, "effects.backdrop.scale"],
+      [{ effects: { backdrop: { kind: "dot-grid", scale: 200 } } }, "effects.backdrop.scale"],
+      [{ effects: { surface: { kind: "glass", intensity: 2 } } }, "effects.surface.intensity"],
+      [{ radius: { field: 3 } }, "radius.field"],
+    ] as const) {
+      refusedAt({ ...v2, ...document }, path);
+    }
+  });
+
+  it("refuses identity in a document that says an appearance API 1 build could draw it", () => {
+    for (const field of [
+      { recipes: { button: "solid" } },
+      { effects: { backdrop: { kind: "grain" } } },
+      { typography: { body: "serif" } },
+      { orb: { profile: "calm" } },
+      { radius: { field: 0.5 } },
+    ]) {
+      refusedAt({ ...v2, appearanceApi: { min: 1, max: 2 }, ...field }, "appearanceApi.min");
+    }
+    // A version 1 document without identity still loads.
+    expect(checkThemeDocument({ ...v2, appearanceApi: { min: 1, max: 2 } }).ok).toBe(true);
   });
 });

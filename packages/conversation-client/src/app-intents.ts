@@ -25,6 +25,7 @@
 import {
   type AppIntent,
   type AppIntentDecision,
+  type ColorScheme,
   type NoticeOperationId,
   type OrbProfileName,
   type SettingsTab,
@@ -121,6 +122,19 @@ export interface AppIntentHost {
    */
   selectOrbProfile?(profile: OrbProfileName): HostEffect;
   /**
+   * Chooses the theme the node resolved, through the same preference write the theme picker makes, and answers with
+   * what is actually drawn - a theme the page refuses to draw is reported as refused, not as chosen.
+   *
+   * Optional for the reason `selectOrbProfile` is: a host with no node has nowhere to keep the choice.
+   */
+  setTheme?(themeRef: string, themeName: string | undefined): HostEffect;
+  /** Chooses light, dark or system, through the same device-local write the Settings control makes. */
+  setColorScheme?(scheme: ColorScheme): HostEffect;
+  /** Puts the theme back to Clark Default and light or dark back to following the system. */
+  resetAppearance?(): HostEffect;
+  /** Opens the list of themes the person can choose from. */
+  openThemeGallery?(): HostEffect;
+  /**
    * Opens the widget library.
    *
    * Optional for the same reason the window methods are: a host that cannot show the library should
@@ -180,6 +194,11 @@ function missingCapabilitySay(intent: AppIntent): string {
       return catalog["shell.intent.notTurn"];
     case "orb.select":
       return catalog["shell.intent.notOrb"];
+    case "appearance.set-theme":
+    case "appearance.set-color-scheme":
+    case "appearance.reset":
+    case "appearance.open-theme-gallery":
+      return catalog["shell.intent.notAppearance"];
     default:
       return catalog["shell.intent.notDesktop"];
   }
@@ -286,6 +305,17 @@ function carryOut(intent: AppIntent, host: AppIntentHost): HostEffect {
       // through it. Refused rather than defaulted: switching to some orb nobody named is not what was asked.
       if (intent.orbProfile === undefined) throw new Error(describeMissingOrbProfile());
       return host.selectOrbProfile?.(intent.orbProfile);
+    case "appearance.set-theme":
+      // The contract refuses one without a theme; defaulting to some theme nobody named is not what was asked.
+      if (intent.themeRef === undefined) throw new Error(CATALOGS[readStoredLocale()]["shell.intent.themeMissing"]);
+      return host.setTheme?.(intent.themeRef, intent.themeName);
+    case "appearance.set-color-scheme":
+      if (intent.colorScheme === undefined) throw new Error(CATALOGS[readStoredLocale()]["shell.intent.themeMissing"]);
+      return host.setColorScheme?.(intent.colorScheme);
+    case "appearance.reset":
+      return host.resetAppearance?.();
+    case "appearance.open-theme-gallery":
+      return host.openThemeGallery?.();
     case "window.expand":
       return host.expandWindow?.();
     case "window.minimise":
@@ -350,6 +380,14 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
       return host.selectModel !== undefined;
     case "orb.select":
       return host.selectOrbProfile !== undefined;
+    case "appearance.set-theme":
+      return host.setTheme !== undefined;
+    case "appearance.set-color-scheme":
+      return host.setColorScheme !== undefined;
+    case "appearance.reset":
+      return host.resetAppearance !== undefined;
+    case "appearance.open-theme-gallery":
+      return host.openThemeGallery !== undefined;
     default:
       return true;
   }

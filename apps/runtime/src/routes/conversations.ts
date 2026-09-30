@@ -68,6 +68,7 @@ import {
 } from "@clarkcant/storage";
 
 import { type AppIntentDeps, decideAppIntent, mintConfirmation } from "../app-intents.ts";
+import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
 import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../application/stop-turn.ts";
 import { bindingAvailability } from "../application/action-bindings.ts";
@@ -871,6 +872,8 @@ function typedAppIntent(
     nodeId: services.runtime.identity.nodeId,
     now: () => at() as never,
     newId: services.conductor.newId,
+    // Read only for a sentence about the look, so an ordinary message does not read the package directory.
+    themes: () => readThemeRegistry(themeRegistryDeps(services)),
   };
   const principalId = services.runtime.identity.ownerPrincipalId;
   return decideAppIntent(

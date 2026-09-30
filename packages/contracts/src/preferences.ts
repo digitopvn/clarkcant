@@ -21,6 +21,7 @@
 import { z } from "zod";
 
 import { GUARD_CLASSES, guardClassSchema, jevUnavailablePolicySchema } from "./execution.ts";
+import { orbPalettePreferenceSchema } from "./orb-palette.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 import { BUILTIN_CLARK_THEME_REF, DEFAULT_COLOR_SCHEME, colorSchemeSchema, themeRefSchema } from "./themes.ts";
 
@@ -91,40 +92,8 @@ export const ORB_PHYSICS_BOUNDS = {
   pointerResponse: { min: 0, max: 1.5, default: 1 },
 } as const satisfies Record<string, NumericBound>;
 
-/**
- * The named colour channels the shader has.
- *
- * Names rather than shader source: a stored preference selects a channel and cannot introduce
- * code. The list is asserted against the renderer's own palette in the orb tests, so it cannot
- * drift into names the shader never reads.
- */
-export const ORB_PALETTE_CHANNELS = [
-  "canvas",
-  "glowColor",
-  "highlight",
-  "shellInner",
-  "shellMid",
-  "shellEdge",
-  "sheenColor",
-  "colorA",
-  "colorB",
-  "colorC",
-  "colorD",
-] as const;
-export type OrbPaletteChannel = (typeof ORB_PALETTE_CHANNELS)[number];
-
-/** Linear RGB in the shader's own space, so no conversion happens at the boundary. */
-export const orbColorSchema = z.tuple([
-  z.number().min(0).max(1),
-  z.number().min(0).max(1),
-  z.number().min(0).max(1),
-]);
-
-const paletteShape = Object.fromEntries(
-  ORB_PALETTE_CHANNELS.map((channel) => [channel, orbColorSchema.optional()]),
-) as Record<OrbPaletteChannel, z.ZodOptional<typeof orbColorSchema>>;
-
-export const orbPalettePreferenceSchema = z.strictObject(paletteShape);
+// The Orb's colour channels live in their own module, shared with a theme's Orb suggestion; see `orb-palette.ts`.
+export { ORB_PALETTE_CHANNELS, orbColorSchema, orbPalettePreferenceSchema, type OrbPaletteChannel } from "./orb-palette.ts";
 
 /**
  * The optics a custom profile may change. `radius` is deliberately absent: the orb's size is part of what makes

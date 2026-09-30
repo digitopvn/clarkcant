@@ -151,6 +151,8 @@ test("a typed command opens the same inbox, and Escape hands focus back", async 
   const dialog = page.getByRole("dialog");
   await expect(dialog.locator('[data-inbox-panel="ready"]')).toBeVisible({ timeout: 20_000 });
   await expect(dialog.locator('[data-inbox-waiting-item="command-approval"]').first()).toBeVisible();
+  // The inbox is the host's own panel, so its approve and deny buttons are Clark's whatever a theme's button recipe says.
+  await expect(dialog.locator('[data-inbox-panel="ready"]')).toHaveAttribute("data-owner", "host");
 
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);

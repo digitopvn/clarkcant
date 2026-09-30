@@ -1127,6 +1127,39 @@ Dùng segmented controls, toggles và swatches:
   lý do trong mục "Chi tiết" bằng ngôn ngữ của người đọc — với màu sắc là mỗi cặp màu không đạt một dòng, dựng từ các
   cặp mà node gửi dưới dạng dữ liệu chứ không phải từ thông điệp tiếng Anh của node; lựa chọn vẫn được giữ, nên khôi phục gói, hoặc một bản cập nhật sửa được nó, là
   theme quay lại.
+- Chiều sâu của theme: theme có thể đổi nhiều hơn màu — phông chữ từ một bộ profile cố định, độ đậm tiêu đề, độ dày và
+  kiểu đường kẻ, bóng cứng hoặc không bóng, tốc độ và đường cong chuyển động, nét biểu tượng, độ bo của ô nhập, một
+  recipe do host sở hữu cho mỗi nút, thẻ, ô nhập, hộp thoại, nhãn và ô soạn tin, một lớp nền (lưới chấm, lưới kẻ, đường
+  quét, hạt, giấy) và một lớp hoàn thiện bề mặt (kính, phát sáng nhẹ, giấy, hạt). Theme chọn từng thứ bằng tên hoặc số
+  có giới hạn; host tự viết mọi giá trị, nên không theme nào đưa vào được selector hay quy tắc CSS. Những thứ luôn là
+  của host dù theme nói gì: vòng tiêu điểm (luôn là màu tiêu điểm, không bao giờ theo recipe), điều khiển bị vô hiệu,
+  các thẻ của chính host (thẻ phê duyệt, thông tin đăng nhập, kết nối vẫn giữ đường viền và bề mặt thẻ trơn — không
+  kính, không vân, không phát sáng, không bóng — dù thẻ widget được vẽ khác đi), các nút trong những thẻ ấy và trong
+  hộp thư, cùng nút Dừng (là nút của chính Clark mang màu của theme, không bao giờ theo recipe nút của theme, nên nút
+  Phê duyệt của một yêu cầu luôn được tô màu nhấn còn nút Từ chối bên cạnh vẫn trơn), và giảm chuyển động (mọi thời lượng
+  bằng không, ánh sáng theo con trỏ trên nền tắt, Orb đứng yên), dù yêu cầu đến từ hệ điều hành hay từ lựa chọn Giảm
+  trong Cài đặt → Trải nghiệm → Chuyển động. Kính phủ thẻ widget và ô soạn tin bằng một lớp màu mờ đục, nên Orb nằm sau
+  ô soạn tin không bao giờ lộ ra; chỉ hộp thoại là trong suốt và làm mờ nền, mỗi lúc một hộp. Ánh sáng theo con trỏ
+  trên nền chỉ mạnh bằng lớp nền của theme, không bao giờ hơn. Một bài kiểm tra thứ hai từ chối theme làm một trạng thái
+  được bảo vệ khó phân biệt — nguy hiểm với cảnh báo hoặc thành công, một trạng thái với chữ, tiêu điểm với các đường
+  viền khác, bị vô hiệu với bình thường, đường viền với thẻ hoặc nền trang, mọi chữ, màu trạng thái, màu nhấn hay vòng
+  tiêu điểm trên bề mặt có hiệu ứng hoặc trên nền trang dưới lớp nền và ánh sáng theo con trỏ (hộp thoại được đo trên
+  nền trang sáng nhất và tối nhất mà lớp phủ của nó có thể che), và một Orb có ánh sáng chìm vào nền trang — và liệt kê
+  những gì nó che, mỗi mục kiểm tra một dòng, như bài kiểm tra tương phản. Trạng thái không bao giờ chỉ được thể hiện
+  bằng màu: recipe hay hiệu ứng chỉ đổi bề mặt và đường viền, không bao giờ đổi biểu tượng hay chữ đi kèm một trạng
+  thái.
+- Orb mặc định của theme: theme có thể gợi ý một trong các preset Orb có sẵn, kèm màu riêng trên mọi kênh trừ màu nền
+  trang mà Orb nằm trên, vì trang luôn tự cung cấp màu đó. Gợi ý chỉ áp dụng khi người dùng chưa từng chọn Orb; khi họ
+  đã chọn, kể cả Orb của chính Clark, lựa chọn của họ thắng, và giảm chuyển động thắng cả hai. Một bảng màu đủ tối để
+  biến mất vào nền trang tối bị bài kiểm tra ở trên từ chối.
+- Đổi diện mạo bằng một câu: "đổi giao diện sang Neo", "chuyển giao diện sang tối", "đặt lại giao diện", "mở danh sách
+  giao diện" (và các câu tiếng Anh tương ứng), gõ hay nói, cùng `control_app` của agent, đều đi đến đúng lệnh ghi
+  preference và đúng lệnh đổi chế độ màu mà các điều khiển ở trên dùng. Một câu chỉ gọi được theme mà node này vẽ được;
+  không có gì hỏi xác nhận, vì thay đổi được hoàn tác bằng cách làm lại. Mở danh sách bằng một câu sẽ đặt tiêu điểm bàn
+  phím vào theme đang chọn.
+- Desktop: trang shell riêng của cửa sổ desktop đọc cùng các token đã biên dịch (`apps/desktop/src/appearance-tokens.css`,
+  sinh từ Clark Default) và theo chế độ sáng hay tối của hệ thống; cửa sổ hội thoại chính là trang của web client, nên
+  theme trông giống nhau ở các chế độ thường, mở rộng, thu gọn và Orb.
 - Ngôn ngữ: Tiếng Việt / English — segmented control, áp dụng ngay (không có nút lưu), đặt
   `<html lang>`, và được giữ qua reload và giữa các thiết bị nhờ preference registry
   (`experience.language`). Mặc định là tiếng Việt; không có tuỳ chọn "theo hệ thống", vì không có

@@ -22,7 +22,7 @@ body {
    * broken: the stack falls through to the system faces, which is what this sheet used before.
    * The family name is "...Variable" because that is what the variable-weight files register.
    */
-  font-family: "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+  font-family: var(--cc-font-body, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif);
   font-size: var(--cc-text-body-md);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
@@ -36,17 +36,21 @@ body {
  *
  * The lit layer is the same grid in a brighter colour, masked to a circle at the pointer. The dots stay exactly
  * where they are; only which of them are bright changes, so nothing on screen moves with the mouse.
+ *
+ * A theme's backdrop effect replaces the pattern (the appearance stylesheet writes that rule) and sets its repeat and
+ * strength here; the lit layer follows whichever pattern is drawn, at a strength that follows the theme's (a faint
+ * backdrop has a faint light), and the protected audit measures text over both layers.
  */
 .cc-dot-grid, .cc-dot-grid::after {
   position: absolute; inset: 0; pointer-events: none;
   background-image: radial-gradient(circle, var(--cc-grid-dot) 1px, transparent 1.6px);
-  background-size: 22px 22px;
+  background-size: var(--cc-backdrop-size, 22px 22px);
   background-position: center;
 }
-.cc-dot-grid { z-index: -1; --cc-grid-dot: color-mix(in srgb, var(--cc-text-tertiary) 14%, transparent); }
+.cc-dot-grid { z-index: -1; --cc-grid-dot: color-mix(in srgb, var(--cc-text-tertiary) var(--cc-backdrop-alpha, 14%), transparent); }
 .cc-dot-grid::after {
   content: "";
-  --cc-grid-dot: color-mix(in srgb, var(--cc-accent) 55%, transparent);
+  --cc-grid-dot: color-mix(in srgb, var(--cc-accent) var(--cc-backdrop-lit, 55%), transparent);
   mask-image: radial-gradient(circle 190px at var(--cc-grid-x, -999px) var(--cc-grid-y, -999px), #000 0%, rgba(0, 0, 0, 0.45) 45%, transparent 100%);
   -webkit-mask-image: radial-gradient(circle 190px at var(--cc-grid-x, -999px) var(--cc-grid-y, -999px), #000 0%, rgba(0, 0, 0, 0.45) 45%, transparent 100%);
   opacity: 0;
@@ -76,10 +80,11 @@ body {
 
 /* Built for choosing from a long list, and dressed so it belongs to this surface rather than to the operating system. */
 .cc-select {
-  background: var(--cc-elevated);
+  background: var(--cc-input-bg, var(--cc-elevated));
   color: inherit;
-  border: 1px solid var(--cc-border);
-  border-radius: 10px;
+  border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, var(--cc-border));
+  border-radius: var(--cc-input-radius, var(--cc-radius-field, 10px));
   padding: 10px 12px;
   font: inherit;
   max-width: 100%;
@@ -101,10 +106,11 @@ body {
 .cc-search-select { position: relative; }
 .cc-search-select input {
   width: 100%;
-  background: var(--cc-elevated);
+  background: var(--cc-input-bg, var(--cc-elevated));
   color: inherit;
-  border: 1px solid var(--cc-border);
-  border-radius: 10px;
+  border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, var(--cc-border));
+  border-radius: var(--cc-input-radius, var(--cc-radius-field, 10px));
   padding: 10px 12px;
   font: inherit;
 }
@@ -121,8 +127,8 @@ body {
   padding: 4px;
   list-style: none;
   background: var(--cc-elevated);
-  border: 1px solid var(--cc-border);
-  border-radius: 10px;
+  border: var(--cc-line, 1px solid) var(--cc-border);
+  border-radius: var(--cc-radius-field, 10px);
   box-shadow: var(--cc-shadow-soft, 0 12px 32px rgb(0 0 0 / 35%));
 }
 .cc-search-list li {
@@ -131,7 +137,7 @@ body {
   justify-content: space-between;
   gap: 8px;
   padding: 7px 9px;
-  border-radius: 7px;
+  border-radius: min(7px, var(--cc-radius-field, 10px));
   cursor: pointer;
 }
 .cc-search-list li[data-active="true"] { background: var(--cc-card); }
@@ -234,8 +240,8 @@ body {
 .cc-bg-list {
   position: absolute; top: 100%; right: 0; margin: var(--cc-space-xs) 0 0; padding: var(--cc-space-sm);
   min-width: 220px; max-width: 360px; list-style: none;
-  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card);
+  box-shadow: var(--cc-shadow-popover, 0 8px 24px rgb(0 0 0 / 35%));
   opacity: 0; visibility: hidden; transition: opacity var(--cc-motion-micro) ease;
 }
 .cc-bg-mark:hover .cc-bg-list, .cc-bg-mark:focus-within .cc-bg-list { opacity: 1; visibility: visible; }
@@ -251,8 +257,8 @@ body {
 .cc-selection-menu {
   position: fixed; transform: translate(-50%, -100%); z-index: 5;
   display: flex; gap: var(--cc-space-xs); padding: var(--cc-space-xs);
-  background: var(--cc-elevated); border: 1px solid var(--cc-border);
-  border-radius: var(--cc-radius-pill); box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-radius: var(--cc-radius-pill); box-shadow: var(--cc-shadow-popover, 0 8px 24px rgb(0 0 0 / 35%));
 }
 .cc-selection-menu button {
   background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
@@ -262,7 +268,8 @@ body {
 .cc-credential-field { display: flex; flex-direction: column; gap: var(--cc-space-xs); font-size: var(--cc-text-label); }
 .cc-credential-field input {
   font: inherit; color: inherit; padding: var(--cc-space-sm);
-  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
+  background: var(--cc-input-bg, var(--cc-elevated)); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, var(--cc-border)); border-radius: var(--cc-input-radius, var(--cc-radius-card));
 }
 .cc-orb {
   width: 27px; height: 27px; border-radius: var(--cc-radius-pill);
@@ -296,7 +303,7 @@ body {
 .cc-inbox-mark {
   display: flex; align-items: center; gap: var(--cc-space-xs);
   font: inherit; font-size: var(--cc-text-label); color: var(--cc-text);
-  background: transparent; border: 1px solid var(--cc-border); border-radius: var(--cc-radius-pill);
+  background: transparent; border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-pill);
   padding: 2px var(--cc-space-sm); min-height: 26px; cursor: pointer; white-space: nowrap;
   transition-property: transform; transition-duration: var(--cc-motion-micro); transition-timing-function: var(--cc-motion-bounce);
 }
@@ -318,7 +325,7 @@ body {
   background: var(--cc-code); border-radius: var(--cc-radius-button); font-size: var(--cc-text-body-sm);
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.cc-inbox-notice { padding: var(--cc-space-sm) 0; border-bottom: 1px solid var(--cc-border); display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-inbox-notice { padding: var(--cc-space-sm) 0; border-bottom: var(--cc-line, 1px solid) var(--cc-border); display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 .cc-inbox-notice:last-child { border-bottom: 0; }
 .cc-inbox-notice-head { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
 .cc-inbox-unread { display: inline-flex; align-items: center; gap: var(--cc-space-xs); font-size: var(--cc-text-label); color: var(--cc-text); font-weight: 600; }

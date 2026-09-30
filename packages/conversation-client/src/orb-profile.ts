@@ -8,8 +8,10 @@
  * express a value this renderer would ignore, and a value written by an older build keeps rendering
  * instead of snapping or failing.
  *
- * Three properties the callers rely on:
+ * Four properties the callers rely on:
  *
+ *   - **The person's choice wins over a theme.** A theme may name the Orb it is drawn with; that is a
+ *     default used only while the person has not chosen one, and it can never select `custom`.
  *   - **Reduced motion wins.** It is applied last, to the resolved values rather than to the patch, so
  *     no profile and no stored patch can ask for motion a person has switched off. Colour is not
  *     motion and survives.
@@ -26,10 +28,13 @@ import {
   ORB_OPTICAL_BOUNDS,
   ORB_PHYSICS_BOUNDS,
   ORB_PALETTE_CHANNELS,
+  THEME_ORB_PROFILE_NAMES,
   orbProfileSchema,
   type OrbPaletteChannel,
   type OrbProfileName,
 } from "@clarkcant/contracts";
+
+import { ORB_PRESET_PALETTES } from "@clarkcant/design-tokens";
 
 import { ORB_PALETTE, ORB_SHAPE, type OrbStyle } from "./orb-shader.ts";
 
@@ -92,83 +97,44 @@ interface Preset {
  * glass shell, rim and silhouette are what make every one of them recognisably Clark.
  *
  * Palettes leave `canvas` alone on purpose. That channel is the surface the orb sits on, which is the
- * theme's to decide, not the profile's.
+ * page's to decide, not the profile's. The palettes live in the design tokens, where the theme audit
+ * measures the light each adds to the page.
  */
 const PRESETS: Record<Exclude<OrbProfileName, "custom">, Preset> = {
-  clark: { optical: {}, speed: ORB_MOTION_BOUNDS.speed.default, physics: {}, palette: {}, style: "band" },
+  clark: { optical: {}, speed: ORB_MOTION_BOUNDS.speed.default, physics: {}, palette: ORB_PRESET_PALETTES.clark, style: "band" },
   calm: {
     optical: { glow: 0.22, chromatic: 0.3, sheen: 0.22 },
     speed: 0.8,
     physics: { stiffness: 70, damping: 14, wobbleGain: 0.45, pointerResponse: 0.6 },
-    palette: {
-      glowColor: [0.36, 0.62, 0.86],
-      shellMid: [0.55, 0.85, 0.9],
-      shellEdge: [0.5, 0.64, 0.9],
-      colorA: [0.62, 0.9, 0.86],
-      colorB: [0.45, 0.78, 0.95],
-      colorC: [0.6, 0.66, 0.98],
-      colorD: [0.42, 0.55, 0.9],
-    },
+    palette: ORB_PRESET_PALETTES.calm,
     style: "band",
   },
   jelly: {
     optical: { glow: 0.36, chromatic: 0.5 },
     speed: 1.4,
     physics: { stiffness: 135, damping: 5.5, wobbleGain: 1, pointerResponse: 1.35 },
-    palette: {
-      glowColor: [1, 0.45, 0.66],
-      shellMid: [1, 0.72, 0.82],
-      shellEdge: [1, 0.55, 0.75],
-      colorA: [1, 0.78, 0.45],
-      colorB: [1, 0.55, 0.62],
-      colorC: [0.98, 0.45, 0.85],
-      colorD: [0.78, 0.5, 1],
-    },
+    palette: ORB_PRESET_PALETTES.jelly,
     style: "band",
   },
   glass: {
     optical: { exposure: 2.8, chromatic: 0.6, sheen: 0.5, glow: 0.2 },
     speed: 1,
     physics: { stiffness: 150, damping: 9, wobbleGain: 0.3, pointerResponse: 0.85 },
-    palette: {
-      glowColor: [0.7, 0.85, 1],
-      shellMid: [0.85, 0.95, 1],
-      shellEdge: [0.75, 0.85, 1],
-      colorA: [0.95, 0.98, 1],
-      colorB: [0.72, 0.9, 1],
-      colorC: [0.82, 0.8, 1],
-      colorD: [0.62, 0.72, 1],
-    },
+    palette: ORB_PRESET_PALETTES.glass,
     style: "band",
   },
   pearl: {
     optical: { exposure: 1.6, chromatic: 0.9, sheen: 0.6, glow: 0.24 },
     speed: 0.7,
     physics: { stiffness: 80, damping: 11, wobbleGain: 0.6, pointerResponse: 0.8 },
-    palette: {
-      glowColor: [0.95, 0.78, 0.9],
-      shellMid: [0.9, 0.97, 0.95],
-      shellEdge: [0.88, 0.8, 1],
-      colorA: [1, 0.82, 0.86],
-      colorB: [0.78, 0.96, 0.88],
-      colorC: [0.84, 0.8, 1],
-      colorD: [1, 0.95, 0.8],
-    },
+    palette: ORB_PRESET_PALETTES.pearl,
     style: "pearl",
   },
   plasma: {
     optical: { exposure: 2.4, chromatic: 0.5, glow: 0.5, sheen: 0.2 },
     speed: 1.6,
     physics: { stiffness: 110, damping: 8, wobbleGain: 0.8, pointerResponse: 1.2 },
-    palette: {
-      glowColor: [0.65, 0.35, 1],
-      shellMid: [0.55, 0.7, 1],
-      shellEdge: [0.7, 0.45, 1],
-      colorA: [1, 0.35, 0.85],
-      colorB: [0.35, 0.55, 1],
-      colorC: [0.7, 0.4, 1],
-      colorD: [0.35, 0.95, 1],
-    },
+    palette: ORB_PRESET_PALETTES.plasma,
     style: "plasma",
   },
 };
@@ -262,6 +228,15 @@ function resolvePalette(patch: unknown): OrbPaletteOverride {
 }
 
 /**
+ * A theme's Orb colours: every channel but `canvas`. The page is the page's to say, and the contract refuses a theme
+ * that sets it; a value that reached here some other way (a cached appearance, an older build) is dropped the same way.
+ */
+function themePalette(patch: unknown): OrbPaletteOverride {
+  const { canvas: _page, ...rest } = resolvePalette(patch);
+  return rest;
+}
+
+/**
  * Resolve a stored preference pair into the values the renderer uses.
  *
  * Anything that does not parse resolves to the shipped orb. That is deliberate for a preference: a
@@ -269,15 +244,25 @@ function resolvePalette(patch: unknown): OrbPaletteOverride {
  * silently different orb is worse than the profile the user actually chose.
  */
 export function resolveOrbProfile(input: {
-  /** Stored `orb.profile`. Unvalidated on purpose: this is the boundary that validates it. */
+  /**
+   * Stored `orb.profile`, or `undefined` when the person has never chosen one. Unvalidated on purpose: this is the
+   * boundary that validates it.
+   */
   profile?: unknown;
   /** Stored `orb.custom`. */
   custom?: unknown;
+  /**
+   * The Orb the drawn theme suggests (`{ profile, palette? }`). A default, not a choice: it applies only while
+   * `profile` is `undefined`, and it can never be `custom`, so a theme cannot reach the person's own patch.
+   */
+  theme?: unknown;
   /** The platform's own answer, not a preference: this one cannot be switched off from settings. */
   reducedMotion?: boolean;
 }): ResolvedOrbProfile {
-  const parsedProfile = orbProfileSchema.safeParse(input.profile);
-  const name: OrbProfileName = parsedProfile.success ? parsedProfile.data : "clark";
+  const suggestion = typeof input.theme === "object" && input.theme !== null ? (input.theme as Record<string, unknown>) : {};
+  const name = orbProfileName(input.profile, suggestion.profile);
+  // The theme's colours ride on its own suggestion only: once the person chooses, both are dropped together.
+  const fromTheme = input.profile === undefined && THEME_ORB_PROFILE_NAMES.some((preset) => preset === suggestion.profile);
 
   // A patch belongs to the custom profile. Selecting a preset is a decision, and a stale patch must not
   // quietly change what the preset means.
@@ -294,7 +279,11 @@ export function resolveOrbProfile(input: {
   const requestedSpeed = clamp(patchMotion.speed ?? preset.speed, ORB_MOTION_BOUNDS.speed);
   // A preset's own palette passes through the same clamp as a stored patch, so the bound holds for
   // shipped values too rather than only for what a person typed.
-  const palette = resolvePalette(applies ? stored.palette : preset.palette);
+  const palette = resolvePalette(
+    // The theme's channels are checked before they are laid over the preset, so one malformed channel keeps the
+    // preset's colour instead of leaving that channel empty.
+    applies ? stored.palette : fromTheme ? { ...preset.palette, ...themePalette(suggestion.palette) } : preset.palette,
+  );
   const style = preset.style;
 
   /*
@@ -317,6 +306,20 @@ export function resolveOrbProfile(input: {
     style,
     reducedMotion,
   };
+}
+
+/**
+ * Which Orb is drawn: the person's choice, then the theme's default, then Clark's own.
+ *
+ * A stored choice that does not parse is still a choice: it resolves to Clark's own Orb rather than handing the
+ * decision to a theme the person never asked to pick it.
+ */
+export function orbProfileName(profile: unknown, themeProfile?: unknown): OrbProfileName {
+  if (profile !== undefined) {
+    const parsed = orbProfileSchema.safeParse(profile);
+    return parsed.success ? parsed.data : "clark";
+  }
+  return THEME_ORB_PROFILE_NAMES.find((preset) => preset === themeProfile) ?? "clark";
 }
 
 function profileKey(input: Omit<ResolvedOrbProfile, "key">): string {

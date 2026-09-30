@@ -8,6 +8,7 @@ import { credentialNames, getNotification, latestMessages, messagesSince, readPr
 import { preferredAppIntentLocale } from "../app-intents.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
+import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
 import { referenceBrief, referencesForLastUserMessage } from "../composer-references.ts";
 import { type BrowserTaskToolDeps, personTextOf } from "../browser-task-tool.ts";
@@ -309,6 +310,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           onEvent: turn.onEvent,
           channel: turn.channel,
           hostControl: deps.services().hostControl,
+          themes: () => readThemeRegistry(themeRegistryDeps(deps.services())),
         },
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.

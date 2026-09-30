@@ -1,0 +1,64 @@
+{
+  "appearanceApi": {
+    "min": 2,
+    "max": 2
+  },
+  "id": "depth",
+  "displayName": "Depth",
+  "description": "Raised buttons, framed composer, a faint grid behind and paper on every card.",
+  "colors": {
+    "dark": {
+      "accent": "#7DB4F0"
+    },
+    "light": {
+      "accent": "#1F5FA8"
+    }
+  },
+  "typography": {
+    "display": "serif",
+    "mono": "typewriter",
+    "headingWeight": 700
+  },
+  "border": {
+    "width": 2,
+    "style": "solid"
+  },
+  "shadow": {
+    "style": "hard",
+    "offset": 3,
+    "color": "text"
+  },
+  "motion": {
+    "speed": 1.5,
+    "easing": "snappy"
+  },
+  "radius": {
+    "card": 0.5,
+    "field": 0.5
+  },
+  "recipes": {
+    "button": "raised",
+    "card": "raised",
+    "input": "outlined",
+    "modal": "framed",
+    "badge": "square",
+    "composer": "framed"
+  },
+  "effects": {
+    "backdrop": {
+      "kind": "hard-grid",
+      "intensity": 0.3,
+      "scale": 24
+    },
+    "surface": {
+      "kind": "paper",
+      "intensity": 0.5
+    }
+  },
+  "orb": {
+    "profile": "plasma",
+    "palette": {
+      "glowColor": [0.49, 0.71, 0.94]
+    }
+  }
+}

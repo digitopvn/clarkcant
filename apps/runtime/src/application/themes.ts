@@ -8,7 +8,6 @@ import {
   type AppearanceFallbackView,
   type AppearanceResponse,
   type DirectoryEntry,
-  type ThemeContrastFailureView,
   type ThemeDocument,
   type ThemeListingView,
   type ThemeProblemView,
@@ -24,7 +23,7 @@ import {
   resolveLocalSource,
   type InstalledPackageView,
 } from "@clarkcant/core";
-import { themeContrastProblem } from "@clarkcant/design-tokens";
+import { themeDrawProblem, type ThemeDrawProblem } from "@clarkcant/design-tokens";
 import { type Database } from "@clarkcant/storage";
 
 /**
@@ -66,8 +65,11 @@ export interface ThemeRegistry {
   unchecked: UncheckedThemePackageView[];
   /** The validated documents, by reference. Only package themes; Clark Default is the compiler's own base. */
   documents: ReadonlyMap<string, ThemeDocument>;
-  /** Valid themes whose colours fail the contrast audit, by reference, with why. Listed as problems, never drawn. */
-  lowContrast: ReadonlyMap<string, { message: string; contrast: ThemeContrastFailureView[] }>;
+  /**
+   * Valid themes an audit refuses, by reference, with why: colours that fail the contrast audit, or an appearance that
+   * would hide a protected state. Listed as problems, never drawn.
+   */
+  refused: ReadonlyMap<string, ThemeDrawProblem>;
 }
 
 const CLARK_LISTING: ThemeListingView = {
@@ -101,7 +103,7 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
   const problems: ThemeProblemView[] = [];
   const unchecked: UncheckedThemePackageView[] = [];
   const documents = new Map<string, ThemeDocument>();
-  const lowContrast = new Map<string, { message: string; contrast: ThemeContrastFailureView[] }>();
+  const refused = new Map<string, ThemeDrawProblem>();
   const claimed = new Set<string>();
 
   for (const pkg of installed) {
@@ -147,13 +149,26 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
         continue;
       }
       claimed.add(theme.themeRef);
-      // A theme is held to the contrast Clark Default is held to. One that fails is named rather than offered: drawing
-      // it would make the conversation itself hard to read, which is not a look anybody chose.
-      const unreadable = themeContrastProblem(theme.document);
-      if (unreadable !== undefined) {
-        const message = `theme ${theme.facetId}: ${unreadable.message}`;
-        lowContrast.set(theme.themeRef, { message, contrast: unreadable.failures });
-        problems.push({ packageId, version: listed.version, themeRef: theme.themeRef, message, contrast: unreadable.failures });
+      // A theme is held to the contrast Clark Default is held to, and may not blur Stop, approval, focus, status or
+      // disabled state. One that fails is named rather than offered: drawing it would make the conversation hard to
+      // read, or a protected state hard to see, which is not a look anybody chose.
+      //
+      // Audited on every registry read, which includes every theme write, rather than cached: both audits are pure
+      // arithmetic over a few dozen colours (well under a millisecond a theme), and the registry read around them
+      // re-reads each package's files from disk, which costs far more. A cache keyed by package digest would save the
+      // cheap half and add a second answer that could go stale when the audit itself changes with an upgrade. Worth
+      // revisiting if a caller starts writing themes in a loop (the Theme Lab, #300), and then for the file reads first.
+      const audit = themeDrawProblem(theme.document);
+      if (audit !== undefined) {
+        const problem: ThemeDrawProblem = { ...audit, message: `theme ${theme.facetId}: ${audit.message}` };
+        refused.set(theme.themeRef, problem);
+        problems.push({
+          packageId,
+          version: listed.version,
+          themeRef: theme.themeRef,
+          message: problem.message,
+          ...(problem.code === "THEME_LOW_CONTRAST" ? { contrast: problem.contrast } : { protected: problem.protected }),
+        });
         continue;
       }
       documents.set(theme.themeRef, theme.document);
@@ -169,7 +184,7 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
     }
   }
 
-  return { themes, problems, unchecked, documents, lowContrast };
+  return { themes, problems, unchecked, documents, refused };
 }
 
 export function resolveAppearance(deps: ThemeRegistryDeps, registry: ThemeRegistry = readThemeRegistry(deps)): AppearanceResponse {
@@ -214,9 +229,15 @@ export function resolveThemeRef(registry: ThemeRegistry, themeRef: string): Them
   if (document !== undefined && listing !== undefined) {
     return { ok: true, themeRef, theme: document, provider: listing.provider };
   }
-  const unreadable = registry.lowContrast.get(themeRef);
-  if (unreadable !== undefined) {
-    return { ok: false, fallback: { code: "THEME_LOW_CONTRAST", message: unreadable.message, contrast: unreadable.contrast } };
+  const refused = registry.refused.get(themeRef);
+  if (refused !== undefined) {
+    return {
+      ok: false,
+      fallback:
+        refused.code === "THEME_LOW_CONTRAST"
+          ? { code: refused.code, message: refused.message, contrast: refused.contrast }
+          : { code: refused.code, message: refused.message, protected: refused.protected },
+    };
   }
   const problem = registry.problems.find((candidate) => candidate.themeRef === themeRef);
   if (problem !== undefined) return fallback("THEME_INVALID", problem.message);

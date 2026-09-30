@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 2,
+  "id": "com.example.theme-hostile",
+  "version": "1.0.0",
+  "displayName": "Hostile themes",
+  "description": "Four themes that push against what Clark keeps visible: one as flat as the contract allows, one whose buttons take the card's colour, one that camouflages status, one that blacks out the Orb.",
+  "hostApi": {
+    "min": 1,
+    "max": 1
+  },
+  "facets": [
+    {
+      "kind": "themes",
+      "id": "flatline",
+      "entry": "themes/flatline.json",
+      "isolation": "declarative"
+    },
+    {
+      "kind": "themes",
+      "id": "lookalike",
+      "entry": "themes/lookalike.json",
+      "isolation": "declarative"
+    },
+    {
+      "kind": "themes",
+      "id": "camouflage",
+      "entry": "themes/camouflage.json",
+      "isolation": "declarative"
+    },
+    {
+      "kind": "themes",
+      "id": "blackout",
+      "entry": "themes/blackout.json",
+      "isolation": "declarative"
+    }
+  ],
+  "requestedCapabilities": [],
+  "permissions": {
+    "networkOrigins": [],
+    "filesystem": [],
+    "microphone": false,
+    "camera": false,
+    "lifecycleScripts": []
+  },
+  "platforms": [
+    "darwin-arm64",
+    "linux-x64",
+    "win32-x64",
+    "web"
+  ],
+  "publisher": {
+    "id": "example",
+    "sourceUrl": "https://example.com",
+    "license": "MIT"
+  }
+}

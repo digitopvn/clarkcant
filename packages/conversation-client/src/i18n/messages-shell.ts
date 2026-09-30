@@ -135,6 +135,21 @@ export const MESSAGES_SHELL_VI = {
   "shell.intent.notTurn": "Bản dựng này không dừng được câu trả lời, nên tôi chưa làm gì cả.",
   "shell.intent.notOrb": "Bản dựng này không lưu được kiểu Orb, nên tôi chưa làm gì cả.",
   "shell.intent.orbProfileMissing": "Chưa rõ bạn muốn đổi Orb sang kiểu nào, nên tôi chưa làm gì cả.",
+  "shell.intent.notAppearance": "Bản dựng này không lưu được giao diện, nên tôi chưa làm gì cả.",
+  "shell.intent.themeMissing": "Chưa rõ bạn muốn đổi giao diện sang gì, nên tôi chưa làm gì cả.",
+  "shell.intent.themeChanged": "Đã đổi giao diện sang {name}.",
+  "shell.intent.themeRefused":
+    "Tôi chưa đổi sang {name}: chủ đề này làm chữ khó đọc hoặc làm mờ nút Dừng, nút duyệt, viền tiêu điểm, màu trạng thái hay chính Orb. Giao diện đang dùng vẫn giữ nguyên.",
+  "shell.intent.themeWriteFailed": "Tôi chưa lưu được chủ đề {name}: {reason}. Giao diện đang dùng vẫn giữ nguyên.",
+  "shell.intent.themeWriteReason.notInstalled": "không gói nào đã cài cung cấp chủ đề này",
+  "shell.intent.themeWriteReason.invalid": "chủ đề này không hợp lệ",
+  "shell.intent.themeWriteReason.unavailable": "node không đọc được gói chứa chủ đề này",
+  "shell.intent.themeWriteReason.unknown": "bản Clark này không có chủ đề này",
+  "shell.intent.themeSavedNotShown":
+    "Đã lưu chủ đề {name}, nhưng trang chưa vẽ lại được vì không đọc lại được giao diện từ node. Chủ đề sẽ hiện khi trang đọc lại được.",
+  "shell.intent.themeShowsDefault": "Đã lưu lựa chọn {name}. {reason}",
+  "shell.intent.themeLocalRefused":
+    "Trang này từ chối vẽ chủ đề đó nên đang hiện Clark Default; chi tiết nằm trong Cài đặt, mục Trải nghiệm.",
   "shell.intent.orbChanged": "Đã đổi Orb sang kiểu {name}.",
   "shell.intent.orbSavedNotShown":
     "Đã lưu kiểu {name}, nhưng Orb trên màn hình chưa đổi được vì không đọc lại được cài đặt ({reason}). Orb sẽ đổi khi đọc lại được hoặc khi tải lại trang.",
@@ -321,6 +336,21 @@ export const MESSAGES_SHELL_EN = {
   "shell.intent.notTurn": "This build cannot stop a reply, so nothing happened.",
   "shell.intent.notOrb": "This build cannot save an orb style, so nothing happened.",
   "shell.intent.orbProfileMissing": "It is not clear which orb style you want, so nothing happened.",
+  "shell.intent.notAppearance": "This build cannot save an appearance, so nothing happened.",
+  "shell.intent.themeMissing": "It is not clear what you want the appearance changed to, so nothing happened.",
+  "shell.intent.themeChanged": "The appearance is now {name}.",
+  "shell.intent.themeRefused":
+    "I did not switch to {name}: it makes text hard to read or blurs Stop, approve, the focus ring, status colors or the Orb itself. The current appearance is kept.",
+  "shell.intent.themeWriteFailed": "I could not save the theme {name}: {reason}. The current appearance is kept.",
+  "shell.intent.themeWriteReason.notInstalled": "no installed package provides it",
+  "shell.intent.themeWriteReason.invalid": "the theme is not valid",
+  "shell.intent.themeWriteReason.unavailable": "the node cannot read the package that holds it",
+  "shell.intent.themeWriteReason.unknown": "this build of Clark does not have it",
+  "shell.intent.themeSavedNotShown":
+    "The theme {name} is saved, but the page could not redraw because the node did not answer. It appears once the page can read it again.",
+  "shell.intent.themeShowsDefault": "Your choice of {name} is saved. {reason}",
+  "shell.intent.themeLocalRefused":
+    "This page refused to draw that theme and is showing Clark Default; the details are in Settings, under Experience.",
   "shell.intent.orbChanged": "The orb is now in the {name} style.",
   "shell.intent.orbSavedNotShown":
     "The {name} style is saved, but the orb on screen has not changed because the settings could not be read back ({reason}). It will change once they can, or on reload.",

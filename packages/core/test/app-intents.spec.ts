@@ -14,6 +14,7 @@ import {
   normaliseIntentText,
   recordAppIntentEvent,
   resolveAppIntent,
+  type ThemeTarget,
 } from "../src/app-intents.ts";
 
 /**
@@ -157,6 +158,22 @@ const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[];
     vietnamese: ["chưa có hiệu lực", "Nó chưa có hiệu lực.", "việc đó chưa có hiệu lực", "chua co hieu luc"],
     english: "it did not take effect",
   },
+  {
+    // "sang" is "to" and "sáng" is "light": the scheme is read with its tone marks, so these three differ.
+    kind: "appearance.set-color-scheme",
+    vietnamese: ["chuyển giao diện sang tối", "đổi giao diện sang sáng", "bật chế độ tối", "đổi giao diện theo hệ thống"],
+    english: "switch to dark mode",
+  },
+  {
+    kind: "appearance.reset",
+    vietnamese: ["đặt lại giao diện", "khôi phục giao diện mặc định"],
+    english: "reset the theme",
+  },
+  {
+    kind: "appearance.open-theme-gallery",
+    vietnamese: ["mở danh sách giao diện", "xem thư viện giao diện"],
+    english: "open the theme gallery",
+  },
 ];
 
 describe("every documented way of asking maps to one intent", () => {
@@ -182,8 +199,11 @@ describe("every documented way of asking maps to one intent", () => {
     // still reachable - by a click that already knows the alias, or by `control_app` - just not by a
     // sentence this table alone resolves. `orb.select` is the same shape: it needs the style's name,
     // which the Settings control and `control_app` carry, and a phrase table naming every style in two
-    // languages would be a second copy of the preset list to keep in step.
-    const coverableKinds = APP_INTENT_KINDS.filter((kind) => kind !== "model.select" && kind !== "orb.select");
+    // languages would be a second copy of the preset list to keep in step. `appearance.set-theme` needs the installed
+    // themes, which the node injects; it is covered below with a target table.
+    const coverableKinds = APP_INTENT_KINDS.filter(
+      (kind) => kind !== "model.select" && kind !== "orb.select" && kind !== "appearance.set-theme",
+    );
     expect(DOCUMENTED.map((entry) => entry.kind).sort()).toEqual([...coverableKinds].sort());
   });
 
@@ -382,6 +402,99 @@ describe("a work request is not an app intent", () => {
 
   it("is not fooled by a tab name inside a question", () => {
     expect(resolveAppIntent({ text: "model nào đang chạy vậy", mintConfirmationToken: mint }).kind).toBe("none");
+  });
+});
+
+describe("the appearance commands", () => {
+  const THEMES: readonly ThemeTarget[] = [
+    { phrase: "Clark Default", themeRef: "builtin:clark", name: "Clark Default" },
+    { phrase: "Dusk", themeRef: "pkg:dusk@1.0.0#dusk", name: "Dusk" },
+    { phrase: "Dusk Pro", themeRef: "pkg:dusk@1.0.0#dusk-pro", name: "Dusk Pro" },
+  ];
+  const withThemes = { themeTargets: () => THEMES };
+
+  it("chooses an installed theme by its name, the longest name first", () => {
+    for (const [sentence, themeRef] of [
+      ["đổi giao diện sang Dusk", "pkg:dusk@1.0.0#dusk"],
+      ["chuyển sang chủ đề Dusk Pro nhé", "pkg:dusk@1.0.0#dusk-pro"],
+      ["switch the theme to Dusk Pro", "pkg:dusk@1.0.0#dusk-pro"],
+      ["doi giao dien sang clark default", "builtin:clark"],
+    ] as const) {
+      const match = matchAppIntent(sentence, withThemes);
+      expect(match?.kind === "intent" && match.intent, sentence).toMatchObject({ kind: "appearance.set-theme", themeRef });
+    }
+  });
+
+  it("reads the colour scheme with its tone marks, and refuses to guess between two", () => {
+    const dark = matchAppIntent("chuyển giao diện sang tối");
+    expect(dark?.kind === "intent" && dark.intent).toEqual({ kind: "appearance.set-color-scheme", colorScheme: "dark" });
+    const light = matchAppIntent("chuyển giao diện sang sáng");
+    expect(light?.kind === "intent" && light.intent).toEqual({ kind: "appearance.set-color-scheme", colorScheme: "light" });
+    // No scheme named: "sang" is only "to".
+    expect(matchAppIntent("chuyển giao diện sang")?.kind).not.toBe("intent");
+    expect(matchAppIntent("đổi giao diện sáng hay tối")?.kind).not.toBe("intent");
+  });
+
+  it("leaves work about somebody else's interface or theme to the agent", () => {
+    for (const request of [
+      "mở giao diện quản trị WordPress",
+      "đổi giao diện trang WordPress sang tối",
+      "switch my vscode theme to dark",
+      "change the theme of the blog to Dusk",
+      "open the themes folder",
+      "chuyển sang chủ đề khác",
+      "đổi chủ đề cuộc trò chuyện",
+      "make a dark theme",
+      "make me a light theme please",
+      "create a dark theme",
+      "build a dark mode theme",
+    ]) {
+      const resolution = resolveAppIntent({ text: request, mintConfirmationToken: mint, ...withThemes });
+      expect(resolution.kind === "intent" && resolution.intent.kind.startsWith("appearance."), request).toBe(false);
+    }
+  });
+
+  it("keeps the scheme phrases when an installed theme is named with their words", () => {
+    const colliding: readonly ThemeTarget[] = [
+      ...THEMES,
+      { phrase: "Dark", themeRef: "pkg:x@1.0.0#dark", name: "Dark" },
+      { phrase: "Light Mode", themeRef: "pkg:x@1.0.0#light-mode", name: "Light Mode" },
+      { phrase: "Dark Forest", themeRef: "pkg:x@1.0.0#dark-forest", name: "Dark Forest" },
+    ];
+    const options = { themeTargets: () => colliding };
+    for (const [sentence, colorScheme] of [
+      ["switch to dark mode", "dark"],
+      ["change the theme to dark", "dark"],
+      ["đổi giao diện sang dark", "dark"],
+      ["turn on light mode", "light"],
+    ] as const) {
+      const match = matchAppIntent(sentence, options);
+      expect(match?.kind === "intent" && match.intent, sentence).toEqual({ kind: "appearance.set-color-scheme", colorScheme });
+    }
+    // A name with a word of its own is still found, even when it begins with a scheme word.
+    const forest = matchAppIntent("switch the theme to dark forest", options);
+    expect(forest?.kind === "intent" && forest.intent).toMatchObject({ kind: "appearance.set-theme", themeRef: "pkg:x@1.0.0#dark-forest" });
+  });
+
+  it("asks for the installed themes only for a sentence about the look", () => {
+    let asked = 0;
+    const counting = { themeTargets: () => ((asked += 1), THEMES) };
+    matchAppIntent("mở cài đặt", counting);
+    matchAppIntent("viết cho tôi một bài thơ", counting);
+    expect(asked).toBe(0);
+    matchAppIntent("đổi giao diện sang Dusk", counting);
+    expect(asked).toBe(1);
+  });
+
+  it("makes every appearance intent executable without a question", () => {
+    for (const intent of [
+      { kind: "appearance.set-theme", themeRef: "builtin:clark", themeName: "Clark Default" },
+      { kind: "appearance.set-color-scheme", colorScheme: "dark" },
+      { kind: "appearance.reset" },
+      { kind: "appearance.open-theme-gallery" },
+    ] as const) {
+      expect(resolveAppIntent({ intent, mintConfirmationToken: mint }).kind, intent.kind).toBe("intent");
+    }
   });
 });
 

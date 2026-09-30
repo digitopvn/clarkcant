@@ -3,9 +3,11 @@ import { join } from "node:path";
 
 import {
   ATTACHMENT_LIMITS,
+  BUILTIN_CLARK_THEME_REF,
   ORB_PROFILE_NAMES,
   appIntentSchema,
   attachmentIdSchema,
+  colorSchemeSchema,
   describeAppIntent,
   memoryKindSchema,
   memoryScopeSchema,
@@ -62,6 +64,12 @@ import { type AutomationToolDeps, createAutomationTools } from "./automation-too
 import { type BrowserTaskToolDeps, createBrowserTaskTool } from "./browser-task-tool.ts";
 import { createWorkTools } from "./work-tools.ts";
 import type { HostControlAcks } from "./host-control-acks.ts";
+import { checkThemeChoice } from "./application/appearance-intents.ts";
+import { preferredAppIntentLocale } from "./app-intents.ts";
+import type { ThemeRegistry } from "./application/themes.ts";
+
+/** The colour schemes `appearance.set-color-scheme` accepts, as the contract lists them. */
+const COLOR_SCHEMES = colorSchemeSchema.options;
 
 /**
  * The tools a turn may call beyond the view and composition surface.
@@ -312,6 +320,10 @@ const CONTROL_APP_KINDS = [
   "model.select",
   "inbox.open",
   "orb.select",
+  "appearance.set-theme",
+  "appearance.set-color-scheme",
+  "appearance.reset",
+  "appearance.open-theme-gallery",
 ] as const;
 
 /**
@@ -355,6 +367,11 @@ export interface ControlAppDeps {
    * node that cannot hear back must not guess.
    */
   hostControl?: HostControlAcks;
+  /**
+   * The node's theme registry, read only for `appearance.set-theme`. Absent, that kind is refused: a theme nobody
+   * checked must not be stored as the person's choice.
+   */
+  themes?: () => ThemeRegistry;
 }
 
 /**
@@ -367,6 +384,8 @@ const CONTROL_APP_MISSING_PARAMETER: Partial<Record<string, string>> = {
   "settings.tab": "settings.tab cần tên tab hợp lệ.",
   "model.select": "model.select cần modelAlias của một profile đã cấu hình.",
   "orb.select": `orb.select cần orbProfile là một trong: ${ORB_PROFILE_NAMES.join(", ")}.`,
+  "appearance.set-theme": "appearance.set-theme cần theme: tên, id hoặc themeRef của một chủ đề đã cài.",
+  "appearance.set-color-scheme": `appearance.set-color-scheme cần colorScheme là một trong: ${COLOR_SCHEMES.join(", ")}.`,
 };
 
 /**
@@ -411,7 +430,9 @@ export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
       "Ask the app to carry out one of its own semantic actions on the person's behalf: open Settings " +
       "(optionally at a tab), open the inbox (what is waiting for the person and the notices from background " +
       "work), return to the current conversation, go to the home screen, start or end voice mode, switch the configured model (cycle to the next one, or select a specific alias), " +
-      "or change the Orb's style to one of its named profiles (saved the same way the Settings buttons save it). " +
+      "or change the Orb's style to one of its named profiles (saved the same way the Settings buttons save it), " +
+      "or change the appearance: switch to an installed theme by its name, set light/dark/system, reset to Clark " +
+      "Default, or open the list of themes (each saved the same way the Settings controls save it). " +
       "This is not a scripting surface — it accepts only these fixed kinds, never a URL, selector or " +
       "arbitrary command. Only call it when the user's own request implies the app itself should change, " +
       "not merely to narrate what you are about to say. The result is the screen's own report: done, " +
@@ -441,10 +462,21 @@ export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
             "Required only for kind \"orb.select\": the Orb profile to switch to. \"clark\" is the signature default; " +
             "\"custom\" is the person's own adjustments from Settings.",
         },
+        theme: {
+          type: "string",
+          description:
+            "Required only for kind \"appearance.set-theme\": the installed theme's display name, id or themeRef " +
+            "(\"builtin:clark\" is Clark Default). An unknown one is refused with the list of themes available.",
+        },
+        colorScheme: {
+          type: "string",
+          enum: [...COLOR_SCHEMES],
+          description: "Required only for kind \"appearance.set-color-scheme\": light, dark, or system to follow the OS.",
+        },
       },
     },
     promptSnippet:
-      "control_app — open Settings or the inbox, navigate, switch voice/model state, or change the Orb's style for the user",
+      "control_app — open Settings or the inbox, navigate, switch voice/model state, or change the Orb's style or the appearance for the user",
     execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
       const outcome = await controlApp(deps, params);
       return { text: outcome.say };
@@ -467,6 +499,16 @@ export async function controlApp(deps: ControlAppDeps, params: Record<string, un
   if (report === "timeout") return { status: "unconfirmed", reason: "timeout", say: TIMEOUT_SAY };
   if (report.ran) return { status: "done", say: `Màn hình đã thực hiện xong: ${report.say || delivered.say}` };
   return { status: "failed", say: `Màn hình không thực hiện được lệnh: ${report.say}` };
+}
+
+/** The theme registry for a `control_app` call, or `undefined` when this node has none or cannot read it now. */
+function readThemes(deps: ControlAppDeps): ThemeRegistry | undefined {
+  try {
+    return deps.themes?.();
+  } catch (error) {
+    console.error("the theme registry could not be read for control_app", error);
+    return undefined;
+  }
 }
 
 /**
@@ -495,6 +537,13 @@ export function decideControlApp(deps: ControlAppDeps, params: Record<string, un
     ...(kind === "orb.select" && orbProfileSchema.safeParse(params.orbProfile).success
       ? { orbProfile: params.orbProfile }
       : {}),
+    ...(kind === "appearance.set-color-scheme" && colorSchemeSchema.safeParse(params.colorScheme).success
+      ? { colorScheme: params.colorScheme }
+      : {}),
+    // Checked against the registry below; the contract only needs a reference here, which the check then replaces.
+    ...(kind === "appearance.set-theme" && typeof params.theme === "string" && params.theme.trim() !== ""
+      ? { themeRef: BUILTIN_CLARK_THEME_REF }
+      : {}),
   });
   if (!parsed.success) {
     return {
@@ -507,8 +556,20 @@ export function decideControlApp(deps: ControlAppDeps, params: Record<string, un
     };
   }
 
-  const intent = parsed.data;
-  const readBack = describeAppIntent(intent);
+  let intent = parsed.data;
+  // Said in the language the person reads the app in: the read-back and a theme refusal are shown and spoken to them.
+  const locale = preferredAppIntentLocale(
+    { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.newId },
+    deps.principalId,
+  );
+  let readBack = describeAppIntent(intent, locale);
+  if (intent.kind === "appearance.set-theme") {
+    // The same check a sentence and a click go through, so the agent can choose only a theme the page will draw.
+    const checked = checkThemeChoice(readThemes(deps), String(params.theme), locale);
+    if (!checked.ok) return { status: "refused", reason: "unsupported", say: checked.say };
+    intent = checked.intent;
+    readBack = checked.readBack;
+  }
   const onEvent = deps.onEvent();
   if (onEvent === undefined) {
     return { status: "refused", reason: "no-active-surface", say: NO_ACTIVE_HOST_SURFACE_SAY };

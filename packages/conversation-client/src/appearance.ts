@@ -3,8 +3,10 @@ import {
   checkThemeDocument,
   type ThemeContrastFailureView,
   type ThemeDocument,
+  type ThemeOrb,
+  type ThemeProtectedFailureView,
 } from "@clarkcant/contracts";
-import { appearanceStylesheet, compileAppearance, themeContrastProblem } from "@clarkcant/design-tokens";
+import { appearanceStylesheet, compileAppearance, themeDrawProblem, type ThemeDrawProblem } from "@clarkcant/design-tokens";
 
 /**
  * The theme a page is drawn in, applied without reloading it.
@@ -15,7 +17,7 @@ import { appearanceStylesheet, compileAppearance, themeContrastProblem } from "@
  *
  * What reaches the sheet is compiled here, from a document checked here, even though the node already checked it. The
  * page is where a value would become CSS, so the page does not take the node's word for it: a document that fails the
- * contract, fails the contrast audit, or compiles to a value the snapshot schema refuses, is drawn as Clark Default
+ * contract, fails the contrast or protected-state audit, or compiles to a value the snapshot schema refuses, is drawn as Clark Default
  * instead.
  */
 
@@ -33,14 +35,17 @@ export const APPEARANCE_UNAVAILABLE = "unavailable";
 
 let tokenSheet: { kind: "constructed"; sheet: CSSStyleSheet } | { kind: "element"; element: HTMLStyleElement } | undefined;
 
-/** A theme refused for its colours, carrying every failing pair so the refusal can be worded in the reader's language. */
-export class ThemeContrastError extends Error {
-  readonly contrast: ThemeContrastFailureView[];
+/**
+ * A theme refused by an audit: for unreadable colours, or for hiding a protected state. It carries every failing pair
+ * as data, so the refusal can be worded in the reader's language.
+ */
+export class ThemeDrawError extends Error {
+  readonly problem: ThemeDrawProblem;
 
-  constructor(message: string, contrast: ThemeContrastFailureView[]) {
-    super(message);
-    this.name = "ThemeContrastError";
-    this.contrast = contrast;
+  constructor(problem: ThemeDrawProblem) {
+    super(problem.message);
+    this.name = "ThemeDrawError";
+    this.problem = problem;
   }
 }
 
@@ -53,13 +58,13 @@ export interface CompiledAppearance {
 /**
  * Compile a theme into the token stylesheet, both schemes.
  *
- * Throws when the theme's colours fail the contrast audit Clark Default is held to, or when the result would break the
+ * Throws when the theme fails the contrast or protected-state audit Clark Default is held to, or when the result would break the
  * snapshot contract: either way the caller draws Clark Default and says why.
  */
 export function compileThemeStylesheet(theme: ThemeDocument | undefined, themeRef: string): CompiledAppearance {
   if (theme !== undefined) {
-    const unreadable = themeContrastProblem(theme);
-    if (unreadable !== undefined) throw new ThemeContrastError(unreadable.message, unreadable.failures);
+    const refused = themeDrawProblem(theme);
+    if (refused !== undefined) throw new ThemeDrawError(refused);
   }
   const dark = compileAppearance(theme === undefined ? { scheme: "dark" } : { scheme: "dark", theme, themeRef });
   const light = compileAppearance(theme === undefined ? { scheme: "light" } : { scheme: "light", theme, themeRef });
@@ -121,6 +126,7 @@ export function installStyleSheets(componentCss: string): void {
   } catch (error) {
     console.error("the remembered theme could not be drawn, so the page starts on Clark Default", error);
     writeTokens(clark);
+    writeThemeOrb(undefined);
     cacheAppearance(undefined);
   }
 }
@@ -135,6 +141,8 @@ export type AppliedAppearance =
       problem: string;
       /** When the refusal was for the theme's colours: every failing pair. */
       contrast?: ThemeContrastFailureView[];
+      /** When the refusal was for hiding a protected state: every failing check. */
+      protected?: ThemeProtectedFailureView[];
     };
 
 /**
@@ -145,7 +153,8 @@ export type AppliedAppearance =
 export function applyAppearance(input: { theme: unknown; themeRef: string }): AppliedAppearance {
   let compiled: CompiledAppearance | undefined;
   let problem: string | undefined;
-  let contrast: ThemeContrastFailureView[] | undefined;
+  let refused: ThemeDrawProblem | undefined;
+  let orbDefault: ThemeOrb | undefined;
   if (input.theme === null) {
     compiled = clarkStylesheet();
   } else {
@@ -155,15 +164,17 @@ export function applyAppearance(input: { theme: unknown; themeRef: string }): Ap
     } else {
       try {
         compiled = compileThemeStylesheet(checked.document, input.themeRef);
+        orbDefault = checked.document.orb;
       } catch (error) {
         problem = error instanceof Error ? error.message : "the theme does not compile";
-        if (error instanceof ThemeContrastError) contrast = error.contrast;
+        if (error instanceof ThemeDrawError) refused = error.problem;
       }
     }
   }
 
   const drawn = compiled ?? clarkStylesheet();
   writeTokens(drawn);
+  writeThemeOrb(orbDefault);
   cacheAppearance(problem === undefined && input.theme !== null ? { theme: input.theme, themeRef: input.themeRef } : undefined);
   return problem === undefined && compiled !== undefined
     ? { ok: true, themeRef: input.theme === null ? BUILTIN_CLARK_THEME_REF : input.themeRef, revision: drawn.revision }
@@ -172,8 +183,36 @@ export function applyAppearance(input: { theme: unknown; themeRef: string }): Ap
         themeRef: BUILTIN_CLARK_THEME_REF,
         revision: drawn.revision,
         problem: problem ?? "the theme does not compile",
-        ...(contrast === undefined ? {} : { contrast }),
+        ...(refused?.code === "THEME_LOW_CONTRAST" ? { contrast: refused.contrast } : {}),
+        ...(refused?.code === "THEME_PROTECTED" ? { protected: refused.protected } : {}),
       };
+}
+
+/**
+ * The Orb the drawn theme suggests, or `undefined` when it suggests none or Clark Default is drawn.
+ *
+ * Set only from a document that passed the contract and both audits, in the same step that draws it, so the Orb and
+ * the token sheet cannot disagree about which theme is on screen. Every Orb on the page reads it as a default under the
+ * person's own choice, never over it; see `resolveOrbProfile`.
+ */
+let themeOrb: ThemeOrb | undefined;
+const themeOrbListeners = new Set<() => void>();
+
+function writeThemeOrb(next: ThemeOrb | undefined): void {
+  if (JSON.stringify(next) === JSON.stringify(themeOrb)) return;
+  themeOrb = next;
+  for (const listener of themeOrbListeners) listener();
+}
+
+/** The drawn theme's Orb suggestion. The same object until it changes, as `useSyncExternalStore` needs. */
+export function readThemeOrb(): ThemeOrb | undefined {
+  return themeOrb;
+}
+
+/** Called when the drawn theme's Orb suggestion changes. Returns the function that stops it. */
+export function subscribeToThemeOrb(onChange: () => void): () => void {
+  themeOrbListeners.add(onChange);
+  return () => themeOrbListeners.delete(onChange);
 }
 
 function writeTokens(compiled: CompiledAppearance): void {

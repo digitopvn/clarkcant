@@ -9,6 +9,17 @@
 const output = document.querySelector("#output");
 const statusList = document.querySelector("#status");
 
+/*
+ * Light or dark as the system says, through the same `data-cc-theme` attribute the web client sets, so the tokens in
+ * `appearance-tokens.css` pick the scheme exactly as they do there. The page starts dark (the attribute in the HTML).
+ */
+const prefersLight = window.matchMedia("(prefers-color-scheme: light)");
+function followSystemScheme() {
+  document.documentElement.dataset.ccTheme = prefersLight.matches ? "light" : "dark";
+}
+followSystemScheme();
+prefersLight.addEventListener("change", followSystemScheme);
+
 function show(value) {
   output.textContent = JSON.stringify(value, null, 2);
 }

@@ -9,9 +9,13 @@ import {
   type ResolvedColorScheme,
   type ThemeContrastFailureView,
   type ThemeDocument,
+  type ThemeMotionEasing,
+  type ThemeProtectedFailureView,
 } from "@clarkcant/contracts";
 
 import { type ContrastAudit, auditColors } from "./contrast.ts";
+import { resolveIdentity } from "./identity.ts";
+import { auditProtectedSchemes } from "./protected.ts";
 import { CLARK_SCHEMES, type ColorTokens, LAYOUT, MOTION, MOTION_REDUCED, RADIUS, SPACE, TYPE_SCALE } from "./tokens.ts";
 
 /**
@@ -67,16 +71,19 @@ export function compileAppearance(input: CompileAppearanceInput): AppearanceSnap
   const theme = input.theme ?? CLARK_THEME;
   const radius: Record<string, string> = { ...RADIUS };
   for (const [name, rem] of Object.entries(theme.radius ?? {})) {
-    if (rem !== undefined) radius[name] = remLength(rem);
+    // `field` is identity, not one of the version-1 radius tokens; `resolveIdentity` carries it.
+    if (rem !== undefined && name !== "field") radius[name] = remLength(rem);
   }
   const tokens = {
     color: themeColors(input.scheme, theme),
     type: TYPE_SCALE,
     space: SPACE,
     radius,
-    motion: MOTION,
+    motion: themeMotion(theme),
+    // Host-owned: a theme can make motion faster, slower or stepped, and reduced motion is still none at all.
     motionReduced: MOTION_REDUCED,
     layout: LAYOUT,
+    identity: resolveIdentity(theme),
   } as AppearanceTokens;
   const themeRef = input.themeRef ?? BUILTIN_CLARK_THEME_REF;
   return appearanceSnapshotSchema.parse({
@@ -143,6 +150,73 @@ export function themeContrastProblem(theme: ThemeDocument): ThemeContrastProblem
 /** A theme's palette in one scheme: Clark's, patched by what the theme says for that scheme. */
 function themeColors(scheme: ResolvedColorScheme, theme: ThemeDocument): ColorTokens {
   return { ...CLARK_SCHEMES[scheme], ...theme.colors?.[scheme] } as ColorTokens;
+}
+
+/** The curves an easing choice draws with: the everyday curve, and the one with overshoot. */
+const EASINGS: Readonly<Record<ThemeMotionEasing, { easing: string; bounce: string }>> = {
+  standard: { easing: MOTION.easing, bounce: MOTION.bounce },
+  snappy: { easing: "cubic-bezier(0.2, 0, 0, 1)", bounce: "cubic-bezier(0.3, 1.4, 0.5, 1)" },
+  linear: { easing: "linear", bounce: "linear" },
+  stepped: { easing: "steps(4)", bounce: "steps(4)" },
+};
+
+/**
+ * A theme's full-motion tokens: Clark's durations scaled by the theme's speed, along the theme's curves.
+ *
+ * Clark's own object when the theme says nothing about motion, so a theme without motion compiles to exactly Clark's
+ * values rather than to a recomputation of them.
+ */
+function themeMotion(theme: ThemeDocument): AppearanceTokens["motion"] {
+  if (theme.motion === undefined) return MOTION;
+  const speed = theme.motion.speed ?? 1;
+  const curves = EASINGS[theme.motion.easing ?? "standard"];
+  const scaled = (duration: string): string => `${String(Math.round(Number.parseInt(duration, 10) / speed))}ms`;
+  return {
+    micro: scaled(MOTION.micro),
+    normal: scaled(MOTION.normal),
+    panel: scaled(MOTION.panel),
+    orb: scaled(MOTION.orb),
+    enter: scaled(MOTION.enter),
+    exit: scaled(MOTION.exit),
+    glow: scaled(MOTION.glow),
+    ...curves,
+  };
+}
+
+/** Why a theme cannot be drawn, whichever audit refuses it first. */
+export type ThemeDrawProblem =
+  | { code: "THEME_LOW_CONTRAST"; message: string; contrast: ThemeContrastFailureView[] }
+  | { code: "THEME_PROTECTED"; message: string; protected: ThemeProtectedFailureView[] };
+
+/**
+ * Why a theme would hide a protected state, or `undefined` when it would not. See `protected.ts`.
+ *
+ * Audited on the palettes, the identity and the Orb default the page draws, from the same merges.
+ */
+export function themeProtectedProblem(theme: ThemeDocument): { failures: ThemeProtectedFailureView[]; message: string } | undefined {
+  const failures = auditProtectedSchemes(
+    { dark: themeColors("dark", theme), light: themeColors("light", theme) },
+    resolveIdentity(theme),
+    theme.orb,
+  );
+  if (failures.length === 0) return undefined;
+  const parts = failures.map(
+    (failure) =>
+      `in the ${failure.scheme} scheme, ${failure.check} (${failure.first} and ${failure.second}) measures ${failure.value.toFixed(2)} and needs ${String(failure.minimum)}`,
+  );
+  return { failures, message: `it would make protected states hard to tell apart: ${parts.join("; ")}` };
+}
+
+/**
+ * Why a theme cannot be drawn, or `undefined` when it can: the one decision the node's listing, its refusal of a choice
+ * and the page's own refusal all make, so they cannot disagree. Unreadable text is reported before hidden states.
+ */
+export function themeDrawProblem(theme: ThemeDocument): ThemeDrawProblem | undefined {
+  const unreadable = themeContrastProblem(theme);
+  if (unreadable !== undefined) return { code: "THEME_LOW_CONTRAST", message: unreadable.message, contrast: unreadable.failures };
+  const hidden = themeProtectedProblem(theme);
+  if (hidden !== undefined) return { code: "THEME_PROTECTED", message: hidden.message, protected: hidden.failures };
+  return undefined;
 }
 
 /**

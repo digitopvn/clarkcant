@@ -3,8 +3,11 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import type { FitAddon } from "@xterm/addon-fit";
 import type { ITheme, Terminal } from "@xterm/xterm";
 
+import { monoFontStack } from "@clarkcant/design-tokens";
+
 import type { GatewayClient } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
+import { subscribeToDocumentTheme } from "./theme.ts";
 import {
   type PiSessionSummaryView,
   type TerminalCommandView,
@@ -52,8 +55,25 @@ function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
-/** The terminal's colours, read from the theme tokens so a shell looks like part of the product in both themes. */
-function themeFromTokens(element: HTMLElement): ITheme {
+/** The monospace stack Clark Default draws, used when the page has no `--cc-font-mono`: the one stack every surface uses. */
+const MONO_FALLBACK = monoFontStack("clark");
+
+/**
+ * A colour at a third of its strength, for the selection.
+ *
+ * A six-digit hex takes an alpha suffix; a theme may give its colours in any CSS form, and `color-mix` is how those are
+ * thinned without parsing them here.
+ */
+function translucent(colour: string): string {
+  return /^#[0-9a-f]{6}$/i.test(colour) ? `${colour}55` : `color-mix(in srgb, ${colour} 33%, transparent)`;
+}
+
+/**
+ * The terminal's colours and font, read from the theme tokens so a shell looks like part of the product in every theme.
+ *
+ * Exported for the test that proves a theme's tokens reach the shell.
+ */
+export function terminalAppearance(element: HTMLElement): { theme: ITheme; fontFamily: string } {
   const style = getComputedStyle(element);
   const token = (name: string, fallback: string): string => {
     const value = style.getPropertyValue(name).trim();
@@ -62,14 +82,17 @@ function themeFromTokens(element: HTMLElement): ITheme {
   const background = token("--cc-code", "#111418");
   const foreground = token("--cc-text", "#e6e6e6");
   return {
-    background,
-    foreground,
-    cursor: token("--cc-focus", foreground),
-    cursorAccent: background,
-    selectionBackground: `${token("--cc-focus", "#6aa0ff")}55`,
-    red: token("--cc-danger", "#e5484d"),
-    green: token("--cc-success", "#46a758"),
-    yellow: token("--cc-warning", "#f5a524"),
+    theme: {
+      background,
+      foreground,
+      cursor: token("--cc-focus", foreground),
+      cursorAccent: background,
+      selectionBackground: translucent(token("--cc-focus", "#6aa0ff")),
+      red: token("--cc-danger", "#e5484d"),
+      green: token("--cc-success", "#46a758"),
+      yellow: token("--cc-warning", "#f5a524"),
+    },
+    fontFamily: token("--cc-font-mono", MONO_FALLBACK),
   };
 }
 
@@ -215,6 +238,7 @@ function LiveTerminal({
     if (element === null) return;
     let disposed = false;
     let observer: ResizeObserver | undefined;
+    let stopFollowingTheme = (): void => {};
     setPhase({ kind: "loading" });
 
     void (async () => {
@@ -227,13 +251,14 @@ function LiveTerminal({
       }
       if (disposed) return;
       const [{ Terminal: TerminalClass }, { FitAddon: FitClass }] = modules;
+      const drawn = terminalAppearance(element);
       const term = new TerminalClass({
         cursorBlink: false,
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+        fontFamily: drawn.fontFamily,
         fontSize: 13,
         lineHeight: 1.2,
         scrollback: 5_000,
-        theme: themeFromTokens(element),
+        theme: drawn.theme,
         screenReaderMode: false,
         allowProposedApi: false,
       });
@@ -247,6 +272,21 @@ function LiveTerminal({
       } catch {
         // A card that is not laid out yet has no size; the resize observer fits it once it has one.
       }
+      /*
+       * The shell is painted on a canvas, which the stylesheet cannot reach: a theme or light/dark change is followed
+       * by reading the tokens again, so a terminal already open does not keep the previous look.
+       */
+      stopFollowingTheme = subscribeToDocumentTheme(() => {
+        const next = terminalAppearance(element);
+        term.options.theme = next.theme;
+        if (term.options.fontFamily === next.fontFamily) return;
+        term.options.fontFamily = next.fontFamily;
+        try {
+          fit.fit();
+        } catch {
+          // Fitted by the observer once the card has a size.
+        }
+      });
 
       // F6 leaves the terminal; every other key, Escape included, belongs to the shell.
       term.attachCustomKeyEventHandler((event) => {
@@ -376,6 +416,7 @@ function LiveTerminal({
     return () => {
       disposed = true;
       observer?.disconnect();
+      stopFollowingTheme();
       connectionRef.current?.close();
       connectionRef.current = null;
       termRef.current?.dispose();

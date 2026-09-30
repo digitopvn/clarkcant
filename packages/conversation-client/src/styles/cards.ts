@@ -10,18 +10,36 @@ export const CARDS_CSS = `
 @layer cards {
 /* Cards */
 .cc-card {
-  border: 1px solid var(--cc-border);
-  background: var(--cc-card);
+  border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-card-edge, var(--cc-border));
+  background: var(--cc-surface-fill, var(--cc-card));
+  background-image: var(--cc-surface-image, none);
+  background-size: var(--cc-surface-size, auto);
+  box-shadow: var(--cc-card-shadow, none);
   border-radius: var(--cc-radius-card);
   overflow: hidden;
+}
+/*
+ * The host's own cards — an approval, a credential, a connection, a task the host runs — keep their edge and their
+ * plain card surface whatever a recipe or an effect says. A theme may draw widget cards flat, frosted, textured or with
+ * a hard shadow; it may not make the card that asks for consent look like one of them, or disappear into the page. The
+ * surface variables are reset here rather than the properties overridden, so every other rule a host card has still
+ * draws it exactly as Clark does. The width follows the theme's line, which is never less than a pixel.
+ */
+.cc-card[data-owner="host"] {
+  border-color: var(--cc-border);
+  --cc-surface-fill: var(--cc-card);
+  --cc-surface-image: none;
+  --cc-surface-size: auto;
+  --cc-card-shadow: none;
 }
 .cc-card-head {
   display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-sm);
   padding: var(--cc-space-sm) var(--cc-space-md);
-  border-bottom: 1px solid var(--cc-border);
+  border-bottom: var(--cc-line, 1px solid) var(--cc-border);
   font-size: var(--cc-text-label); color: var(--cc-text-muted);
 }
-.cc-card-title { font-weight: 600; color: var(--cc-text); }
+.cc-card-title { font-family: var(--cc-font-display, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); font-weight: var(--cc-weight-heading, 600); color: var(--cc-text); }
 .cc-card-body { padding: var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-fields { display: grid; grid-template-columns: max-content 1fr; gap: var(--cc-space-xs) var(--cc-space-md); margin: 0; }
 .cc-fields dt { color: var(--cc-text-muted); }
@@ -29,8 +47,8 @@ export const CARDS_CSS = `
 .cc-badge {
   font-size: var(--cc-text-label);
   padding: 2px var(--cc-space-sm);
-  border-radius: var(--cc-radius-pill);
-  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-badge-radius, var(--cc-radius-pill));
+  border: var(--cc-line, 1px solid) var(--cc-border);
   /*
    * Both of these are set explicitly because a badge is sometimes a button. A badge with no
    * background is painted by the user agent, which gives it a light grey that ignores the
@@ -53,13 +71,13 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-badge[data-tone="danger"] { color: var(--cc-danger); border-color: color-mix(in oklab, var(--cc-danger) 45%, transparent); }
 .cc-badge[data-tone="ok"] { color: var(--cc-success); border-color: color-mix(in oklab, var(--cc-success) 45%, transparent); }
 .cc-freshness { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
-.cc-widget-frame-document { display: block; width: 100%; border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card); }
+.cc-widget-frame-document { display: block; width: 100%; border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card); }
 .cc-widget-frame-document[hidden] { display: none; }
 /* A frame that could not load again: in place of the document, with the one way forward beside what failed. */
 .cc-widget-frame-failure { display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-sm); padding: var(--cc-space-sm) var(--cc-space-md); border: 1px solid color-mix(in oklab, var(--cc-danger) 45%, var(--cc-border)); border-radius: var(--cc-radius-card); color: var(--cc-text); overflow-wrap: anywhere; }
 .cc-widget-frame-failure p { margin: 0; }
 .cc-widget-frame-failure [data-frame-failure-reason] { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
-.cc-widget-frame-failure button { cursor: pointer; font: inherit; min-height: 40px; padding: var(--cc-space-xs) var(--cc-space-md); border-radius: var(--cc-radius-button); border: 1px solid var(--cc-border); background: transparent; color: inherit; }
+.cc-widget-frame-failure button { cursor: pointer; font: inherit; min-height: 40px; padding: var(--cc-space-xs) var(--cc-space-md); border-radius: var(--cc-radius-button); border: var(--cc-line, 1px solid) var(--cc-border); background: transparent; color: inherit; }
 .cc-widget-frame-failure button:hover { border-color: var(--cc-focus); background: var(--cc-elevated); }
 .cc-widget-frame-failure button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 /*
@@ -92,7 +110,7 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-artifact-button:disabled, .cc-viewer-file-button:disabled { cursor: default; opacity: 0.6; }
 /* Tables */
 .cc-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.cc-table th, .cc-table td { text-align: left; padding: var(--cc-space-xs) var(--cc-space-sm); border-bottom: 1px solid var(--cc-border); }
+.cc-table th, .cc-table td { text-align: left; padding: var(--cc-space-xs) var(--cc-space-sm); border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-table th { color: var(--cc-text-muted); font-weight: 500; font-size: var(--cc-text-label); }
 .cc-table [data-numeric="true"] { text-align: right; }
 .cc-table tr[aria-selected="true"] td { background: color-mix(in oklab, var(--cc-accent) 12%, var(--cc-card)); }
@@ -157,7 +175,7 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 /* The edge is drawn by a pseudo-element: a collapsed-border table does not paint a cell's own shadow. */
 .cc-table-scroll .cc-table-sticky::after {
   content: ""; position: absolute; top: 0; bottom: 0; inset-inline-end: -6px; width: 6px; pointer-events: none;
-  border-inline-start: 1px solid var(--cc-border);
+  border-inline-start: var(--cc-line, 1px solid) var(--cc-border);
   background: linear-gradient(to right, color-mix(in oklab, var(--cc-text) 12%, transparent), transparent);
 }
 .cc-table-scroll thead :is(.cc-table-check-cell, .cc-table-sticky), .cc-table-scroll tfoot :is(.cc-table-check-cell, .cc-table-sticky) { z-index: 2; }
@@ -174,7 +192,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-table-search { flex: 1 1 200px; min-width: 0; display: flex; }
 .cc-table-search input {
   flex: 1; min-width: 0; min-height: 32px; font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text);
-  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  background: var(--cc-input-bg, var(--cc-elevated)); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, var(--cc-border)); border-radius: var(--cc-input-radius, var(--cc-radius-badge));
   padding: var(--cc-space-xs) var(--cc-space-sm);
 }
 .cc-table-search input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
@@ -252,8 +271,9 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 
 /* Note */
 .cc-note-area {
-  width: 100%; background: var(--cc-elevated); color: var(--cc-text);
-  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  width: 100%; background: var(--cc-input-bg, var(--cc-elevated)); color: var(--cc-text);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-color: var(--cc-input-edge, var(--cc-border));
+  border-radius: var(--cc-input-radius, var(--cc-radius-badge));
   padding: var(--cc-space-sm); font: inherit;
 }
 .cc-note-area { min-height: 120px; resize: vertical; line-height: var(--cc-leading-body-md); }
@@ -275,7 +295,7 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-viewer-name { flex: 1 1 auto; min-width: 0; color: var(--cc-text); overflow-wrap: anywhere; }
 .cc-viewer-meta { font-variant-numeric: tabular-nums; }
 /* The head is monospace for the path; the button is a control and keeps the interface's own face. */
-.cc-viewer-copy { font-family: "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif; }
+.cc-viewer-copy { font-family: var(--cc-font-body, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); }
 .cc-viewer-scroll { max-block-size: min(24rem, 60vh); overflow: auto; overscroll-behavior: contain; }
 .cc-viewer-code .cc-viewer-scroll { display: grid; grid-template-columns: max-content minmax(max-content, 1fr); }
 /*
@@ -284,12 +304,12 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
  */
 .cc-viewer-code .cc-code-body {
   overflow: visible;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm);
+  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm);
 }
 .cc-viewer-gutter {
   position: sticky; left: 0; margin: 0; padding: var(--cc-space-sm) var(--cc-space-xs) var(--cc-space-sm) var(--cc-space-sm);
-  background: var(--cc-code); border-inline-end: 1px solid var(--cc-border); color: var(--cc-text-tertiary); text-align: end;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm);
+  background: var(--cc-code); border-inline-end: var(--cc-line, 1px solid) var(--cc-border); color: var(--cc-text-tertiary); text-align: end;
+  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm);
   font-variant-numeric: tabular-nums; user-select: none;
 }
 /*
@@ -315,17 +335,17 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-viewer-diff-file { display: flex; flex-direction: column; gap: var(--cc-space-xxs); min-width: 0; }
 /* A long path wraps; the counts beside it do not, so "+2 −0" never splits across two lines. */
 .cc-viewer-diff-counts { flex: none; white-space: nowrap; }
-.cc-viewer-diff-scroll { background: var(--cc-code); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge); }
+.cc-viewer-diff-scroll { background: var(--cc-code); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-badge); }
 .cc-viewer-hunk { min-inline-size: max-content; }
-.cc-viewer-hunk + .cc-viewer-hunk { border-top: 1px solid var(--cc-border); }
+.cc-viewer-hunk + .cc-viewer-hunk { border-top: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-viewer-num {
   flex: none; min-inline-size: 4ch; text-align: end; color: var(--cc-text-tertiary); user-select: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); font-variant-numeric: tabular-nums;
+  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); font-variant-numeric: tabular-nums;
 }
 .cc-viewer-file { display: flex; align-items: flex-start; gap: var(--cc-space-sm); min-width: 0; }
 .cc-viewer-file-mark {
   flex: none; display: inline-grid; place-items: center; min-inline-size: 44px; block-size: 44px; padding: 0 var(--cc-space-xxs);
-  border-radius: var(--cc-radius-button); border: 1px solid var(--cc-border); background: var(--cc-elevated);
+  border-radius: var(--cc-radius-button); border: var(--cc-line, 1px solid) var(--cc-border); background: var(--cc-elevated);
   font-size: var(--cc-text-label); font-weight: 700; color: var(--cc-text-muted); letter-spacing: 0.04em;
 }
 .cc-viewer-file-text { display: flex; flex-direction: column; gap: var(--cc-space-xs); min-width: 0; flex: 1 1 auto; }
@@ -366,7 +386,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-field-error { margin: 0; font-size: var(--cc-text-label); color: var(--cc-danger); }
 .cc-field-input {
   width: 100%; min-width: 0; min-height: 44px; font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text);
-  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  background: var(--cc-input-bg, var(--cc-elevated)); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, var(--cc-border)); border-radius: var(--cc-input-radius, var(--cc-radius-badge));
   padding: var(--cc-space-xs) var(--cc-space-sm);
 }
 textarea.cc-field-input { resize: vertical; line-height: var(--cc-leading-body-md); }
@@ -387,7 +408,7 @@ textarea.cc-field-input { resize: vertical; line-height: var(--cc-leading-body-m
 .cc-field-chips { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); }
 .cc-field-chip {
   min-height: 44px; padding: 0 var(--cc-space-md); font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text);
-  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-pill); cursor: pointer;
+  background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-pill); cursor: pointer;
   transition: background var(--cc-motion-micro), border-color var(--cc-motion-micro);
 }
 /* Pressed is said by a check mark as well as by colour. */
@@ -401,7 +422,7 @@ textarea.cc-field-input { resize: vertical; line-height: var(--cc-leading-body-m
 }
 .cc-switch-track {
   position: relative; width: 40px; height: 24px; flex: none; border-radius: var(--cc-radius-pill);
-  background: var(--cc-elevated); border: 1px solid var(--cc-border); transition: background var(--cc-motion-micro);
+  background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border); transition: background var(--cc-motion-micro);
 }
 .cc-switch-thumb {
   position: absolute; top: 3px; inset-inline-start: 3px; width: 16px; height: 16px; border-radius: 50%;
@@ -421,7 +442,7 @@ textarea.cc-field-input { resize: vertical; line-height: var(--cc-leading-body-m
 .cc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .cc-list-item {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-xs) var(--cc-space-sm);
-  padding: var(--cc-space-xs) 0; border-bottom: 1px solid var(--cc-border);
+  padding: var(--cc-space-xs) 0; border-bottom: var(--cc-line, 1px solid) var(--cc-border);
 }
 .cc-list-item:last-child { border-bottom: none; }
 .cc-list-item[data-selected="true"] { background: color-mix(in oklab, var(--cc-accent) 10%, transparent); }
@@ -440,7 +461,7 @@ label.cc-list-main { cursor: pointer; }
 .cc-status-card { display: flex; align-items: flex-start; gap: var(--cc-space-sm); min-width: 0; }
 .cc-status-card-mark {
   flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--cc-radius-pill);
-  font-weight: 700; color: var(--cc-text-muted); border: 1px solid var(--cc-border); background: var(--cc-elevated);
+  font-weight: 700; color: var(--cc-text-muted); border: var(--cc-line, 1px solid) var(--cc-border); background: var(--cc-elevated);
 }
 .cc-status-card[data-status-tone="info"] .cc-status-card-mark { color: var(--cc-accent); border-color: color-mix(in oklab, var(--cc-accent) 45%, transparent); }
 .cc-status-card[data-status-tone="success"] .cc-status-card-mark { color: var(--cc-success); border-color: color-mix(in oklab, var(--cc-success) 45%, transparent); }
@@ -463,12 +484,12 @@ label.cc-list-main { cursor: pointer; }
 .cc-progress-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .cc-progress-step {
   display: flex; align-items: flex-start; gap: var(--cc-space-sm); padding: var(--cc-space-xs) 0;
-  border-bottom: 1px solid var(--cc-border);
+  border-bottom: var(--cc-line, 1px solid) var(--cc-border);
 }
 .cc-progress-step:last-child { border-bottom: none; }
 .cc-progress-step-mark {
   flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--cc-radius-pill);
-  font-size: var(--cc-text-label); font-weight: 700; color: var(--cc-text-muted); border: 1px solid var(--cc-border);
+  font-size: var(--cc-text-label); font-weight: 700; color: var(--cc-text-muted); border: var(--cc-line, 1px solid) var(--cc-border);
 }
 .cc-progress-step[data-step-status="done"] .cc-progress-step-mark { color: var(--cc-success); border-color: color-mix(in oklab, var(--cc-success) 45%, transparent); }
 .cc-progress-step[data-step-status="current"] .cc-progress-step-mark { color: var(--cc-accent); border-color: var(--cc-accent); }
@@ -504,7 +525,7 @@ label.cc-list-main { cursor: pointer; }
 }
 .cc-pin {
   display: flex; align-items: center; gap: var(--cc-space-sm);
-  border: 1px solid var(--cc-border); background: var(--cc-card);
+  border: var(--cc-line, 1px solid) var(--cc-border); background: var(--cc-card);
   border-radius: var(--cc-radius-pill); padding: var(--cc-space-xs) var(--cc-space-sm);
   font-size: var(--cc-text-label);
 }
@@ -517,11 +538,11 @@ label.cc-list-main { cursor: pointer; }
  * so both hosts get them from the one stylesheet this package owns, and its durations are the motion tokens.
  */
 .cc-terminal-heading { display: flex; align-items: baseline; gap: var(--cc-space-sm); min-width: 0; }
-.cc-terminal-cwd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); color: var(--cc-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cc-terminal-cwd { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); color: var(--cc-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .cc-terminal-line { margin: 0; }
-.cc-terminal-line code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); overflow-wrap: anywhere; }
+.cc-terminal-line code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); overflow-wrap: anywhere; }
 .cc-terminal-label { color: var(--cc-text-muted); font-size: var(--cc-text-label); }
-.cc-terminal-viewing { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); margin: 0; padding: var(--cc-space-xs) var(--cc-space-md); font-size: var(--cc-text-label); color: var(--cc-warning); border-bottom: 1px solid var(--cc-border); }
+.cc-terminal-viewing { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); margin: 0; padding: var(--cc-space-xs) var(--cc-space-md); font-size: var(--cc-text-label); color: var(--cc-warning); border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-terminal-frame { position: relative; background: var(--cc-code); padding: var(--cc-space-xs) var(--cc-space-sm); }
 .cc-terminal-frame:focus-within { outline: 2px solid var(--cc-focus); outline-offset: -2px; }
 .cc-terminal-screen { height: 300px; overflow: hidden; }
@@ -533,7 +554,7 @@ label.cc-list-main { cursor: pointer; }
 .cc-terminal-actions { padding: var(--cc-space-sm) var(--cc-space-md); align-items: center; }
 .cc-terminal-hint { margin-left: auto; font-size: var(--cc-text-meta); color: var(--cc-text-tertiary); }
 .cc-terminal-panel {
-  border-top: 1px solid var(--cc-border);
+  border-top: var(--cc-line, 1px solid) var(--cc-border);
   padding: var(--cc-space-sm) var(--cc-space-md) var(--cc-space-md);
   display: flex; flex-direction: column; gap: var(--cc-space-sm);
   max-height: 360px; overflow-y: auto;
@@ -544,9 +565,9 @@ label.cc-list-main { cursor: pointer; }
 .cc-terminal-panel h3:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-terminal-panel h4 { margin: 0 0 var(--cc-space-xs); font-size: var(--cc-text-label); font-weight: 500; color: var(--cc-text-muted); }
 .cc-terminal-panel ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
-.cc-terminal-panel li { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); padding: var(--cc-space-xs) 0; border-bottom: 1px solid var(--cc-border); }
+.cc-terminal-panel li { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); padding: var(--cc-space-xs) 0; border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-terminal-panel-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--cc-space-sm); min-width: 0; }
-.cc-terminal-panel-main code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); overflow-wrap: anywhere; }
+.cc-terminal-panel-main code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); overflow-wrap: anywhere; }
 .cc-terminal-panel-meta { font-size: var(--cc-text-meta); color: var(--cc-text-muted); overflow-wrap: anywhere; }
 .cc-terminal-panel-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; max-width: 45%; text-align: end; }
 

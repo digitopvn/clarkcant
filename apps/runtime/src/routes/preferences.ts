@@ -163,7 +163,7 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
     }
     /*
      * A theme is chosen only when this node can draw it. A reference no installed package provides, or one whose theme
-     * fails validation or the contrast audit, would otherwise be stored and answered with success while the page went
+     * fails validation, the contrast audit or the protected-state audit, would otherwise be stored and answered with success while the page went
      * on drawing Clark Default: a change that changes nothing. The refusal carries the same code and reason the
      * appearance would have given. A choice already stored is never re-checked here, so a package removed after its
      * theme was chosen still falls back visibly and comes back when the package does.
@@ -174,11 +174,12 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
       const resolved = resolveThemeRef(readThemeRegistry(themeRegistryDeps(deps.services)), chosenTheme);
       if (!resolved.ok) {
         const { code, message, contrast } = resolved.fallback;
+        const hidden = resolved.fallback.protected;
         return fail(
           409,
           code,
           `that theme cannot be drawn here, so it was not chosen: ${message}`,
-          contrast === undefined ? undefined : { contrast },
+          contrast !== undefined ? { contrast } : hidden !== undefined ? { protected: hidden } : undefined,
         );
       }
     }

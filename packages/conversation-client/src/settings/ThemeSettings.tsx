@@ -1,17 +1,18 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 
 import {
   BUILTIN_CLARK_THEME_REF,
-  type AppearanceFallbackCode,
   type AppearanceFallbackView,
   type ThemeContrastFailureView,
   type ThemeListingView,
   type ThemeProblemView,
+  type ThemeProtectedFailureView,
   type ThemesResponse,
   type UncheckedThemePackageView,
 } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
+import { appearanceFallbackKey } from "../appearance-actions.ts";
 import { useLocale, useT } from "../i18n/locale-context.tsx";
 import type { LocaleChoice } from "../i18n/locale.ts";
 import type { MessageKey } from "../i18n/messages.ts";
@@ -19,7 +20,7 @@ import { laneLabel } from "../package-provenance.ts";
 import type { AppearanceState } from "../use-appearance.ts";
 import { InlineStatus, SettingsRow } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
-import { contrastLines } from "./theme-contrast-lines.ts";
+import { contrastLines, protectedLines } from "./theme-contrast-lines.ts";
 
 /**
  * Choosing a theme.
@@ -36,14 +37,6 @@ import { contrastLines } from "./theme-contrast-lines.ts";
  * again.
  */
 
-const FALLBACK_KEYS: Readonly<Record<AppearanceFallbackCode, MessageKey>> = {
-  THEME_NOT_INSTALLED: "settings.experience.themePicker.fallback.notInstalled",
-  THEME_INVALID: "settings.experience.themePicker.fallback.invalid",
-  THEME_LOW_CONTRAST: "settings.experience.themePicker.fallback.lowContrast",
-  THEME_UNAVAILABLE: "settings.experience.themePicker.fallback.unavailable",
-  THEME_UNKNOWN: "settings.experience.themePicker.fallback.unknown",
-};
-
 const UNCHECKED_KEYS: Readonly<Record<UncheckedThemePackageView["code"], MessageKey>> = {
   NO_DIRECTORY: "settings.experience.themePicker.unchecked.NO_DIRECTORY",
   NOT_IN_DIRECTORY: "settings.experience.themePicker.unchecked.NOT_IN_DIRECTORY",
@@ -53,14 +46,43 @@ const UNCHECKED_KEYS: Readonly<Record<UncheckedThemePackageView["code"], Message
 
 type Translate = (key: MessageKey) => string;
 
-/** The failing pairs, one per line. */
-function ContrastList({ contrast, t, locale }: { contrast: readonly ThemeContrastFailureView[]; t: Translate; locale: LocaleChoice }): ReactElement {
+/** What an audit found, as data: the pairs without enough contrast, and the protected checks a theme fails. */
+interface AuditFindings {
+  contrast?: readonly ThemeContrastFailureView[] | undefined;
+  protected?: readonly ThemeProtectedFailureView[] | undefined;
+}
+
+function hasFindings(findings: AuditFindings): boolean {
+  return (findings.contrast?.length ?? 0) > 0 || (findings.protected?.length ?? 0) > 0;
+}
+
+/** The failing pairs and checks, one per line, each list under its own lead sentence. */
+function AuditLists({ findings, t, locale }: { findings: AuditFindings; t: Translate; locale: LocaleChoice }): ReactElement {
+  const contrast = findings.contrast ?? [];
+  const hidden = findings.protected ?? [];
   return (
-    <ul className="cc-theme-contrast" data-theme-contrast={contrast.length}>
-      {contrastLines(contrast, t, locale).map((line, index) => (
-        <li key={`${String(index)}:${line}`}>{line}</li>
-      ))}
-    </ul>
+    <>
+      {contrast.length === 0 ? null : (
+        <>
+          <p>{t("settings.experience.themePicker.contrast.lead")}</p>
+          <ul className="cc-theme-contrast" data-theme-contrast={contrast.length}>
+            {contrastLines(contrast, t, locale).map((line, index) => (
+              <li key={`${String(index)}:${line}`}>{line}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {hidden.length === 0 ? null : (
+        <>
+          <p>{t("settings.experience.themePicker.protected.lead")}</p>
+          <ul className="cc-theme-contrast" data-theme-protected={hidden.length}>
+            {protectedLines(hidden, t, locale).map((line, index) => (
+              <li key={`${String(index)}:${line}`}>{line}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </>
   );
 }
 
@@ -71,11 +93,10 @@ function FallbackDetail({ fallback, selectedRef, t, locale }: {
   t: Translate;
   locale: LocaleChoice;
 }): ReactElement {
-  if (fallback.code === "THEME_LOW_CONTRAST" && fallback.contrast !== undefined && fallback.contrast.length > 0) {
+  if ((fallback.code === "THEME_LOW_CONTRAST" || fallback.code === "THEME_PROTECTED") && hasFindings(fallback)) {
     return (
       <div className="cc-theme-notice-detail">
-        <p>{t("settings.experience.themePicker.contrast.lead")}</p>
-        <ContrastList contrast={fallback.contrast} t={t} locale={locale} />
+        <AuditLists findings={fallback} t={t} locale={locale} />
       </div>
     );
   }
@@ -94,11 +115,8 @@ function ProblemEntry({ problem, t, locale }: { problem: ThemeProblemView; t: Tr
       <code>
         {problem.packageId}@{problem.version}
       </code>{" "}
-      {problem.contrast !== undefined && problem.contrast.length > 0 ? (
-        <>
-          {t("settings.experience.themePicker.contrast.lead")}
-          <ContrastList contrast={problem.contrast} t={t} locale={locale} />
-        </>
+      {hasFindings(problem) ? (
+        <AuditLists findings={problem} t={t} locale={locale} />
       ) : (
         // A schema or packaging error names fields and files, which have no translation: it is shown as the technical
         // text it is, marked as English for assistive technology.
@@ -161,13 +179,30 @@ export interface ThemeSettingsProps {
   client: GatewayClient;
   prefs: PreferencesHandle;
   appearance: AppearanceState;
+  /**
+   * Counts requests to open the list of themes ("mở danh sách chủ đề"). Each new count brings the list into view and
+   * puts focus on the theme in use once the list has loaded, so a keyboard or voice user lands on it.
+   */
+  galleryRequest?: number | undefined;
 }
 
-export function ThemeSettings({ client, prefs, appearance }: ThemeSettingsProps): ReactElement {
+export function ThemeSettings({ client, prefs, appearance, galleryRequest }: ThemeSettingsProps): ReactElement {
   const t = useT();
   const locale = useLocale();
   const [listing, setListing] = useState<ThemesResponse | undefined>(undefined);
   const [unreachable, setUnreachable] = useState(false);
+  const options = useRef<HTMLDivElement>(null);
+  const answeredRequest = useRef(0);
+
+  useEffect(() => {
+    if (galleryRequest === undefined || galleryRequest === answeredRequest.current || listing === undefined) return;
+    answeredRequest.current = galleryRequest;
+    const group = options.current;
+    if (group === null) return;
+    const current = group.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ?? group.querySelector("button");
+    group.scrollIntoView({ block: "nearest" });
+    current?.focus();
+  }, [galleryRequest, listing]);
 
   // Re-read whenever the appearance was re-read: that is when a package may have come or gone.
   useEffect(() => {
@@ -188,6 +223,20 @@ export function ThemeSettings({ client, prefs, appearance }: ThemeSettingsProps)
   }, [client, appearance.generation]);
 
   const selectedRef = prefs.text("experience.themeRef", BUILTIN_CLARK_THEME_REF);
+
+  /*
+   * The theme changed without this list writing it: a typed or spoken request, or the agent, chose one while Settings
+   * was open. Re-read, so the pressed entry is the one the node stored rather than the one the panel opened on.
+   */
+  const nodeSelected = appearance.appearance?.selectedRef;
+  const seenSelected = useRef(nodeSelected);
+  useEffect(() => {
+    if (seenSelected.current === nodeSelected) return;
+    seenSelected.current = nodeSelected;
+    if (nodeSelected !== undefined && nodeSelected !== selectedRef) prefs.reload();
+    // `prefs.reload` is a fresh closure each render; the node's answer is the trigger.
+  }, [nodeSelected]);
+
   const appliedRef = appearance.appearance?.appliedRef;
   const fallback = appearance.appearance?.fallback ?? null;
   const localProblem = appearance.localProblem;
@@ -206,7 +255,13 @@ export function ThemeSettings({ client, prefs, appearance }: ThemeSettingsProps)
             {unreachable ? t("settings.experience.themePicker.unreachable") : t("settings.experience.themePicker.loading")}
           </p>
         ) : (
-          <div className="cc-theme-options" role="group" aria-label={t("settings.experience.themePicker.label")}>
+          <div
+            ref={options}
+            className="cc-theme-options"
+            role="group"
+            aria-label={t("settings.experience.themePicker.label")}
+            data-theme-gallery
+          >
             {listing.themes.map((theme) => (
               <ThemeOption
                 key={theme.themeRef}
@@ -229,7 +284,7 @@ export function ThemeSettings({ client, prefs, appearance }: ThemeSettingsProps)
 
       {fallback === null ? null : (
         <div className="cc-theme-notice" role="status" data-theme-fallback={fallback.code}>
-          <p>{t(FALLBACK_KEYS[fallback.code])}</p>
+          <p>{t(appearanceFallbackKey(fallback.code))}</p>
           <details>
             <summary>{t("settings.experience.themePicker.details")}</summary>
             <FallbackDetail fallback={fallback} selectedRef={appearance.appearance?.selectedRef ?? selectedRef} t={t} locale={locale} />
@@ -239,10 +294,9 @@ export function ThemeSettings({ client, prefs, appearance }: ThemeSettingsProps)
       {localProblem === undefined ? null : (
         <div className="cc-theme-notice" role="status" data-theme-local-problem="true">
           <p>{t("settings.experience.themePicker.localProblem")}</p>
-          {localProblem.contrast !== undefined && localProblem.contrast.length > 0 ? (
+          {hasFindings(localProblem) ? (
             <div className="cc-theme-notice-detail">
-              <p>{t("settings.experience.themePicker.contrast.lead")}</p>
-              <ContrastList contrast={localProblem.contrast} t={t} locale={locale} />
+              <AuditLists findings={localProblem} t={t} locale={locale} />
             </div>
           ) : (
             <details>

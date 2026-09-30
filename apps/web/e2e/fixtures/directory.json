@@ -277,5 +277,83 @@
     "riskTier": "declarative",
     "sizeBytes": 1024,
     "digest": "sha256:b5b53158c6434ec13b4c44cb63aeb9e59221be06f791340855c6402f10c5a0c6"
+  },
+  {
+    "packageId": "com.example.theme-depth",
+    "version": "1.0.0",
+    "displayName": "Depth theme",
+    "description": "A theme with a look of its own: host recipes, a backdrop, a surface finish and an Orb default. Data only.",
+    "source": {
+      "kind": "local",
+      "path": "apps/web/e2e/fixtures/theme-depth"
+    },
+    "publisher": {
+      "id": "example",
+      "sourceUrl": "https://example.com",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "themes"
+    ],
+    "isolations": [
+      {
+        "facetKind": "themes",
+        "isolation": "declarative"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "declarative",
+    "sizeBytes": 2048,
+    "digest": "sha256:14dc35f5d507f28c9fa0c516274e0a61ba4e857fe35a987443621dd16a416b69"
+  },
+  {
+    "packageId": "com.example.theme-hostile",
+    "version": "1.0.0",
+    "displayName": "Hostile themes",
+    "description": "Four themes that push against what Clark keeps visible: one as flat as the contract allows, one whose buttons take the card's colour, one that camouflages status, one that blacks out the Orb.",
+    "source": {
+      "kind": "local",
+      "path": "apps/web/e2e/fixtures/theme-hostile"
+    },
+    "publisher": {
+      "id": "example",
+      "sourceUrl": "https://example.com",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "themes"
+    ],
+    "isolations": [
+      {
+        "facetKind": "themes",
+        "isolation": "declarative"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "declarative",
+    "sizeBytes": 2048,
+    "digest": "sha256:4258b1eff61513c85652b3b2847411e2fd48721d377784f04750deb1094ba0b9"
   }
 ]

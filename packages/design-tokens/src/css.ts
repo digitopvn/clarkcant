@@ -13,6 +13,7 @@ import {
 } from "@clarkcant/contracts";
 
 import { type CompileAppearanceInput, compileAppearance } from "./appearance.ts";
+import { identityStylesheet } from "./identity.ts";
 
 /**
  * Emit an appearance as CSS custom properties.
@@ -23,6 +24,8 @@ import { type CompileAppearanceInput, compileAppearance } from "./appearance.ts"
  *
  * Only the contract's own token names are iterated, and every value has already passed the snapshot schema, so what
  * a theme says can change a value but never a property name, a selector, or anything outside the declaration block.
+ * Identity (see `identity.ts`) is written from the host's own templates in the same way; the one rule it adds, for the
+ * backdrop, has a selector the host wrote and a pattern built from a closed list.
  */
 
 const COLOR_VARIABLES: Record<ColorTokenName, string> = {
@@ -120,7 +123,14 @@ export function appearanceStylesheet(snapshots: Readonly<Record<ResolvedColorSch
   const scoped = `[data-cc-reduced-motion="true"] {\n${MOTION_TOKEN_NAMES.map(
     (name) => `  --cc-motion-${name}: ${reduced[name]};`,
   ).join("\n")}\n}`;
-  return `${appearanceToCss(snapshots.dark)}\n\n${appearanceToCss(snapshots.light)}\n\n${media}\n\n${scoped}`;
+  /*
+   * Identity is the same in both schemes, and empty for Clark Default and for any theme that leaves identity alone, so
+   * their sheets are exactly what they were before identity existed. It sits before the reduced-motion blocks, which
+   * stay last so nothing after them can restore a duration they zeroed.
+   */
+  const identity = identityStylesheet(snapshots.dark.tokens.identity);
+  const schemes = `${appearanceToCss(snapshots.dark)}\n\n${appearanceToCss(snapshots.light)}`;
+  return `${schemes}${identity === "" ? "" : `\n\n${identity}`}\n\n${media}\n\n${scoped}`;
 }
 
 /** The stylesheet for a theme and the reference it was selected by, or Clark Default's when none is given. */

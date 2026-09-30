@@ -11,4 +11,7 @@ export * from "./tokens.ts";
 export * from "./motion.ts";
 export * from "./contrast.ts";
 export * from "./appearance.ts";
+export * from "./identity.ts";
+export * from "./orb.ts";
+export * from "./protected.ts";
 export * from "./css.ts";

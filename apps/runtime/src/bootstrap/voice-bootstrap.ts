@@ -24,6 +24,7 @@ import {
 } from "../gateway.ts";
 import { spokenActionRefusal, spokenActionWaiting } from "../application/action-speech.ts";
 import { carryOutSpokenStop } from "../application/stop-turn.ts";
+import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { pendingForConversation } from "../interactions.ts";
 import { availableCredentials } from "../readiness.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
@@ -89,6 +90,7 @@ function appIntentDepsFor(services: NodeServices): AppIntentDeps {
     now: () => new Date().toISOString() as never,
     newId: services.conductor.newId,
     widgetTargets: widgetTargetsFromCatalog(),
+    themes: () => readThemeRegistry(themeRegistryDeps(services)),
   };
 }
 

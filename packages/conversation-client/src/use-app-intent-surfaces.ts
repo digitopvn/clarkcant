@@ -13,6 +13,7 @@ import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import {
   type AppIntentDecision,
   type AppIntentKind,
+  type ColorScheme,
   NOTICE_DISMISS_UNDO_WINDOW_MS,
   type NoticeOperationId,
   type NoticeOperationSource,
@@ -53,6 +54,8 @@ export interface AppIntentSurfacesState {
   uiCheckOpen: boolean;
   setUiCheckOpen: (open: boolean) => void;
   settingsTab: SettingsTab | undefined;
+  /** Counts requests to open the list of themes; Settings lands on it with focus on the theme in use. */
+  themeGalleryRequest: number;
   /** Opens Settings on a tab, closing the inbox: the same state an "open settings" intent lands on. */
   openSettings: (tab?: SettingsTab) => void;
   widgetLibrary: WidgetLibraryState;
@@ -136,6 +139,13 @@ export interface AppIntentSurfacesDeps {
    * save it is refused with a sentence instead of reporting a change that would not survive a reload.
    */
   selectOrbProfile?: (profile: OrbProfileName) => Promise<string>;
+  /**
+   * The appearance actions the theme picker and the light/dark control share (`appearance-actions.ts`). Optional for
+   * the reason `selectOrbProfile` is: a host with no node has nowhere to keep a theme.
+   */
+  setTheme?: (themeRef: string, themeName: string | undefined) => Promise<string>;
+  setColorScheme?: (scheme: ColorScheme) => void;
+  resetAppearance?: () => Promise<void>;
 }
 
 /**
@@ -161,10 +171,14 @@ export function useAppIntentSurfaces({
   cycleModel,
   selectModel,
   selectOrbProfile,
+  setTheme,
+  setColorScheme,
+  resetAppearance,
   t,
 }: AppIntentSurfacesDeps): AppIntentSurfacesState {
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
+  const [themeGalleryRequest, setThemeGalleryRequest] = useState(0);
   const [widgetLibrary, setWidgetLibrary] = useState<WidgetLibraryState>(CLOSED_LIBRARY);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxTarget, setInboxTarget] = useState<string | undefined>(undefined);
@@ -250,6 +264,15 @@ export function useAppIntentSurfaces({
       ...(recordEffectOutcome === undefined ? {} : { recordEffectOutcome }),
       ...(actOnNotice === undefined ? {} : { actOnNotice }),
       ...(selectOrbProfile === undefined ? {} : { selectOrbProfile }),
+      ...(setTheme === undefined ? {} : { setTheme }),
+      ...(setColorScheme === undefined ? {} : { setColorScheme }),
+      ...(resetAppearance === undefined ? {} : { resetAppearance }),
+      // The list of themes is the theme picker in Settings, on Experience, with focus on the theme in use.
+      openThemeGallery: () => {
+        setWidgetLibrary(CLOSED_LIBRARY);
+        openSettings("experience");
+        setThemeGalleryRequest((count) => count + 1);
+      },
       ...(desktop
         ? {
             expandWindow: () => {
@@ -293,6 +316,9 @@ export function useAppIntentSurfaces({
     cycleModel,
     selectModel,
     selectOrbProfile,
+    setTheme,
+    setColorScheme,
+    resetAppearance,
     t,
   ]);
 
@@ -412,6 +438,7 @@ export function useAppIntentSurfaces({
     uiCheckOpen,
     setUiCheckOpen,
     settingsTab,
+    themeGalleryRequest,
     openSettings,
     widgetLibrary,
     setWidgetLibrary,

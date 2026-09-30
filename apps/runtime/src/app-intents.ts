@@ -74,6 +74,9 @@ import {
 
 import { noticeActionsFor } from "./notice-actions.ts";
 
+import { checkThemeChoice, themeTargets } from "./application/appearance-intents.ts";
+import type { ThemeRegistry } from "./application/themes.ts";
+
 export interface AppIntentDeps {
   db: Database;
   nodeId: string;
@@ -87,6 +90,11 @@ export interface AppIntentDeps {
    * imports `core`, so the other direction would be a cycle).
    */
   widgetTargets?: readonly WidgetTarget[];
+  /**
+   * The node's theme registry, read when a request is about a theme and only then. Absent, a request to change the
+   * theme is refused: a node that cannot check a theme must not store a choice the page would then ignore.
+   */
+  themes?: () => ThemeRegistry;
 }
 
 const PENDING_PREFIX = "app.intent.pending.";
@@ -257,6 +265,8 @@ export function requestedIntent(request: AppIntentRequest): RequestedIntent {
     ...(request.noticeId === undefined ? {} : { noticeId: request.noticeId }),
     ...(request.noticeAction === undefined ? {} : { noticeAction: request.noticeAction }),
     ...(request.inboxTarget === undefined ? {} : { inboxTarget: request.inboxTarget }),
+    ...(request.themeRef === undefined ? {} : { themeRef: request.themeRef }),
+    ...(request.colorScheme === undefined ? {} : { colorScheme: request.colorScheme }),
   });
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues.map((issue) => issue.message).join("; ") };
@@ -278,11 +288,29 @@ export function decideAppIntent(
   // The typed/clicked path: read-backs and refusals follow the UI language the person chose in
   // Settings, the same way the voice path does (see `preferredAppIntentLocale`).
   const locale = preferredAppIntentLocale(deps, input.principalId);
+  // Read at most once per decision, and only if the request turns out to be about a theme.
+  let registry: { value: ThemeRegistry | undefined } | undefined;
+  const themes = (): ThemeRegistry | undefined => {
+    if (registry === undefined) {
+      try {
+        registry = { value: deps.themes?.() };
+      } catch (error) {
+        // A registry that cannot be read refuses a theme change with a sentence rather than failing the request.
+        console.error("the theme registry could not be read for an app intent", error);
+        registry = { value: undefined };
+      }
+    }
+    return registry.value;
+  };
   const resolution = resolveAppIntent({
     ...(input.request.text === undefined ? {} : { text: input.request.text }),
     ...(input.intent === undefined ? {} : { intent: input.intent }),
     mintConfirmationToken: () => randomUUID() as ConfirmationToken,
     ...(deps.widgetTargets === undefined ? {} : { widgetTargets: deps.widgetTargets }),
+    themeTargets: () => {
+      const read = themes();
+      return read === undefined ? [] : themeTargets(read);
+    },
     locale,
   });
 
@@ -290,7 +318,9 @@ export function decideAppIntent(
     return resolution.kind === "refused" ? resolution : { kind: "none" };
   }
 
-  const effectAnswer = answerAboutEffect(deps, input, resolution, locale);
+  const themed = checkedTheme(resolution, themes, locale);
+  if (themed.kind === "refused") return themed;
+  const effectAnswer = answerAboutEffect(deps, input, themed, locale);
   if (effectAnswer.kind === "refused") return effectAnswer;
   const answered = resolveNoticeTarget(deps, input, effectAnswer, locale);
   if (answered.kind === "refused") return answered;
@@ -308,6 +338,22 @@ export function decideAppIntent(
     ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
   });
   return answered;
+}
+
+/**
+ * A theme change checked against the node's registry, whichever way it was asked for: a sentence names only a theme
+ * the registry listed, and a click names a reference that may since have been uninstalled. The read-back names the
+ * theme by its display name, filled in here and never taken from the request.
+ */
+function checkedTheme(
+  resolution: Exclude<AppIntentResolution, { kind: "none" | "refused" }>,
+  themes: () => ThemeRegistry | undefined,
+  locale: AppIntentLocale,
+): Exclude<AppIntentResolution, { kind: "none" }> {
+  if (resolution.kind !== "intent" || resolution.intent.kind !== "appearance.set-theme") return resolution;
+  const checked = checkThemeChoice(themes(), resolution.intent.themeRef ?? "", locale);
+  if (!checked.ok) return { kind: "refused", say: checked.say };
+  return { ...resolution, intent: checked.intent, readBack: checked.readBack };
 }
 
 /**
