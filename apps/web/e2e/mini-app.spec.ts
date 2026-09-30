@@ -218,13 +218,23 @@ test("the live view changes while the transcript keeps what it showed", async ({
 test("the expanded view is operable and dismissible from the keyboard alone", async ({ page, context }) => {
   mkdirSync(EVIDENCE, { recursive: true });
 
+  await openApp(page);
+  const eventTime = await page.evaluate(() => {
+    const startsAt = new Date();
+    startsAt.setHours(9, 0, 0, 0);
+    const endsAt = new Date(startsAt);
+    endsAt.setHours(10, 0, 0, 0);
+    return {
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    };
+  });
   const created = await api<{ event: { date: string } }>("POST", "/calendar/events", {
     title: "Họp kế hoạch tuần",
-    ...eventTodayAtNine(),
-    timezone: "Asia/Saigon",
+    ...eventTime,
   });
 
-  await openApp(page);
   // Typed and sent with the keyboard, so the whole journey below is one a keyboard user can make.
   await page.locator("textarea[aria-label='Nhập tin nhắn']").click();
   await page.keyboard.type("cho tui xem tổng quan công việc tuần này");

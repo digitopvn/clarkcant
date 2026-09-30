@@ -2,6 +2,8 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Frame } from "@playwright/test";
 import type { WidgetRuntime } from "@clarkcant/widget-sdk";
+import type { AppearanceResponse } from "@clarkcant/contracts";
+import { compileAppearance } from "@clarkcant/design-tokens";
 
 const port = process.env.CC_E2E_NODE_PORT;
 if (!port) throw new Error("run this suite through playwright.config.ts");
@@ -20,13 +22,28 @@ const readWidget = (frame: Frame) => frame.evaluate(() => {
     accent: getComputedStyle(document.documentElement).getPropertyValue("--cc-accent").trim().toUpperCase() };
 });
 
-for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const) {
-  test(`an isolated widget follows appearance in place at ${width} ${scheme}`, async ({ page, request }) => {
+const themes = [
+  { packageId: "com.example.theme-dusk", facet: "dusk", orb: undefined },
+  { packageId: "org.clarkcant.pixel-arcade", facet: "pixel-arcade", orb: "plasma" },
+  { packageId: "org.clarkcant.neo-brutalism", facet: "neo-brutalism", orb: "glass" },
+];
+for (const theme of themes) for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const) {
+  test(`an isolated widget follows ${theme.facet} appearance in place at ${width} ${scheme}`, async ({ page, request }) => {
     mkdirSync(evidence, { recursive: true });
     const headers = { authorization: `Bearer ${token()}` };
+    for (const [key, value] of [["experience.colorScheme", "system"], ["experience.accent", null], ["experience.motion", "system"]]) {
+      const reset = await request.put(`${node}/preferences/${key}`, { headers, data: { value } });
+      expect(reset.ok(), await reset.text()).toBe(true);
+    }
+    for (let step = 0; step < 16; step += 1) {
+      const reset = await request.post(`${node}/preferences/orb.profile/undo`, { headers });
+      expect(reset.ok()).toBe(true);
+      if ((await reset.json()).preference.isDefault) break;
+      if (step === 15) throw new Error("The personal Orb choice did not reset");
+    }
     expect((await request.put(`${node}/preferences/experience.themeRef`, { headers, data: { value: "builtin:clark" } })).ok()).toBe(true);
     const directory = JSON.parse(readFileSync(join(process.cwd(), "apps/web/e2e/fixtures/directory.json"), "utf8")) as { packageId: string; digest: string }[];
-    const entry = directory.find((candidate) => candidate.packageId === "com.example.theme-dusk")!;
+    const entry = directory.find((candidate) => candidate.packageId === theme.packageId)!;
     const listed = await (await request.get(`${node}/packages`, { headers })).json() as { packages: { packageId: string }[] };
     if (!listed.packages.some((candidate) => candidate.packageId === entry.packageId)) {
       expect((await request.post(`${node}/packages/install`, { headers, data: { packageId: entry.packageId, version: "1.0.0", localDigest: entry.digest } })).ok()).toBe(true);
@@ -66,10 +83,22 @@ for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const
       if (/\/conversations\/[^/]+\/messages$/.test(new URL(request.url()).pathname)) modelTurns += 1;
     });
     await page.locator("[data-settings='true']").click();
-    const dusk = page.locator("[data-theme-ref='package:com.example.theme-dusk#dusk']");
-    await expect(dusk).toBeVisible();
-    await dusk.click();
-    await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe("package:com.example.theme-dusk#dusk");
+    const themeRef = `package:${theme.packageId}#${theme.facet}`;
+    const choice = page.locator(`[data-theme-ref='${themeRef}']`);
+    await expect(choice).toBeVisible();
+    await choice.click();
+    await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+    const canonical = await (await request.get(`${node}/appearance`, { headers })).json() as AppearanceResponse;
+    if (canonical.theme === null) throw new Error("The installed theme was not applied by the canonical route");
+    expect((await readWidget(frame)).appearance).toEqual(compileAppearance({
+      scheme, theme: canonical.theme, themeRef: canonical.appliedRef, customization: canonical.customization,
+    }));
+    if (theme.orb !== undefined) {
+      const orb = page.locator("canvas[data-orb-profile]").first();
+      await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+      await page.locator('[data-orb-preset="calm"]').click();
+      await expect(orb).toHaveAttribute("data-orb-profile", "calm");
+    }
     const hostAccent = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-accent").trim().toUpperCase());
     await expect.poll(async () => (await readWidget(frame)).accent).toBe(await hostAccent());
     await page.locator(`[data-theme-choice='${scheme === "dark" ? "light" : "dark"}']`).click();
@@ -89,6 +118,7 @@ for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const
     await expect(composer).toHaveValue("draft kept across appearance changes");
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
     await page.keyboard.press("Escape");
-    await page.screenshot({ path: join(evidence, `iframe-${width}-${scheme}.png`) });
+    await page.screenshot({ path: join(evidence, `iframe-${theme.facet}-${width}-${scheme}.png`) });
+    expect((await request.put(`${node}/preferences/experience.themeRef`, { headers, data: { value: "builtin:clark" } })).ok()).toBe(true);
   });
 }

@@ -191,6 +191,15 @@ approval's Approve and Deny, the inbox's answers or Stop) and reduced motion, fr
 Settings, are the host's whatever a theme says. It is selected as `package:<package id>#<theme id>`, and a
 theme-only package is a UI refresh, never a Pi restart. Installed themes appear under Settings → Experience → Theme.
 
+**Reference packages.** [Pixel Arcade](../examples/themes/pixel-arcade/README.md) and
+[Neo Brutalism](../examples/themes/neo-brutalism/README.md) are generalized data-only packages, installed through
+the existing package lifecycle and selected in Settings → Experience. Pixel Arcade uses square frames, beveled
+controls, a bounded scanline backdrop, stepped motion and a Plasma Orb default; Neo Brutalism uses heavy borders,
+hard offset shadows, strong headings, raised controls and a Glass Orb default. Both use host-owned font-family
+profiles with system fallbacks, without bundled font files or external styling resources. Their source/license
+metadata is in each manifest; original theme data is Apache-2.0. Personal Orb choices and reduced motion retain
+precedence. Clark Default is unchanged. These checkout examples are not marketplace publication claims.
+
 **Theme authoring and Theme Lab.** The existing package CLI has `clark theme init <dir>`, `dev [dir] [--port <port>]`,
 `test [dir]` and `pack [dir]`. From a checkout, invoke `node packages/widget-cli/src/cli.ts theme <command>`.
 Init writes a generalized manifest and `themes/main.json`, refusing a nonempty directory. Dev binds to loopback

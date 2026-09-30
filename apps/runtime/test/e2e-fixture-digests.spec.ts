@@ -15,6 +15,8 @@ import { themeDrawProblem } from "@clarkcant/design-tokens";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 const THEME_PACKAGES = [
+  "examples/themes/pixel-arcade",
+  "examples/themes/neo-brutalism",
   "apps/web/e2e/fixtures/theme-dusk",
   "apps/web/e2e/fixtures/theme-dusk-dim",
   "apps/web/e2e/fixtures/theme-depth",

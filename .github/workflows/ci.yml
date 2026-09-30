@@ -225,6 +225,53 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  reference-theme-browser:
+    name: reference theme browser (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium and Linux dependencies
+        if: runner.os == 'Linux'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Chromium
+        if: runner.os != 'Linux'
+        run: pnpm exec playwright install chromium
+
+      - name: Reference theme browser journeys
+        run: >-
+          pnpm test:e2e apps/web/e2e/reference-theme-composition.spec.ts
+          apps/web/e2e/widget-appearance.spec.ts
+
+      - name: Keep reference theme visual evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: reference-themes-${{ matrix.os }}
+          path: |
+            plans/reports/evidence/reference-themes/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # A package service runs in a container as the node's own user, which rootless Docker maps onto a subordinate id the
   # person does not own. The service-container suite is run here against a rootless daemon set up on the runner, so the
   # notes package's service really adds and lists a note in a folder the person owns, instead of that being assumed from

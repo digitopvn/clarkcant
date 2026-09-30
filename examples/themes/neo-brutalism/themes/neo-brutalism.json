@@ -1,0 +1,19 @@
+{
+  "appearanceApi": { "min": 2, "max": 2 },
+  "id": "neo-brutalism",
+  "displayName": "Neo Brutalism",
+  "description": "Strong system headings, heavy frames and hard pressed controls.",
+  "colors": {
+    "dark": { "accent": "#7DB4F0", "onAccent": "#000000" },
+    "light": { "accent": "#1F5FA8", "onAccent": "#FFFFFF" }
+  },
+  "typography": { "body": "system", "display": "system", "mono": "clark", "headingWeight": 800 },
+  "radius": { "badge": 0, "button": 0.125, "card": 0.125, "response": 0.125, "modal": 0.125, "field": 0.125 },
+  "border": { "width": 3, "style": "solid" },
+  "shadow": { "style": "hard", "offset": 6, "color": "text" },
+  "motion": { "speed": 0.75, "easing": "snappy" },
+  "icons": { "stroke": 2.5 },
+  "recipes": { "button": "raised", "card": "raised", "input": "underlined", "modal": "framed", "badge": "square", "composer": "integrated" },
+  "effects": { "backdrop": { "kind": "none", "intensity": 0 }, "surface": { "kind": "none", "intensity": 0 } },
+  "orb": { "profile": "glass" }
+}

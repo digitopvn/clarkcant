@@ -240,7 +240,7 @@ export function ConversationComposerBar({
               type="submit"
               className="cc-icon-btn"
               aria-label={t("composer.send")}
-              disabled={draft.trim() === ""}
+              disabled={draft.trim() === "" || chips.some((chip) => chip.state === "checking")}
               data-send="true"
             >
               ↑

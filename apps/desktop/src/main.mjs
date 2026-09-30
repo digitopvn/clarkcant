@@ -1210,6 +1210,26 @@ async function runSmokeTest() {
       `window.clarkcant.updateAppearance(${JSON.stringify({ ...appearance.next, rawTheme: {} })})`,
     );
     const latest = await opened.webContents.executeJavaScript("window.clarkcantDetached.bootstrap()");
+    const initialEvents = events;
+    const expectedEvents = [appearance.next];
+    const referenceAppearance = JSON.parse(readFileSync(join(here, "../test/fixtures/reference-appearance.json"), "utf8"));
+    for (const reference of referenceAppearance) {
+      step = `relay ${reference.name} ${reference.scheme} reduced=${reference.reducedMotion}`;
+      const result = await detachShell.webContents.executeJavaScript(
+        `window.clarkcant.updateAppearance(${JSON.stringify(reference.appearance)})`,
+      );
+      expectedEvents.push(reference.appearance);
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        events = await opened.webContents.executeJavaScript("window.__appearanceEvents");
+        if (events.length === expectedEvents.length) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const current = await opened.webContents.executeJavaScript("window.clarkcantDetached.bootstrap()");
+      checks.push([`the real detached relay retains ${reference.name} ${reference.scheme} reduced=${reference.reducedMotion}`,
+        result?.ok === true && detached?.window === opened &&
+        JSON.stringify(events) === JSON.stringify(expectedEvents) &&
+        JSON.stringify(current?.bootstrap?.appearance) === JSON.stringify(reference.appearance)]);
+    }
     await opened.webContents.executeJavaScript("window.__stopAppearance(); true");
     await detachShell.webContents.executeJavaScript(
       `window.clarkcant.updateAppearance(${JSON.stringify(appearance.initial)})`,
@@ -1219,9 +1239,10 @@ async function runSmokeTest() {
     checks.push(
       ["the initial detached snapshot is the exact host revision", JSON.stringify(bootstrap?.bootstrap?.appearance) === JSON.stringify(appearance.initial)],
       ["the live relay delivers one checked revision without reopening the window", updated?.ok === true && repeated?.ok === true &&
-        detached?.window === opened && JSON.stringify(events) === JSON.stringify([appearance.next])],
+        detached?.window === opened && JSON.stringify(initialEvents) === JSON.stringify([appearance.next])],
       ["the updated bootstrap retains that same appearance revision", JSON.stringify(latest?.bootstrap?.appearance) === JSON.stringify(appearance.next)],
       ["a raw theme is refused before reaching the detached window", refused?.ok === false],
+      ["unsubscribing also stops reference appearance events", JSON.stringify(events) === JSON.stringify(expectedEvents)],
     );
 
     step = "close the detached window";
