@@ -1,7 +1,7 @@
 import type { MessageBlock, WorkflowRunReport, WorkflowStep, WorkflowStepReport } from "@clarkcant/contracts";
 
 import { WorkAbort } from "../work-supervisor.ts";
-import { answerNeverCame, type CapabilityInvokeOutcome } from "./capability-invoke.ts";
+import type { CapabilityInvokeOutcome } from "./capability-invoke.ts";
 
 /**
  * Running a workflow binding: a bounded sequence of steps over capabilities this node already runs.
@@ -27,6 +27,11 @@ import { answerNeverCame, type CapabilityInvokeOutcome } from "./capability-invo
 const TAKE_MAX = 1_000;
 const OUTPUT_CHARS = 2_000;
 const DETAIL_CHARS = 200;
+/**
+ * The least time a step is sent with. A step with less left than this would be sent only to time out at once, which
+ * turns a deadline that has in effect passed into an unknown effect and an inbox question; it is stopped unsent instead.
+ */
+export const MIN_STEP_MS = 250;
 
 type Value = unknown;
 
@@ -217,28 +222,39 @@ function textOf(value: Value): string {
 
 function clip(text: string, limit: number): string {
   const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length <= limit ? flat : `${flat.slice(0, limit - 1)}…`;
+  const points = Array.from(flat);
+  return points.length <= limit ? flat : `${points.slice(0, limit - 1).join("")}…`;
 }
 
 function named(ids: readonly string[]): string {
   return ids.map((id) => `"${id}"`).join(", ");
 }
 
+/** What one `invoke` step's call came to, with what the caller's effect ledger made of it. */
+export interface StepCall {
+  outcome: CapabilityInvokeOutcome;
+  /**
+   * Whether the effect ledger now holds this call as unknown, which is when the inbox asks the person whether it took
+   * effect. The caller opens the ledger entry before the call is sent and settles it after; this says how it settled.
+   */
+  recorded: boolean;
+}
+
 export interface WorkflowRunDeps {
-  /** Call one `invoke` step's capability through the shared gate. */
-  invoke: (
-    step: WorkflowStep,
-    args: Record<string, unknown>,
-    options: { signal: AbortSignal; timeoutMs: number },
-  ) => Promise<CapabilityInvokeOutcome>;
+  /** Call one `invoke` step's capability through the shared gate, inside the caller's effect ledger. */
+  invoke: (step: WorkflowStep, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs: number }) => Promise<StepCall>;
   /** One audit row per step, whatever it came to. */
   audit: (step: WorkflowStep, report: WorkflowStepReport) => void;
-  /**
-   * A step was sent and its answer never came back. The caller writes it into the effect ledger so a person can say
-   * later whether it took effect; nothing here retries it.
-   */
-  uncertain: (step: WorkflowStep, reason: { code: string; message: string; stopped: boolean; args: Record<string, unknown> }) => void;
   nowMs?: () => number;
+}
+
+/** Why a sent call has no answer the run can trust, in the words the report uses. */
+function noAnswerWhy(code: string, message: string, stopped: boolean, deadlineHit: boolean, deadlineMs: number): string {
+  if (stopped) return "a person stopped it while it ran";
+  if (deadlineHit) return `the workflow's ${String(Math.ceil(deadlineMs / 1000))} s ran out while it ran`;
+  if (code === "SERVICE_TIMED_OUT") return "the service did not answer in time";
+  if (code === "SERVICE_TOOL_FAILED") return `the service answered with an error (${clip(message, DETAIL_CHARS)}) after it may have done part of the work`;
+  return "the service stopped answering while it ran";
 }
 
 export interface WorkflowRunResult {
@@ -251,8 +267,9 @@ export interface WorkflowRunResult {
  * Run a workflow's steps, stopping at the first that does not complete.
  *
  * `signal` is the person's Stop; the deadline is the run's own, and both reach a service call in flight. A stop or the
- * deadline between steps stops the run before the next step is sent, which leaves nothing uncertain; during a call it
- * withdraws the call, and that step is reported as uncertain rather than as not done.
+ * deadline between steps stops the run before the next step is sent, which leaves nothing uncertain; so does a
+ * deadline too close to send a step at all (`MIN_STEP_MS`). During a call it withdraws the call, and that step is
+ * reported as uncertain rather than as not done — unless the step only reads, when nothing can have changed.
  */
 export async function runWorkflow(
   deps: WorkflowRunDeps,
@@ -265,8 +282,21 @@ export async function runWorkflow(
     () => deadline.abort(new WorkAbort("deadline", `the workflow ran past its ${String(Math.ceil(input.deadlineMs / 1000))} s`)),
     input.deadlineMs,
   );
-  const signal = AbortSignal.any([input.signal, deadline.signal]);
+  // Cleared however the run ends, a throw included, so a failed run leaves no timer behind for up to its deadline.
+  try {
+    return await runSteps(deps, input, { started, nowMs, signal: AbortSignal.any([input.signal, deadline.signal]), deadline: deadline.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
+async function runSteps(
+  deps: WorkflowRunDeps,
+  input: { steps: readonly WorkflowStep[]; input: Record<string, unknown>; deadlineMs: number; signal: AbortSignal },
+  run: { started: number; nowMs: () => number; signal: AbortSignal; deadline: AbortSignal },
+): Promise<WorkflowRunResult> {
+  const { signal, nowMs, started } = run;
+  const seconds = String(Math.ceil(input.deadlineMs / 1000));
   const ordered = workflowOrder(input.steps);
   const reports = new Map<string, WorkflowStepReport>(
     ordered.map((step) => [step.stepId, { stepId: step.stepId, kind: step.kind, status: "not-run" }]),
@@ -277,7 +307,6 @@ export async function runWorkflow(
   let lastOutput: Value;
 
   const finish = (stop?: { step: WorkflowStep; code: string; message: string }): WorkflowRunResult => {
-    clearTimeout(timer);
     const steps = ordered.map((step) => reports.get(step.stepId) ?? { stepId: step.stepId, kind: step.kind, status: "not-run" as const });
     const ran = steps.filter((step) => step.status === "done" && step.kind === "invoke").map((step) => step.stepId);
     const notRun = steps.filter((step) => step.status === "not-run").map((step) => step.stepId);
@@ -294,11 +323,11 @@ export async function runWorkflow(
       };
     }
     const stoppedStatus = reports.get(stop.step.stepId)?.status;
-    const reachedService = stoppedStatus === "failed" && stop.step.kind === "invoke";
+    const reachedService = (stoppedStatus === "failed" && stop.step.kind === "invoke") || stoppedStatus === "uncertain";
     const kept =
       ran.length > 0
         ? `${named(ran)} ran and stay done — a workflow undoes nothing.`
-        : reachedService || stoppedStatus === "uncertain"
+        : reachedService
           ? "No step before it had called a service."
           : "No step that calls a service had run, so nothing changed.";
     const rest = notRun.length === 0 ? "" : ` ${named(notRun)} did not run.`;
@@ -320,22 +349,25 @@ export async function runWorkflow(
     deps.audit(step, report);
   };
 
+  /** The run stopped before this step was sent: by a person, by the deadline, or with too little time left to send it. */
+  const stoppedBefore = (step: WorkflowStep): WorkflowRunResult => {
+    const byPerson = input.signal.aborted;
+    return finish({
+      step,
+      code: byPerson ? "WORKFLOW_STOPPED" : "WORKFLOW_DEADLINE",
+      message: byPerson
+        ? "a person stopped the workflow before this step ran."
+        : `the workflow ran out of its ${seconds} s before this step ran.`,
+    });
+  };
+
   for (const step of ordered) {
     if (step.dependsOn.some((dependency) => skipped.has(dependency))) {
       skipped.add(step.stepId);
       settle(step, { stepId: step.stepId, kind: step.kind, status: "skipped", detail: "a condition it depends on was not met" });
       continue;
     }
-    if (signal.aborted) {
-      const byPerson = input.signal.aborted;
-      return finish({
-        step,
-        code: byPerson ? "WORKFLOW_STOPPED" : "WORKFLOW_DEADLINE",
-        message: byPerson
-          ? "a person stopped the workflow before this step ran."
-          : `the workflow ran out of its ${String(Math.ceil(input.deadlineMs / 1000))} s before this step ran.`,
-      });
-    }
+    if (signal.aborted) return stoppedBefore(step);
     const from = step.dependsOn[0];
     const value: Value = from === undefined ? input.input : outputs.get(from);
 
@@ -365,11 +397,10 @@ export async function runWorkflow(
     }
 
     const remaining = input.deadlineMs - (nowMs() - started);
+    // Not sent with a budget it could only time out on: that would make a deadline that has passed an unknown effect.
+    if (remaining < MIN_STEP_MS) return stoppedBefore(step);
     const args = resolveStepArgs(step, outputs, input.input);
-    const outcome = await deps.invoke(step, args, {
-      signal,
-      timeoutMs: Math.max(1, remaining),
-    });
+    const { outcome, recorded } = await deps.invoke(step, args, { signal, timeoutMs: remaining });
     if (outcome.kind === "done") {
       const produced = outputValue(outcome.output);
       outputs.set(step.stepId, produced);
@@ -387,27 +418,35 @@ export async function runWorkflow(
           "it needs your approval, and the card is in the conversation. Approving it runs that step on its own; the steps after it are not run by the approval.",
       });
     }
-    if (answerNeverCame(outcome.code)) {
-      // The deadline and a person's Stop both reach the call as the same signal; which one it was decides the words.
-      const stopped = input.signal.aborted;
-      const why = stopped ? "a person stopped it while it ran" : `the workflow's ${String(Math.ceil(input.deadlineMs / 1000))} s ran out while it ran`;
-      deps.uncertain(step, { code: outcome.code, message: outcome.message, stopped, args });
-      settle(step, { stepId: step.stepId, kind: step.kind, status: "uncertain", detail: why });
+
+    const stopped = input.signal.aborted;
+    const deadlineHit = !stopped && run.deadline.aborted;
+    if (!outcome.sent) {
+      // Nothing reached the service. A stop or the deadline that withdrew it before it was written is a run stopped
+      // before this step; any other refusal is the step refused.
+      if (stopped || deadlineHit) return stoppedBefore(step);
+      settle(step, { stepId: step.stepId, kind: step.kind, status: "refused", detail: clip(outcome.message, DETAIL_CHARS) });
+      return finish({ step, code: outcome.code, message: `${outcome.message}.` });
+    }
+
+    // Sent, and no answer the run can trust came back. Which of a stop, the deadline or the service it was decides the words.
+    const code = stopped ? "WORKFLOW_STOPPED" : deadlineHit ? "WORKFLOW_DEADLINE" : outcome.code;
+    const why = noAnswerWhy(outcome.code, outcome.message, stopped, deadlineHit, input.deadlineMs);
+    if (outcome.effectCategory === "read") {
+      settle(step, { stepId: step.stepId, kind: step.kind, status: "failed", detail: why, readOnly: true });
       return finish({
         step,
-        code: stopped ? "WORKFLOW_STOPPED" : "WORKFLOW_DEADLINE",
-        message: `it was sent, but ${why}, so whether it took effect is unknown. It was not retried; the inbox asks you to say whether it did.`,
+        code,
+        message: `it did not finish: ${why}. It only reads, so nothing changed.`,
       });
     }
-    const status = outcome.code === "SERVICE_TOOL_FAILED" || outcome.code === "SERVICE_UNREACHABLE" ? "failed" : "refused";
-    settle(step, { stepId: step.stepId, kind: step.kind, status, detail: clip(outcome.message, DETAIL_CHARS) });
+    settle(step, { stepId: step.stepId, kind: step.kind, status: "uncertain", detail: why, recorded });
     return finish({
       step,
-      code: outcome.code,
-      message:
-        status === "failed"
-          ? `${outcome.message} — the request reached the service, so it may have done part of it.`
-          : `${outcome.message}.`,
+      code,
+      message: `it was sent, but ${why}, so whether it took effect is unknown. It was not retried; ${
+        recorded ? "the inbox asks you to say whether it did." : "say in the conversation whether it did before running it again."
+      }`,
     });
   }
   return finish();

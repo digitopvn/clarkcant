@@ -16,10 +16,8 @@ import { migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import {
   type CapabilityInvokeDeps,
-  answerNeverCame,
   capabilityDigest,
   invokeCapability,
-  mayHaveRun,
   runApprovedCapability,
 } from "../src/application/capability-invoke.ts";
 import { describeCapabilityOutcome } from "../src/invoke-capability-tool.ts";
@@ -399,11 +397,11 @@ describe("the policy in front of a service", () => {
 describe("what the agent is told about a call that failed", () => {
   it("does not say nothing ran when the request reached the service", () => {
     for (const code of ["SERVICE_UNREACHABLE", "SERVICE_TOOL_FAILED"] as const) {
-      const told = describeCapabilityOutcome({ kind: "refused", status: 504, code, message: "no answer in 30 s" });
+      const told = describeCapabilityOutcome({ kind: "refused", status: 504, code, message: "no answer in 30 s", sent: true });
       expect(told, code).not.toContain("Không có gì được chạy");
       expect(told, code).toContain("có thể nó đã chạy một phần");
     }
-    const refused = describeCapabilityOutcome({ kind: "refused", status: 403, code: "POLICY_REFUSED", message: "denied" });
+    const refused = describeCapabilityOutcome({ kind: "refused", status: 403, code: "POLICY_REFUSED", message: "denied", sent: false });
     expect(refused).toContain("Không có gì được chạy");
   });
 });
@@ -674,6 +672,23 @@ describe("a service that is not running", () => {
     });
   });
 
+  it("reports a call whose service exits mid-call as sent, so the caller keeps it as one that may have run", async () => {
+    activate();
+    await running(start({ restartBaseMs: 1_500 }));
+    const pidFile = await until(() => findPidFile(join(dir, "services")), "the pid file");
+    const pending = invokeCapability(invokeDeps(), {
+      ref: "com.example.notes.add-slowly@1" as CapabilityRef,
+      args: { text: "giữa chừng", seconds: 2 },
+      source: "widget",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    process.kill(Number(readFileSync(pidFile, "utf8")));
+    const lost = await pending;
+    expect(lost).toMatchObject({ kind: "refused", sent: true, effectCategory: "local-write" });
+    if (lost.kind !== "refused") throw new Error("unreachable");
+    expect(["SERVICE_UNREACHABLE", "SERVICE_TOOL_FAILED"]).toContain(lost.code);
+  });
+
   it("leaves a service that keeps dying stopped, and says so", async () => {
     activate();
     const serviceHost = start({
@@ -743,10 +758,8 @@ describe("a call its caller bounds", () => {
     await running(start());
 
     const late = await invokeCapability(invokeDeps(), { ref: SLOW, args: { text: "chậm", seconds: 2 }, source: "widget", timeoutMs: 300 });
-    expect(late).toMatchObject({ kind: "refused", status: 504, code: "SERVICE_TIMED_OUT" });
-    if (late.kind !== "refused") throw new Error("unreachable");
-    expect(mayHaveRun(late.code)).toBe(true);
-    expect(answerNeverCame(late.code)).toBe(true);
+    // Sent, so it may have run: the caller must not free what it asked for.
+    expect(late).toMatchObject({ kind: "refused", status: 504, code: "SERVICE_TIMED_OUT", sent: true, effectCategory: "local-write" });
     // The service was told the request is withdrawn, and this one honours it: the note is never written.
     await new Promise((resolve) => setTimeout(resolve, 2_300));
     expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "widget" })).toMatchObject({ kind: "done", output: "No notes yet." });
@@ -765,9 +778,7 @@ describe("a call its caller bounds", () => {
     });
     setTimeout(() => controller.abort(), 100);
     const stopped = await pending;
-    expect(stopped).toMatchObject({ kind: "refused", status: 409, code: "SERVICE_CANCELLED" });
-    if (stopped.kind !== "refused") throw new Error("unreachable");
-    expect(mayHaveRun(stopped.code)).toBe(true);
+    expect(stopped).toMatchObject({ kind: "refused", status: 409, code: "SERVICE_CANCELLED", sent: true });
     await new Promise((resolve) => setTimeout(resolve, 2_300));
     expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "widget" })).toMatchObject({ kind: "done", output: "No notes yet." });
   });
@@ -782,8 +793,37 @@ describe("a call its caller bounds", () => {
       timeoutMs: 10 * 60_000,
     });
     expect(quick).toMatchObject({ kind: "done", output: "Saved. 1 note(s): nhanh" });
-    // A service error is the service's answer, not an unknown one.
-    expect(answerNeverCame("SERVICE_TOOL_FAILED")).toBe(false);
-    expect(answerNeverCame("SERVICE_UNREACHABLE")).toBe(false);
+  });
+
+  it("reports a call withdrawn before it was written as not sent, so no caller treats it as one that may have run", async () => {
+    activate();
+    await running(start());
+    const controller = new AbortController();
+    controller.abort();
+    const withdrawn = await invokeCapability(invokeDeps(), {
+      ref: ADD,
+      args: { text: "không gửi" },
+      source: "widget",
+      signal: controller.signal,
+    });
+    expect(withdrawn).toMatchObject({ kind: "refused", code: "SERVICE_CANCELLED", sent: false });
+    expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "widget" })).toMatchObject({ kind: "done", output: "No notes yet." });
+  });
+
+  it("refuses to send a call it cannot first write down, and sends nothing", async () => {
+    activate();
+    await running(start());
+    const outcome = await invokeCapability(invokeDeps(), {
+      ref: ADD,
+      args: { text: "không ghi được" },
+      source: "widget",
+      beforeSend: () => {
+        throw new Error("the disk is full");
+      },
+    });
+    expect(outcome).toMatchObject({ kind: "refused", status: 503, code: "LEDGER_UNAVAILABLE", sent: false });
+    if (outcome.kind !== "refused") throw new Error("unreachable");
+    expect(outcome.message).toContain("nothing was sent");
+    expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "widget" })).toMatchObject({ kind: "done", output: "No notes yet." });
   });
 });

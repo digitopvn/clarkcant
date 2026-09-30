@@ -246,10 +246,17 @@ export function compileWidgetAction(
         categories.push(descriptor.effectCategory);
         providers.add(served.generationId);
       }
-      // One package behind every step pins its generation, as an `invoke` does, so an update makes the button stale
-      // rather than retargeting it. Steps from several packages are each checked against the registry when they run.
+      // The package behind the steps pins its generation, as an `invoke` does, so an update makes the button stale
+      // rather than retargeting it. A binding records one generation, so steps from several packages could not all be
+      // pinned; such a workflow is refused rather than left to follow whichever versions are active when it runs.
+      if (providers.size > 1) {
+        return {
+          ok: false,
+          message: "a workflow's steps must all call capabilities of one package, so the button can be pinned to that package's version; make one button per package",
+        };
+      }
       const [only] = providers;
-      if (providers.size === 1 && only !== undefined) packageGeneration = only;
+      if (only !== undefined) packageGeneration = only;
       effectCategory = SEVERITY.find((category) => categories.includes(category)) ?? "read";
       break;
     }

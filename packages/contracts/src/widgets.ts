@@ -308,12 +308,21 @@ export interface WorkflowStepReport {
   kind: WorkflowStep["kind"];
   /**
    * `done` ran and answered; `skipped` was not run because a condition it depends on was false; `not-run` was never
-   * reached because the run stopped first; `refused` was refused before anything ran; `failed` ran and answered with an
-   * error; `uncertain` was sent and its answer never came back; `awaiting-approval` waits on the host's approval card.
+   * reached because the run stopped first; `refused` was refused before anything was sent; `failed` did not complete and
+   * changed nothing — a transform that could not apply, or a call that only reads and did not finish; `uncertain` was
+   * sent and no answer that can be trusted came back (none in time, a stop, the service going away, or an error after it
+   * may have done part of the work), so it may have taken effect; `awaiting-approval` waits on the host's approval card.
    */
   status: "done" | "skipped" | "not-run" | "refused" | "failed" | "uncertain" | "awaiting-approval";
   /** One line: the output's start, the refusal, or why it was skipped. Never a secret, never the whole output. */
   detail?: string;
+  /**
+   * For an `uncertain` step: whether the effect ledger holds the call as unknown, so the inbox asks the person whether
+   * it took effect. `false` means that question could not be recorded, and nothing may say it was.
+   */
+  recorded?: boolean;
+  /** For a `failed` step that was sent: the capability only reads, so nothing changed whatever happened. */
+  readOnly?: true;
 }
 
 /**

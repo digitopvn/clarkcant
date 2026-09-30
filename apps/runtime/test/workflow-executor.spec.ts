@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkflowStep, WorkflowStepReport } from "@clarkcant/contracts";
 
 import type { CapabilityInvokeOutcome } from "../src/application/capability-invoke.ts";
 import {
+  MIN_STEP_MS,
   applyTransform,
   resolveStepArgs,
   runWorkflow,
@@ -32,36 +33,48 @@ function done(output: string): CapabilityInvokeOutcome {
 interface Harness {
   sent: { stepId: string; args: Record<string, unknown>; timeoutMs: number }[];
   audited: WorkflowStepReport[];
-  uncertain: { stepId: string; stopped: boolean; args: Record<string, unknown> }[];
 }
 
-function harness(answer: (step: WorkflowStep, signal: AbortSignal) => Promise<CapabilityInvokeOutcome>) {
-  const seen: Harness = { sent: [], audited: [], uncertain: [] };
+/**
+ * The executor's caller stood in for: `recorded` is what a ledger that can be written makes of the call — held as
+ * unknown when it was sent, is not a read, and came back without an answer — unless `ledger` says it could not be.
+ */
+function harness(
+  answer: (step: WorkflowStep, signal: AbortSignal) => Promise<CapabilityInvokeOutcome>,
+  options: { ledger?: boolean; nowMs?: () => number } = {},
+) {
+  const seen: Harness = { sent: [], audited: [] };
   return {
     seen,
     deps: {
-      invoke: (step: WorkflowStep, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs: number }) => {
-        seen.sent.push({ stepId: step.stepId, args, timeoutMs: options.timeoutMs });
-        return answer(step, options.signal);
+      invoke: async (step: WorkflowStep, args: Record<string, unknown>, call: { signal: AbortSignal; timeoutMs: number }) => {
+        seen.sent.push({ stepId: step.stepId, args, timeoutMs: call.timeoutMs });
+        const outcome = await answer(step, call.signal);
+        const unknown = outcome.kind === "refused" && outcome.sent && outcome.effectCategory !== "read";
+        return { outcome, recorded: unknown && options.ledger !== false };
       },
       audit: (_step: WorkflowStep, report: WorkflowStepReport) => {
         seen.audited.push(report);
       },
-      uncertain: (step: WorkflowStep, reason: { stopped: boolean; args: Record<string, unknown> }) => {
-        seen.uncertain.push({ stepId: step.stepId, stopped: reason.stopped, args: reason.args });
-      },
+      ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }),
     },
   };
 }
 
 /** A call that answers only when withdrawn, as the service host reports it then. */
-function waitForAbort(signal: AbortSignal): Promise<CapabilityInvokeOutcome> {
+function waitForAbort(signal: AbortSignal, effectCategory: "local-write" | "read" = "local-write"): Promise<CapabilityInvokeOutcome> {
   return new Promise((resolve) => {
-    signal.addEventListener("abort", () => resolve({ kind: "refused", status: 409, code: "SERVICE_CANCELLED", message: "withdrawn" }), {
-      once: true,
-    });
+    signal.addEventListener(
+      "abort",
+      () => resolve({ kind: "refused", status: 409, code: "SERVICE_CANCELLED", message: "withdrawn", sent: true, effectCategory }),
+      { once: true },
+    );
   });
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("the order steps run in", () => {
   it("puts every step after what it depends on, and otherwise keeps the order they were written in", () => {
@@ -143,7 +156,7 @@ describe("a run", () => {
 
   it("stops at the first refusal, names it, and claims no rollback for what ran before it", async () => {
     const { seen, deps } = harness(async (step) =>
-      step.stepId === "second" ? { kind: "refused", status: 403, code: "POLICY_REFUSED", message: "your policy refuses local writes" } : done("ok"),
+      step.stepId === "second" ? { kind: "refused", status: 403, code: "POLICY_REFUSED", message: "your policy refuses local writes", sent: false } : done("ok"),
     );
     const result = await runWorkflow(deps, {
       steps: [invokeStep("first"), invokeStep("second", ["first"]), invokeStep("third", ["second"])],
@@ -181,15 +194,18 @@ describe("a run", () => {
     const result = await runWorkflow(deps, {
       steps: [invokeStep("fast"), invokeStep("slow", ["fast"], { text: "chậm" }), invokeStep("never", ["slow"])],
       input: {},
-      deadlineMs: 150,
+      deadlineMs: 600,
       signal: new AbortController().signal,
     });
     expect(result.report).toMatchObject({ completed: false, stoppedAt: "slow", code: "WORKFLOW_DEADLINE" });
-    expect(result.report.message).toContain("whether it took effect is unknown. It was not retried");
-    expect(seen.uncertain).toEqual([{ stepId: "slow", stopped: false, args: { text: "chậm" } }]);
-    expect(seen.sent.map((call) => call.stepId)).toEqual(["fast", "slow"]);
+    expect(result.report.message).toContain("whether it took effect is unknown. It was not retried; the inbox asks you");
+    expect(result.report.steps.find((step) => step.stepId === "slow")).toMatchObject({ status: "uncertain", recorded: true });
+    expect(seen.sent.map((call) => [call.stepId, call.args])).toEqual([
+      ["fast", {}],
+      ["slow", { text: "chậm" }],
+    ]);
     // Each step is given what is left of the run's time, never more.
-    expect(seen.sent[1]?.timeoutMs).toBeLessThanOrEqual(150);
+    expect(seen.sent[1]?.timeoutMs).toBeLessThanOrEqual(600);
   });
 
   it("does not send the next step once a person stopped the run, and leaves nothing uncertain", async () => {
@@ -207,7 +223,69 @@ describe("a run", () => {
     expect(result.report).toMatchObject({ completed: false, stoppedAt: "second", code: "WORKFLOW_STOPPED" });
     expect(result.report.message).toContain("a person stopped the workflow before this step ran");
     expect(seen.sent.map((call) => call.stepId)).toEqual(["first"]);
-    expect(seen.uncertain).toEqual([]);
+    expect(result.report.steps.map((step) => step.status)).toEqual(["done", "not-run"]);
+  });
+
+  it("promises no inbox question when the ledger could not hold the call", async () => {
+    const { deps } = harness((step, signal) => waitForAbort(signal), { ledger: false });
+    const result = await runWorkflow(deps, { steps: [invokeStep("slow")], input: {}, deadlineMs: 400, signal: new AbortController().signal });
+    expect(result.report.steps[0]).toMatchObject({ status: "uncertain", recorded: false });
+    expect(result.report.message).toContain("say in the conversation whether it did before running it again");
+    expect(result.report.message).not.toContain("inbox");
+  });
+
+  it("says a read that did not finish changed nothing, and asks nobody about it", async () => {
+    const { deps } = harness((_step, signal) => waitForAbort(signal, "read"));
+    const result = await runWorkflow(deps, { steps: [invokeStep("look")], input: {}, deadlineMs: 400, signal: new AbortController().signal });
+    expect(result.report).toMatchObject({ completed: false, stoppedAt: "look", code: "WORKFLOW_DEADLINE" });
+    expect(result.report.steps[0]).toMatchObject({ status: "failed", readOnly: true });
+    expect(result.report.message).toContain("It only reads, so nothing changed.");
+    expect(result.report.message).not.toContain("unknown");
+  });
+
+  it("reports a step the service never received as refused, not as one that may have run", async () => {
+    const { deps } = harness(async () => ({
+      kind: "refused",
+      status: 503,
+      code: "SERVICE_NOT_RUNNING",
+      message: "the notes service is not running",
+      sent: false,
+      effectCategory: "local-write",
+    }));
+    const result = await runWorkflow(deps, { steps: [invokeStep("add")], input: {}, deadlineMs: 5_000, signal: new AbortController().signal });
+    expect(result.report.steps[0]).toMatchObject({ status: "refused" });
+    expect(result.report.message).toContain("No step that calls a service had run, so nothing changed.");
+  });
+
+  it("does not send a step with less time left than a call needs, and leaves nothing uncertain", async () => {
+    let clock = 0;
+    const { seen, deps } = harness(
+      async () => {
+        clock = 5_000 - (MIN_STEP_MS - 1);
+        return done("ok");
+      },
+      { nowMs: () => clock },
+    );
+    const result = await runWorkflow(deps, {
+      steps: [invokeStep("first"), invokeStep("second", ["first"])],
+      input: {},
+      deadlineMs: 5_000,
+      signal: new AbortController().signal,
+    });
+    expect(seen.sent.map((call) => call.stepId)).toEqual(["first"]);
+    expect(result.report).toMatchObject({ completed: false, stoppedAt: "second", code: "WORKFLOW_DEADLINE" });
+    expect(result.report.steps.map((step) => step.status)).toEqual(["done", "not-run"]);
+  });
+
+  it("leaves no deadline timer behind when a step throws", async () => {
+    vi.useFakeTimers();
+    const { deps } = harness(async () => {
+      throw new Error("the node could not reach its own database");
+    });
+    await expect(
+      runWorkflow(deps, { steps: [invokeStep("add")], input: {}, deadlineMs: 300_000, signal: new AbortController().signal }),
+    ).rejects.toThrow("database");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("hands an approval the policy asked for back to the caller and runs nothing after it", async () => {

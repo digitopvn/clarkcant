@@ -9,6 +9,7 @@ import {
   type Timeline,
   type TimelineAction,
 } from "./api.ts";
+import { actionRefusalMessage, actionResultMessage } from "./action-messages.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { tableExportRequestFrom } from "./table-model.ts";
@@ -87,38 +88,6 @@ interface ActionRun {
   pending: boolean;
   message?: string;
   tone?: "done" | "waiting" | "refused";
-}
-
-const UNAVAILABLE_KEYS: Record<string, MessageKey> = {
-  // Kept for a node that predates workflow actions and still answers with it.
-  WORKFLOW_UNSUPPORTED: "widgets.action.unavailable.WORKFLOW_UNSUPPORTED",
-  NOT_A_SERVICE_CAPABILITY: "widgets.action.unavailable.NOT_A_SERVICE_CAPABILITY",
-  BINDING_STALE: "widgets.action.unavailable.BINDING_STALE",
-  CAPABILITY_NOT_READY: "widgets.action.unavailable.CAPABILITY_NOT_READY",
-  CAPABILITY_NOT_AUTHENTICATED: "widgets.action.unavailable.CAPABILITY_NOT_AUTHENTICATED",
-  CAPABILITY_MISSING: "widgets.action.unavailable.CAPABILITY_MISSING",
-};
-
-/**
- * A single call whose answer never came, said whole in the person's language: why it is unknown, that it was not run
- * again, and what happens next. A workflow's sentence stays the node's own, because it names the step it stopped at.
- */
-const UNCERTAIN_KEYS: Record<string, MessageKey> = {
-  SERVICE_CANCELLED: "widgets.action.uncertain.SERVICE_CANCELLED",
-  SERVICE_TIMED_OUT: "widgets.action.uncertain.SERVICE_TIMED_OUT",
-  ACTION_INTERRUPTED: "widgets.action.uncertain.ACTION_INTERRUPTED",
-};
-
-/**
- * The sentence for a binding the node says cannot run, or for a press it refused.
- *
- * A known code is said in the person's language; an unknown one falls back to the node's own reason, which is still
- * the real answer rather than a generic "something went wrong".
- */
-function reasonFor(t: (key: MessageKey) => string, code: string | undefined, reason: string | undefined): string {
-  const key = code === undefined ? undefined : UNAVAILABLE_KEYS[code];
-  if (key !== undefined) return t(key);
-  return reason ?? t("widgets.action.refusedGeneric");
 }
 
 function newInvocationId(): string {
@@ -237,37 +206,18 @@ export function useSurfaceRenderer({
         })
         .then((result) => {
           applyTimeline(result.timeline);
-          const run: ActionRun =
-            result.outcome === "background"
-              ? // Started, not done: the run reports into the conversation when it ends.
-                { pending: false, tone: "waiting", message: t("widgets.action.background") }
-              : result.approvalRequired !== undefined
-                ? // Nothing ran yet — or, for a workflow, not the step that asked; the card is where it is decided.
-                  { pending: false, tone: "waiting", message: result.message ?? t("widgets.action.awaitingApproval") }
-                : result.duplicate
-                  ? { pending: false, tone: "done", message: t("widgets.action.duplicate") }
-                  : typeof result.output === "string" && result.output !== ""
-                    ? { pending: false, tone: "done", message: result.output }
-                    : result.pinId !== null
-                      ? { pending: false, tone: "done", message: t("widgets.action.pinned") }
-                      : { pending: false, tone: "done", message: result.message ?? t("widgets.action.done") };
+          // Started or waiting on an approval card is not done; the words for each are said in the person's language.
+          const tone = result.outcome === "background" || result.approvalRequired !== undefined ? "waiting" : "done";
+          const run: ActionRun = { pending: false, tone, message: actionResultMessage(t, result) };
           setActionRuns((current) => ({ ...current, [id]: run }));
         })
         .catch((cause: unknown) => {
-          const code = cause instanceof GatewayError ? cause.code : undefined;
-          const reason = cause instanceof GatewayError ? cause.reason : undefined;
-          const outcome = cause instanceof GatewayError ? cause.details.outcome : undefined;
+          // Said from the node's code and details, never its English sentence or a raw code: what failed, what was
+          // kept, and what happens next — the inbox only when the node recorded the question there.
           const message =
-            code === "TURN_IN_PROGRESS"
-              ? t("widgets.action.turnInProgress")
-              : code === "REVISION_MISMATCH"
-                ? t("widgets.action.revisionMismatch")
-                : outcome === "uncertain" && code !== undefined && UNCERTAIN_KEYS[code] !== undefined
-                  ? t(UNCERTAIN_KEYS[code])
-                  : outcome === "uncertain" || outcome === "partial"
-                  ? // The node's own sentence: which step or call, what is kept, what happens next.
-                    `${t(outcome === "uncertain" ? "widgets.action.uncertain" : "widgets.action.partial")} ${reason ?? ""}`.trim()
-                  : reasonFor(t, code, reason);
+            cause instanceof GatewayError
+              ? actionRefusalMessage(t, { code: cause.code, reason: cause.reason, details: cause.details })
+              : t("widgets.action.refusedGeneric");
           setActionRuns((current) => ({ ...current, [id]: { pending: false, tone: "refused", message } }));
         });
     },
@@ -381,7 +331,7 @@ export function useSurfaceRenderer({
               ...(sends && actionRun?.pending === true ? { pending: true } : {}),
               ...(sends && actionRun?.message !== undefined ? { message: actionRun.message, tone: actionRun.tone } : {}),
               ...(sends && boundAction !== undefined && !boundAction.available
-                ? { unavailableReason: reasonFor(t, boundAction.unavailableCode, boundAction.unavailableReason) }
+                ? { unavailableReason: actionRefusalMessage(t, { code: boundAction.unavailableCode, reason: boundAction.unavailableReason, details: {} }) }
                 : {}),
               ...(isList && actionReady ? { itemActionReady: true } : {}),
             };

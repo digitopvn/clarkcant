@@ -31,19 +31,18 @@ import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { AGENT_ITEM_KEY } from "./action-bindings.ts";
 import { estimateTokens, renderActionContext, resolveActionContext } from "./action-context.ts";
-import { effectCategoryOf, recordUncertainCall } from "./action-effects.ts";
+import { type OpenedActionEffect, openActionEffect, settleActionEffect } from "./action-effects.ts";
 import { ACTION_LIMITS, admitCall, bindingLimits, rateLimitedMessage } from "./action-limits.ts";
 import { actionRunning, beginActionRun, endActionRun } from "./action-runs.ts";
 import {
-  type CapabilityInvokeRefusal,
+  type CapabilityInvokeOutcome,
+  type CapabilityInvokeRequest,
   type CapabilityInvokeSource,
-  answerNeverCame,
   capabilityInvokeDeps,
   invokeCapability,
-  mayHaveRun,
   validateArgs,
 } from "./capability-invoke.ts";
-import { runWorkflow } from "./workflow-executor.ts";
+import { type StepCall, runWorkflow } from "./workflow-executor.ts";
 
 const FORM_DEFINITION_ID = "canvas.form@1";
 const LIST_DEFINITION_ID = "canvas.list@1";
@@ -181,6 +180,7 @@ function statusOf(code: string): number {
     case "SERVICE_NOT_RUNNING":
     case "CAPABILITY_NOT_READY":
     case "BACKGROUND_UNAVAILABLE":
+    case "LEDGER_UNAVAILABLE":
       return 503;
     case "SERVICE_TIMED_OUT":
     case "SERVICE_UNREACHABLE":
@@ -230,16 +230,84 @@ function actionBody(
   };
 }
 
-/** A call sent whose answer never came, as the person is told it: what was sent, why it is unknown, what happens next. */
-function uncertainMessage(label: string, code: string, deadlineMs: number | undefined, recorded: boolean): string {
-  const why =
-    code === "SERVICE_CANCELLED"
-      ? "you stopped it before the service answered"
-      : `the service did not answer within ${String(Math.ceil((deadlineMs ?? 60_000) / 1000))} s`;
+/** Why a call that was sent has no answer that can be trusted, as a clause of the sentence the person reads. */
+function noAnswerClause(code: string, message: string, deadlineMs: number | undefined): string {
+  switch (code) {
+    case "SERVICE_CANCELLED":
+      return "you stopped it before the service answered";
+    case "SERVICE_TIMED_OUT":
+      return `the service did not answer within ${String(Math.ceil((deadlineMs ?? 60_000) / 1000))} s`;
+    case "SERVICE_TOOL_FAILED":
+      return `the service answered with an error (${message.slice(0, 200)}) after it may have done part of the work`;
+    default:
+      return "the service stopped answering while it ran";
+  }
+}
+
+/**
+ * A call sent without an answer that can be trusted, as the person is told it: what was sent, why it is unknown, what
+ * happens next — the inbox only when the ledger really holds the question.
+ */
+function uncertainMessage(label: string, code: string, message: string, deadlineMs: number | undefined, recorded: boolean): string {
   const next = recorded
     ? "The inbox asks you to say whether it did."
     : "Say in the conversation whether it did before pressing it again.";
-  return `“${label}” was sent, but ${why}, so whether it took effect is unknown. It was not retried. ${next}`;
+  return `“${label}” was sent, but ${noAnswerClause(code, message, deadlineMs)}, so whether it took effect is unknown. It was not retried. ${next}`;
+}
+
+/**
+ * One service call a press makes, inside the effect ledger.
+ *
+ * The ledger entry is opened by `invokeCapability`'s `beforeSend`, after the registry, the schema and the policy have
+ * all said yes and before anything is sent, so a node that dies mid-call leaves a `submitted` row for boot recovery to
+ * turn into an inbox question. It is settled here on what came back. A `read` opens nothing: asking again changes nothing.
+ * A ledger that cannot be written refuses the call with nothing sent (`LEDGER_UNAVAILABLE`).
+ */
+async function callInLedger(
+  services: WidgetActionServices,
+  call: { conversationId: string; principalId: string; intent: string; request: Omit<CapabilityInvokeRequest, "beforeSend"> },
+): Promise<StepCall & { taskId?: string }> {
+  const ledger: { opened?: OpenedActionEffect } = {};
+  let outcome: CapabilityInvokeOutcome;
+  try {
+    outcome = await invokeCapability(capabilityInvokeDeps(services), {
+      ...call.request,
+      beforeSend: ({ effectCategory }) => {
+        if (effectCategory === "read") return;
+        ledger.opened = openActionEffect(services, {
+          conversationId: call.conversationId,
+          principalId: call.principalId,
+          capabilityRef: call.request.ref,
+          args: call.request.args,
+          intent: call.intent,
+          effectCategory,
+        });
+      },
+    });
+  } catch (cause) {
+    // Thrown on this node before the call was sent: a service's failure is an answer, not a throw.
+    if (ledger.opened !== undefined) {
+      settleActionEffect(services, ledger.opened, { kind: "not-sent", reason: cause instanceof Error ? cause.message : String(cause) });
+    }
+    throw cause;
+  }
+  const opened = ledger.opened;
+  if (opened === undefined) return { outcome, recorded: false };
+  if (outcome.kind === "done") {
+    settleActionEffect(services, opened, { kind: "answered", evidence: `the service answered: ${outcome.output.slice(0, 200)}` });
+    return { outcome, recorded: false };
+  }
+  if (outcome.kind !== "refused") return { outcome, recorded: false };
+  if (!outcome.sent) {
+    settleActionEffect(services, opened, { kind: "not-sent", reason: outcome.message });
+    return { outcome, recorded: false };
+  }
+  const settled = settleActionEffect(services, opened, {
+    kind: "no-answer",
+    stopped: outcome.code === "SERVICE_CANCELLED",
+    reason: `no answer that can be trusted came back: ${outcome.message}`,
+  });
+  return { outcome, recorded: settled.recorded, ...(settled.recorded ? { taskId: opened.taskId } : {}) };
 }
 
 /** An outcome of a workflow run, as the response carries it: its report, and whether anything it ran is kept. */
@@ -275,11 +343,11 @@ function workflowResult(
       }),
     };
   }
-  const uncertain = report.steps.some((step) => step.status === "uncertain");
+  const uncertain = report.steps.find((step) => step.status === "uncertain");
   const ran = report.steps.some((step) => step.status === "done" && step.kind === "invoke");
   return refusal(report.code ?? "WORKFLOW_STEP_FAILED", report.message, {
-    outcome: uncertain ? "uncertain" : ran ? "partial" : "refused",
-    ...(uncertain ? { mayHaveRun: true } : {}),
+    outcome: uncertain !== undefined ? "uncertain" : ran ? "partial" : "refused",
+    ...(uncertain !== undefined ? { mayHaveRun: true, recorded: uncertain.recorded === true } : {}),
     workflow: report,
   });
 }
@@ -312,17 +380,21 @@ function replay(
     case "workflow":
       return workflowResult(services, checked, request.conversationId, prior.report, true);
     case "uncertain":
+      // A task id is recorded only when the ledger holds the question, so its presence is what "recorded" means.
       return refusal(prior.code, prior.message, {
         outcome: "uncertain",
         mayHaveRun: true,
+        recorded: prior.taskId !== undefined,
         ...(prior.taskId === undefined ? {} : { taskId: prior.taskId }),
       });
     case "started":
+      // The node stopped while it ran. A call it had sent left a `submitted` ledger row, which boot recovery turned
+      // into an inbox question; a turn or a read left none, so the words promise nothing about the inbox.
       return actionRunning(request.invocationId)
         ? refusal("INVOCATION_IN_PROGRESS", "this action is already running; its answer will come back to the first request")
         : refusal(
             "ACTION_INTERRUPTED",
-            `“${checked.binding.label}” started before this node restarted and never reported back, so whether it took effect is unknown. It was not run again; press it anew once you know.`,
+            `“${checked.binding.label}” started before this node restarted and never reported back, so whether it took effect is unknown. It was not run again; check before pressing it anew.`,
             { outcome: "uncertain", mayHaveRun: true },
           );
   }
@@ -339,10 +411,20 @@ function admit(
   checked: Admitted,
   request: WidgetActionRequest,
   perMinute: number,
+  options: { stoppable?: boolean } = {},
 ): { ok: true; controller: AbortController } | { ok: false; result: WidgetActionResult } {
   const rate = admitCall(checked.binding.actionBindingId, perMinute);
-  if (!rate.allowed) return { ok: false, result: refusal("RATE_LIMITED", rateLimitedMessage(rate)) };
-  const controller = beginActionRun({ invocationId: request.invocationId, conversationId: request.conversationId });
+  if (!rate.allowed) {
+    return {
+      ok: false,
+      result: refusal("RATE_LIMITED", rateLimitedMessage(rate), { retryAfterMs: rate.retryAfterMs, limit: rate.limit }),
+    };
+  }
+  const controller = beginActionRun({
+    invocationId: request.invocationId,
+    conversationId: request.conversationId,
+    ...(options.stoppable === undefined ? {} : { stoppable: options.stoppable }),
+  });
   if (controller === undefined) {
     return {
       ok: false,
@@ -366,15 +448,17 @@ function settle(services: WidgetActionServices, checked: Admitted, request: Widg
 /**
  * The `invoke` half: a widget button that calls a package's service capability.
  *
- * The widget gate runs first — owner, binding, revision, digest, one outcome per invocation id — and then the same
- * `invokeCapability` the agent's tool and a spoken command reach, so the registry, the input schema and the policy
- * answer a click exactly as they answer a sentence. When the policy asks, the question is a host card in this
+ * The widget gate runs first — owner, conversation, binding, revision, digest, one outcome per invocation id — and then
+ * the same `invokeCapability` the agent's tool and a spoken command reach, so the registry, the input schema and the
+ * policy answer a click exactly as they answer a sentence. When the policy asks, the question is a host card in this
  * conversation: the frame is told it is waiting, and nothing it sends can answer it.
  *
- * The call is bounded by the binding's deadline and stoppable by the conversation's Stop. A call that was sent and then
- * ran out of time or was stopped is not reported as refused: the service may have done it. It is written into the effect
- * ledger for the person to settle, recorded against the invocation id so the same press is never sent again, and never
- * retried by the node.
+ * The call is bounded by the binding's deadline and stoppable by the conversation's Stop, and runs inside the effect
+ * ledger (`callInLedger`). A call that was sent and then came back without an answer that can be trusted — no answer in
+ * time, a Stop, the service going away mid-call, an error after it may have done part of the work — is not reported as
+ * refused: the service may have done it. It is recorded as uncertain against the invocation id, so the same id is
+ * answered with that again and never sent a second time, and it is never retried by the node. Only a refusal decided
+ * before anything was sent frees the id, and so does a `read`, which changed nothing whatever happened.
  */
 async function invokeCapabilityAction(
   services: WidgetActionServices,
@@ -391,35 +475,60 @@ async function invokeCapabilityAction(
   const admitted = admit(services, checked, request, limits.maxCallsPerMinute ?? ACTION_LIMITS.invoke.maxCallsPerMinute?.default ?? 1);
   if (!admitted.ok) return admitted.result;
 
-  let outcome: Awaited<ReturnType<typeof invokeCapability>>;
+  const ref = checked.proposal.capabilityRef;
+  let call: Awaited<ReturnType<typeof callInLedger>>;
   try {
-    outcome = await invokeCapability(capabilityInvokeDeps(services), {
-      ref: checked.proposal.capabilityRef,
-      args: checked.args,
-      source,
+    call = await callInLedger(services, {
       conversationId: request.conversationId,
-      bindingGeneration: checked.binding.packageGeneration,
-      ...(limits.deadlineMs === undefined ? {} : { timeoutMs: limits.deadlineMs }),
-      signal: admitted.controller.signal,
+      principalId: request.principalId,
+      intent: `${checked.binding.label} (${ref})`,
+      request: {
+        ref,
+        args: checked.args,
+        source,
+        conversationId: request.conversationId,
+        bindingGeneration: checked.binding.packageGeneration,
+        ...(limits.deadlineMs === undefined ? {} : { timeoutMs: limits.deadlineMs }),
+        signal: admitted.controller.signal,
+      },
     });
   } catch (cause) {
+    // Thrown before anything was sent, so there is nothing the same id could repeat.
     forgetStartedInvokeAction(services.conductor, request.invocationId);
     throw cause;
   } finally {
     endActionRun(request.invocationId);
   }
+  const { outcome } = call;
 
   if (outcome.kind === "refused") {
-    if (answerNeverCame(outcome.code)) {
-      return uncertainInvoke(services, checked, request, outcome.code, outcome.message, limits.deadlineMs);
+    if (!outcome.sent) {
+      // Decided before the service was asked, or never written to it: nothing changed, and the id is freed so a press
+      // after whatever refused it has changed can run.
+      forgetStartedInvokeAction(services.conductor, request.invocationId);
+      return { ok: false, status: outcome.status, code: outcome.code, message: outcome.message };
     }
-    // Not recorded, so a retry after the service recovers can run. A refusal decided before the service was asked
-    // changed nothing; one after it may have, and the person is told so rather than that nothing happened.
-    forgetStartedInvokeAction(services.conductor, request.invocationId);
-    const message = mayHaveRun(outcome.code)
-      ? `${outcome.message} — the request reached the service, so it may have done part of it`
-      : outcome.message;
-    return { ok: false, status: outcome.status, code: outcome.code, message };
+    if (outcome.effectCategory === "read") {
+      forgetStartedInvokeAction(services.conductor, request.invocationId);
+      return refusal(
+        outcome.code,
+        `“${checked.binding.label}” did not finish: ${noAnswerClause(outcome.code, outcome.message, limits.deadlineMs)}. It only reads, so nothing changed and pressing it again is safe.`,
+        { outcome: "refused", readOnly: true },
+      );
+    }
+    const said = uncertainMessage(checked.binding.label, outcome.code, outcome.message, limits.deadlineMs, call.recorded);
+    settle(services, checked, request, {
+      kind: "uncertain",
+      code: outcome.code,
+      message: said,
+      ...(call.taskId === undefined ? {} : { taskId: call.taskId }),
+    });
+    return refusal(outcome.code, said, {
+      outcome: "uncertain",
+      mayHaveRun: true,
+      recorded: call.recorded,
+      ...(call.taskId === undefined ? {} : { taskId: call.taskId }),
+    });
   }
 
   if (outcome.kind === "approval-required") {
@@ -446,40 +555,6 @@ async function invokeCapabilityAction(
   };
 }
 
-/**
- * A call that was sent and never answered.
- *
- * A `read` changed nothing whatever happened, so it is reported plainly and the id is freed for a retry. Anything else
- * goes into the ledger and is recorded as uncertain against the id.
- */
-function uncertainInvoke(
-  services: WidgetActionServices,
-  checked: Extract<ReturnType<typeof checkInvokeAction>, { ok: true }>,
-  request: WidgetActionRequest,
-  code: CapabilityInvokeRefusal,
-  message: string,
-  deadlineMs: number | undefined,
-): WidgetActionResult {
-  const ref = checked.proposal.capabilityRef;
-  if (effectCategoryOf(services, ref) === "read") {
-    forgetStartedInvokeAction(services.conductor, request.invocationId);
-    const why = code === "SERVICE_CANCELLED" ? "you stopped it" : "the service did not answer in time";
-    return refusal(code, `“${checked.binding.label}” did not finish: ${why}. It only reads, so nothing changed and pressing it again is safe.`);
-  }
-  const taskId = recordUncertainCall(services, {
-    conversationId: request.conversationId,
-    principalId: request.principalId,
-    capabilityRef: ref,
-    args: checked.args,
-    intent: `${checked.binding.label} (${ref})`,
-    stopped: code === "SERVICE_CANCELLED",
-    message,
-  });
-  const said = uncertainMessage(checked.binding.label, code, deadlineMs, taskId !== undefined);
-  settle(services, checked, request, { kind: "uncertain", code, message: said, ...(taskId === undefined ? {} : { taskId }) });
-  return refusal(code, said, { outcome: "uncertain", mayHaveRun: true, ...(taskId === undefined ? {} : { taskId }) });
-}
-
 /** What the model is told about a turn a button started, beside the label the person saw. */
 function agentActionNote(label: string, intent: string, input: Record<string, unknown>): string {
   const sent = Object.keys(input).length === 0 ? "" : `\nWhat they sent with it, as the host checked it: ${JSON.stringify(input)}`;
@@ -494,10 +569,14 @@ function agentActionNote(label: string, intent: string, input: Record<string, un
  *
  * It passes the same gate every bound action does, then becomes a turn in the same conversation whose message is the
  * button's label — exactly what the person saw and pressed — with the intent the button was offered for given to the
- * model beside it, and the context its references name, read by the host from its own records. The frame supplies none
- * of that text. The request is measured against the button's token budget before any model is asked, and refused whole
- * when it does not fit. The turn is an ordinary one: whatever it goes on to do passes the policy on its own. Its reply is
- * the outcome, recorded per invocation id, so a double click starts one turn and a spoken request hears the answer.
+ * model beside it as host guidance. The press carries no free text, but the context its references name is not all
+ * host-written: a `widget:` or `selection:` reference to an isolated widget reads that widget's description of itself,
+ * and a `state:` value may have been written by the page. So that context never joins the guidance: it goes to the model
+ * as the turn's data section, after everything the person said, labelled as data and with its bracket characters made
+ * inert (`renderActionContext`). A background worker gets it the same way, never inside its request text. The request is
+ * measured against the button's token budget before any model is asked, and refused whole when it does not fit. The
+ * turn is an ordinary one: whatever it goes on to do passes the policy on its own. Its reply is the outcome, recorded
+ * per invocation id, so a double click starts one turn and a spoken request hears the answer.
  *
  * A `background` button hands the same request to the node's supervisor instead, whose run reports into this
  * conversation and the inbox when it ends; the answer now is that it started.
@@ -532,10 +611,12 @@ async function invokeAgentAction(
   const limits = bindingLimits(checked.binding);
   const maxTokens = limits.maxTokens ?? ACTION_LIMITS.agent.maxTokens?.default ?? 4_000;
   const text = agentActionText(checked.instance, checked.binding.label, request.input);
-  const rendered = renderActionContext(context.items);
-  const note = rendered === "" ? agentActionNote(checked.binding.label, proposal.intent, request.input) : `${agentActionNote(checked.binding.label, proposal.intent, request.input)}\n\n${rendered}`;
+  // Host guidance only: the intent the model itself wrote when it offered the button, and the input the host checked.
+  const note = agentActionNote(checked.binding.label, proposal.intent, request.input);
+  // What the references read, some of it in a widget's own words: data, kept out of the guidance.
+  const data = renderActionContext(context.items);
   // Measured before anything is admitted or sent, so a request over its budget costs nothing and is never cut short.
-  const tokensEstimated = estimateTokens(`${text}\n${note}`);
+  const tokensEstimated = estimateTokens(`${text}\n${note}\n${data}`);
   if (tokensEstimated > maxTokens) {
     return refusal(
       "TOKEN_BUDGET_EXCEEDED",
@@ -543,7 +624,11 @@ async function invokeAgentAction(
     );
   }
 
-  const admitted = admit(services, checked, request, limits.maxCallsPerMinute ?? ACTION_LIMITS.agent.maxCallsPerMinute?.default ?? 1);
+  // Tracked only as the in-flight guard. The turn it starts is ended by the conversation's own Stop as a reply, and
+  // background work by the supervisor's; the run has no call of its own to withdraw, so a Stop does not count it again.
+  const admitted = admit(services, checked, request, limits.maxCallsPerMinute ?? ACTION_LIMITS.agent.maxCallsPerMinute?.default ?? 1, {
+    stoppable: false,
+  });
   if (!admitted.ok) return admitted.result;
   const resolved = context.items.map((item) => ({ ref: item.ref, kind: item.kind, instanceId: item.instanceId }));
   const at = new Date().toISOString() as Instant;
@@ -554,6 +639,7 @@ async function invokeAgentAction(
       const started = startBackgroundWork(services, principal, () => new Date().toISOString() as Instant, request.conversationId, `${text}\n\n${note}`, {
         title: checked.binding.label,
         maxTokens,
+        ...(data === "" ? {} : { data }),
       });
       if ("refusal" in started) {
         forgetStartedInvokeAction(services.conductor, request.invocationId);
@@ -578,6 +664,7 @@ async function invokeAgentAction(
       text,
       at,
       note,
+      ...(data === "" ? {} : { data }),
       channel: source === "voice" ? "voice" : "chat",
     });
     indexMessages(services.search, { conversationId: request.conversationId, messages: outcome.messages, at });
@@ -633,21 +720,26 @@ async function invokeWorkflowAction(
   const admitted = admit(services, checked, request, limits.maxCallsPerMinute ?? ACTION_LIMITS.workflow.maxCallsPerMinute?.default ?? 1);
   if (!admitted.ok) return admitted.result;
 
-  const deps = capabilityInvokeDeps(services);
   const label = checked.binding.label;
   let result: Awaited<ReturnType<typeof runWorkflow>>;
   try {
     result = await runWorkflow(
       {
+        // Each step is its own call in the effect ledger, opened before it is sent and settled on what came back.
         invoke: (step, args, options) =>
-          invokeCapability(deps, {
-            ref: step.capabilityRef ?? "",
-            args,
-            source,
+          callInLedger(services, {
             conversationId: request.conversationId,
-            bindingGeneration: checked.binding.packageGeneration,
-            timeoutMs: options.timeoutMs,
-            signal: options.signal,
+            principalId: request.principalId,
+            intent: `${label}: step ${step.stepId} (${step.capabilityRef ?? ""})`,
+            request: {
+              ref: step.capabilityRef ?? "",
+              args,
+              source,
+              conversationId: request.conversationId,
+              bindingGeneration: checked.binding.packageGeneration,
+              timeoutMs: options.timeoutMs,
+              signal: options.signal,
+            },
           }),
         audit: (step, report) => {
           appendAuditEvent(services.runtime.db, {
@@ -664,19 +756,6 @@ async function invokeWorkflowAction(
                   : "refused",
             at: new Date().toISOString() as Instant,
             ref: request.invocationId,
-          });
-        },
-        uncertain: (step, reason) => {
-          const ref = step.capabilityRef ?? "";
-          if (effectCategoryOf(services, ref) === "read") return;
-          recordUncertainCall(services, {
-            conversationId: request.conversationId,
-            principalId: request.principalId,
-            capabilityRef: ref,
-            args: reason.args,
-            intent: `${label}: step ${step.stepId} (${ref})`,
-            stopped: reason.stopped,
-            message: reason.message,
           });
         },
       },

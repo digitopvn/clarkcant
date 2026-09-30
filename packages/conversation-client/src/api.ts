@@ -259,6 +259,10 @@ export interface ActionWorkflowReport {
     kind: "invoke" | "transform" | "condition";
     status: "done" | "skipped" | "not-run" | "refused" | "failed" | "uncertain" | "awaiting-approval";
     detail?: string;
+    /** For an `uncertain` step: whether the node's effect ledger holds it, which is when the inbox asks about it. */
+    recorded?: boolean;
+    /** For a `failed` step that calls a service: it only reads, so nothing can have changed. */
+    readOnly?: boolean;
   }[];
   stoppedAt?: string;
   code?: string;

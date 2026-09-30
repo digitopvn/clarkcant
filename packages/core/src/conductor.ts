@@ -135,6 +135,8 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
     channel?: "voice" | "chat";
     /** See `UserMessageInput.note`, carried through unchanged: a fixture standing in for the model reads it too. */
     note?: string;
+    /** See `UserMessageInput.data`, carried through unchanged for the same reason. */
+    data?: string;
   }) => Promise<{ block: MessageBlock; text: string } | undefined>;
   /**
    * Choose between several usable capabilities, when there is a real choice.
@@ -172,6 +174,8 @@ export interface ModelTurnInput {
    * how the model is addressed, and a mode enum would have to be taught to both.
    */
   note?: string;
+  /** See `UserMessageInput.data`, which this carries through unchanged. */
+  data?: string;
   /**
    * Everything the turn does while it runs: text, reasoning, and tool calls.
    *
@@ -287,8 +291,19 @@ export interface UserMessageInput {
    * It exists because a turn that will be read aloud has to be shorter than one that will be read, and only
    * the caller knows which it is. Nothing else about the turn changes - the same model, the same tools, the
    * same stored message - so this is a sentence of guidance rather than a mode.
+   *
+   * Host-authored only. Words that came from anywhere else — a widget's view of itself, a value on the screen — go in
+   * `data`, never here: the runner frames this as guidance for the turn.
    */
   note?: string;
+  /**
+   * Material the host read for this turn, handed to the model as data rather than as guidance.
+   *
+   * The runner places it after everything the person said and labels it as data, the same way the screen's context is
+   * placed; it is never folded into `note`. Its text may have been written by an isolated widget, so it is the caller's
+   * job to have made it inert (see `renderActionContext`), and the model's to read it as a quotation, not an order.
+   */
+  data?: string;
   /**
    * Which surface this message came in on: the composer, or a spoken sentence the deterministic
    * matcher and the widget resolver both passed on.
@@ -558,6 +573,7 @@ export async function handleUserMessage(
       ...(input.emit === undefined ? {} : { emit: input.emit }),
       ...(input.channel === undefined ? {} : { channel: input.channel }),
       ...(input.note === undefined ? {} : { note: input.note }),
+      ...(input.data === undefined ? {} : { data: input.data }),
     });
     if (composed !== undefined) {
       // A reply that is only its sentence is said once: leading with the same text again would print it twice.
@@ -765,6 +781,7 @@ async function runModelTurn(
       text: input.text,
       messageId,
       ...(input.note === undefined ? {} : { note: input.note }),
+      ...(input.data === undefined ? {} : { data: input.data }),
       ...(input.channel === undefined ? {} : { channel: input.channel }),
       // Always supplied, and a no-op when nobody is streaming. A conditional spread here would have
       // to exist only to keep the optional field absent, which is a distinction nothing reads.

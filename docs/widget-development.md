@@ -361,7 +361,7 @@ same turn, and no button is left behind.
 | `view` (`view.save`) | Pins this button to the conversation. | Effect category `local-write`. |
 | `agent` | Starts a turn in the same conversation whose message is exactly the label; the `intent` goes to the model beside it, with the context its `contextRefs` name, read by the host. The reply is the press's outcome. With `background: true` the request goes to the node's background lane instead, and its result arrives in the conversation and the inbox. | Starting a turn changes nothing by itself; what the turn then does passes the policy on its own. `contextRefs` are checked against the closed grammar and the person placing the button. |
 | `invoke` | Calls a package service capability through `invokeCapability`, the same path as the agent's `invoke_capability` tool and voice, within the binding's deadline. | The capability's own effect category and the package generation serving it now; the arguments are checked against its input schema. |
-| `workflow` | Runs its steps in `dependsOn` order within one total deadline, and stops at the first step that does not complete. | The most severe category among its steps; each `invoke` step must be served by a running service. A workflow whose steps all come from one package pins that package's generation. |
+| `workflow` | Runs its steps in `dependsOn` order within one total deadline, and stops at the first step that does not complete. | The most severe category among its steps; each `invoke` step must be served by a running service. Every `invoke` step must call a capability of one package, whose generation the binding pins; a workflow that spans packages is refused when it is compiled, so make one button per package. |
 
 The binding digest covers the proposal, the package generation, the effect category, the label and the limits. A package
 update makes the binding stale (`BINDING_STALE`) instead of retargeting it. Whether a press needs approval is the
@@ -388,36 +388,62 @@ the binding is compiled, and a binding stored without limits runs under the defa
 | `agent` | — (the node's turn and background deadlines apply) | 4000 by default, 256–16000. | 10 by default, 1–30. |
 | `workflow` | 120 s by default, 1–300 s, for the whole run. | — | 10 by default, 1–60. |
 
-The per-minute count is per binding, on this node, and counts only admitted presses. A press over it is refused with
-`RATE_LIMITED` (429) and nothing runs.
+The per-minute count is per binding and on this node. A press counts once it passes the binding, revision and input
+checks, before the policy decides, so a press the policy then refuses or sends for approval still uses one. A press over
+the limit is refused with `RATE_LIMITED` (429), carrying `retryAfterMs` and `limit`, and nothing runs. The count is
+held in memory for the bindings pressed in the last minute, at most 1000 of them.
 
 **Context for an agent button.** `contextRefs` form a closed grammar: `widget` / `widget:<instanceId>` (what a widget
 means now, from the same semantic document `inspect_ui` reads), `selection` / `selection:<instanceId>`, and
 `state:<key>` / `state:<instanceId>/<key>` (one value of a composed view's state). A reference without an instance id
 means the button's own widget. Anything else is refused when the binding is compiled, as is a widget this node does not
 hold or one another person owns. `artifact:<id>` is refused until the node has the artifact broker (#313). At the press
-the host reads each reference again for the person who pressed, bounds each to 4000 characters, and gives it to the
-model under a heading that marks it as data, not instructions. The frame supplies no text at all: a button sends no
-input, and anything it sends is refused. A reference that no longer resolves refuses the press with
+the host reads each reference again for the person who pressed and bounds each to 4000 characters, cut at a character
+boundary. What it reads can be text a widget wrote, so it is data, never guidance: it is not placed in the turn's
+guidance note, nor in a background worker's request text. It goes in a separate section after the person's words and
+the guidance, under a heading that marks it as data, not instructions. The host also makes it inert there: square
+brackets become full-width ones, line and paragraph separators become plain line breaks, and every line is indented
+under its entry, so widget text cannot close the guidance marker or start an entry of its own. The button itself adds
+nothing: it sends no input, and anything it sends is refused. A reference that no longer resolves refuses the press with
 `CONTEXT_REF_UNKNOWN` (404) or `CONTEXT_REF_FORBIDDEN` (403) before any model is called. The request and its context
 are then measured against `maxTokens` with a conservative estimate (UTF-8 bytes / 3). One that does not fit is refused
 whole with `TOKEN_BUDGET_EXCEEDED`, and nothing is sent to the model. A background request hands the budget to its
 worker as the brief's `maxTokens`. The model adapter does not yet cap a worker's own output with it.
 
 **A call whose answer never came.** Stop, Escape or "dừng lại" in the conversation also stops a button's service call or
-workflow still running there. While one runs, the composer shows Stop. A call that was sent and then ran out of time or
-was stopped may have taken effect. The press answers `outcome: "uncertain"` with `mayHaveRun: true`
-(`SERVICE_TIMED_OUT` 504, `SERVICE_CANCELLED` 409, `WORKFLOW_DEADLINE` 504 or `WORKFLOW_STOPPED` 409). The call is
-written into the effect ledger (#273) as an unknown effect, whose inbox notice asks the person whether it took effect.
-It is recorded against the invocation id, and it is never retried. A `read` capability that ran out of time is reported
-plainly: nothing changed, so pressing again is safe. A service over MCP stdio is sent `notifications/cancelled` for a
-withdrawn or timed-out request. A service that honours it can stop, but the host never assumes it did.
+workflow still running there. While one runs, the composer shows Stop. A foreground agent press is a turn, and the same
+Stop ends it as a turn. It is not counted a second time as a button's run.
+
+Every call that is not a `read` goes through the effect ledger (#273), the way a browser action does
+(`apps/runtime/src/application/action-effects.ts`). After the registry, the schema and the policy have allowed it, and
+before anything is sent, the call is written as `submitted` under a task of its own, in one transaction. A ledger that
+cannot be written refuses the press with `LEDGER_UNAVAILABLE` (503), and nothing is sent. What comes back settles it:
+
+- an answer confirms it;
+- a call that never left the node (the service was not running, or the call was withdrawn before it was written) marks
+  it failed, and nothing happened;
+- any other ending marks it unknown: it ran out of time, was stopped, the service exited mid-call
+  (`SERVICE_UNREACHABLE`), or the service answered with an error after it may have done part of the work
+  (`SERVICE_TOOL_FAILED`).
+
+An unknown call may have taken effect. The press answers `outcome: "uncertain"` with `mayHaveRun: true` and
+`recorded`, which says whether the ledger now holds the question. Only then is there an inbox notice asking the person
+whether it took effect, and only then do the words the person reads or hears mention the inbox; otherwise they ask the
+person to say so in the conversation. If the node dies mid-call, the `submitted` row is still there, and boot recovery
+turns it into an unknown effect with the same inbox notice. The call is recorded against the invocation id and never
+retried: the same id gets the uncertain answer back and sends nothing.
+
+A `read` opens no ledger entry. One that did not finish is refused with `readOnly: true`, since nothing changed and
+pressing again is safe. A service over MCP stdio is sent `notifications/cancelled` for a withdrawn or timed-out
+request. A service that honours it can stop, but the host never assumes it did.
 
 **One outcome per invocation id, across a restart.** Before anything is sent, the node writes a `started` record for
 the invocation id, and replaces it with the outcome when the press ends. The same id arriving again gets that outcome
 back and runs nothing. While the first is still running the answer is `INVOCATION_IN_PROGRESS`. After a restart
 interrupted it, the answer is `ACTION_INTERRUPTED` with `outcome: "uncertain"`, and it is not run again. A press refused
-before anything was sent is not recorded, so the same press can run once whatever refused it changes.
+before anything was sent is not recorded, so the same press can run once whatever refused it changes. The press is
+also refused with `INSTANCE_UNKNOWN` (404) when the widget is not in the conversation the request names, so Stop, the
+approval card, the background run and the ledger task all belong to the widget's own conversation.
 
 **Workflows.** The step vocabulary is closed and holds no code:
 
@@ -430,21 +456,27 @@ before anything was sent is not recorded, so the same press can run once whateve
 
 An `invoke` step's argument may be `{"$step": "<id>"}` (a step it depends on, optionally with `"field"`) or
 `{"$input": "<key>"}` (a value the press sent). The run stops at the first step that is refused, fails, asks for
-approval, or does not answer in time. Its message names that step and the steps that did not run. The steps before it
+approval, or does not answer in time. A step is not sent with less than 250 ms of the deadline left; the run stops
+before it instead, with nothing sent. Its message names that step and the steps that did not run. The steps before it
 stay done, because a workflow has no rollback and never claims one. The response says `outcome: "partial"` when some
 step reached a service before the stop, `"uncertain"` when the stopped step may have run, and `"refused"` otherwise, and
 it carries a `workflow` report of every step. Every step the run reached, a skipped one included, is written to the
 audit log. An approval a step asked for is a host card in the conversation. Approving it runs that step on its own and
-does not resume the workflow.
+does not resume the workflow. An approved call runs under the service host's own ceiling (60 s), not the button's
+deadline or per-minute count, and the conversation's Stop does not reach it.
 
 Response bodies say what happened in `outcome`: `done` (200), `approval-required` (202) or `background` (202). A
-refusal's body carries `code`, `message` and, when relevant, `outcome`, `mayHaveRun`, `taskId` (the ledger entry) and
-`workflow`.
+refusal's body carries `code`, `message` and, when relevant, `outcome`, `mayHaveRun`, `recorded`, `readOnly`,
+`taskId` (the ledger entry, only when `recorded`), `retryAfterMs`, `limit` and `workflow`. The `message` is English, for
+logs and agents. The conversation and voice say the outcome in the person's language from the code and the details
+(`packages/conversation-client/src/action-messages.ts`, `apps/runtime/src/application/action-speech.ts`). They never show
+a raw code, and a call that may have run is never said as a failure.
 
 `canvas.cta@1` is kept so history renders. A model can no longer place it, because it had no action behind it.
 
-Tests: `apps/runtime/test/action-widget.spec.ts`, `apps/runtime/test/workflow-executor.spec.ts`, the bounded-call
-cases in `apps/runtime/test/service-host.spec.ts`, `packages/conversation-client/test/action-button.spec.ts`, and the
+Tests: `apps/runtime/test/action-widget.spec.ts`, `apps/runtime/test/workflow-executor.spec.ts`,
+`apps/runtime/test/action-speech.spec.ts`, the bounded-call cases in `apps/runtime/test/service-host.spec.ts`,
+`packages/conversation-client/test/action-button.spec.ts`, `packages/conversation-client/test/action-messages.spec.ts`, and the
 browser journey `apps/web/e2e/action-widget.spec.ts`, which runs each kind against a real notes service in a container,
 including a workflow, an agent button with a context reference and Stop during a slow call.
 

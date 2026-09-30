@@ -234,12 +234,13 @@ test("Stop cancels an invoke still waiting on the service, and says whether it t
 
   const response = await pressed;
   expect(response.status()).toBe(409);
-  const body = (await response.json()) as { code?: string; outcome?: string; mayHaveRun?: boolean; message?: string };
-  expect(body).toMatchObject({ code: "SERVICE_CANCELLED", outcome: "uncertain", mayHaveRun: true });
+  const body = (await response.json()) as { code?: string; outcome?: string; mayHaveRun?: boolean; recorded?: boolean; message?: string };
+  expect(body).toMatchObject({ code: "SERVICE_CANCELLED", outcome: "uncertain", mayHaveRun: true, recorded: true });
   const result = button.locator("[data-action-result='refused']");
-  // Said whole in the person's language: they stopped it after it was sent, so it is unknown, and it was not run again.
+  // Said whole in the person's language: they stopped it after it was sent, so it is unknown, it was not run again,
+  // and — because the node recorded the question — the inbox asks about it.
   await expect(result).toHaveText(
-    "Bạn đã dừng nó sau khi yêu cầu đã được gửi, trước khi dịch vụ trả lời, nên chưa rõ việc này đã có hiệu lực hay chưa. Nó không được chạy lại; hộp thư sẽ hỏi bạn nó đã có hiệu lực chưa.",
+    "Bạn đã dừng nó sau khi yêu cầu đã được gửi, trước khi dịch vụ trả lời, nên chưa rõ việc này đã có hiệu lực hay chưa. Nó không được chạy lại. Hộp thư sẽ hỏi bạn nó đã có hiệu lực chưa.",
     { timeout: 10_000 },
   );
   await expect(stop).toBeHidden();

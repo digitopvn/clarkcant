@@ -619,6 +619,13 @@ export function startBackgroundWork(
     title?: string;
     /** The token budget the request set, handed to the worker. */
     maxTokens?: number;
+    /**
+     * Material the host read for this request, sent to the worker after the request as data, never as part of it.
+     *
+     * Not part of the stored request text, so a retry of this run asks again without it: the screen it was read from
+     * may have changed, and a retry is a new request rather than a replay of old context.
+     */
+    data?: string;
   } = {},
 ):
   | { sessionId: string; state: "running" | "queued"; position?: number }
@@ -628,6 +635,7 @@ export function startBackgroundWork(
 
   const title = (options.title ?? text).replace(/\s+/g, " ").trim().slice(0, 120);
   const maxTokens = options.maxTokens;
+  const data = options.data;
   const submitted = nodeWork().submitBackground({
     ...(options.workId === undefined ? {} : { workId: options.workId }),
     ...(options.attempt === undefined ? {} : { attempt: options.attempt }),
@@ -650,6 +658,7 @@ export function startBackgroundWork(
           text,
           signal,
           ...(maxTokens === undefined ? {} : { maxTokens }),
+          ...(data === undefined ? {} : { data }),
         });
         signal.throwIfAborted();
         if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() });

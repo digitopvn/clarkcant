@@ -1517,6 +1517,31 @@ interface InvokeRecord {
 /** What an action run outside this package came to, recorded so the same invocation id gets it back. */
 export type BoundActionResult = InvokeRecord["result"];
 
+/**
+ * Whether a widget instance is part of a conversation: pinned there, captured in one of its messages, or named by a
+ * block of one — the same blocks the conversation's timeline draws its widgets from.
+ */
+export function instanceInConversation(deps: Pick<WidgetDeps, "db">, instanceId: string, conversationId: string): boolean {
+  const pinned = oneRow(deps.db, "SELECT 1 AS found FROM pins WHERE conversation_id = ? AND instance_id = ? LIMIT 1", conversationId, instanceId);
+  if (pinned !== undefined) return true;
+  const captured = oneRow(
+    deps.db,
+    `SELECT 1 AS found FROM widget_snapshots s JOIN messages m ON m.message_id = s.message_id
+     WHERE s.instance_id = ? AND m.conversation_id = ? LIMIT 1`,
+    instanceId,
+    conversationId,
+  );
+  if (captured !== undefined) return true;
+  // A widget-ref block, or a surface block whose snapshot names the instance, as the message document stores it.
+  const named = oneRow(
+    deps.db,
+    "SELECT 1 AS found FROM messages WHERE conversation_id = ? AND instr(document, ?) > 0 LIMIT 1",
+    conversationId,
+    JSON.stringify({ instanceId }).slice(1, -1),
+  );
+  return named !== undefined;
+}
+
 export type BoundActionCheck =
   | { ok: false; code: MiniAppActionCode; message: string; currentRevision?: number }
   | {
@@ -1549,6 +1574,15 @@ export function checkBoundAction(
   }
   if (instance.ownerPrincipalId !== request.principalId) {
     return { ok: false, code: "NOT_AUTHORIZED", message: "this instance belongs to another principal" };
+  }
+  // Stop, the approval card, a background run and the ledger's task are all kept under the conversation the request
+  // names, so a press is only taken in a conversation the widget is actually in.
+  if (!instanceInConversation(deps, instance.instanceId, request.conversationId)) {
+    return {
+      ok: false,
+      code: "INSTANCE_UNKNOWN",
+      message: `widget instance ${request.instanceId} is not in this conversation`,
+    };
   }
   const binding = getActionBinding(deps, request.actionBindingId);
   if (binding === undefined || binding.instanceId !== instance.instanceId) {

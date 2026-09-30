@@ -67,11 +67,27 @@ export class McpRequestTimeout extends Error {
   }
 }
 
-/** A request its caller withdrew before the server answered; the server was told, and may have acted already. */
+/**
+ * A request its caller withdrew before the server answered.
+ *
+ * `sent` says whether it had been written to the server. One withdrawn while it ran was sent, the server was told, and
+ * it may have acted already; one withdrawn before it was written reached nothing, and a caller must not report it as
+ * something that may have happened.
+ */
 export class McpRequestCancelled extends Error {
-  constructor(message: string) {
+  readonly sent: boolean;
+  constructor(message: string, sent: boolean) {
     super(message);
     this.name = "McpRequestCancelled";
+    this.sent = sent;
+  }
+}
+
+/** A request that could not be written to the server at all — it is not running — so nothing reached it. */
+export class McpRequestNotSent extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "McpRequestNotSent";
   }
 }
 
@@ -360,7 +376,7 @@ export class StdioMcpTransport implements McpTransport {
     return new Promise<unknown>((resolve, reject) => {
       if (signal?.aborted === true) {
         // Withdrawn before it was sent: nothing reached the server, so there is nothing to tell it.
-        reject(new McpRequestCancelled(`${method} to mcp server ${this.#options.serverId} was cancelled before it was sent`));
+        reject(new McpRequestCancelled(`${method} to mcp server ${this.#options.serverId} was cancelled before it was sent`, false));
         return;
       }
       const timer = setTimeout(() => {
@@ -384,7 +400,7 @@ export class StdioMcpTransport implements McpTransport {
         clearTimeout(timer);
         this.#pending.delete(id);
         this.#cancelled(id, "the caller withdrew the request");
-        reject(new McpRequestCancelled(`${method} to mcp server ${this.#options.serverId} was cancelled while it ran`));
+        reject(new McpRequestCancelled(`${method} to mcp server ${this.#options.serverId} was cancelled while it ran`, true));
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       const release = signal === undefined ? undefined : (): void => signal.removeEventListener("abort", onAbort);
@@ -396,7 +412,8 @@ export class StdioMcpTransport implements McpTransport {
         clearTimeout(timer);
         release?.();
         this.#pending.delete(id);
-        reject(cause instanceof Error ? cause : new Error(String(cause)));
+        // The write itself failed, so the request never reached the server.
+        reject(new McpRequestNotSent(cause instanceof Error ? cause.message : String(cause)));
       }
     });
   }

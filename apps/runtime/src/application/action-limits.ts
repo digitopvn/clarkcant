@@ -59,10 +59,21 @@ export function bindingLimits(binding: ActionBinding): ActionLimits {
  * Presses per binding in the last minute, on this node.
  *
  * Kept in memory on purpose: it bounds how fast one button can be driven, which a restart does not make any faster in a
- * way that matters, and writing a row per press would cost more than the limit protects.
+ * way that matters, and writing a row per press would cost more than the limit protects. Bounded as well: a binding
+ * whose window has emptied is dropped, and past `MAX_TRACKED` bindings the ones pressed longest ago are swept, so the
+ * map holds the buttons pressed in the last minute rather than every button ever pressed.
  */
 const WINDOW_MS = 60_000;
+const MAX_TRACKED = 1_000;
 const presses = new Map<string, number[]>();
+
+/** Drop every binding with no press inside the window. */
+function sweep(nowMs: number): void {
+  for (const [bindingId, times] of presses) {
+    const last = times[times.length - 1];
+    if (last === undefined || nowMs - last >= WINDOW_MS) presses.delete(bindingId);
+  }
+}
 
 export type RateDecision = { allowed: true } | { allowed: false; retryAfterMs: number; limit: number };
 
@@ -79,7 +90,17 @@ export function admitCall(bindingId: string, perMinute: number, nowMs: number = 
     return { allowed: false, retryAfterMs: Math.max(0, WINDOW_MS - (nowMs - oldest)), limit: perMinute };
   }
   recent.push(nowMs);
+  // Re-inserted so the map's order is least recently pressed first, which is the order a sweep can give up.
+  presses.delete(bindingId);
   presses.set(bindingId, recent);
+  if (presses.size > MAX_TRACKED) {
+    sweep(nowMs);
+    // Every tracked binding was pressed in the last minute: the oldest go, which can only let one of them through early.
+    for (const bindingId of presses.keys()) {
+      if (presses.size <= MAX_TRACKED) break;
+      presses.delete(bindingId);
+    }
+  }
   return { allowed: true };
 }
 
@@ -95,4 +116,9 @@ export function rateLimitedMessage(decision: Extract<RateDecision, { allowed: fa
 /** For tests: forget every count. */
 export function resetActionRateLimits(): void {
   presses.clear();
+}
+
+/** For tests: how many bindings the counter holds. */
+export function trackedActionRateLimits(): number {
+  return presses.size;
 }

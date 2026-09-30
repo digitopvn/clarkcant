@@ -261,6 +261,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     emit?: (event: ConductorEmit) => void;
     channel?: "voice" | "chat";
     note?: string;
+    data?: string;
   }): Promise<{ block: MessageBlock; text: string } | undefined> => {
     /*
      * A press of an `agent` action button, answered.
@@ -268,11 +269,12 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * The turn itself is the product's: the host checked the binding and started it with the button's label as the
      * person's message and the offered intent as guidance. What the fixture adds is only the reply, and it quotes the
      * intent it was given, so a journey can see that what the model was asked is what the button was made to ask. When
-     * the host read context for the button, the reply quotes it too: what reached the model is what the host read.
+     * the host read context for the button, the reply quotes it too — from the turn's data section, which is where the
+     * host puts it, never from the guidance note: what reached the model is what the host read.
      */
-    const pressed = input.note === undefined ? null : /You offered it for: (.+?)\nDo that now\.(?:\n\n(.*))?$/su.exec(input.note);
+    const pressed = input.note === undefined ? null : /You offered it for: (.+?)\nDo that now\.$/su.exec(input.note);
     if (pressed !== null) {
-      const context = (pressed[2] ?? "").split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim();
+      const context = (input.data ?? "").split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim();
       const reply =
         `Fixture: đã nhận yêu cầu từ nút "${input.text}". Việc cần làm: ${(pressed[1] ?? "").trim()}` +
         (context === "" ? "" : ` Ngữ cảnh host đọc: ${context.slice(0, 600)}`);

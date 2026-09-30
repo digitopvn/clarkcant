@@ -17,6 +17,12 @@ interface ActionRun {
   invocationId: string;
   conversationId: string;
   controller: AbortController;
+  /**
+   * Whether Stop reaches this run through its controller. A foreground `agent` press is a turn in the conversation,
+   * which the same Stop already ends as a reply; it is tracked only as the in-flight guard, so a stop is not counted
+   * twice for one thing.
+   */
+  stoppable: boolean;
 }
 
 const runs = new Map<string, ActionRun>();
@@ -31,10 +37,15 @@ export function actionRunning(invocationId: string): boolean {
  *
  * The caller must call `endActionRun` in a `finally`, whatever the run came to.
  */
-export function beginActionRun(input: { invocationId: string; conversationId: string }): AbortController | undefined {
+export function beginActionRun(input: { invocationId: string; conversationId: string; stoppable?: boolean }): AbortController | undefined {
   if (runs.has(input.invocationId)) return undefined;
   const controller = new AbortController();
-  runs.set(input.invocationId, { ...input, controller });
+  runs.set(input.invocationId, {
+    invocationId: input.invocationId,
+    conversationId: input.conversationId,
+    controller,
+    stoppable: input.stoppable ?? true,
+  });
   return controller;
 }
 
@@ -46,7 +57,7 @@ export function endActionRun(invocationId: string): void {
 export function cancelActionRuns(conversationId: string): number {
   let stopped = 0;
   for (const run of runs.values()) {
-    if (run.conversationId !== conversationId || run.controller.signal.aborted) continue;
+    if (run.conversationId !== conversationId || !run.stoppable || run.controller.signal.aborted) continue;
     run.controller.abort(new WorkAbort("stopped", "a person stopped this action"));
     stopped += 1;
   }
@@ -57,15 +68,10 @@ export function cancelActionRuns(conversationId: string): number {
 export function cancelAllActionRuns(): number {
   let stopped = 0;
   for (const run of runs.values()) {
-    if (run.controller.signal.aborted) continue;
+    if (!run.stoppable || run.controller.signal.aborted) continue;
     run.controller.abort(new WorkAbort("stopped", "the node was stopped"));
     stopped += 1;
   }
   return stopped;
 }
 
-/** Whether any action is running in this conversation. */
-export function conversationHasActionRuns(conversationId: string): boolean {
-  for (const run of runs.values()) if (run.conversationId === conversationId) return true;
-  return false;
-}

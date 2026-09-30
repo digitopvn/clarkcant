@@ -168,6 +168,7 @@ export {
   connectStdio,
   MCP_TRANSPORT_STATUS,
   McpRequestCancelled,
+  McpRequestNotSent,
   McpRequestTimeout,
   type StdioMcpTransportOptions,
   type ServerHandshake,
