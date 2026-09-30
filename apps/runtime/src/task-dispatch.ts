@@ -1103,6 +1103,8 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
   return {
     dispatch(input) {
+      // A delayed peer callback can arrive after shutdown closed storage. Boot recovery owns the persisted task.
+      if (!deps.conductor.db.isOpen) return false;
       const job: QueuedRun = {
         taskId: input.taskId,
         capabilityRef: input.capabilityRef,
