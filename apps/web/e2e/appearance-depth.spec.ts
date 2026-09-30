@@ -1,0 +1,328 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+
+/**
+ * A theme's look beyond colour, in the browser.
+ *
+ * The compiler, the contract and the audits are unit-tested; what only a page can show is that a theme's recipes,
+ * effects and Orb default actually reach what is drawn, that a theme pushing as hard as the contract allows still
+ * leaves Stop, the approval card and every focus ring plainly visible, that reduced motion stills all of it, that the
+ * whole flow works from the keyboard, and that a typed sentence changes the theme through the same write as a click.
+ */
+
+const DATA_DIR = join(process.cwd(), ".data", "e2e");
+const EVIDENCE = join(process.cwd(), "plans", "reports", "evidence");
+const NODE_PORT = process.env.CC_E2E_NODE_PORT;
+if (NODE_PORT === undefined || NODE_PORT === "") {
+  throw new Error(
+    "CC_E2E_NODE_PORT is not set, so this suite does not know which node it is testing; run it through playwright.config.ts",
+  );
+}
+const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
+
+const DEPTH_PACKAGE = "com.example.theme-depth";
+const HOSTILE_PACKAGE = "com.example.theme-hostile";
+const DEPTH_REF = `package:${DEPTH_PACKAGE}#depth`;
+const FLATLINE_REF = `package:${HOSTILE_PACKAGE}#flatline`;
+const CAMOUFLAGE_REF = `package:${HOSTILE_PACKAGE}#camouflage`;
+/** The digests of the fixtures' bytes, as `fixtures/directory.json` lists them (a unit test keeps the two in step). */
+const DEPTH_DIGEST = "sha256:0fc26c73d2a10e2d24fc037fbc278cae5d09e14c2280269b7040a6abe52f32f1";
+const HOSTILE_DIGEST = "sha256:488d748b65afd1859b0a2c5e893317166818508f4816e3ce7c404f2345371742";
+const DEPTH_DARK_ACCENT = "#7DB4F0";
+
+const overflowLog: { shot: string; scrollWidth: number; clientWidth: number; overflow: number }[] = [];
+
+function token(): string {
+  const parsed = JSON.parse(readFileSync(join(DATA_DIR, "identity.json"), "utf8")) as { localToken?: unknown };
+  if (typeof parsed.localToken !== "string") throw new Error("no local token");
+  return parsed.localToken;
+}
+
+const headers = (): Record<string, string> => ({ authorization: `Bearer ${token()}` });
+
+async function install(request: APIRequestContext, packageId: string, localDigest: string): Promise<void> {
+  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers: headers() })).json()) as { packages: { packageId: string }[] };
+  if (listed.packages.some((entry) => entry.packageId === packageId)) return;
+  const installed = await request.post(`${GATEWAY}/packages/install`, { headers: headers(), data: { packageId, version: "1.0.0", localDigest } });
+  if (installed.ok()) return;
+  // Uninstalled by an earlier run: restored from what this node kept, as the Extensions tab would.
+  const restored = await request.post(`${GATEWAY}/packages/${encodeURIComponent(packageId)}/restore`, { headers: headers() });
+  expect(restored.ok(), `install answered ${String(installed.status())}: ${await installed.text()}`).toBe(true);
+}
+
+async function setTheme(request: APIRequestContext, themeRef: string): Promise<void> {
+  const written = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers: headers(), data: { value: themeRef } });
+  expect(written.ok(), `theme write answered ${String(written.status())}: ${await written.text()}`).toBe(true);
+}
+
+/** Back to "never chosen", so a theme's Orb default is what decides. */
+async function forgetOrbChoice(request: APIRequestContext): Promise<void> {
+  for (let step = 0; step < 16; step += 1) {
+    const answer = await request.post(`${GATEWAY}/preferences/orb.profile/undo`, { headers: headers() });
+    expect(answer.ok()).toBe(true);
+    if (((await answer.json()) as { preference: { isDefault: boolean } }).preference.isDefault) return;
+  }
+  throw new Error("orb.profile did not return to its default");
+}
+
+test.beforeEach(async ({ request }) => {
+  mkdirSync(EVIDENCE, { recursive: true });
+  await install(request, DEPTH_PACKAGE, DEPTH_DIGEST);
+  await install(request, HOSTILE_PACKAGE, HOSTILE_DIGEST);
+  await setTheme(request, "builtin:clark");
+  await forgetOrbChoice(request);
+});
+
+test.afterEach(async ({ request }) => {
+  // Every spec after this one starts from Clark Default and the shipped Orb.
+  await setTheme(request, "builtin:clark");
+  await forgetOrbChoice(request);
+});
+
+async function open(page: Page): Promise<void> {
+  await page.route("**/suggestions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
+  );
+  await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+}
+
+const rootVar = (page: Page, name: string): Promise<string> =>
+  page.evaluate((variable) => getComputedStyle(document.documentElement).getPropertyValue(variable).trim(), name);
+
+/** A token as the colour the browser draws, so it compares with a computed `border-color` or `outline-color`. */
+const drawnColor = (page: Page, name: string): Promise<string> =>
+  page.evaluate((variable) => {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${variable})`;
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, name);
+
+async function recordOverflow(page: Page, shot: string): Promise<void> {
+  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  const overflow = scrollWidth - clientWidth;
+  overflowLog.push({ shot, scrollWidth, clientWidth, overflow });
+  writeFileSync(join(EVIDENCE, "298-overflow.json"), `${JSON.stringify(overflowLog, null, 2)}\n`);
+  console.log(`[overflow] ${shot}: scrollWidth ${String(scrollWidth)} - clientWidth ${String(clientWidth)} = ${String(overflow)}`);
+  expect(overflow, `${shot} is wider than the window`).toBeLessThanOrEqual(0);
+}
+
+async function still(page: Page): Promise<void> {
+  await expect
+    .poll(() => page.evaluate(() => document.getAnimations().filter((animation) => animation instanceof CSSTransition).length))
+    .toBe(0);
+}
+
+/** Screenshots at both widths and both schemes, each with its overflow logged. */
+async function shoot(page: Page, name: string): Promise<void> {
+  for (const scheme of ["dark", "light"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width === 1280 ? 900 : 844 });
+      await still(page);
+      const shot = `298-${name}-${String(width)}-${scheme}`;
+      await page.screenshot({ path: join(EVIDENCE, `${shot}.png`) });
+      await recordOverflow(page, shot);
+    }
+  }
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.setViewportSize({ width: 1280, height: 900 });
+}
+
+/** The Orb in the conversation, not the preview in Settings. */
+const conversationOrb = (page: Page): Locator => page.locator("canvas[data-orb-profile]").first();
+
+test("a recipe-and-effect theme reaches the page, brings its Orb default, and loses the Orb to the person's choice", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await open(page);
+  await expect(conversationOrb(page)).toHaveAttribute("data-orb-profile", "clark");
+  const clarkBackdrop = await page.locator(".cc-dot-grid").evaluate((element) => getComputedStyle(element).backgroundImage);
+  expect(await rootVar(page, "--cc-button-shadow")).toBe("");
+  await shoot(page, "clark-default");
+
+  await setTheme(request, DEPTH_REF);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => rootVar(page, "--cc-accent"), { timeout: 15_000 }).toBe(DEPTH_DARK_ACCENT);
+
+  // Recipes and effects arrive as the host's own values under the host's own names.
+  expect(await rootVar(page, "--cc-button-shadow")).toContain("3px 3px 0");
+  expect(await rootVar(page, "--cc-composer-line")).toContain("solid");
+  expect(await rootVar(page, "--cc-surface-image")).not.toBe("");
+  const backdrop = await page.locator(".cc-dot-grid").evaluate((element) => getComputedStyle(element).backgroundImage);
+  expect(backdrop).not.toBe(clarkBackdrop);
+  // The theme's Orb, because the person never chose one.
+  await expect(conversationOrb(page)).toHaveAttribute("data-orb-profile", "plasma", { timeout: 15_000 });
+  await shoot(page, "depth");
+
+  // The person's choice wins over the theme's, and stays when the theme changes.
+  const chosen = await request.put(`${GATEWAY}/preferences/orb.profile`, { headers: headers(), data: { value: "calm" } });
+  expect(chosen.ok()).toBe(true);
+  await page.reload();
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(conversationOrb(page)).toHaveAttribute("data-orb-profile", "calm", { timeout: 15_000 });
+  await expect.poll(() => rootVar(page, "--cc-accent"), { timeout: 15_000 }).toBe(DEPTH_DARK_ACCENT);
+});
+
+test("a hostile theme cannot hide Stop, the approval card, or a focus ring, and a camouflaged one is refused", async ({
+  page,
+  request,
+}) => {
+  // Camouflage is readable but draws every status as danger: the node refuses to store it.
+  const refused = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers: headers(), data: { value: CAMOUFLAGE_REF } });
+  expect(refused.ok()).toBe(false);
+  expect(await refused.text()).toContain("THEME_PROTECTED");
+
+  await setTheme(request, FLATLINE_REF);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await open(page);
+  await expect.poll(() => rootVar(page, "--cc-card-edge"), { timeout: 15_000 }).toBe("transparent");
+
+  // The approval card keeps the host's edge although the theme draws every card flat.
+  await page.locator("[data-composer]").fill("chạy lệnh thử");
+  await page.locator("[data-send]").click();
+  const card = page.locator('[data-host-card="approval"][data-decision="pending"]').last();
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  const edge = await card.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.borderTopColor, width: Number.parseFloat(style.borderTopWidth) };
+  });
+  expect(edge.width).toBeGreaterThanOrEqual(1);
+  expect(edge.color).toBe(await drawnColor(page, "--cc-border"));
+  await expect(card.locator("[data-approve]")).toBeVisible();
+  await expect(card.locator("[data-deny]")).toBeVisible();
+
+  // Reached from the keyboard, the approve button shows the protected focus ring.
+  await card.locator("[data-approve]").focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(card.locator("[data-approve]")).toBeFocused();
+  const ring = await card.locator("[data-approve]").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { style: style.outlineStyle, width: Number.parseFloat(style.outlineWidth), color: style.outlineColor };
+  });
+  expect(ring.style).not.toBe("none");
+  expect(ring.width).toBeGreaterThanOrEqual(2);
+  expect(ring.color).toBe(await drawnColor(page, "--cc-focus"));
+  await card.locator("[data-deny]").click();
+  await expect(card.locator("[data-approve]")).toHaveCount(0, { timeout: 15_000 });
+
+  // Stop, while a reply is being written, is a visible, named button.
+  await page.locator("[data-composer]").fill("viết một câu trả lời thật dài");
+  await page.locator("[data-composer]").press("Enter");
+  const stop = page.locator("[data-stop]");
+  await expect(stop).toBeVisible({ timeout: 15_000 });
+  await expect(stop).toHaveAccessibleName(/.+/);
+  const box = await stop.boundingBox();
+  expect(box?.width ?? 0).toBeGreaterThanOrEqual(24);
+  expect(await stop.evaluate((element) => Number(getComputedStyle(element).opacity))).toBe(1);
+  await stop.click();
+  await expect(stop).toHaveCount(0, { timeout: 15_000 });
+
+  // Nothing on either width is wider than the window under the flattest theme.
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: width === 1280 ? 900 : 844 });
+    await still(page);
+    await recordOverflow(page, `298-flatline-${String(width)}-dark`);
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  // Settings lists Camouflage as refused, each hidden state on its own line in the reader's language.
+  await page.locator("[data-settings='true']").click();
+  const problems = page.locator("[data-theme-problems]");
+  await expect(problems).toBeVisible({ timeout: 20_000 });
+  await problems.locator("summary").first().click();
+  const lines = page.locator(`[data-theme-problem='${CAMOUFLAGE_REF}'] [data-theme-protected] li`);
+  await expect(lines.first()).toBeVisible();
+  expect(await lines.count()).toBeGreaterThanOrEqual(2);
+  // Sentences, not the audit's check codes or token names.
+  for (const line of await lines.allInnerTexts()) {
+    expect(line).not.toMatch(/status-distinct|status-vs-text|focus-vs-border|disabled-distinct|edge-visible|surface-readable|textTertiary|THEME_|\{/);
+  }
+  await expect(page.locator(`[data-theme-ref='${CAMOUFLAGE_REF}']`)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+});
+
+test("reduced motion stills the theme's motion, its backdrop light and its Orb", async ({ page, request }) => {
+  await setTheme(request, DEPTH_REF);
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await open(page);
+  await expect.poll(() => rootVar(page, "--cc-accent"), { timeout: 15_000 }).toBe(DEPTH_DARK_ACCENT);
+
+  // The theme asked for slower, snappier motion; reduced motion is still none at all.
+  expect(await rootVar(page, "--cc-motion-micro")).toBe("0ms");
+  expect(await rootVar(page, "--cc-motion-normal")).toBe("0ms");
+  // The Orb is the theme's, and still.
+  await expect(conversationOrb(page)).toHaveAttribute("data-orb-profile", "plasma", { timeout: 15_000 });
+  await expect(conversationOrb(page)).toHaveAttribute("data-orb-motion", "reduced");
+  // The backdrop keeps its pattern and loses the light that follows the pointer.
+  await page.mouse.move(640, 450);
+  const lit = await page.locator(".cc-dot-grid").evaluate((element) => getComputedStyle(element, "::after").display);
+  expect(lit).toBe("none");
+  // Nothing loops.
+  const looping = await page.evaluate(
+    () => document.getAnimations().filter((animation) => animation.playState === "running" && animation.effect?.getTiming().iterations === Infinity).length,
+  );
+  expect(looping).toBe(0);
+});
+
+test("a typed sentence and the keyboard alone choose a theme through the same write as a click", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await open(page);
+  const clarkAccent = await rootVar(page, "--cc-accent");
+
+  // Typed: the sentence is understood here, the node checks the theme, and the page stores it through the picker's write.
+  const composer = page.locator("[data-composer]");
+  await composer.fill("đổi giao diện sang depth");
+  await composer.press("Enter");
+  await expect.poll(() => rootVar(page, "--cc-accent"), { timeout: 15_000 }).toBe(DEPTH_DARK_ACCENT);
+  const stored = (await (await request.get(`${GATEWAY}/preferences`, { headers: headers() })).json()) as {
+    preferences: { key: string; value: unknown }[];
+  };
+  expect(stored.preferences.find((entry) => entry.key === "experience.themeRef")?.value).toBe(DEPTH_REF);
+  await recordOverflow(page, "298-typed-depth-390-dark");
+
+  // Opened by a sentence, the gallery puts focus on the theme that is chosen, so the keyboard starts from there.
+  await composer.fill("mở danh sách giao diện");
+  await composer.press("Enter");
+  const depth = page.locator(`[data-theme-ref='${DEPTH_REF}']`);
+  await expect(depth).toBeFocused({ timeout: 20_000 });
+  await expect(depth).toHaveAttribute("aria-pressed", "true");
+
+  // Keyboard only: walk back to Clark Default and choose it.
+  const clark = page.locator("[data-theme-ref='builtin:clark']");
+  for (let step = 0; step < 12 && !(await clark.evaluate((element) => element === document.activeElement)); step += 1) {
+    await page.keyboard.press("Shift+Tab");
+  }
+  await expect(clark).toBeFocused();
+  const ring = await clark.evaluate((element) => getComputedStyle(element).outlineStyle);
+  expect(ring).not.toBe("none");
+  await page.keyboard.press("Enter");
+  await expect(clark).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => rootVar(page, "--cc-accent"), { timeout: 15_000 }).toBe(clarkAccent);
+  await recordOverflow(page, "298-keyboard-gallery-390-dark");
+  await page.keyboard.press("Escape");
+  await expect(composer).toBeVisible();
+
+  // Light and dark, typed, through the same call as the Settings control.
+  await composer.fill("chuyển giao diện sang sáng");
+  await composer.press("Enter");
+  await expect(page.locator("html")).toHaveAttribute("data-cc-theme", "light", { timeout: 15_000 });
+  await composer.fill("đổi giao diện theo hệ thống");
+  await composer.press("Enter");
+  await expect(page.locator("html")).toHaveAttribute("data-cc-theme", "dark", { timeout: 15_000 });
+});

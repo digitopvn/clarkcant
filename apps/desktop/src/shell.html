@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-cc-theme="dark">
   <head>
     <meta charset="utf-8" />
     <title>clarkcant</title>
@@ -11,6 +11,8 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; object-src 'none'"
     />
+    <!-- The tokens first: shell.css reads only their names. See tools/desktop-appearance-tokens.ts. -->
+    <link rel="stylesheet" href="appearance-tokens.css" />
     <link rel="stylesheet" href="shell.css" />
   </head>
   <body>

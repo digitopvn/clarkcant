@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { themeStylesheet } from "@clarkcant/design-tokens";
+import {
+  CLARK_IDENTITY_DECLARATIONS,
+  IDENTITY_VARIABLES,
+  type IdentityVariable,
+  themeStylesheet,
+} from "@clarkcant/design-tokens";
 
 import { APP_CSS } from "../src/styles.ts";
 
@@ -96,5 +101,93 @@ describe("every variable the stylesheet reads exists", () => {
     const unguarded = [...APP_CSS.matchAll(/var\((--cc-[a-z0-9-]+)\)/g)].map((match) => match[1] ?? "");
     const missing = [...new Set(unguarded)].filter((name) => !defined.has(name) && !RUNTIME.has(name));
     expect(missing).toEqual([]);
+  });
+});
+
+/** Every `var(name, fallback)` the sheet writes, with the fallback read to its matching parenthesis. */
+function fallbacks(css: string): { name: string; fallback: string }[] {
+  const found: { name: string; fallback: string }[] = [];
+  for (const match of css.matchAll(/var\((--cc-[a-z0-9-]+),/g)) {
+    let depth = 1;
+    let end = (match.index ?? 0) + match[0].length;
+    const start = end;
+    for (; end < css.length && depth > 0; end += 1) {
+      if (css[end] === "(") depth += 1;
+      if (css[end] === ")") depth -= 1;
+    }
+    found.push({ name: match[1] ?? "", fallback: css.slice(start, end - 1).trim().replace(/\s+/g, " ") });
+  }
+  return found;
+}
+
+/** The sheet's innermost rules, comments removed: a selector and the declarations under it. */
+function rules(css: string): { selector: string; body: string }[] {
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  return [...bare.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((match) => ({
+    selector: (match[1] ?? "").trim(),
+    body: match[2] ?? "",
+  }));
+}
+
+describe("the look a theme's identity reaches", () => {
+  it("reads each identity variable with Clark Default's own value, so Clark draws exactly as it did", () => {
+    /*
+     * Clark Default writes no identity variables at all - its token sheet is byte-identical to the one before identity
+     * existed - so every fallback here is what Clark draws. A fallback that drifted from Clark's value would change Clark
+     * Default silently; one that matches means a theme's identity is the only thing that can change it.
+     */
+    const identity = new Set<string>(IDENTITY_VARIABLES);
+    const checked = fallbacks(APP_CSS).filter(({ name }) => identity.has(name));
+    expect(checked.length).toBeGreaterThan(40);
+    for (const { name, fallback } of checked) {
+      const clark = CLARK_IDENTITY_DECLARATIONS[name as IdentityVariable];
+      /*
+       * A variable Clark never sets falls back to another token (`var(--cc-badge-radius, var(--cc-radius-pill))`), or
+       * to a token with Clark's own literal behind it (`var(--cc-input-radius, var(--cc-radius-field, 10px))`).
+       */
+      if (clark === undefined) {
+        if (/^(?:none|auto|transparent|0)$/.test(fallback)) continue;
+        const nested = /^var\((--cc-[a-z0-9-]+)(?:, ([\s\S]+))?\)$/.exec(fallback);
+        expect(nested, `${name} falls back to ${fallback}`).not.toBeNull();
+        const [, token = "", literal] = nested ?? [];
+        if (literal === undefined) continue;
+        // The literal behind a nested token is what Clark draws when that token is unset, so it must be Clark's value.
+        const clarkNested = CLARK_IDENTITY_DECLARATIONS[token as IdentityVariable];
+        if (clarkNested === undefined) expect(literal, name).not.toMatch(/[;{}]/);
+        else expect(literal, name).toBe(clarkNested.replace(/\s+/g, " "));
+        continue;
+      }
+      expect(fallback, name).toBe(clark.replace(/\s+/g, " "));
+    }
+  });
+
+  it("never lets a recipe or an effect reach a focus ring, a disabled control, provenance or the host's own cards", () => {
+    const styling = IDENTITY_VARIABLES.filter((name) =>
+      /^--cc-(?:button|card|input|modal|badge|composer|surface|backdrop)-/.test(name),
+    );
+    const protectedRules = rules(APP_CSS).filter(({ selector }) => {
+      // `:not(:disabled)` is the enabled state, which a recipe may style; only the protected state itself counts.
+      const positive = selector.replace(/:not\([^)]*\)/g, "");
+      // Provenance says where a widget, a theme or an effect came from, which is trust information like a host card.
+      return /:focus-visible|:disabled|\[aria-disabled="true"\]|\[data-owner="host"\]|provenance/.test(positive);
+    });
+    expect(protectedRules.length).toBeGreaterThan(20);
+    expect(protectedRules.filter(({ selector }) => selector.includes("provenance")).length).toBeGreaterThan(5);
+    for (const { selector, body } of protectedRules) {
+      for (const name of styling) expect(body, `${selector} reads ${name}`).not.toContain(name);
+    }
+  });
+
+  it("draws every focus ring in the protected focus colour", () => {
+    const rings = rules(APP_CSS).filter(({ selector, body }) => selector.includes(":focus-visible") && /\boutline\s*:/.test(body));
+    expect(rings.length).toBeGreaterThan(20);
+    for (const { selector, body } of rings) {
+      const outline = /\boutline\s*:\s*([^;]+)/.exec(body)?.[1] ?? "";
+      expect(outline, selector).toContain("var(--cc-focus)");
+    }
+  });
+
+  it("keeps the host's own cards edged whatever a card recipe says", () => {
+    expect(APP_CSS).toMatch(/\.cc-card\[data-owner="host"\]\s*\{\s*border-color:\s*var\(--cc-border\);/);
   });
 });

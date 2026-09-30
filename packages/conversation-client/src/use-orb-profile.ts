@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import { ORB_PROFILE_LABELS, type OrbProfileName } from "@clarkcant/contracts";
+import { ORB_PROFILE_LABELS, type OrbProfileName, type ThemeOrb } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
+import { readThemeOrb, subscribeToThemeOrb } from "./appearance.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import { prefersReducedMotion, usePlatformReducedMotion } from "./typewriter.ts";
 import { resolveOrbProfile, type ResolvedOrbProfile } from "./orb-profile.ts";
@@ -14,8 +15,10 @@ import { resolveOrbProfile, type ResolvedOrbProfile } from "./orb-profile.ts";
  * orb before a conversation exists, and the conversation draws it afterwards — and two copies of the
  * reduced-motion rule is exactly how the two would come to disagree about whether motion is on.
  *
- * Four properties:
+ * Five properties:
  *
+ *   - **The person's choice, then the theme's, then Clark's.** A profile never chosen is read as no choice, so the
+ *     drawn theme's Orb default applies until the person picks one; reduced motion still wins over both.
  *   - **A failed first read leaves it undefined rather than guessing.** The orb is the product's own face, so a
  *     node that cannot answer for a preference must not be why it is missing; the caller draws the shipped
  *     profile in that case.
@@ -36,17 +39,21 @@ export interface OrbProfileHandle {
   refresh: () => Promise<ResolvedOrbProfile>;
 }
 
-/** The three stored values the orb is resolved from, kept raw so the platform switch can be re-applied to them. */
+/**
+ * The three stored values the orb is resolved from, kept raw so the platform switch can be re-applied to them.
+ * `profile` is `undefined` while the person has never chosen one, which is when the theme's default applies.
+ */
 interface StoredOrb {
   profile: unknown;
   custom: unknown;
   motion: unknown;
 }
 
-function resolveStored(stored: StoredOrb, platformReducedMotion: boolean): ResolvedOrbProfile {
+function resolveStored(stored: StoredOrb, theme: ThemeOrb | undefined, platformReducedMotion: boolean): ResolvedOrbProfile {
   return resolveOrbProfile({
     profile: stored.profile,
     custom: stored.custom,
+    theme,
     reducedMotion: stored.motion === "reduced" || platformReducedMotion,
   });
 }
@@ -54,6 +61,8 @@ function resolveStored(stored: StoredOrb, platformReducedMotion: boolean): Resol
 export function useOrbProfile(client: GatewayClient): OrbProfileHandle {
   const [stored, setStored] = useState<StoredOrb | undefined>(undefined);
   const platformReducedMotion = usePlatformReducedMotion();
+  /** The drawn theme's Orb suggestion, followed as the theme changes; see `readThemeOrb`. */
+  const themeOrb = useSyncExternalStore(subscribeToThemeOrb, readThemeOrb, () => undefined);
   /*
    * Which read was asked for last. Two reads can be in flight — the first load and a refresh after a write — and the
    * older one answering second would put back the value the write replaced.
@@ -65,7 +74,13 @@ export function useOrbProfile(client: GatewayClient): OrbProfileHandle {
     const ticket = latestRead.current;
     const listed = await client.preferences();
     const value = (key: string): unknown => listed.preferences.find((entry) => entry.key === key)?.value;
-    const next: StoredOrb = { profile: value("orb.profile"), custom: value("orb.custom"), motion: value("experience.motion") };
+    // A profile nobody chose is reported as its default value; it is read as "no choice", so a theme's Orb can apply.
+    const chosen = listed.preferences.find((entry) => entry.key === "orb.profile");
+    const next: StoredOrb = {
+      profile: chosen === undefined || chosen.isDefault ? undefined : chosen.value,
+      custom: value("orb.custom"),
+      motion: value("experience.motion"),
+    };
     if (ticket === latestRead.current) setStored(next);
     return next;
   }, [client]);
@@ -77,13 +92,13 @@ export function useOrbProfile(client: GatewayClient): OrbProfileHandle {
   }, [read]);
 
   const profile = useMemo(
-    () => (stored === undefined ? undefined : resolveStored(stored, platformReducedMotion)),
-    [stored, platformReducedMotion],
+    () => (stored === undefined ? undefined : resolveStored(stored, themeOrb, platformReducedMotion)),
+    [stored, themeOrb, platformReducedMotion],
   );
 
   const refresh = useCallback(async (): Promise<ResolvedOrbProfile> => {
     const next = await read();
-    return resolveStored(next, prefersReducedMotion());
+    return resolveStored(next, readThemeOrb(), prefersReducedMotion());
   }, [read]);
 
   return { profile, refresh };

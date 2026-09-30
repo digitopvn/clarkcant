@@ -23,12 +23,31 @@ import { z } from "zod";
 
 import type { RiskLane } from "./directory.ts";
 import { facetIdSchema } from "./install.ts";
+import { orbPalettePreferenceSchema } from "./orb-palette.ts";
+import type { OrbProfileName } from "./preferences.ts";
 
-/** The version of the theme document and snapshot shapes. A theme declares the range it was written against. */
-export const APPEARANCE_API_VERSION = 1;
+/**
+ * The version of the theme document and snapshot shapes. A theme declares the range it was written against.
+ *
+ * Version 2 added identity: typography, border, shadow, motion, component recipes, effects and an Orb default. Every
+ * version-1 field kept its meaning, so a version-1 theme is still drawn; see `APPEARANCE_API_OLDEST`.
+ */
+export const APPEARANCE_API_VERSION = 2;
 
-/** The version of the token name set a snapshot carries. Adding a token is a new version; renaming one is too. */
-export const TOKEN_CONTRACT_VERSION = 1;
+/**
+ * The oldest appearance API this build still draws.
+ *
+ * A build supports a range rather than one number, so publishing version 2 did not orphan every theme written for 1: a
+ * theme is drawable when its declared range and this one overlap.
+ */
+export const APPEARANCE_API_OLDEST = 1;
+
+/**
+ * The version of the token set a snapshot carries. Adding a token is a new version; renaming one is too.
+ *
+ * Version 2 added the `identity` group.
+ */
+export const TOKEN_CONTRACT_VERSION = 2;
 
 /* ------------------------------------------------------------------ *
  * Colour scheme
@@ -208,12 +227,15 @@ export const cssLengthSchema = z.string().regex(/^(?:0|[0-9]{1,4}(?:\.[0-9]{1,4}
 export const cssDurationSchema = z.string().regex(/^[0-9]{1,5}ms$/, { error: "must be a whole number of milliseconds" });
 
 const EASING_NUMBER = "-?[0-9](?:\\.[0-9]{1,3})?";
-/** An easing the host wrote: `linear`, or a `cubic-bezier` of four plain numbers. */
+/** An easing the host wrote: `linear`, a `cubic-bezier` of four plain numbers, or `steps(n)` for a stepped look. */
 export const cssEasingSchema = z
   .string()
-  .regex(new RegExp(`^(?:linear|cubic-bezier\\(${EASING_NUMBER}, ${EASING_NUMBER}, ${EASING_NUMBER}, ${EASING_NUMBER}\\))$`), {
-    error: "must be linear or a cubic-bezier of four numbers",
-  });
+  .regex(
+    new RegExp(
+      `^(?:linear|steps\\([1-9]\\)|cubic-bezier\\(${EASING_NUMBER}, ${EASING_NUMBER}, ${EASING_NUMBER}, ${EASING_NUMBER}\\))$`,
+    ),
+    { error: "must be linear, steps(1-9) or a cubic-bezier of four numbers" },
+  );
 
 function closedRecord<const Name extends string, Value extends z.ZodType>(names: readonly Name[], value: Value) {
   return z.strictObject(Object.fromEntries(names.map((name) => [name, value])) as Record<Name, Value>);
@@ -249,6 +271,167 @@ export const appearanceApiRangeSchema = z
   .strictObject({ min: z.int().min(1), max: z.int().min(1) })
   .refine((range) => range.min <= range.max, { error: "appearanceApi.min must not exceed appearanceApi.max" });
 
+/* ------------------------------------------------------------------ *
+ * Identity (appearance API 2)
+ *
+ * Everything below is a choice from a list the host wrote, or a number inside bounds the host set. A theme picks a
+ * font profile, never a font-family string; a recipe, never a selector or a declaration; an effect and its strength,
+ * never a gradient, a filter, a `url(…)` or a shader. The host turns each choice into CSS it wrote itself, so what a
+ * theme says can change how a surface looks and never which elements are styled, what they say, or what they do.
+ * ------------------------------------------------------------------ */
+
+/**
+ * The typefaces a theme can ask for, as profiles of system fonts.
+ *
+ * Profiles rather than family names, because a family name is a string that reaches a stylesheet, and because a font
+ * this build does not ship would silently fall back on one machine and not another. `clark` is Plus Jakarta Sans.
+ */
+export const THEME_FONT_PROFILES = ["clark", "system", "serif", "rounded", "mono"] as const;
+export type ThemeFontProfile = (typeof THEME_FONT_PROFILES)[number];
+export const THEME_MONO_PROFILES = ["clark", "typewriter"] as const;
+export type ThemeMonoProfile = (typeof THEME_MONO_PROFILES)[number];
+
+export const THEME_BORDER_STYLES = ["solid", "dashed"] as const;
+/** How far a theme may thicken a structural line, in whole pixels. Never zero: an edge is how a region is found. */
+export const THEME_BORDER_WIDTH_BOUNDS = { min: 1, max: 3 } as const;
+
+/** `soft` is Clark's blurred elevation, `hard` an offset block with no blur, `none` a flat surface. */
+export const THEME_SHADOW_STYLES = ["soft", "hard", "none"] as const;
+export type ThemeShadowStyle = (typeof THEME_SHADOW_STYLES)[number];
+/** The colour a hard shadow is drawn in, as a token rather than a value, so it follows the scheme. */
+export const THEME_SHADOW_COLORS = ["text", "border", "accent"] as const;
+export const THEME_SHADOW_OFFSET_BOUNDS = { min: 1, max: 8 } as const;
+
+/** The curves a theme can move along. `standard` is Clark's. */
+export const THEME_MOTION_EASINGS = ["standard", "snappy", "linear", "stepped"] as const;
+export type ThemeMotionEasing = (typeof THEME_MOTION_EASINGS)[number];
+/** A multiplier on every duration. Reduced motion is not multiplied: it stays zero whatever a theme says. */
+export const THEME_MOTION_SPEED_BOUNDS = { min: 0.5, max: 2 } as const;
+
+/** The font weight a heading is set in. */
+export const THEME_HEADING_WEIGHT_BOUNDS = { min: 400, max: 800 } as const;
+
+/** The stroke a line icon is drawn with, in the icon's own 24-unit grid. */
+export const THEME_ICON_STROKE_BOUNDS = { min: 1, max: 2.5 } as const;
+
+/**
+ * Component recipes: host-written treatments a theme selects by name, one list per component.
+ *
+ * The first entry of each list is not special; Clark's own choice is in `CLARK_RECIPES`. A recipe restyles the
+ * component's surface — fill, edge, elevation, corner — and nothing that carries meaning: focus rings, disabled state,
+ * status colours and the host's own cards are drawn by rules no recipe reaches.
+ */
+export const THEME_RECIPES = {
+  button: ["quiet", "outlined", "solid", "raised", "beveled"],
+  card: ["flat", "outlined", "raised"],
+  input: ["quiet", "filled", "outlined", "underlined"],
+  modal: ["floating", "framed"],
+  badge: ["pill", "rounded", "square"],
+  composer: ["floating", "integrated", "framed"],
+} as const;
+export type ThemeRecipeComponent = keyof typeof THEME_RECIPES;
+export const THEME_RECIPE_COMPONENTS = Object.keys(THEME_RECIPES) as ThemeRecipeComponent[];
+export type ThemeRecipes = { [Component in ThemeRecipeComponent]: (typeof THEME_RECIPES)[Component][number] };
+
+/** Clark Default's recipes: exactly the look the product had before recipes existed. */
+export const CLARK_RECIPES: Readonly<ThemeRecipes> = {
+  button: "outlined",
+  card: "outlined",
+  input: "outlined",
+  modal: "floating",
+  badge: "pill",
+  composer: "floating",
+};
+
+/** What is drawn behind the conversation. Every one is a gradient the host wrote; none loads anything. */
+export const THEME_BACKDROP_EFFECTS = ["none", "dot-grid", "hard-grid", "scanlines", "grain", "paper"] as const;
+export type ThemeBackdropEffect = (typeof THEME_BACKDROP_EFFECTS)[number];
+/** What a card, a modal and the composer are finished with. */
+export const THEME_SURFACE_EFFECTS = ["none", "glass", "soft-glow", "paper", "grain"] as const;
+export type ThemeSurfaceEffect = (typeof THEME_SURFACE_EFFECTS)[number];
+export const THEME_EFFECT_INTENSITY_BOUNDS = { min: 0, max: 1 } as const;
+/** The repeat of a backdrop pattern, in whole pixels. */
+export const THEME_EFFECT_SCALE_BOUNDS = { min: 8, max: 48 } as const;
+
+/**
+ * The Orb profiles a theme may name as its default: every preset, never `custom`.
+ *
+ * `custom` is the person's own tuning; a theme naming it would point at values the person set, or at none. The list
+ * is written here rather than imported because the preference registry imports this module.
+ */
+export const THEME_ORB_PROFILE_NAMES = ["clark", "calm", "jelly", "glass", "pearl", "plasma"] as const satisfies readonly Exclude<
+  OrbProfileName,
+  "custom"
+>[];
+export type ThemeOrbProfileName = (typeof THEME_ORB_PROFILE_NAMES)[number];
+
+const intensitySchema = z.number().min(THEME_EFFECT_INTENSITY_BOUNDS.min).max(THEME_EFFECT_INTENSITY_BOUNDS.max);
+
+export const themeTypographySchema = z.strictObject({
+  body: z.enum(THEME_FONT_PROFILES).optional(),
+  /** Headings and titles. */
+  display: z.enum(THEME_FONT_PROFILES).optional(),
+  /** Code, paths, digests and the terminal. */
+  mono: z.enum(THEME_MONO_PROFILES).optional(),
+  headingWeight: z.int().min(THEME_HEADING_WEIGHT_BOUNDS.min).max(THEME_HEADING_WEIGHT_BOUNDS.max).multipleOf(100).optional(),
+});
+
+export const themeBorderSchema = z.strictObject({
+  width: z.int().min(THEME_BORDER_WIDTH_BOUNDS.min).max(THEME_BORDER_WIDTH_BOUNDS.max).optional(),
+  style: z.enum(THEME_BORDER_STYLES).optional(),
+});
+
+export const themeShadowSchema = z.strictObject({
+  style: z.enum(THEME_SHADOW_STYLES).optional(),
+  /** How far a hard shadow is offset, in whole pixels. */
+  offset: z.int().min(THEME_SHADOW_OFFSET_BOUNDS.min).max(THEME_SHADOW_OFFSET_BOUNDS.max).optional(),
+  color: z.enum(THEME_SHADOW_COLORS).optional(),
+});
+
+export const themeMotionSchema = z.strictObject({
+  speed: z.number().min(THEME_MOTION_SPEED_BOUNDS.min).max(THEME_MOTION_SPEED_BOUNDS.max).optional(),
+  easing: z.enum(THEME_MOTION_EASINGS).optional(),
+});
+
+export const themeRecipesSchema = z.strictObject({
+  button: z.enum(THEME_RECIPES.button).optional(),
+  card: z.enum(THEME_RECIPES.card).optional(),
+  input: z.enum(THEME_RECIPES.input).optional(),
+  modal: z.enum(THEME_RECIPES.modal).optional(),
+  badge: z.enum(THEME_RECIPES.badge).optional(),
+  composer: z.enum(THEME_RECIPES.composer).optional(),
+});
+
+export const themeEffectsSchema = z.strictObject({
+  backdrop: z
+    .strictObject({
+      kind: z.enum(THEME_BACKDROP_EFFECTS),
+      intensity: intensitySchema.optional(),
+      scale: z.int().min(THEME_EFFECT_SCALE_BOUNDS.min).max(THEME_EFFECT_SCALE_BOUNDS.max).optional(),
+    })
+    .optional(),
+  surface: z.strictObject({ kind: z.enum(THEME_SURFACE_EFFECTS), intensity: intensitySchema.optional() }).optional(),
+});
+
+export const themeIconsSchema = z.strictObject({
+  stroke: z.number().min(THEME_ICON_STROKE_BOUNDS.min).max(THEME_ICON_STROKE_BOUNDS.max).optional(),
+});
+
+export const themeOrbSchema = z.strictObject({
+  /** The Orb this theme is drawn with when the person has not chosen one. The person's own choice always wins. */
+  profile: z.enum(THEME_ORB_PROFILE_NAMES),
+  /**
+   * Colours laid over that profile's own, in the same closed channels and 0–1 linear-RGB bounds the Orb preference
+   * accepts: a colour per named channel, never shader code. Dropped with the rest of the suggestion once the person
+   * chooses an Orb.
+   */
+  palette: orbPalettePreferenceSchema.optional(),
+});
+export type ThemeOrb = z.infer<typeof themeOrbSchema>;
+
+/** The fields that need appearance API 2, in the order a problem names them. */
+const IDENTITY_FIELDS = ["typography", "border", "shadow", "motion", "icons", "recipes", "effects", "orb"] as const;
+
 /**
  * A theme, as a package ships it (`theme.json`) and as this build declares its own.
  *
@@ -258,28 +441,55 @@ export const appearanceApiRangeSchema = z
  * refused rather than silently ignored — a theme that relies on a field the host drops would render as something its
  * author never saw.
  */
-export const themeDocumentSchema = z.strictObject({
-  appearanceApi: appearanceApiRangeSchema,
-  /** The theme's id. For a package theme it must equal the `themes` facet id that points at this file. */
-  id: facetIdSchema,
-  displayName: z.string().trim().min(1).max(80),
-  description: z.string().trim().min(1).max(400).optional(),
-  colors: z
-    .strictObject({
-      light: themeColorOverridesSchema.optional(),
-      dark: themeColorOverridesSchema.optional(),
-    })
-    .optional(),
-  /** Radii in rem, per component. */
-  radius: partialRecord(THEMEABLE_RADIUS_NAMES, themeRadiusSchema).optional(),
-});
+export const themeDocumentSchema = z
+  .strictObject({
+    appearanceApi: appearanceApiRangeSchema,
+    /** The theme's id. For a package theme it must equal the `themes` facet id that points at this file. */
+    id: facetIdSchema,
+    displayName: z.string().trim().min(1).max(80),
+    description: z.string().trim().min(1).max(400).optional(),
+    colors: z
+      .strictObject({
+        light: themeColorOverridesSchema.optional(),
+        dark: themeColorOverridesSchema.optional(),
+      })
+      .optional(),
+    /** Radii in rem, per component. `field` — text fields and selects — needs appearance API 2. */
+    radius: partialRecord([...THEMEABLE_RADIUS_NAMES, "field"], themeRadiusSchema).optional(),
+    typography: themeTypographySchema.optional(),
+    border: themeBorderSchema.optional(),
+    shadow: themeShadowSchema.optional(),
+    motion: themeMotionSchema.optional(),
+    icons: themeIconsSchema.optional(),
+    recipes: themeRecipesSchema.optional(),
+    effects: themeEffectsSchema.optional(),
+    orb: themeOrbSchema.optional(),
+  })
+  .superRefine((document, context) => {
+    /*
+     * A theme that uses identity cannot be drawn by a build that only knows version 1 — that build refuses the unknown
+     * field — so declaring a range that starts at 1 would promise a build something it cannot do.
+     */
+    if (document.appearanceApi.min >= 2) return;
+    const used = [
+      ...IDENTITY_FIELDS.filter((field) => document[field] !== undefined),
+      ...(document.radius?.field === undefined ? [] : ["radius.field"]),
+    ];
+    if (used.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["appearanceApi", "min"],
+        message: `${used.join(", ")} need appearance API 2; set appearanceApi.min to 2`,
+      });
+    }
+  });
 export type ThemeDocument = z.infer<typeof themeDocumentSchema>;
 
 /** Why this build cannot draw a theme written for another appearance API, or nothing when it can. */
 export function themeCompatibilityProblem(document: Pick<ThemeDocument, "appearanceApi">): string | undefined {
   const { min, max } = document.appearanceApi;
-  if (APPEARANCE_API_VERSION < min || APPEARANCE_API_VERSION > max) {
-    return `the theme needs appearance API ${String(min)}–${String(max)}, and this build provides ${String(APPEARANCE_API_VERSION)}`;
+  if (min > APPEARANCE_API_VERSION || max < APPEARANCE_API_OLDEST) {
+    return `the theme needs appearance API ${String(min)}–${String(max)}, and this build provides ${String(APPEARANCE_API_OLDEST)}–${String(APPEARANCE_API_VERSION)}`;
   }
   return undefined;
 }
@@ -326,14 +536,54 @@ export const appearanceTokensSchema = z.strictObject({
   /** The reduced-motion counterparts. A renderer uses these whenever reduced motion is asked for, whatever the theme. */
   motionReduced: motionTokensSchema,
   layout: closedRecord(LAYOUT_TOKEN_NAMES, cssLengthSchema),
+  identity: z.strictObject({
+    typography: z.strictObject({
+      body: z.enum(THEME_FONT_PROFILES),
+      display: z.enum(THEME_FONT_PROFILES),
+      mono: z.enum(THEME_MONO_PROFILES),
+      headingWeight: z.int().min(THEME_HEADING_WEIGHT_BOUNDS.min).max(THEME_HEADING_WEIGHT_BOUNDS.max).multipleOf(100),
+    }),
+    border: z.strictObject({
+      width: z.int().min(THEME_BORDER_WIDTH_BOUNDS.min).max(THEME_BORDER_WIDTH_BOUNDS.max),
+      style: z.enum(THEME_BORDER_STYLES),
+    }),
+    shadow: z.strictObject({
+      style: z.enum(THEME_SHADOW_STYLES),
+      offset: z.int().min(THEME_SHADOW_OFFSET_BOUNDS.min).max(THEME_SHADOW_OFFSET_BOUNDS.max),
+      color: z.enum(THEME_SHADOW_COLORS),
+    }),
+    /** Text fields and selects. */
+    fieldRadius: cssLengthSchema,
+    iconStroke: z.number().min(THEME_ICON_STROKE_BOUNDS.min).max(THEME_ICON_STROKE_BOUNDS.max),
+    recipes: z.strictObject({
+      button: z.enum(THEME_RECIPES.button),
+      card: z.enum(THEME_RECIPES.card),
+      input: z.enum(THEME_RECIPES.input),
+      modal: z.enum(THEME_RECIPES.modal),
+      badge: z.enum(THEME_RECIPES.badge),
+      composer: z.enum(THEME_RECIPES.composer),
+    }),
+    effects: z.strictObject({
+      backdrop: z.strictObject({
+        kind: z.enum(THEME_BACKDROP_EFFECTS),
+        intensity: intensitySchema,
+        scale: z.int().min(THEME_EFFECT_SCALE_BOUNDS.min).max(THEME_EFFECT_SCALE_BOUNDS.max),
+      }),
+      surface: z.strictObject({ kind: z.enum(THEME_SURFACE_EFFECTS), intensity: intensitySchema }),
+    }),
+  }),
 });
 export type AppearanceTokens = z.infer<typeof appearanceTokensSchema>;
+/** A theme's identity with every choice made: what the theme said, and Clark's choice for everything it did not. */
+export type AppearanceIdentity = AppearanceTokens["identity"];
 
 /**
  * The resolved appearance for one theme in one scheme: what a renderer reads, never the theme document itself.
  *
  * Every token here is written out as a `--cc-*` custom property, and nothing else is: a value a snapshot carries but no
- * stylesheet emits would be a contract nobody can observe.
+ * stylesheet emits would be a contract nobody can observe. The `identity` group is written as the properties where a
+ * theme differs from Clark Default; Clark's own values are the fallbacks the component stylesheet reads them with, so
+ * Clark Default's token sheet is the one it always was.
  *
  * `revision` is a fingerprint of everything else in the snapshot, so two compilations of the same theme in the same
  * scheme carry the same revision, and a consumer can tell "nothing changed" from "the appearance changed" without
@@ -391,6 +641,45 @@ export interface ThemeContrastFailureView {
   minimum: number;
 }
 
+/**
+ * The protected-semantics checks: what must stay distinguishable in every theme, whatever else it changes.
+ *
+ *   - `status-distinct`: danger, warning, success and the accent (information, selection, the primary action) are
+ *     told apart from each other;
+ *   - `status-vs-text`: a status colour is told apart from body text, so a warning does not read as a sentence;
+ *   - `focus-vs-border`: a focused control is told apart from an unfocused one;
+ *   - `disabled-distinct`: the disabled tier is told apart from enabled text;
+ *   - `edge-visible`: the edge the host's own cards — approval, credential, connection — are drawn with is seen
+ *     against the card and the page;
+ *   - `surface-readable`: text stays readable on a surface an effect finished (glass, paper, grain).
+ *
+ * Colour is never the only signal for any of these — every state also has a glyph, a word, an underline or a shape the
+ * host draws — and these checks keep the colour a real second signal rather than a claim.
+ */
+export const PROTECTED_CHECKS = [
+  "status-distinct",
+  "status-vs-text",
+  "focus-vs-border",
+  "disabled-distinct",
+  "edge-visible",
+  "surface-readable",
+] as const;
+export type ProtectedCheck = (typeof PROTECTED_CHECKS)[number];
+
+/** One pair a theme fails a protected check on, as data a surface words in the reader's language. */
+export interface ThemeProtectedFailureView {
+  scheme: ResolvedColorScheme;
+  check: ProtectedCheck;
+  first: ColorTokenName;
+  second: ColorTokenName;
+  /**
+   * What the pair measures, rounded to two decimals: a perceptual distance (OKLab ΔE × 100) for every check but
+   * `surface-readable`, which is a contrast ratio.
+   */
+  value: number;
+  minimum: number;
+}
+
 /** A theme an installed package declares that could not be loaded, and why. */
 export interface ThemeProblemView {
   packageId: string;
@@ -400,6 +689,8 @@ export interface ThemeProblemView {
   message: string;
   /** Present when the theme is valid and fails the contrast audit: every failing pair. */
   contrast?: ThemeContrastFailureView[];
+  /** Present when the theme is valid, readable, and would hide a protected state: every failing check. */
+  protected?: ThemeProtectedFailureView[];
 }
 
 /** An installed package this node could not inspect for themes, which is a different fact from "has none". */
@@ -425,6 +716,11 @@ export type AppearanceFallbackCode =
   | "THEME_INVALID"
   /** The theme is valid, and its colours fail the contrast audit Clark Default is held to, so text in it is unreadable. */
   | "THEME_LOW_CONTRAST"
+  /**
+   * The theme is valid and readable, and it would make a protected state — Stop, approve or deny, a status, focus,
+   * disabled, the host's own cards — hard to tell apart.
+   */
+  | "THEME_PROTECTED"
   /** The package is installed, and this node could not read it. */
   | "THEME_UNAVAILABLE"
   /** A built-in name this build does not have. */
@@ -437,6 +733,8 @@ export interface AppearanceFallbackView {
   message: string;
   /** With `THEME_LOW_CONTRAST`: every pair the theme fails. */
   contrast?: ThemeContrastFailureView[];
+  /** With `THEME_PROTECTED`: every protected check the theme fails. */
+  protected?: ThemeProtectedFailureView[];
 }
 
 /** `GET /appearance`: the theme to draw now, and why it is not the chosen one when it is not. */

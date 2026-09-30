@@ -1,0 +1,19 @@
+{
+  "appearanceApi": {
+    "min": 2,
+    "max": 2
+  },
+  "id": "camouflage",
+  "displayName": "Camouflage",
+  "description": "Readable, and every status the same colour: warning and success drawn as danger.",
+  "colors": {
+    "dark": {
+      "warning": "#C8757C",
+      "success": "#C8757C"
+    },
+    "light": {
+      "warning": "#A33B45",
+      "success": "#A33B45"
+    }
+  }
+}

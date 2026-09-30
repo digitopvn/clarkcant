@@ -18,6 +18,7 @@ import {
   preferredAppIntentLocale,
   requestedIntent,
 } from "../app-intents.ts";
+import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import type { HostControlAcks } from "../host-control-acks.ts";
 import { buildSuggestions } from "../suggestions.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -31,7 +32,8 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  */
 export interface InteractionRouteDeps {
   services: {
-    runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string } };
+    /** `dataDir` is where installed packages are read from; without it, a theme change is refused, not guessed. */
+    runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string }; dataDir?: string };
     conductor: { newId: (prefix: string) => string };
     hostControl: Pick<HostControlAcks, "settle">;
   };
@@ -115,11 +117,15 @@ async function handleAppIntentRoutes(
 ): Promise<GatewayResponse> {
   const { runtime } = services;
   const principalId = runtime.identity.ownerPrincipalId;
+  const dataDir = runtime.dataDir;
   const intentDeps: AppIntentDeps = {
     db: runtime.db,
     nodeId: runtime.identity.nodeId,
     now: () => at() as never,
     newId: services.conductor.newId,
+    ...(dataDir === undefined
+      ? {}
+      : { themes: () => readThemeRegistry(themeRegistryDeps({ runtime: { ...runtime, dataDir }, conductor: services.conductor })) }),
   };
 
   if (segments.length === 1 && request.method === "POST") {

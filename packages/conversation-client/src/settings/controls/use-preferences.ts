@@ -83,7 +83,7 @@ export interface PreferencesHandle {
    * the default would store it as a choice: the surface would then show a value the user picked rather than
    * the state of having never picked one.
    */
-  reset: (key: string) => void;
+  reset: (key: string, onSaved?: () => void) => void;
   reload: () => void;
 }
 
@@ -247,7 +247,7 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
   const RESET_MAX_STEPS = 8;
 
   const reset = useCallback(
-    (key: string): void => {
+    (key: string, onSaved?: () => void): void => {
       setPending(key);
       setStatus(undefined);
       const step = async (remaining: number): Promise<void> => {
@@ -262,6 +262,7 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
         });
         if (answer.preference.isDefault) {
           setStatus({ key, tone: "ok", status: { kind: "resetDone" } });
+          onSaved?.();
           return;
         }
         await step(remaining - 1);

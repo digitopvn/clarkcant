@@ -29,6 +29,7 @@ import { ConversationLiveReplyRow } from "./ConversationLiveReplyRow.tsx";
 import { TimelineMessageRow } from "./TimelineMessageRow.tsx";
 import { NoticeUndoRow } from "./NoticeUndoRow.tsx";
 import { useAppearance } from "./use-appearance.ts";
+import { chooseThemeShown, resetAppearanceShown } from "./appearance-actions.ts";
 import { useTheme } from "./use-theme.ts";
 import { useLocale } from "./i18n/use-locale.ts";
 import { LocaleProvider } from "./i18n/locale-context.tsx";
@@ -345,6 +346,24 @@ export function Conversation({
               t: localeState.t,
             }),
         }),
+    /*
+     * The theme, stored through the preference write the theme picker makes and redrawn through the same appearance
+     * read; light and dark through the same call as the Settings control. See `appearance-actions.ts`.
+     */
+    setTheme: (themeRef: string, themeName: string | undefined) =>
+      chooseThemeShown(themeRef, themeName, {
+        write: (ref) => client.writePreference("experience.themeRef", ref),
+        refresh: appearance.refresh,
+        t: localeState.t,
+      }),
+    setColorScheme: applyThemeChoice,
+    resetAppearance: () =>
+      resetAppearanceShown({
+        write: (ref) => client.writePreference("experience.themeRef", ref),
+        refresh: appearance.refresh,
+        t: localeState.t,
+        applyColorScheme: applyThemeChoice,
+      }),
   });
 
   /**
@@ -621,6 +640,7 @@ export function Conversation({
       <SettingsPanel
         open={appIntents.uiCheckOpen}
         {...(appIntents.settingsTab === undefined ? {} : { openAt: appIntents.settingsTab })}
+        themeGalleryRequest={appIntents.themeGalleryRequest}
         onClose={() => appIntents.setUiCheckOpen(false)}
         client={client}
         themeChoice={themeChoice}

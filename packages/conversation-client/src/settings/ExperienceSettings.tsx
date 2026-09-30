@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactElement } from "react";
+import { useEffect, useId, useState, useSyncExternalStore, type ReactElement } from "react";
 
 import {
   ORB_MOTION_BOUNDS,
@@ -11,7 +11,8 @@ import {
 
 import type { GatewayClient } from "../api.ts";
 import { Orb } from "../Orb.tsx";
-import { orbPaletteGradient, resolveOrbProfile } from "../orb-profile.ts";
+import { readThemeOrb, subscribeToThemeOrb } from "../appearance.ts";
+import { orbPaletteGradient, orbProfileName, resolveOrbProfile } from "../orb-profile.ts";
 import { usePlatformReducedMotion } from "../typewriter.ts";
 import { THEME_CHOICES, type ThemeChoice } from "../theme.ts";
 import type { AppearanceState } from "../use-appearance.ts";
@@ -90,6 +91,8 @@ export interface ExperienceSettingsProps {
   onThemeChoice: (choice: ThemeChoice) => void;
   /** Called after a write that changes the orb, so the orb on screen follows the control that changed it. */
   onOrbChange: () => void;
+  /** Counts requests to open the list of themes; see `ThemeSettings`. */
+  themeGalleryRequest?: number | undefined;
 }
 
 export function ExperienceSettings({
@@ -100,6 +103,7 @@ export function ExperienceSettings({
   resolvedTheme,
   onThemeChoice,
   onOrbChange,
+  themeGalleryRequest,
 }: ExperienceSettingsProps): ReactElement {
   const t = useT();
   const { locale, setLocale } = useLocaleState();
@@ -128,7 +132,11 @@ export function ExperienceSettings({
   const MOTION_OPTIONS = motionOptions(t);
   const ORB_PRESETS = orbPresets(t);
 
-  const profileName = prefs.text("orb.profile", "clark");
+  /** The person's own choice, or `undefined` while they have not made one and the theme's Orb default applies. */
+  const storedProfile = prefs.preference("orb.profile");
+  const chosenProfile = storedProfile === undefined || storedProfile.isDefault ? undefined : storedProfile.value;
+  const themeOrb = useSyncExternalStore(subscribeToThemeOrb, readThemeOrb, () => undefined);
+  const profileName: string = orbProfileName(chosenProfile, themeOrb?.profile);
   const custom = prefs.record("orb.custom") ?? {};
   const customPhysics = numbers(custom.physics);
   const customOptical = numbers(custom.optical);
@@ -149,8 +157,9 @@ export function ExperienceSettings({
    * the same rule as the orb in the conversation: the stored preference or the platform's switch, either one.
    */
   const preview = resolveOrbProfile({
-    profile: profileName,
+    profile: chosenProfile,
     custom,
+    theme: themeOrb,
     reducedMotion: prefs.text("experience.motion", "system") === "reduced" || platformReducedMotion,
   });
 
@@ -215,7 +224,7 @@ export function ExperienceSettings({
           {themeChoice === "system" ? ` ${t("settings.experience.theme.systemSuffix")}` : ""}
         </p>
         <InlineStatus status={prefs.status} forKey="experience.colorScheme" />
-        <ThemeSettings client={client} prefs={prefs} appearance={appearance} />
+        <ThemeSettings client={client} prefs={prefs} appearance={appearance} galleryRequest={themeGalleryRequest} />
       </section>
 
       <section className="cc-panel-section">
@@ -347,8 +356,9 @@ export function ExperienceSettings({
             className="cc-chip"
             data-orb-reset="true"
             onClick={() => {
-              prefs.write("orb.profile", "clark", onOrbChange);
-              prefs.undo("orb.custom", onOrbChange);
+              // Back to having made no choice, rather than a stored "clark": a choice would outrank the theme's Orb.
+              prefs.reset("orb.profile", onOrbChange);
+              prefs.reset("orb.custom", onOrbChange);
             }}
           >
             {t("settings.experience.orb.reset")}

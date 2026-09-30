@@ -3,7 +3,9 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { checkThemeDocument, type ThemeDocument } from "@clarkcant/contracts";
 import { digestOfDirectory } from "@clarkcant/core";
+import { themeDrawProblem } from "@clarkcant/design-tokens";
 
 /**
  * The browser suite's package directory lists the theme packages by the digest of their files, as a published directory
@@ -12,7 +14,12 @@ import { digestOfDirectory } from "@clarkcant/core";
  */
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
-const THEME_PACKAGES = ["apps/web/e2e/fixtures/theme-dusk", "apps/web/e2e/fixtures/theme-dusk-dim"];
+const THEME_PACKAGES = [
+  "apps/web/e2e/fixtures/theme-dusk",
+  "apps/web/e2e/fixtures/theme-dusk-dim",
+  "apps/web/e2e/fixtures/theme-depth",
+  "apps/web/e2e/fixtures/theme-hostile",
+];
 
 interface FixtureEntry {
   packageId: string;
@@ -28,5 +35,21 @@ describe("the browser suite's theme packages", () => {
     const entry = entries.find((candidate) => candidate.source.kind === "local" && candidate.source.path === path);
     expect(entry?.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(digestOfDirectory(join(ROOT, path))).toEqual({ ok: true, digest: entry?.digest });
+  });
+
+  /*
+   * The appearance suite relies on what each fixture theme is, so that is pinned here where a failure names the file:
+   * Depth and Flatline are drawn, and Camouflage is refused for hiding status, not for being unreadable.
+   */
+  const theme = (path: string): ThemeDocument => {
+    const checked = checkThemeDocument(JSON.parse(readFileSync(join(ROOT, "apps/web/e2e/fixtures", path), "utf8")));
+    if (!checked.ok) throw new Error(`${path}: ${checked.problems.join("; ")}`);
+    return checked.document;
+  };
+
+  it("has a depth theme and a flat one that are drawn, and a camouflaged one the protected audit refuses", () => {
+    expect(themeDrawProblem(theme("theme-depth/themes/depth.json"))).toBeUndefined();
+    expect(themeDrawProblem(theme("theme-hostile/themes/flatline.json"))).toBeUndefined();
+    expect(themeDrawProblem(theme("theme-hostile/themes/camouflage.json"))?.code).toBe("THEME_PROTECTED");
   });
 });

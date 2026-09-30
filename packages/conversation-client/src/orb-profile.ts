@@ -8,8 +8,10 @@
  * express a value this renderer would ignore, and a value written by an older build keeps rendering
  * instead of snapping or failing.
  *
- * Three properties the callers rely on:
+ * Four properties the callers rely on:
  *
+ *   - **The person's choice wins over a theme.** A theme may name the Orb it is drawn with; that is a
+ *     default used only while the person has not chosen one, and it can never select `custom`.
  *   - **Reduced motion wins.** It is applied last, to the resolved values rather than to the patch, so
  *     no profile and no stored patch can ask for motion a person has switched off. Colour is not
  *     motion and survives.
@@ -26,6 +28,7 @@ import {
   ORB_OPTICAL_BOUNDS,
   ORB_PHYSICS_BOUNDS,
   ORB_PALETTE_CHANNELS,
+  THEME_ORB_PROFILE_NAMES,
   orbProfileSchema,
   type OrbPaletteChannel,
   type OrbProfileName,
@@ -269,15 +272,25 @@ function resolvePalette(patch: unknown): OrbPaletteOverride {
  * silently different orb is worse than the profile the user actually chose.
  */
 export function resolveOrbProfile(input: {
-  /** Stored `orb.profile`. Unvalidated on purpose: this is the boundary that validates it. */
+  /**
+   * Stored `orb.profile`, or `undefined` when the person has never chosen one. Unvalidated on purpose: this is the
+   * boundary that validates it.
+   */
   profile?: unknown;
   /** Stored `orb.custom`. */
   custom?: unknown;
+  /**
+   * The Orb the drawn theme suggests (`{ profile, palette? }`). A default, not a choice: it applies only while
+   * `profile` is `undefined`, and it can never be `custom`, so a theme cannot reach the person's own patch.
+   */
+  theme?: unknown;
   /** The platform's own answer, not a preference: this one cannot be switched off from settings. */
   reducedMotion?: boolean;
 }): ResolvedOrbProfile {
-  const parsedProfile = orbProfileSchema.safeParse(input.profile);
-  const name: OrbProfileName = parsedProfile.success ? parsedProfile.data : "clark";
+  const suggestion = typeof input.theme === "object" && input.theme !== null ? (input.theme as Record<string, unknown>) : {};
+  const name = orbProfileName(input.profile, suggestion.profile);
+  // The theme's colours ride on its own suggestion only: once the person chooses, both are dropped together.
+  const fromTheme = input.profile === undefined && THEME_ORB_PROFILE_NAMES.some((preset) => preset === suggestion.profile);
 
   // A patch belongs to the custom profile. Selecting a preset is a decision, and a stale patch must not
   // quietly change what the preset means.
@@ -294,7 +307,11 @@ export function resolveOrbProfile(input: {
   const requestedSpeed = clamp(patchMotion.speed ?? preset.speed, ORB_MOTION_BOUNDS.speed);
   // A preset's own palette passes through the same clamp as a stored patch, so the bound holds for
   // shipped values too rather than only for what a person typed.
-  const palette = resolvePalette(applies ? stored.palette : preset.palette);
+  const palette = resolvePalette(
+    // The theme's channels are checked before they are laid over the preset, so one malformed channel keeps the
+    // preset's colour instead of leaving that channel empty.
+    applies ? stored.palette : fromTheme ? { ...preset.palette, ...resolvePalette(suggestion.palette) } : preset.palette,
+  );
   const style = preset.style;
 
   /*
@@ -317,6 +334,20 @@ export function resolveOrbProfile(input: {
     style,
     reducedMotion,
   };
+}
+
+/**
+ * Which Orb is drawn: the person's choice, then the theme's default, then Clark's own.
+ *
+ * A stored choice that does not parse is still a choice: it resolves to Clark's own Orb rather than handing the
+ * decision to a theme the person never asked to pick it.
+ */
+export function orbProfileName(profile: unknown, themeProfile?: unknown): OrbProfileName {
+  if (profile !== undefined) {
+    const parsed = orbProfileSchema.safeParse(profile);
+    return parsed.success ? parsed.data : "clark";
+  }
+  return THEME_ORB_PROFILE_NAMES.find((preset) => preset === themeProfile) ?? "clark";
 }
 
 function profileKey(input: Omit<ResolvedOrbProfile, "key">): string {

@@ -1,4 +1,4 @@
-import type { ColorTokenName, ThemeContrastFailureView } from "@clarkcant/contracts";
+import type { ColorTokenName, ThemeContrastFailureView, ThemeProtectedFailureView } from "@clarkcant/contracts";
 
 import type { LocaleChoice } from "../i18n/locale.ts";
 import type { MessageKey } from "../i18n/messages.ts";
@@ -53,4 +53,28 @@ export function contrastLines(
       .replace("{minimum}", minimum.format(failure.minimum));
     return line.charAt(0).toLocaleUpperCase(tag) + line.slice(1);
   });
+}
+
+/**
+ * One line per protected check a theme fails, e.g. "Viền tiêu điểm lẫn vào đường kẻ: viền tiêu điểm và đường kẻ (tối)
+ * cách nhau 9,10, cần ít nhất 15". A distance is a perceptual one; readability over a surface effect is a contrast ratio
+ * and is worded as one.
+ */
+export function protectedLines(
+  failures: readonly ThemeProtectedFailureView[],
+  t: (key: MessageKey) => string,
+  locale: LocaleChoice,
+): string[] {
+  const tag = locale === "vi" ? "vi-VN" : "en-US";
+  const measured = new Intl.NumberFormat(tag, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const minimum = new Intl.NumberFormat(tag, { maximumFractionDigits: 2 });
+  return failures.map((failure) =>
+    t(failure.check === "surface-readable" ? "settings.experience.themePicker.protected.lineRatio" : "settings.experience.themePicker.protected.line")
+      .replace("{check}", t(`settings.experience.themePicker.protected.check.${failure.check}`))
+      .replace("{first}", t(TOKEN_KEYS[failure.first]))
+      .replace("{second}", t(failure.check === "surface-readable" ? backgroundKey(failure.second) : TOKEN_KEYS[failure.second]))
+      .replace("{scheme}", t(`settings.experience.themePicker.contrast.scheme.${failure.scheme}`))
+      .replace("{value}", measured.format(failure.value))
+      .replace("{minimum}", minimum.format(failure.minimum)),
+  );
 }

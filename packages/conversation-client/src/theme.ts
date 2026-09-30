@@ -146,8 +146,9 @@ export function readDocumentAppearance(): string {
  *
  * Exists for the WebGL orb. The orb paints its own background to match the page, and it reads that
  * colour once when it is created — so without a notification it keeps the previous colour and its
- * square canvas becomes a visible rectangle on the new one. Nothing else needs this: the rest of the
- * interface is CSS and follows the attributes on its own.
+ * square canvas becomes a visible rectangle on the new one. The terminal is the other canvas: xterm.js
+ * takes its colours and font as options, so it reads the tokens again here. The rest of the interface
+ * is CSS and follows the attributes on its own.
  */
 export function subscribeToDocumentTheme(onChange: () => void): () => void {
   if (typeof document === "undefined" || typeof MutationObserver !== "function") return () => {};

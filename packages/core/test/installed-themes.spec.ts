@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { APPEARANCE_API_VERSION } from "@clarkcant/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { THEME_DOCUMENT_MAX_BYTES, installedThemes } from "../src/installed-themes.ts";
@@ -117,7 +118,10 @@ describe("installedThemes", () => {
 
   it("refuses a document outside the appearance API range this host speaks", () => {
     write("clarkcant.json", manifest([themeFacet("future")]));
-    write("themes/future.json", themeDocument("future", { appearanceApi: { min: 2, max: 3 } }));
+    write(
+      "themes/future.json",
+      themeDocument("future", { appearanceApi: { min: APPEARANCE_API_VERSION + 1, max: APPEARANCE_API_VERSION + 2 } }),
+    );
 
     const read = installedThemes({ source: { kind: "local", path: root } });
 

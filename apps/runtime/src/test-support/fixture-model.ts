@@ -250,7 +250,8 @@ function uiEchoModelTurn(conductor: () => NodeServices["conductor"]): Promise<Mo
  * The `control_app` call a scripted sentence stands for, if it is one.
  *
  * Two spellings: the original "go home" sentences the voice journey says, and `agent control_app <kind> [arg]`,
- * where the argument is the tab of `settings.tab`, the alias of `model.select` or the profile of `orb.select`, so one
+ * where the argument is the tab of `settings.tab`, the alias of `model.select`, the profile of `orb.select`, the theme
+ * of `appearance.set-theme` or the scheme of `appearance.set-color-scheme`, so one
  * fixture line covers every
  * kind the tool offers without a sentence per kind. Several calls separated by `;` are made one after another in
  * the same turn, the way a model may call the tool twice before it answers - which is how a journey reaches an
@@ -264,12 +265,14 @@ export function controlAppFixtureCalls(text: string): Record<string, unknown>[] 
   if (match === null) return undefined;
   const calls: Record<string, unknown>[] = [];
   for (const part of (match[1] ?? "").split(";")) {
-    const call = /^([a-z.]+)(?: ([\w-]+))?$/i.exec(part.trim());
+    const call = /^([a-z.-]+)(?: ([\w-]+))?$/i.exec(part.trim());
     if (call === null) return undefined;
     const [, kind = "", arg] = call;
     if (arg === undefined) calls.push({ kind });
     else if (kind === "model.select") calls.push({ kind, modelAlias: arg });
     else if (kind === "orb.select") calls.push({ kind, orbProfile: arg });
+    else if (kind === "appearance.set-theme") calls.push({ kind, theme: arg });
+    else if (kind === "appearance.set-color-scheme") calls.push({ kind, colorScheme: arg });
     else calls.push({ kind, tab: arg });
   }
   return calls;

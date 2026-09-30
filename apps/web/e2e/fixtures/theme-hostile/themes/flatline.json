@@ -1,0 +1,34 @@
+{
+  "appearanceApi": {
+    "min": 2,
+    "max": 2
+  },
+  "id": "flatline",
+  "displayName": "Flatline",
+  "description": "Everything as flat and quiet as a theme may make it.",
+  "shadow": {
+    "style": "none"
+  },
+  "radius": {
+    "card": 0,
+    "modal": 0,
+    "field": 0
+  },
+  "recipes": {
+    "button": "quiet",
+    "card": "flat",
+    "input": "quiet",
+    "modal": "floating",
+    "badge": "square",
+    "composer": "integrated"
+  },
+  "effects": {
+    "backdrop": {
+      "kind": "none"
+    },
+    "surface": {
+      "kind": "glass",
+      "intensity": 1
+    }
+  }
+}

@@ -277,5 +277,83 @@
     "riskTier": "declarative",
     "sizeBytes": 1024,
     "digest": "sha256:b5b53158c6434ec13b4c44cb63aeb9e59221be06f791340855c6402f10c5a0c6"
+  },
+  {
+    "packageId": "com.example.theme-depth",
+    "version": "1.0.0",
+    "displayName": "Depth theme",
+    "description": "A theme with a look of its own: host recipes, a backdrop, a surface finish and an Orb default. Data only.",
+    "source": {
+      "kind": "local",
+      "path": "apps/web/e2e/fixtures/theme-depth"
+    },
+    "publisher": {
+      "id": "example",
+      "sourceUrl": "https://example.com",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "themes"
+    ],
+    "isolations": [
+      {
+        "facetKind": "themes",
+        "isolation": "declarative"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "declarative",
+    "sizeBytes": 2048,
+    "digest": "sha256:0fc26c73d2a10e2d24fc037fbc278cae5d09e14c2280269b7040a6abe52f32f1"
+  },
+  {
+    "packageId": "com.example.theme-hostile",
+    "version": "1.0.0",
+    "displayName": "Hostile themes",
+    "description": "Two themes that push against what Clark keeps visible: one as flat as the contract allows, one that camouflages status.",
+    "source": {
+      "kind": "local",
+      "path": "apps/web/e2e/fixtures/theme-hostile"
+    },
+    "publisher": {
+      "id": "example",
+      "sourceUrl": "https://example.com",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "themes"
+    ],
+    "isolations": [
+      {
+        "facetKind": "themes",
+        "isolation": "declarative"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "declarative",
+    "sizeBytes": 2048,
+    "digest": "sha256:488d748b65afd1859b0a2c5e893317166818508f4816e3ce7c404f2345371742"
   }
 ]

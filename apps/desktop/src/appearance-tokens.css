@@ -1,0 +1,175 @@
+/*
+ * Generated from @clarkcant/design-tokens (Clark Default). Do not edit by hand:
+ * run `node tools/desktop-appearance-tokens.ts --write` after changing a token.
+ */
+:root[data-cc-theme="dark"],
+[data-cc-theme="dark"] {
+  color-scheme: dark;
+  --cc-canvas: #111317;
+  --cc-window: #14161A;
+  --cc-card: #17191D;
+  --cc-elevated: #1B1D22;
+  --cc-code: #101318;
+  --cc-border: #27292D;
+  --cc-text: #E7E7EA;
+  --cc-text-muted: #A0A2AB;
+  --cc-text-tertiary: #858994;
+  --cc-accent: #B8AEDC;
+  --cc-on-accent: #111317;
+  --cc-success: #8EBCA3;
+  --cc-warning: #D1AC68;
+  --cc-danger: #C8757C;
+  --cc-focus: #D8D2F0;
+  --cc-text-display-xl: 3.25rem;
+  --cc-leading-display-xl: 3.75rem;
+  --cc-text-display-lg: 2.125rem;
+  --cc-leading-display-lg: 2.625rem;
+  --cc-text-heading-lg: 1.5rem;
+  --cc-leading-heading-lg: 2rem;
+  --cc-text-heading-md: 1.125rem;
+  --cc-leading-heading-md: 1.625rem;
+  --cc-text-body-lg: 1rem;
+  --cc-leading-body-lg: 1.5rem;
+  --cc-text-body-md: 0.875rem;
+  --cc-leading-body-md: 1.375rem;
+  --cc-text-body-sm: 0.8125rem;
+  --cc-leading-body-sm: 1.25rem;
+  --cc-text-label: 0.75rem;
+  --cc-leading-label: 1rem;
+  --cc-text-mono-sm: 0.75rem;
+  --cc-leading-mono-sm: 1.25rem;
+  --cc-text-meta: 0.6875rem;
+  --cc-leading-meta: 1rem;
+  --cc-space-xxs: 0.125rem;
+  --cc-space-xs: 0.25rem;
+  --cc-space-sm: 0.5rem;
+  --cc-space-md: 0.75rem;
+  --cc-space-lg: 1rem;
+  --cc-space-xl: 1.5rem;
+  --cc-space-xxl: 2rem;
+  --cc-space-s20: 1.25rem;
+  --cc-space-s40: 2.5rem;
+  --cc-space-s48: 3rem;
+  --cc-space-s64: 4rem;
+  --cc-space-s80: 5rem;
+  --cc-radius-badge: 0.375rem;
+  --cc-radius-button: 0.5rem;
+  --cc-radius-card: 0.75rem;
+  --cc-radius-response: 1rem;
+  --cc-radius-modal: 1.25rem;
+  --cc-radius-pill: 999px;
+  --cc-motion-micro: 120ms;
+  --cc-motion-normal: 180ms;
+  --cc-motion-panel: 280ms;
+  --cc-motion-orb: 600ms;
+  --cc-motion-enter: 560ms;
+  --cc-motion-exit: 320ms;
+  --cc-motion-glow: 7200ms;
+  --cc-motion-easing: cubic-bezier(0.2, 0, 0.2, 1);
+  --cc-motion-bounce: cubic-bezier(0.22, 1.28, 0.36, 1);
+  --cc-conversation-max-width: 800px;
+  --cc-composer-max-width: 840px;
+  --cc-composer-min-height: 70px;
+  --cc-topbar-height: 62px;
+  --cc-modal-width: 700px;
+}
+
+:root[data-cc-theme="light"],
+[data-cc-theme="light"] {
+  color-scheme: light;
+  --cc-canvas: #F7F7F5;
+  --cc-window: #FFFFFF;
+  --cc-card: #FFFFFF;
+  --cc-elevated: #FFFFFF;
+  --cc-code: #F2F2EF;
+  --cc-border: #E5E5E1;
+  --cc-text: #1A1A1C;
+  --cc-text-muted: #5C5E66;
+  --cc-text-tertiary: #696C74;
+  --cc-accent: #6B5FA8;
+  --cc-on-accent: #FFFFFF;
+  --cc-success: #3F6B52;
+  --cc-warning: #7A5B1E;
+  --cc-danger: #A33B45;
+  --cc-focus: #5B4FA0;
+  --cc-text-display-xl: 3.25rem;
+  --cc-leading-display-xl: 3.75rem;
+  --cc-text-display-lg: 2.125rem;
+  --cc-leading-display-lg: 2.625rem;
+  --cc-text-heading-lg: 1.5rem;
+  --cc-leading-heading-lg: 2rem;
+  --cc-text-heading-md: 1.125rem;
+  --cc-leading-heading-md: 1.625rem;
+  --cc-text-body-lg: 1rem;
+  --cc-leading-body-lg: 1.5rem;
+  --cc-text-body-md: 0.875rem;
+  --cc-leading-body-md: 1.375rem;
+  --cc-text-body-sm: 0.8125rem;
+  --cc-leading-body-sm: 1.25rem;
+  --cc-text-label: 0.75rem;
+  --cc-leading-label: 1rem;
+  --cc-text-mono-sm: 0.75rem;
+  --cc-leading-mono-sm: 1.25rem;
+  --cc-text-meta: 0.6875rem;
+  --cc-leading-meta: 1rem;
+  --cc-space-xxs: 0.125rem;
+  --cc-space-xs: 0.25rem;
+  --cc-space-sm: 0.5rem;
+  --cc-space-md: 0.75rem;
+  --cc-space-lg: 1rem;
+  --cc-space-xl: 1.5rem;
+  --cc-space-xxl: 2rem;
+  --cc-space-s20: 1.25rem;
+  --cc-space-s40: 2.5rem;
+  --cc-space-s48: 3rem;
+  --cc-space-s64: 4rem;
+  --cc-space-s80: 5rem;
+  --cc-radius-badge: 0.375rem;
+  --cc-radius-button: 0.5rem;
+  --cc-radius-card: 0.75rem;
+  --cc-radius-response: 1rem;
+  --cc-radius-modal: 1.25rem;
+  --cc-radius-pill: 999px;
+  --cc-motion-micro: 120ms;
+  --cc-motion-normal: 180ms;
+  --cc-motion-panel: 280ms;
+  --cc-motion-orb: 600ms;
+  --cc-motion-enter: 560ms;
+  --cc-motion-exit: 320ms;
+  --cc-motion-glow: 7200ms;
+  --cc-motion-easing: cubic-bezier(0.2, 0, 0.2, 1);
+  --cc-motion-bounce: cubic-bezier(0.22, 1.28, 0.36, 1);
+  --cc-conversation-max-width: 800px;
+  --cc-composer-max-width: 840px;
+  --cc-composer-min-height: 70px;
+  --cc-topbar-height: 62px;
+  --cc-modal-width: 700px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  :root[data-cc-theme],
+  [data-cc-theme] {
+    --cc-motion-micro: 0ms;
+    --cc-motion-normal: 0ms;
+    --cc-motion-panel: 0ms;
+    --cc-motion-orb: 0ms;
+    --cc-motion-enter: 0ms;
+    --cc-motion-exit: 0ms;
+    --cc-motion-glow: 0ms;
+    --cc-motion-easing: linear;
+    --cc-motion-bounce: linear;
+  }
+}
+
+[data-cc-reduced-motion="true"] {
+  --cc-motion-micro: 0ms;
+  --cc-motion-normal: 0ms;
+  --cc-motion-panel: 0ms;
+  --cc-motion-orb: 0ms;
+  --cc-motion-enter: 0ms;
+  --cc-motion-exit: 0ms;
+  --cc-motion-glow: 0ms;
+  --cc-motion-easing: linear;
+  --cc-motion-bounce: linear;
+}

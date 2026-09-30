@@ -28,6 +28,7 @@ import { z } from "zod";
 import { capabilityRefSchema } from "./grants.ts";
 import { NOTICE_DISMISS_UNDO_WINDOW_MS, type NoticeOperationId, inboxTargetSchema, noticeOperationIdSchema } from "./inbox.ts";
 import { ORB_PROFILE_LABELS, orbProfileSchema } from "./preferences.ts";
+import { colorSchemeSchema, themeRefSchema, type ColorScheme } from "./themes.ts";
 
 /**
  * The kinds.
@@ -66,6 +67,10 @@ export const APP_INTENT_KINDS = [
   "effect.confirmed",
   "effect.failed",
   "notice.act",
+  "appearance.set-theme",
+  "appearance.set-color-scheme",
+  "appearance.reset",
+  "appearance.open-theme-gallery",
 ] as const;
 
 export const appIntentKindSchema = z.enum(APP_INTENT_KINDS);
@@ -127,8 +132,15 @@ export const widgetFamilySchema = z
   .regex(/^[a-z][a-z0-9-]*$/, { error: "must be a catalog family name" });
 export type WidgetFamily = z.infer<typeof widgetFamilySchema>;
 
+/** A theme's display name as a read-back carries it: the same bound a theme document's `displayName` has. */
+export const appIntentThemeNameSchema = z.string().trim().min(1).max(80);
+
 /**
  * The two widget kinds.
+ *
+ * The four appearance kinds change how the whole window looks — the theme, the colour scheme, both back to Clark
+ * Default and System, or the list of themes to choose from. Each is a preference write any Settings control can make
+ * and undo, so none asks for confirmation; which theme a reference draws is checked by the node's registry, not here.
  *
  * `widgets.open` opens the library on the catalogue; `widgets.show` opens it on a particular widget
  * or family. Neither carries anything executable, which is why neither needs confirmation: the worst
@@ -166,6 +178,35 @@ export const appIntentSchema = z
      * web notification's click names it (`inboxTargetSchema`). An id, never anything the person would read.
      */
     inboxTarget: inboxTargetSchema.optional(),
+    /**
+     * Carried only by `appearance.set-theme`: the theme to draw, as the `experience.themeRef` preference names it. A
+     * reference, never a document: what it draws is whatever the node's registry holds under it, checked there.
+     */
+    themeRef: themeRefSchema.optional(),
+    /**
+     * Carried only by `appearance.set-theme`, beside `themeRef`: the theme's display name, for the read-back. Filled in
+     * by the node from its registry, never taken from the words or a click, so a read-back names the theme that will
+     * actually be drawn.
+     */
+    themeName: appIntentThemeNameSchema.optional(),
+    /** Carried only by `appearance.set-color-scheme`: System, Light or Dark. */
+    colorScheme: colorSchemeSchema.optional(),
+  })
+  .refine((intent) => intent.kind !== "appearance.set-theme" || intent.themeRef !== undefined, {
+    message: "appearance.set-theme must name the theme to switch to",
+    path: ["themeRef"],
+  })
+  .refine((intent) => intent.kind === "appearance.set-theme" || (intent.themeRef === undefined && intent.themeName === undefined), {
+    message: "only appearance.set-theme may name a theme",
+    path: ["themeRef"],
+  })
+  .refine((intent) => intent.kind !== "appearance.set-color-scheme" || intent.colorScheme !== undefined, {
+    message: "appearance.set-color-scheme must name System, Light or Dark",
+    path: ["colorScheme"],
+  })
+  .refine((intent) => intent.kind === "appearance.set-color-scheme" || intent.colorScheme === undefined, {
+    message: "only appearance.set-color-scheme may name a colour scheme",
+    path: ["colorScheme"],
   })
   .refine((intent) => intent.kind !== "settings.tab" || intent.tab !== undefined, {
     message: "settings.tab must name the tab to change to",
@@ -353,6 +394,23 @@ function orbProfileLabel(intent: AppIntent): string {
   return ORB_PROFILE_LABELS[intent.orbProfile ?? "clark"];
 }
 
+/** The theme an `appearance.set-theme` names: its display name when the node filled one in, else its reference. */
+function themeLabel(intent: AppIntent): string {
+  return intent.themeName ?? intent.themeRef ?? "";
+}
+
+const COLOR_SCHEME_READ_BACK_VI: Record<ColorScheme, string> = {
+  dark: "Tôi chuyển giao diện sang nền tối nhé.",
+  light: "Tôi chuyển giao diện sang nền sáng nhé.",
+  system: "Tôi cho giao diện sáng hay tối theo hệ thống nhé.",
+};
+
+const COLOR_SCHEME_READ_BACK_EN: Record<ColorScheme, string> = {
+  dark: "Switching the appearance to dark.",
+  light: "Switching the appearance to light.",
+  system: "Letting the system decide between light and dark.",
+};
+
 /**
  * The sentence read back before the application acts, in Vietnamese.
  *
@@ -416,6 +474,16 @@ function describeAppIntentVi(intent: AppIntent): string {
       return "Tôi ghi nhận là việc đang chờ chưa có hiệu lực nhé.";
     case "notice.act":
       return describeNoticeAction(intent.noticeAction ?? "mark-read", "vi");
+    case "appearance.set-theme":
+      return themeLabel(intent) === ""
+        ? "Tôi đổi chủ đề giao diện nhé."
+        : `Tôi đổi giao diện sang chủ đề ${themeLabel(intent)} nhé.`;
+    case "appearance.set-color-scheme":
+      return COLOR_SCHEME_READ_BACK_VI[intent.colorScheme ?? "system"];
+    case "appearance.reset":
+      return "Tôi đưa giao diện về mặc định nhé: chủ đề Clark Default, sáng hay tối theo hệ thống.";
+    case "appearance.open-theme-gallery":
+      return "Tôi mở danh sách chủ đề giao diện nhé.";
     default: {
       // Every kind above returns, so this is unreachable today. It exists so that adding a tenth kind
       // without a sentence is a loud failure in a test rather than `undefined` read aloud by a voice.
@@ -479,6 +547,16 @@ function describeAppIntentEn(intent: AppIntent): string {
       return "Recording that the waiting action did not take effect.";
     case "notice.act":
       return describeNoticeAction(intent.noticeAction ?? "mark-read", "en");
+    case "appearance.set-theme":
+      return themeLabel(intent) === ""
+        ? "Changing the theme."
+        : `Switching the appearance to the ${themeLabel(intent)} theme.`;
+    case "appearance.set-color-scheme":
+      return COLOR_SCHEME_READ_BACK_EN[intent.colorScheme ?? "system"];
+    case "appearance.reset":
+      return "Resetting the appearance: Clark Default, with light or dark following the system.";
+    case "appearance.open-theme-gallery":
+      return "Opening the list of themes.";
     default: {
       const unreachable: never = intent.kind;
       throw new Error(`no read-back sentence for app intent ${String(unreachable)}`);
@@ -575,6 +653,10 @@ export const appIntentRequestSchema = z
     noticeAction: noticeOperationIdSchema.optional(),
     /** Carried so a notification's click can open the inbox on what it was about. */
     inboxTarget: inboxTargetSchema.optional(),
+    /** Carried so a click can name the theme an `appearance.set-theme` draws. The node fills in its name. */
+    themeRef: themeRefSchema.optional(),
+    /** Carried so a click can name the scheme an `appearance.set-color-scheme` switches to. */
+    colorScheme: colorSchemeSchema.optional(),
     conversationId: z.string().min(1).max(128).optional(),
     source: appIntentSourceSchema,
   })
@@ -620,6 +702,10 @@ export const appIntentEventDocumentSchema = z.strictObject({
   noticeAction: noticeOperationIdSchema.optional(),
   /** Recorded so the audit can answer what a notification's click opened the inbox on. */
   inboxTarget: inboxTargetSchema.optional(),
+  /** Recorded so the audit can answer which theme an `appearance.set-theme` drew. */
+  themeRef: themeRefSchema.optional(),
+  /** Recorded so the audit can answer which scheme an `appearance.set-color-scheme` chose. */
+  colorScheme: colorSchemeSchema.optional(),
   source: appIntentSourceSchema,
   confirmed: z.boolean(),
 });

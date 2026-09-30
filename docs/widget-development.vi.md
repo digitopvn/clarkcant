@@ -163,12 +163,31 @@ dụ `{ "kind": "themes", "id": "dusk", "entry": "themes/dusk.json", "isolation"
 vá đè lên Clark Default: `appearanceApi` (`{ "min": 1, "max": 1 }`), một `id` trùng với `id` của facet, một
 `displayName`, `description` tuỳ chọn, `colors.dark` / `colors.light` tuỳ chọn (giá trị hex sáu chữ số cho các token màu
 được đặt tên trong `packages/contracts/src/themes.ts`), và `radius` tuỳ chọn (rem từ 0 đến 2 cho `badge`, `button`,
-`card`, `response`, `modal`). Ngoài ra không có gì khác: không CSS, không selector, không font. Node đọc nó từ các byte đã cài qua cùng cơ chế giới hạn như tệp của
+`card`, `response`, `modal`). Tài liệu khai báo `appearanceApi.min` là 2 (`{ "min": 2, "max": 2 }`) còn có thể đặt phần
+còn lại của diện mạo, mỗi thứ bằng một cái tên hoặc một con số có giới hạn mà chính host biến thành CSS: `typography`
+(`body` và `display` chọn trong `clark`, `system`, `serif`, `rounded`, `mono`; `mono` chọn trong `clark`, `typewriter`;
+`headingWeight` từ 400 đến 800, theo bước 100), `border` (`width` từ 1 đến 3, `style` là `solid` hoặc `dashed`),
+`shadow` (`style` là `soft`, `hard` hoặc `none`; với bóng cứng thì `offset` từ 1 đến 8 và `color` là `text`, `border`
+hoặc `accent`), `motion` (`speed` từ 0,5 đến 2, `easing` là `standard`, `snappy`, `linear` hoặc `stepped`),
+`icons.stroke` (từ 1 đến 2,5), `radius.field`, `recipes` (mỗi thành phần một kiểu: `button`
+`quiet`/`outlined`/`solid`/`raised`/`beveled`, `card` `flat`/`outlined`/`raised`, `input`
+`quiet`/`filled`/`outlined`/`underlined`, `modal` `floating`/`framed`, `badge` `pill`/`rounded`/`square`, `composer`
+`floating`/`integrated`/`framed`), `effects` (`backdrop.kind` là `dot-grid`, `hard-grid`, `scanlines`, `grain` hoặc
+`paper` với `intensity` từ 0 đến 1 và `scale` từ 8 đến 48 px; `surface.kind` là `glass`, `soft-glow`, `paper` hoặc
+`grain` với `intensity` từ 0 đến 1) và `orb` (`profile` là một trong các kiểu Orb có sẵn, kèm `palette` tuỳ chọn gồm
+các bộ ba màu từ 0 đến 1; nó chỉ có tác dụng khi người dùng chưa từng tự chọn Orb). Các giới hạn là các hằng số trong
+`packages/contracts/src/themes.ts`. Tài liệu dùng bất kỳ trường nào trong số này mà `appearanceApi.min` là 1 sẽ bị từ
+chối, vì bản dựng chỉ biết phiên bản 1 không vẽ được nó. Ngoài ra không có gì khác: không CSS, không selector, không tệp
+font, không ảnh. Node đọc nó từ các byte đã cài qua cùng cơ chế giới hạn như tệp của
 widget, từ chối tài liệu lớn hơn 64 KiB, và kiểm tra nó (`packages/core/src/installed-themes.ts`); theme không qua được
 kiểm tra sẽ được liệt kê kèm lý do, và các theme khác của gói vẫn được nạp. Theme hợp lệ còn phải qua bài kiểm tra tương
-phản mà Clark Default phải qua, ở cả hai chế độ màu (`requiredPairs` trong `packages/design-tokens/src/contrast.ts`);
-theme không đạt sẽ được liệt kê kèm các cặp màu không đạt và không chọn được, nên hãy kiểm tra cả hai chế độ màu trước
-khi phát hành. Theme được chọn bằng
+phản mà Clark Default phải qua, ở cả hai chế độ màu (`requiredPairs` trong `packages/design-tokens/src/contrast.ts`),
+và bài kiểm tra trạng thái được bảo vệ (`packages/design-tokens/src/protected.ts`): màu nguy hiểm, cảnh báo, thành công
+và màu nhấn phải khác nhau, màu trạng thái phải khác màu chữ, vòng focus phải khác màu viền, chữ bị vô hiệu hoá phải
+khác chữ thường, viền phải thấy được trên thẻ và trên nền trang, và chữ phải đọc được trên bề mặt đã hoàn thiện. Theme
+không đạt một trong hai bài kiểm tra sẽ được liệt kê kèm những gì không đạt và không chọn được, nên hãy kiểm tra cả hai
+chế độ màu trước khi phát hành. Vòng focus, điều khiển bị vô hiệu hoá, các thẻ của chính host và chế độ giảm chuyển
+động luôn do host quyết định, dù theme nói gì. Theme được chọn bằng
 `package:<package id>#<theme id>`, và một gói chỉ có theme là một lần làm mới UI, không bao giờ khởi động lại Pi. Theme đã
 cài xuất hiện ở Cài đặt → Trải nghiệm → Chủ đề.
 **Node chạy service facet như thế nào.** Node chạy một container cho mỗi facet `tools` của mọi package generation

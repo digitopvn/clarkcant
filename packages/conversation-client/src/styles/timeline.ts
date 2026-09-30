@@ -104,7 +104,7 @@ export const TIMELINE_CSS = `
     radial-gradient(ellipse 78% 11% at 50% 50%, #ffffff 0%, #ffd86b 22%, #82f4ff 40%, #ff7bd5 62%, #8e6cff 82%, transparent 100%),
     radial-gradient(circle at 50% 46%, #2a2350 0%, #161231 45%, #0b0a1c 100%);
 }
-.cc-empty h1 { font-size: var(--cc-text-heading-md); font-weight: 600; margin: 0; }
+.cc-empty h1 { font-family: var(--cc-font-display, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); font-size: var(--cc-text-heading-md); font-weight: var(--cc-weight-heading, 600); margin: 0; }
 .cc-empty p { color: var(--cc-text-muted); margin: 0; }
 
 .cc-row { display: flex; flex-direction: column; gap: var(--cc-space-sm); }
@@ -123,7 +123,7 @@ export const TIMELINE_CSS = `
   padding: var(--cc-space-sm) var(--cc-space-md);
   border-radius: var(--cc-radius-response);
   background: var(--cc-card);
-  border: 1px solid var(--cc-border);
+  border: var(--cc-line, 1px solid) var(--cc-border);
   overflow-wrap: anywhere;
 }
 .cc-row[data-role="assistant"] .cc-bubble { background: transparent; border: none; padding: 0; max-width: 100%; }
@@ -169,10 +169,11 @@ export const TIMELINE_CSS = `
 .cc-md p { margin: 0 0 var(--cc-space-sm); }
 .cc-md h1, .cc-md h2, .cc-md h3, .cc-md h4, .cc-md h5, .cc-md h6 {
   margin: var(--cc-space-md) 0 var(--cc-space-xs); line-height: 1.3;
+  font-family: var(--cc-font-display, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif);
 }
 .cc-md h1 { font-size: var(--cc-text-heading-md); }
-.cc-md h2 { font-size: var(--cc-text-body-lg, var(--cc-text-body-md)); font-weight: 600; }
-.cc-md h3, .cc-md h4, .cc-md h5, .cc-md h6 { font-size: var(--cc-text-body-md); font-weight: 600; }
+.cc-md h2 { font-size: var(--cc-text-body-lg, var(--cc-text-body-md)); font-weight: var(--cc-weight-heading, 600); }
+.cc-md h3, .cc-md h4, .cc-md h5, .cc-md h6 { font-size: var(--cc-text-body-md); font-weight: var(--cc-weight-heading, 600); }
 .cc-md-list { margin: 0 0 var(--cc-space-sm); padding-left: var(--cc-space-lg); display: flex; flex-direction: column; gap: var(--cc-space-xxs); }
 .cc-md-list li[data-task] { list-style: none; display: flex; gap: var(--cc-space-sm); align-items: baseline; }
 .cc-md-list { list-style-position: outside; }
@@ -181,18 +182,18 @@ export const TIMELINE_CSS = `
   margin: 0 0 var(--cc-space-sm); padding: var(--cc-space-xs) var(--cc-space-md);
   border-left: 2px solid var(--cc-border); color: var(--cc-text-muted);
 }
-.cc-md hr { border: none; border-top: 1px solid var(--cc-border); margin: var(--cc-space-md) 0; }
+.cc-md hr { border: none; border-top: var(--cc-line, 1px solid) var(--cc-border); margin: var(--cc-space-md) 0; }
 .cc-md a, .cc-text a { color: var(--cc-accent); }
 .cc-md a:focus-visible, .cc-text a:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: 2px; }
 .cc-md-inline-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm);
-  background: var(--cc-elevated); border: 1px solid var(--cc-border);
+  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm);
+  background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border);
   border-radius: var(--cc-radius-badge); padding: 0 4px;
 }
-.cc-md-literal { color: var(--cc-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); }
+.cc-md-literal { color: var(--cc-text-muted); font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); }
 .cc-md-table-wrap { overflow-x: auto; margin: 0 0 var(--cc-space-sm); }
 .cc-md-table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-.cc-md-table th, .cc-md-table td { text-align: left; padding: var(--cc-space-xs) var(--cc-space-sm); border-bottom: 1px solid var(--cc-border); }
+.cc-md-table th, .cc-md-table td { text-align: left; padding: var(--cc-space-xs) var(--cc-space-sm); border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-md-table th { color: var(--cc-text-muted); font-weight: 500; font-size: var(--cc-text-label); }
 .cc-md-table [data-align="center"] { text-align: center; }
 .cc-md-table [data-align="right"] { text-align: right; }
@@ -205,19 +206,19 @@ export const TIMELINE_CSS = `
  * as code.
  */
 .cc-code {
-  border: 1px solid var(--cc-border); background: var(--cc-code);
+  border: var(--cc-line, 1px solid) var(--cc-border); background: var(--cc-code);
   border-radius: var(--cc-radius-card); overflow: hidden;
 }
 .cc-code-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: var(--cc-space-xxs) var(--cc-space-sm);
-  border-bottom: 1px solid var(--cc-border);
+  border-bottom: var(--cc-line, 1px solid) var(--cc-border);
   font-size: var(--cc-text-meta); color: var(--cc-text-tertiary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 .cc-code-body { margin: 0; padding: var(--cc-space-sm); overflow-x: auto; }
 .cc-code-body code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm);
   white-space: pre; color: var(--cc-text);
 }

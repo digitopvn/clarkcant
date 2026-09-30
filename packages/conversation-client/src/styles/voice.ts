@@ -87,7 +87,7 @@ export const VOICE_CSS = `
   display: flex; align-items: center; justify-content: space-between;
   min-height: var(--cc-topbar-height);
   padding: var(--cc-space-md) var(--cc-space-lg);
-  border-bottom: 1px solid var(--cc-border);
+  border-bottom: var(--cc-line, 1px solid) var(--cc-border);
 }
 .cc-voice-status {
   display: flex; align-items: center; gap: var(--cc-space-xs);
@@ -147,7 +147,7 @@ export const VOICE_CSS = `
 }
 .cc-voice-action-icon {
   display: grid; place-items: center; width: 52px; height: 52px;
-  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-pill);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-pill);
   background: var(--cc-elevated); color: var(--cc-text); font-size: 18px;
   transition: border-color var(--cc-motion-micro) var(--cc-motion-easing), color var(--cc-motion-micro) var(--cc-motion-easing);
 }
@@ -169,17 +169,20 @@ export const VOICE_CSS = `
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 71;
   width: min(var(--cc-modal-width), calc(100vw - 32px)); max-height: calc(100vh - 64px);
   display: flex; flex-direction: column;
-  background: var(--cc-elevated); border: 1px solid var(--cc-border);
+  background: var(--cc-elevated);
+  background-image: var(--cc-surface-image, none);
+  background-size: var(--cc-surface-size, auto);
+  border: var(--cc-modal-line, var(--cc-line, 1px solid)) var(--cc-modal-edge, var(--cc-border));
   border-radius: var(--cc-radius-modal);
-  box-shadow: 0 24px 64px color-mix(in oklab, var(--cc-code) 70%, transparent);
+  box-shadow: var(--cc-modal-shadow, var(--cc-shadow-modal, 0 24px 64px color-mix(in oklab, var(--cc-code) 70%, transparent)));
   animation: cc-modal-in var(--cc-motion-panel) var(--cc-motion-easing);
 }
 @keyframes cc-modal-in { from { opacity: 0; transform: translate(-50%, -48%); } to { opacity: 1; } }
 .cc-modal:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
-.cc-modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md); padding: var(--cc-space-lg); border-bottom: 1px solid var(--cc-border); }
-.cc-modal-head h2 { margin: 0; font-size: var(--cc-text-heading-md); line-height: var(--cc-leading-heading-md); }
+.cc-modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md); padding: var(--cc-space-lg); border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
+.cc-modal-head h2 { margin: 0; font-family: var(--cc-font-display, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); font-size: var(--cc-text-heading-md); line-height: var(--cc-leading-heading-md); }
 .cc-modal-body { padding: var(--cc-space-lg); overflow-y: auto; display: flex; flex-direction: column; gap: var(--cc-space-md); }
-.cc-modal-actions { display: flex; justify-content: flex-end; gap: var(--cc-space-sm); padding: var(--cc-space-md) var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
+.cc-modal-actions { display: flex; justify-content: flex-end; gap: var(--cc-space-sm); padding: var(--cc-space-md) var(--cc-space-lg); border-top: var(--cc-line, 1px solid) var(--cc-border); }
 
 /*
  * Settings tabs. A tab that is selected says so with an underline and with aria-selected, so
@@ -194,7 +197,7 @@ export const VOICE_CSS = `
   /* flex: none because a scroll container in the dialog's column may otherwise shrink to nothing when the panel
      below it is long: its automatic minimum height is zero once overflow is not visible. */
   display: flex; flex: none; flex-wrap: nowrap; gap: var(--cc-space-md);
-  border-bottom: 1px solid var(--cc-border); margin: 0 calc(var(--cc-space-lg) * -1); padding: 0 var(--cc-space-lg);
+  border-bottom: var(--cc-line, 1px solid) var(--cc-border); margin: 0 calc(var(--cc-space-lg) * -1); padding: 0 var(--cc-space-lg);
   overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
   scroll-padding-inline: var(--cc-space-lg);
 }
@@ -210,14 +213,14 @@ export const VOICE_CSS = `
 .cc-tab[data-selected="true"] { color: var(--cc-text); border-bottom-color: var(--cc-accent); }
 .cc-tab:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: -2px; border-radius: var(--cc-radius-badge); }
 .cc-tabpanel { display: flex; flex-direction: column; gap: var(--cc-space-md); }
-.cc-modal-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md); padding: var(--cc-space-md) var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
+.cc-modal-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md); padding: var(--cc-space-md) var(--cc-space-lg); border-top: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-modal-done { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-md); }
 
 /* Menu bar popover: the same connection wording the app window uses. */
 .cc-menubar {
   display: flex; flex-direction: column; gap: var(--cc-space-sm);
   padding: var(--cc-space-md); min-width: 15rem;
-  background: var(--cc-elevated); border: 1px solid var(--cc-border);
+  background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border);
   border-radius: var(--cc-radius-card);
 }
 .cc-menubar-head { display: flex; align-items: center; gap: var(--cc-space-sm); font-size: var(--cc-text-body-sm); color: var(--cc-text); }
@@ -238,7 +241,7 @@ export const VOICE_CSS = `
      and its note are read as one phrase, so the ends need the space the middle already has. */
   padding: var(--cc-space-sm) var(--cc-space-xl);
   background: var(--cc-card); color: var(--cc-text);
-  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-pill);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-pill);
   transition: border-color var(--cc-motion-micro) var(--cc-motion-easing);
 }
 .cc-chip:hover { border-color: var(--cc-accent); }
@@ -257,16 +260,22 @@ export const VOICE_CSS = `
 .cc-action {
   cursor: pointer; font: inherit; font-size: var(--cc-text-body-sm);
   padding: var(--cc-space-xs) var(--cc-space-md);
-  background: var(--cc-elevated); color: var(--cc-text);
-  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-button);
+  background: var(--cc-button-bg, var(--cc-elevated)); color: var(--cc-text);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-color: var(--cc-button-edge, var(--cc-border));
+  border-radius: var(--cc-radius-button);
+  box-shadow: var(--cc-button-shadow, none);
   min-height: 32px;
   transition-property: transform; transition-duration: var(--cc-motion-micro); transition-timing-function: var(--cc-motion-bounce);
 }
 .cc-action:hover:not(:disabled, [aria-disabled="true"]) { border-color: var(--cc-accent); }
-.cc-action:active:not(:disabled, [aria-disabled="true"]) { transform: scale(0.97); }
+.cc-action:active:not(:disabled, [aria-disabled="true"]) { transform: var(--cc-button-press, scale(0.97)); box-shadow: var(--cc-button-press-shadow, none); }
 .cc-action:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 /* aria-disabled looks the same as disabled: it is used where the button must keep the focus that pressed it. */
-.cc-action:disabled, .cc-action[aria-disabled="true"] { cursor: not-allowed; color: var(--cc-text-tertiary); }
+/*
+ * Host-owned, like the focus ring above: a recipe restyles a button's surface, never whether it can be pressed. A
+ * disabled button drops its recipe's elevation too, so a raised shadow never suggests it can be pushed.
+ */
+.cc-action:disabled, .cc-action[aria-disabled="true"] { cursor: not-allowed; color: var(--cc-text-tertiary); box-shadow: none; }
 /*
  * A thumb needs 44 px. Said here, in the layer that sets the 32 px a mouse is fine with, because a later layer wins
  * whatever its specificity: a 44 px rule for a button in an earlier layer (a card's, a form's) never applies.
@@ -281,8 +290,8 @@ export const VOICE_CSS = `
 
 /* Project roots the node has already approved. */
 .cc-root-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
-.cc-root-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); padding: var(--cc-space-xs) 0; border-bottom: 1px solid var(--cc-border); }
+.cc-root-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); padding: var(--cc-space-xs) 0; border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-root-list li:last-child { border-bottom: none; }
-.cc-root-list code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-meta); line-height: var(--cc-leading-meta); overflow-wrap: anywhere; }
+.cc-root-list code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-meta); line-height: var(--cc-leading-meta); overflow-wrap: anywhere; }
 }
 `;

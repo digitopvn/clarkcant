@@ -162,11 +162,27 @@ runs. Installing the package is the consent to what it declares; each call is st
 over Clark Default: `appearanceApi` (`{ "min": 1, "max": 1 }`), an `id` equal to the facet's `id`, a `displayName`, an
 optional `description`, optional `colors.dark` / `colors.light` (six-digit hex values for the colour tokens named in
 `packages/contracts/src/themes.ts`), and optional `radius` (rem from 0 to 2 for `badge`, `button`, `card`, `response`,
-`modal`). Nothing else: no CSS, no selectors, no fonts. The node reads it from the installed bytes through the same containment as a widget's files, refuses
+`modal`). A document that declares `appearanceApi.min` 2 (`{ "min": 2, "max": 2 }`) may also set the rest of the
+look, each by a name or a bounded number the host turns into CSS itself: `typography` (`body` and `display` from
+`clark`, `system`, `serif`, `rounded`, `mono`; `mono` from `clark`, `typewriter`; `headingWeight` 400–800 in hundreds), `border`
+(`width` 1–3, `style` `solid` or `dashed`), `shadow` (`style` `soft`, `hard` or `none`; a hard shadow's `offset` 1–8 and
+`color` `text`, `border` or `accent`), `motion` (`speed` 0.5–2, `easing` `standard`, `snappy`, `linear` or `stepped`),
+`icons.stroke` (1–2.5), `radius.field`, `recipes` (one per component: `button` `quiet`/`outlined`/`solid`/`raised`/`beveled`,
+`card` `flat`/`outlined`/`raised`, `input` `quiet`/`filled`/`outlined`/`underlined`, `modal` `floating`/`framed`, `badge`
+`pill`/`rounded`/`square`, `composer` `floating`/`integrated`/`framed`), `effects` (`backdrop.kind` `dot-grid`,
+`hard-grid`, `scanlines`, `grain` or `paper` with `intensity` 0–1 and `scale` 8–48 px; `surface.kind` `glass`,
+`soft-glow`, `paper` or `grain` with `intensity` 0–1) and `orb` (`profile`, one of the shipped Orb presets, and an
+optional `palette` of 0–1 colour triples; it applies only while the person has never chosen an Orb). The bounds are
+the constants in `packages/contracts/src/themes.ts`. A document using any of these with `appearanceApi.min` 1 is
+refused, since a version 1 build could not draw it. Nothing else: no CSS, no selectors, no font files, no images. The node reads it from the installed bytes through the same containment as a widget's files, refuses
 one over 64 KiB, and validates it (`packages/core/src/installed-themes.ts`); a theme that fails is listed with its
 reason, and the package's other themes still load. A valid theme is also held to the contrast audit Clark Default is
-held to, in both schemes (`requiredPairs` in `packages/design-tokens/src/contrast.ts`); one that fails is listed with
-the pairs that fail and cannot be chosen, so check both schemes before publishing. It is selected as `package:<package id>#<theme id>`, and a
+held to, in both schemes (`requiredPairs` in `packages/design-tokens/src/contrast.ts`), and to the protected-state
+audit (`packages/design-tokens/src/protected.ts`): danger, warning, success and the accent must stay apart, a status
+apart from text, the focus ring apart from edges, disabled text apart from enabled text, an edge visible on its card
+and the page, and text readable on a finished surface. One that fails either audit is listed with what fails and
+cannot be chosen, so check both schemes before publishing. The focus ring, disabled controls, the host's own cards
+and reduced motion are the host's whatever a theme says. It is selected as `package:<package id>#<theme id>`, and a
 theme-only package is a UI refresh, never a Pi restart. Installed themes appear under Settings → Experience → Theme.
 **How the node runs a service facet.** The node runs one container for each `tools` facet of every active package
 generation, and stops it when the generation stops being active (`apps/runtime/src/service-host.ts`). A service is

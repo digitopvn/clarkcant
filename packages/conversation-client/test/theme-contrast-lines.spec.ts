@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { COLOR_TOKEN_NAMES, type ThemeContrastFailureView } from "@clarkcant/contracts";
-import { themeContrastProblem } from "@clarkcant/design-tokens";
+import { COLOR_TOKEN_NAMES, PROTECTED_CHECKS, type ThemeContrastFailureView } from "@clarkcant/contracts";
+import { DARK, themeContrastProblem, themeDrawProblem } from "@clarkcant/design-tokens";
 
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
-import { contrastLines } from "../src/settings/theme-contrast-lines.ts";
+import { contrastLines, protectedLines } from "../src/settings/theme-contrast-lines.ts";
 
 const vi = (key: MessageKey): string => CATALOGS.vi[key];
 const en = (key: MessageKey): string => CATALOGS.en[key];
@@ -59,5 +59,41 @@ describe("a theme's failing colour pairs, in the reader's language", () => {
       for (const token of COLOR_TOKEN_NAMES) expect(line).not.toContain(` ${token} `);
     }
     for (const line of enLines) expect(line).not.toMatch(/\{|\}| trên |cần/);
+  });
+});
+
+describe("a theme's hidden protected states, in the reader's language", () => {
+  it("words the protected checks a theme fails, in both languages, with no token name or code left in", () => {
+    // Readable everywhere, so the contrast audit passes it; camouflaged, so the protected audit does not.
+    const hidden = themeDrawProblem({
+      appearanceApi: { min: 2, max: 2 },
+      id: "camouflage",
+      displayName: "Camouflage",
+      colors: { dark: { warning: DARK.danger, success: DARK.danger, textTertiary: DARK.text } },
+    });
+    expect(hidden?.code).toBe("THEME_PROTECTED");
+    const failures = hidden?.code === "THEME_PROTECTED" ? hidden.protected : [];
+    expect(new Set(failures.map((failure) => failure.check)).size).toBeGreaterThanOrEqual(2);
+
+    const viLines = protectedLines(failures, vi, "vi");
+    const enLines = protectedLines(failures, en, "en");
+    expect(viLines).toHaveLength(failures.length);
+    expect(enLines).toHaveLength(failures.length);
+    for (const line of [...viLines, ...enLines]) {
+      expect(line).not.toMatch(/\{|\}/);
+      for (const check of PROTECTED_CHECKS) expect(line).not.toContain(check);
+    }
+    for (const line of viLines) expect(line).not.toMatch(/\b(needs|the|dark|light)\b/);
+    for (const line of enLines) expect(line).not.toMatch(/ trên |cần/);
+  });
+
+  it("gives every protected check a sentence of its own", () => {
+    for (const check of PROTECTED_CHECKS) {
+      const failure = { scheme: "dark", check, first: "danger", second: "warning", value: 3.2, minimum: 6 } as const;
+      const [viLine] = protectedLines([failure], vi, "vi");
+      const [enLine] = protectedLines([failure], en, "en");
+      expect(viLine, check).toContain("3,20");
+      expect(enLine, check).toContain("3.20");
+    }
   });
 });

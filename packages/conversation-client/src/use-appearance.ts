@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { AppearanceResponse, ThemeContrastFailureView } from "@clarkcant/contracts";
+import type { AppearanceResponse, ThemeContrastFailureView, ThemeProtectedFailureView } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
 import { applyAppearance } from "./appearance.ts";
@@ -16,10 +16,11 @@ import { applyAppearance } from "./appearance.ts";
  * change what a person sees for a reason that has nothing to do with their theme.
  */
 
-/** Why the page refused what the node sent: the English reason, and the failing pairs when it was the colours. */
+/** Why the page refused what the node sent: the English reason, and the failing pairs when an audit refused it. */
 export interface LocalAppearanceProblem {
   message: string;
   contrast?: ThemeContrastFailureView[];
+  protected?: ThemeProtectedFailureView[];
 }
 
 export interface AppearanceState {
@@ -32,7 +33,17 @@ export interface AppearanceState {
   localProblem: LocalAppearanceProblem | undefined;
   /** Counts answers, so a surface listing themes can re-read when the answer may have changed. */
   generation: number;
-  refresh: () => Promise<void>;
+  /**
+   * Ask the node again and draw its answer. Resolves with what is now drawn, or `undefined` when the node could not
+   * answer or a newer read overtook this one - the page is then left as it was.
+   */
+  refresh: () => Promise<AppearanceRead | undefined>;
+}
+
+/** One answer from the node and what the page made of it. */
+export interface AppearanceRead {
+  appearance: AppearanceResponse;
+  localProblem: LocalAppearanceProblem | undefined;
 }
 
 export function useAppearance(client: GatewayClient): AppearanceState {
@@ -42,24 +53,28 @@ export function useAppearance(client: GatewayClient): AppearanceState {
   // Only the latest request is applied: two refreshes racing must not leave the older answer on screen.
   const latest = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<AppearanceRead | undefined> => {
     const ticket = latest.current + 1;
     latest.current = ticket;
     let next: AppearanceResponse;
     try {
       next = await client.appearance();
     } catch {
-      return;
+      return undefined;
     }
-    if (ticket !== latest.current) return;
+    if (ticket !== latest.current) return undefined;
     const applied = applyAppearance({ theme: next.theme, themeRef: next.appliedRef });
+    const problem: LocalAppearanceProblem | undefined = applied.ok
+      ? undefined
+      : {
+          message: applied.problem,
+          ...(applied.contrast === undefined ? {} : { contrast: applied.contrast }),
+          ...(applied.protected === undefined ? {} : { protected: applied.protected }),
+        };
     setAppearance(next);
-    setLocalProblem(
-      applied.ok
-        ? undefined
-        : { message: applied.problem, ...(applied.contrast === undefined ? {} : { contrast: applied.contrast }) },
-    );
+    setLocalProblem(problem);
     setGeneration((count) => count + 1);
+    return { appearance: next, localProblem: problem };
   }, [client]);
 
   useEffect(() => {

@@ -293,16 +293,34 @@ id, version, digest, trust lane and source tier); `problems` names each theme th
 Default is held to (`requiredPairs` in `packages/design-tokens/src/contrast.ts`) is a problem too, with a `contrast`
 list of the pairs that fail, and is not listed as selectable. Each pair is `{ scheme, foreground, background, ratio,
 minimum }`: the colour scheme, the two colour token names, the measured ratio rounded to two decimals and the ratio
-required. `message` fields are English, for logs; a client words a failure for its reader from `code` and `contrast`.
+required. A readable theme that would make a protected state hard to tell apart (danger from warning or success, a
+status from body text, the focus ring from other edges, disabled text from enabled text, an edge from the card or the
+page, or text on a card finished with a surface effect) is a problem in the same way, with a `protected` list instead:
+each entry is `{ scheme, check, first, second, value, minimum }`, where `check` is one of `status-distinct`,
+`status-vs-text`, `focus-vs-border`, `disabled-distinct`, `edge-visible` or `surface-readable`, and `value` is a
+perceptual distance (OKLab ΔE × 100), or a contrast ratio for `surface-readable`. `message` fields are English, for
+logs; a client words a failure for its reader from `code`, `contrast` and `protected`.
 `GET /appearance` answers what the page should
 draw: `selectedRef` (the `experience.themeRef` preference, chosen with `PUT /preferences/experience.themeRef`
 `{ "value": "<themeRef>" }`), `appliedRef`, the validated `theme` document (`null` for Clark Default), its `provider`,
-and a `fallback` `{ code, message, contrast? }` when the choice cannot be drawn — `THEME_NOT_INSTALLED`, `THEME_INVALID`,
-`THEME_LOW_CONTRAST` (the only code that carries `contrast`), `THEME_UNAVAILABLE` or `THEME_UNKNOWN` — in which case
-Clark Default is drawn and `selectedRef` is kept, so reinstalling the package brings the theme back. Writing
-`experience.themeRef` checks the reference first: one this node cannot draw is refused with `409` and the same code,
-reason and `contrast`, and nothing is stored. The node does not push package changes: a client re-reads `/appearance` after it
-changes a package and when its window comes back into view. The shapes are `packages/contracts/src/themes.ts`.
+and a `fallback` `{ code, message, contrast?, protected? }` when the choice cannot be drawn — `THEME_NOT_INSTALLED`,
+`THEME_INVALID`, `THEME_LOW_CONTRAST` (the only code that carries `contrast`), `THEME_PROTECTED` (the only code that
+carries `protected`), `THEME_UNAVAILABLE` or `THEME_UNKNOWN` — in which case Clark Default is drawn and `selectedRef` is
+kept, so reinstalling the package brings the theme back. Writing `experience.themeRef` checks the reference first: one
+this node cannot draw is refused with `409` and the same code, reason and `contrast` or `protected`, and nothing is
+stored. The node does not push package changes: a client re-reads `/appearance` after it changes a package and when its
+window comes back into view. The shapes are `packages/contracts/src/themes.ts`.
+
+A theme document declaring `appearanceApi.min` 2 may also choose the rest of the look, always by name or bounded number
+and never as CSS: `typography` (font profiles and heading weight), `border`, `shadow`, `motion` (speed and easing;
+reduced motion stays none whatever it says), `icons`, `radius.field`, `recipes` (one host-owned recipe per button, card,
+input, modal, badge and composer), `effects` (a backdrop: dot grid, hard grid, scanlines, grain or paper; a surface
+finish: glass, soft glow, paper or grain; each with a bounded intensity) and `orb` (a default Orb preset with optional
+colours, used only while the person has not chosen an Orb). An unknown field, recipe or effect, or a value out of range,
+is refused. The appearance app intents are `appearance.set-theme` (`themeRef`), `appearance.set-color-scheme`
+(`colorScheme`: `light`, `dark` or `system`), `appearance.reset` (Clark Default, following the system) and
+`appearance.open-theme-gallery`. `POST /app-intents` and the agent's `control_app` accept them; a theme is checked
+against this node's themes and refused with a sentence when it cannot be drawn. None of them asks for confirmation.
 
 `POST /inbox/notices/:id/actions/:action` is the one route for a notice's own actions, whoever asks: the inbox panel,
 a typed or spoken sentence, the main and voice agent, MCP's `act_on_notice` and `clarkcant api`. The action is one of

@@ -296,17 +296,34 @@ trust lane và source tier); `problems` nêu tên từng theme không qua đư�
 mà node này không đọc được tệp. Theme có màu không qua được bài kiểm tra tương phản mà Clark Default phải qua
 (`requiredPairs` trong `packages/design-tokens/src/contrast.ts`) cũng là một `problems`, kèm danh sách `contrast` gồm
 các cặp màu không đạt, và không được liệt kê để chọn. Mỗi cặp là `{ scheme, foreground, background, ratio, minimum }`:
-chế độ màu, tên hai token màu, tỉ lệ đo được làm tròn hai chữ số thập phân và tỉ lệ cần đạt. Các trường `message` là
-tiếng Anh, dành cho log; client diễn đạt lỗi cho người đọc từ `code` và `contrast`. `GET /appearance` trả về thứ trang
+chế độ màu, tên hai token màu, tỉ lệ đo được làm tròn hai chữ số thập phân và tỉ lệ cần đạt. Theme đọc được nhưng làm
+một trạng thái được bảo vệ khó phân biệt (nguy hiểm với cảnh báo hoặc thành công, một trạng thái với chữ thường, vòng
+tiêu điểm với các đường viền khác, chữ bị vô hiệu với chữ bình thường, đường viền với thẻ hoặc nền trang, hay chữ trên
+thẻ có hiệu ứng bề mặt) cũng là một `problems` theo cùng cách, nhưng kèm danh sách `protected`: mỗi mục là
+`{ scheme, check, first, second, value, minimum }`, trong đó `check` là một trong `status-distinct`, `status-vs-text`,
+`focus-vs-border`, `disabled-distinct`, `edge-visible` hoặc `surface-readable`, còn `value` là khoảng cách cảm nhận
+(OKLab ΔE × 100), hoặc tỉ lệ tương phản với `surface-readable`. Các trường `message` là tiếng Anh, dành cho log; client
+diễn đạt lỗi cho người đọc từ `code`, `contrast` và `protected`. `GET /appearance` trả về thứ trang
 cần vẽ: `selectedRef` (preference `experience.themeRef`, được chọn bằng `PUT /preferences/experience.themeRef`
 `{ "value": "<themeRef>" }`), `appliedRef`, tài liệu `theme` đã kiểm tra (`null` với Clark Default), `provider` của
-nó, và `fallback` `{ code, message, contrast? }` khi lựa chọn không vẽ được — `THEME_NOT_INSTALLED`, `THEME_INVALID`,
-`THEME_LOW_CONTRAST` (mã duy nhất kèm `contrast`), `THEME_UNAVAILABLE` hoặc `THEME_UNKNOWN` — khi đó Clark Default được
-vẽ và `selectedRef` vẫn được giữ, nên cài lại gói là theme quay lại. Khi ghi `experience.themeRef`, tham chiếu được
-kiểm tra trước: tham chiếu mà node này không vẽ được sẽ bị từ chối bằng `409` kèm đúng mã, lý do và `contrast` đó, và
-không có gì được lưu. Node
+nó, và `fallback` `{ code, message, contrast?, protected? }` khi lựa chọn không vẽ được — `THEME_NOT_INSTALLED`,
+`THEME_INVALID`, `THEME_LOW_CONTRAST` (mã duy nhất kèm `contrast`), `THEME_PROTECTED` (mã duy nhất kèm `protected`),
+`THEME_UNAVAILABLE` hoặc `THEME_UNKNOWN` — khi đó Clark Default được vẽ và `selectedRef` vẫn được giữ, nên cài lại gói
+là theme quay lại. Khi ghi `experience.themeRef`, tham chiếu được kiểm tra trước: tham chiếu mà node này không vẽ được
+sẽ bị từ chối bằng `409` kèm đúng mã, lý do và `contrast` hoặc `protected` đó, và không có gì được lưu. Node
 không đẩy thay đổi gói về client: client đọc lại `/appearance` sau khi chính nó thay đổi một gói và khi cửa sổ được
 nhìn lại. Hình dạng dữ liệu ở `packages/contracts/src/themes.ts`.
+
+Tài liệu theme khai báo `appearanceApi.min` là 2 còn có thể chọn phần còn lại của diện mạo, luôn bằng tên hoặc số có
+giới hạn và không bao giờ bằng CSS: `typography` (bộ phông và độ đậm tiêu đề), `border`, `shadow`, `motion` (tốc độ và
+đường cong; giảm chuyển động vẫn là không chuyển động dù theme nói gì), `icons`, `radius.field`, `recipes` (một recipe
+do host sở hữu cho mỗi nút, thẻ, ô nhập, hộp thoại, nhãn và ô soạn tin), `effects` (nền: lưới chấm, lưới kẻ, đường quét,
+hạt hoặc giấy; lớp hoàn thiện bề mặt: kính, phát sáng nhẹ, giấy hoặc hạt; mỗi hiệu ứng có cường độ trong giới hạn) và
+`orb` (một preset Orb mặc định kèm màu tùy chọn, chỉ dùng khi người dùng chưa tự chọn Orb). Trường, recipe hay hiệu ứng
+lạ, hoặc giá trị ngoài giới hạn, đều bị từ chối. Các app intent về diện mạo là `appearance.set-theme` (`themeRef`),
+`appearance.set-color-scheme` (`colorScheme`: `light`, `dark` hoặc `system`), `appearance.reset` (Clark Default, theo
+hệ thống) và `appearance.open-theme-gallery`. `POST /app-intents` và `control_app` của agent đều nhận chúng; theme được
+đối chiếu với các theme của node này và bị từ chối bằng một câu nói rõ khi không vẽ được. Không intent nào hỏi xác nhận.
 
 `POST /inbox/notices/:id/actions/:action` là route duy nhất cho các thao tác của chính một thông báo, dù ai yêu cầu:
 hộp thư, một câu gõ hoặc nói, agent chính và voice agent, `act_on_notice` của MCP và `clarkcant api`. Thao tác là

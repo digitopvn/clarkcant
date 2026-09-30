@@ -2401,6 +2401,7 @@ function ActionButton({ props, onAction, state }: RendererProps): ReactElement {
       >
         {iconPath !== undefined && (
           <svg
+            className="cc-icon"
             width="15"
             height="15"
             viewBox="0 0 24 24"

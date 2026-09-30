@@ -34,6 +34,7 @@ import {
   type AppIntentKind,
   type AppIntentLocale,
   type AppIntentSource,
+  type ColorScheme,
   type ConfirmationToken,
   type ConversationId,
   type Instant,
@@ -549,10 +550,184 @@ function findWidgetTarget(bare: string, targets: readonly WidgetTarget[]): Widge
   return undefined;
 }
 
+/**
+ * A theme a spoken or typed command can name: a display name or id, and the reference it draws.
+ *
+ * Injected by the runtime from the node's theme registry, for the reason `WidgetTarget` is: which themes exist is the
+ * node's knowledge, and the matcher stays a deterministic table. Only themes the node can draw are offered, so a
+ * sentence can never choose one the registry would refuse.
+ */
+export interface ThemeTarget {
+  phrase: string;
+  themeRef: string;
+  name: string;
+}
+
+/**
+ * Verbs an appearance command opens with, in the bare spelling.
+ *
+ * Bare, unlike `CONTROL_VERBS`, so a typed "doi giao dien sang Dusk" works: a bare verb that is another word with its
+ * marks ("đợi", "bắt") is harmless here, because the sentence must also be about the look and made only of words the
+ * appearance vocabulary accounts for.
+ */
+const APPEARANCE_VERBS: readonly string[] = [
+  "doi",
+  "chuyen",
+  "bat",
+  "mo",
+  "xem",
+  "hien",
+  "dat",
+  "khoi",
+  "cho",
+  "switch",
+  "change",
+  "turn",
+  "open",
+  "show",
+  "reset",
+  "set",
+  "go",
+  "make",
+];
+
+/**
+ * What makes a sentence about the look of the application, in the bare spelling.
+ *
+ * "chủ đề" alone is absent on purpose: it is also "topic", and "chuyển sang chủ đề khác" is a person changing the
+ * subject. It counts only together with a theme's own name, which the target check below requires anyway.
+ */
+const APPEARANCE_NOUNS: readonly string[] = [
+  "giao dien",
+  "theme",
+  "themes",
+  "appearance",
+  "dark mode",
+  "light mode",
+  "che do toi",
+  "che do sang",
+  "nen toi",
+  "nen sang",
+  "chu de giao dien",
+];
+
+const APPEARANCE_RESET_PHRASES: readonly string[] = [
+  "dat lai giao dien",
+  "khoi phuc giao dien",
+  "reset giao dien",
+  "giao dien mac dinh",
+  "reset the theme",
+  "reset theme",
+  "reset the appearance",
+  "reset appearance",
+  "default theme",
+  "default appearance",
+];
+
+const APPEARANCE_GALLERY_PHRASES: readonly string[] = [
+  "thu vien giao dien",
+  "danh sach giao dien",
+  "cac giao dien",
+  "danh sach chu de giao dien",
+  "cac chu de giao dien",
+  "theme gallery",
+  "themes gallery",
+  "theme list",
+  "list of themes",
+  "available themes",
+];
+
+/**
+ * Every word an appearance command may be made of, in the bare spelling, besides the name of a theme.
+ *
+ * An appearance sentence is claimed only when each of its words is accounted for, by this list or by the theme it
+ * names. People ask for work about themes all the time - "switch my vscode theme to dark", "đổi giao diện trang
+ * WordPress sang tối" - and a word this list does not know ("vscode", "wordpress", "trang") is what says the sentence
+ * is about something other than Clark's own window. Such a sentence is left to the agent, never refused.
+ */
+const APPEARANCE_VOCABULARY: ReadonlySet<string> = new Set([
+  // Verbs and particles.
+  ..."doi chuyen bat mo xem hien dat khoi phuc lai cho sang qua ve thanh dung su theo".split(" "),
+  ..."switch change turn open show reset set go make use put back to the a an into on my please me for follow".split(" "),
+  // The nouns of the look itself.
+  ..."giao dien chu de che do nen mau toi he thong tu dong mac dinh danh sach thu vien cac".split(" "),
+  ..."theme themes appearance mode dark light system automatic default gallery list of available color colour scheme".split(" "),
+  // Courtesy.
+  ..."giup minh nhe nha di voi ban ho".split(" "),
+]);
+
+function accountedFor(bareWords: readonly string[], target: ThemeTarget | undefined): boolean {
+  const named = new Set(target === undefined ? [] : normaliseIntentText(target.phrase).split(" "));
+  return bareWords.every((word) => word === "" || APPEARANCE_VOCABULARY.has(word) || named.has(word));
+}
+
+/**
+ * Dark, light or the system's choice.
+ *
+ * Vietnamese is read with its tone marks: without them "tối" (dark) is "tôi" (I) and "sáng" (light) is "sang" (to), so
+ * "chuyển giao diện sang tối" would read as light. A transcript that dropped the marks still lands through the
+ * unambiguous "chế độ tối" and "nền sáng" forms.
+ */
+function colorSchemeOf(spokenWords: readonly string[], bareWords: readonly string[]): ColorScheme | undefined {
+  const dark = spokenWords.includes("tối") || containsAny(bareWords, ["dark", "che do toi", "nen toi"]);
+  const light = spokenWords.includes("sáng") || containsAny(bareWords, ["light", "che do sang", "nen sang"]);
+  const system = containsAny(bareWords, ["he thong", "system", "tu dong", "automatic"]);
+  const named = [dark ? "dark" : undefined, light ? "light" : undefined, system ? "system" : undefined].filter(
+    (scheme): scheme is ColorScheme => scheme !== undefined,
+  );
+  // Two schemes in one sentence is a question, not a command: "sáng hay tối?" is not answered by guessing.
+  return named.length === 1 ? named[0] : undefined;
+}
+
+function containsAny(words: readonly string[], phrases: readonly string[]): boolean {
+  return phrases.some((phrase) => containsPhrase(words, phrase));
+}
+
+function findThemeTarget(bareWords: readonly string[], targets: readonly ThemeTarget[]): ThemeTarget | undefined {
+  // Longest first, so a theme called "Dusk Pro" is not taken by one called "Dusk".
+  const sorted = [...targets].sort((a, b) => b.phrase.length - a.phrase.length);
+  return sorted.find((target) => {
+    const phrase = normaliseIntentText(target.phrase);
+    return phrase !== "" && containsPhrase(bareWords, phrase);
+  });
+}
+
+/**
+ * An appearance command, or `undefined` when the sentence is not one.
+ *
+ * Claimed only when it resolves to a concrete intent. "giao diện" is also the ordinary word for an interface, so
+ * "mở giao diện quản trị WordPress" is a request for work: a sentence that merely mentions it is left to the rest of
+ * the matcher rather than refused here. `targets` is read only once a sentence is about the look at all, which keeps
+ * the registry out of every other message.
+ */
+function matchAppearance(text: string, targets: () => readonly ThemeTarget[]): AppIntent | undefined {
+  const spokenWords = text.toLowerCase().replace(/[.!?,;:]+/g, " ").replace(/\s+/g, " ").trim().split(" ");
+  const bareWords = normaliseIntentText(text).replace(/[.!?,;:]+/g, " ").replace(/\s+/g, " ").trim().split(" ");
+  if (bareWords.length > APP_COMMAND_MAX_WORDS || !APPEARANCE_VERBS.includes(bareWords[0] ?? "")) return undefined;
+  if (!containsAny(bareWords, APPEARANCE_NOUNS) && !containsPhrase(bareWords, "chu de")) return undefined;
+
+  const target = findThemeTarget(bareWords, targets());
+  if (!accountedFor(bareWords, target)) return undefined;
+  if (containsAny(bareWords, APPEARANCE_RESET_PHRASES)) return { kind: "appearance.reset" };
+  if (containsAny(bareWords, APPEARANCE_GALLERY_PHRASES)) return { kind: "appearance.open-theme-gallery" };
+  if (target !== undefined) return { kind: "appearance.set-theme", themeRef: target.themeRef, themeName: target.name };
+  // "chủ đề" on its own is a topic, not a look: a scheme needs one of the appearance nouns.
+  if (!containsAny(bareWords, APPEARANCE_NOUNS)) return undefined;
+  const colorScheme = colorSchemeOf(spokenWords, bareWords);
+  return colorScheme === undefined ? undefined : { kind: "appearance.set-color-scheme", colorScheme };
+}
+
 export function matchAppIntent(
   text: string,
-  options?: { widgetTargets?: readonly WidgetTarget[]; locale?: AppIntentLocale },
+  options?: {
+    widgetTargets?: readonly WidgetTarget[];
+    /** The themes a sentence may name; see `ThemeTarget`. A getter, read only for a sentence about the look. */
+    themeTargets?: () => readonly ThemeTarget[];
+    locale?: AppIntentLocale;
+  },
 ): AppIntentMatch | undefined {
+  const appearance = matchAppearance(text, options?.themeTargets ?? (() => []));
+  if (appearance !== undefined) return { kind: "intent", intent: appearance };
   if (!isAppCommandShaped(text)) return undefined;
   const normalised = normaliseIntentText(text);
   const locale = options?.locale ?? "vi";
@@ -628,6 +803,7 @@ export function resolveAppIntent(input: {
   intent?: AppIntent;
   mintConfirmationToken: () => ConfirmationToken;
   widgetTargets?: readonly WidgetTarget[];
+  themeTargets?: () => readonly ThemeTarget[];
   locale?: AppIntentLocale;
 }): AppIntentResolution {
   const locale = input.locale ?? "vi";
@@ -636,6 +812,7 @@ export function resolveAppIntent(input: {
   }
   const match = matchAppIntent(input.text ?? "", {
     ...(input.widgetTargets === undefined ? {} : { widgetTargets: input.widgetTargets }),
+    ...(input.themeTargets === undefined ? {} : { themeTargets: input.themeTargets }),
     locale,
   });
   if (match === undefined) return { kind: "none" };
@@ -678,6 +855,8 @@ export function recordAppIntentEvent(
     ...(input.intent.noticeId === undefined ? {} : { noticeId: input.intent.noticeId }),
     ...(input.intent.noticeAction === undefined ? {} : { noticeAction: input.intent.noticeAction }),
     ...(input.intent.inboxTarget === undefined ? {} : { inboxTarget: input.intent.inboxTarget }),
+    ...(input.intent.themeRef === undefined ? {} : { themeRef: input.intent.themeRef }),
+    ...(input.intent.colorScheme === undefined ? {} : { colorScheme: input.intent.colorScheme }),
     source: input.source,
     confirmed: input.confirmed,
   };
