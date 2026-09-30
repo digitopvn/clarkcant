@@ -54,6 +54,8 @@ let services: NodeServices;
 let conversationId: string;
 let served: Map<string, { packageId: string; generationId: string }>;
 let composed: { text: string; note: string | undefined; data: string | undefined }[];
+/** Runs while the stand-in model composes, so a test can act in the middle of a turn. */
+let duringCompose: (() => void) | undefined;
 let counter = 0;
 
 function bindingDeps(): ActionBindingDeps {
@@ -218,6 +220,7 @@ function boot(): void {
     // Stands in for the model: records what the turn was asked, and answers.
     composeFromIntent: async (input) => {
       composed.push({ text: input.text, note: input.note, data: input.data });
+      duringCompose?.();
       const reply = `Đã làm: ${input.text}`;
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     },
@@ -269,6 +272,7 @@ function rows<T>(sql: string, ...params: unknown[]): T[] {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-action-widget-"));
   composed = [];
+  duringCompose = undefined;
   served = new Map();
   calls = [];
   notes = [];
@@ -1342,5 +1346,17 @@ describe("the counters a press is admitted by", () => {
     expect(cancelActionRuns("conv_count")).toBe(1);
     // Still tracked, so the same id cannot start twice.
     expect(actionRunning("inv_turn")).toBe(true);
+  });
+
+  it("leaves a foreground agent press in the middle of its turn for the turn's own Stop to end", async () => {
+    const button = await place({ label: "Tóm tắt", action: { kind: "agent", intent: "Tóm tắt." } });
+    const seen: { stopped: number; running: boolean }[] = [];
+    duringCompose = () => {
+      seen.push({ stopped: cancelActionRuns(conversationId), running: actionRunning("inv_turn_stop") });
+    };
+    expect(await press(button, "inv_turn_stop")).toMatchObject({ ok: true, status: 200 });
+    // The press was in flight, but the conversation's Stop counts the turn once, as a reply, and not again here.
+    expect(seen).toEqual([{ stopped: 0, running: true }]);
+    expect(actionRunning("inv_turn_stop")).toBe(false);
   });
 });
