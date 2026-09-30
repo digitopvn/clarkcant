@@ -783,6 +783,35 @@ export function retryBackgroundWork(
   };
 }
 
+export type AskAgainOutcome =
+  | { ok: true; questionId: string }
+  | { ok: false; status: 404 | 409 | 422; code: string; message: string };
+
+/**
+ * "Ask again" for a question that expired unanswered, from wherever it is asked: its conversation's route, the inbox,
+ * a sentence or the agent (`notice-operations.ts`). What may be asked again is `askQuestionAgain`'s to decide; this adds
+ * the one thing every caller needs after it, which is taking the notice that said it expired out of the inbox, since the
+ * new card is now the thing waiting.
+ */
+export function askExpiredQuestionAgain(
+  services: Pick<NodeServices, "runtime" | "conductor" | "search">,
+  conversationId: string,
+  questionId: string,
+  at: () => Instant,
+): AskAgainOutcome {
+  const asked = askQuestionAgain(interactionDepsFor(services, conversationId), questionId);
+  if (!asked.ok) {
+    const status = asked.code === "QUESTION_NOT_FOUND" ? 404 : asked.code === "INVALID_QUESTION" || asked.code === "SECRET_REQUEST" ? 422 : 409;
+    return { ok: false, status, code: asked.code, message: asked.message };
+  }
+  dismissNotificationByKey(services.runtime.db, {
+    principalId: services.runtime.identity.ownerPrincipalId,
+    dedupKey: `expired:${questionId}`,
+    at: at(),
+  });
+  return { ok: true, questionId: asked.questionId };
+}
+
 /** What the conversation is told when a background run ends without an answer, or nothing when the next boot says it. */
 function backgroundEndingReply(signal: AbortSignal, cause: unknown, title: string): string | undefined {
   const reason: unknown = signal.aborted ? signal.reason : undefined;
@@ -1256,16 +1285,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "a question is asked again with POST");
     const questionId = segments[3];
     if (questionId === undefined) return fail(400, "INVALID_SCHEMA", "asking again needs the question it repeats");
-    const asked = askQuestionAgain(interactionDepsFor(services, conversationId), questionId);
-    if (!asked.ok) {
-      const status = asked.code === "QUESTION_NOT_FOUND" ? 404 : asked.code === "INVALID_QUESTION" || asked.code === "SECRET_REQUEST" ? 422 : 409;
-      return fail(status, asked.code, asked.message);
-    }
-    dismissNotificationByKey(services.runtime.db, {
-      principalId: services.runtime.identity.ownerPrincipalId,
-      dedupKey: `expired:${questionId}`,
-      at: at() as never,
-    });
+    const asked = askExpiredQuestionAgain(services, conversationId, questionId, () => at() as Instant);
+    if (!asked.ok) return fail(asked.status, asked.code, asked.message);
     return json(200, {
       ok: true,
       questionId: asked.questionId,

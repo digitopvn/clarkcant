@@ -26,6 +26,7 @@
 import { z } from "zod";
 
 import { capabilityRefSchema } from "./grants.ts";
+import { NOTICE_DISMISS_UNDO_WINDOW_MS, type NoticeOperationId, inboxTargetSchema, noticeOperationIdSchema } from "./inbox.ts";
 import { ORB_PROFILE_LABELS, orbProfileSchema } from "./preferences.ts";
 
 /**
@@ -64,6 +65,7 @@ export const APP_INTENT_KINDS = [
   "orb.select",
   "effect.confirmed",
   "effect.failed",
+  "notice.act",
 ] as const;
 
 export const appIntentKindSchema = z.enum(APP_INTENT_KINDS);
@@ -152,6 +154,18 @@ export const appIntentSchema = z
      * answer the effect the node itself named in the read-back.
      */
     effectId: z.string().min(1).max(128).optional(),
+    /**
+     * Carried only by `notice.act`: the notice, and which of the node's own notice actions to take on it
+     * (`NOTICE_OPERATION_IDS`). The notice is named by the node, never read from the words: a sentence such as "dismiss
+     * the latest notification" is resolved to the newest notice that offers that action now, and the read-back names it.
+     */
+    noticeId: z.string().min(1).max(128).optional(),
+    noticeAction: noticeOperationIdSchema.optional(),
+    /**
+     * Carried only by `inbox.open`, and only optionally: the notice or waiting item the inbox should open on, as an OS or
+     * web notification's click names it (`inboxTargetSchema`). An id, never anything the person would read.
+     */
+    inboxTarget: inboxTargetSchema.optional(),
   })
   .refine((intent) => intent.kind !== "settings.tab" || intent.tab !== undefined, {
     message: "settings.tab must name the tab to change to",
@@ -188,6 +202,18 @@ export const appIntentSchema = z
   .refine((intent) => isPersonOnlyAppIntent(intent.kind) || intent.effectId === undefined, {
     message: "only an answer about an effect may name one",
     path: ["effectId"],
+  })
+  .refine((intent) => intent.kind !== "notice.act" || (intent.noticeId !== undefined && intent.noticeAction !== undefined), {
+    message: "notice.act must name the notice and the action to take on it",
+    path: ["noticeId"],
+  })
+  .refine((intent) => intent.kind === "notice.act" || (intent.noticeId === undefined && intent.noticeAction === undefined), {
+    message: "only notice.act may name a notice or a notice action",
+    path: ["noticeId"],
+  })
+  .refine((intent) => intent.kind === "inbox.open" || intent.inboxTarget === undefined, {
+    message: "only inbox.open may name where the inbox opens",
+    path: ["inboxTarget"],
   });
 export type AppIntent = z.infer<typeof appIntentSchema>;
 
@@ -247,6 +273,81 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   developer: "Developer",
 };
 
+/**
+ * The read-back for a notice action, naming the notice by its title when the caller has it (the node does, once it has
+ * resolved which notice a sentence means) and as "that notice" when it does not.
+ */
+export function describeNoticeAction(action: NoticeOperationId, locale: AppIntentLocale = "vi", title?: string): string {
+  const en = locale === "en";
+  const notice = noticeNamed(locale, title);
+  switch (action) {
+    case "mark-read":
+      return en ? `Marking ${notice} as read.` : `Tôi đánh dấu ${notice} là đã đọc nhé.`;
+    case "mark-unread":
+      return en ? `Marking ${notice} as unread.` : `Tôi đánh dấu ${notice} là chưa đọc nhé.`;
+    case "dismiss": {
+      // True because the page keeps an Undo beside this sentence for the whole window, and "undo dismissing the
+      // notification" restores it too; the node accepts the undo for exactly as long.
+      const minutes = String(NOTICE_DISMISS_UNDO_WINDOW_MS / 60_000);
+      return en
+        ? `Dismissing ${notice}. You can undo this within ${minutes} minutes.`
+        : `Tôi bỏ ${notice} khỏi hộp thư nhé. Bạn có thể hoàn tác trong ${minutes} phút.`;
+    }
+    case "restore":
+      return en ? `Undoing the dismissal of ${notice}.` : `Tôi hoàn tác việc bỏ ${notice} nhé.`;
+    case "snooze":
+      return en ? `Snoozing ${notice} for an hour.` : `Tôi hoãn ${notice} một tiếng nhé.`;
+    case "unsnooze":
+      return en ? `Bringing ${notice} back to the inbox.` : `Tôi đưa ${notice} trở lại hộp thư nhé.`;
+    case "suppress":
+      return en ? `Stopping notifications like ${notice}.` : `Tôi tắt báo cho loại thông báo như ${notice} nhé.`;
+    case "unsuppress":
+      return en ? `Notifying you again about notices like ${notice}.` : `Tôi bật lại báo cho loại thông báo như ${notice} nhé.`;
+    case "retry":
+      return en ? `Running the background work in ${notice} again.` : `Tôi chạy lại việc nền trong ${notice} nhé.`;
+    case "update":
+      return en ? `Installing the update ${notice} is about.` : `Tôi cài bản cập nhật trong ${notice} nhé.`;
+    case "skip-version":
+      return en ? `Skipping the version ${notice} is about.` : `Tôi bỏ qua phiên bản trong ${notice} nhé.`;
+    case "ask-again":
+      return en ? `Asking the expired question in ${notice} again.` : `Tôi hỏi lại câu hỏi đã hết hạn trong ${notice} nhé.`;
+    default: {
+      const unreachable: never = action;
+      throw new Error(`no read-back sentence for notice action ${String(unreachable)}`);
+    }
+  }
+}
+
+/** A notice as a read-back names it: by its title when the node resolved one, as "that notice" when it did not. */
+function noticeNamed(locale: AppIntentLocale, title: string | undefined): string {
+  const en = locale === "en";
+  if (title === undefined) return en ? "that notice" : "thông báo đó";
+  return en ? `the notice “${title}”` : `thông báo “${title}”`;
+}
+
+/**
+ * The question a spoken "install the latest update" is answered with. Installing puts new code on the machine and grants
+ * it what its manifest asks for, so a sentence alone never installs: a spoken yes spends a single-use token, as it does
+ * for quitting.
+ */
+export function askToConfirmNoticeUpdate(locale: AppIntentLocale = "vi", title?: string): string {
+  const notice = noticeNamed(locale, title);
+  return locale === "en"
+    ? `Install the update in ${notice}? It adds new code and the permissions it asks for. Do you confirm?`
+    : `Cài bản cập nhật trong ${notice}? Bản này thêm mã mới và các quyền nó yêu cầu. Bạn xác nhận chứ?`;
+}
+
+/**
+ * What a typed "install the latest update" is answered with: the inbox opens on the notice, and its Update button is the
+ * confirmation — the same place and the same press as installing it without a sentence.
+ */
+export function pointToNoticeUpdate(locale: AppIntentLocale = "vi", title?: string): string {
+  const notice = noticeNamed(locale, title);
+  return locale === "en"
+    ? `To install the update in ${notice}, press “Update” on the notice in the inbox. Nothing is installed until you do.`
+    : `Để cài bản cập nhật trong ${notice}, bạn bấm “Cập nhật” ở thông báo trong hộp thư. Chưa có gì được cài cho đến khi bạn bấm.`;
+}
+
 /** The on-screen name of the profile an `orb.select` names; the refinements above guarantee there is one. */
 function orbProfileLabel(intent: AppIntent): string {
   return ORB_PROFILE_LABELS[intent.orbProfile ?? "clark"];
@@ -302,7 +403,7 @@ function describeAppIntentVi(intent: AppIntent): string {
       return "Tôi mở thư viện widget để bạn chọn nhé.";
     }
     case "inbox.open":
-      return "Tôi mở hộp thư nhé.";
+      return intent.inboxTarget === undefined ? "Tôi mở hộp thư nhé." : "Tôi mở hộp thư ở mục đó nhé.";
     case "inbox.ask":
       return "Tôi xem thông báo mới nhất rồi nói cho bạn nó nghĩa là gì nhé.";
     case "turn.stop":
@@ -313,6 +414,8 @@ function describeAppIntentVi(intent: AppIntent): string {
       return "Tôi ghi nhận là việc đang chờ đã có hiệu lực nhé.";
     case "effect.failed":
       return "Tôi ghi nhận là việc đang chờ chưa có hiệu lực nhé.";
+    case "notice.act":
+      return describeNoticeAction(intent.noticeAction ?? "mark-read", "vi");
     default: {
       // Every kind above returns, so this is unreachable today. It exists so that adding a tenth kind
       // without a sentence is a loud failure in a test rather than `undefined` read aloud by a voice.
@@ -363,7 +466,7 @@ function describeAppIntentEn(intent: AppIntent): string {
       return "Opening the widget library for you to choose.";
     }
     case "inbox.open":
-      return "Opening your inbox.";
+      return intent.inboxTarget === undefined ? "Opening your inbox." : "Opening your inbox at that item.";
     case "inbox.ask":
       return "Looking at your latest notice and saying what it means.";
     case "turn.stop":
@@ -374,6 +477,8 @@ function describeAppIntentEn(intent: AppIntent): string {
       return "Recording that the waiting action took effect.";
     case "effect.failed":
       return "Recording that the waiting action did not take effect.";
+    case "notice.act":
+      return describeNoticeAction(intent.noticeAction ?? "mark-read", "en");
     default: {
       const unreachable: never = intent.kind;
       throw new Error(`no read-back sentence for app intent ${String(unreachable)}`);
@@ -465,6 +570,11 @@ export const appIntentRequestSchema = z
     modelAlias: modelAliasSchema.optional(),
     /** Carried so a click can name the orb profile an `orb.select` switches to. */
     orbProfile: orbProfileSchema.optional(),
+    /** Carried so a request that already knows the notice can name it for `notice.act`; the node checks it is offered. */
+    noticeId: z.string().min(1).max(128).optional(),
+    noticeAction: noticeOperationIdSchema.optional(),
+    /** Carried so a notification's click can open the inbox on what it was about. */
+    inboxTarget: inboxTargetSchema.optional(),
     conversationId: z.string().min(1).max(128).optional(),
     source: appIntentSourceSchema,
   })
@@ -505,6 +615,11 @@ export const appIntentEventDocumentSchema = z.strictObject({
   orbProfile: orbProfileSchema.optional(),
   /** Recorded so the audit can answer which effect a sentence was understood to answer. */
   effectId: z.string().min(1).max(128).optional(),
+  /** Recorded so the audit can answer which notice was acted on, and how. */
+  noticeId: z.string().min(1).max(128).optional(),
+  noticeAction: noticeOperationIdSchema.optional(),
+  /** Recorded so the audit can answer what a notification's click opened the inbox on. */
+  inboxTarget: inboxTargetSchema.optional(),
   source: appIntentSourceSchema,
   confirmed: z.boolean(),
 });

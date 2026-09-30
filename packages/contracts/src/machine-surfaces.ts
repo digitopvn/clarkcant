@@ -8,10 +8,14 @@
  * Exporting a table to a CSV file is the person's too: it hands a whole dataset over as a download. The person's own
  * surfaces call the routes over HTTP as before. Stop, answering a question and reading stay reachable everywhere.
  * Saying whether an effect whose outcome was unknown took effect is the person's for the same reason as an approval: it
- * decides what a task may report about itself.
+ * decides what a task may report about itself. Installing the update a notice announces is the person's too: it puts new
+ * code on the machine and grants that code the capabilities its manifest asks for, which is exactly the trust an AI
+ * client must not be able to widen for itself.
  *
  * Segments are split the way the gateway splits them (on `/`, empty segments dropped, no decoding), so a path this
- * lets through cannot reach one of these routes under another spelling.
+ * lets through cannot reach one of these routes under another spelling. A route guarded here must not decode the
+ * segment it is matched on either — the notice-action route takes its action name raw and refuses anything that is not
+ * a plain action id, so `/actions/%75pdate` is refused rather than read as `update`.
  */
 export function isPersonOnlyRoute(method: string, path: string): boolean {
   if (method.toUpperCase() !== "POST") return false;
@@ -44,7 +48,9 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
       // POST /conversations/:id/widgets/:instanceId/export: a table's rows written to a file for the person to
       // download. A machine surface reads the conversation instead; a whole dataset handed over as a file is not a read
       // an AI client should be able to make on the person's behalf.
-      return first === "conversations" && third === "widgets" && fifth === "export";
+      if (first === "conversations" && third === "widgets" && fifth === "export") return true;
+      // POST /inbox/notices/:id/actions/update: installing the version an update notice names.
+      return first === "inbox" && second === "notices" && fourth === "actions" && fifth === "update";
     default:
       return false;
   }
@@ -54,5 +60,5 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, installing updates and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });

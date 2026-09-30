@@ -458,3 +458,129 @@ export type InboxUnreadRequest = z.infer<typeof inboxUnreadRequestSchema>;
  * checks that the moment is ahead of it and within `NOTICE_SNOOZE_MAX_MS`. */
 export const inboxSnoozeRequestSchema = z.strictObject({ until: instantSchema });
 export type InboxSnoozeRequest = z.infer<typeof inboxSnoozeRequestSchema>;
+
+/**
+ * How long after a dismissal it can still be undone (`restore`).
+ *
+ * The node accepts an undo for this long, and every surface that says "you can undo this" says it for exactly this long:
+ * the read-back of a typed or spoken dismissal, the agent's tool result, and the Undo the page keeps beside what it said.
+ */
+export const NOTICE_DISMISS_UNDO_WINDOW_MS = 5 * 60_000;
+
+/**
+ * The notice actions the node carries out itself, by name (`POST /inbox/notices/:id/actions/:action`): the inbox panel,
+ * a typed or spoken command, the main and voice agent's `act_on_notice`, MCP and the CLI.
+ *
+ * The rest of `noticeActionIdSchema` is not here, for one of two reasons. `open`, `ask-clark`, `add-to-context` and
+ * `review-update` change what the person's own screen shows, so only that screen can do them. `reconcile-confirmed` and
+ * `reconcile-failed` are the person's answer about an effect, and have their own person-only route.
+ *
+ * `restore` is here without being a button on a notice: it is the Undo of `dismiss`, for a notice already out of the
+ * list, accepted while `NOTICE_DISMISS_UNDO_WINDOW_MS` has not passed.
+ */
+export const NOTICE_OPERATION_IDS = [
+  "mark-read",
+  "mark-unread",
+  "dismiss",
+  "restore",
+  "snooze",
+  "unsnooze",
+  "suppress",
+  "unsuppress",
+  "retry",
+  "update",
+  "skip-version",
+  "ask-again",
+] as const satisfies readonly (NoticeActionId | "restore")[];
+export const noticeOperationIdSchema = z.enum(NOTICE_OPERATION_IDS);
+export type NoticeOperationId = z.infer<typeof noticeOperationIdSchema>;
+
+export function isNoticeOperation(id: string): id is NoticeOperationId {
+  return (NOTICE_OPERATION_IDS as readonly string[]).includes(id);
+}
+
+/**
+ * The notice operations only the person carries out, on their own surface.
+ *
+ * `update` installs new code and grants it the capabilities its manifest asks for. That is the person's decision, like
+ * approving a command: the route is person-only (`isPersonOnlyRoute`), so MCP, the WebSocket relay and `clarkcant api`
+ * are refused, and the agents' `act_on_notice` is refused the same way. The person presses Update on the notice, or asks
+ * for it in their own words and confirms.
+ */
+export const PERSON_ONLY_NOTICE_OPERATIONS = ["update"] as const satisfies readonly NoticeOperationId[];
+
+export function isPersonOnlyNoticeOperation(id: string): boolean {
+  return (PERSON_ONLY_NOTICE_OPERATIONS as readonly string[]).includes(id);
+}
+
+/** The notice operations a machine surface or an agent may ask for: every one that is not the person's alone. */
+export const MACHINE_NOTICE_OPERATION_IDS: readonly NoticeOperationId[] = NOTICE_OPERATION_IDS.filter(
+  (id) => !isPersonOnlyNoticeOperation(id),
+);
+
+/**
+ * What the person is told when an agent or a machine surface asks to install a notice's update. The same words
+ * everywhere, so the model and an MCP client pass on the one thing the person can do.
+ */
+export const NOTICE_UPDATE_PERSON_ONLY_MESSAGE =
+  "installing an update is the person's decision: they press Update on the notice in the inbox, or ask for it themselves and confirm";
+
+/**
+ * Where on the person's own page a notice action was asked for, in the app-intent vocabulary: a press (a button in the
+ * inbox, or the Undo beside what a command did), a typed command or a spoken one. A label the page supplies for the
+ * audit and nothing more — nothing may be decided from it, because any caller can send it.
+ */
+export const noticeOperationSourceSchema = z.enum(["click", "chat", "voice"]);
+export type NoticeOperationSource = z.infer<typeof noticeOperationSourceSchema>;
+
+/**
+ * `POST /inbox/notices/:id/actions/:action`. `until` is read by `snooze` and only by it, and `snooze` needs it. `source`
+ * is the page's label for the audit (`noticeOperationSourceSchema`).
+ */
+export const noticeOperationRequestSchema = z.strictObject({
+  until: instantSchema.optional(),
+  source: noticeOperationSourceSchema.optional(),
+});
+export type NoticeOperationRequest = z.infer<typeof noticeOperationRequestSchema>;
+
+/**
+ * What a notice action did. `done` means the node carried it out; `approval-required` (only `update`) means the install
+ * is waiting for a decision that is the person's, named by `approvalId`, and nothing is installed yet. The other fields
+ * say what the action produced, where it produced something: the snooze's end, the retried work, the installed or
+ * skipped version, the question asked again. After an update, `pendingCapabilities` counts the capabilities its manifest
+ * asked for that wait for the person's approval, and `deniedCapabilities` the ones the policy refused; the package runs
+ * without them until then.
+ */
+export const noticeOperationResponseSchema = z.strictObject({
+  noticeId: z.string().min(1).max(128),
+  action: noticeOperationIdSchema,
+  outcome: z.enum(["done", "approval-required"]),
+  snoozedUntil: instantSchema.optional(),
+  workId: z.string().min(1).max(128).optional(),
+  state: z.enum(["running", "queued"]).optional(),
+  position: z.int().nonnegative().optional(),
+  version: z.string().min(1).max(128).optional(),
+  questionId: z.string().min(1).max(128).optional(),
+  approvalId: z.string().min(1).max(128).optional(),
+  pendingCapabilities: z.int().nonnegative().optional(),
+  deniedCapabilities: z.int().nonnegative().optional(),
+});
+export type NoticeOperationResponse = z.infer<typeof noticeOperationResponseSchema>;
+
+/**
+ * Where an OS or web notification leads when it is clicked: one notice (`notice:<noticeId>`) or one waiting item, keyed
+ * the way the inbox keys it (`question:<questionId>`, `command-approval:<approvalId>`, `capability-approval:<approvalId>`,
+ * `task-approval:<approvalId>`).
+ *
+ * Only an id travels, never a title, a body or anything secret: the payload passes through the operating system, and
+ * whatever the inbox shows for the target is read from the node when the inbox opens. A target that no longer resolves
+ * is said so there, rather than silently landing on the top of the list.
+ */
+export const INBOX_TARGET_KINDS = ["notice", "question", "command-approval", "capability-approval", "task-approval"] as const;
+export const inboxTargetSchema = z
+  .string()
+  .max(200)
+  .regex(/^(notice|question|command-approval|capability-approval|task-approval):[A-Za-z0-9._:@/-]{1,160}$/, {
+    error: "must name a notice or a waiting item",
+  });
+export type InboxTarget = z.infer<typeof inboxTargetSchema>;

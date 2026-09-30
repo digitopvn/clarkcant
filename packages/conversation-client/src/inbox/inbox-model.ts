@@ -1,13 +1,16 @@
-import type {
-  ComposerReference,
-  EffectCategory,
-  InboxSummary,
-  Notice,
-  NoticeAction,
-  NoticeSeverity,
-  NoticeSourceKind,
-  NoticeSuppression,
-  WaitingItem,
+import {
+  type ComposerReference,
+  type EffectCategory,
+  type InboxSummary,
+  NOTICE_DISMISS_UNDO_WINDOW_MS,
+  type Notice,
+  type NoticeAction,
+  type NoticeActionUnavailable,
+  type NoticeOperationResponse,
+  type NoticeSeverity,
+  type NoticeSourceKind,
+  type NoticeSuppression,
+  type WaitingItem,
 } from "@clarkcant/contracts";
 
 import type { MessageKey } from "../i18n/messages.ts";
@@ -186,8 +189,80 @@ export function sanitizeReason(cause: unknown): string | undefined {
  */
 export function updateFailureReason(cause: unknown, version: string, t: (key: MessageKey) => string): string {
   if (gatewayErrorCode(cause) === "NOT_IN_DIRECTORY") return t("inbox.updateReason.notInDirectory").replace("{version}", version);
+  return noticeRefusalReason(cause, t);
+}
+
+/** The words for each reason an action cannot be taken now (`noticeActionSchema.unavailable`). */
+export const UNAVAILABLE_KEYS = {
+  "conversation-gone": "inbox.action.conversationGone",
+  "work-gone": "inbox.action.workGone",
+  "package-gone": "inbox.action.packageGone",
+  "already-current": "inbox.action.alreadyCurrent",
+} as const satisfies Record<NoticeActionUnavailable, MessageKey>;
+
+/**
+ * The refusals a notice action can meet, by the node's code, in the reader's language. The node's own sentence is
+ * English for some and Vietnamese for others, and a code such as `already-current` is never something to show.
+ */
+const REFUSAL_KEYS: Readonly<Record<string, MessageKey>> = {
+  RESOURCE_NOT_FOUND: "inbox.refused.notFound",
+  ACTION_NOT_OFFERED: "inbox.refused.notOffered",
+  ACTION_UNAVAILABLE: "inbox.refused.notOffered",
+  NOT_AN_UPDATE: "inbox.refused.notOffered",
+  UNDO_EXPIRED: "inbox.refused.undoExpired",
+  ACTION_IN_PROGRESS: "inbox.refused.inProgress",
+  PERSON_ONLY: "inbox.refused.personOnly",
+  SUPPRESSION_TOO_BROAD: "inbox.refused.tooBroad",
+  SNOOZE_OUT_OF_RANGE: "inbox.refused.snoozeRange",
+  WORK_NOT_FOUND: "inbox.action.workGone",
+  CONVERSATION_GONE: "inbox.action.conversationGone",
+  WORK_NOT_RETRYABLE: "inbox.refused.notRetryable",
+  ALREADY_RETRIED: "inbox.refused.alreadyRetried",
+  BACKGROUND_BUSY: "inbox.refused.backgroundBusy",
+  BACKGROUND_UNAVAILABLE: "inbox.refused.backgroundUnavailable",
+  QUESTION_NOT_FOUND: "inbox.refused.questionGone",
+  QUESTION_OPEN: "inbox.refused.questionOpen",
+  QUESTION_CLOSED: "inbox.refused.questionClosed",
+  ALREADY_ASKED_AGAIN: "inbox.refused.alreadyAskedAgain",
+};
+
+/**
+ * Why a notice action did not happen, as one finished sentence in the reader's language: worded from the node's code,
+ * and for "not possible now" from the reason code beside it. Only a code this client does not know falls back to the
+ * node's own sentence, ended with a full stop so the sentence after it reads as its own.
+ */
+export function noticeRefusalReason(cause: unknown, t: (key: MessageKey) => string): string {
+  const code = gatewayErrorCode(cause);
+  if (code === "ACTION_UNAVAILABLE") {
+    const reason = unavailableReasonOf(cause);
+    if (reason !== undefined) return t(UNAVAILABLE_KEYS[reason]);
+  }
+  const key = code === undefined || !Object.hasOwn(REFUSAL_KEYS, code) ? undefined : REFUSAL_KEYS[code];
+  if (key !== undefined) return t(key).replace("{minutes}", String(NOTICE_DISMISS_UNDO_WINDOW_MS / 60_000));
   const reason = (sanitizeReason(cause) ?? t("inbox.reason.unavailable")).trimEnd();
   return /[.!?…]$/u.test(reason) ? reason : `${reason}.`;
+}
+
+/**
+ * What an installed update runs without, after the sentence that says it was installed: "installed" alone would read
+ * as "installed with everything it asked for". Empty when it got everything.
+ */
+export function capabilitiesSay(answer: NoticeOperationResponse, t: (key: MessageKey) => string): string {
+  const pending = answer.pendingCapabilities ?? 0;
+  const denied = answer.deniedCapabilities ?? 0;
+  return (
+    (pending > 0 ? t("inbox.act.pending").replace("{count}", String(pending)) : "") +
+    (denied > 0 ? t("inbox.act.denied").replace("{count}", String(denied)) : "")
+  );
+}
+
+/** The `reason` code a refusal carried in its details, when it is one this client has words for. */
+function unavailableReasonOf(cause: unknown): NoticeActionUnavailable | undefined {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const details = (cause as { details?: unknown }).details;
+  if (typeof details !== "object" || details === null) return undefined;
+  const reason = (details as { reason?: unknown }).reason;
+  return typeof reason === "string" && Object.hasOwn(UNAVAILABLE_KEYS, reason) ? (reason as NoticeActionUnavailable) : undefined;
 }
 
 /**

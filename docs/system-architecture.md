@@ -585,7 +585,36 @@ open-interface description. The contract is in `packages/contracts/src/inbox.ts`
 DESIGN.md §6.7; opened with the `inbox.open` intent (text, voice, `control_app`), and `inbox.ask` asks Clark about the
 newest notice. The agent reads the same data through the read-only tool `read_inbox`
 (`apps/runtime/src/read-inbox-tool.ts`): it does not mark anything as read (the user has not seen it yet) and cannot decide anything
-(the model is not the user).
+(the model is not the user). Each notice it lists carries its id, the actions it can take now and the ones it cannot,
+with the reason.
+
+**One action layer for a notice's own actions.** `performNoticeOperation` (`apps/runtime/src/notice-operations.ts`)
+carries out the actions in `NOTICE_OPERATION_IDS` (read, unread, dismiss, restore, snooze, unsnooze, suppress,
+unsuppress, retry, update, skip-version, ask-again), and every surface reaches it: `POST /inbox/notices/:id/actions/:action`
+(the inbox panel, MCP's `act_on_notice`, `clarkcant api`), the main and voice agent's `act_on_notice` tool
+(`act-on-notice-tool.ts`), and the `notice.act` intent from a typed or spoken sentence. The route matches the raw
+action segment, so a percent-encoded name is not decoded into another action. Each call is audited as an
+`inbox.notice-action` event with the surface it came from (click, chat, voice, agent, voice-agent, mcp, relay, api)
+and its result; the MCP server and the WebSocket relay set the surface themselves and their marker wins over any label
+in the body, and the label only describes the call for the audit — it never allows anything. It refuses in a fixed order and changes nothing when it does: an unknown name, the person's answer
+about an unknown outcome and an update asked for by an agent, MCP or the relay (`403 PERSON_ONLY`), an action that
+changes what the person's screen shows (`409 SURFACE_ACTION`), a notice that is not this principal's live one
+(`404`), and, for all but read, unread and restore, an action the notice does not offer now (`409 ACTION_NOT_OFFERED`)
+or offers as unavailable (`409 ACTION_UNAVAILABLE`), re-read from the store at the moment of asking rather than from
+what the caller last saw. `update` is the person's own decision: `isPersonOnlyRoute` lists its route, so the relay,
+`clarkcant api` and MCP `call` refuse it, and the agents' tool never offers it. It goes through the ordinary
+`installPackage` with its checks, answers `409 ACTION_IN_PROGRESS` while the same notice is already installing, and
+reports how many requested capabilities wait for approval or were denied; under an ask-first execution mode it answers
+`202 approval-required`, reuses a pending install approval for the same version and installs nothing. `restore` undoes
+a dismissal for five minutes (`409 UNDO_EXPIRED` after that). The core matcher knows only which action a sentence
+names; `resolveNoticeTarget` in the runtime's `app-intents.ts` picks the notice (newest for read, unread, dismiss,
+snooze and suppress; the latest dismissal still inside its undo window for restore; the soonest-due snoozed notice for
+unsnooze; the newest notice among the latest 50 that offers the action as available for retry, update, skip-version
+and ask-again) and puts its title in the read-back, or answers that none fits. A typed "install the latest update"
+opens the inbox at that notice rather than installing, and a spoken one asks first. The page runs the decision through
+`host.actOnNotice`, which posts to the same route, and says the node's answer in the panel's words. `read_inbox`
+marks notice text as data rather than instructions, strips control characters and newlines, and clips titles, so a
+notice cannot forge a line of the listing.
 
 **Out-of-app notifications** are the client's job, not the node's. `use-inbox-notifications.ts` polls `GET /inbox`
 and the `inbox.notifications` preference (`packages/contracts/src/preferences.ts`; a stored value missing a field is
@@ -595,7 +624,14 @@ first poll only remembers, it does not notify a backlog. The content is only a r
 never a command line, capability ref or internal id. On desktop the renderer calls `desktop:notify`; the main process
 keeps a reference to each `Notification` still on screen, and on click restores the shell window from orb/compact,
 focuses it and sends `desktop:notificationClicked` **only to the shell window** (never to a detached widget window);
-preload returns a function that unsubscribes that listener (as does `onWidgetReattached`). When `desktop:notify`
+preload returns a function that unsubscribes that listener (as does `onWidgetReattached`). The renderer passes the
+item's inbox target (`notice:<id>`, `question:<id>`, `command-approval:<id>`, `capability-approval:<id>`,
+`task-approval:<id>`) with `desktop:notify`; the main process keeps it only if it matches the grammar
+(`reviewNotificationTarget` in `security.mjs`, the same pattern as `inboxTargetSchema`), sends only that string back
+on click, and preload copies only a string `target` into the callback. The page checks it again (`inboxTargetOf`)
+and opens the inbox with `inbox.open` carrying `inboxTarget`: the panel marks that row, scrolls it into view and
+focuses its first button, or says the item is no longer in the inbox. A web notification's click does the same with
+its `tag`. Buttons on the OS notification itself are not offered (#340). When `desktop:notify`
 refuses (`reason`: `unsupported`, `no-window`) or fails, the renderer records the latest outcome
 (`desktop-notify-status.ts`, the kind of failure only, no content) and Settings → Control shows an inline status
 beside the OS notification toggle until the OS accepts a notification again. In the browser, the Web Notification API is used only

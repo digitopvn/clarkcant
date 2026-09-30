@@ -1083,7 +1083,7 @@ describe("the agent reads the inbox", () => {
     expect(text).not.toContain("snoozed");
   });
 
-  it("does not list what the user snoozed, but says it exists", async () => {
+  it("lists what the user snoozed apart from the notices, with its id and the one action it offers", async () => {
     const { notificationId } = recordNodeNotice(services, {
       sourceKind: "background",
       category: "result",
@@ -1092,10 +1092,13 @@ describe("the agent reads the inbox", () => {
       dedupKey: "background:later",
       at: now as Instant,
     });
-    await request("POST", `/inbox/notices/${notificationId}/snooze`, { until: new Date(Date.parse(AT) + 60 * 60_000).toISOString() });
+    const until = new Date(Date.parse(AT) + 60 * 60_000).toISOString();
+    await request("POST", `/inbox/notices/${notificationId}/snooze`, { until });
     const { text } = await createReadInboxTool(() => readInbox(services, now as Instant)).execute({});
-    expect(text).not.toContain("Việc để sau");
-    expect(text).toContain("1 more snoozed by the user until later");
+    // Not among the notices the user sees now: under its own heading, so the model does not report it as current.
+    expect(text).toContain("No notices.");
+    expect(text).toContain("Snoozed by the user (1); each returns to the inbox on its own at its time:");
+    expect(text).toContain(`- [snoozed until ${until}] Việc để sau (notice ${notificationId}; actions: unsnooze)`);
   });
 
   it("reports a read that failed as a failure, not as an empty inbox", async () => {

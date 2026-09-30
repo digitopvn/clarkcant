@@ -664,6 +664,119 @@ async function listedNotices(page: Page): Promise<Array<{ noticeId: string; titl
   return ((await response.json()) as { notices: Array<{ noticeId: string; title: string; body?: string; conversationId?: string; severity: string }> }).notices;
 }
 
+test("dismissing the latest notification, typed, is done by the node on the notice it names, and says so", async ({ page }) => {
+  await openApp(page);
+  const { noticeId, title } = await backgroundNotice(page, "thông báo để bỏ bằng một câu");
+  const actions: Array<{ path: string; source?: string }> = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/inbox/notices/")) {
+      const source = (request.postDataJSON() as { source?: string } | null)?.source;
+      actions.push({ path: new URL(request.url()).pathname, ...(source === undefined ? {} : { source }) });
+    }
+  });
+
+  const composer = page.locator("[data-composer]");
+  await composer.fill("bỏ thông báo mới nhất");
+  await composer.press("Enter");
+
+  // The read-back names the notice the node chose, so a person who hears the wrong one knows it, and says how long the
+  // undo it promises lasts.
+  const readBack = `Tôi bỏ thông báo “${title}” khỏi hộp thư nhé. Bạn có thể hoàn tác trong 5 phút.`;
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(readBack, { timeout: 20_000 });
+  // Held by its words, since later replies become the last one.
+  const reply = page.locator('[data-role="assistant"]', { hasText: readBack });
+  // What the node answered, not the read-back again: it was done. Said in the conversation, directly under that reply,
+  // with its Undo — not in a card over the page — and without taking focus from wherever the person is.
+  const undoRow = page.locator(`[data-notice-undo-id="${noticeId}"]`);
+  await expect(undoRow).toHaveAttribute("data-notice-undo", "offered", { timeout: 20_000 });
+  await expect(undoRow).toContainText("Đã bỏ thông báo.");
+  await expect(reply.locator("xpath=following-sibling::*[1]")).toHaveAttribute("data-notice-undo-id", noticeId);
+  expect(await undoRow.evaluate((element) => getComputedStyle(element).position)).toBe("static");
+  await expect(page.locator("[data-intent-notice]")).toHaveCount(0);
+  const undo = undoRow.locator('[data-intent-undo="true"]');
+  await expect(undo).toHaveAccessibleName("Hoàn tác bỏ thông báo");
+  await expect(undo).not.toBeFocused();
+  // Lined up with the reply's words and on one line with its Undo, close under the reply: part of it, not a centred
+  // block of its own. Measured once both have finished arriving, since the entrance moves them.
+  for (const settling of [reply, undoRow]) {
+    await settling.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)).then(() => undefined));
+  }
+  const replyText =await reply.locator(".cc-assistant-body").boundingBox();
+  const lineText = await undoRow.locator(".cc-notice-undo-text").boundingBox();
+  const undoBox = await undo.boundingBox();
+  const replyBox = await reply.boundingBox();
+  const rowBox = await undoRow.boundingBox();
+  if (replyText === null || lineText === null || undoBox === null || replyBox === null || rowBox === null) {
+    throw new Error("the reply and its undo line are not laid out");
+  }
+  expect(Math.abs(lineText.x - replyText.x)).toBeLessThanOrEqual(2);
+  expect(undoBox.x).toBeGreaterThan(lineText.x + lineText.width - 1);
+  expect(Math.abs(undoBox.y + undoBox.height / 2 - (lineText.y + lineText.height / 2))).toBeLessThanOrEqual(4);
+  expect(rowBox.y - (replyBox.y + replyBox.height)).toBeLessThanOrEqual(12);
+  expect(actions).toEqual([{ path: `/inbox/notices/${noticeId}/actions/dismiss`, source: "chat" }]);
+  await expect.poll(async () => (await listedNotices(page)).map((notice) => notice.noticeId)).not.toContain(noticeId);
+
+  // The inbox shows the same state a press would have left: the notice is gone from the list.
+  await composer.fill("mở hộp thư");
+  await composer.press("Enter");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.locator('[data-inbox-panel="ready"]')).toBeVisible({ timeout: 20_000 });
+  await expect(dialog.locator(`[data-inbox-notice="${noticeId}"]`)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  // The undo the read-back promised is a real control that stayed under its reply while the conversation moved on, it
+  // works from the keyboard, and it brings the notice back. Focus lands on the line that says so, not on the page.
+  await expect(reply.locator("xpath=following-sibling::*[1]")).toHaveAttribute("data-notice-undo-id", noticeId);
+  await expect(undo).toBeVisible();
+  await undo.focus();
+  await page.keyboard.press("Enter");
+  await expect(undoRow).toHaveAttribute("data-notice-undo", "restored", { timeout: 20_000 });
+  await expect(undoRow).toContainText("Đã đưa thông báo trở lại hộp thư");
+  await expect(undo).toHaveCount(0);
+  await expect(undoRow.locator(".cc-notice-undo-text")).toBeFocused();
+  expect(actions.at(-1)).toEqual({ path: `/inbox/notices/${noticeId}/actions/restore`, source: "click" });
+  await expect.poll(async () => (await listedNotices(page)).map((notice) => notice.noticeId)).toContain(noticeId);
+});
+
+test("the Undo under a dismissal's reply says quietly when its five minutes have passed", async ({ page }) => {
+  await page.clock.install();
+  await openApp(page);
+  const { noticeId } = await backgroundNotice(page, "thông báo để hết thời gian hoàn tác");
+  const composer = page.locator("[data-composer]");
+  await composer.fill("bỏ thông báo mới nhất");
+  await composer.press("Enter");
+  const undoRow = page.locator(`[data-notice-undo-id="${noticeId}"]`);
+  await expect(undoRow).toHaveAttribute("data-notice-undo", "offered", { timeout: 20_000 });
+
+  // Still offered just before the window ends, gone with a quiet sentence just after it.
+  await page.clock.fastForward(5 * 60_000 - 5_000);
+  await expect(undoRow.locator('[data-intent-undo="true"]')).toBeVisible();
+  await page.clock.fastForward(10_000);
+  await expect(undoRow).toHaveAttribute("data-notice-undo", "expired");
+  await expect(undoRow).toContainText("Hết thời gian hoàn tác");
+  await expect(undoRow.locator('[data-intent-undo="true"]')).toHaveCount(0);
+});
+
+test("undoing a dismissal, said in words, brings back the notice most recently dismissed", async ({ page }) => {
+  await openApp(page);
+  const { noticeId, title } = await backgroundNotice(page, "thông báo để hoàn tác bằng một câu");
+  const composer = page.locator("[data-composer]");
+  await composer.fill("bỏ thông báo mới nhất");
+  await composer.press("Enter");
+  const undoRow = page.locator(`[data-notice-undo-id="${noticeId}"]`);
+  await expect(undoRow).toHaveAttribute("data-notice-undo", "offered", { timeout: 20_000 });
+
+  await composer.fill("hoàn tác bỏ thông báo");
+  await composer.press("Enter");
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(`Tôi hoàn tác việc bỏ thông báo “${title}” nhé.`, { timeout: 20_000 });
+  await expect(page.locator("[data-intent-notice]")).toContainText("Đã đưa thông báo trở lại.", { timeout: 20_000 });
+  // The Undo left under the dismissal no longer offers what the sentence already did.
+  await expect(undoRow).toHaveAttribute("data-notice-undo", "restored");
+  await expect(undoRow.locator('[data-intent-undo="true"]')).toHaveCount(0);
+  await expect.poll(async () => (await listedNotices(page)).map((notice) => notice.noticeId)).toContain(noticeId);
+});
+
 test("background work that failed is run again from its notice, and the new run reports for itself", async ({ page }) => {
   await openApp(page);
   // The fixture fails the first run of a request that says so, and runs the same words cleanly the second time.

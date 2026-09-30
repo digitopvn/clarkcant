@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { parseInboxNotificationsPreference, type InboxNotificationsPreference } from "@clarkcant/contracts";
+import { inboxTargetSchema, parseInboxNotificationsPreference, type InboxNotificationsPreference } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
 import { desktopBridge, hasDesktopChrome } from "../desktop-compact.ts";
@@ -58,12 +58,24 @@ function webNotificationApi(scope: unknown = globalThis): typeof Notification | 
  */
 type WebNotificationOptions = NotificationOptions & { renotify?: boolean };
 
+/**
+ * A notification's id as an inbox target, or nothing when it is not one — an id with characters the target grammar does
+ * not allow opens the inbox at the top rather than being sent on as something the node would refuse.
+ */
+export function inboxTargetOf(id: unknown): string | undefined {
+  const parsed = inboxTargetSchema.safeParse(id);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export interface UseInboxNotificationsInput {
   client: GatewayClient;
   t: (key: MessageKey) => string;
   windowMode: WindowModeAttribute;
-  /** Focuses the window (desktop click already did) and opens the inbox — the same path the header mark uses. */
-  onOpenInbox: () => void;
+  /**
+   * Focuses the window (desktop click already did) and opens the inbox — the same path the header mark uses — on the
+   * notice or waiting item the notification was about (`inboxTargetSchema`), when the click said which.
+   */
+  onOpenInbox: (target?: string) => void;
   /**
    * The conversations that new notices belong to, once per poll that found any. Something the node said on its own —
    * a reminder, work an automation started — lands in its conversation and in the inbox together; this is how a
@@ -97,13 +109,14 @@ export function useInboxNotifications({
   const tRef = useRef(t);
   tRef.current = t;
 
-  // Desktop notifications are click-through: the main process broadcasts one event for whichever notification
-  // was clicked, and any of them opening the inbox is the right reaction. Subscribed once, not per notification,
-  // and unsubscribed on cleanup so a remount never leaves a second, stale listener behind.
+  // Desktop notifications are click-through: the main process sends one event for whichever notification was clicked,
+  // carrying the id it was shown with, and the inbox opens on that item. A shell from before targets sends no payload,
+  // and the inbox then opens at the top as it always did. Subscribed once, not per notification, and unsubscribed on
+  // cleanup so a remount never leaves a second, stale listener behind.
   useEffect(() => {
     const bridge = desktopBridge();
     if (bridge?.onNotificationClicked === undefined) return;
-    const unsubscribe = bridge.onNotificationClicked(() => onOpenInboxRef.current());
+    const unsubscribe = bridge.onNotificationClicked((clicked) => onOpenInboxRef.current(inboxTargetOf(clicked?.target)));
     return () => unsubscribe();
   }, []);
 
@@ -120,7 +133,10 @@ export function useInboxNotifications({
         const bridge = desktopBridge();
         if (bridge?.notify === undefined) return;
         // Not an app-level error, but kept so Settings can say why an OS toggle that is on shows nothing.
-        bridge.notify({ title: candidate.title, body: candidate.body ?? "" }).then(
+        // Only the id travels with it: the payload passes through the operating system, and what the inbox shows for
+        // it is read from the node when it opens.
+        const target = inboxTargetOf(candidate.id);
+        bridge.notify({ title: candidate.title, body: candidate.body ?? "", ...(target === undefined ? {} : { target }) }).then(
           (answer) => recordDesktopNotifyStatus(classifyDesktopNotifyResult(answer)),
           () => recordDesktopNotifyStatus({ kind: "failed" }),
         );
@@ -140,7 +156,7 @@ export function useInboxNotifications({
         shown.onclick = () => {
           shown.close();
           window.focus();
-          onOpenInboxRef.current();
+          onOpenInboxRef.current(inboxTargetOf(candidate.id));
         };
       } catch {
         // A browser that throws from the constructor (permission revoked mid-session, a platform quirk) is

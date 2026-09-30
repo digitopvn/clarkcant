@@ -1,11 +1,18 @@
 import { type RefObject, useCallback, useEffect, useRef } from "react";
 
-import type { ComposerReference, EffectReconcileResponse, Notice } from "@clarkcant/contracts";
+import type {
+  ComposerReference,
+  EffectReconcileResponse,
+  Notice,
+  NoticeOperationId,
+  NoticeOperationResponse,
+  NoticeOperationSource,
+} from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
 import type { MessageKey } from "../i18n/messages.ts";
 import type { SendOptions } from "../use-turn-send.ts";
-import { noticeReference } from "./inbox-model.ts";
+import { capabilitiesSay, noticeRefusalReason, noticeReference, snoozeUntil } from "./inbox-model.ts";
 
 export interface InboxNoticeActionsDeps {
   client: GatewayClient;
@@ -20,6 +27,10 @@ export interface InboxNoticeActionsDeps {
   refreshTimeline: () => void;
   /** Tells the header's inbox count that something changed. */
   onInboxChanged: () => void;
+  /** Tells an open inbox panel to read again, because something outside it changed a notice. */
+  refreshInboxPanel: () => void;
+  /** The UI language, for the time a snooze ends. */
+  locale: "vi" | "en";
 }
 
 export interface InboxNoticeActions {
@@ -33,6 +44,14 @@ export interface InboxNoticeActions {
    * here, so the three cannot drift apart. Rejects with the node's error, `EFFECT_NOT_UNKNOWN` included.
    */
   reconcile: (effectId: string, outcome: "confirmed" | "failed", source: "click" | "chat" | "voice") => Promise<EffectReconcileResponse>;
+  /**
+   * The `notice.act` intent: one of a notice's own actions, carried out by the node's notice-action route — the one MCP,
+   * `clarkcant api` and both agents reach — after the node named the notice. Resolves to the sentence saying what the node
+   * did, and rejects with the reason, in the reader's language, when it did not. A snooze from a sentence lasts an hour,
+   * the menu's first choice. `source` says how the person asked: a press, a typed sentence or a spoken one; the node
+   * records it with the action.
+   */
+  actOnNotice: (noticeId: string, action: NoticeOperationId, source: NoticeOperationSource) => Promise<string>;
 }
 
 /**
@@ -54,6 +73,8 @@ export function useInboxNoticeActions({
   t,
   refreshTimeline,
   onInboxChanged,
+  refreshInboxPanel,
+  locale,
 }: InboxNoticeActionsDeps): InboxNoticeActions {
   // Closing the inbox hands focus back to whatever opened it. After "Add to context" the person is about to write,
   // so focus goes to the composer instead — once the dialog has put it back, which is why this is an effect here:
@@ -105,5 +126,76 @@ export function useInboxNoticeActions({
     [client, refreshTimeline, onInboxChanged],
   );
 
-  return { askClark, addToContext, askAboutLatestNotice, reconcile };
+  const actOnNotice = useCallback(
+    async (noticeId: string, action: NoticeOperationId, source: NoticeOperationSource): Promise<string> => {
+      let until: string | undefined;
+      if (action === "snooze") {
+        // "In 1 hour" always has a time; the check is the preset's own contract.
+        const end = snoozeUntil("hour", new Date());
+        if (end === undefined) throw new Error(t("inbox.snooze.gone"));
+        until = end.toISOString();
+      }
+      let answer: NoticeOperationResponse;
+      try {
+        answer = await client.actOnNotice(noticeId, action, { ...(until === undefined ? {} : { until }), source });
+      } catch (cause) {
+        // Worded from the node's code in the reader's language; a restore that fails leaves the notice dismissed.
+        const reason = noticeRefusalReason(cause, t);
+        throw new Error(t(action === "restore" ? "inbox.act.undoFailed" : "inbox.act.failed").replace("{reason}", reason), { cause });
+      } finally {
+        // Whatever happened, the list and the count are read again: a refusal can mean the notice changed elsewhere.
+        onInboxChanged();
+        refreshInboxPanel();
+      }
+      // Retrying and asking again add to a conversation; the one on screen shows it without waiting for its next read.
+      if (action === "retry" || action === "ask-again") refreshTimeline();
+      return noticeOperationSay(answer, t, locale);
+    },
+    [client, t, locale, onInboxChanged, refreshInboxPanel, refreshTimeline],
+  );
+
+  return { askClark, addToContext, askAboutLatestNotice, reconcile, actOnNotice };
+}
+
+/** What the node did, in the panel's own words for the same action, so a sentence and a press are answered alike. */
+export function noticeOperationSay(answer: NoticeOperationResponse, t: (key: MessageKey) => string, locale: "vi" | "en"): string {
+  switch (answer.action) {
+    case "mark-read":
+      return t("inbox.markedRead");
+    case "mark-unread":
+      return t("inbox.markedUnread");
+    case "dismiss":
+      return t("inbox.dismissed");
+    case "restore":
+      return t("inbox.restored");
+    case "snooze": {
+      const time =
+        answer.snoozedUntil === undefined
+          ? ""
+          : new Date(answer.snoozedUntil).toLocaleString(locale === "vi" ? "vi-VN" : "en-US", { weekday: "long", hour: "2-digit", minute: "2-digit" });
+      return t("inbox.snoozed").replace("{time}", time);
+    }
+    case "unsnooze":
+      return t("inbox.unsnoozed");
+    case "suppress":
+      return t("inbox.suppressed");
+    case "unsuppress":
+      return t("inbox.unsuppressed");
+    case "retry":
+      return answer.state === "queued" && answer.position !== undefined
+        ? t("inbox.retryQueued").replace("{position}", String(answer.position))
+        : t("inbox.retried");
+    case "update":
+      return answer.outcome === "approval-required"
+        ? t("inbox.updateNeedsApproval")
+        : `${t("inbox.act.updated").replace("{version}", answer.version ?? "")}${capabilitiesSay(answer, t)}`;
+    case "skip-version":
+      return t("inbox.skipped").replace("{version}", answer.version ?? "");
+    case "ask-again":
+      return t("inbox.askedAgain");
+    default: {
+      const unhandled: never = answer.action;
+      return unhandled;
+    }
+  }
 }

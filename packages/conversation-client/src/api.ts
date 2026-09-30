@@ -30,6 +30,7 @@ import {
   inboxResponseSchema,
   inboxSummarySchema,
   memoryListSchema,
+  noticeOperationResponseSchema,
   suggestionsResponseSchema,
   type AppIntentDecision,
   type AppIntentKind,
@@ -41,6 +42,9 @@ import {
   type EffectReconcileResponse,
   type InboxResponse,
   type InboxSummary,
+  type NoticeOperationId,
+  type NoticeOperationResponse,
+  type NoticeOperationSource,
   type NoticeSuppression,
   type SkippedVersion,
   type MemoryRecord,
@@ -1740,10 +1744,18 @@ export class GatewayClient {
     text?: string;
     source: "chat" | "click" | "voice";
     conversationId?: string;
+    /** Only with `notice.act`: which notice, and which of its actions. */
+    noticeId?: string;
+    noticeAction?: NoticeOperationId;
+    /** Only with `inbox.open`: the notice or waiting item a notification pointed at. */
+    inboxTarget?: string;
   }): Promise<AppIntentResolution> {
     const body = {
       ...(input.kind === undefined ? {} : { kind: input.kind }),
       ...(input.tab === undefined ? {} : { tab: input.tab }),
+      ...(input.noticeId === undefined ? {} : { noticeId: input.noticeId }),
+      ...(input.noticeAction === undefined ? {} : { noticeAction: input.noticeAction }),
+      ...(input.inboxTarget === undefined ? {} : { inboxTarget: input.inboxTarget }),
       ...(input.text === undefined ? {} : { text: input.text }),
       ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
       source: input.source,
@@ -1964,6 +1976,29 @@ export class GatewayClient {
    */
   cancelWork(workId: string): Promise<{ workId: string; outcome: "stopped" | "dequeued" | "already-ended" }> {
     return this.#call("POST", `/work/${encodeURIComponent(workId)}/cancel`, {});
+  }
+
+  /**
+   * Carry out one of a notice's own actions on the node (`POST /inbox/notices/:id/actions/:action`): the same function
+   * MCP, `clarkcant api` and both agents reach, which checks the action against what the notice offers now. `outcome`
+   * is `approval-required` when an update's install waits for the person's approval; nothing is installed then.
+   * `source` says where on this page it was asked for — a press, a typed or a spoken command — for the node's audit.
+   */
+  async actOnNotice(
+    noticeId: string,
+    action: NoticeOperationId,
+    options: { until?: string; source?: NoticeOperationSource } = {},
+  ): Promise<NoticeOperationResponse> {
+    const body = await this.#call<unknown>(
+      "POST",
+      // The action is sent as it is: the node reads that segment raw and refuses an encoded one.
+      `/inbox/notices/${encodeURIComponent(noticeId)}/actions/${action}`,
+      {
+        ...(options.until === undefined ? {} : { until: options.until }),
+        ...(options.source === undefined ? {} : { source: options.source }),
+      },
+    );
+    return noticeOperationResponseSchema.parse(body);
   }
 
   /** Runs background work that failed or was stopped again, once, as new work with the same words. */

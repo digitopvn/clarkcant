@@ -1,6 +1,6 @@
-import { type CSSProperties, type ReactElement, useRef, useState } from "react";
+import { type CSSProperties, Fragment, type ReactElement, useRef, useState } from "react";
 
-import type { OrbProfileName } from "@clarkcant/contracts";
+import type { NoticeOperationId, NoticeOperationSource, OrbProfileName } from "@clarkcant/contracts";
 
 import type { GatewayClient, Timeline } from "./api.ts";
 import { agentStateFrom, windowModeFrom } from "./input-modality.ts";
@@ -27,6 +27,7 @@ import { ConversationComposerBar } from "./ConversationComposerBar.tsx";
 import { ConversationPinSurfaces } from "./ConversationPinSurfaces.tsx";
 import { ConversationLiveReplyRow } from "./ConversationLiveReplyRow.tsx";
 import { TimelineMessageRow } from "./TimelineMessageRow.tsx";
+import { NoticeUndoRow } from "./NoticeUndoRow.tsx";
 import { useAppearance } from "./use-appearance.ts";
 import { useTheme } from "./use-theme.ts";
 import { useLocale } from "./i18n/use-locale.ts";
@@ -180,6 +181,8 @@ export function Conversation({
   const [backgroundTick, setBackgroundTick] = useState(0);
   /** The same, for the inbox mark: bumped when the inbox panel changed something the mark counts. */
   const [inboxTick, setInboxTick] = useState(0);
+  /** Bumped when a notice changed from outside the inbox panel (a sentence), so an open panel reads again. */
+  const [inboxPanelRefresh, setInboxPanelRefresh] = useState(0);
   const [draft, setDraft] = useState("");
 
   /**
@@ -194,6 +197,12 @@ export function Conversation({
   const recordEffectOutcome = useRef<((effectId: string, outcome: "confirmed" | "failed") => Promise<void>) | undefined>(
     undefined,
   );
+  const actOnNotice = useRef<((noticeId: string, action: NoticeOperationId, source?: NoticeOperationSource) => Promise<string>) | undefined>(
+    undefined,
+  );
+  /** The newest message on screen, kept for the moment a dismissal runs (see `latestMessageId` below). */
+  const latestMessageId = useRef<string | undefined>(undefined);
+  latestMessageId.current = blocks.at(-1)?.messageId;
   /** The hidden file input the `+` button opens, so the button itself is a real `<button>`. */
   const attachmentInput = useRef<HTMLInputElement>(null);
 
@@ -308,6 +317,13 @@ export function Conversation({
     recordEffectOutcome: async (effectId, outcome) => {
       await recordEffectOutcome.current?.(effectId, outcome);
     },
+    // "Dismiss the latest notification", typed or said: the notice's own action, through the route the panel uses.
+    actOnNotice: async (noticeId, action, source) => {
+      if (actOnNotice.current === undefined) throw new Error(localeState.t("shell.intent.notInbox"));
+      return actOnNotice.current(noticeId, action, source);
+    },
+    // Read when a dismissal runs: by then Clark's reply about it is the newest message, and its Undo goes under it.
+    latestMessageId: () => latestMessageId.current,
     // The hotkey's own switches, so the alias and note on screen follow an agent's switch too.
     cycleModel,
     selectModel,
@@ -348,10 +364,14 @@ export function Conversation({
     t: localeState.t,
     refreshTimeline,
     onInboxChanged: () => setInboxTick((tick) => tick + 1),
+    refreshInboxPanel: () => setInboxPanelRefresh((tick) => tick + 1),
+    locale: localeState.locale,
   });
   askAboutLatestNotice.current = noticeActions.askAboutLatestNotice;
   // A typed command arrives while the voice screen is closed, a spoken one while it is open: that is the surface the
-  // person answered from, and the node records it beside the answer.
+  // person answered from, and the node records it beside the answer. A press says so itself.
+  actOnNotice.current = (noticeId, action, source) => noticeActions.actOnNotice(noticeId, action, source ?? (voiceOpen ? "voice" : "chat"));
+  // The same rule for "it took effect", typed or said.
   recordEffectOutcome.current = async (effectId, outcome) => {
     try {
       await noticeActions.reconcile(effectId, outcome, voiceOpen ? "voice" : "chat");
@@ -409,7 +429,8 @@ export function Conversation({
     client,
     t: localeState.t,
     windowMode,
-    onOpenInbox: () => appIntents.clickIntent("inbox.open"),
+    // A notification leads to what it was about: the inbox opens on that notice or waiting item.
+    onOpenInbox: (target) => appIntents.clickIntent("inbox.open", target === undefined ? undefined : { inboxTarget: target }),
     onNoticesArrived: (conversationIds) => {
       if (conversationId !== undefined && conversationIds.includes(conversationId)) refreshTimeline();
     },
@@ -419,6 +440,13 @@ export function Conversation({
   const placeholderPhrases = PLACEHOLDER_PHRASE_KEYS.map((key) => localeState.t(key));
   const placeholder = useTypewriterPlaceholder(placeholderPhrases, heroPhase === "shown" && draft === "");
   const showTimeline = blocks.length > 0 || pendingUser !== undefined || busy;
+  // The Undo a dismissal by a sentence left, under the reply that said so: the last row with that message's id.
+  const noticeUndo = appIntents.noticeUndo;
+  const undoIndex = noticeUndo === undefined ? -1 : blocks.findLastIndex((message) => message.messageId === noticeUndo.afterMessageId);
+  const noticeUndoRow =
+    noticeUndo === undefined ? null : (
+      <NoticeUndoRow key={`${noticeUndo.noticeId}-${String(noticeUndo.offeredAt)}`} undo={noticeUndo} onUndo={appIntents.undoNoticeDismissal} />
+    );
 
   return (
     <LocaleProvider value={localeState}>
@@ -466,16 +494,20 @@ export function Conversation({
           {showTimeline && (
             <div className="cc-timeline" aria-live="polite" aria-relevant="additions">
               {blocks.map((message, index) => (
-                <TimelineMessageRow
-                  key={`${message.messageId}-${index}`}
-                  message={message}
-                  index={index}
-                  renderSurface={renderSurface}
-                  blockActions={blockActions}
-                  client={client}
-                  settled
-                />
+                <Fragment key={`${message.messageId}-${index}`}>
+                  <TimelineMessageRow
+                    message={message}
+                    index={index}
+                    renderSurface={renderSurface}
+                    blockActions={blockActions}
+                    client={client}
+                    settled
+                  />
+                  {index === undoIndex && noticeUndoRow}
+                </Fragment>
               ))}
+              {/* Its reply is not on screen (a dismissal said while a reply was being written): it goes after the rest. */}
+              {undoIndex === -1 && noticeUndoRow}
 
               {pendingUser !== undefined && (
                 <article className="cc-row" data-role="user" data-pending="true" style={{ "--cc-enter-delay": "0ms" } as CSSProperties}>
@@ -605,6 +637,9 @@ export function Conversation({
         onAddToContext={noticeActions.addToContext}
         onReconcile={(effectId, outcome) => noticeActions.reconcile(effectId, outcome, "click")}
         onOpenSettings={appIntents.openSettings}
+        refreshKey={inboxPanelRefresh}
+        {...(appIntents.inboxTarget === undefined ? {} : { target: appIntents.inboxTarget })}
+        onTargetShown={appIntents.clearInboxTarget}
       />
 
       {/* The Widget Library, beside the conversation rather than in place of it. */}

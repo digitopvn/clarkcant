@@ -36,6 +36,7 @@ import {
   reviewCredentialRequest,
   reviewDevServerUrl,
   reviewIpcCall,
+  reviewNotificationTarget,
 } from "./security.mjs";
 import {
   detachedBootstrap,
@@ -396,7 +397,10 @@ function registerHandlers() {
     // restores the window from orb/compact if it was collapsed, focuses it the same way `desktop:focusWindow`
     // does, then tells the shell window's own renderer so it can open the inbox through its own `inbox.open`
     // intent — never every window, and never an arbitrary `getAllWindows()[0]`, both of which could reach a
-    // detached widget window instead of the one actually showing the conversation.
+    // detached widget window instead of the one actually showing the conversation. The click carries back the id the
+    // notification was shown with, checked here against the inbox-target grammar, so the inbox opens on that item;
+    // nothing else the renderer sent travels with it.
+    const target = reviewNotificationTarget(input?.target);
     const notification = new Notification({ title, body });
     const forget = () => activeNotifications.delete(notification);
     notification.on("click", () => {
@@ -405,7 +409,7 @@ function registerHandlers() {
       restoreToNormalIfCollapsed(shellWindow);
       if (shellWindow.isMinimized()) shellWindow.restore();
       shellWindow.focus();
-      shellWindow.webContents.send("desktop:notificationClicked");
+      shellWindow.webContents.send("desktop:notificationClicked", target === undefined ? {} : { target });
     });
     notification.on("close", forget);
     notification.on("failed", forget);

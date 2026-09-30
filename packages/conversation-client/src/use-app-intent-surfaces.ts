@@ -10,7 +10,15 @@ import {
   requestWindowMode,
 } from "./desktop-compact.ts";
 import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
-import type { AppIntentDecision, AppIntentKind, OrbProfileName, SettingsTab } from "@clarkcant/contracts";
+import {
+  type AppIntentDecision,
+  type AppIntentKind,
+  NOTICE_DISMISS_UNDO_WINDOW_MS,
+  type NoticeOperationId,
+  type NoticeOperationSource,
+  type OrbProfileName,
+  type SettingsTab,
+} from "@clarkcant/contracts";
 import { CLOSED_LIBRARY, applyLibraryAction, type WidgetLibraryState } from "./widget-library/widget-library-state.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 
@@ -20,6 +28,25 @@ const MODEL_SWITCH_KINDS: ReadonlySet<AppIntentKind> = new Set<AppIntentKind>(["
 /** The node's own reason when it gave one, the generic sentence otherwise. */
 function modelSwitchFailure(t: (key: MessageKey) => string, cause: unknown): string {
   return cause instanceof Error && cause.message !== "" ? cause.message : t("intents.modelSwitchFailed");
+}
+
+/**
+ * The Undo a dismissal by a sentence leaves in the conversation.
+ *
+ * `offered` while the node can still bring the notice back (`NOTICE_DISMISS_UNDO_WINDOW_MS` from when it said it had
+ * dismissed it), `restoring` while that is on its way, then `restored`, `failed` or `expired`.
+ */
+export type NoticeUndoPhase = "offered" | "restoring" | "restored" | "failed" | "expired";
+
+export interface NoticeUndo {
+  noticeId: string;
+  /** The transcript message it sits under: the newest one when the dismissal ran, which is Clark's reply about it. */
+  afterMessageId: string | undefined;
+  /** When the node said it was dismissed, in epoch milliseconds; the window runs from here. */
+  offeredAt: number;
+  phase: NoticeUndoPhase;
+  /** What the line says: what the node did while the undo is offered, then how it ended. */
+  text: string;
 }
 
 export interface AppIntentSurfacesState {
@@ -34,13 +61,23 @@ export interface AppIntentSurfacesState {
   /** Whether the inbox is open over the conversation. */
   inboxOpen: boolean;
   setInboxOpen: (open: boolean) => void;
+  /**
+   * The notice or waiting item the inbox was last opened on (`inboxTargetSchema`), from a clicked OS or web notification;
+   * cleared once the panel has shown it.
+   */
+  inboxTarget: string | undefined;
+  clearInboxTarget: () => void;
   intentNotice: string | undefined;
+  /** The Undo the latest typed or spoken dismissal left in the conversation, drawn under Clark's reply about it. */
+  noticeUndo: NoticeUndo | undefined;
+  /** Brings the dismissed notice back through the node's own restore, and says how that went on the same line. */
+  undoNoticeDismissal: () => void;
   /** Shows a notice outside the click/voice/typed-command path, e.g. a voice session that failed to open. */
   setIntentNotice: (message: string) => void;
   /** Carry out a decision, whichever way it arrived (click, voice, or a typed command). */
   runIntent: (decision: AppIntentDecision) => void;
-  /** Ask the node what a click means, then do it. */
-  clickIntent: (kind: AppIntentKind) => void;
+  /** Ask the node what a click means, then do it. `inboxTarget` goes only with `inbox.open`. */
+  clickIntent: (kind: AppIntentKind, extra?: { inboxTarget?: string }) => void;
   /** A command a typed message resolved to, to be carried out once the send that produced it settles. */
   pendingIntent: AppIntentDecision | undefined;
   setPendingIntent: (decision: AppIntentDecision | undefined) => void;
@@ -81,6 +118,13 @@ export interface AppIntentSurfacesDeps {
   /** The inbox's "It took effect" / "It did not take effect" for the effect the node named; rejects with the reason. */
   recordEffectOutcome?: (effectId: string, outcome: "confirmed" | "failed") => Promise<void>;
   /**
+   * One of a notice's own actions, on the notice the node named; resolves to what the node did, rejects with why not.
+   * `source` is given only for a press (the line's own "Undo"); otherwise the host says whether it was typed or spoken.
+   */
+  actOnNotice?: (noticeId: string, action: NoticeOperationId, source?: NoticeOperationSource) => Promise<string>;
+  /** The newest message in the transcript on screen, read when a dismissal runs so its Undo sits under that reply. */
+  latestMessageId?: () => string | undefined;
+  /**
    * The model switches the hotkey makes (`useModelAlias`), so an intent that switches the model updates
    * the alias and note on screen exactly as the hotkey does.
    */
@@ -112,6 +156,8 @@ export function useAppIntentSurfaces({
   stopTurn,
   askAboutLatestNotice,
   recordEffectOutcome,
+  actOnNotice,
+  latestMessageId,
   cycleModel,
   selectModel,
   selectOrbProfile,
@@ -121,7 +167,10 @@ export function useAppIntentSurfaces({
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [widgetLibrary, setWidgetLibrary] = useState<WidgetLibraryState>(CLOSED_LIBRARY);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxTarget, setInboxTarget] = useState<string | undefined>(undefined);
+  const clearInboxTarget = useCallback(() => setInboxTarget(undefined), []);
   const [intentNotice, setIntentNotice] = useState<string | undefined>(undefined);
+  const [noticeUndo, setNoticeUndo] = useState<NoticeUndo | undefined>(undefined);
   const [pendingIntent, setPendingIntent] = useState<AppIntentDecision | undefined>(undefined);
   const [liveRefresh, setLiveRefresh] = useState(0);
   const bumpLiveRefresh = useCallback(() => setLiveRefresh((count) => count + 1), []);
@@ -155,9 +204,11 @@ export function useAppIntentSurfaces({
     const windowControls = hasWindowControls();
     return {
       openSettings,
-      openInbox: () => {
+      openInbox: (target?: string) => {
         setUiCheckOpen(false);
         setWidgetLibrary(CLOSED_LIBRARY);
+        // Only a notification's own target is kept; any other opening starts at the top of the list, as before.
+        setInboxTarget(target);
         setInboxOpen(true);
       },
       goHome: restartSession,
@@ -197,6 +248,7 @@ export function useAppIntentSurfaces({
       ...(stopTurn === undefined ? {} : { stopTurn }),
       ...(askAboutLatestNotice === undefined ? {} : { askAboutLatestNotice }),
       ...(recordEffectOutcome === undefined ? {} : { recordEffectOutcome }),
+      ...(actOnNotice === undefined ? {} : { actOnNotice }),
       ...(selectOrbProfile === undefined ? {} : { selectOrbProfile }),
       ...(desktop
         ? {
@@ -237,6 +289,7 @@ export function useAppIntentSurfaces({
     stopTurn,
     askAboutLatestNotice,
     recordEffectOutcome,
+    actOnNotice,
     cycleModel,
     selectModel,
     selectOrbProfile,
@@ -251,6 +304,24 @@ export function useAppIntentSurfaces({
         // says why in the note beside the model label - near the thing it is about - so it is not said twice.
         if (!run.ran && !(decision.kind === "intent" && MODEL_SWITCH_KINDS.has(decision.intent.kind))) {
           setIntentNotice(run.say);
+        } else if (run.ran && decision.kind === "intent" && decision.intent.kind === "notice.act") {
+          // A notice action leaves nothing on screen that says it happened — the inbox may not even be open — so what
+          // the node did is said, in the same words the panel uses for the same press. A dismissal says it in the
+          // conversation, under Clark's reply about it, with "Undo" for as long as the node can bring the notice back.
+          const { noticeId, noticeAction } = decision.intent;
+          if (noticeAction === "dismiss" && noticeId !== undefined && actOnNotice !== undefined) {
+            setNoticeUndo({ noticeId, afterMessageId: latestMessageId?.(), offeredAt: Date.now(), phase: "offered", text: run.say });
+          } else {
+            setIntentNotice(run.say);
+            // "Undo dismissing the notification" said instead of pressed: the Undo left for it has nothing left to offer.
+            if (noticeAction === "restore" && noticeId !== undefined) {
+              setNoticeUndo((shown) =>
+                shown?.noticeId === noticeId && (shown.phase === "offered" || shown.phase === "restoring")
+                  ? { ...shown, phase: "restored", text: t("inbox.act.undoRestored") }
+                  : shown,
+              );
+            }
+          }
         }
         // An action the agent asked for is reported back, run or not: the agent's tool is waiting to
         // tell the model whether the screen changed, and "sent" is not an answer it may give as "done".
@@ -259,24 +330,66 @@ export function useAppIntentSurfaces({
         }
       });
     },
-    [client, intentHost],
+    [client, intentHost, actOnNotice, latestMessageId, t],
   );
 
+  const undoNoticeDismissal = useCallback((): void => {
+    const current = noticeUndo;
+    if (current?.phase !== "offered" || actOnNotice === undefined) return;
+    // Only this Undo's own line changes, and only if it is still the one on screen when the answer comes.
+    const settle = (phase: NoticeUndoPhase, text: string) =>
+      setNoticeUndo((shown) => (shown?.offeredAt === current.offeredAt && shown.noticeId === current.noticeId ? { ...shown, phase, text } : shown));
+    // Marked at once, so a second press cannot send a second restore while the first is on its way.
+    setNoticeUndo({ ...current, phase: "restoring" });
+    actOnNotice(current.noticeId, "restore", "click").then(
+      () => settle("restored", t("inbox.act.undoRestored")),
+      (cause: unknown) =>
+        settle(
+          "failed",
+          cause instanceof Error && cause.message !== ""
+            ? cause.message
+            : t("inbox.act.undoFailed").replace("{reason}", `${t("inbox.reason.unavailable")}.`),
+        ),
+    );
+  }, [noticeUndo, actOnNotice, t]);
+
+  // The undo is offered exactly as long as the node keeps the notice restorable, then says quietly that it has passed.
+  useEffect(() => {
+    if (noticeUndo?.phase !== "offered") return;
+    const { offeredAt, noticeId } = noticeUndo;
+    const timer = setTimeout(
+      () =>
+        setNoticeUndo((shown) =>
+          shown?.phase === "offered" && shown.offeredAt === offeredAt && shown.noticeId === noticeId
+            ? { ...shown, phase: "expired", text: t("inbox.act.undoExpired") }
+            : shown,
+        ),
+      Math.max(0, offeredAt + NOTICE_DISMISS_UNDO_WINDOW_MS - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [noticeUndo, t]);
+
+  // It belongs to the conversation it was said in.
+  useEffect(() => {
+    setNoticeUndo(undefined);
+  }, [conversationId]);
+
   const clickIntent = useCallback(
-    (kind: AppIntentKind): void => {
+    (kind: AppIntentKind, extra?: { inboxTarget?: string }): void => {
       if (client === undefined) return;
       void client
         .sendAppIntent({
           kind,
           source: "click",
           ...(conversationId === undefined ? {} : { conversationId }),
+          ...(extra?.inboxTarget === undefined ? {} : { inboxTarget: extra.inboxTarget }),
         })
         .then((decision) => {
           if (decision.kind !== "none") runIntent(decision);
         })
         .catch(() => setIntentNotice(t("intents.commandLookupFailed")));
     },
-    [client, conversationId, runIntent, t],
+    [client, conversationId, runIntent, setIntentNotice, t],
   );
 
   // A notice is a remark about something that just happened, not a permanent line of text.
@@ -305,7 +418,11 @@ export function useAppIntentSurfaces({
     openWidgetLibrary,
     inboxOpen,
     setInboxOpen,
+    inboxTarget,
+    clearInboxTarget,
     intentNotice,
+    noticeUndo,
+    undoNoticeDismissal,
     setIntentNotice,
     runIntent,
     clickIntent,

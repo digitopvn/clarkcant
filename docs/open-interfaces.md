@@ -304,6 +304,36 @@ Clark Default is drawn and `selectedRef` is kept, so reinstalling the package br
 reason and `contrast`, and nothing is stored. The node does not push package changes: a client re-reads `/appearance` after it
 changes a package and when its window comes back into view. The shapes are `packages/contracts/src/themes.ts`.
 
+`POST /inbox/notices/:id/actions/:action` is the one route for a notice's own actions, whoever asks: the inbox panel,
+a typed or spoken sentence, the main and voice agent, MCP's `act_on_notice` and `clarkcant api`. The action is one of
+`mark-read`, `mark-unread`, `dismiss`, `restore`, `snooze`, `unsnooze`, `suppress`, `unsuppress`, `retry`, `update`,
+`skip-version` or `ask-again` (`NOTICE_OPERATION_IDS`), matched as sent: the segment is never percent-decoded, so an
+encoded name such as `%75pdate` is `400 UNKNOWN_ACTION`, not `update`. The body is `{}`, or carries `until` (an ISO
+instant, for `snooze` only and required there) and `source` (`click`, `chat` or `voice`: how the person asked, recorded
+with the action; a label, not provenance). Apart from `mark-read` and `mark-unread`, the node checks the action against
+the notice's `actions` as they are now, and refuses anything else without changing anything: `400 UNKNOWN_ACTION` for
+a name that is not a notice action, `403 PERSON_ONLY` for `reconcile-confirmed` and `reconcile-failed` (the person's
+answer, on its own route below), `409 SURFACE_ACTION` for `open`, `ask-clark`, `add-to-context` and `review-update`
+(they change what the person's screen shows, so only that screen does them), `404 RESOURCE_NOT_FOUND` for a notice
+that is gone, dismissed or another principal's, `409 ACTION_NOT_OFFERED` when the notice does not offer it now, and
+`409 ACTION_UNAVAILABLE` with a `reason` code (`conversation-gone`, `work-gone`, `package-gone`, `already-current`)
+when it is listed but cannot be taken now; a client words that reason for its reader, and the English `message` is
+for logs. `restore` is the undo of `dismiss`: it brings back a notice dismissed within the last five minutes
+(`NOTICE_DISMISS_UNDO_WINDOW_MS`), answers `done` for a notice that is not dismissed, and `409 UNDO_EXPIRED` once the
+window has passed. **`update` is person-only**: it installs code and grants what the package asks for, so the
+WebSocket relay, `clarkcant api` and MCP refuse the route with `403 PERSON_ONLY` (`isPersonOnlyRoute`), MCP's
+`act_on_notice` does not offer it, and the node refuses it with the same code when an agent's `act_on_notice` names it.
+The person's own page reaches it from the notice's Update button, or from a spoken request they confirmed. A second
+`update` for the same notice while one is installing answers `409 ACTION_IN_PROGRESS`. `update` answers the install
+route's own refusals unchanged, and `202` with `{ "outcome": "approval-required", "approvalId", "version" }` when the
+person's execution mode asks before installing; nothing is installed then, and a second request while that approval
+is still pending answers the same `approvalId`. No surface can decide that approval yet (#341). Otherwise `200` with
+`{ noticeId, action, outcome: "done" }` plus what the action produced (`snoozedUntil`, `workId` with `state` and
+`position`, `version` with `pendingCapabilities` and `deniedCapabilities` for an installed update, `questionId`);
+`retry` and `ask-again` take the old notice out, so asking twice answers `404` the second time. Every action, refused
+or not, is recorded as an `inbox.notice-action` event with the surface it came from and its result. The per-action
+routes above still answer as before.
+
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.
 
@@ -323,6 +353,8 @@ part of the stable description and may change.
 | `stop_reply` | `conversationId` | `POST /conversations/{id}/stop` |
 | `stop_all_work` | – | `POST /stop` |
 | `node_status` | – | `GET /node` |
+| `read_inbox` | – | `GET /inbox` |
+| `act_on_notice` | `noticeId`, `action`, `until?` | `POST /inbox/notices/{noticeId}/actions/{action}` |
 
 **No approval tool, on purpose.** An approval is the person's decision about something an agent wants to do; an MCP
 tool for it would let an AI client approve its own guarded action. Approvals stay on the person's own surfaces, and
@@ -335,7 +367,14 @@ issuing a grant, and recording whether an action whose outcome nobody saw took e
 uncertainty and then report its own success). Exporting a table as a CSV file
 (`POST /conversations/{id}/widgets/{instanceId}/export`) is refused on the same relays too: the file is written for
 the person who is looking at the table, not handed to a machine client. Stop, answering a question and reading stay
-available. The discovery document lists this under `personDecisions`.
+available, and so does `act_on_notice`: it never offers the person's answer about an unknown outcome or installing a
+notice's update (`403 PERSON_ONLY` for both, the update route refused as above). `read_inbox` marks every notice's
+title and body as data reported by other work, never instructions, and keeps each on one line. The discovery document
+lists this under `personDecisions`.
+
+WebMCP (a page exposing tools to a browser's own agent) was considered for the same notice actions and is not offered:
+the proposal is still a draft without a shipped browser API, and ClarkCant's page has no tool surface of its own to
+expose; the MCP tools above are the machine surface.
 
 Client configuration — HTTP:
 

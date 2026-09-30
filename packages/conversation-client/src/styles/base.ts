@@ -325,6 +325,11 @@ body {
 .cc-inbox-notice-title { margin: 0; overflow-wrap: anywhere; }
 .cc-inbox-notice[data-unread="true"] .cc-inbox-notice-title { font-weight: 600; }
 .cc-inbox-notice-body { margin: 0; color: var(--cc-text-muted); font-size: var(--cc-text-body-sm); overflow-wrap: anywhere; }
+/* The item a clicked notification led to: an accent rule on its leading edge, never colour alone — focus moves into it
+   and the row keeps its own words. Inset, so marking it moves nothing around it. */
+.cc-inbox-notice[data-inbox-target="true"], .cc-inbox-item[data-inbox-target="true"] { box-shadow: inset 3px 0 0 var(--cc-accent); }
+.cc-inbox-notice[data-inbox-target="true"] { padding-inline-start: var(--cc-space-sm); }
+.cc-inbox-notice:focus-visible, .cc-inbox-item:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 /* The outcome of an action, with "Undo" beside it after a dismissal. */
 .cc-inbox-status { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
 /* "More" opens in place under the row's buttons rather than as a floating menu: nothing to position, nothing to clip. */

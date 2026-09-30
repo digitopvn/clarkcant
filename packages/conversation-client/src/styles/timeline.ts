@@ -143,6 +143,21 @@ export const TIMELINE_CSS = `
 .cc-assistant-body { display: flex; flex-direction: column; gap: var(--cc-space-sm); min-width: 0; flex: 1; }
 
 /*
+ * The Undo for a notice dismissed by a sentence: a quiet line in the flow, under the reply that said so and lined up
+ * with its text, rather than a card over the page. It stays where it was put while the conversation moves on. The
+ * row is a line, not a column like the message rows, and it sits at the reply's own spacing rather than the gap
+ * between two messages, so it reads as part of that reply. The button's width is set where it is rendered, because
+ * the shared round button's fixed width is declared in a later layer and would win here.
+ */
+.cc-notice-undo {
+  flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--cc-space-sm);
+  margin-top: calc(var(--cc-space-sm) - var(--cc-space-lg));
+  padding-left: calc(28px + var(--cc-space-sm));
+  color: var(--cc-text-muted); font-size: var(--cc-text-label); line-height: 1.45;
+}
+.cc-notice-undo-text { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+/*
  * Markdown.
  *
  * Sizes are relative to the message text, so a heading in a reply is a heading in the same scale as the

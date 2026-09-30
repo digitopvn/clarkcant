@@ -247,7 +247,7 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
   padding: var(--cc-space-xs) var(--cc-space-md);
   background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
   box-shadow: var(--cc-shadow-soft, 0 12px 32px rgb(0 0 0 / 35%));
-  color: var(--cc-text); font-size: var(--cc-text-label); line-height: 1.45;
+  color: var(--cc-text); font-size: var(--cc-text-label); line-height: 1.45; overflow-wrap: anywhere;
 }
 
 /*
