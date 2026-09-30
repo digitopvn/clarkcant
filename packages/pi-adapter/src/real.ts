@@ -126,6 +126,15 @@ export interface RealPiAdapterOptions {
    */
   model?: { provider: string; id: string; thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" };
   /**
+   * The key for the configured model's provider, when the process was handed one rather than holding it itself.
+   *
+   * A dispatched worker runs with an environment that carries no provider key on purpose, so the node hands it the key
+   * over its stdin instead. It goes into the SDK's runtime credential overlay (`setRuntimeApiKey`), which keeps it in
+   * this process's memory and writes nothing to disk; it is never put into `process.env`, where anything this process
+   * started would inherit it. Applied only to `model.provider`: it is that provider's key and nobody else's.
+   */
+  apiKey?: string;
+  /**
    * Built-in tool allowlist. Defaults to none at all.
    *
    * The SDK's own tools resolve paths against `cwd` themselves, so no project root can bound them. A session
@@ -146,6 +155,15 @@ export interface RealPiAdapterOptions {
    * it — see `personal-instructions.ts`.
    */
   personalInstructions?: () => string | undefined;
+  /**
+   * Load nothing from the machine into a session: no extension, skill, prompt template, theme or instructions file
+   * (`AGENTS.md`/`CLAUDE.md`) the SDK would otherwise discover under `cwd` or `agentDir`.
+   *
+   * A dispatched worker sets it. Its tools, its goal and its model are the host's decision, and a file that happens to
+   * sit above the directory it was started from must not add hooks, text or behaviour to it. Inline extensions this
+   * adapter registers itself (`personalInstructions`) are still applied.
+   */
+  isolated?: boolean;
   /** Injected so tests can exercise the adapter without loading the real SDK. */
   sdk?: SdkModule;
 }
@@ -237,12 +255,11 @@ export class RealPiAdapter implements PiAdapter {
   ): Promise<{ runtime?: SdkModelRuntime; model?: SdkModel }> {
     if (wanted === undefined) return {};
 
-    // No options: the credentials this resolves against are the process environment's, which is
-    // the path an operator can control without editing a file in their home directory. The
-    // runtime has no `agentDir` option, so the credential directory an operator sets on the
-    // adapter is deliberately not threaded here — env is the contract.
-    this.#modelRuntime ??= await sdk.ModelRuntime.create({});
-    const runtime = this.#modelRuntime;
+    // No options: the credentials this resolves against are a key handed to this adapter, else the
+    // process environment's, which is the path an operator can control without editing a file in
+    // their home directory. The runtime has no `agentDir` option, so the credential directory an
+    // operator sets on the adapter is deliberately not threaded here — env is the contract.
+    const runtime = await this.#runtime(sdk);
 
     const available = runtime.getModels(wanted.provider);
     if (available.length === 0) {
@@ -259,6 +276,23 @@ export class RealPiAdapter implements PiAdapter {
       );
     }
     return { runtime, model };
+  }
+
+  /**
+   * The SDK's model runtime, created once, with a handed-over key applied before anything can ask it for a model.
+   *
+   * Applied here rather than per session so there is exactly one moment the key enters the SDK, and it enters as a
+   * runtime key: it shadows whatever the credential file holds for that provider and is never written back to it.
+   */
+  async #runtime(sdk: SdkModule): Promise<SdkModelRuntime> {
+    if (this.#modelRuntime !== undefined) return this.#modelRuntime;
+    const runtime = await sdk.ModelRuntime.create({});
+    const provider = this.#options.model?.provider;
+    if (this.#options.apiKey !== undefined && this.#options.apiKey !== "" && provider !== undefined) {
+      await runtime.setRuntimeApiKey(provider, this.#options.apiKey);
+    }
+    this.#modelRuntime = runtime;
+    return runtime;
   }
 
   readonly #options: RealPiAdapterOptions;
@@ -297,8 +331,7 @@ export class RealPiAdapter implements PiAdapter {
    */
   async catalogue(): Promise<ModelCatalogue> {
     const sdk = await this.#load();
-    this.#modelRuntime ??= await sdk.ModelRuntime.create({});
-    const runtime = this.#modelRuntime;
+    const runtime = await this.#runtime(sdk);
     const current = this.#options.model;
 
     return runtime.getProviders().map((provider) => ({
@@ -433,6 +466,9 @@ export class RealPiAdapter implements PiAdapter {
       new sdk.DefaultResourceLoader({
         cwd: this.#options.cwd,
         agentDir: this.#options.agentDir ?? sdk.getAgentDir(),
+        ...(this.#options.isolated === true
+          ? { noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true }
+          : {}),
         /*
          * The personal-instructions section, registered as a trusted inline extension.
          *
@@ -752,6 +788,22 @@ export class RealPiAdapter implements PiAdapter {
       throw new Error(
         `worker ${sessionId} exceeded its ${budgetMs} ms wall-clock budget; it was stopped instead of continuing without a limit`,
       );
+    }
+
+    /*
+     * A turn the provider refused ends with an assistant message whose stop reason is `error`, and the SDK settles as it
+     * would after an answer. Without this, a rejected key or a model that does not exist reads as a session that
+     * finished having done nothing. Read once the session is idle, so an error the SDK retried past is not reported;
+     * a stop this adapter asked for has already said so.
+     */
+    // Read structurally: an SDK stand-in in a test may keep no message list at all.
+    const messages = (entry.session.agent.state as { messages?: readonly unknown[] }).messages;
+    const last = messages?.at(-1) as { role?: unknown; stopReason?: unknown; errorMessage?: unknown } | undefined;
+    if (last?.role === "assistant" && last.stopReason === "error" && !this.#aborted.has(sessionId)) {
+      const reason = typeof last.errorMessage === "string" && last.errorMessage !== "" ? last.errorMessage : "no reason given";
+      for (const listener of entry.listeners) {
+        listener({ type: "error", sessionId, message: `the model's provider refused the turn: ${reason}` });
+      }
     }
 
     // The boundary this note used to deny is enforced where the act happens, not here: the adapter binds the

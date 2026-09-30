@@ -13,8 +13,12 @@ import type { Database } from "./db.ts";
  * Append-only in practice: nothing in this module updates or deletes a row, and `listAuditEvents` is the only reader.
  */
 
-/** `peer` is what passed between paired nodes and did not arrive: a run of messages one side gave up on and skipped. */
-export type AuditKind = "command" | "secret-use" | "approval" | "stop" | "interaction" | "policy" | "peer";
+/**
+ * `peer` is what passed between paired nodes and did not arrive: a run of messages one side gave up on and skipped.
+ * `model` is which model a dispatched task's worker was started on, how it was chosen and where its key came from —
+ * never the key.
+ */
+export type AuditKind = "command" | "secret-use" | "approval" | "stop" | "interaction" | "policy" | "peer" | "model";
 export type AuditOutcome = "done" | "failed" | "refused" | "stopped";
 
 export interface AuditEvent {

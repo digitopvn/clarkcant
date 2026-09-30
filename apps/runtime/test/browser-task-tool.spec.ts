@@ -6,9 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Instant, MessageRecord, MessageSurface } from "@clarkcant/contracts";
 import { getTask } from "@clarkcant/storage";
 
+import { browserTaskToolDepsFor } from "../src/bootstrap/model-bootstrap.ts";
 import { createBrowserTaskTool, personTextOf } from "../src/browser-task-tool.ts";
+import { createNodeTools } from "../src/node-tools.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
-import type { TaskDispatcher } from "../src/task-dispatch.ts";
+import { createTaskDispatcher, type TaskDispatcher, type TaskDispatcherDeps } from "../src/task-dispatch.ts";
+import { nodeWorkerModel } from "../src/worker-model.ts";
 
 /**
  * The model's way to start a browser task: which sites the task may act on come only from what the person wrote, and
@@ -222,6 +225,43 @@ describe("start_browser_task", () => {
 
     expect(result.text).toContain("Not started: this node runs no background tasks");
     expect(tasksInConversation()).toEqual([]);
+  });
+
+  it("is offered to a model turn only on a node whose dispatched workers run its model", () => {
+    const toolNames = (): string[] => {
+      const browserTasks = browserTaskToolDepsFor(services, {
+        principalId: services.runtime.identity.ownerPrincipalId,
+        conversationId,
+      });
+      return createNodeTools({
+        search: services.search,
+        projects: services.projects,
+        ...(browserTasks === undefined ? {} : { browserTasks }),
+      }).map((tool) => tool.name);
+    };
+    const dispatcherWith = (workerModel: TaskDispatcherDeps["workerModel"]): TaskDispatcher =>
+      createTaskDispatcher({
+        conductor: services.conductor,
+        projectRoots: () => [dir],
+        ownedRoots: () => [dir],
+        onSettled: () => undefined,
+        ...(workerModel === undefined ? {} : { workerModel }),
+      });
+    const configured = {
+      workerModel: async () => ({ provider: "openai", id: "gpt-test", via: "configured" as const }),
+    };
+
+    // No dispatcher: nothing runs a background task here.
+    expect(toolNames()).not.toContain("start_browser_task");
+    // A dispatcher and a configured model: the tool is offered.
+    services.taskDispatch = dispatcherWith(nodeWorkerModel({ modelTurn: configured, env: {}, storedCredential: () => undefined }));
+    expect(toolNames()).toContain("start_browser_task");
+    // A dispatcher on a node with no model configured: a task could be started, but nothing could do it.
+    services.taskDispatch = dispatcherWith(nodeWorkerModel({ modelTurn: undefined, env: {}, storedCredential: () => undefined }));
+    expect(toolNames()).not.toContain("start_browser_task");
+    // The scripted worker is not a model either.
+    services.taskDispatch = dispatcherWith(undefined);
+    expect(toolNames()).not.toContain("start_browser_task");
   });
 
   it("does not claim a start the dispatcher refused", async () => {

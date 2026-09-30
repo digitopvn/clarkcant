@@ -39,7 +39,7 @@ import {
   workerCapabilitiesFor,
   type ManagedWorktree,
 } from "@clarkcant/project-work";
-import { getTask, oneRow, type Database } from "@clarkcant/storage";
+import { appendAuditEvent, getTask, oneRow, type Database } from "@clarkcant/storage";
 
 import type { CommandToolDeps } from "./node-tools.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
@@ -124,8 +124,48 @@ function outputName(path: string, roots: readonly string[]): string | undefined 
   return undefined;
 }
 
+/** How long past its wall-clock budget a worker on a model may take before its process is ended as unfinished. */
+const WORKER_PROCESS_GRACE_MS = 30_000;
+
+/** The model a dispatched worker is started on, decided the moment it is about to start. */
+export interface WorkerModelLaunch {
+  model: { provider: string; id: string; thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" };
+  /** How it was chosen: routed among the node's pool by the policy layer, or the model the node itself runs. */
+  via: "routed" | "configured";
+  /**
+   * The provider's key, handed to the worker over its stdin and nowhere else. Absent when the node holds none of its
+   * own, and the worker's model runtime reads its configuration directory instead.
+   */
+  credential?: string;
+  /** Where the key came from, for the record. Never the key. */
+  credentialSource: "environment" | "stored" | "model-config";
+  /** The model runtime's configuration directory, when this node was given one. */
+  agentDir?: string;
+  /** The token ceiling for a task that set none of its own: the node's worker budget, not its per-turn one. */
+  maxTokens?: number;
+  /** The wall-clock ceiling for a task that set none of its own, from the same worker budget. */
+  maxWallClockMs?: number;
+}
+
+/**
+ * Where a dispatched worker's model comes from.
+ *
+ * `available` is asked when a turn decides whether to offer tools whose only point is a worker doing the work;
+ * `launch` when a worker is about to start. A node with no model answers false and undefined, and a task it is given
+ * is refused before its worker starts rather than run on a script that cannot do it.
+ */
+export interface WorkerModelSource {
+  available(): boolean;
+  launch(): Promise<WorkerModelLaunch | undefined>;
+}
+
 export interface TaskDispatcherDeps {
   conductor: ConductorDeps;
+  /**
+   * The model a worker runs. Absent means the scripted adapter, which proves the wiring and settles every task as not
+   * verified; a node wired for real (`bootstrap/runtime-bootstrap.ts`) always supplies it.
+   */
+  workerModel?: WorkerModelSource;
   /** The roots granted to the worker for this run, read fresh at dispatch time. */
   projectRoots: () => readonly string[];
   /**
@@ -252,6 +292,11 @@ export interface TaskDispatcher {
   work(): WorkView[];
   runningCount(): number;
   queuedCount(): number;
+  /**
+   * Whether a task this dispatcher runs is worked by a model. False on a node with none, and for the scripted adapter:
+   * a tool whose whole point is a dispatched worker doing real work is offered only when this is true.
+   */
+  workersRunAModel(): boolean;
   /** Refuse every dispatch from now on. Called once, when the node starts to close. */
   close(): void;
   /** SIGKILL every worker's group now, without the grace: for a node that exits before the grace runs out. */
@@ -527,6 +572,28 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       await refuse(job, plan.refusal);
       return;
     }
+
+    /*
+     * The model the worker runs, decided before the policy is asked about the task: a node with nothing to do the work
+     * refuses it now, rather than asking a person to approve work that could never be done.
+     */
+    let launch: WorkerModelLaunch | undefined;
+    if (deps.workerModel !== undefined) {
+      let reason: string | undefined;
+      try {
+        launch = await deps.workerModel.launch();
+      } catch (cause) {
+        reason = `the model for it could not be chosen (${cause instanceof Error ? cause.message : String(cause)})`;
+      }
+      if (launch === undefined) {
+        releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        await refuse(
+          job,
+          `refused: ${reason ?? "this node has no model configured to do the work"}; the worker was never started and nothing was done`,
+        );
+        return;
+      }
+    }
     const intent = executionIntentOf(task.origin);
     /** How the gate below let a browser task on; undefined when it never decided, which a browser task is refused for. */
     let admission: TaskBrowserAdmission | undefined;
@@ -736,7 +803,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
      * every settle path below so a run that finishes first does not leave a dangling timer that later
      * kills a since-reused `runId`.
      */
-    const maxWallClockMs = task.budget?.maxWallClockMs;
+    // A task on a model that set no ceiling of its own gets the node's worker budget: a model nobody is watching is
+    // never unbounded.
+    const maxWallClockMs = task.budget?.maxWallClockMs ?? launch?.maxWallClockMs;
     let wallClockExceeded = false;
     const wallClockTimer =
       maxWallClockMs === undefined
@@ -751,6 +820,17 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     const wallClockRefusal = (): string =>
       `the wall-clock budget of ${String(maxWallClockMs)} ms was exhausted before the worker finished; nothing it did was verified; raise the task's budget or re-run it`;
 
+    // The worker stops itself at the token budget as it goes, rather than only being told afterwards that it ran over:
+    // the task's own ceiling, else the node's worker budget.
+    const maxTokens = task.budget?.maxTokens ?? launch?.maxTokens;
+    /*
+     * The process ceiling for a worker on a model sits past its wall-clock budget, so a run that takes too long is
+     * stopped and reported as the budget running out rather than as a worker that "did not finish" for no stated reason.
+     */
+    const timeoutMs =
+      deps.timeoutMs ??
+      (launch !== undefined && maxWallClockMs !== undefined ? maxWallClockMs + WORKER_PROCESS_GRACE_MS : undefined);
+
     try {
       const result = await runWorker({
         nodeId: job.executionNodeId,
@@ -764,8 +844,17 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           projectRoots: browsing ? [] : read,
           ...(plan.scoped ? { writableRoots: browsing ? [] : write } : {}),
           allowedCapabilityRefs: [...workerCapabilitiesFor(job.capabilityRef)],
+          ...(launch === undefined ? {} : { model: launch.model }),
+          ...(maxTokens === undefined ? {} : { maxTokens }),
         },
-        ...(deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs }),
+        ...(launch === undefined
+          ? {}
+          : {
+              adapter: "real" as const,
+              ...(launch.credential === undefined ? {} : { credential: launch.credential }),
+              ...(launch.agentDir === undefined ? {} : { agentDir: launch.agentDir }),
+            }),
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(broker === undefined
           ? {}
           : {
@@ -790,6 +879,8 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             }),
         onChild: (child) => {
           liveChildren.set(runId, { taskId: job.taskId, child });
+          // Written once the worker exists, so the trail never says a worker started that never did.
+          if (launch !== undefined) recordModelRun(job, runId, launch);
           // A stop that arrived while the run was being prepared ends the worker as soon as it exists.
           if (stopping.has(job.taskId)) {
             void stopTree(child);
@@ -823,10 +914,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         return;
       }
 
-      // Post-hoc token enforcement: the tokens are already spent by the time the worker's usage comes
-      // back, so this is not a prevention, only an honest refusal to accept work that ran over budget —
-      // reported as what it is rather than folded into a generic failure.
-      const maxTokens = task.budget?.maxTokens;
+      // Token enforcement after the fact: a worker stops itself once a turn takes it over the budget, but that turn's
+      // tokens are already spent, so this is an honest refusal to accept work that ran over — reported as what it is
+      // rather than folded into a generic failure.
       const tokensUsed = result.usage?.tokens;
       if (maxTokens !== undefined && tokensUsed !== undefined && tokensUsed > maxTokens) {
         journal((j) => j.taskEnded(job.taskId, "failed"));
@@ -874,6 +964,37 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       liveChildren.delete(runId);
       releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
       await takeAwayWorktrees(job.taskId, task.conversationId, worktrees);
+    }
+  }
+
+  /**
+   * Which model a task's worker was started on, written to the node's audit trail before it starts: the model, how it
+   * was chosen and where its key came from. A row, not the task's record, because the record is the worker's own account
+   * of what it did, and this is the host's account of what it handed the worker. Never the key.
+   */
+  function recordModelRun(job: QueuedRun, runId: string, launch: WorkerModelLaunch): void {
+    const principalId = deps.ownerPrincipalId?.();
+    if (principalId === undefined) return;
+    const chosen = launch.via === "routed" ? "routed by policy among the node's models" : "the model this node runs";
+    const key =
+      launch.credentialSource === "environment"
+        ? "the node's environment"
+        : launch.credentialSource === "stored"
+          ? "a stored credential"
+          : "the model runtime's own configuration";
+    try {
+      appendAuditEvent(deps.conductor.db, {
+        auditId: deps.conductor.newId("audit"),
+        principalId,
+        nodeId: deps.conductor.nodeId,
+        kind: "model",
+        summary: `task ${job.taskId}: worker started on ${launch.model.provider}/${launch.model.id} (${chosen}; key from ${key})`,
+        outcome: "done",
+        ref: runId,
+        at: at(),
+      });
+    } catch {
+      // A trail that cannot be written does not stop the task; the worker's own output still names its model.
     }
   }
 
@@ -1031,6 +1152,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     },
     runningCount: () => running,
     queuedCount: () => queue.length,
+    workersRunAModel: () => deps.workerModel?.available() === true,
     close() {
       closing = true;
     },

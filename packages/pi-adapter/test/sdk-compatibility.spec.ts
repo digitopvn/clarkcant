@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -136,5 +136,55 @@ describe("the extension seam this feature depends on", () => {
 
     expect(received, "the inline factory was never called").toBeDefined();
     expect(received).toContain("on");
+  });
+});
+
+describe("the discovery switches an isolated worker session relies on", () => {
+  it("leaves out an instructions file and a prompt template the loader would otherwise find, and still runs an inline factory", async () => {
+    const sdk = await loadSdk();
+    const dir = mkdtempSync(join(tmpdir(), "cc-compat-"));
+    dirs.push(dir);
+    writeFileSync(join(dir, "AGENTS.md"), "Instructions a worker must not be given.\n", "utf8");
+    mkdirSync(join(dir, ".pi", "prompts"), { recursive: true });
+    writeFileSync(join(dir, ".pi", "prompts", "leak.md"), "A template a worker must not expand.\n", "utf8");
+
+    type Loader = {
+      reload(): Promise<unknown>;
+      getAgentsFiles(): { agentsFiles: unknown[] };
+      getPrompts(): { prompts: unknown[] };
+    };
+    const Loader = sdk.DefaultResourceLoader as new (options: Record<string, unknown>) => Loader;
+    const load = async (options: Record<string, unknown>): Promise<Loader> => {
+      const loader = new Loader({ cwd: dir, agentDir: join(dir, "agent"), ...options });
+      await loader.reload();
+      return loader;
+    };
+
+    // The control: without the switches, the loader does find both, so the switches are what leaves them out.
+    const open = await load({});
+    expect(open.getAgentsFiles().agentsFiles.length).toBeGreaterThan(0);
+    expect(open.getPrompts().prompts.length).toBeGreaterThan(0);
+
+    let factoryCalled = false;
+    const isolated = await load({
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      extensionFactories: [
+        {
+          name: "clark-compat-probe",
+          hidden: true,
+          factory: () => {
+            factoryCalled = true;
+            return {};
+          },
+        },
+      ],
+    });
+    expect(isolated.getAgentsFiles().agentsFiles).toEqual([]);
+    expect(isolated.getPrompts().prompts).toEqual([]);
+    expect(factoryCalled).toBe(true);
   });
 });

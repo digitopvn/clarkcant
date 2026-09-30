@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { RunRecord } from "@clarkcant/contracts";
@@ -38,21 +38,66 @@ const WORKER_ENV_PROFILE: ExecutionProfile = BUILTIN_PROFILES.build as Execution
  */
 
 /**
- * Whether a task the dispatcher runs is worked by the node's configured model.
- *
- * Not yet: `createTaskDispatcher` never asks for `adapter: "real"`, so every dispatched worker runs the scripted adapter
- * and settles as not verified (#346). A model tool whose whole point is a dispatched worker doing real work — a browser
- * task — would be a control that cannot do what it says, so it is offered to a real model only once this is true.
+ * What a worker running a real model needs from the environment besides the `build` profile, on Windows only: the
+ * system and profile directories without which Node cannot resolve a host, seed its random source, or find the home
+ * directory the model runtime's configuration lives under. Directory names, not credentials.
  */
-export const DISPATCHED_WORKERS_RUN_A_REAL_MODEL: boolean = false;
+const WINDOWS_RUNTIME_VARIABLES: readonly string[] = [
+  "SystemRoot",
+  "windir",
+  "TEMP",
+  "TMP",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "HOMEDRIVE",
+  "HOMEPATH",
+];
+
+/** Where the model runtime reads its provider and model configuration, named the way the Pi SDK reads it. */
+export const MODEL_CONFIG_DIR_VARIABLE = "PI_CODING_AGENT_DIR";
+
+/**
+ * The environment a worker child starts with.
+ *
+ * The `build` profile, and for a real model the Windows directories it cannot run without and the directory its
+ * provider configuration lives in. Never the provider key: that goes over stdin, so nothing the worker starts can
+ * inherit it.
+ */
+export function workerEnvironment(
+  adapter: "fake" | "real",
+  agentDir: string | undefined,
+  source: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const env = buildEnvironment(WORKER_ENV_PROFILE, source);
+  if (adapter !== "real") return env;
+  if (process.platform === "win32") {
+    for (const name of WINDOWS_RUNTIME_VARIABLES) {
+      const value = source[name];
+      if (value !== undefined) env[name] = value;
+    }
+  }
+  if (agentDir !== undefined) env[MODEL_CONFIG_DIR_VARIABLE] = agentDir;
+  return env;
+}
 
 export interface WorkerProcessOptions {
   /** The worker's entry point. Defaults to the sibling app in this repository. */
   workerEntry?: string;
   nodeId: string;
   brief: WorkerBriefEnvelope;
-  /** `fake` proves the wiring without a provider; `real` needs a model configured. */
+  /** `fake` proves the wiring without a provider; `real` needs a model on the brief. */
   adapter?: "fake" | "real";
+  /**
+   * The provider key for the brief's model, with `adapter: "real"`.
+   *
+   * Written once to the child's stdin and the pipe closed: not an argument, which any process on the machine can list;
+   * not the child's environment, which everything the worker starts would inherit; not a file, which outlives the run.
+   * Absent leaves the worker to the model runtime's own configuration under `agentDir`.
+   */
+  credential?: string;
+  /** The model runtime's configuration directory for a real model, when this node was given one. */
+  agentDir?: string;
   /** Ceiling for the whole process, so a wedged worker cannot hold a run open forever. */
   timeoutMs?: number;
   /**
@@ -102,6 +147,8 @@ export const WORKER_BROWSER_REPLY = "clarkcant.browser.reply";
 export interface WorkerProcessResult {
   adapter: string;
   adapterVersion: string | undefined;
+  /** The `provider/id` a real-model worker says it ran. Absent for the scripted adapter. */
+  model?: string;
   stopReason: string;
   withheldCapabilities: string[];
   record: RunRecord;
@@ -142,25 +189,39 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
   try {
     writeFileSync(briefPath, `${JSON.stringify(options.brief, null, 2)}\n`, "utf8");
 
-    const args = [entry, "--brief", briefPath, "--node", options.nodeId, "--adapter", options.adapter ?? "fake"];
-    if (options.dataDir !== undefined) args.push("--data-dir", options.dataDir);
+    const adapter = options.adapter ?? "fake";
+    const credential = adapter === "real" && options.credential !== undefined && options.credential !== "" ? options.credential : undefined;
+    const args = [entry, "--brief", briefPath, "--node", options.nodeId, "--adapter", adapter];
+    if (options.dataDir !== undefined) args.push("--data-dir", resolvePath(options.dataDir));
     if (options.scriptPath !== undefined) args.push("--script", options.scriptPath);
+    if (credential !== undefined) args.push("--credential-stdin");
 
     const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
       // The child never inherits this process's environment wholesale: only the names the `build`
       // profile allows cross the boundary, so a provider key or an SSH agent socket sitting in this
       // node's own environment is not handed to code the worker's tools may invoke on the user's behalf.
+      const stdin = credential === undefined ? "ignore" : "pipe";
       const child = (options.spawnImpl ?? spawn)(process.execPath, args, {
         stdio:
           options.onCommand === undefined && options.onBrowser === undefined
-            ? ["ignore", "pipe", "pipe"]
-            : ["ignore", "pipe", "pipe", "ipc"],
-        env: buildEnvironment(WORKER_ENV_PROFILE),
+            ? [stdin, "pipe", "pipe"]
+            : [stdin, "pipe", "pipe", "ipc"],
+        env: workerEnvironment(adapter, options.agentDir),
+        // A real model's worker starts in this run's own empty directory, not wherever this node was started from, so
+        // nothing that happens to sit around the node's working directory is the worker's working directory too.
+        ...(adapter === "real" ? { cwd: directory } : {}),
         // Its own process group, so a stop reaches what the worker's tools started as well as the worker.
         detached: process.platform !== "win32",
         windowsHide: true,
       });
       options.onChild?.(child);
+      if (credential !== undefined) {
+        // A worker that died before reading its stdin makes this write fail; that worker's exit is the error worth
+        // reporting, and it is reported through `close` below. The failure itself is never echoed: it could quote
+        // what was being written.
+        child.stdin?.on("error", () => undefined);
+        child.stdin?.end(JSON.stringify({ apiKey: credential }));
+      }
       if (options.onCommand !== undefined || options.onBrowser !== undefined) {
         const answerers = [
           { request: WORKER_COMMAND_REQUEST, reply: WORKER_COMMAND_REPLY, answer: options.onCommand, what: "commands" },
@@ -233,6 +294,13 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       });
     });
 
+    // A provider's error can quote the key it was sent, and everything the worker printed ends up in a task's record or
+    // an error message. The key is cut out of both before either is read.
+    if (credential !== undefined) {
+      result.stdout = result.stdout.split(credential).join("[redacted]");
+      result.stderr = result.stderr.split(credential).join("[redacted]");
+    }
+
     // Exit 2 is the worker saying it could not run: an unreadable brief, or an adapter that is not
     // available. That is a failure here rather than a result, which is the whole point of separating
     // it from a run that produced no evidence.
@@ -247,6 +315,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     return {
       adapter: parsed.adapter,
       adapterVersion: parsed.adapterVersion,
+      ...(parsed.model === undefined ? {} : { model: parsed.model }),
       stopReason: parsed.stopReason,
       withheldCapabilities: parsed.withheldCapabilities,
       record: parsed.record,
@@ -254,13 +323,20 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       outputs: parsed.outputs,
     };
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    try {
+      // Retried, because on Windows a worker being stopped still holds its working directory for a moment.
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      // A temporary directory left behind (it holds the brief, never a key) is not worth replacing the run's own result
+      // or error with.
+    }
   }
 }
 
 interface WorkerOutput {
   adapter: string;
   adapterVersion: string | undefined;
+  model: string | undefined;
   stopReason: string;
   withheldCapabilities: string[];
   record: RunRecord;
@@ -298,6 +374,7 @@ function parseWorkerOutput(stdout: string): WorkerOutput {
   return {
     adapter: typeof output.adapter === "string" ? output.adapter : "unknown",
     adapterVersion: typeof output.adapterVersion === "string" ? output.adapterVersion : undefined,
+    model: typeof output.model === "string" && output.model.length <= 300 ? output.model : undefined,
     stopReason: typeof output.stopReason === "string" ? output.stopReason : "unknown",
     withheldCapabilities: Array.isArray(output.withheldCapabilities)
       ? output.withheldCapabilities.filter((one): one is string => typeof one === "string")

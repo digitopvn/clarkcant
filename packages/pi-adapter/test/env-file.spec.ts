@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   applyEnvFile,
   DEFAULT_MODEL_BUDGET,
+  DEFAULT_WORKER_BUDGET,
   keyVariableFor,
   modelBudgetFromEnv,
   modelFromEnv,
   parseEnvFile,
+  workerBudgetFromEnv,
 } from "../src/env-file.ts";
 
 /**
@@ -118,5 +120,30 @@ describe("the ceiling on one conversation turn", () => {
     const budget = modelBudgetFromEnv({ CC_MODEL_MAX_TOKENS: "1234" });
     expect(budget.maxTokens).toBe(1234);
     expect(budget.maxWallClockMs).toBe(DEFAULT_MODEL_BUDGET.maxWallClockMs);
+  });
+});
+
+describe("the ceiling on a dispatched task's worker", () => {
+  it("defaults to room for a task of many model calls, well above one turn's", () => {
+    // A worker's count is every call's whole context summed, so a turn-sized ceiling stops ordinary browser tasks.
+    expect(workerBudgetFromEnv({})).toEqual(DEFAULT_WORKER_BUDGET);
+    expect(DEFAULT_WORKER_BUDGET.maxTokens).toBeGreaterThanOrEqual(10 * DEFAULT_MODEL_BUDGET.maxTokens);
+    expect(DEFAULT_WORKER_BUDGET.maxWallClockMs).toBeGreaterThan(DEFAULT_MODEL_BUDGET.maxWallClockMs);
+  });
+
+  it("takes its own configured limits, and not the turn's", () => {
+    expect(
+      workerBudgetFromEnv({
+        CC_WORKER_MAX_WALL_CLOCK_MS: "90000",
+        CC_WORKER_MAX_TOKENS: "70000",
+        CC_MODEL_MAX_TOKENS: "900",
+      }),
+    ).toEqual({ maxWallClockMs: 90_000, maxTokens: 70_000 });
+  });
+
+  it("ignores a limit that is not a positive number, rather than clamping it", () => {
+    expect(workerBudgetFromEnv({ CC_WORKER_MAX_TOKENS: "lots", CC_WORKER_MAX_WALL_CLOCK_MS: "-1" })).toEqual(
+      DEFAULT_WORKER_BUDGET,
+    );
   });
 });
