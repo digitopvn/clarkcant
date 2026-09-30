@@ -5,6 +5,7 @@ import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { credentialNames, getNotification, latestMessages, messagesSince, readPreference } from "@clarkcant/storage";
 
+import { preferredAppIntentLocale } from "../app-intents.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
@@ -15,7 +16,7 @@ import { type InteractionDeps } from "../interactions.ts";
 import { decideModelRoute } from "../jev-decider.ts";
 import { memoryBrief } from "../memory.ts";
 import { readCurrentAlias, readModelPool } from "../model-registry.ts";
-import { filterBackgroundCandidates, routeBackgroundModel } from "../model-router.ts";
+import { filterBackgroundCandidates, routeBackgroundModel, toolCallsIn } from "../model-router.ts";
 import { type ModelTurn, type ViewDescriptor, createModelTurn } from "../model-turn.ts";
 import type { Runtime } from "../node.ts";
 import { createNodeTools, type CommandToolDeps } from "../node-tools.ts";
@@ -98,9 +99,79 @@ export function browserTaskToolDepsFor(
     personText: () =>
       personTextOf(latestMessages(services.runtime.db, turn.conversationId, 30), services.runtime.identity.nodeId),
     dispatcher: () => services.taskDispatch,
+    // The interface language the person chose, so a refusal names the setting in the words Settings shows them.
+    language: () =>
+      preferredAppIntentLocale(
+        { db: services.runtime.db, now: () => instantSchema.parse(new Date().toISOString()) },
+        turn.principalId,
+      ),
   };
 }
 
+/**
+ * Every model a dispatched worker could be started on: the one this node runs, which is where routing falls back, and
+ * every enabled profile of the pool routing chooses among.
+ */
+export function workerModelCandidates(
+  services: NodeServices,
+  configured: { provider: string; id: string } | undefined,
+): { provider: string; id: string }[] {
+  const pool = readModelPool(services.runtime.db, services.runtime.identity.ownerPrincipalId);
+  return [
+    ...(configured === undefined ? [] : [{ provider: configured.provider, id: configured.id }]),
+    ...pool.profiles.filter((profile) => profile.enabled).map((profile) => ({ provider: profile.provider, id: profile.modelId })),
+  ];
+}
+
+/**
+ * Which model a background worker runs.
+ *
+ * Deterministic filters first — the pool's own settings, the credentials this node has, provider health, context and
+ * tool needs — and only then the policy layer, which may choose among what survived. When nothing is eligible, or
+ * when the policy layer cannot be reached, this returns nothing and the worker runs what the node is configured
+ * with: routing must never be the reason a job does not start. A configured model the catalogue states cannot call
+ * tools is then refused by the dispatcher before its worker starts, rather than here.
+ */
+export async function routeNodeBackgroundModel(
+  services: NodeServices,
+): Promise<{ provider: string; id: string } | undefined> {
+  const owner = services.runtime.identity.ownerPrincipalId;
+  const pool = readModelPool(services.runtime.db, owner);
+  if (pool.profiles.length === 0) return undefined;
+  const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+  const credentials = credentialNames(services.runtime.db, owner);
+  const currentAlias = readCurrentAlias(services.runtime.db, owner);
+
+  const filtered = filterBackgroundCandidates({
+    pool,
+    // The mapping from a provider to the name its credential is stored under is the adapter's business; until it
+    // exposes one, a provider counts as credentialed when it is the one this node runs, or when a credential is
+    // stored under the provider's own name.
+    hasCredential: (provider) => services.model?.provider === provider || credentials.includes(provider),
+    isHealthy: () => true,
+    contextWindowFor: (provider, modelId) =>
+      catalogue.find((entry) => entry.id === provider)?.models.find((model) => model.id === modelId)?.contextWindow,
+    // What the catalogue states, and unknown where it states nothing: filtering on a guess would empty the pool on any
+    // installation whose catalogue is thin, so only a stated "no" leaves a profile out.
+    supportsTools: (provider, modelId) => toolCallsIn(catalogue, provider, modelId),
+    needsTools: true,
+  });
+
+  const decider = services.projects.decider;
+  const routed = await routeBackgroundModel({
+    eligible: filtered.eligible,
+    ...(decider === undefined
+      ? {}
+      : {
+          decide: async (candidates) =>
+            await decideModelRoute(decider, { task: "background worker", role: "background", candidates }),
+        }),
+    ...(currentAlias === undefined ? {} : { foregroundAlias: currentAlias }),
+    // Checked after the decision as well as before it: a pool can change while a selector is thinking.
+    verify: (alias) => pool.profiles.some((profile) => profile.alias === alias && profile.enabled),
+  });
+  return routed === undefined ? undefined : { provider: routed.provider, id: routed.modelId };
+}
 /**
  * Build the model turn, or `undefined` when this node has no model.
  */
@@ -113,58 +184,11 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
       : { provider, id };
   };
 
-  /**
-   * Which model a background worker runs.
-   *
-   * Deterministic filters first — the pool's own settings, the credentials this node has, provider health, context and
-   * tool needs — and only then the policy layer, which may choose among what survived. When nothing is eligible, or
-   * when the policy layer cannot be reached, this returns nothing and the worker runs what the node is configured
-   * with: routing must never be the reason a job does not start.
-   */
-  const routeBackground = async (): Promise<{ provider: string; id: string } | undefined> => {
-    const owner = deps.services().runtime.identity.ownerPrincipalId;
-    const pool = readModelPool(deps.services().runtime.db, owner);
-    if (pool.profiles.length === 0) return undefined;
-    const catalogue = await (deps.services().modelCatalogue?.() ?? Promise.resolve([]));
-    const credentials = credentialNames(deps.services().runtime.db, owner);
-    const currentAlias = readCurrentAlias(deps.services().runtime.db, owner);
-
-    const filtered = filterBackgroundCandidates({
-      pool,
-      // The mapping from a provider to the name its credential is stored under is the adapter's business; until it
-      // exposes one, a provider counts as credentialed when it is the one this node runs, or when a credential is
-      // stored under the provider's own name.
-      hasCredential: (provider) => deps.services().model?.provider === provider || credentials.includes(provider),
-      isHealthy: () => true,
-      contextWindowFor: (provider, modelId) =>
-        catalogue.find((entry) => entry.id === provider)?.models.find((model) => model.id === modelId)?.contextWindow,
-      // Unknown rather than false: this build cannot confirm tool support per model, and filtering on a guess would
-      // empty the pool on any installation whose catalogue is thin.
-      supportsTools: () => undefined,
-      needsTools: true,
-    });
-
-    const decider = deps.services().projects.decider;
-    const routed = await routeBackgroundModel({
-      eligible: filtered.eligible,
-      ...(decider === undefined
-        ? {}
-        : {
-            decide: async (candidates) =>
-              await decideModelRoute(decider, { task: "background worker", role: "background", candidates }),
-          }),
-      ...(currentAlias === undefined ? {} : { foregroundAlias: currentAlias }),
-      // Checked after the decision as well as before it: a pool can change while a selector is thinking.
-      verify: (alias) => pool.profiles.some((profile) => profile.alias === alias && profile.enabled),
-    });
-    return routed === undefined ? undefined : { provider: routed.provider, id: routed.modelId };
-  };
-
   const modelTurn = await createModelTurn({
     env: deps.env,
     cwd: process.cwd(),
     model: chosenModel,
-    backgroundModel: routeBackground,
+    backgroundModel: async () => await routeNodeBackgroundModel(deps.services()),
 
     /*
      * The user's own instructions, read on every turn rather than captured here.

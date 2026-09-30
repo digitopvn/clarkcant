@@ -48,7 +48,24 @@ export interface BrowserTaskToolDeps {
   personText: () => string;
   /** The node's dispatcher, read when the tool runs. Absent means this node runs no background task. */
   dispatcher: () => TaskDispatcher | undefined;
+  /** The language the person reads the interface in, for the sentence the model is asked to pass on. Defaults to Vietnamese. */
+  language?: () => "vi" | "en";
 }
+
+/**
+ * What the person is told when no model this node could start the task on can call tools, naming the setting to change.
+ *
+ * Written out in both languages the interface has, because the model is asked to pass it on as it stands: the words of
+ * the setting have to match what the person sees in Settings.
+ */
+const NO_TOOL_CAPABLE_MODEL: Readonly<Record<"vi" | "en", string>> = {
+  vi:
+    "Không model nào đang cấu hình ở đây gọi được tool, nên không model nào dùng được trình duyệt. " +
+    "Hãy chọn một model gọi được tool trong Cài đặt → AI & Định tuyến → Chọn provider và model.",
+  en:
+    "None of the models set up here can call tools, so none of them can use the browser. " +
+    "Choose one that can in Settings → AI & Routing → Choose provider and model.",
+};
 
 type Checked = { ok: true; goal: string; urls: URL[]; sites: string[] } | { ok: false; text: string };
 
@@ -159,6 +176,15 @@ export function createBrowserTaskTool(deps: BrowserTaskToolDeps): ToolDefinition
       const dispatcher = deps.dispatcher();
       if (dispatcher === undefined) {
         return { text: "Not started: this node runs no background tasks, so it has no browser to give one." };
+      }
+      // A task only a tool can do is not started on models that are all stated unable to call one. Unknown goes ahead.
+      if ((await dispatcher.workersCallTools()) === false) {
+        const sentence = NO_TOOL_CAPABLE_MODEL[deps.language?.() ?? "vi"];
+        return {
+          text:
+            "Not started: the model catalogue states that no model this node could run the task on can call tools, so " +
+            `none of them could use the browser. No task was created. Tell the person, in these words: ${sentence}`,
+        };
       }
       let said: string;
       try {

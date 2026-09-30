@@ -30,13 +30,13 @@
     },
     {
       "path": "browser-computer-use.md",
-      "bytes": 19238,
-      "sha256": "80f96cbf912fcc6d8cf8afa3d50ca961fec7740e7b75ad2d44dc05c3a3921e42"
+      "bytes": 20781,
+      "sha256": "59fa35499a2f3f5ed289c8a2fb6dcbb677992a2a6a3f93f3661c714e1f7a697a"
     },
     {
       "path": "browser-computer-use.vi.md",
-      "bytes": 22217,
-      "sha256": "5982f68affff7efd1c86f573b94e2d31041c262f629f4a196d91c524b8d5a011"
+      "bytes": 24399,
+      "sha256": "1b818552301782f14ef376c6eb127df80e0f3b44dfee351f21d0ab3b9c135fda"
     },
     {
       "path": "distributed-runtime.md",

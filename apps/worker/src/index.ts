@@ -406,10 +406,17 @@ export async function runWorker(
     });
   } else if (evidence.length === 0) {
     // A settled session produced no proof of anything. Reporting success here is precisely the
-    // mistake the evidence model exists to catch.
+    // mistake the evidence model exists to catch. Every call of a permitted tool leaves evidence,
+    // so a run that had tools and none here answered without calling one: said plainly, because the
+    // work was only ever going to be done through those tools, and a model that cannot call tools
+    // ends exactly like this.
     evidence.push({
       kind: "absent",
-      summary: "the session settled without producing any verifiable evidence; this is not a result",
+      summary:
+        permitted.length > 0
+          ? `the model answered without using any of its tools (${[...permittedNames].join(", ")}), so nothing was done; ` +
+            "this is not a result, and the model may not be able to call tools"
+          : "the session settled without producing any verifiable evidence; this is not a result",
       verdict: "not-verified",
       observedAt: now(),
     });

@@ -1231,7 +1231,8 @@ export class GatewayClient {
     current: { provider: string; id: string } | null;
     catalogue: {
       id: string;
-      models: { provider: string; id: string; contextWindow?: number; current: boolean }[];
+      /** `toolCalls` is present only where the catalogue states it; absent means unknown, not no. */
+      models: { provider: string; id: string; contextWindow?: number; current: boolean; toolCalls?: boolean }[];
     }[];
   }> {
     return this.#call("GET", "/model");

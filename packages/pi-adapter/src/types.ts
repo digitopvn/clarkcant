@@ -150,6 +150,14 @@ export interface CatalogueModel {
   readonly contextWindow?: number;
   /** Whether this is the model the adapter is configured with, so a chooser can mark the current one. */
   readonly current: boolean;
+  /**
+   * Whether the model can call tools, as the catalogue states it.
+   *
+   * Absent means unknown, never no: a model somebody configured by hand says nothing about tools, and guessing
+   * would either refuse a model that works or offer one that does not. `false` is kept for a catalogue that states
+   * it; pi's own catalogue only ever states `true`, because it lists only models that can call tools.
+   */
+  readonly toolCalls?: boolean;
 }
 
 /** What one provider offers. Every provider is listed, including ones with no credential yet. */

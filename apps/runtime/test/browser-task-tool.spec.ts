@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Instant, MessageRecord, MessageSurface } from "@clarkcant/contracts";
+import { setPreference } from "@clarkcant/core";
 import { getTask } from "@clarkcant/storage";
 
 import { browserTaskToolDepsFor } from "../src/bootstrap/model-bootstrap.ts";
@@ -61,13 +62,17 @@ function message(
   };
 }
 
-function toolFor(said: string | readonly MessageRecord[], options: { dispatcher?: boolean; accept?: boolean } = {}) {
+function toolFor(
+  said: string | readonly MessageRecord[],
+  options: { dispatcher?: boolean; accept?: boolean; toolCalls?: boolean; language?: "vi" | "en" } = {},
+) {
   const jobs: Job[] = [];
   const dispatcher = {
     dispatch: (job: Job) => {
       jobs.push(job);
       return options.accept ?? true;
     },
+    workersCallTools: async () => options.toolCalls,
   } as unknown as TaskDispatcher;
   const messages =
     typeof said === "string"
@@ -79,6 +84,7 @@ function toolFor(said: string | readonly MessageRecord[], options: { dispatcher?
     conversationId,
     personText: () => personTextOf(messages, services.runtime.identity.nodeId),
     dispatcher: () => (options.dispatcher === false ? undefined : dispatcher),
+    ...(options.language === undefined ? {} : { language: () => options.language ?? "vi" }),
   });
   return { tool, jobs };
 }
@@ -262,6 +268,82 @@ describe("start_browser_task", () => {
     // The scripted worker is not a model either.
     services.taskDispatch = dispatcherWith(undefined);
     expect(toolNames()).not.toContain("start_browser_task");
+  });
+
+  it("refuses before any task exists when no model it could run on can call tools, naming the setting in Vietnamese", async () => {
+    const { tool, jobs } = toolFor("Điền đơn ở https://shop.example/apply", { toolCalls: false });
+    const result = await tool.execute({ goal: "Điền đơn", urls: ["https://shop.example/apply"] });
+
+    expect(result.text).toContain("Not started");
+    expect(result.text).toContain("No task was created");
+    expect(result.text).toContain("Cài đặt → AI & Định tuyến → Chọn provider và model");
+    expect(result.text).not.toContain("Started browser task");
+    expect(tasksInConversation()).toEqual([]);
+    expect(jobs).toEqual([]);
+  });
+
+  it("names the setting in English for a person who reads the interface in English", async () => {
+    const { tool, jobs } = toolFor("Fill the form at https://shop.example/apply", { toolCalls: false, language: "en" });
+    const result = await tool.execute({ goal: "Fill the form", urls: ["https://shop.example/apply"] });
+
+    expect(result.text).toContain("None of the models set up here can call tools");
+    expect(result.text).toContain("Settings → AI & Routing → Choose provider and model");
+    expect(result.text).not.toContain("Cài đặt");
+    expect(tasksInConversation()).toEqual([]);
+    expect(jobs).toEqual([]);
+  });
+
+  it("starts the task when tool calling is stated or unknown, because unknown is not no", async () => {
+    for (const toolCalls of [true, undefined]) {
+      const { tool, jobs } = toolFor("https://shop.example/apply", { ...(toolCalls === undefined ? {} : { toolCalls }) });
+      const result = await tool.execute({ goal: "Điền đơn", urls: ["https://shop.example/apply"] });
+      expect(result.text).toContain("Started browser task");
+      expect(jobs).toHaveLength(1);
+    }
+  });
+
+  it("refuses on a node whose configured model the catalogue states cannot call tools, in the person's language", async () => {
+    // The node's own wiring: its worker model, its dispatcher, and the language preference the settings panel writes.
+    setPreference(
+      { db: services.runtime.db, now: () => AT },
+      { principalId: services.runtime.identity.ownerPrincipalId, key: "experience.language", scope: "global", value: "en", source: "user" },
+    );
+    const catalogue = async () => [
+      { id: "acme", models: [{ provider: "acme", id: "words-only", current: true, toolCalls: false }] },
+    ];
+    const workerModel = (models: readonly { provider: string; id: string }[]) =>
+      nodeWorkerModel({
+        modelTurn: { workerModel: async () => ({ provider: "acme", id: "words-only", via: "configured" as const }), catalogue },
+        candidates: () => models,
+        env: {},
+        storedCredential: () => undefined,
+      });
+    const toolOnNode = (models: readonly { provider: string; id: string }[]) => {
+      services.taskDispatch = createTaskDispatcher({
+        conductor: services.conductor,
+        projectRoots: () => [dir],
+        ownedRoots: () => [dir],
+        onSettled: () => undefined,
+        workerModel: workerModel(models),
+      });
+      const deps = browserTaskToolDepsFor(services, { principalId: services.runtime.identity.ownerPrincipalId, conversationId });
+      if (deps === undefined) throw new Error("the tool was not offered");
+      return createBrowserTaskTool({ ...deps, personText: () => "Fill the form at https://shop.example/apply" });
+    };
+
+    const refused = await toolOnNode([{ provider: "acme", id: "words-only" }]).execute({
+      goal: "Fill the form",
+      urls: ["https://shop.example/apply"],
+    });
+    expect(refused.text).toContain("Settings → AI & Routing → Choose provider and model");
+    expect(tasksInConversation()).toEqual([]);
+
+    // One model the catalogue says nothing about is enough to go ahead: the worker finds out, and says so if it cannot.
+    toolOnNode([
+      { provider: "acme", id: "words-only" },
+      { provider: "elsewhere", id: "unlisted" },
+    ]);
+    expect(await services.taskDispatch?.workersCallTools()).toBeUndefined();
   });
 
   it("does not claim a start the dispatcher refused", async () => {

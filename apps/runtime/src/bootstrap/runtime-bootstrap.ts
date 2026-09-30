@@ -10,6 +10,7 @@ import { interactionDepsFor } from "../gateway.ts";
 import { guardOperation } from "../jev-decider.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { createModelCatalogue, type ModelTurn, type ViewDescriptor } from "../model-turn.ts";
+import { workerModelCandidates } from "./model-bootstrap.ts";
 import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
@@ -269,6 +270,9 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       // worker starts rather than run on a script that cannot do it.
       workerModel: nodeWorkerModel({
         modelTurn,
+        // Asked before a browser task is created: when the catalogue states that none of these can call tools, the
+        // task is refused with the setting to change instead of being started on a model that can only answer in words.
+        candidates: () => workerModelCandidates(deps.services, modelTurn?.configuredModel()),
         env: process.env,
         storedCredential: (name) =>
           readCredential(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId, name),
