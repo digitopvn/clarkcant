@@ -68,7 +68,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
-  rmSync(dir, { recursive: true, force: true });
+  // Chromium has closed, but Windows may briefly retain a lock on a profile file.
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 type ActionOverrides = Omit<Partial<AutomationAction>, "observationId"> & { observationId: string };
