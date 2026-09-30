@@ -249,6 +249,22 @@ export function Conversation({
     onSendFailed: (originalText) => setDraft(originalText),
   });
 
+  /*
+   * A widget button's call or workflow that is still waiting on the node is something this conversation is doing, so
+   * Stop is offered for it as for a reply, and reaches the same node stop: that stops the reply and every action running
+   * in the conversation. The button then says what the stop meant for its effect.
+   */
+  const [actionRunning, setActionRunning] = useState(false);
+  const stopConversation = (): void => {
+    if (busy) {
+      void stop();
+      return;
+    }
+    if (actionRunning && conversationId !== undefined) {
+      void client.stopTurn(conversationId).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+    }
+  };
+
   const {
     voiceOpen,
     setVoiceOpen,
@@ -282,7 +298,7 @@ export function Conversation({
       if (failed !== undefined) throw new Error(failed);
     },
     // "Dừng lại", typed or said, reaches the same call as the Stop button.
-    stopTurn: () => void stop(),
+    stopTurn: () => stopConversation(),
     // Read through a ref: the inbox actions need this hook's own inbox state, so they are made below it.
     askAboutLatestNotice: async () => {
       await askAboutLatestNotice.current?.();
@@ -378,6 +394,7 @@ export function Conversation({
     applyTimeline,
     setError,
     liveTrigger,
+    onActionsRunningChange: setActionRunning,
   });
 
   const focusedInstanceId = pins.find((pin) => pin.displayMode === "expanded")?.instanceId;
@@ -496,10 +513,10 @@ export function Conversation({
           draft={draft}
           setDraft={setDraft}
           placeholder={placeholder}
-          busy={busy}
+          busy={busy || actionRunning}
           onSubmit={() => void send(draft)}
           onStop={() => {
-            void stop();
+            stopConversation();
             // Back to where the next message is written: the Stop button turns back into Send, which is disabled
             // on an empty draft and would otherwise leave focus on a control that does nothing.
             composerInput.current?.focus();

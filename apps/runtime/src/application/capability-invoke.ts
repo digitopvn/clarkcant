@@ -59,7 +59,10 @@ export type CapabilityInvokeRefusal =
   | "APPROVAL_STALE"
   | "SERVICE_NOT_RUNNING"
   | "SERVICE_TOOL_FAILED"
-  | "SERVICE_UNREACHABLE";
+  | "SERVICE_UNREACHABLE"
+  | "SERVICE_TIMED_OUT"
+  | "SERVICE_CANCELLED"
+  | "LEDGER_UNAVAILABLE";
 
 export type CapabilityInvokeOutcome =
   | { kind: "done"; ref: CapabilityRef; effectCategory: EffectCategory; output: string; description: string }
@@ -69,7 +72,19 @@ export type CapabilityInvokeOutcome =
       /** The card to show; it carries the payload an approval runs. */
       card: Extract<MessageBlock, { type: "approval-card" }>;
     }
-  | { kind: "refused"; status: number; code: CapabilityInvokeRefusal; message: string };
+  | {
+      kind: "refused";
+      status: number;
+      code: CapabilityInvokeRefusal;
+      message: string;
+      /**
+       * Whether the call was written to the service before it failed. Every refusal decided on this node is `false`;
+       * a service failure is `true` unless the transport knows the request never left (`ServiceCallError.sent`).
+       */
+      sent: boolean;
+      /** The category the call was decided under, once it got that far. */
+      effectCategory?: EffectCategory;
+    };
 
 export interface CapabilityInvokeDeps {
   db: Database;
@@ -112,20 +127,24 @@ export interface CapabilityInvokeRequest {
    * Set only by `runApprovedCapability`, after `decideApproval` checked the decider and the digest.
    */
   approvedBy?: { approvalId: string; generation: string; effectCategory: EffectCategory };
+  /** How long the service may take to answer, within the host's own ceiling. */
+  timeoutMs?: number;
+  /** Withdraws the call once it was sent: a person's Stop, or a workflow's deadline. */
+  signal?: AbortSignal;
+  /**
+   * Called once the call is decided and about to be sent, with nothing awaited in between.
+   *
+   * The caller's chance to write down what is about to happen — a widget press opens its effect-ledger entry here — so
+   * that a node which dies mid-call still has that record. When it throws, the call is not sent and the answer is
+   * `LEDGER_UNAVAILABLE` with nothing sent.
+   */
+  beforeSend?: (call: { effectCategory: EffectCategory; description: string }) => void;
 }
 
 /** What an approval is also bound to besides the call: the code that would run it, and the effect it was shown as. */
 export interface CapabilityApprovalContext {
   generation: string;
   effectCategory: EffectCategory;
-}
-
-/**
- * Whether a refused call may still have done something: it was sent to the service, and what came back was an error
- * or nothing at all. Every other refusal is decided before the service is asked, so nothing ran.
- */
-export function mayHaveRun(code: CapabilityInvokeRefusal): boolean {
-  return code === "SERVICE_TOOL_FAILED" || code === "SERVICE_UNREACHABLE";
 }
 
 /**
@@ -144,8 +163,9 @@ const APPROVAL_TTL_MS = 15 * 60_000;
 const PAYLOAD_LIMIT = 4000;
 const OUTPUT_LIMIT = 16_000;
 
+/** A refusal decided on this node, before anything was sent. */
 function refused(status: number, code: CapabilityInvokeRefusal, message: string): CapabilityInvokeOutcome {
-  return { kind: "refused", status, code, message };
+  return { kind: "refused", status, code, message, sent: false };
 }
 
 /** Why a schema refused the arguments, in one line a person or a model can act on. */
@@ -316,6 +336,18 @@ export async function invokeCapability(
     };
   }
 
+  if (request.beforeSend !== undefined) {
+    try {
+      request.beforeSend({ effectCategory: descriptor.effectCategory, description });
+    } catch (cause) {
+      return refused(
+        503,
+        "LEDGER_UNAVAILABLE",
+        `this node could not record the call before sending it (${cause instanceof Error ? cause.message : String(cause)}); nothing was sent`,
+      );
+    }
+  }
+
   // Written before the call, so a node that dies mid-call still shows what it started.
   recordEffectExecution(
     { db: deps.db, nodeId: deps.nodeId, now, newId: deps.newId },
@@ -331,7 +363,10 @@ export async function invokeCapability(
   );
 
   try {
-    const result = await host.call(ref, request.args);
+    const result = await host.call(ref, request.args, {
+      ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    });
     return {
       kind: "done",
       ref,
@@ -341,10 +376,25 @@ export async function invokeCapability(
     };
   } catch (cause) {
     if (cause instanceof ServiceCallError) {
-      const status = cause.code === "SERVICE_TOOL_FAILED" ? 502 : cause.code === "SERVICE_NOT_RUNNING" ? 503 : 504;
-      return refused(status, cause.code, cause.message);
+      const status =
+        cause.code === "SERVICE_TOOL_FAILED"
+          ? 502
+          : cause.code === "SERVICE_NOT_RUNNING"
+            ? 503
+            : cause.code === "SERVICE_CANCELLED"
+              ? 409
+              : 504;
+      return { kind: "refused", status, code: cause.code, message: cause.message, sent: cause.sent, effectCategory: descriptor.effectCategory };
     }
-    return refused(504, "SERVICE_UNREACHABLE", cause instanceof Error ? cause.message : String(cause));
+    // An error this layer does not know came from inside the call, so the request may have left: said as sent.
+    return {
+      kind: "refused",
+      status: 504,
+      code: "SERVICE_UNREACHABLE",
+      message: cause instanceof Error ? cause.message : String(cause),
+      sent: true,
+      effectCategory: descriptor.effectCategory,
+    };
   }
 }
 

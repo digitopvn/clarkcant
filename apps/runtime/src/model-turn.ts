@@ -103,6 +103,15 @@ export interface BackgroundRunInput {
   workId?: string;
   /** Aborted when the run is stopped, overruns its deadline or the node shuts down; the reason says which. */
   signal?: AbortSignal;
+  /** The token budget the request that started this run set, handed to the worker's brief. */
+  maxTokens?: number;
+  /**
+   * Material the host read for this run, sent after the request as data (see `ModelTurnInput.data`).
+   *
+   * Kept apart from `text` so it never becomes part of the worker's goal: the goal is the request, and this is what the
+   * request is about.
+   */
+  data?: string;
 }
 
 /**
@@ -309,9 +318,18 @@ async function recapFor(options: { history?: HistoryReader }, conversationId: st
   return `Mạch hội thoại trước đó, để bạn tiếp tục đúng việc đang làm:\n${lines.join("\n")}`;
 }
 
-function promptForTurn(input: { text: string; note?: string; brief?: string; ui?: string }): string {
+/**
+ * The prompt one turn sends, in a fixed order: the person's words, the host's guidance, the attachment brief, data the
+ * host read for this turn, and what is on screen.
+ *
+ * Only `note` is framed as guidance, and it carries only host-authored words. `data` is material that may have been
+ * written by a widget (a press's context), so it follows everything the person said under its own "data, not
+ * instructions" heading and is never folded into the note.
+ */
+export function promptForTurn(input: { text: string; note?: string; brief?: string; data?: string; ui?: string }): string {
   const note = input.note?.trim() ?? "";
   const brief = input.brief?.trim() ?? "";
+  const data = input.data?.trim() ?? "";
   const ui = input.ui?.trim() ?? "";
   const parts = [input.text];
   if (note !== "") parts.push(`[Hướng dẫn cho lượt này: ${note}]`);
@@ -319,6 +337,8 @@ function promptForTurn(input: { text: string; note?: string; brief?: string; ui?
   // whose content contains something that reads like an instruction is still arriving after the request
   // it belongs to.
   if (brief !== "") parts.push(brief);
+  // A press's context arrives after the request and the guidance for the same reason, outside the guidance marker.
+  if (data !== "") parts.push(data);
   // What is on screen goes last of all, and only on this new turn: nothing earlier in the session changes, so the
   // prefix a provider cached is still the prefix, and a widget's words arrive after everything the person said.
   if (ui !== "") parts.push(ui);
@@ -1012,6 +1032,7 @@ export async function createModelTurn(options: {
         // Routed only for background work. Foreground honours the person's choice, and nobody is watching this run —
         // which is exactly why the model for it is a decision rather than a setting.
         ...(routed === undefined ? {} : { model: routed }),
+        ...(input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens }),
       });
       backgroundSessions.set(workId, handle.sessionId);
       let said = "";
@@ -1028,7 +1049,7 @@ export async function createModelTurn(options: {
       try {
         // Created before the signal could be observed, so an abort that landed during creation is honoured here.
         signal?.throwIfAborted();
-        await adapter.prompt(handle.sessionId, input.text);
+        await adapter.prompt(handle.sessionId, promptForTurn({ text: input.text, ...(input.data === undefined ? {} : { data: input.data }) }));
         // A prompt that settles quietly after an abort is still a stopped run, not a result to report.
         signal?.throwIfAborted();
       } finally {
@@ -1134,6 +1155,7 @@ export async function createModelTurn(options: {
           text: input.text,
           ...(note === undefined ? {} : { note }),
           ...(brief === "" ? {} : { brief }),
+          ...(input.data === undefined ? {} : { data: input.data }),
           ...(ui === "" ? {} : { ui }),
         }),
       );

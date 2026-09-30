@@ -612,14 +612,30 @@ export function startBackgroundWork(
   at: () => Instant,
   conversationId: string,
   text: string,
-  options: { workId?: string; attempt?: number } = {},
+  options: {
+    workId?: string;
+    attempt?: number;
+    /** What the run is called where a person sees it, when the request text is not that — a button's label. */
+    title?: string;
+    /** The token budget the request set, handed to the worker. */
+    maxTokens?: number;
+    /**
+     * Material the host read for this request, sent to the worker after the request as data, never as part of it.
+     *
+     * Not part of the stored request text, so a retry of this run asks again without it: the screen it was read from
+     * may have changed, and a retry is a new request rather than a replay of old context.
+     */
+    data?: string;
+  } = {},
 ):
   | { sessionId: string; state: "running" | "queued"; position?: number }
   | { refusal: string; busy?: true } {
   const control = services.turnControl;
   if (control === undefined) return { refusal: "node này không có model để chạy việc nền" };
 
-  const title = text.replace(/\s+/g, " ").trim().slice(0, 120);
+  const title = (options.title ?? text).replace(/\s+/g, " ").trim().slice(0, 120);
+  const maxTokens = options.maxTokens;
+  const data = options.data;
   const submitted = nodeWork().submitBackground({
     ...(options.workId === undefined ? {} : { workId: options.workId }),
     ...(options.attempt === undefined ? {} : { attempt: options.attempt }),
@@ -635,7 +651,15 @@ export function startBackgroundWork(
     },
     run: async (signal, workId) => {
       try {
-        const said = await control.runInBackground({ workId, conversationId, principal, text, signal });
+        const said = await control.runInBackground({
+          workId,
+          conversationId,
+          principal,
+          text,
+          signal,
+          ...(maxTokens === undefined ? {} : { maxTokens }),
+          ...(data === undefined ? {} : { data }),
+        });
         signal.throwIfAborted();
         if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() });
         // The result is the message above; the notice is the pointer to it, for a person who is not looking at this
@@ -1360,6 +1384,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     }
     return fail(result.status, result.code, result.message, {
       ...(result.currentRevision === undefined ? {} : { currentRevision: result.currentRevision }),
+      ...(result.detail ?? {}),
     });
   }
 

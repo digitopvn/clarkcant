@@ -1,5 +1,5 @@
 import type { MessageKey } from "./i18n/messages.ts";
-import { useCallback, useRef, useState, type ReactElement, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement, type RefObject } from "react";
 
 import {
   GatewayError,
@@ -9,6 +9,7 @@ import {
   type Timeline,
   type TimelineAction,
 } from "./api.ts";
+import { actionRefusalMessage, actionResultMessage } from "./action-messages.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { tableExportRequestFrom } from "./table-model.ts";
@@ -89,27 +90,6 @@ interface ActionRun {
   tone?: "done" | "waiting" | "refused";
 }
 
-const UNAVAILABLE_KEYS: Record<string, MessageKey> = {
-  WORKFLOW_UNSUPPORTED: "widgets.action.unavailable.WORKFLOW_UNSUPPORTED",
-  NOT_A_SERVICE_CAPABILITY: "widgets.action.unavailable.NOT_A_SERVICE_CAPABILITY",
-  BINDING_STALE: "widgets.action.unavailable.BINDING_STALE",
-  CAPABILITY_NOT_READY: "widgets.action.unavailable.CAPABILITY_NOT_READY",
-  CAPABILITY_NOT_AUTHENTICATED: "widgets.action.unavailable.CAPABILITY_NOT_AUTHENTICATED",
-  CAPABILITY_MISSING: "widgets.action.unavailable.CAPABILITY_MISSING",
-};
-
-/**
- * The sentence for a binding the node says cannot run, or for a press it refused.
- *
- * A known code is said in the person's language; an unknown one falls back to the node's own reason, which is still
- * the real answer rather than a generic "something went wrong".
- */
-function reasonFor(t: (key: MessageKey) => string, code: string | undefined, reason: string | undefined): string {
-  const key = code === undefined ? undefined : UNAVAILABLE_KEYS[code];
-  if (key !== undefined) return t(key);
-  return reason ?? t("widgets.action.refusedGeneric");
-}
-
 function newInvocationId(): string {
   const cryptoApi = globalThis.crypto as { randomUUID?: () => string } | undefined;
   if (cryptoApi?.randomUUID !== undefined) return cryptoApi.randomUUID();
@@ -144,6 +124,8 @@ export interface SurfaceRendererDeps {
   applyTimeline: (next: Timeline) => void;
   setError: (message: string | undefined) => void;
   liveTrigger: RefObject<HTMLElement | null>;
+  /** Told whenever a press starts or stops waiting on the node, so the conversation can offer Stop meanwhile. */
+  onActionsRunningChange?: (running: boolean) => void;
 }
 
 /**
@@ -167,6 +149,7 @@ export function useSurfaceRenderer({
   setError,
   liveTrigger,
   t,
+  onActionsRunningChange,
 }: SurfaceRendererDeps): (input: SurfaceBlockRef) => ReactElement {
   /*
    * A standalone widget's view (a table's sort, search, page and selection; a form's draft; a list's page and
@@ -203,6 +186,12 @@ export function useSurfaceRenderer({
    * node checks it against what the binding accepts before anything runs.
    */
   const [actionRuns, setActionRuns] = useState<Record<string, ActionRun>>({});
+  // Whether a press is still waiting on the node, told to the conversation so its Stop is offered while one is: a
+  // button's call is stopped by the same Stop as a reply.
+  const anyActionRunning = Object.values(actionRuns).some((run) => run.pending);
+  useEffect(() => {
+    onActionsRunningChange?.(anyActionRunning);
+  }, [anyActionRunning, onActionsRunningChange]);
   const runAction = useCallback(
     (conversation: string, instance: Timeline["instances"][number], action: TimelineAction, input: Record<string, unknown>): void => {
       const id = instance.instanceId;
@@ -217,27 +206,18 @@ export function useSurfaceRenderer({
         })
         .then((result) => {
           applyTimeline(result.timeline);
-          const run: ActionRun =
-            result.approvalRequired !== undefined
-              ? // Nothing ran yet; the card the host placed in the conversation is where it is decided.
-                { pending: false, tone: "waiting", message: t("widgets.action.awaitingApproval") }
-              : result.duplicate
-                ? { pending: false, tone: "done", message: t("widgets.action.duplicate") }
-                : typeof result.output === "string" && result.output !== ""
-                  ? { pending: false, tone: "done", message: result.output }
-                  : result.pinId !== null
-                    ? { pending: false, tone: "done", message: t("widgets.action.pinned") }
-                    : { pending: false, tone: "done", message: t("widgets.action.done") };
+          // Started or waiting on an approval card is not done; the words for each are said in the person's language.
+          const tone = result.outcome === "background" || result.approvalRequired !== undefined ? "waiting" : "done";
+          const run: ActionRun = { pending: false, tone, message: actionResultMessage(t, result) };
           setActionRuns((current) => ({ ...current, [id]: run }));
         })
         .catch((cause: unknown) => {
-          const code = cause instanceof GatewayError ? cause.code : undefined;
+          // Said from the node's code and details, never its English sentence or a raw code: what failed, what was
+          // kept, and what happens next — the inbox only when the node recorded the question there.
           const message =
-            code === "TURN_IN_PROGRESS"
-              ? t("widgets.action.turnInProgress")
-              : code === "REVISION_MISMATCH"
-                ? t("widgets.action.revisionMismatch")
-                : reasonFor(t, code, cause instanceof GatewayError ? cause.reason : undefined);
+            cause instanceof GatewayError
+              ? actionRefusalMessage(t, { code: cause.code, reason: cause.reason, details: cause.details })
+              : t("widgets.action.refusedGeneric");
           setActionRuns((current) => ({ ...current, [id]: { pending: false, tone: "refused", message } }));
         });
     },
@@ -351,7 +331,7 @@ export function useSurfaceRenderer({
               ...(sends && actionRun?.pending === true ? { pending: true } : {}),
               ...(sends && actionRun?.message !== undefined ? { message: actionRun.message, tone: actionRun.tone } : {}),
               ...(sends && boundAction !== undefined && !boundAction.available
-                ? { unavailableReason: reasonFor(t, boundAction.unavailableCode, boundAction.unavailableReason) }
+                ? { unavailableReason: actionRefusalMessage(t, { code: boundAction.unavailableCode, reason: boundAction.unavailableReason, details: {} }) }
                 : {}),
               ...(isList && actionReady ? { itemActionReady: true } : {}),
             };

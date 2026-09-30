@@ -22,6 +22,7 @@ import {
   invokeWidgetAction,
   widgetActionTarget,
 } from "../gateway.ts";
+import { spokenActionRefusal, spokenActionWaiting } from "../application/action-speech.ts";
 import { carryOutSpokenStop } from "../application/stop-turn.ts";
 import { pendingForConversation } from "../interactions.ts";
 import { availableCredentials } from "../readiness.ts";
@@ -398,16 +399,17 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         "voice",
       );
 
-      if (!result.ok) return { ok: false, say: `Không thực hiện được: ${result.message}` };
+      const locale = preferredAppIntentLocale(appIntentDepsFor(deps.services), deps.services.runtime.identity.ownerPrincipalId);
+      // Said from the code and details in the person's language: a call that may have run is never "could not do it".
+      if (!result.ok) return { ok: false, say: spokenActionRefusal(action.label, { code: result.code, ...(result.detail === undefined ? {} : { detail: result.detail }) }, locale) };
+      if (result.body.outcome === "background") {
+        // Started, not done: the run reports into the conversation and the inbox when it ends.
+        return { ok: true, instanceId, revision: target.revision, say: spokenActionWaiting(action.label, "background", locale) };
+      }
       if (result.status === 202) {
         // The policy asked. The card is in the conversation; saying "done" here would be claiming something that has
         // not happened, and the person answers the card, not this sentence.
-        return {
-          ok: true,
-          instanceId,
-          revision: target.revision,
-          say: `${action.label} cần bạn duyệt trước. Tôi đã đặt thẻ duyệt trong cuộc trò chuyện.`,
-        };
+        return { ok: true, instanceId, revision: target.revision, say: spokenActionWaiting(action.label, "approval", locale) };
       }
       const landedOn = typeof result.body.revision === "number" ? result.body.revision : target.revision;
       // A service-backed action answers with what the service said, and that answer is what the person asked to hear.

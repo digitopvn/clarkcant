@@ -1,6 +1,7 @@
 import {
   type ActionBinding,
   type ActionProposal,
+  type WorkflowRunReport,
   type ActionInvocation,
   type CapabilityRef,
   type CompiledSection,
@@ -1496,11 +1497,50 @@ interface InvokeRecord {
   digest: string;
   result:
     | { kind: "done"; output: string }
-    | { kind: "approval-required"; approvalId: string };
+    | { kind: "approval-required"; approvalId: string }
+    /**
+     * Sent, and its answer never came back: the deadline passed or a person stopped it. Recorded so the same
+     * invocation id is told that again rather than sent a second time, which is how an effect would happen twice.
+     */
+    | { kind: "uncertain"; code: string; message: string; taskId?: string }
+    /** Handed to the node's background lane; its result arrives in the conversation, not in this answer. */
+    | { kind: "background"; workId: string; state: "running" | "queued" }
+    /** A workflow's run, complete or stopped at a step, with what each step came to. */
+    | { kind: "workflow"; report: WorkflowRunReport }
+    /**
+     * Written before anything is sent, and replaced by the outcome once there is one. Found again after a restart, it
+     * means the node stopped while the action ran: its effect is unknown, and it is not run a second time.
+     */
+    | { kind: "started"; at: string };
 }
 
 /** What an action run outside this package came to, recorded so the same invocation id gets it back. */
 export type BoundActionResult = InvokeRecord["result"];
+
+/**
+ * Whether a widget instance is part of a conversation: pinned there, captured in one of its messages, or named by a
+ * block of one — the same blocks the conversation's timeline draws its widgets from.
+ */
+export function instanceInConversation(deps: Pick<WidgetDeps, "db">, instanceId: string, conversationId: string): boolean {
+  const pinned = oneRow(deps.db, "SELECT 1 AS found FROM pins WHERE conversation_id = ? AND instance_id = ? LIMIT 1", conversationId, instanceId);
+  if (pinned !== undefined) return true;
+  const captured = oneRow(
+    deps.db,
+    `SELECT 1 AS found FROM widget_snapshots s JOIN messages m ON m.message_id = s.message_id
+     WHERE s.instance_id = ? AND m.conversation_id = ? LIMIT 1`,
+    instanceId,
+    conversationId,
+  );
+  if (captured !== undefined) return true;
+  // A widget-ref block, or a surface block whose snapshot names the instance, as the message document stores it.
+  const named = oneRow(
+    deps.db,
+    "SELECT 1 AS found FROM messages WHERE conversation_id = ? AND instr(document, ?) > 0 LIMIT 1",
+    conversationId,
+    JSON.stringify({ instanceId }).slice(1, -1),
+  );
+  return named !== undefined;
+}
 
 export type BoundActionCheck =
   | { ok: false; code: MiniAppActionCode; message: string; currentRevision?: number }
@@ -1534,6 +1574,15 @@ export function checkBoundAction(
   }
   if (instance.ownerPrincipalId !== request.principalId) {
     return { ok: false, code: "NOT_AUTHORIZED", message: "this instance belongs to another principal" };
+  }
+  // Stop, the approval card, a background run and the ledger's task are all kept under the conversation the request
+  // names, so a press is only taken in a conversation the widget is actually in.
+  if (!instanceInConversation(deps, instance.instanceId, request.conversationId)) {
+    return {
+      ok: false,
+      code: "INSTANCE_UNKNOWN",
+      message: `widget instance ${request.instanceId} is not in this conversation`,
+    };
   }
   const binding = getActionBinding(deps, request.actionBindingId);
   if (binding === undefined || binding.instanceId !== instance.instanceId) {
@@ -1646,6 +1695,35 @@ export function recordInvokeAction(
       toJson({ digest: input.digest, result: input.result }),
       deps.now(),
     );
+}
+
+/**
+ * Replace a `started` record with what the action came to.
+ *
+ * Only a `started` record is replaced: an outcome already written is the answer the same id keeps getting.
+ */
+export function settleInvokeAction(
+  deps: WidgetDeps,
+  input: { invocationId: string; digest: string; result: InvokeRecord["result"] },
+): void {
+  deps.db
+    .prepare(
+      `UPDATE action_invocations SET outcome = ?, recorded_at = ?
+       WHERE invocation_id = ? AND json_extract(outcome, '$.result.kind') = 'started'`,
+    )
+    .run(toJson({ digest: input.digest, result: input.result }), deps.now(), input.invocationId);
+}
+
+/**
+ * Remove a `started` record for an action that was refused before anything was sent, so the same id can be pressed
+ * again once whatever refused it has changed.
+ */
+export function forgetStartedInvokeAction(deps: WidgetDeps, invocationId: string): void {
+  deps.db
+    .prepare(
+      `DELETE FROM action_invocations WHERE invocation_id = ? AND json_extract(outcome, '$.result.kind') = 'started'`,
+    )
+    .run(invocationId);
 }
 
 function readDisplayMode(input: Record<string, unknown>): "compact" | "expanded" {

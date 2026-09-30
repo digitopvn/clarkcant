@@ -5,7 +5,6 @@ import {
   type CapabilityInvokeDeps,
   type CapabilityInvokeOutcome,
   invokeCapability,
-  mayHaveRun,
 } from "./application/capability-invoke.ts";
 
 /**
@@ -63,7 +62,7 @@ export function describeCapabilityOutcome(outcome: CapabilityInvokeOutcome): str
       );
     case "refused":
       // Sent and then failed is not the same as never sent: the service may have done part of it.
-      return mayHaveRun(outcome.code)
+      return outcome.sent
         ? `Gọi ${outcome.code === "SERVICE_TOOL_FAILED" ? "bị service báo lỗi" : "không nhận được trả lời"}: ${outcome.message} (${outcome.code}). ` +
             "Yêu cầu đã tới service nên có thể nó đã chạy một phần — kiểm tra lại (ví dụ gọi list) trước khi gọi lại."
         : `Không gọi được: ${outcome.message} (${outcome.code}). Không có gì được chạy.`;

@@ -261,17 +261,23 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     emit?: (event: ConductorEmit) => void;
     channel?: "voice" | "chat";
     note?: string;
+    data?: string;
   }): Promise<{ block: MessageBlock; text: string } | undefined> => {
     /*
      * A press of an `agent` action button, answered.
      *
      * The turn itself is the product's: the host checked the binding and started it with the button's label as the
      * person's message and the offered intent as guidance. What the fixture adds is only the reply, and it quotes the
-     * intent it was given, so a journey can see that what the model was asked is what the button was made to ask.
+     * intent it was given, so a journey can see that what the model was asked is what the button was made to ask. When
+     * the host read context for the button, the reply quotes it too — from the turn's data section, which is where the
+     * host puts it, never from the guidance note: what reached the model is what the host read.
      */
-    const pressed = input.note === undefined ? null : /You offered it for: (.+)\nDo that now\.$/su.exec(input.note);
+    const pressed = input.note === undefined ? null : /You offered it for: (.+?)\nDo that now\.$/su.exec(input.note);
     if (pressed !== null) {
-      const reply = `Fixture: đã nhận yêu cầu từ nút "${input.text}". Việc cần làm: ${(pressed[1] ?? "").trim()}`;
+      const context = (input.data ?? "").split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim();
+      const reply =
+        `Fixture: đã nhận yêu cầu từ nút "${input.text}". Việc cần làm: ${(pressed[1] ?? "").trim()}` +
+        (context === "" ? "" : ` Ngữ cảnh host đọc: ${context.slice(0, 600)}`);
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     }
 
@@ -1454,9 +1460,11 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      *
      * The decision to place it is scripted; the descriptor is the real one, so the action is compiled by the host,
      * the binding is stored and the refusal of a bad proposal is the host's own sentence. `invoke` names the notes
-     * package's list capability, which is served only when that package is installed and its service is running.
+     * package's list capability, which is served only when that package is installed and its service is running;
+     * `chậm` its slow add, which a journey stops while it waits; `workflow` adds a note and then reads the list back.
+     * `agent ngữ cảnh <instanceId>` asks for a summary of another widget, which the host reads from its own records.
      */
-    const placed = /^(?:đặt nút|place button)\s+(view|agent|invoke|workflow)$/iu.exec(input.text.trim());
+    const placed = /^(?:đặt nút|place button)\s+(agent ngữ cảnh|view|agent|invoke|workflow|chậm)(?:\s+(\S+))?$/iu.exec(input.text.trim());
     if (placed !== null) {
       const services = deps.services();
       const view = buildViewCatalog(services.conductor, undefined, () => ({
@@ -1483,26 +1491,46 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
                 icon: "send",
                 action: { kind: "agent", intent: "Tóm tắt cuộc trò chuyện này trong ba dòng." },
               }
-            : kind === "invoke"
+            : kind === "agent ngữ cảnh"
               ? {
-                  label: "Tải ghi chú",
-                  description: "Đọc danh sách từ dịch vụ của gói ghi chú.",
-                  emphasis: "secondary",
-                  icon: "refresh",
-                  action: { kind: "invoke", capabilityRef: "com.example.notes.list@1", args: {} },
+                  label: "Tóm tắt thẻ",
+                  description: "Clark tóm tắt thẻ chi tiết ở trên.",
+                  icon: "send",
+                  action: { kind: "agent", intent: "Tóm tắt thẻ chi tiết.", contextRefs: [`widget:${placed[2] ?? ""}`] },
                 }
-              : {
-                  label: "Chạy quy trình",
-                  description: "Đọc ghi chú rồi đếm.",
-                  icon: "play",
-                  action: {
-                    kind: "workflow",
-                    steps: [
-                      { stepId: "list", kind: "invoke", capabilityRef: "com.example.notes.list@1", args: {}, dependsOn: [] },
-                      { stepId: "count", kind: "transform", transform: "count", dependsOn: ["list"] },
-                    ],
-                  },
-                };
+              : kind === "invoke"
+                ? {
+                    label: "Tải ghi chú",
+                    description: "Đọc danh sách từ dịch vụ của gói ghi chú.",
+                    emphasis: "secondary",
+                    icon: "refresh",
+                    action: { kind: "invoke", capabilityRef: "com.example.notes.list@1", args: {} },
+                  }
+                : kind === "chậm"
+                  ? {
+                      label: "Ghi chậm",
+                      description: "Ghi một ghi chú sau 30 giây, trừ khi bạn dừng trước.",
+                      icon: "save",
+                      action: { kind: "invoke", capabilityRef: "com.example.notes.add-slowly@1", args: { text: "ghi chậm", seconds: 30 } },
+                    }
+                  : {
+                      label: "Ghi rồi đọc ghi chú",
+                      description: "Thêm một ghi chú rồi đọc lại danh sách.",
+                      icon: "play",
+                      action: {
+                        kind: "workflow",
+                        steps: [
+                          {
+                            stepId: "add",
+                            kind: "invoke",
+                            capabilityRef: "com.example.notes.add@1",
+                            args: { text: "từ quy trình" },
+                            dependsOn: [],
+                          },
+                          { stepId: "list", kind: "invoke", capabilityRef: "com.example.notes.list@1", args: {}, dependsOn: ["add"] },
+                        ],
+                      },
+                    };
       try {
         const block = await view.build({
           props,

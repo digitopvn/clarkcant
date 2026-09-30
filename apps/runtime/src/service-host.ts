@@ -24,7 +24,14 @@ import {
   resolveLocalSource,
   updateReadiness,
 } from "@clarkcant/core";
-import { type McpToolMetadata, StdioMcpTransport, type StdioMcpTransportOptions } from "@clarkcant/mcp-adapters";
+import {
+  McpRequestCancelled,
+  McpRequestNotSent,
+  McpRequestTimeout,
+  type McpToolMetadata,
+  StdioMcpTransport,
+  type StdioMcpTransportOptions,
+} from "@clarkcant/mcp-adapters";
 
 import {
   type ContainerEngineName,
@@ -113,7 +120,11 @@ export function serviceEffectCategory(declared: EffectCategory, tool: McpToolMet
 /** What a running service does, as a unit test can stand in for it. */
 export interface ServiceConnection {
   listTools(): Promise<McpToolMetadata[]>;
-  callTool(name: string, args: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<{ content: string }>;
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<{ content: string }>;
   ping(): Promise<void>;
   close(): Promise<void>;
   readonly stderrTail: string;
@@ -156,13 +167,38 @@ export interface ServiceHostOptions {
   timings?: { restartBaseMs?: number; pingIntervalMs?: number; engineRetryMs?: number };
 }
 
-export type ServiceCallFailure = "SERVICE_NOT_RUNNING" | "SERVICE_TOOL_FAILED" | "SERVICE_UNREACHABLE";
+/**
+ * Why a call did not come back with an answer.
+ *
+ * `SERVICE_TIMED_OUT` and `SERVICE_CANCELLED` are their own codes rather than kinds of "unreachable": the request was
+ * sent and the service was reachable, so what it was asked to do may have been done. A caller that recorded an effect
+ * has to say that, not that nothing happened.
+ */
+export type ServiceCallFailure =
+  | "SERVICE_NOT_RUNNING"
+  | "SERVICE_TOOL_FAILED"
+  | "SERVICE_UNREACHABLE"
+  | "SERVICE_TIMED_OUT"
+  | "SERVICE_CANCELLED";
+
+/** How a caller bounds one call: a deadline shorter than the host's own, and a signal that withdraws it. */
+export interface ServiceCallOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
 
 export class ServiceCallError extends Error {
   readonly code: ServiceCallFailure;
-  constructor(code: ServiceCallFailure, message: string) {
+  /**
+   * Whether the request was written to the service before it failed. `false` means nothing reached it — it was not
+   * running, or the call was withdrawn before it was written — so nothing can have happened; `true` means the service
+   * may have acted, whatever came back.
+   */
+  readonly sent: boolean;
+  constructor(code: ServiceCallFailure, message: string, sent = code !== "SERVICE_NOT_RUNNING") {
     super(message);
     this.code = code;
+    this.sent = sent;
   }
 }
 
@@ -170,7 +206,7 @@ export interface ServiceHost {
   /** Bring the running services in line with what is installed. Serialised: a second call waits for the first. */
   reconcile(): Promise<void>;
   /** Call a registered service capability. The caller has already asked the policy; this only runs it. */
-  call(ref: CapabilityRef, args: Record<string, unknown>): Promise<{ content: string }>;
+  call(ref: CapabilityRef, args: Record<string, unknown>, options?: ServiceCallOptions): Promise<{ content: string }>;
   /**
    * The active generation whose service facet declares this ref and owns its registry row, whatever state the service
    * is in.
@@ -773,7 +809,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
   return {
     reconcile: () => serialised(reconcileNow),
 
-    async call(ref, args) {
+    async call(ref, args, options = {}) {
       const entry = [...entries.values()].find((candidate) => candidate.tools.has(ref));
       const tool = entry?.tools.get(ref);
       if (entry === undefined || tool === undefined || entry.state !== "running" || entry.connection === undefined) {
@@ -781,12 +817,33 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         throw new ServiceCallError("SERVICE_NOT_RUNNING", `${ref} cannot run now: ${reason}`);
       }
       try {
-        return await entry.connection.callTool(tool, args, { timeoutMs: CALL_TIMEOUT_MS });
+        // A caller may ask for less time than the host allows, never for more.
+        const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? CALL_TIMEOUT_MS, CALL_TIMEOUT_MS));
+        return await entry.connection.callTool(tool, args, {
+          timeoutMs,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
-        // A tool that answered with an error is the service's own verdict; anything else is the service failing.
-        const code: ServiceCallFailure = message.includes("reported an error") ? "SERVICE_TOOL_FAILED" : "SERVICE_UNREACHABLE";
-        throw new ServiceCallError(code, message.slice(0, 500));
+        // A tool that answered with an error is the service's own verdict; a request that ran out of time or was
+        // withdrawn was sent and never answered; anything else is the service failing.
+        // A request that never reached the service changed nothing, whatever else is true, so it is said first.
+        if (cause instanceof McpRequestNotSent || (cause instanceof McpRequestCancelled && !cause.sent)) {
+          throw new ServiceCallError(
+            cause instanceof McpRequestNotSent ? "SERVICE_NOT_RUNNING" : "SERVICE_CANCELLED",
+            message.slice(0, 500),
+            false,
+          );
+        }
+        const code: ServiceCallFailure =
+          cause instanceof McpRequestCancelled || options.signal?.aborted === true
+            ? "SERVICE_CANCELLED"
+            : cause instanceof McpRequestTimeout
+              ? "SERVICE_TIMED_OUT"
+              : message.includes("reported an error")
+                ? "SERVICE_TOOL_FAILED"
+                : "SERVICE_UNREACHABLE";
+        throw new ServiceCallError(code, message.slice(0, 500), true);
       }
     },
 

@@ -252,6 +252,21 @@ export const workflowStepSchema = z.strictObject({
 });
 export type WorkflowStep = z.infer<typeof workflowStepSchema>;
 
+/**
+ * The limits an action runs under.
+ *
+ * A proposal may ask for tighter ones than the host's defaults, never for looser: the host clamps what was asked to its
+ * own ceilings when it compiles the binding, and fills in a default for anything left out. Each kind takes only the
+ * limits that mean something for it — a service call has no token budget, and a turn is bounded by the node's own turn
+ * budget rather than a deadline a button sets — so a limit a kind cannot apply is refused rather than ignored.
+ */
+export const actionLimitsSchema = z.strictObject({
+  maxTokens: z.int().nonnegative().optional(),
+  maxCallsPerMinute: z.int().nonnegative().optional(),
+  deadlineMs: z.int().nonnegative().optional(),
+});
+export type ActionLimits = z.infer<typeof actionLimitsSchema>;
+
 export const actionProposalSchema = z.discriminatedUnion("kind", [
   /** Client-local gesture or canonical view state. Does not call the model. */
   z.strictObject({
@@ -265,6 +280,7 @@ export const actionProposalSchema = z.discriminatedUnion("kind", [
     capabilityRef: capabilityRefSchema,
     args: z.record(z.string(), z.unknown()),
     bindings: z.array(fieldBindingSchema).max(32).optional(),
+    limits: actionLimitsSchema.pick({ deadlineMs: true, maxCallsPerMinute: true }).optional(),
   }),
   /** Turn a click into a fresh intent with bounded context. */
   z.strictObject({
@@ -272,15 +288,60 @@ export const actionProposalSchema = z.discriminatedUnion("kind", [
     intent: z.string().min(1).max(2000),
     contextRefs: z.array(z.string().min(1).max(200)).max(32),
     inputSchema: z.record(z.string(), z.unknown()).optional(),
+    /** Run as background work under the node's supervisor rather than as a turn in the conversation. */
+    background: z.boolean().optional(),
+    limits: actionLimitsSchema.pick({ maxTokens: true, maxCallsPerMinute: true }).optional(),
   }),
   /** A bounded multi-step sequence over capabilities already known to work. */
   z.strictObject({
     kind: z.literal("workflow"),
     steps: z.array(workflowStepSchema).min(1).max(16),
     inputSchema: z.record(z.string(), z.unknown()).optional(),
+    limits: actionLimitsSchema.pick({ deadlineMs: true, maxCallsPerMinute: true }).optional(),
   }),
 ]);
 export type ActionProposal = z.infer<typeof actionProposalSchema>;
+
+/** What one step of a workflow came to, as the run reports it. */
+export interface WorkflowStepReport {
+  stepId: string;
+  kind: WorkflowStep["kind"];
+  /**
+   * `done` ran and answered; `skipped` was not run because a condition it depends on was false; `not-run` was never
+   * reached because the run stopped first; `refused` was refused before anything was sent; `failed` did not complete and
+   * changed nothing — a transform that could not apply, or a call that only reads and did not finish; `uncertain` was
+   * sent and no answer that can be trusted came back (none in time, a stop, the service going away, or an error after it
+   * may have done part of the work), so it may have taken effect; `awaiting-approval` waits on the host's approval card.
+   */
+  status: "done" | "skipped" | "not-run" | "refused" | "failed" | "uncertain" | "awaiting-approval";
+  /** One line: the output's start, the refusal, or why it was skipped. Never a secret, never the whole output. */
+  detail?: string;
+  /**
+   * For an `uncertain` step: whether the effect ledger holds the call as unknown, so the inbox asks the person whether
+   * it took effect. `false` means that question could not be recorded, and nothing may say it was.
+   */
+  recorded?: boolean;
+  /** For a `failed` step that was sent: the capability only reads, so nothing changed whatever happened. */
+  readOnly?: true;
+}
+
+/**
+ * What a workflow run came to.
+ *
+ * Honest about a partial run: the steps that ran are named as done and nothing claims they were undone, because a
+ * workflow has no rollback — what a step did stays done.
+ */
+export interface WorkflowRunReport {
+  completed: boolean;
+  steps: WorkflowStepReport[];
+  /** The step the run stopped at, when it did not complete. */
+  stoppedAt?: string;
+  code?: string;
+  /** One or two sentences a person reads: what happened, what was kept, what they can do. */
+  message: string;
+  /** The last completed step's output, bounded. */
+  output?: string;
+}
 
 /**
  * A compiled, server-owned action binding.
@@ -313,11 +374,7 @@ export const actionBindingSchema = z.strictObject({
   /** Whether the host must obtain fresh approval before each invocation. */
   requiresApproval: z.boolean(),
   /** Token/rate/deadline limits applied before any model call is started. */
-  limits: z.strictObject({
-    maxTokens: z.int().nonnegative().optional(),
-    maxCallsPerMinute: z.int().nonnegative().optional(),
-    deadlineMs: z.int().nonnegative().optional(),
-  }),
+  limits: actionLimitsSchema,
   bindingDigest: z.string().min(1).max(120),
   createdAt: instantSchema,
 });

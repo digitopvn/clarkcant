@@ -361,26 +361,124 @@ biết gì về hành động. Nếu host từ chối đề xuất, model đọc
 | `action.kind` | Bấm nút thì làm gì | Biên dịch từ |
 | --- | --- | --- |
 | `view` (`view.save`) | Ghim nút này vào cuộc trò chuyện. | Effect category `local-write`. |
-| `agent` | Mở một lượt trong cùng cuộc trò chuyện với tin nhắn đúng bằng nhãn; `intent` được gửi kèm cho model. Câu trả lời là kết quả của lần bấm. | Bản thân việc mở lượt không thay đổi gì; lượt đó làm gì tiếp thì tự đi qua policy. |
-| `invoke` | Gọi một capability của package service qua `invokeCapability`, cùng đường với tool `invoke_capability` của agent và giọng nói. | Effect category của chính capability và thế hệ package đang phục vụ nó; tham số được kiểm theo input schema. |
-| `workflow` | Chưa làm gì: node này chưa chạy được quy trình, nên nút hiện ở trạng thái tắt kèm lý do. | Category nặng nhất trong các bước. |
+| `agent` | Mở một lượt trong cùng cuộc trò chuyện với tin nhắn đúng bằng nhãn; `intent` được gửi kèm cho model, cùng ngữ cảnh mà `contextRefs` chỉ ra, do host đọc. Câu trả lời là kết quả của lần bấm. Với `background: true`, yêu cầu đi vào làn chạy nền của node, và kết quả tới cuộc trò chuyện và hộp thư. | Bản thân việc mở lượt không thay đổi gì; lượt đó làm gì tiếp thì tự đi qua policy. `contextRefs` được kiểm theo ngữ pháp đóng và theo người đặt nút. |
+| `invoke` | Gọi một capability của package service qua `invokeCapability`, cùng đường với tool `invoke_capability` của agent và giọng nói, trong hạn chót của binding. | Effect category của chính capability và thế hệ package đang phục vụ nó; tham số được kiểm theo input schema. |
+| `workflow` | Chạy các bước theo thứ tự `dependsOn` trong một hạn chót chung, và dừng ở bước đầu tiên không hoàn tất. | Category nặng nhất trong các bước; mỗi bước `invoke` phải do một service đang chạy phục vụ. Mọi bước `invoke` phải gọi capability của cùng một package, và binding ghim thế hệ của package đó; workflow trải qua nhiều package bị từ chối khi biên dịch, nên hãy làm mỗi package một nút. |
 
-Binding digest bao gồm đề xuất, thế hệ package, effect category và nhãn. Khi package được cập nhật, binding trở nên cũ
-(`BINDING_STALE`) thay vì bị trỏ sang đích khác. Lần bấm có cần phê duyệt hay không là quyết định của execution policy
-tại thời điểm bấm, không phải một cờ đóng băng lúc biên dịch.
+Binding digest bao gồm đề xuất, thế hệ package, effect category, nhãn và các giới hạn. Khi package được cập nhật,
+binding trở nên cũ (`BINDING_STALE`) thay vì bị trỏ sang đích khác. Lần bấm có cần phê duyệt hay không là quyết định của
+execution policy tại thời điểm bấm, không phải một cờ đóng băng lúc biên dịch. Bấm nút và nói yêu cầu cho cùng một nút
+đi chung một đường (`invokeWidgetAction`), nhận cùng quyết định policy và cùng kết quả.
 
 Mọi bề mặt đọc trạng thái sẵn sàng từ một hàm duy nhất (`bindingAvailability` trong
 `apps/runtime/src/application/action-bindings.ts`), và timeline mang trạng thái đó bên cạnh instance. Service đã dừng,
-capability không phải service, binding cũ hay workflow đều là nút bị tắt kèm lý do bằng lời, không phải nút trông như
-bấm được rồi thất bại. Lần bấm vẫn được kiểm lại khi tới node. Khi bấm, nút hiện trạng thái đang chạy, rồi kết quả trong
-một dòng `role="status"`. Kết quả là output của service, câu trả lời của agent, "đã ghim", "đang chờ bạn phê duyệt"
-hoặc lý do bị từ chối. Bấm lần hai khi lần đầu còn đang chạy thì không gửi gì. Bấm nút agent khi Clark còn đang trả lời
-thì bị từ chối với `TURN_IN_PROGRESS` thay vì ngắt ngang.
+capability không phải service hay binding cũ đều là nút bị tắt kèm lý do bằng lời, không phải nút trông như bấm được rồi
+thất bại. Workflow chỉ sẵn sàng khi capability của mọi bước `invoke` đều sẵn sàng, và lý do nêu tên bước chưa sẵn sàng.
+Lần bấm vẫn được kiểm lại khi tới node. Khi bấm, nút hiện trạng thái đang chạy, rồi kết quả trong một dòng
+`role="status"`. Kết quả là output của service, câu trả lời của agent, output cuối của workflow, "đã ghim", "đã bắt đầu
+chạy nền", "đang chờ bạn phê duyệt" hoặc lý do bị từ chối. Bấm lần hai khi lần đầu còn đang chạy thì không gửi gì. Bấm
+nút agent chạy trước mặt khi Clark còn đang trả lời thì bị từ chối với `TURN_IN_PROGRESS` thay vì ngắt ngang.
+
+**Giới hạn.** Đề xuất có thể xin `limits` chặt hơn mặc định. Những gì nó xin được kẹp vào trần khi biên dịch binding, và
+binding được lưu không kèm giới hạn thì chạy theo mặc định, nên không binding nào chạy không có giới hạn
+(`apps/runtime/src/application/action-limits.ts`).
+
+| Loại | `deadlineMs` | `maxTokens` | `maxCallsPerMinute` |
+| --- | --- | --- | --- |
+| `invoke` | Mặc định 60 giây, 1–60 giây; trần thời gian gọi của chính service host vẫn áp dụng. | — | Mặc định 30, 1–120. |
+| `agent` | — (áp dụng hạn chót của lượt và của việc chạy nền trên node) | Mặc định 4000, 256–16000. | Mặc định 10, 1–30. |
+| `workflow` | Mặc định 120 giây, 1–300 giây, cho cả lần chạy. | — | Mặc định 10, 1–60. |
+
+Số lần mỗi phút được tính theo từng binding, trên node này. Một lần bấm được đếm khi nó đã qua phần kiểm binding,
+revision và input, trước khi policy quyết định, nên lần bấm mà policy sau đó từ chối hoặc chuyển sang chờ phê duyệt vẫn
+dùng mất một lượt. Lần bấm vượt giới hạn bị từ chối với `RATE_LIMITED` (429), kèm `retryAfterMs` và `limit`, và không có
+gì chạy. Bộ đếm được giữ trong bộ nhớ cho các binding được bấm trong một phút gần nhất, tối đa 1000 binding.
+
+**Ngữ cảnh cho nút agent.** `contextRefs` là một ngữ pháp đóng: `widget` / `widget:<instanceId>` (widget đang mang ý
+nghĩa gì lúc này, lấy từ chính semantic document mà `inspect_ui` đọc), `selection` / `selection:<instanceId>`, và
+`state:<key>` / `state:<instanceId>/<key>` (một giá trị trong state của một view ghép). Tham chiếu không có instance id
+nghĩa là widget của chính nút. Mọi thứ khác bị từ chối khi biên dịch binding, cũng như một widget mà node này không giữ
+hoặc thuộc về người khác. `artifact:<id>` bị từ chối cho tới khi node có artifact broker (#313). Khi bấm, host đọc lại
+từng tham chiếu cho người đã bấm và giới hạn mỗi cái ở 4000 ký tự, cắt đúng ranh giới ký tự. Những gì host đọc có thể là
+chữ do widget viết, nên đó là dữ liệu, không bao giờ là chỉ dẫn: nó không được đặt vào ghi chú hướng dẫn của lượt, cũng
+không vào văn bản yêu cầu của worker chạy nền. Nó nằm trong một phần riêng sau lời của người dùng và phần hướng dẫn, dưới
+một tiêu đề đánh dấu đó là dữ liệu, không phải chỉ dẫn. Ở đó host còn làm nó trơ: dấu ngoặc vuông được đổi thành ngoặc
+toàn độ rộng, ký tự phân dòng và phân đoạn được đổi thành xuống dòng thường, và mỗi dòng được thụt vào dưới mục của nó,
+nên chữ của widget không thể đóng dấu hướng dẫn hay tự mở một mục mới. Bản thân nút không thêm gì: nút không gửi input,
+và bất cứ thứ gì nó gửi đều bị từ chối. Tham chiếu không còn phân giải được thì lần bấm bị từ chối với `CONTEXT_REF_UNKNOWN` (404) hoặc
+`CONTEXT_REF_FORBIDDEN` (403) trước khi gọi bất kỳ model nào. Sau đó yêu cầu và ngữ cảnh được đo theo `maxTokens` bằng
+một ước lượng thận trọng (số byte UTF-8 / 3). Yêu cầu không vừa bị từ chối trọn vẹn với `TOKEN_BUDGET_EXCEEDED`, và không
+có gì được gửi tới model. Yêu cầu chạy nền trao ngân sách này cho worker dưới dạng `maxTokens` của brief. Model adapter
+chưa dùng nó để giới hạn output của chính worker.
+
+**Cuộc gọi không bao giờ nhận được câu trả lời.** Stop, Escape hoặc "dừng lại" trong cuộc trò chuyện cũng dừng một cuộc
+gọi service hay workflow của nút còn đang chạy ở đó. Khi có cái đang chạy, ô soạn tin hiện Stop. Lần bấm nút agent chạy
+trước mặt là một lượt, và cùng nút Stop đó kết thúc nó như một lượt. Nó không bị đếm thêm lần nữa như một thao tác của nút.
+
+Mọi cuộc gọi không phải `read` đều đi qua sổ effect (#273), giống như một thao tác trình duyệt
+(`apps/runtime/src/application/action-effects.ts`). Sau khi registry, schema và policy đã cho phép, và trước khi gửi bất
+cứ thứ gì, cuộc gọi được ghi là `submitted` dưới một task riêng, trong một transaction. Nếu sổ không ghi được, lần bấm bị
+từ chối với `LEDGER_UNAVAILABLE` (503) và không có gì được gửi. Kết quả trả về sẽ chốt nó:
+
+- có câu trả lời thì nó được xác nhận;
+- cuộc gọi chưa rời khỏi node (service không chạy, hoặc cuộc gọi bị rút lại trước khi được ghi) thì bị đánh dấu thất bại,
+  và không có gì xảy ra;
+- mọi kết cục khác thì bị đánh dấu chưa rõ: hết giờ, bị dừng, service thoát giữa chừng (`SERVICE_UNREACHABLE`), hoặc
+  service trả lời bằng lỗi sau khi có thể đã làm một phần việc (`SERVICE_TOOL_FAILED`).
+
+Cuộc gọi chưa rõ có thể đã có hiệu lực. Lần bấm trả về `outcome: "uncertain"` với `mayHaveRun: true` và `recorded`, cho
+biết sổ có đang giữ câu hỏi đó hay không. Chỉ khi đó mới có thông báo trong hộp thư hỏi người dùng nó đã có hiệu lực
+chưa, và chỉ khi đó lời người dùng đọc hoặc nghe mới nhắc tới hộp thư; nếu không, lời đó nhờ người dùng nói rõ trong cuộc
+trò chuyện. Nếu node chết giữa cuộc gọi, dòng `submitted` vẫn còn đó, và phần phục hồi lúc khởi động biến nó thành effect
+chưa rõ với cùng thông báo trong hộp thư. Cuộc gọi được ghi theo invocation id và không bao giờ được thử lại: cùng id đó
+nhận lại câu trả lời chưa rõ và không gửi gì.
+
+Capability `read` không mở mục nào trong sổ. Một lần đọc chưa xong bị từ chối với `readOnly: true`, vì không có gì thay
+đổi và bấm lại là an toàn. Service qua MCP stdio được gửi `notifications/cancelled` cho yêu cầu bị rút lại hoặc hết giờ.
+Service tôn trọng thông báo này có thể dừng, nhưng host không bao giờ mặc định là nó đã dừng.
+
+**Một kết quả cho mỗi invocation id, kể cả qua khởi động lại.** Trước khi gửi bất cứ thứ gì, node ghi một bản ghi
+`started` cho invocation id, và thay nó bằng kết quả khi lần bấm kết thúc. Cùng id đó tới lần nữa thì nhận lại kết quả ấy
+và không chạy gì. Khi lần đầu còn đang chạy, câu trả lời là `INVOCATION_IN_PROGRESS`. Sau khi một lần khởi động lại cắt
+ngang nó, câu trả lời là `ACTION_INTERRUPTED` với `outcome: "uncertain"`, và nó không được chạy lại. Lần bấm bị từ chối
+trước khi gửi gì thì không được ghi, nên cùng lần bấm đó có thể chạy một lần khi điều khiến nó bị từ chối thay đổi. Lần
+bấm cũng bị từ chối với `INSTANCE_UNKNOWN` (404) khi widget không nằm trong cuộc trò chuyện mà yêu cầu nêu, nên Stop, thẻ
+phê duyệt, việc chạy nền và task trong sổ đều thuộc về chính cuộc trò chuyện của widget.
+
+**Workflow.** Bộ từ vựng bước là đóng và không chứa mã:
+
+- `invoke` gọi một capability qua `invokeCapability`, với phần kiểm registry, kiểm schema, quyết định policy riêng và,
+  khi policy hỏi, thẻ phê duyệt riêng;
+- `transform` định hình lại output của bước nó phụ thuộc bằng một trong năm hàm thuần: `select-field`,
+  `filter-equals`, `map-field`, `take` hoặc `count`;
+- `condition` kiểm output đó (`equals`, `not-equals`, `exists`, `greater-than` hoặc `less-than`), và các bước phụ thuộc
+  vào một điều kiện sai thì bị bỏ qua.
+
+Tham số của bước `invoke` có thể là `{"$step": "<id>"}` (một bước nó phụ thuộc, có thể kèm `"field"`) hoặc
+`{"$input": "<key>"}` (một giá trị lần bấm đã gửi). Lần chạy dừng ở bước đầu tiên bị từ chối, thất bại, xin phê duyệt
+hoặc không trả lời kịp. Một bước không được gửi khi hạn chót chỉ còn dưới 250 ms; lần chạy dừng trước bước đó, không gửi
+gì. Thông điệp nêu tên bước đó và các bước chưa chạy. Các bước trước nó vẫn giữ nguyên là đã xong,
+vì workflow không có rollback và không bao giờ tuyên bố có. Phản hồi nói `outcome: "partial"` khi có bước đã tới service
+trước lúc dừng, `"uncertain"` khi bước bị dừng có thể đã chạy, và `"refused"` trong các trường hợp còn lại, kèm một báo
+cáo `workflow` về mọi bước. Mọi bước mà lần chạy đã tới, kể cả bước bị bỏ qua, đều được ghi vào nhật ký audit. Phê duyệt
+mà một bước xin là một thẻ của host trong cuộc trò chuyện. Phê duyệt nó thì chỉ chạy riêng bước đó và không tiếp tục
+workflow. Cuộc gọi đã được phê duyệt chạy theo trần của chính service host (60 giây), không theo hạn chót hay số lần mỗi
+phút của nút, và nút Stop của cuộc trò chuyện không dừng được nó.
+
+Body phản hồi nói điều gì đã xảy ra trong `outcome`: `done` (200), `approval-required` (202) hoặc `background` (202).
+Body của một lần từ chối mang `code`, `message` và, khi liên quan, `outcome`, `mayHaveRun`, `recorded`, `readOnly`,
+`taskId` (mục trong sổ, chỉ khi `recorded`), `retryAfterMs`, `limit` và `workflow`. `message` là tiếng Anh, dành cho log
+và agent. Cuộc trò chuyện và giọng nói nói kết quả bằng ngôn ngữ của người dùng, dựa trên code và các chi tiết
+(`packages/conversation-client/src/action-messages.ts`, `apps/runtime/src/application/action-speech.ts`). Chúng không bao
+giờ hiện code thô, và một cuộc gọi có thể đã chạy thì không bao giờ bị nói là thất bại.
 
 `canvas.cta@1` được giữ để lịch sử vẫn hiển thị. Model không đặt nó được nữa, vì nó không có hành động nào phía sau.
 
-Kiểm thử: `apps/runtime/test/action-widget.spec.ts`, `packages/conversation-client/test/action-button.spec.ts`, và
-journey trình duyệt `apps/web/e2e/action-widget.spec.ts`, chạy từng loại với một notes service thật trong container.
+Kiểm thử: `apps/runtime/test/action-widget.spec.ts`, `apps/runtime/test/workflow-executor.spec.ts`,
+`apps/runtime/test/action-speech.spec.ts`, các trường hợp gọi có giới hạn trong `apps/runtime/test/service-host.spec.ts`,
+`packages/conversation-client/test/action-button.spec.ts`, `packages/conversation-client/test/action-messages.spec.ts`,
+và journey trình duyệt `apps/web/e2e/action-widget.spec.ts`, chạy từng loại với một notes service thật trong container,
+gồm một workflow, một nút agent có tham chiếu ngữ cảnh và Stop trong lúc một cuộc gọi chậm đang chạy.
 
 ### 8.2 Biểu mẫu, danh sách, ô tìm kiếm và trường nhập
 
