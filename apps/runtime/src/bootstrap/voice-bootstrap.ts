@@ -185,6 +185,8 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         // `source: "voice"` on a `control_app` call this turn makes: the tool reads this the same way
         // `model-bootstrap.ts` does for a typed turn, off the same `Turn.channel` field.
         channel: "voice",
+        // What the person said, heard on their own voice surface: it counts as their words (`MessageRecord.surface`).
+        surface: "voice",
         // The voice surface is a caller holding an open stream like any other, so it gets the same
         // events the typed path gets. Text is forwarded, accumulated: the surface replaces what it shows, so a
         // frame has to carry the answer so far rather than the fragment that just arrived. `accumulateAnswerText`

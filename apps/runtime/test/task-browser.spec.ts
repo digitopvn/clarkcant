@@ -18,11 +18,18 @@ import { allRows, effectsForTask, getTask } from "@clarkcant/storage";
 
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import {
+  type SiteLookup,
+  type TaskBrowserAdmission,
   type TaskBrowserDriver,
   type TaskBrowserInput,
+  browserTaskApprovalText,
   browserTaskOrigins,
   createTaskBrowserBroker,
+  isPrivateAddress,
   parseTaskBrowserRequest,
+  pinnedSites,
+  removeIdleTaskProfiles,
+  sameSites,
   taskProfileDir,
 } from "../src/task-browser.ts";
 
@@ -82,8 +89,9 @@ const ELEMENTS: ObservedElement[] = [
 ];
 
 /** A driver that answers clicks as it is told, and records what the ledger held at the moment each action reached it. */
-function fakeDriver(clickAnswer: ActResult, taskId: () => string) {
+function fakeDriver(clickAnswer: ActResult, taskId: () => string, options: { clickGate?: Promise<void> } = {}) {
   const seen: { action: AutomationAction; rowsAtAct: string[] }[] = [];
+  const stops: string[] = [];
   let observations = 0;
   let closed = 0;
   const driver: TaskBrowserDriver = {
@@ -112,15 +120,25 @@ function fakeDriver(clickAnswer: ActResult, taskId: () => string) {
       if (action.operation === "navigate") {
         return { status: "applied", verification: "not-applicable", message: "navigated", requiresReobservation: true };
       }
-      if (action.operation === "click") return clickAnswer;
+      if (action.operation === "click") {
+        await options.clickGate;
+        return clickAnswer;
+      }
       return { status: "applied", verification: "observed-applied", message: "done", requiresReobservation: false };
+    },
+    stop(reason: string) {
+      stops.push(reason);
+      return { epoch: 2, reason };
     },
     async close(): Promise<void> {
       closed += 1;
     },
   } as TaskBrowserDriver;
-  return { driver, seen, closedCount: () => closed };
+  return { driver, seen, stops, closedCount: () => closed };
 }
+
+/** Name lookups answered without the network: every name is a public address unless a test says otherwise. */
+const PUBLIC_LOOKUP: SiteLookup = async () => [{ address: "93.184.216.34", family: 4 }];
 
 const ANSWERED: ActResult = {
   status: "applied",
@@ -137,16 +155,27 @@ const LOST: ActResult = {
   sentEffect: true,
 };
 
-function broker(taskId: string, conversationId: string, driver: TaskBrowserDriver, policy = AUTONOMOUS, profileDir?: string) {
+function broker(
+  taskId: string,
+  conversationId: string,
+  driver: TaskBrowserDriver,
+  policy: ExecutionPolicyConfig | (() => ExecutionPolicyConfig) = AUTONOMOUS,
+  options: { profileDir?: string; admission?: TaskBrowserAdmission; lookup?: SiteLookup; opened?: (rules: string[]) => void } = {},
+) {
   const input: TaskBrowserInput = {
     ledger: { services, taskId },
     conversationId,
     intent: { kind: "interactive" },
-    policy: () => policy,
+    policy: typeof policy === "function" ? policy : () => policy,
     principalId: owner.principalId,
     allowedOrigins: ["http://shop.example"],
-    profileDir: profileDir ?? join(dir, "profiles", taskId),
-    openDriver: () => ({ ok: true, driver }),
+    admission: options.admission ?? "policy",
+    profileDir: options.profileDir ?? join(dir, "profiles", taskId),
+    lookup: options.lookup ?? PUBLIC_LOOKUP,
+    openDriver: (opening) => {
+      options.opened?.(opening.hostResolverRules);
+      return { ok: true, driver };
+    },
   };
   return createTaskBrowserBroker(input);
 }
@@ -187,6 +216,93 @@ describe("what a worker may ask the browser", () => {
     expect(browserTaskOrigins("ftp://files.example/x and javascript:alert(1)")).toEqual([]);
     expect(taskProfileDir("/data/browser-profiles", "task/../1")).toBe(join("/data/browser-profiles", "task____1"));
   });
+
+  it("compares two lists of sites as sets, and reads a goal naming too many sites as a different list", () => {
+    expect(sameSites(["https://a.example", "https://b.example"], ["https://b.example", "https://a.example"])).toBe(true);
+    expect(sameSites(["https://a.example"], ["https://a.example", "https://b.example"])).toBe(false);
+    expect(sameSites([], [])).toBe(true);
+    const nine = Array.from({ length: 9 }, (_, index) => `https://s${String(index)}.example`);
+    const eight = nine.slice(0, 8);
+    expect(sameSites(browserTaskOrigins(nine.join(" ")), eight)).toBe(false);
+  });
+
+  it("names the sites and the request in the approval, without the addresses line", () => {
+    expect(
+      browserTaskApprovalText(
+        ["https://shop.example", "http://127.0.0.1:8080"],
+        "Điền đơn ứng tuyển\n\nBắt đầu từ: https://shop.example/apply http://127.0.0.1:8080/",
+      ),
+    ).toBe("dùng trình duyệt trên shop.example, 127.0.0.1:8080 cho việc “Điền đơn ứng tuyển”");
+  });
+});
+
+describe("where the browser finds a named site", () => {
+  it("knows the addresses of this machine and of private networks, IPv4 written as IPv6 included", () => {
+    for (const address of ["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.10", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "[::1]"]) {
+      expect(isPrivateAddress(address), address).toBe(true);
+    }
+    for (const address of ["93.184.216.34", "8.8.8.8", "2606:4700::1111", "::ffff:8.8.8.8", "not-an-address"]) {
+      expect(isPrivateAddress(address), address).toBe(false);
+    }
+  });
+
+  it("pins a name to the public address it was checked at, and refuses one that points inside", async () => {
+    const lookup: SiteLookup = async (hostname) =>
+      hostname === "rebind.example"
+        ? [{ address: "93.184.216.34", family: 4 }, { address: "127.0.0.1", family: 4 }]
+        : hostname === "v6.example"
+          ? [{ address: "2606:4700::1111", family: 6 }]
+          : [{ address: "93.184.216.34", family: 4 }];
+
+    expect(await pinnedSites(["https://shop.example", "https://v6.example"], lookup)).toEqual({
+      ok: true,
+      rules: ["MAP shop.example 93.184.216.34", "MAP v6.example [2606:4700::1111]"],
+    });
+    // Typed by the person as an address, or as localhost: where they said, looked up by nobody.
+    expect(await pinnedSites(["http://127.0.0.1:8080", "http://localhost:3000", "http://[::1]:9000"], lookup)).toEqual({
+      ok: true,
+      rules: [],
+    });
+    const rebound = await pinnedSites(["https://rebind.example"], lookup);
+    expect(rebound.ok).toBe(false);
+    if (!rebound.ok) expect(rebound.refused).toContain("rebind.example points at 127.0.0.1");
+    const missing = await pinnedSites(["https://gone.example"], async () => {
+      throw new Error("getaddrinfo ENOTFOUND gone.example");
+    });
+    expect(missing).toEqual({ ok: false, refused: "gone.example could not be found (getaddrinfo ENOTFOUND gone.example)" });
+  });
+
+  it("starts no browser for a site whose name points inside, and hands the checked addresses to the one it starts", async () => {
+    const { taskId, conversationId } = runningTask();
+    const fake = fakeDriver(ANSWERED, () => taskId);
+    const refusedBroker = broker(taskId, conversationId, fake.driver, AUTONOMOUS, {
+      lookup: async () => [{ address: "10.0.0.5", family: 4 }],
+    });
+    const refused = await refusedBroker({ action: "open", url: "http://shop.example/form" });
+    expect(refused.kind).toBe("refused");
+    expect(refused.text).toContain("shop.example points at 10.0.0.5");
+    expect(fake.seen).toEqual([]);
+
+    let rules: string[] = [];
+    const pinned = broker(taskId, conversationId, fake.driver, AUTONOMOUS, { opened: (given) => (rules = given) });
+    expect((await pinned({ action: "open", url: "http://shop.example/form" })).kind).toBe("done");
+    expect(rules).toEqual(["MAP shop.example 93.184.216.34"]);
+  });
+});
+
+describe("profiles left behind", () => {
+  it("removes every task profile whose task is not running, and keeps the running ones", async () => {
+    const profiles = join(dir, "browser-profiles");
+    for (const name of ["task_gone", "task_live", "task_other"]) mkdirSync(join(profiles, name, "Default"), { recursive: true });
+
+    const result = await removeIdleTaskProfiles(profiles, ["task_live"]);
+
+    expect(result.removed.sort()).toEqual(["task_gone", "task_other"]);
+    expect(result.failed).toEqual([]);
+    expect(existsSync(join(profiles, "task_live"))).toBe(true);
+    expect(existsSync(join(profiles, "task_gone"))).toBe(false);
+    expect(await removeIdleTaskProfiles(join(dir, "never-made"), [])).toEqual({ removed: [], failed: [] });
+  });
 });
 
 describe("a click that submits, in the task's ledger", () => {
@@ -209,7 +325,7 @@ describe("a click that submits, in the task's ledger", () => {
     const [effect] = effectsForTask(services.runtime.db, taskId);
     expect(effect).toMatchObject({ state: "confirmed", capabilityRef: "browser.playwright@1", category: "external-write" });
     // Named for the person: the page by host and path, never its query.
-    expect(effect?.intent).toBe("click “Send application” on shop.example/form — tgt_fake");
+    expect(effect?.intent).toBe("bấm “Send application” trên shop.example/form — tgt_fake");
     expect(executedAudits()).toHaveLength(1);
     expect(getTask(services.runtime.db, taskId)?.state).toBe("running");
   });
@@ -228,7 +344,7 @@ describe("a click that submits, in the task's ledger", () => {
     expect(getTask(services.runtime.db, taskId)?.state).toBe("uncertain");
     const written = notices(taskId);
     expect(written.map((notice) => notice.dedup_key)).toEqual([`worker:${taskId}`]);
-    expect(written[0]?.body).toContain("click “Send application” on shop.example/form");
+    expect(written[0]?.body).toContain("Thao tác bấm “Send application” trên shop.example/form cho việc “gửi đơn trên");
     expect(written[0]?.body).toContain("trang không trả lời");
 
     // A second submission of the same task is not handed to the browser while the first is unknown.
@@ -253,10 +369,10 @@ describe("a click that submits, in the task's ledger", () => {
     expect(executedAudits()).toEqual([]);
   });
 
-  it("does not ask a second time what the dispatcher already asked the person, and says so in the audit", async () => {
+  it("does not ask a second time what the person already granted at dispatch, and says so in the audit", async () => {
     const { taskId, conversationId } = runningTask();
     const fake = fakeDriver(ANSWERED, () => taskId);
-    const ask = broker(taskId, conversationId, fake.driver, ASKS);
+    const ask = broker(taskId, conversationId, fake.driver, ASKS, { admission: "granted" });
 
     await ask({ action: "open", url: "http://shop.example/form" });
     const reply = await ask({ action: "click", ref: "el_send" });
@@ -264,13 +380,60 @@ describe("a click that submits, in the task's ledger", () => {
     expect(reply.kind).toBe("done");
     const [audit] = executedAudits();
     expect(JSON.parse(audit?.document ?? "{}")).toMatchObject({
-      because: "the task it belongs to was allowed to act on these sites when it started",
+      because: "the person approved this task acting on these sites when it started",
       category: "external-write",
       approvedBy: "policy",
     });
   });
 
-  it("lets the model make a click consequential, and leaves a click that sent nothing out of the ledger", async () => {
+  it("refuses a submit the policy now asks about when nobody approved the task, and presses nothing", async () => {
+    const { taskId, conversationId } = runningTask();
+    const fake = fakeDriver(ANSWERED, () => taskId);
+    // Let on by the policy alone at dispatch; the person has since switched to asking.
+    const ask = broker(taskId, conversationId, fake.driver, ASKS, { admission: "policy" });
+
+    await ask({ action: "open", url: "http://shop.example/form" });
+    const reply = await ask({ action: "click", ref: "el_send" });
+
+    expect(reply.kind).toBe("refused");
+    expect(reply.text).toContain("nobody approved this task's clicks");
+    expect(reply.text).toContain("nothing was pressed");
+    expect(fake.seen.filter((entry) => entry.action.operation === "click")).toEqual([]);
+    expect(effectsForTask(services.runtime.db, taskId)).toEqual([]);
+    expect(executedAudits()).toEqual([]);
+
+    // A plain click is covered by the task being let onto the site, so it still goes ahead under an ask.
+    expect((await ask({ action: "click", ref: "el_more" })).kind).toBe("done");
+  });
+
+  it("refuses any click the policy denies, one nobody marked consequential included", async () => {
+    const { taskId, conversationId } = runningTask();
+    const fake = fakeDriver(ANSWERED, () => taskId);
+    const ask = broker(taskId, conversationId, fake.driver, DENIES);
+
+    await ask({ action: "open", url: "http://shop.example/form" });
+    const reply = await ask({ action: "click", ref: "el_more" });
+
+    expect(reply.kind).toBe("refused");
+    expect(reply.text).toContain("nothing was pressed");
+    expect(fake.seen.filter((entry) => entry.action.operation === "click")).toEqual([]);
+  });
+
+  it("audits a click nobody marked consequential that sent something anyway", async () => {
+    const { taskId, conversationId } = runningTask();
+    const fake = fakeDriver(ANSWERED, () => taskId);
+    const ask = broker(taskId, conversationId, fake.driver);
+
+    await ask({ action: "open", url: "http://shop.example/form" });
+    await ask({ action: "click", ref: "el_more" });
+
+    const audits = executedAudits().map((audit) => JSON.parse(audit.document) as { description?: string });
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.description).toContain("bấm “Show more” trên shop.example/form");
+    expect(effectsForTask(services.runtime.db, taskId).map((effect) => effect.state)).toEqual(["confirmed"]);
+  });
+
+  it("lets the model make a click consequential, and records a press that sent nothing as failed, never done", async () => {
     const { taskId, conversationId } = runningTask();
     const quiet: ActResult = { status: "applied", verification: "observed-applied", message: "clicked", requiresReobservation: false, sentEffect: false };
     const fake = fakeDriver(quiet, () => taskId);
@@ -279,12 +442,17 @@ describe("a click that submits, in the task's ledger", () => {
     await ask({ action: "open", url: "http://shop.example/form" });
     await ask({ action: "click", ref: "el_more" });
     expect(effectsForTask(services.runtime.db, taskId)).toEqual([]);
+    expect(executedAudits()).toEqual([]);
 
     await ask({ action: "observe" });
-    await ask({ action: "click", ref: "el_more", consequential: true });
+    const pressed = await ask({ action: "click", ref: "el_more", consequential: true });
     const clicks = fake.seen.filter((entry) => entry.action.operation === "click");
     expect(clicks.map((entry) => entry.action.consequential)).toEqual([false, true]);
     expect(clicks[1]?.rowsAtAct).toEqual(["submitted"]);
+    expect(pressed.text).toContain("sent nothing to the site, so nothing was submitted");
+    const [effect] = effectsForTask(services.runtime.db, taskId);
+    expect(effect?.state).toBe("failed");
+    expect(effect?.reconciliationEvidence).toContain("nothing was sent");
   });
 
   it("acts only on an element of the latest observation, and on nothing once the run is stopped", async () => {
@@ -292,18 +460,65 @@ describe("a click that submits, in the task's ledger", () => {
     const fake = fakeDriver(ANSWERED, () => taskId);
     const profileDir = join(dir, "profiles", "one");
     mkdirSync(profileDir, { recursive: true });
-    const ask = broker(taskId, conversationId, fake.driver, AUTONOMOUS, profileDir);
+    const ask = broker(taskId, conversationId, fake.driver, AUTONOMOUS, { profileDir });
 
     expect((await ask({ action: "click", ref: "el_send" })).text).toContain("open a page");
     await ask({ action: "open", url: "http://shop.example/form" });
     expect((await ask({ action: "click", ref: "el_elsewhere" })).text).toContain("not an element of the latest observation");
 
     ask.stop();
+    expect(fake.stops).toHaveLength(1);
     expect((await ask({ action: "click", ref: "el_send" })).kind).toBe("refused");
     await ask.close();
     expect(fake.closedCount()).toBe(1);
     expect(existsSync(profileDir)).toBe(false);
     expect(fake.seen.filter((entry) => entry.action.operation === "click")).toEqual([]);
+  });
+
+  it("stops the driver at once while a click is in flight, writes that click down, and sends nothing after it", async () => {
+    const { taskId, conversationId } = runningTask();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const fake = fakeDriver(ANSWERED, () => taskId, { clickGate: gate });
+    const ask = broker(taskId, conversationId, fake.driver);
+
+    await ask({ action: "open", url: "http://shop.example/form" });
+    const inFlight = ask({ action: "click", ref: "el_send" });
+    const queued = ask({ action: "click", ref: "el_more" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fake.seen.filter((entry) => entry.action.operation === "click")).toHaveLength(1);
+
+    ask.stop();
+    // The stop reached the driver while the click was still out, without waiting for it.
+    expect(fake.stops).toEqual(["the person stopped this task"]);
+    release();
+
+    expect((await inFlight).kind).toBe("done");
+    expect((await queued).kind).toBe("refused");
+    expect(fake.seen.filter((entry) => entry.action.operation === "click")).toHaveLength(1);
+    expect(effectsForTask(services.runtime.db, taskId).map((effect) => effect.state)).toEqual(["confirmed"]);
+  });
+
+  it("hands nothing to the browser when the stop lands while the click is being decided", async () => {
+    const { taskId, conversationId } = runningTask();
+    const fake = fakeDriver(ANSWERED, () => taskId);
+    let stopNow = false;
+    const holder: { ask?: ReturnType<typeof broker> } = {};
+    const ask = broker(taskId, conversationId, fake.driver, () => {
+      if (stopNow) holder.ask?.stop();
+      return AUTONOMOUS;
+    });
+    holder.ask = ask;
+
+    await ask({ action: "open", url: "http://shop.example/form" });
+    stopNow = true;
+    const reply = await ask({ action: "click", ref: "el_send" });
+
+    expect(reply.kind).toBe("refused");
+    expect(reply.text).toContain("stopped before the action was handed to the browser");
+    expect(fake.seen.filter((entry) => entry.action.operation === "click")).toEqual([]);
+    expect(effectsForTask(services.runtime.db, taskId)).toEqual([]);
+    expect(executedAudits()).toEqual([]);
   });
 });
 
@@ -349,6 +564,7 @@ describe("a lost submit in a real browser", () => {
       policy: () => AUTONOMOUS,
       principalId: owner.principalId,
       allowedOrigins: browserTaskOrigins(`nộp đơn ở ${origin}/`),
+      admission: "policy",
       profileDir: join(dir, "profiles", "real"),
       answerTimeoutMs: 1500,
     });

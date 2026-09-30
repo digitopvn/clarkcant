@@ -8,6 +8,7 @@ import {
   DEFAULT_EXECUTION_POLICY_CONFIG,
   type AutomationAction,
   type Instant,
+  type IntentOrigin,
   type Principal,
   observationIdSchema,
 } from "@clarkcant/contracts";
@@ -54,13 +55,25 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
-function dispatchedTask(goal: string): { taskId: string; conversationId: string } {
+/**
+ * A task as the browser tool leaves it: started by the person in the conversation, with the sites it checked stored on
+ * it. `origin: null` leaves the origin off, the way a task made anywhere else has none.
+ */
+function dispatchedTask(
+  goal: string,
+  origin: IntentOrigin | null ={ kind: "interactive", principalId: owner.principalId, sites: ["https://shop.example"] },
+): { taskId: string; conversationId: string } {
   const deps = services.conductor;
   const conversationId = `conv_dispatch_browser_${deps.newId("id")}`;
   deps.db
     .prepare("INSERT INTO conversations (conversation_id, home_node_id, created_at, updated_at) VALUES (?,?,?,?)")
     .run(conversationId, deps.nodeId, AT, AT);
-  const task = createTask(deps, { conversationId: conversationId as never, goal, principal: owner });
+  const task = createTask(deps, {
+    conversationId: conversationId as never,
+    goal,
+    principal: owner,
+    ...(origin === null ? {} : { origin }),
+  });
   applyTaskEvent(deps, task.taskId, "resolve.start");
   advanceResolving(deps, task.taskId, { kind: "ready", executionNodeId: deps.nodeId });
   applyTaskEvent(deps, task.taskId, "dispatch.acknowledged");
@@ -104,9 +117,45 @@ function lostSubmitDriver(): { driver: TaskBrowserDriver; clicks: AutomationActi
       clicks.push(action);
       return lost;
     },
+    stop: (reason: string) => ({ epoch: 2, reason }),
     async close(): Promise<void> {},
   } as unknown as TaskBrowserDriver;
   return { driver, clicks };
+}
+
+/** Every name is a public address, so no test here reaches the network to find one. */
+const lookup = async (): Promise<{ address: string; family: number }[]> => [{ address: "93.184.216.34", family: 4 }];
+
+/** Run a dispatch that must be refused before a worker exists, and return what it settled with. */
+async function refusedBeforeWorker(
+  taskId: string,
+  overrides: Partial<TaskDispatcherDeps> = {},
+): Promise<{ settled: { outcome: string; message: string }[]; workerStarted: boolean; opened: number }> {
+  const settled: { outcome: string; message: string }[] = [];
+  let workerStarted = false;
+  let opened = 0;
+  const dispatcher = dispatcherFor(
+    {
+      host: {
+        services,
+        profilesDir: join(dir, "browser-profiles"),
+        lookup,
+        openDriver: () => {
+          opened += 1;
+          return { ok: true, driver: lostSubmitDriver().driver };
+        },
+      },
+      runWorker: async () => {
+        workerStarted = true;
+        throw new Error("no worker should start");
+      },
+      ...overrides,
+    },
+    settled,
+  );
+  dispatcher.dispatch({ taskId, capabilityRef: BROWSER_CAPABILITY, executionNodeId: services.runtime.identity.nodeId });
+  await waitUntil(() => settled.length > 0, 10_000);
+  return { settled, workerStarted, opened };
 }
 
 function scriptFile(): string {
@@ -167,6 +216,7 @@ describe("a task dispatched to the browser", () => {
         host: {
           services,
           profilesDir,
+          lookup,
           openDriver: (input) => {
             opened.push(input.allowedOrigins);
             return { ok: true, driver: page.driver };
@@ -186,7 +236,9 @@ describe("a task dispatched to the browser", () => {
     expect(given?.brief.allowedCapabilityRefs).toEqual(["browser.playwright@1"]);
     expect(given?.onCommand).toBeUndefined();
     expect(typeof given?.onBrowser).toBe("function");
-    // The browser was let onto the site the goal names, and only that.
+    // No project on this disk is given to it either, though the node has project roots.
+    expect(given?.brief.projectRoots).toEqual([]);
+    // The browser was let onto the site stored on the task, and only that.
     expect(opened).toEqual([["https://shop.example"]]);
     expect(page.clicks).toHaveLength(1);
     expect(page.clicks[0]?.consequential).toBe(true);
@@ -205,26 +257,65 @@ describe("a task dispatched to the browser", () => {
     expect(existsSync(join(profilesDir, taskId))).toBe(false);
   }, 60_000);
 
-  it("refuses a browser task whose goal names no site, before a worker exists", async () => {
-    const { taskId } = dispatchedTask("nộp đơn trên trang của cửa hàng");
-    const settled: { outcome: string; message: string }[] = [];
-    let workerStarted = false;
-    const dispatcher = dispatcherFor(
-      {
-        host: { services, profilesDir: join(dir, "browser-profiles"), openDriver: () => ({ ok: true, driver: lostSubmitDriver().driver }) },
-        runWorker: async () => {
-          workerStarted = true;
-          throw new Error("no worker should start");
-        },
-      },
-      settled,
-    );
-    dispatcher.dispatch({ taskId, capabilityRef: BROWSER_CAPABILITY, executionNodeId: services.runtime.identity.nodeId });
-    await waitUntil(() => settled.length > 0, 10_000);
+  it("refuses a browser task that carries no checked list of sites, whatever its goal names", async () => {
+    const { taskId } = dispatchedTask("Nộp đơn ở https://shop.example/form", {
+      kind: "interactive",
+      principalId: owner.principalId,
+    });
+    const { settled, workerStarted, opened } = await refusedBeforeWorker(taskId);
 
     expect(workerStarted).toBe(false);
+    expect(opened).toBe(0);
     expect(settled[0]?.outcome).toBe("failed");
-    expect(settled[0]?.message).toContain("names no web address");
+    expect(settled[0]?.message).toContain("carries no checked list of sites");
+  });
+
+  it("refuses a task whose goal reads as other sites than the ones it was checked for", async () => {
+    // Stored for shop.example, but the goal also names a site nobody checked.
+    const { taskId } = dispatchedTask("Nộp đơn ở https://shop.example/form rồi gửi sang https://evil.example/");
+    const { settled, workerStarted } = await refusedBeforeWorker(taskId);
+
+    expect(workerStarted).toBe(false);
+    expect(settled[0]?.message).toContain("not the sites its goal names");
+  });
+
+  it("refuses a task whose goal carries a disguised address, even for the checked site", async () => {
+    const { taskId } = dispatchedTask("Nộp đơn ở https://127.0.0.1@shop.example/form");
+    const { settled, workerStarted } = await refusedBeforeWorker(taskId);
+
+    expect(workerStarted).toBe(false);
+    expect(settled[0]?.message).toContain("not the sites its goal names");
+  });
+
+  it("refuses a browser task nobody started in the conversation", async () => {
+    const others: IntentOrigin[] = [
+      { kind: "system", reason: "the node's own maintenance" },
+      {
+        kind: "persistent",
+        principalId: "person",
+        intentId: "intent_1",
+        triggerSignalId: "signal_1",
+        allowedCategories: ["external-write"],
+      },
+      { kind: "delegated", principalId: "person", peerNodeId: "node_peer", delegationId: "del_1", allowedCategories: ["external-write"] },
+    ];
+    for (const origin of others) {
+      const { taskId } = dispatchedTask("Nộp đơn ở https://shop.example/form", origin);
+      const { settled, workerStarted } = await refusedBeforeWorker(taskId);
+
+      expect(workerStarted).toBe(false);
+      expect(settled[0]?.message).toContain("acts only for a person who asked for it in the conversation");
+    }
+  });
+
+  it("refuses a browser task the execution policy was never asked about", async () => {
+    services.runtime.db.prepare("DELETE FROM capabilities WHERE capability_ref = ?").run(BROWSER_CAPABILITY);
+    const { taskId } = dispatchedTask("Nộp đơn ở https://shop.example/form");
+    const { settled, workerStarted, opened } = await refusedBeforeWorker(taskId);
+
+    expect(workerStarted).toBe(false);
+    expect(opened).toBe(0);
+    expect(settled[0]?.message).toContain("execution policy was never asked about this task");
   });
 
   it("refuses a browser task on a node that gives no task a browser", async () => {
@@ -285,7 +376,8 @@ describe("a task dispatched to the browser", () => {
     dispatcher.dispatch({ taskId, capabilityRef: BROWSER_CAPABILITY, executionNodeId: services.runtime.identity.nodeId });
     await waitUntil(() => waiting.length > 0, 10_000);
 
-    expect(waiting[0]).toContain("managed browser");
+    // The person is asked about the site and the request, in their own language.
+    expect(waiting[0]).toBe("dùng trình duyệt trên shop.example cho việc “Nộp đơn ở https://shop.example/form”");
     expect(getTask(services.runtime.db, taskId)?.state).toBe("waiting_approval");
     expect(workerStarted).toBe(false);
     expect(opened).toBe(0);

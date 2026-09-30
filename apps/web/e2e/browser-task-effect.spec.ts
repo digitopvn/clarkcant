@@ -6,9 +6,11 @@ import { expect, test, type Page } from "@playwright/test";
 /**
  * A browser task's submit that the page never answers, from the press to the person's answer.
  *
- * The scripted sentence stands in for the model only: the node serves a form whose POST it never answers, the managed
- * browser is the pack's real Playwright driver, and every step goes through the broker a dispatched browser task gets.
- * So the unknown row, the task turning uncertain and the inbox notice are written by production calls. What this proves
+ * The scripted sentence stands in for the model and for the dispatch: the fixture model cannot call tools, so it creates
+ * the task and its broker itself instead of going through `start_browser_task` and the dispatcher, which have their own
+ * node-side tests. The node serves a form whose POST it never answers, the managed browser is the pack's real Playwright
+ * driver, and every step goes through the broker a dispatched browser task gets, under the node's own policy. So the
+ * unknown row, the task turning uncertain and the inbox notice are written by production calls. What this proves
  * end to end is that the lost submit is heard in the inbox with the browser's own wording, that it was sent once and a
  * second press was refused, and that the answer is the person's: recorded through the inbox, once, and never again.
  *
@@ -74,7 +76,8 @@ test("a submit the page never answers is held as unknown, heard in the inbox, an
   const notice = fresh[0];
   if (notice === undefined) throw new Error("the lost submit left no notice offering an answer");
   expect(notice.title).toBe("Chưa rõ một thao tác đã có hiệu lực hay chưa");
-  expect(notice.body).toContain("“click “Send application” on 127.0.0.1:");
+  expect(notice.body).toContain("Thao tác bấm “Send application” trên 127.0.0.1:");
+  expect(notice.body).not.toContain("““");
   expect(notice.body).toContain("đã được gửi đi nhưng trang không trả lời");
   expect(notice.body).toContain("Hãy kiểm tra trên trang đó");
   const effectId = notice.actions?.find((action) => action.id === "reconcile-failed")?.effectId;

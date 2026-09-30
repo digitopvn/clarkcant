@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { Instant } from "@clarkcant/contracts";
+import type { Instant, MessageRecord, MessageSurface } from "@clarkcant/contracts";
 import { getTask } from "@clarkcant/storage";
 
 import { createBrowserTaskTool, personTextOf } from "../src/browser-task-tool.ts";
@@ -37,7 +37,28 @@ afterEach(() => {
 
 type Job = Parameters<TaskDispatcher["dispatch"]>[0];
 
-function toolFor(said: string, options: { dispatcher?: boolean; accept?: boolean } = {}) {
+let sequence = 0;
+
+/** A stored message as the conversation keeps it; by default one the person typed into this node's composer. */
+function message(
+  text: string,
+  options: { role?: MessageRecord["role"]; surface?: MessageSurface | null; authorNodeId?: string; blocks?: MessageRecord["blocks"] } = {},
+): MessageRecord {
+  sequence += 1;
+  const surface = options.surface === undefined ? "composer" : options.surface;
+  return {
+    messageId: `msg_${String(sequence)}`,
+    conversationId,
+    role: options.role ?? "user",
+    blocks: options.blocks ?? [{ type: "text", format: "plain", content: text, streaming: false }],
+    authorNodeId: options.authorNodeId ?? services.runtime.identity.nodeId,
+    createdAt: AT,
+    delivery: "accepted",
+    ...(surface === null ? {} : { surface }),
+  };
+}
+
+function toolFor(said: string | readonly MessageRecord[], options: { dispatcher?: boolean; accept?: boolean } = {}) {
   const jobs: Job[] = [];
   const dispatcher = {
     dispatch: (job: Job) => {
@@ -45,11 +66,15 @@ function toolFor(said: string, options: { dispatcher?: boolean; accept?: boolean
       return options.accept ?? true;
     },
   } as unknown as TaskDispatcher;
+  const messages =
+    typeof said === "string"
+      ? [message(said), message("https://evil.example/", { role: "assistant", surface: null })]
+      : said;
   const tool = createBrowserTaskTool({
     tasks: services.conductor,
     principalId: services.runtime.identity.ownerPrincipalId,
     conversationId,
-    personText: () => personTextOf([{ role: "user", text: said }, { role: "assistant", text: "https://evil.example/" }]),
+    personText: () => personTextOf(messages, services.runtime.identity.nodeId),
     dispatcher: () => (options.dispatcher === false ? undefined : dispatcher),
   });
   return { tool, jobs };
@@ -69,11 +94,96 @@ describe("start_browser_task", () => {
     expect(result.text).toContain("Started browser task");
     expect(result.text).toContain("not that it is done");
     const [task] = tasksInConversation();
-    expect(task?.goal).toBe("Điền đơn ứng tuyển\n\nStart at: https://shop.example/apply");
+    expect(task?.goal).toBe("Điền đơn ứng tuyển\n\nBắt đầu từ: https://shop.example/apply");
     expect(jobs).toEqual([
       { taskId: task?.task_id, capabilityRef: "browser.playwright@1", executionNodeId: services.runtime.identity.nodeId },
     ]);
-    expect(getTask(services.runtime.db, task?.task_id ?? "")?.state).toBe("running");
+    const stored = getTask(services.runtime.db, task?.task_id ?? "");
+    expect(stored?.state).toBe("running");
+    // The checked sites travel on the task itself; the dispatcher lets the browser onto these and nothing else.
+    expect(stored?.origin).toEqual({
+      kind: "interactive",
+      principalId: services.runtime.identity.ownerPrincipalId,
+      sites: ["https://shop.example"],
+    });
+  });
+
+  it("refuses an address with a user name or password in front of its host, in any spelling", async () => {
+    const { tool, jobs } = toolFor("Điền đơn ở https://shop.example/apply và http://127.0.0.1:8080");
+    for (const url of [
+      "https://shop.example'@evil.example/",
+      "https://shop.example(@evil.example/",
+      "https://shop.example)@evil.example/",
+      "https://user:pass@shop.example/",
+      // The loopback form: a reader sees a local address ending in "(", a parser sees shop.example with a user name.
+      "http://127.0.0.1:8080(@shop.example/",
+    ]) {
+      const result = await tool.execute({ goal: "Điền đơn", urls: [url] });
+      expect(result.text, url).toContain("with a user name or password in front of its host");
+    }
+    // Written into the goal instead of the list, it is refused all the same.
+    const inGoal = await tool.execute({
+      goal: "Điền đơn ở https://x@shop.example/apply",
+      urls: ["https://shop.example/apply"],
+    });
+    expect(inGoal.text).toContain("with a user name or password in front of its host");
+    expect(jobs).toEqual([]);
+    expect(tasksInConversation()).toEqual([]);
+  });
+
+  it("refuses a request too long to store whole instead of cutting it, wherever the cut would land", async () => {
+    const { tool, jobs } = toolFor("Điền đơn ở https://shop.example/apply");
+    // Sized so that a cut at the task's 4000-character limit would fall inside the second address's host, leaving
+    // `https://shop.e` — a different site than the one that was checked.
+    const first = `https://shop.example/${"a".repeat(1950)}`;
+    const goal = "x".repeat(2000);
+    const whole = `${goal}\n\nBắt đầu từ: ${first} https://shop.example/second`;
+    expect(whole.slice(0, 4000).endsWith("https://shop.e")).toBe(true);
+    const result = await tool.execute({ goal, urls: [first, "https://shop.example/second"] });
+
+    expect(result.text).toContain("shorten the goal");
+    expect(jobs).toEqual([]);
+    expect(tasksInConversation()).toEqual([]);
+  });
+
+  it("takes a plain http address only when the person wrote http themselves", async () => {
+    const named = toolFor("Điền đơn ở shop.example");
+    const plain = await named.tool.execute({ goal: "Điền đơn", urls: ["http://shop.example/apply"] });
+    expect(plain.text).toContain("not as a plain http address; use https");
+
+    const typed = toolFor("Điền đơn ở http://shop.example/apply");
+    const allowed = await typed.tool.execute({ goal: "Điền đơn", urls: ["http://shop.example/apply"] });
+    expect(allowed.text).toContain("Started browser task");
+    expect(named.jobs).toEqual([]);
+  });
+
+  it("reads a site only from the person's own words on this node's composer or voice", async () => {
+    const node = services.runtime.identity.nodeId;
+    const text = (content: string): MessageRecord["blocks"] => [{ type: "text", format: "plain", content, streaming: false }];
+    const messages = [
+      message("https://relay.example/", { surface: null }),
+      message("https://peer.example/", { authorNodeId: "node_elsewhere" }),
+      message("https://assistant.example/", { role: "assistant", surface: null }),
+      message("", {
+        blocks: [
+          ...text("mở trang voice.example giúp mình"),
+          { type: "artifact", artifactId: "art_1", title: "https://artifact.example/", mediaType: "text/plain" } as never,
+        ],
+        surface: "voice",
+      }),
+      message("mở https://composer.example/"),
+    ];
+    const said = personTextOf(messages, node);
+
+    expect(said).toContain("composer.example");
+    expect(said).toContain("voice.example");
+    for (const other of ["relay.example", "peer.example", "assistant.example", "artifact.example"]) {
+      expect(said).not.toContain(other);
+    }
+    const { tool, jobs } = toolFor(messages);
+    const relayed = await tool.execute({ goal: "Điền đơn", urls: ["https://relay.example/"] });
+    expect(relayed.text).toContain("relay.example is not a site the person named");
+    expect(jobs).toEqual([]);
   });
 
   it("refuses a site only the model or a page named, and starts nothing", async () => {

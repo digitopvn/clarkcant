@@ -22,6 +22,7 @@ import type {
 } from "@clarkcant/contracts";
 
 import {
+  COMPOSER_SURFACE_HEADER,
   appIntentDecisionSchema,
   composerSuggestionsResponseSchema,
   effectReconcileResponseSchema,
@@ -864,6 +865,8 @@ export class GatewayClient {
         authorization: `Bearer ${this.#token}`,
         "content-type": "application/json",
         accept: "text/event-stream",
+        // Typed into this page's composer: the node stores the message as the person's own words.
+        [COMPOSER_SURFACE_HEADER]: "composer",
       },
       body: JSON.stringify(messageBody(text, options)),
       ...(listeners.signal === undefined ? {} : { signal: listeners.signal }),

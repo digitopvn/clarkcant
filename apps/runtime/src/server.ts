@@ -259,8 +259,9 @@ function baseHeaders(): Record<string, string> {
     // token-authenticated rather than cookie-authenticated, so a wildcard origin here grants nothing
     // a caller does not already need the token for.
     "access-control-allow-origin": "*",
-    // The two MCP headers as well, so a browser-hosted MCP client's preflight is not refused before it starts.
-    "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id",
+    // The two MCP headers as well, so a browser-hosted MCP client's preflight is not refused before it starts, and the
+    // composer's own mark on a message it posts (`COMPOSER_SURFACE_HEADER`).
+    "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id, x-clarkcant-surface",
     /*
      * Every method the gateway routes.
      *

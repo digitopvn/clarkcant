@@ -86,8 +86,21 @@ beforeAll(async () => {
       response.writeHead(204).end();
       return;
     }
-    const html =
-      path === "/elsewhere" ? page(`<a href="${otherOrigin}/landing">Leave for another site</a>`) : PAGES[path];
+    if (path === "/redirect-away") {
+      response.writeHead(302, { location: `${otherOrigin}/landing` }).end();
+      return;
+    }
+    const away: Record<string, string> = {
+      "/elsewhere": page(`<a href="${otherOrigin}/landing">Leave for another site</a>`),
+      "/script-away": page(
+        `<button type="button" id="go">Continue</button><script>document.querySelector("#go").addEventListener("click", () => { location.href = "${otherOrigin}/landing"; });</script>`,
+      ),
+      "/popup": page(
+        `<button type="button" id="go">Open offer</button><script>document.querySelector("#go").addEventListener("click", () => { window.open("${otherOrigin}/landing"); window.open("/ok-page"); });</script>`,
+      ),
+      "/frame-away": page(`<p>framed</p><iframe src="${otherOrigin}/landing"></iframe>`),
+    };
+    const html = away[path] ?? PAGES[path];
     if (html === undefined) {
       response.writeHead(404).end();
       return;
@@ -263,6 +276,88 @@ describe("a click is judged by the answer to what it sent", () => {
       expect(hits["other"]).toBeUndefined();
     });
   }, 60_000);
+
+  it("stops a script taking the page to an undeclared origin, and says so", async () => {
+    await onPage("/script-away", async (driver, observed) => {
+      const result = await driver.act(
+        action(driver, observed, { consequential: false, arguments: { elementRef: refOf(observed, "Continue") } }),
+        { approvalGranted: false },
+      );
+      expect(result.status, result.message).toBe("applied");
+      expect(result.sentEffect).toBe(false);
+      expect(result.message).toContain("which was stopped before it left");
+      expect(hits["other"]).toBeUndefined();
+      expect((await driver.observe()).url).toBe(`${origin}/script-away`);
+    });
+  }, 60_000);
+
+  it("opens no pop-up a script asks for, on any site", async () => {
+    await onPage("/popup", async (driver, observed) => {
+      const result = await driver.act(
+        action(driver, observed, { consequential: false, arguments: { elementRef: refOf(observed, "Open offer") } }),
+        { approvalGranted: false },
+      );
+      expect(result.status, result.message).toBe("applied");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(hits["other"]).toBeUndefined();
+      expect(hits["/ok-page"]).toBeUndefined();
+      expect((await driver.observe()).url).toBe(`${origin}/popup`);
+    });
+  }, 60_000);
+
+  it("loads no frame from an undeclared origin", async () => {
+    await onPage("/frame-away", async (_driver, observed) => {
+      expect(observed.url).toBe(`${origin}/frame-away`);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(hits["other"]).toBeUndefined();
+    });
+  }, 60_000);
+
+  it("refuses an address the server redirects to an undeclared origin, and sends nothing there", async () => {
+    for (const key of Object.keys(hits)) delete hits[key];
+    const created = createDriver({
+      profileName: "redirect-away",
+      nodeId: "node_test",
+      allowedOrigins: [origin],
+      profileDir: join(dir, "profile-redirect-away"),
+    });
+    if (!created.ok) throw new Error(created.refused);
+    const driver = created.driver;
+    try {
+      driver.startLease();
+      const result = await driver.act(
+        {
+          actionId: "nav_away",
+          targetId: driver.target.targetId,
+          observationId: observationIdSchema.parse("obs_none"),
+          leaseEpoch: driver.leaseEpoch,
+          operation: "navigate",
+          arguments: { url: `${origin}/redirect-away` },
+          expectedTargetVersion: driver.targetVersion,
+          consequential: false,
+        },
+        { approvalGranted: false },
+      );
+      expect(result.status).toBe("refused");
+      expect(hits["/redirect-away"]).toBe(1);
+      expect(hits["other"]).toBeUndefined();
+      // Wherever the refused load left the page, it is not on the other site: an observation finds it on neither.
+      const after = (await driver.observe()).url;
+      expect(after.startsWith(otherOrigin)).toBe(false);
+      expect(after === "about:blank" || after.startsWith(origin), after).toBe(true);
+    } finally {
+      await driver.close();
+    }
+  }, 60_000);
+
+  it("takes a host mapping only in the one form it passes to the browser", () => {
+    const base = { profileName: "mapped", nodeId: "node_test", allowedOrigins: [origin], profileDir: join(dir, "profile-mapped") };
+    expect(createDriver({ ...base, hostResolverRules: ["MAP shop.example 93.184.216.34", "MAP v6.example [2606:4700::1111]"] }).ok).toBe(true);
+    for (const rule of ["MAP * 127.0.0.1", "MAP a.example 1.2.3.4,MAP b.example 127.0.0.1", "EXCLUDE shop.example"]) {
+      const made = createDriver({ ...base, hostResolverRules: [rule] });
+      expect(made.ok, rule).toBe(false);
+    }
+  });
 
   it("reports a click that sent nothing as applied without waiting out the deadline", async () => {
     await onPage("/quiet", async (driver, observed) => {

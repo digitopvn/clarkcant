@@ -28,6 +28,7 @@ import { registerSessionFile } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import { registerNodeTools } from "../tool-catalogue.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
+import { DISPATCHED_WORKERS_RUN_A_REAL_MODEL } from "../worker-process.ts";
 
 /**
  * The model turn, and everything it reads from the node.
@@ -317,9 +318,11 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           fingerprint: deps.services().runtime.identity.fingerprint,
           peerCapabilities: (peerNodeId) => askPeerCapabilities(deps.services().runtime, peerNodeId),
         },
-        // "Do this on example.com": a browser task, offered only by a node that runs background tasks. The sites it may act
-        // on are checked against what the person wrote in this conversation, read back when the tool is called.
-        ...(deps.services().taskDispatch === undefined
+        // "Do this on example.com": a browser task, offered only by a node that runs background tasks, and only once the
+        // worker such a task gets runs a real model (#346) — until then the tool could start a task but never do the
+        // work, which is a control that cannot do what it says. The sites it may act on are checked against what the
+        // person wrote on their own surfaces in this conversation, read back when the tool is called.
+        ...(deps.services().taskDispatch === undefined || !DISPATCHED_WORKERS_RUN_A_REAL_MODEL
           ? {}
           : {
               browserTasks: {
@@ -333,10 +336,8 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
                 conversationId: turn.conversationId,
                 personText: () =>
                   personTextOf(
-                    latestMessages(deps.services().runtime.db, turn.conversationId, 30).map((record) => ({
-                      role: record.role,
-                      text: textOfMessage(record),
-                    })),
+                    latestMessages(deps.services().runtime.db, turn.conversationId, 30),
+                    deps.services().runtime.identity.nodeId,
                   ),
                 dispatcher: () => deps.services().taskDispatch,
               },

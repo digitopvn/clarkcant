@@ -39,9 +39,16 @@ const BROWSER_CAPABILITY_PREFIX = "browser.";
 /** How long each quote may be, so what to do next still fits in the notice's 500 characters with both quotes full. */
 const QUOTE_MAX = 70;
 
-function quote(text: string): string {
+/** The most a notice body may hold (`NodeNotice`'s own limit). */
+const BODY_MAX = 500;
+
+function quote(text: string, max = QUOTE_MAX): string {
   const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length <= QUOTE_MAX ? flat : `${flat.slice(0, QUOTE_MAX - 1)}…`;
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max - 1);
+  // A cut inside a quoted name closes the quote, so the sentence around it still reads as one.
+  const open = (cut.match(/“/gu) ?? []).length > (cut.match(/”/gu) ?? []).length;
+  return open ? `${cut.slice(0, -1)}…”` : `${cut}…`;
 }
 
 /**
@@ -64,7 +71,9 @@ export function unknownEffectNotice(input: {
   // intent names the page itself, so the target it ran in is left off the quote.
   const browser = first.capabilityRef?.startsWith(BROWSER_CAPABILITY_PREFIX) === true;
   const intent = browser ? (first.intent.split(" — ")[0] ?? first.intent) : first.intent;
-  const forTask = input.task === undefined ? "" : ` cho việc “${quote(input.task.goal)}”`;
+  // A browser task's goal ends with the addresses it starts at; the request before them is what the person asked for.
+  const goal = input.task === undefined ? undefined : browser ? (input.task.goal.split("\n\n")[0] ?? input.task.goal) : input.task.goal;
+  const forTask = goal === undefined ? "" : ` cho việc “${quote(goal)}”`;
   const what =
     first.reconciliationEvidence === COMMAND_STOPPED_ON_REQUEST
       ? "đã bị dừng theo yêu cầu trong lúc đang chạy"
@@ -82,7 +91,9 @@ export function unknownEffectNotice(input: {
     category: "alert",
     severity: "warning",
     title: "Chưa rõ một thao tác đã có hiệu lực hay chưa",
-    body: `“${quote(intent)}”${forTask} ${what}${others}, nên chưa rõ nó đã có hiệu lực hay chưa. ${next}`,
+    body: browser
+      ? browserBody(intent, `${forTask} ${what}${others}, nên chưa rõ nó đã có hiệu lực hay chưa. ${next}`)
+      : `“${quote(intent)}”${forTask} ${what}${others}, nên chưa rõ nó đã có hiệu lực hay chưa. ${next}`,
     ...(input.task === undefined ? {} : { conversationId: input.task.conversationId }),
     subject: {
       kind: "task",
@@ -92,6 +103,15 @@ export function unknownEffectNotice(input: {
     dedupKey: input.dedupKey ?? workerNoticeKey(first.taskId),
     at: input.at,
   };
+}
+
+/**
+ * A browser action is already a phrase with its own quoted button name (`bấm “Gửi” trên shop.example/apply`), so it is
+ * said as the action it was rather than quoted again, and given as much of the body as the rest leaves.
+ */
+function browserBody(intent: string, rest: string): string {
+  const room = Math.max(40, BODY_MAX - rest.length - "Thao tác ".length);
+  return `Thao tác ${quote(intent, room)}${rest}`.slice(0, BODY_MAX);
 }
 
 /**

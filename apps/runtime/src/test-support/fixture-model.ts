@@ -959,10 +959,12 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     /*
      * A browser task whose submit is never answered — a real browser, a real page and the product's own broker.
      *
-     * What is scripted is only the model's part: which steps a worker would ask for. The page is served by this node
-     * and never answers the form it receives, the managed browser is the pack's Playwright driver, and every step goes
-     * through the broker a dispatched browser task gets, so the ledger row, the task turning uncertain and the inbox
-     * notice are all written by the calls production makes. A second press is asked for too, to show it is refused.
+     * What is scripted is the model's part and the dispatch: this fixture is a composer, not a model that calls tools,
+     * so it creates the task and the broker itself rather than through `start_browser_task` and the dispatcher, and it
+     * asks for the steps a worker would. The page is served by this node and never answers the form it receives, the
+     * managed browser is the pack's Playwright driver, and every step goes through the broker a dispatched browser task
+     * gets, so the ledger row, the task turning uncertain and the inbox notice are all written by the calls production
+     * makes. A second press is asked for too, to show it is refused.
      */
     if (/gửi đơn trên trang không phản hồi|lost browser submit/iu.test(input.text)) {
       const services = deps.services();
@@ -995,6 +997,8 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           kind: "user" as const,
           nodeId: services.runtime.identity.nodeId as never,
         },
+        // The checked list the browser tool stores: this page, which is the node's own.
+        origin: { kind: "interactive", principalId: input.principal.principalId, sites: [origin] },
       });
       applyTaskEvent(taskDeps, task.taskId, "resolve.start");
       advanceResolving(taskDeps, task.taskId, { kind: "ready", executionNodeId: services.runtime.identity.nodeId });
@@ -1006,6 +1010,8 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         policy: () => readExecutionPolicy({ db: services.runtime.db, now }, input.principal.principalId),
         principalId: input.principal.principalId,
         allowedOrigins: [origin],
+        // Nobody approved anything: the press goes ahead only while the node's policy lets it by itself.
+        admission: "policy",
         profileDir: taskProfileDir(join(deps.dataDir, "browser-profiles"), task.taskId),
         answerTimeoutMs: 1500,
       });

@@ -168,7 +168,7 @@ describe("an effect whose outcome is unknown", () => {
       effects: Array.from({ length: 100 }, (_, index) => ({
         taskId: "task_browser",
         capabilityRef: "browser.playwright@1",
-        intent: `click “${"Gửi đơn ".repeat(40)}” on shop.example/checkout — tgt_task-${String(index)}`,
+        intent: `bấm “${"Gửi đơn ".repeat(40)}” trên shop.example/checkout — tgt_task-${String(index)}`,
         reconciliationEvidence: "click on el_1 sent 1 request(s) that had no answer after 5000 ms",
       })),
       task: { conversationId: "conv_browser", goal: "đặt hàng ".repeat(100) },
@@ -182,18 +182,26 @@ describe("an effect whose outcome is unknown", () => {
     // The target the browser ran in says nothing to a person, so it is not quoted.
     expect(body).not.toContain("tgt_task");
     expect(body.endsWith("trước khi làm lại.")).toBe(true);
+    // A button name cut short still closes its quote, and the action is never wrapped in a second pair.
+    expect(body.startsWith("Thao tác bấm “Gửi đơn")).toBe(true);
+    expect((body.match(/“/gu) ?? []).length).toBe((body.match(/”/gu) ?? []).length);
+    expect(body).not.toContain("““");
 
     const short = unknownEffectNotice({
       effects: [
         {
           taskId: "task_browser",
           capabilityRef: "browser.playwright@1",
-          intent: "click “Send” on shop.example/checkout — tgt_task-1",
+          intent: "bấm “Send” trên shop.example/checkout — tgt_task-1",
         },
       ],
+      task: { conversationId: "conv_browser", goal: "Đặt hàng\n\nBắt đầu từ: https://shop.example/checkout" },
       at: AT,
     });
-    expect(short?.body).toContain("“click “Send” on shop.example/checkout”");
+    // Vietnamese throughout, the request without its addresses line.
+    expect(short?.body).toContain(
+      "Thao tác bấm “Send” trên shop.example/checkout cho việc “Đặt hàng” đã được gửi đi nhưng trang không trả lời",
+    );
   });
 
   it("gives each task its own notice, and counts a task's other unknown effects in it", () => {

@@ -31,6 +31,7 @@ import { createServiceHost, engineContainers, packageRootFrom } from "../service
 import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import type { NodeWork } from "./work-bootstrap.ts";
+import { removeIdleTaskProfiles } from "../task-browser.ts";
 import { createTaskDispatcher } from "../task-dispatch.ts";
 import { startUpdateCheckTimer } from "../update-checks.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
@@ -276,6 +277,12 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       ...(deps.work === undefined ? {} : { journal: deps.work.journal }),
     });
     deps.services.taskDispatch = dispatcher;
+    // A profile a previous process left behind when it went down mid-run holds that run's cookies: removed now, while
+    // no task of this process is running yet. Reported, never fatal.
+    void removeIdleTaskProfiles(
+      join(deps.services.runtime.dataDir, "browser-profiles"),
+      dispatcher.work().filter((work) => work.state === "running").map((work) => work.workId),
+    );
     // Task workers are listed and stopped with everything else, by task id.
     deps.work?.addSource({ kind: "task", list: () => dispatcher.work(), cancel: (taskId) => dispatcher.stop(taskId) });
     deps.services.conductor.runTask = (input) => dispatcher.dispatch(input);

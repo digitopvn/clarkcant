@@ -104,11 +104,17 @@ function settleBrowserEffect(ledger: BrowserEffectLedger, effect: EffectRecord, 
       if (notice !== undefined) tryRecordNodeNotice(ledger.services, notice);
       return;
     }
+    /*
+     * Applied is not confirmed when the press sent nothing: a submission that never left did not happen, and the
+     * ledger must not hold it as done. It failed, and says why.
+     */
     const moved = advanceEffect(
       effect,
-      result.status === "applied"
-        ? { to: "confirmed", at, evidence: `the browser reported it applied (${result.verification})` }
-        : { to: "failed", at, evidence: `the browser reported it ${result.status}: ${result.message}`.slice(0, 1000) },
+      result.status === "applied" && result.sentEffect === false
+        ? { to: "failed", at, evidence: `nothing was sent: ${result.message}`.slice(0, 1000) }
+        : result.status === "applied"
+          ? { to: "confirmed", at, evidence: `the browser reported it applied (${result.verification})` }
+          : { to: "failed", at, evidence: `the browser reported it ${result.status}: ${result.message}`.slice(0, 1000) },
     );
     if (moved.ok) upsertEffect(deps.db, moved.effect);
   } catch (cause) {
@@ -136,7 +142,7 @@ export async function actWithLedger(
     if (unknown !== undefined) {
       const earlier = unknown.intent.split(" — ")[0] ?? unknown.intent;
       return refused(
-        `not run: an earlier action of this task ("${earlier}") may or may not have taken effect, and nothing on this ` +
+        `not run: an earlier action of this task (${earlier}) may or may not have taken effect, and nothing on this ` +
           `node can tell which; another action that sends something could do the same thing twice`,
       );
     }

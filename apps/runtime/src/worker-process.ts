@@ -37,6 +37,15 @@ const WORKER_ENV_PROFILE: ExecutionProfile = BUILTIN_PROFILES.build as Execution
  * is a successful run of the worker, not a failure of it.
  */
 
+/**
+ * Whether a task the dispatcher runs is worked by the node's configured model.
+ *
+ * Not yet: `createTaskDispatcher` never asks for `adapter: "real"`, so every dispatched worker runs the scripted adapter
+ * and settles as not verified (#346). A model tool whose whole point is a dispatched worker doing real work — a browser
+ * task — would be a control that cannot do what it says, so it is offered to a real model only once this is true.
+ */
+export const DISPATCHED_WORKERS_RUN_A_REAL_MODEL: boolean = false;
+
 export interface WorkerProcessOptions {
   /** The worker's entry point. Defaults to the sibling app in this repository. */
   workerEntry?: string;

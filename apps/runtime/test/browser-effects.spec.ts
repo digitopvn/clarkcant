@@ -183,13 +183,13 @@ describe("a consequential browser action in the ledger", () => {
 
     const result = await actWithLedger({ services, taskId }, lost, click(false, "ref_save"), {
       approvalGranted: false,
-      describe: "click “Save” on shop.example/cart",
+      describe: "bấm “Save” trên shop.example/cart",
     });
 
     expect(result.status).toBe("unknown");
     const [effect] = effectsForTask(services.runtime.db, taskId);
     expect(effect).toMatchObject({ state: "unknown", category: "external-write", capabilityRef: "browser.playwright@1" });
-    expect(effect?.intent).toBe("click “Save” on shop.example/cart — tgt_form");
+    expect(effect?.intent).toBe("bấm “Save” trên shop.example/cart — tgt_form");
     expect(getTask(services.runtime.db, taskId)?.state).toBe("uncertain");
     expect(taskNotices(taskId)).toEqual([{ dedup_key: `worker:${taskId}` }]);
   });
@@ -208,6 +208,21 @@ describe("a consequential browser action in the ledger", () => {
       ["confirmed", "browser click ref_save — tgt_form"],
     ]);
     expect(getTask(services.runtime.db, taskId)?.state).toBe("running");
+  });
+
+  it("records a consequential press that sent nothing as failed, never as confirmed", async () => {
+    const { taskId } = runningTask();
+
+    const result = await actWithLedger({ services, taskId }, scripted({ ...APPLIED, sentEffect: false }), click(true), {
+      approvalGranted: true,
+    });
+
+    expect(result.status).toBe("applied");
+    const [effect] = effectsForTask(services.runtime.db, taskId);
+    expect(effect?.state).toBe("failed");
+    expect(effect?.reconciliationEvidence).toMatch(/^nothing was sent: /u);
+    expect(getTask(services.runtime.db, taskId)?.state).toBe("running");
+    expect(taskNotices(taskId)).toEqual([]);
   });
 });
 

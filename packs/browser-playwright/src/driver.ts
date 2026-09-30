@@ -11,6 +11,7 @@ import {
 import {
   chromium,
   type BrowserContext,
+  type CDPSession,
   type Locator,
   type Page,
   type Request,
@@ -34,7 +35,12 @@ import { SUPPORTED_OPERATIONS, managedProfileDescriptor, resolveLocator, reviewA
  *    into an explicit re-observation.
  * 3. **Navigation is checked against the profile's declared origins** before it happens, the
  *    page's own included: a link or a form pointing elsewhere is stopped before its request
- *    leaves. The model does not get to name a new destination, directly or by clicking one.
+ *    leaves, a document the page or a frame is about to load from elsewhere (a script's
+ *    navigation, a redirect's hop) is answered on the spot inside the browser so the page
+ *    stays put, a script cannot open a window and a new tab is closed, and a page that still
+ *    ends up elsewhere (where a `goto` landed, or where an observation finds it) is taken
+ *    back to a blank page. The model does
+ *    not get to name a new destination, directly or by clicking one.
  * 4. **A click's outcome is the answer to what it sent.** A submit that was dispatched but
  *    never answered is `unknown`, not `applied` (`watchClickRequests`).
  */
@@ -108,18 +114,25 @@ type ClickAnswer =
  * effect — anything but a read, and the page's own navigation — are followed until each has an answer or the deadline
  * passes, and one still waiting at the deadline, or one that broke after it left, is what the driver calls unknown.
  */
-function watchClickRequests(page: Page): {
+function watchClickRequests(
+  page: Page,
+  /** Requests the driver stops before they leave (`BrowserDriver.#blocks`): they send nothing and are not waited on. */
+  blocks: (request: Request) => boolean,
+): {
   settle: (timeoutMs: number) => Promise<ClickAnswer>;
   stop: () => void;
   /** Whether the click started a navigation of the page itself, which replaces every stamped reference. */
   navigated: () => boolean;
   /** How many requests other than reads the click started, answered or not. */
   sent: () => number;
+  /** Where the click tried to take the page or one of its frames outside the declared origins, and was stopped. */
+  blocked: () => string[];
 } {
   const pending = new Set<Request>();
   let sent = 0;
   const statuses: number[] = [];
   const failures: string[] = [];
+  const blocked: string[] = [];
   const mainFrame = page.mainFrame();
   let navigated = false;
   const isPageNavigation = (request: Request): boolean => {
@@ -134,6 +147,10 @@ function watchClickRequests(page: Page): {
     // A redirect is the same submission answered with "go there": the first request has its answer.
     const from = request.redirectedFrom();
     if (from !== null && pending.delete(from)) statuses.push(302);
+    if (blocks(request)) {
+      if (blocked.length < 5) blocked.push(request.url().slice(0, 200));
+      return;
+    }
     const pageNavigation = isPageNavigation(request);
     if (pageNavigation) navigated = true;
     const writes = !["GET", "HEAD", "OPTIONS"].includes(request.method());
@@ -149,6 +166,7 @@ function watchClickRequests(page: Page): {
     pending.delete(request);
   };
   const onFailed = (request: Request): void => {
+    if (blocks(request)) return;
     if (pending.delete(request)) failures.push(request.failure()?.errorText ?? "the request failed");
   };
   page.on("request", onRequest);
@@ -166,6 +184,7 @@ function watchClickRequests(page: Page): {
     stop,
     navigated: () => navigated,
     sent: () => sent,
+    blocked: () => [...blocked],
     async settle(timeoutMs) {
       await sleep(REQUEST_GRACE_MS);
       const deadline = Date.now() + timeoutMs;
@@ -198,12 +217,20 @@ export class BrowserDriver {
    */
   readonly #unresolved = new Set<string>();
   readonly #answerTimeoutMs: number;
+  readonly #hostResolverRules: readonly string[];
   #targetVersion = "1";
 
-  constructor(input: { profile: DriverProfile; profileDir: string; answerTimeoutMs?: number }) {
+  constructor(input: {
+    profile: DriverProfile;
+    profileDir: string;
+    answerTimeoutMs?: number;
+    /** Chromium `--host-resolver-rules` entries (`MAP host address`) that fix where a named site is found. */
+    hostResolverRules?: readonly string[];
+  }) {
     this.#profile = input.profile;
     this.#profileDir = input.profileDir;
     this.#answerTimeoutMs = input.answerTimeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS;
+    this.#hostResolverRules = input.hostResolverRules ?? [];
   }
 
   get target(): AutomationTarget {
@@ -248,13 +275,88 @@ export class BrowserDriver {
     }
   }
 
+  /** Whether a document may load: somewhere declared, or a frame's own inline document. */
+  #documentAllowed(url: string): boolean {
+    return url === "about:srcdoc" || this.#pageAllowed(url);
+  }
+
+  /**
+   * Whether the browser stopped this request before it left (`#stopForeignDocuments`): a document the page or one of its
+   * frames was about to load from somewhere undeclared, a redirect's next hop included.
+   */
+  #blocks(request: Request): boolean {
+    if (this.#documentAllowed(request.url())) return false;
+    try {
+      return request.isNavigationRequest() && request.frame().page() === this.#page;
+    } catch {
+      // A service worker's request has no frame, and is not a navigation of anything.
+      return false;
+    }
+  }
+
+  /**
+   * Hold every document this page or its frames load at the browser, before it leaves, and answer one bound for
+   * somewhere undeclared with `204 No Content`: a navigation answered that way does not happen, so the page stays where
+   * it was. Only documents are held, through the page's own DevTools session, so a page's other requests are never
+   * waited on — Playwright's `route` holds every request until the page's own thread is free to describe it, which
+   * delays a submission a busy page sent. Redirect hops are held too.
+   */
+  async #stopForeignDocuments(page: Page, context: BrowserContext): Promise<void> {
+    const session: CDPSession = await context.newCDPSession(page);
+    session.on("Fetch.requestPaused", (event) => {
+      const answer = this.#documentAllowed(event.request.url)
+        ? session.send("Fetch.continueRequest", { requestId: event.requestId })
+        : session.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 204 });
+      // A request whose page closed or navigated on meanwhile has nobody left to answer.
+      answer.catch(() => undefined);
+    });
+    await session.send("Fetch.enable", { patterns: [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" }] });
+  }
+
   async #ensurePage(): Promise<Page> {
     if (this.#page) return this.#page;
     mkdirSync(this.#profileDir, { recursive: true });
-    this.#context = await chromium.launchPersistentContext(this.#profileDir, { headless: true });
-    const [existing] = this.#context.pages();
-    this.#page = existing ?? (await this.#context.newPage());
-    return this.#page;
+    const context = await chromium.launchPersistentContext(this.#profileDir, {
+      headless: true,
+      ...(this.#hostResolverRules.length === 0
+        ? {}
+        : { args: [`--host-resolver-rules=${this.#hostResolverRules.join(",")}`] }),
+    });
+    this.#context = context;
+    const [existing] = context.pages();
+    const page = existing ?? (await context.newPage());
+    /*
+     * One page. A script cannot open a window, and a new tab that opens anyway (a link's `target`) is closed at once.
+     * The page's documents are held to the declared sites before they load; where the page ended up is still checked
+     * after every navigation and before every observation. A page these could not be set up on is never handed out.
+     */
+    try {
+      await context.addInitScript(() => {
+        window.open = () => null;
+      });
+      context.on("page", (opened) => {
+        if (opened !== page) void opened.close().catch(() => undefined);
+      });
+      await this.#stopForeignDocuments(page, context);
+    } catch (cause) {
+      this.#context = undefined;
+      await context.close().catch(() => undefined);
+      throw cause;
+    }
+    this.#page = page;
+    return page;
+  }
+
+  /**
+   * Take the page back to a blank one when it ended up somewhere undeclared, however it got there. Returns where it was.
+   * Nothing is read from or done on a page this profile was never allowed to be on.
+   */
+  async #leaveIfOutside(page: Page): Promise<string | undefined> {
+    const url = page.url();
+    if (this.#pageAllowed(url)) return undefined;
+    await page.goto("about:blank").catch(() => undefined);
+    this.#bumpTargetVersion();
+    return url;
   }
 
   /**
@@ -299,6 +401,7 @@ export class BrowserDriver {
     // clears the retry block.
     this.#unresolved.clear();
     const page = await this.#ensurePage();
+    await this.#leaveIfOutside(page);
 
     const elements: ObservedElement[] = await page.evaluate((attribute: string) => {
       const selector = 'a[href], button, input, select, textarea, [role], [data-testid]';
@@ -441,6 +544,16 @@ export class BrowserDriver {
         await page.goto(url, { waitUntil: "domcontentloaded" });
         // Navigation replaces every reference stamped on the previous document.
         this.#bumpTargetVersion();
+        // Where the page ended, not where it was sent: a redirect or a script may have moved it on.
+        const left = await this.#leaveIfOutside(page);
+        if (left !== undefined) {
+          return {
+            status: "refused",
+            verification: "not-applicable",
+            message: `${url} ended on ${left.slice(0, 200)}, outside this profile's declared origins; the page was taken back to a blank page`,
+            requiresReobservation: true,
+          };
+        }
         return {
           status: "applied",
           verification: "not-applicable",
@@ -506,6 +619,15 @@ export class BrowserDriver {
             requiresReobservation: false,
           };
         case "read-dom": {
+          const left = await this.#leaveIfOutside(page);
+          if (left !== undefined) {
+            return {
+              status: "refused",
+              verification: "not-applicable",
+              message: `the page had moved to ${left.slice(0, 200)}, outside this profile's declared origins, and was taken back to a blank page; nothing was read`,
+              requiresReobservation: true,
+            };
+          }
           const text = (await page.textContent("body")) ?? "";
           return {
             status: "applied",
@@ -621,7 +743,7 @@ export class BrowserDriver {
       };
     }
 
-    const watch = watchClickRequests(page);
+    const watch = watchClickRequests(page, (request) => this.#blocks(request));
     try {
       await locator.first().click({ timeout: 5000 });
     } catch (cause) {
@@ -644,16 +766,20 @@ export class BrowserDriver {
     const sentEffect = watch.sent() > 0;
     const left = this.#pageAllowed(page.url()) ? undefined : page.url();
     if (left !== undefined) {
-      // A redirect the allowed server answered with took the page somewhere undeclared. It is taken back, so nothing
-      // further is read from or done on a page this profile was never allowed to be on.
+      // The page got somewhere undeclared some way the browser did not stop. It is taken back, so nothing further is
+      // read from or done on a page this profile was never allowed to be on.
       await page.goto("about:blank").catch(() => undefined);
     }
     // A new document replaced every reference the plan was made against.
     if (watch.navigated() || left !== undefined) this.#bumpTargetVersion();
+    const [firstBlocked] = watch.blocked();
     const leftNote =
-      left === undefined
+      (left === undefined
         ? ""
-        : `; the page ended on ${left.slice(0, 200)}, outside this profile's declared origins, and was taken back to a blank page`;
+        : `; the page ended on ${left.slice(0, 200)}, outside this profile's declared origins, and was taken back to a blank page`) +
+      (firstBlocked === undefined
+        ? ""
+        : `; it tried to open ${firstBlocked}, outside this profile's declared origins, which was stopped before it left`);
     const unknown = (why: string): ActResult => {
       this.#unresolved.add(action.actionId);
       return {
@@ -763,7 +889,15 @@ export function createDriver(input: {
   downloadRoot?: string;
   /** How long a click waits for the answers to what it sent before calling the outcome unknown. */
   answerTimeoutMs?: number;
+  /** Chromium `--host-resolver-rules` entries (`MAP host address`) that pin where each named site is found. */
+  hostResolverRules?: readonly string[];
 }): { ok: true; driver: BrowserDriver } | { ok: false; refused: string } {
+  for (const rule of input.hostResolverRules ?? []) {
+    // One rule each, never a list smuggled into one: the switch takes a comma-separated list.
+    if (!/^MAP [A-Za-z0-9.-]+ (?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9A-Fa-f:.]+\])$/u.test(rule)) {
+      return { ok: false, refused: `${rule.slice(0, 120)} is not a host mapping this driver accepts` };
+    }
+  }
   const target = managedProfileDescriptor({
     profileName: input.profileName,
     nodeId: input.nodeId,
@@ -780,6 +914,7 @@ export function createDriver(input: {
       },
       profileDir: input.profileDir,
       ...(input.answerTimeoutMs === undefined ? {} : { answerTimeoutMs: input.answerTimeoutMs }),
+      ...(input.hostResolverRules === undefined ? {} : { hostResolverRules: input.hostResolverRules }),
     }),
   };
 }

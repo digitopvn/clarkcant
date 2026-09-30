@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { lookup as dnsLookup } from "node:dns/promises";
+import type { Dirent } from "node:fs";
+import { readdir, rm } from "node:fs/promises";
+import { BlockList, isIP } from "node:net";
 import { join } from "node:path";
 
 import type { ActResult, BrowserDriver, ObserveResult, ObservedElement } from "@clarkcant/browser-playwright";
@@ -27,12 +30,14 @@ import { BROWSER_CAPABILITY, actWithLedger, browserDigest, type BrowserEffectLed
  *   - **what counts as consequential**: the driver's reading of the markup (a submit control) or the model's own word
  *     that a click has an effect outside. The model can make a click consequential, never the reverse;
  *   - **the policy**: the task was let onto these sites once, when it was dispatched (the dispatcher's gate on this
- *     capability's `external-write` category, which asks the person where their policy says to). Each consequential
- *     click is then decided again by the same `decideExecution`, with the task's own intent, so a deny rule still
- *     stops it; an `ask` is the question already answered at dispatch, and is not put to anybody a second time;
+ *     capability's `external-write` category, which asks the person where their policy says to), and the broker is
+ *     told how (`admission`). Every click is then decided again by the same `decideExecution`, with the task's own
+ *     intent, so a deny rule still stops it. An `ask` on a consequential click counts as answered only when the person
+ *     really granted this task at dispatch; a task the policy let on by itself, whose policy now asks, is refused rather
+ *     than pressed;
  *   - **the ledger**: an allowed consequential click goes through `actWithLedger`, which writes the effect down as
  *     handed off before the driver acts and settles it on what the driver reported — `unknown`, with one inbox notice,
- *     for a submission nobody heard back from.
+ *     for a submission nobody heard back from. Every click that sent something is audited as an executed effect.
  *
  * Everything the page says is returned as data from that site. The broker never reads it as an instruction, and the
  * policy never sees it: what is decided is the operation, the element's kind and the origin.
@@ -109,29 +114,166 @@ export const BROWSER_TASK_NOT_ROUTABLE =
   "runs only as a browser task the person asks for in the conversation; never chosen for a message on its own";
 
 /** The most sites one browser task may be let onto. */
-const MAX_TASK_ORIGINS = 8;
+export const MAX_TASK_ORIGINS = 8;
+/** What separates a browser task's request from the addresses it starts at, in the goal the tool writes. */
+export const BROWSER_GOAL_ADDRESSES = "\n\nBắt đầu từ: ";
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`“”‘’()[\]{}]+/giu;
 
 /**
- * The sites a browser task may act on: the origin of every web address its goal names, and nothing else.
+ * The origin of every web address a goal's text names, as a reader of that text would take them.
  *
- * The goal is what the person asked for, written when the task was created (`browser-task-tool.ts` refuses one that
- * names a site the person did not), so this is the person's own list of sites. Read from the task at dispatch rather
- * than carried beside it, because a task re-dispatched after its approval has only its record to go on.
+ * Not the list a browser task may act on — that is the checked list stored on the task (`origin.sites`). This is the
+ * backstop both sides hold that list to: the tool before it creates the task and the dispatcher before it opens a
+ * browser refuse a task whose goal reads as different sites than it was checked for, which is how an address that
+ * says one site to a parser and another to a reader would get through.
  */
 export function browserTaskOrigins(goal: string): string[] {
   const origins: string[] = [];
+  for (const url of browserGoalUrls(goal)) {
+    if (!origins.includes(url.origin)) origins.push(url.origin);
+    // One past the limit, so a goal naming more sites than a task may have never reads as equal to a checked list.
+    if (origins.length > MAX_TASK_ORIGINS) break;
+  }
+  return origins;
+}
+
+/** Every web address a goal's text names, parsed. A task's goal is at most a few thousand characters. */
+export function browserGoalUrls(goal: string): URL[] {
+  const urls: URL[] = [];
   for (const match of goal.matchAll(URL_PATTERN)) {
-    let origin: string;
     try {
-      origin = new URL(match[0].replace(/[.,;:!?]+$/u, "")).origin;
+      urls.push(new URL(match[0].replace(/[.,;:!?]+$/u, "")));
     } catch {
       continue;
     }
-    if (!origins.includes(origin)) origins.push(origin);
-    if (origins.length === MAX_TASK_ORIGINS) break;
   }
-  return origins;
+  return urls;
+}
+
+/** Whether an address carries a user name or password before its host, where it can read as one site and be another. */
+export function hasUserinfo(url: URL): boolean {
+  return url.username !== "" || url.password !== "";
+}
+
+/** Whether two lists of origins name the same sites, in any order. */
+export function sameSites(left: readonly string[], right: readonly string[]): boolean {
+  const a = new Set(left);
+  const b = new Set(right);
+  return a.size === b.size && [...a].every((site) => b.has(site));
+}
+
+/** A site as a person reads it in an approval or a notice: its host, with the port when it has one. */
+function hostOf(site: string): string {
+  try {
+    return new URL(site).host;
+  } catch {
+    return site;
+  }
+}
+
+/**
+ * What the person is asked to approve for a browser task, in their language: which sites, and what for.
+ *
+ * The goal's own addresses line is left off: the sites are named once, as hosts.
+ */
+export function browserTaskApprovalText(sites: readonly string[], goal: string): string {
+  const [request = goal] = goal.split(BROWSER_GOAL_ADDRESSES);
+  return oneLine(`dùng trình duyệt trên ${sites.map(hostOf).join(", ")} cho việc “${oneLine(request, 160)}”`, 320);
+}
+
+/**
+ * Addresses this machine or its own network uses, which a site named by its name must not turn out to be: an allowed
+ * host whose name resolves to one would let a page the person never meant reach the node itself or the LAN.
+ */
+const PRIVATE_ADDRESSES = ((): BlockList => {
+  const list = new BlockList();
+  for (const [network, prefix] of [
+    ["0.0.0.0", 8],
+    ["10.0.0.0", 8],
+    ["100.64.0.0", 10],
+    ["127.0.0.0", 8],
+    ["169.254.0.0", 16],
+    ["172.16.0.0", 12],
+    ["192.0.0.0", 24],
+    ["192.168.0.0", 16],
+    ["198.18.0.0", 15],
+    ["224.0.0.0", 4],
+    ["240.0.0.0", 4],
+  ] as const) {
+    list.addSubnet(network, prefix, "ipv4");
+  }
+  for (const [network, prefix] of [
+    ["::", 128],
+    ["::1", 128],
+    ["fc00::", 7],
+    ["fe80::", 10],
+    ["ff00::", 8],
+  ] as const) {
+    list.addSubnet(network, prefix, "ipv6");
+  }
+  return list;
+})();
+
+/** Whether an IP address belongs to this machine or a private network, an IPv4 address written as IPv6 included. */
+export function isPrivateAddress(address: string): boolean {
+  const bare = address.replace(/^\[|\]$/gu, "");
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/iu.exec(bare)?.[1];
+  if (mapped !== undefined) return PRIVATE_ADDRESSES.check(mapped, "ipv4");
+  const family = isIP(bare);
+  if (family === 0) return false;
+  return PRIVATE_ADDRESSES.check(bare, family === 4 ? "ipv4" : "ipv6");
+}
+
+/** How a site's name is looked up; injected by a test. */
+export type SiteLookup = (hostname: string) => Promise<readonly { address: string; family: number }[]>;
+
+const systemLookup: SiteLookup = (hostname) => dnsLookup(hostname, { all: true, verbatim: true });
+
+/**
+ * Where the browser will find each named site, fixed before it starts.
+ *
+ * A site the person named by its address, or as `localhost`, is where they said: they typed it. A site named by its
+ * name is looked up once, refused when the name points at this machine or a private network, and pinned to the address
+ * that was checked (`--host-resolver-rules`), so the name cannot be pointed somewhere else between this check and the
+ * browser's own lookup.
+ */
+export async function pinnedSites(
+  sites: readonly string[],
+  lookup: SiteLookup = systemLookup,
+): Promise<{ ok: true; rules: string[] } | { ok: false; refused: string }> {
+  const rules: string[] = [];
+  for (const site of sites) {
+    let hostname: string;
+    try {
+      hostname = new URL(site).hostname.toLowerCase();
+    } catch {
+      return { ok: false, refused: `${site.slice(0, 200)} is not a web address` };
+    }
+    const bare = hostname.replace(/^\[|\]$/gu, "");
+    if (isIP(bare) !== 0 || bare === "localhost" || bare.endsWith(".localhost")) continue;
+    let addresses: readonly { address: string; family: number }[];
+    try {
+      addresses = await lookup(bare);
+    } catch (cause) {
+      return {
+        ok: false,
+        refused: `${bare} could not be found (${cause instanceof Error ? cause.message.slice(0, 120) : String(cause)})`,
+      };
+    }
+    const [first] = addresses;
+    if (first === undefined) return { ok: false, refused: `${bare} could not be found` };
+    const inside = addresses.find((entry) => isPrivateAddress(entry.address));
+    if (inside !== undefined) {
+      return {
+        ok: false,
+        refused:
+          `${bare} points at ${inside.address}, an address of this machine or a private network; a site named by its ` +
+          `name is only visited on the public internet, so the person has to write the address itself if that is what they meant`,
+      };
+    }
+    rules.push(`MAP ${bare} ${first.family === 6 ? `[${first.address}]` : first.address}`);
+  }
+  return { ok: true, rules };
 }
 
 /**
@@ -144,19 +286,76 @@ export interface TaskBrowserHost {
   /** The node's own folder for managed profiles; each task gets its own directory under it, removed when it ends. */
   profilesDir: string;
   answerTimeoutMs?: number;
+  lookup?: SiteLookup;
   openDriver?: TaskBrowserInput["openDriver"];
 }
 
 /** Where one task's managed profile is kept, under the node's profiles folder. */
 export function taskProfileDir(profilesDir: string, taskId: string): string {
-  return join(profilesDir, taskId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 100));
+  return join(profilesDir, taskProfileName(taskId));
+}
+
+function taskProfileName(taskId: string): string {
+  return taskId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 100);
+}
+
+/**
+ * Remove every task profile under the node's profiles folder whose task is not running on this node now.
+ *
+ * A profile is removed when its run ends, but a node that went down mid-run never got there, and the cookies a site set
+ * while the task was signed in would otherwise stay on disk for as long as the folder does. Run at boot, when nothing of
+ * the previous process is running any more. Reports what it could not remove and never throws.
+ */
+export async function removeIdleTaskProfiles(
+  profilesDir: string,
+  runningTaskIds: readonly string[],
+): Promise<{ removed: string[]; failed: string[] }> {
+  const keep = new Set(runningTaskIds.map(taskProfileName));
+  const removed: string[] = [];
+  const failed: string[] = [];
+  let entries: Dirent[];
+  try {
+    entries = await readdir(profilesDir, { withFileTypes: true });
+  } catch (cause) {
+    // No folder yet is the ordinary case: this node never gave a task a browser.
+    if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
+      process.stderr.write(
+        `browser: could not list task profiles (${cause instanceof Error ? cause.message : String(cause)})\n`,
+      );
+    }
+    return { removed, failed };
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || keep.has(entry.name)) continue;
+    try {
+      await rm(join(profilesDir, entry.name), { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      removed.push(entry.name);
+    } catch (cause) {
+      failed.push(entry.name);
+      process.stderr.write(
+        `browser: could not remove the task profile ${entry.name} (${cause instanceof Error ? cause.message : String(cause)})\n`,
+      );
+    }
+  }
+  return { removed, failed };
 }
 
 /** The part of a driver this broker uses, so a test can hand it one without starting a browser. */
 export type TaskBrowserDriver = Pick<
   BrowserDriver,
-  "target" | "leaseEpoch" | "targetVersion" | "startLease" | "observe" | "act" | "close"
+  "target" | "leaseEpoch" | "targetVersion" | "startLease" | "observe" | "act" | "stop" | "close"
 >;
+
+/**
+ * How the task was let onto its sites when it was dispatched.
+ *
+ * - `policy`: the execution policy said `execute` by itself; nobody was asked.
+ * - `granted`: the policy asked, and the person answered with a grant that covers this task.
+ *
+ * The broker needs to know which, because a later `ask` on a consequential click is answered by a person's grant and
+ * never by the absence of one.
+ */
+export type TaskBrowserAdmission = "policy" | "granted";
 
 export interface TaskBrowserInput {
   ledger: BrowserEffectLedger;
@@ -168,22 +367,29 @@ export interface TaskBrowserInput {
   principalId: string;
   /** The sites the person allowed the managed browser to act on. */
   allowedOrigins: readonly string[];
+  /** How the dispatcher let this task onto those sites. */
+  admission: TaskBrowserAdmission;
   /** Where this node keeps the task's managed profile. Never the person's own browser profile. */
   profileDir: string;
   /** How long a click waits for the answer to what it sent. Defaults to the driver's own. */
   answerTimeoutMs?: number;
+  /** How a named site is looked up before the browser starts; injected by a test. */
+  lookup?: SiteLookup;
   /** Injected by a test; production builds the Playwright driver. */
-  openDriver?: (input: { profileName: string; allowedOrigins: string[]; profileDir: string }) =>
-    | { ok: true; driver: TaskBrowserDriver }
-    | { ok: false; refused: string };
+  openDriver?: (input: {
+    profileName: string;
+    allowedOrigins: string[];
+    profileDir: string;
+    hostResolverRules: string[];
+  }) => { ok: true; driver: TaskBrowserDriver } | { ok: false; refused: string };
 }
 
 export type TaskBrowserBroker = ((request: TaskBrowserRequest) => Promise<TaskBrowserReply>) & {
   /** Wait for every request still being answered: the dispatcher settles the task only after its effects settled. */
   idle: () => Promise<void>;
   /**
-   * Refuse every request from now on, at once: a person's stop. An action already handed to the browser is left to
-   * finish and be written down — interrupting it would only make its outcome unknown for no reason.
+   * Refuse every request from now on, at once: a person's stop. The driver is told too, so an action not yet handed to
+   * the browser is refused there as well. One already sent is left to be written down as whatever it turned out to be.
    */
   stop: () => void;
   /** Close the browser. Idempotent; the next request after it is refused. */
@@ -266,16 +472,33 @@ export function createTaskBrowserBroker(input: TaskBrowserInput): TaskBrowserBro
           ...(input.answerTimeoutMs === undefined ? {} : { answerTimeoutMs: input.answerTimeoutMs }),
         });
     }
+    const pinned = await pinnedSites(input.allowedOrigins, input.lookup);
+    if (!pinned.ok) return pinned;
+    // A stop that arrived while the names were being looked up wins: no browser is started for a stopped task.
+    if (closed) return { ok: false, refused: "this task's browser was closed because its run was stopped or ended" };
     const made = opener({
-      profileName: `task-${taskId}`.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 100),
+      profileName: taskProfileName(`task-${taskId}`),
       allowedOrigins: [...input.allowedOrigins],
       profileDir: input.profileDir,
+      hostResolverRules: pinned.rules,
     });
     if (!made.ok) return made;
     driver = made.driver;
     driver.startLease();
     return { ok: true, driver };
   };
+
+  /** Hand an action to the ledger and the driver, unless the task was stopped while it was being decided. */
+  const act = async (
+    current: TaskBrowserDriver,
+    action: AutomationAction,
+    options: { approvalGranted: boolean; describe?: string },
+  ): Promise<ActResult | undefined> => {
+    if (closed) return undefined;
+    return actWithLedger(input.ledger, current, action, options);
+  };
+  const stoppedReply = (): TaskBrowserReply =>
+    refused("refused: this task was stopped before the action was handed to the browser; nothing was pressed");
 
   const observe = async (current: TaskBrowserDriver): Promise<TaskBrowserReply> => {
     latest = await current.observe();
@@ -372,29 +595,24 @@ export function createTaskBrowserBroker(input: TaskBrowserInput): TaskBrowserBro
           return refused(`refused: ${ref ?? "no ref"} is not an element of the latest observation; observe the page again`);
         }
         if (request.action === "fill") {
-          const filled = await actWithLedger(
-            input.ledger,
-            current,
-            planned(current, latest, "fill", ref, { value: request.value ?? "" }, false),
-            { approvalGranted: false },
-          );
+          const filled = await act(current, planned(current, latest, "fill", ref, { value: request.value ?? "" }, false), {
+            approvalGranted: false,
+          });
+          if (filled === undefined) return stoppedReply();
           return replyFor(filled, "Observe again before acting on what changed.");
         }
 
         // The model may say a click is consequential; it can never say a submit control is not.
         const consequential = element.submits || request.consequential === true;
         const action = planned(current, latest, "click", ref, {}, consequential);
-        const describe = `click “${oneLine(element.name, 60)}” on ${pageLabel(latest.url)}`;
-        if (!consequential) {
-          const clicked = await actWithLedger(input.ledger, current, action, { approvalGranted: false, describe });
-          return replyFor(clicked, "Observe the page again before the next action.");
-        }
+        const describe = `bấm “${oneLine(element.name, 60)}” trên ${pageLabel(latest.url)}`;
 
         /*
-         * The policy is asked again for each consequential click, and only its refusal is final here. Whether the task
-         * may act on these sites at all was decided when it was dispatched — autonomously, or by the person answering
-         * the one approval the dispatcher asked for — so an `ask` now is that same question, already answered. A rule
-         * the person added since, or one that denies this exact operation, still stops the click.
+         * The policy is asked again for every click, and a deny stops any of them: a click nobody marked consequential
+         * can still turn out to submit. An `ask` is where the two kinds part. A plain click was covered by the task being
+         * let onto these sites. A consequential one goes ahead on an `ask` only when the person answered that very
+         * question with a grant when the task was dispatched; a task the policy let on by itself has had nobody say yes
+         * to anything, so it is refused rather than pressed — the person can re-run it once they have decided.
          */
         const policy = input.policy();
         const operationDigest = browserDigest(action);
@@ -404,21 +622,56 @@ export function createTaskBrowserBroker(input: TaskBrowserInput): TaskBrowserBro
           intent: input.intent,
         });
         if (decided.kind === "deny") return refused(`refused: ${decided.reason}; nothing was pressed`);
+        if (consequential && decided.kind === "ask" && input.admission !== "granted") {
+          return refused(
+            "refused: the policy now asks before this kind of click, and nobody approved this task's clicks when it " +
+              "started; nothing was pressed. Say in the result that the step needs the person's approval.",
+          );
+        }
         const decision: Extract<PolicyDecision, { kind: "execute" }> =
           decided.kind === "execute"
             ? decided
-            : { kind: "execute", reason: "the task it belongs to was allowed to act on these sites when it started", audit: true };
-        recordEffectExecution(input.ledger.services.conductor, {
-          principalId: input.principalId,
-          mode: policy.mode,
-          decision,
-          category: "external-write",
-          operationDigest,
-          conversationId: input.conversationId,
-          description: `browser ${describe} (task ${taskId})`,
-        });
+            : {
+                kind: "execute",
+                reason:
+                  input.admission === "granted"
+                    ? "the person approved this task acting on these sites when it started"
+                    : "the task it belongs to was allowed to act on these sites when it started",
+                audit: true,
+              };
+        const audit = (): void => {
+          recordEffectExecution(input.ledger.services.conductor, {
+            principalId: input.principalId,
+            mode: policy.mode,
+            decision,
+            category: "external-write",
+            operationDigest,
+            conversationId: input.conversationId,
+            description: `browser ${describe} (task ${taskId})`,
+          });
+        };
+
+        if (!consequential) {
+          const clicked = await act(current, action, { approvalGranted: false, describe });
+          if (clicked === undefined) return stoppedReply();
+          // A click nobody marked consequential that sent something is an effect all the same, and is audited as one.
+          if (clicked.sentEffect === true) audit();
+          return replyFor(clicked, "Observe the page again before the next action.");
+        }
+
+        if (closed) return stoppedReply();
+        audit();
         // Approved by the policy decision above, never by the model: that is what the driver's approval flag means.
-        const clicked = await actWithLedger(input.ledger, current, action, { approvalGranted: true, describe });
+        const clicked = await act(current, action, { approvalGranted: true, describe });
+        if (clicked === undefined) return stoppedReply();
+        if (clicked.status === "applied" && clicked.sentEffect === false) {
+          return {
+            kind: "done",
+            text:
+              `${clicked.message}. The press sent nothing to the site, so nothing was submitted: observe the page to see ` +
+              `why (a field it still wants, or a control that only changes the page) before trying anything else.`,
+          };
+        }
         return replyFor(clicked, "Observe the page to see what the site answered.");
       }
     }
@@ -460,6 +713,7 @@ export function createTaskBrowserBroker(input: TaskBrowserInput): TaskBrowserBro
 
   const stop = (): void => {
     closed = true;
+    driver?.stop("the person stopped this task");
   };
 
   return Object.assign(broker, { idle, stop, close });

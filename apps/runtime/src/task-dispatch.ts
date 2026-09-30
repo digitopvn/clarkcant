@@ -47,10 +47,15 @@ import { signalTree, stopTree } from "./process-tree.ts";
 import { stopCommandsForTask } from "./run-command.ts";
 import {
   BROWSER_CAPABILITY,
+  type TaskBrowserAdmission,
   type TaskBrowserBroker,
   type TaskBrowserHost,
+  browserGoalUrls,
+  browserTaskApprovalText,
   browserTaskOrigins,
   createTaskBrowserBroker,
+  hasUserinfo,
+  sameSites,
   parseTaskBrowserRequest,
   taskProfileDir,
 } from "./task-browser.ts";
@@ -488,6 +493,34 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       return;
     }
 
+    /*
+     * A browser task is let onto exactly the sites the tool that created it checked against the person's own words and
+     * stored on the task (`origin.sites`), and nothing is read back out of the goal's text to widen them. It must have
+     * been started by a person in the conversation, and its goal must still read as those same sites and carry no
+     * disguised address: a task that fails any of this was not made by that tool, or was changed since, and is refused
+     * before the policy is asked about it or a worker exists.
+     */
+    const browsing = job.capabilityRef === BROWSER_CAPABILITY;
+    let browserSites: readonly string[] = [];
+    if (browsing) {
+      const origin = task.origin;
+      const sites = origin?.kind === "interactive" ? (origin.sites ?? []) : [];
+      const refusal =
+        origin?.kind !== "interactive"
+          ? "a browser task acts only for a person who asked for it in the conversation, and this one was not started that way"
+          : sites.length === 0
+            ? "the task carries no checked list of sites, so there is no site it could be allowed onto"
+            : browserGoalUrls(task.goal).some(hasUserinfo) || !sameSites(browserTaskOrigins(task.goal), sites)
+              ? "the sites the task was checked for are not the sites its goal names"
+              : undefined;
+      if (refusal !== undefined) {
+        releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        await refuse(job, `refused: ${refusal}; the worker was never started`);
+        return;
+      }
+      browserSites = sites;
+    }
+
     const plan = planRoots(task);
     if (!plan.ok) {
       releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
@@ -495,6 +528,8 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       return;
     }
     const intent = executionIntentOf(task.origin);
+    /** How the gate below let a browser task on; undefined when it never decided, which a browser task is refused for. */
+    let admission: TaskBrowserAdmission | undefined;
 
     /*
      * The execution-policy gate.
@@ -560,7 +595,10 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
         if (decision.kind === "ask") {
           releaseLease(coordination, lease.lease.leaseId);
-          const effectDescription = describeCapabilityEffectVi(descriptor);
+          // A browser task is approved for its sites and its request, so the person is shown both.
+          const effectDescription = browsing
+            ? browserTaskApprovalText(browserSites, task.goal)
+            : describeCapabilityEffectVi(descriptor);
           const parkedReason =
             `Cần được duyệt trước khi thực hiện: ${effectDescription}. Việc chưa chạy; ` +
             `nếu được duyệt việc sẽ tiếp tục, nếu bị từ chối hoặc hết hạn thì việc sẽ dừng hẳn.`;
@@ -593,6 +631,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           });
           return;
         }
+        admission = policyDecision.kind === "execute" ? "policy" : "granted";
         recordEffectExecution(coordination, {
           principalId,
           mode: policy.mode,
@@ -632,23 +671,21 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     }
 
     /*
-     * A browser task gets a browser and nothing that runs commands: the sites its goal names are the whole of what it
-     * may act on, and the broker built here for this run is where each of its clicks is decided and written down.
+     * A browser task gets a browser and nothing that runs commands: its checked sites are the whole of what it may act
+     * on, and the broker built here for this run is where each of its clicks is decided and written down.
      */
-    const browsing = job.capabilityRef === BROWSER_CAPABILITY;
     let openedBrowser: TaskBrowserBroker | undefined;
     if (browsing) {
       const host = deps.browser?.();
       const principalId = deps.ownerPrincipalId?.();
-      const origins = browserTaskOrigins(task.goal);
-      // Without an owner there is no policy to decide a click by, and the dispatch gate above never ran.
+      // Without an owner there is no policy to decide a click by; without a registered capability the gate never ran.
       const refusal =
         host === undefined || principalId === undefined
           ? "this node gives no task a browser"
-          : origins.length === 0
-            ? "the task names no web address, so there is no site it could be allowed onto"
+          : admission === undefined
+            ? "the execution policy was never asked about this task, because this node does not know the browser capability"
             : undefined;
-      if (host === undefined || principalId === undefined || refusal !== undefined) {
+      if (host === undefined || principalId === undefined || admission === undefined || refusal !== undefined) {
         releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
         await refuse(job, `refused: ${refusal ?? "no browser"}; the worker was never started`);
         return;
@@ -659,9 +696,11 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         intent,
         policy: () => readExecutionPolicy({ db: deps.conductor.db, now: at }, principalId),
         principalId,
-        allowedOrigins: origins,
+        allowedOrigins: browserSites,
+        admission,
         profileDir: taskProfileDir(host.profilesDir, job.taskId),
         ...(host.answerTimeoutMs === undefined ? {} : { answerTimeoutMs: host.answerTimeoutMs }),
+        ...(host.lookup === undefined ? {} : { lookup: host.lookup }),
         ...(host.openDriver === undefined ? {} : { openDriver: host.openDriver }),
       });
       browsers.set(job.taskId, openedBrowser);
@@ -721,8 +760,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           taskRevision: task.revision,
           leaseEpoch: lease.lease.epoch,
           goal: task.goal,
-          projectRoots: read,
-          ...(plan.scoped ? { writableRoots: write } : {}),
+          // A browser task reads and writes no project: its worker is given the browser and nothing on this disk.
+          projectRoots: browsing ? [] : read,
+          ...(plan.scoped ? { writableRoots: browsing ? [] : write } : {}),
           allowedCapabilityRefs: [...workerCapabilitiesFor(job.capabilityRef)],
         },
         ...(deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs }),

@@ -68,6 +68,12 @@ a few seconds it is told the action is unconfirmed. Each `controlId` is answered
 the agent asked for while answering a spoken sentence has `source: "voice-agent"`, distinct from a person's own spoken
 command (`source: "voice"`).
 
+The node's own page sends `x-clarkcant-surface: composer` with the messages a person types into it, and the node
+stores that as the message's `surface`; a spoken message is stored with `surface: "voice"` by the node itself. A
+message posted without the header (MCP, the WebSocket relay, `clarkcant api`, a script) is stored without a surface.
+Only a message with a surface counts as the person's own words where that matters, such as which sites a browser task
+may act on; any other value of the header is ignored.
+
 A signal is how anything outside the conversation tells the node that something happened: a CI run, a script, a
 service of your own. It is recorded before anything is matched, then answered against the standing requests the person
 set up by saying "when X happens, do Y" to Clark. A topic is dotted lower-case words (`build.finished`); the payload is

@@ -311,7 +311,16 @@ export type RunRecord = z.infer<typeof runRecordSchema>;
  */
 export const intentOriginSchema = z.discriminatedUnion("kind", [
   /** A person asked in this conversation. */
-  z.strictObject({ kind: z.literal("interactive"), principalId: z.string().min(1).max(128) }),
+  z.strictObject({
+    kind: z.literal("interactive"),
+    principalId: z.string().min(1).max(128),
+    /**
+     * The web sites the person named for this request, as origins (`https://shop.example`), checked against their own
+     * words when the task was created. Only a browser task carries them, and they are the whole of what it may act on:
+     * the dispatcher uses this list and never reads sites back out of the goal's text.
+     */
+    sites: z.array(z.string().min(1).max(300)).min(1).max(8).optional(),
+  }),
   /** An automation the person set up earlier matched something that happened. */
   z.strictObject({
     kind: z.literal("persistent"),
