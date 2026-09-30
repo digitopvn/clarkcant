@@ -1,0 +1,316 @@
+{
+  "initial": {
+    "appearanceApi": 2,
+    "tokenContractVersion": 2,
+    "themeRef": "builtin:clark",
+    "scheme": "dark",
+    "revision": "bf9d3bfc960b8265",
+    "tokens": {
+      "color": {
+        "canvas": "#111317",
+        "window": "#14161A",
+        "card": "#17191D",
+        "elevated": "#1B1D22",
+        "code": "#101318",
+        "border": "#27292D",
+        "text": "#E7E7EA",
+        "textMuted": "#A0A2AB",
+        "textTertiary": "#858994",
+        "accent": "#B8AEDC",
+        "onAccent": "#111317",
+        "success": "#8EBCA3",
+        "warning": "#D1AC68",
+        "danger": "#C8757C",
+        "focus": "#D8D2F0"
+      },
+      "type": {
+        "displayXl": {
+          "size": "3.25rem",
+          "lineHeight": "3.75rem"
+        },
+        "displayLg": {
+          "size": "2.125rem",
+          "lineHeight": "2.625rem"
+        },
+        "headingLg": {
+          "size": "1.5rem",
+          "lineHeight": "2rem"
+        },
+        "headingMd": {
+          "size": "1.125rem",
+          "lineHeight": "1.625rem"
+        },
+        "bodyLg": {
+          "size": "1rem",
+          "lineHeight": "1.5rem"
+        },
+        "bodyMd": {
+          "size": "0.875rem",
+          "lineHeight": "1.375rem"
+        },
+        "bodySm": {
+          "size": "0.8125rem",
+          "lineHeight": "1.25rem"
+        },
+        "label": {
+          "size": "0.75rem",
+          "lineHeight": "1rem"
+        },
+        "monoSm": {
+          "size": "0.75rem",
+          "lineHeight": "1.25rem"
+        },
+        "meta": {
+          "size": "0.6875rem",
+          "lineHeight": "1rem"
+        }
+      },
+      "space": {
+        "xxs": "0.125rem",
+        "xs": "0.25rem",
+        "sm": "0.5rem",
+        "md": "0.75rem",
+        "lg": "1rem",
+        "xl": "1.5rem",
+        "xxl": "2rem",
+        "s20": "1.25rem",
+        "s40": "2.5rem",
+        "s48": "3rem",
+        "s64": "4rem",
+        "s80": "5rem"
+      },
+      "radius": {
+        "badge": "0.375rem",
+        "button": "0.5rem",
+        "card": "0.75rem",
+        "response": "1rem",
+        "modal": "1.25rem",
+        "pill": "999px"
+      },
+      "motion": {
+        "micro": "120ms",
+        "normal": "180ms",
+        "panel": "280ms",
+        "orb": "600ms",
+        "enter": "560ms",
+        "exit": "320ms",
+        "glow": "7200ms",
+        "easing": "cubic-bezier(0.2, 0, 0.2, 1)",
+        "bounce": "cubic-bezier(0.22, 1.28, 0.36, 1)"
+      },
+      "motionReduced": {
+        "micro": "0ms",
+        "normal": "0ms",
+        "panel": "0ms",
+        "orb": "0ms",
+        "enter": "0ms",
+        "exit": "0ms",
+        "glow": "0ms",
+        "easing": "linear",
+        "bounce": "linear"
+      },
+      "layout": {
+        "conversationMaxWidth": "800px",
+        "composerMaxWidth": "840px",
+        "composerMinHeight": "70px",
+        "topBarHeight": "62px",
+        "modalWidth": "700px"
+      },
+      "identity": {
+        "typography": {
+          "body": "clark",
+          "display": "clark",
+          "mono": "clark",
+          "headingWeight": 600
+        },
+        "border": {
+          "width": 1,
+          "style": "solid"
+        },
+        "shadow": {
+          "style": "soft",
+          "offset": 4,
+          "color": "text"
+        },
+        "fieldRadius": "10px",
+        "iconStroke": 1.8,
+        "recipes": {
+          "button": "outlined",
+          "card": "outlined",
+          "input": "outlined",
+          "modal": "floating",
+          "badge": "pill",
+          "composer": "floating"
+        },
+        "effects": {
+          "backdrop": {
+            "kind": "dot-grid",
+            "intensity": 0.5,
+            "scale": 22
+          },
+          "surface": {
+            "kind": "none",
+            "intensity": 0.5
+          }
+        }
+      }
+    }
+  },
+  "next": {
+    "appearanceApi": 2,
+    "tokenContractVersion": 2,
+    "themeRef": "builtin:clark",
+    "scheme": "light",
+    "revision": "615fe25b44b71d3f",
+    "tokens": {
+      "color": {
+        "canvas": "#F7F7F5",
+        "window": "#FFFFFF",
+        "card": "#FFFFFF",
+        "elevated": "#FFFFFF",
+        "code": "#F2F2EF",
+        "border": "#E5E5E1",
+        "text": "#1A1A1C",
+        "textMuted": "#5C5E66",
+        "textTertiary": "#696C74",
+        "accent": "#6B5FA8",
+        "onAccent": "#FFFFFF",
+        "success": "#3F6B52",
+        "warning": "#7A5B1E",
+        "danger": "#A33B45",
+        "focus": "#5B4FA0"
+      },
+      "type": {
+        "displayXl": {
+          "size": "3.25rem",
+          "lineHeight": "3.75rem"
+        },
+        "displayLg": {
+          "size": "2.125rem",
+          "lineHeight": "2.625rem"
+        },
+        "headingLg": {
+          "size": "1.5rem",
+          "lineHeight": "2rem"
+        },
+        "headingMd": {
+          "size": "1.125rem",
+          "lineHeight": "1.625rem"
+        },
+        "bodyLg": {
+          "size": "1rem",
+          "lineHeight": "1.5rem"
+        },
+        "bodyMd": {
+          "size": "0.875rem",
+          "lineHeight": "1.375rem"
+        },
+        "bodySm": {
+          "size": "0.8125rem",
+          "lineHeight": "1.25rem"
+        },
+        "label": {
+          "size": "0.75rem",
+          "lineHeight": "1rem"
+        },
+        "monoSm": {
+          "size": "0.75rem",
+          "lineHeight": "1.25rem"
+        },
+        "meta": {
+          "size": "0.6875rem",
+          "lineHeight": "1rem"
+        }
+      },
+      "space": {
+        "xxs": "0.125rem",
+        "xs": "0.25rem",
+        "sm": "0.5rem",
+        "md": "0.75rem",
+        "lg": "1rem",
+        "xl": "1.5rem",
+        "xxl": "2rem",
+        "s20": "1.25rem",
+        "s40": "2.5rem",
+        "s48": "3rem",
+        "s64": "4rem",
+        "s80": "5rem"
+      },
+      "radius": {
+        "badge": "0.375rem",
+        "button": "0.5rem",
+        "card": "0.75rem",
+        "response": "1rem",
+        "modal": "1.25rem",
+        "pill": "999px"
+      },
+      "motion": {
+        "micro": "0ms",
+        "normal": "0ms",
+        "panel": "0ms",
+        "orb": "0ms",
+        "enter": "0ms",
+        "exit": "0ms",
+        "glow": "0ms",
+        "easing": "linear",
+        "bounce": "linear"
+      },
+      "motionReduced": {
+        "micro": "0ms",
+        "normal": "0ms",
+        "panel": "0ms",
+        "orb": "0ms",
+        "enter": "0ms",
+        "exit": "0ms",
+        "glow": "0ms",
+        "easing": "linear",
+        "bounce": "linear"
+      },
+      "layout": {
+        "conversationMaxWidth": "800px",
+        "composerMaxWidth": "840px",
+        "composerMinHeight": "70px",
+        "topBarHeight": "62px",
+        "modalWidth": "700px"
+      },
+      "identity": {
+        "typography": {
+          "body": "clark",
+          "display": "clark",
+          "mono": "clark",
+          "headingWeight": 600
+        },
+        "border": {
+          "width": 1,
+          "style": "solid"
+        },
+        "shadow": {
+          "style": "soft",
+          "offset": 4,
+          "color": "text"
+        },
+        "fieldRadius": "10px",
+        "iconStroke": 1.8,
+        "recipes": {
+          "button": "outlined",
+          "card": "outlined",
+          "input": "outlined",
+          "modal": "floating",
+          "badge": "pill",
+          "composer": "floating"
+        },
+        "effects": {
+          "backdrop": {
+            "kind": "dot-grid",
+            "intensity": 0.5,
+            "scale": 22
+          },
+          "surface": {
+            "kind": "none",
+            "intensity": 0.5
+          }
+        }
+      }
+    }
+  }
+}

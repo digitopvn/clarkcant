@@ -29,6 +29,14 @@ import {
 const PRELOAD = "/tmp/detached-preload.cjs";
 
 describe("the detached appearance boundary", () => {
+  it("keeps the real Electron smoke fixture equal to current compiler output", () => {
+    const fixture = JSON.parse(readFileSync(new URL("./fixtures/appearance.json", import.meta.url), "utf8"));
+    expect(fixture).toEqual({
+      initial: compileAppearance({ scheme: "dark" }),
+      next: compileAppearance({ scheme: "light", reducedMotion: true }),
+    });
+  });
+
   it("uses the current canonical schema, accepts a snapshot and refuses raw/privileged styling", () => {
     const generated = JSON.parse(readFileSync(new URL("../src/appearance-schema.json", import.meta.url), "utf8"));
     expect(generated).toEqual(appearanceSnapshotSchema.toJSONSchema());
