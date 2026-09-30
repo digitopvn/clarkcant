@@ -4,8 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ModelTurnEvent } from "@clarkcant/core";
+import { BUILTIN_CLARK_THEME_REF, describeAppIntent } from "@clarkcant/contracts";
+import { setPreference, type ModelTurnEvent } from "@clarkcant/core";
 
+import type { ThemeRegistry } from "../src/application/themes.ts";
 import { controlApp, controlAppRefusalSay, decideControlApp, type ControlAppDeps } from "../src/node-tools.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
@@ -187,6 +189,30 @@ describe("control_app", () => {
     expect(generic).toContain("inbox.open");
     expect(generic).toContain("only orb.select may name an orb profile");
     expect(controlAppRefusalSay("inbox.open", []).trim()).not.toBe("");
+  });
+
+  it("says a theme refusal and a read-back in the language the person reads the app in", () => {
+    const registry: ThemeRegistry = {
+      themes: [{ themeRef: BUILTIN_CLARK_THEME_REF, displayName: "Clark Default", provider: { kind: "builtin" } }],
+      problems: [],
+      unchecked: [],
+      documents: new Map(),
+      refused: new Map(),
+    };
+    const withThemes = (): ControlAppDeps => ({ ...deps(() => () => {}), themes: () => registry });
+    // Nothing chosen yet: Vietnamese, the language's own default.
+    const unset = decideControlApp(withThemes(), { kind: "appearance.set-theme", theme: "camouflage" });
+    expect(unset).toMatchObject({ status: "refused", say: expect.stringContaining("Chủ đề") as unknown as string });
+
+    setPreference(
+      { db: services.runtime.db, now: () => "2026-09-23T00:00:00.000Z" as never },
+      { principalId: services.runtime.identity.ownerPrincipalId, key: "experience.language", scope: "global", value: "en", source: "user" },
+    );
+    const refused = decideControlApp(withThemes(), { kind: "appearance.set-theme", theme: "camouflage" });
+    expect(refused).toMatchObject({ status: "refused", say: expect.stringContaining("cannot be drawn on this node") as unknown as string });
+    const delivered = decideControlApp(withThemes(), { kind: "appearance.set-theme", theme: "Clark Default" });
+    expect(delivered.status).toBe("delivered");
+    expect(delivered.say).toBe(describeAppIntent({ kind: "appearance.set-theme", themeRef: BUILTIN_CLARK_THEME_REF, themeName: "Clark Default" }, "en"));
   });
 });
 

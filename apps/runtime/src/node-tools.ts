@@ -65,6 +65,7 @@ import { type BrowserTaskToolDeps, createBrowserTaskTool } from "./browser-task-
 import { createWorkTools } from "./work-tools.ts";
 import type { HostControlAcks } from "./host-control-acks.ts";
 import { checkThemeChoice } from "./application/appearance-intents.ts";
+import { preferredAppIntentLocale } from "./app-intents.ts";
 import type { ThemeRegistry } from "./application/themes.ts";
 
 /** The colour schemes `appearance.set-color-scheme` accepts, as the contract lists them. */
@@ -556,10 +557,15 @@ export function decideControlApp(deps: ControlAppDeps, params: Record<string, un
   }
 
   let intent = parsed.data;
-  let readBack = describeAppIntent(intent);
+  // Said in the language the person reads the app in: the read-back and a theme refusal are shown and spoken to them.
+  const locale = preferredAppIntentLocale(
+    { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.newId },
+    deps.principalId,
+  );
+  let readBack = describeAppIntent(intent, locale);
   if (intent.kind === "appearance.set-theme") {
     // The same check a sentence and a click go through, so the agent can choose only a theme the page will draw.
-    const checked = checkThemeChoice(readThemes(deps), String(params.theme), "vi");
+    const checked = checkThemeChoice(readThemes(deps), String(params.theme), locale);
     if (!checked.ok) return { status: "refused", reason: "unsupported", say: checked.say };
     intent = checked.intent;
     readBack = checked.readBack;
