@@ -587,8 +587,8 @@ export function Conversation({
         a window command failing in a browser is still visible when no panel is open.
       */}
       {appIntents.intentNotice !== undefined && (
-        <div className="cc-intent-notice">
-          <p className="cc-intent-notice-text" data-intent-notice="true" role="status">
+        <div className="cc-intent-notice" data-intent-notice="true">
+          <p className="cc-intent-notice-text" role="status">
             {appIntents.intentNotice}
           </p>
           {/* A real undo: the node keeps a dismissed notice restorable for this long, and the line stays exactly as long. */}
