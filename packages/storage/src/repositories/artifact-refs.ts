@@ -197,6 +197,31 @@ export function artifactUsageForPrincipal(db: Database, principalId: string): nu
   return Number(row?.used ?? 0);
 }
 
+/**
+ * Bytes one widget instance holds in broker artifacts: the ones it created and the ones the person handed it.
+ *
+ * Read against `ARTIFACT_LIMITS.instanceQuotaBytes`, inside the principal's quota, so one widget cannot fill the quota
+ * the composer's attachments share.
+ */
+export function artifactUsageForInstance(db: Database, instanceId: string): number {
+  const row = oneRow<{ used: number | null }>(
+    db,
+    "SELECT COALESCE(SUM(size_bytes), 0) AS used FROM artifacts WHERE instance_id = ? AND kind IS NOT NULL",
+    instanceId,
+  );
+  return Number(row?.used ?? 0);
+}
+
+/** The staging file names a writable artifact still points at: every other file in the staging directory is an orphan. */
+export function liveStagingRefs(db: Database): Set<string> {
+  return new Set(
+    allRows<{ staging_ref: string }>(
+      db,
+      "SELECT staging_ref FROM artifacts WHERE kind IS NOT NULL AND staging_ref IS NOT NULL",
+    ).map((row) => row.staging_ref),
+  );
+}
+
 /** Working artifacts whose time ran out before they were finalized. */
 export function listExpiredWorkingArtifacts(db: Database, now: Instant, limit = 200): BrokerArtifactRecord[] {
   return allRows<ArtifactRow>(
@@ -251,12 +276,21 @@ export function deleteArtifactsForConversation(
 }
 
 /**
- * Whether any row still points at a blob file.
+ * Whether anything this node keeps still points at a blob file.
  *
  * The blob store is content-addressed, so one file can be an attachment, a finalized artifact, a peer's received
- * artifact and an imported image at once. Removing it because one of those rows went away would take the bytes out
- * from under the others. Compared by the file name rather than the full path, because the name is the content
- * address and a path written by an older build may differ in separators.
+ * artifact, an imported image, a file a delegated task offered back, and a captured session frame at once. Removing it
+ * because one of those went away would take the bytes out from under the others. So every writer of the store is asked
+ * here, in the two ways its rows can name a blob:
+ *
+ * - **by path** (`attachments`, `artifacts`, `local_images`), compared by the file name rather than the full path,
+ *   because the name is the content address and a path written by an older build may differ in separators;
+ * - **by digest** — the file name's 32 hex characters are the start of the SHA-256 — anywhere in every column that records one
+ *   (`attachments.sha256`, `artifacts.digest`, `local_images.digest`, `task_artifacts.digest` for a file a task offered,
+ *   `evidence.digest`) and in `messages.document`, which is where a session card keeps the digest of its captured frame.
+ *
+ * The digest match is deliberately generous: the same bytes stored under another extension keep this file too. Keeping
+ * bytes nobody needs costs space; removing bytes somebody needs loses a file.
  */
 export function blobStillReferenced(db: Database, blobPath: string): boolean {
   const name = blobPath.split(/[/\\]/).at(-1) ?? "";
@@ -270,5 +304,23 @@ export function blobStillReferenced(db: Database, blobPath: string): boolean {
       `/${name}`,
       `\\${name}`,
     ) !== undefined;
-  return suffixMatch("attachments") || suffixMatch("artifacts") || suffixMatch("local_images");
+  if (suffixMatch("attachments") || suffixMatch("artifacts") || suffixMatch("local_images")) return true;
+
+  const address = /^([0-9a-f]{32})\./u.exec(name)?.[1];
+  if (address === undefined) return false;
+  const digestMatch = (table: string, column: string): boolean =>
+    oneRow<{ present: number }>(
+      db,
+      `SELECT 1 AS present FROM ${table} WHERE ${column} IS NOT NULL AND instr(${column}, ?) > 0 LIMIT 1`,
+      // The bare hex, so a digest written with or without its `sha256:` prefix is found either way.
+      address,
+    ) !== undefined;
+  return (
+    digestMatch("attachments", "sha256") ||
+    digestMatch("artifacts", "digest") ||
+    digestMatch("local_images", "digest") ||
+    digestMatch("task_artifacts", "digest") ||
+    digestMatch("evidence", "digest") ||
+    digestMatch("messages", "document")
+  );
 }

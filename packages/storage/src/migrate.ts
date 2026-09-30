@@ -1547,6 +1547,11 @@ export const MIGRATIONS: readonly Migration[] = [
         ALTER TABLE artifacts ADD COLUMN staging_ref TEXT;
         CREATE INDEX idx_artifacts_conversation ON artifacts(conversation_id);
         CREATE INDEX idx_artifacts_owner ON artifacts(owner_principal_id);
+        -- A widget instance's own usage is read against its share of the quota on every create, write and pick, and
+        -- a widget route checks its instance belongs to the conversation in its path through the snapshots that
+        -- placed it there.
+        CREATE INDEX idx_artifacts_instance ON artifacts(instance_id);
+        CREATE INDEX idx_snapshots_instance ON widget_snapshots(instance_id);
 
         -- One widget instance's permission to use one artifact. A ref is a pointer; this row is the permission, and
         -- the host re-reads it on every use. access is read | write. revoked_at is kept rather than the row deleted,

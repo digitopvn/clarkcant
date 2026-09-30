@@ -3,11 +3,12 @@ import {
   ARTIFACT_LIMITS,
   type ArtifactRefusal,
   artifactAcceptSchema,
+  artifactFileName,
   artifactNameSchema,
   artifactRefusalStatus,
 } from "@clarkcant/contracts";
 import { getInstance } from "@clarkcant/core";
-import { getBrokerArtifact, getConversation } from "@clarkcant/storage";
+import { getBrokerArtifact, getConversation, instanceIsInConversation } from "@clarkcant/storage";
 
 import {
   type ArtifactBrokerDeps,
@@ -15,6 +16,7 @@ import {
   attachArtifact,
   createWorkingArtifact,
   describeArtifact,
+  discardArtifact,
   exportArtifactBytes,
   finalizeArtifact,
   readArtifactRange,
@@ -23,6 +25,7 @@ import {
 } from "../artifact-broker.ts";
 import { readBlob } from "../blobs.ts";
 import type { NodeServices } from "../services.ts";
+import { contentDisposition } from "./content-disposition.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
 /**
@@ -89,11 +92,6 @@ function queryInteger(value: string | undefined): unknown {
   return /^\d{1,15}$/.test(value) ? Number(value) : value;
 }
 
-/** A file name safe to put in a header: quotes, backslashes and line breaks removed, as for attachments. */
-function dispositionName(filename: string): string {
-  return filename.replaceAll(/["\\\r\n]/g, "").slice(0, 120);
-}
-
 export function handleArtifactRoutes(deps: ArtifactRouteDeps): GatewayResponse | undefined {
   const { segments } = deps;
   if (segments[0] === "artifacts") return personRoutes(deps);
@@ -133,7 +131,7 @@ function personRoutes(deps: ArtifactRouteDeps): GatewayResponse {
         contentType: record.mimeType,
         headers: {
           "x-content-type-options": "nosniff",
-          "content-disposition": `${inline ? "inline" : "attachment"}; filename="${dispositionName(record.name)}"`,
+          "content-disposition": contentDisposition(inline ? "inline" : "attachment", record.name),
         },
       },
     };
@@ -152,6 +150,8 @@ function personRoutes(deps: ArtifactRouteDeps): GatewayResponse {
     }
     const exported = exportArtifactBytes(brokerDeps(services), { principalId, artifactId });
     if (!exported.ok) return refused(exported);
+    // The extension is the bytes' type's, whatever the suggestion said: see `artifactFileName`.
+    const saved = artifactFileName(name, exported.ref.mimeType);
     return {
       status: 200,
       body: null,
@@ -161,7 +161,7 @@ function personRoutes(deps: ArtifactRouteDeps): GatewayResponse {
         cache: "no-store",
         headers: {
           "x-content-type-options": "nosniff",
-          "content-disposition": `attachment; filename="${dispositionName(name)}"`,
+          "content-disposition": contentDisposition("attachment", saved),
           // The web host reads the name back to give the download the name the person chose.
           "access-control-expose-headers": "content-disposition",
         },
@@ -186,6 +186,11 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
   if (instance === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that instance is not on this node");
   if (instance.ownerPrincipalId !== principalId) {
     return fail(403, "NOT_AUTHORIZED", "that instance belongs to another principal");
+  }
+  // The path pairs a conversation with an instance; the pair is checked, not trusted. The same answer as a missing
+  // instance, so the route cannot be used to learn which conversation an instance is in.
+  if (!instanceIsInConversation(runtime.db, { conversationId, instanceId })) {
+    return fail(404, "RESOURCE_NOT_FOUND", "that instance is not on this node");
   }
   const broker = brokerDeps(services);
   const scope = { principalId, instanceId };
@@ -237,6 +242,12 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
   if (segments.length === 6 && request.method === "GET") {
     const described = describeArtifact(broker, target);
     return described.ok ? json(200, { artifactRef: described.ref }) : refused(described);
+  }
+
+  // DELETE …/artifacts/:id — the widget lets go of a file it made, and the bytes nothing else points at go with it.
+  if (segments.length === 6 && request.method === "DELETE") {
+    const discarded = discardArtifact(broker, target);
+    return discarded.ok ? json(200, { discarded: true, artifactId }) : refused(discarded);
   }
 
   if (segments.length === 7 && segments[6] === "content" && request.method === "GET") {

@@ -52,8 +52,17 @@ export const ARTIFACT_LIMITS = Object.freeze({
   maxBytes: ATTACHMENT_LIMITS.maxBytes,
   /** How long a working artifact lives after its last write, unless it is finalized. */
   workingTtlMs: 24 * 60 * 60 * 1000,
-  /** How long a widget instance's grant lasts. A write extends the grant of the instance writing. */
+  /**
+   * How long a widget instance's grant lasts. A write extends the grant of the instance writing. The grant a widget holds
+   * on a file it wrote and finalized does not run out: that file follows its conversation, and so does its creator's
+   * access to it.
+   */
   grantTtlMs: 24 * 60 * 60 * 1000,
+  /**
+   * Bytes one widget instance may hold in artifacts it created or was handed, inside the principal's quota. 128 MiB, so
+   * one widget that saves often cannot take the whole quota the composer's attachments share with it.
+   */
+  instanceQuotaBytes: 134_217_728,
   nameMaxChars: ATTACHMENT_LIMITS.filenameMaxChars,
   /** Entries in a picker's accept list. */
   maxAccept: 16,
@@ -121,6 +130,8 @@ export const ARTIFACT_REFUSAL_CODES = [
   "ARTIFACT_OFFSET_MISMATCH",
   "ARTIFACT_TOO_LARGE",
   "ARTIFACT_QUOTA_EXCEEDED",
+  "ARTIFACT_INSTANCE_QUOTA_EXCEEDED",
+  "ARTIFACT_NOT_CREATOR",
   "ARTIFACT_TYPE_MISMATCH",
   "ARTIFACT_TYPE_UNSUPPORTED",
   "ARTIFACT_TYPE_NOT_ACCEPTED",
@@ -140,6 +151,7 @@ export function artifactRefusalStatus(code: ArtifactRefusalCode): number {
     case "ARTIFACT_NOT_GRANTED":
     case "ARTIFACT_GRANT_EXPIRED":
     case "ARTIFACT_GRANT_REVOKED":
+    case "ARTIFACT_NOT_CREATOR":
       return 403;
     case "ARTIFACT_EXPIRED":
     case "ARTIFACT_BYTES_MISSING":
@@ -148,6 +160,7 @@ export function artifactRefusalStatus(code: ArtifactRefusalCode): number {
     case "ARTIFACT_NOT_FINALIZED":
     case "ARTIFACT_OFFSET_MISMATCH":
     case "ARTIFACT_QUOTA_EXCEEDED":
+    case "ARTIFACT_INSTANCE_QUOTA_EXCEEDED":
       return 409;
     case "ARTIFACT_TOO_LARGE":
     case "ARTIFACT_CHUNK_TOO_LARGE":
@@ -168,6 +181,10 @@ export interface ArtifactAccessSubject {
   state: ArtifactState;
   /** ISO instant. Absent means it does not expire on its own. */
   expiresAt?: string | undefined;
+  /** Where it came from. A `finalized` artifact's creator keeps reading it after the grant's own time runs out. */
+  kind?: ArtifactKind | undefined;
+  /** The widget instance that created it or was handed it. */
+  instanceId?: string | undefined;
 }
 
 /** One widget instance's grant on one artifact. */
@@ -218,11 +235,20 @@ export function decideArtifactAccess(input: {
   if (grant.revokedAt !== undefined) {
     return { ok: false, code: "ARTIFACT_GRANT_REVOKED", message: "this widget's access to that artifact was revoked" };
   }
-  if (Date.parse(grant.expiresAt) <= input.nowMs) {
+  /*
+   * A file the widget wrote and finalized follows its conversation, so the widget that wrote it keeps reading it for as
+   * long as it is there: its grant's time is the time a writer has between writes, not a lifetime. A file the person
+   * chose is theirs to hand over again, so that grant does run out.
+   */
+  const creatorOfSealed = artifact.kind === "finalized" && artifact.instanceId === input.instanceId && input.need === "read";
+  if (!creatorOfSealed && Date.parse(grant.expiresAt) <= input.nowMs) {
     return {
       ok: false,
       code: "ARTIFACT_GRANT_EXPIRED",
-      message: "this widget's access to that artifact has expired; ask the person to choose the file again",
+      message:
+        artifact.kind === "external"
+          ? "this widget's access to that file ended 24 hours after the person chose it; ask the person to choose the file again"
+          : "this widget's access to that artifact has expired",
     };
   }
   if (input.need === "write" && (grant.access !== "write" || artifact.state !== "writable")) {
@@ -278,18 +304,47 @@ export function artifactAcceptMatches(accept: readonly string[], mimeType: strin
 /** The types a widget may create or pick: the attachment allowlist, so every artifact can be attached. */
 export const ARTIFACT_MIME_ALLOWLIST: readonly string[] = ATTACHMENT_MIME_ALLOWLIST;
 
+/**
+ * The file extensions each allowed type is saved under, the first being the one the host writes.
+ *
+ * The desktop shell's picker keeps its own copy (`PICKABLE_TYPES` in `apps/desktop/src/file-bridge.mjs`), because the
+ * shell's main process is plain JavaScript that does not load this package; a test holds the two to the same lists.
+ */
+export const ARTIFACT_EXTENSIONS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "text/plain": ["txt", "text", "log"],
+  "text/markdown": ["md", "markdown"],
+  "text/csv": ["csv"],
+  "application/json": ["json"],
+  "application/pdf": ["pdf"],
+  "image/png": ["png"],
+  "image/jpeg": ["jpg", "jpeg"],
+  "image/webp": ["webp"],
+  "image/gif": ["gif"],
+});
+
 /** A default display name for a working artifact created without one. */
 export function defaultArtifactName(mimeType: string): string {
-  const extension: Record<string, string> = {
-    "text/plain": "txt",
-    "text/markdown": "md",
-    "text/csv": "csv",
-    "application/json": "json",
-    "application/pdf": "pdf",
-    "image/png": "png",
-    "image/jpeg": "jpg",
-    "image/webp": "webp",
-    "image/gif": "gif",
-  };
-  return `untitled.${extension[mimeType] ?? "bin"}`;
+  return `untitled.${ARTIFACT_EXTENSIONS[mimeType]?.[0] ?? "bin"}`;
+}
+
+/**
+ * The name a file is saved under: the suggested name, with the extension its bytes' type has.
+ *
+ * The type is the node's, sniffed from the bytes; the name is a widget's suggestion. So the extension is decided by the
+ * type — kept when it already agrees, replaced when it does not, added when there is none — and a `text/plain` artifact
+ * a widget suggested as `invoice.bat` is saved as `invoice.txt`, never as something the OS would run.
+ */
+export function artifactFileName(suggestedName: string, mimeType: string): string {
+  const extensions = ARTIFACT_EXTENSIONS[mimeType];
+  const trimmed = suggestedName.trim().replace(/[. ]+$/u, "");
+  if (extensions === undefined) return trimmed === "" ? "file" : trimmed;
+  const dot = trimmed.lastIndexOf(".");
+  const hasExtension = dot > 0 && /^[\p{L}\p{N}_-]{1,16}$/u.test(trimmed.slice(dot + 1));
+  const stem = hasExtension ? trimmed.slice(0, dot) : trimmed;
+  const current = hasExtension ? trimmed.slice(dot + 1).toLowerCase() : "";
+  if (extensions.includes(current)) return trimmed;
+  const extension = extensions[0] ?? "bin";
+  // By code point, so a long Vietnamese or emoji name is never cut through a character.
+  const kept = Array.from(stem).slice(0, ARTIFACT_LIMITS.nameMaxChars - extension.length - 1).join("");
+  return `${kept === "" ? "file" : kept}.${extension}`;
 }

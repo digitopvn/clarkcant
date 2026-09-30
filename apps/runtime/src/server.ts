@@ -1,4 +1,12 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import {
+  createServer,
+  STATUS_CODES,
+  validateHeaderName,
+  validateHeaderValue,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
 
 import { handleRequest, type GatewayResponse } from "./gateway.ts";
 import type { NodeServices } from "./services.ts";
@@ -88,6 +96,12 @@ export interface NodeServerOptions {
    * The default is the deployed policy.
    */
   bodyLimitFor?: (path: string) => number | undefined;
+  /**
+   * What answers a request. A seam like the ceiling: the transport's own guard — an answer that cannot be written —
+   * is reached only by a handler that returns one, which the node's routes are built never to do. The default is the
+   * node's handler.
+   */
+  handle?: typeof handleRequest;
 }
 
 export function createNodeServer(options: NodeServerOptions): Server {
@@ -145,7 +159,7 @@ function handleOne(
       const body = Buffer.concat(chunks);
       let result: GatewayResponse;
       try {
-        result = await handleRequest(
+        result = await (options.handle ?? handleRequest)(
           { services: options.services },
           {
             method: request.method ?? "GET",
@@ -173,7 +187,25 @@ function handleOne(
         };
       }
 
-      writeResult(response, result, warn);
+      /*
+       * Guarded as well. Writing the answer can throw on its own — a header value Node refuses throws from `writeHead`
+       * — and a throw here, outside the handler's guard, left the request with no response at all: the client waited
+       * for good, and a page that waits on one request at a time waited with it.
+       */
+      try {
+        writeResult(response, result, warn);
+      } catch (cause) {
+        warn(
+          `response to ${request.method ?? "GET"} ${url.pathname} could not be written: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+        if (!response.headersSent) {
+          writeJson(response, 500, {
+            error: { code: "RESPONSE_NOT_WRITTEN", message: "the node handled the request, but its answer could not be sent; ask again" },
+          });
+        } else {
+          response.destroy();
+        }
+      }
     })();
   });
 }
@@ -243,6 +275,15 @@ function writeResult(response: ServerResponse, result: GatewayResponse, warn: (l
       }
       headers[name] = value;
     }
+    /*
+     * Checked before the first `writeHead`, not left to it. `writeHead` throws part-way through storing the headers,
+     * after it has kept this response's length and status text — so the refusal the guard then writes went out with
+     * the file's `Content-Length` and was cut to its first bytes.
+     */
+    for (const [name, value] of Object.entries(headers)) {
+      validateHeaderName(name);
+      validateHeaderValue(name, value);
+    }
     response.writeHead(result.status, headers);
     response.end(Buffer.from(result.binary.bytes));
     return;
@@ -262,8 +303,14 @@ function writeResult(response: ServerResponse, result: GatewayResponse, warn: (l
 }
 
 function writeJson(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, { ...baseHeaders(), "content-type": "application/json" });
-  response.end(`${JSON.stringify(body)}\n`);
+  // Its own length and status text, so nothing an earlier failed attempt at this response kept can describe this body.
+  const text = `${JSON.stringify(body)}\n`;
+  response.writeHead(status, STATUS_CODES[status] ?? "", {
+    ...baseHeaders(),
+    "content-type": "application/json",
+    "content-length": String(Buffer.byteLength(text)),
+  });
+  response.end(text);
 }
 
 function baseHeaders(): Record<string, string> {

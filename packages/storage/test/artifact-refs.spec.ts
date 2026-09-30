@@ -9,6 +9,7 @@ import type { Instant } from "@clarkcant/contracts";
 import { openDatabase, type Database } from "../src/db.ts";
 import { migrate } from "../src/migrate.ts";
 import {
+  artifactUsageForInstance,
   artifactUsageForPrincipal,
   blobStillReferenced,
   deleteArtifactsForConversation,
@@ -17,7 +18,9 @@ import {
   getArtifactGrant,
   getBrokerArtifact,
   insertBrokerArtifact,
+  instanceIsInConversation,
   listExpiredWorkingArtifacts,
+  liveStagingRefs,
   putArtifactGrant,
   recordWorkingArtifactWrite,
   revokeArtifactGrant,
@@ -115,6 +118,30 @@ describe("broker artifacts", () => {
     expect(artifactUsageForPrincipal(db, "prn_me")).toBe(40);
   });
 
+  it("counts one instance's artifact bytes, so one widget cannot fill the principal's quota", () => {
+    working({ sizeBytes: 40 });
+    working({ artifactId: "art_w2", sizeBytes: 2, stagingRef: "art_w2.part" });
+    working({ artifactId: "art_w3", instanceId: "winst_2", sizeBytes: 7, stagingRef: "art_w3.part" });
+    expect(artifactUsageForInstance(db, "winst_1")).toBe(42);
+    expect(artifactUsageForInstance(db, "winst_2")).toBe(7);
+    expect(artifactUsageForInstance(db, "winst_none")).toBe(0);
+  });
+
+  it("names the staging files a writable artifact still points at, and no sealed one", () => {
+    working();
+    working({ artifactId: "art_w2", stagingRef: "art_w2.part" });
+    working({
+      artifactId: "art_f1",
+      kind: "finalized",
+      state: "sealed",
+      digest: `sha256:${"d".repeat(64)}`,
+      blobPath: "/data/blobs/ddd.md",
+      stagingRef: undefined,
+      expiresAt: undefined,
+    });
+    expect([...liveStagingRefs(db)].sort()).toEqual(["art_w1.part", "art_w2.part"]);
+  });
+
   it("lists working artifacts past their expiry, and not finalized ones", () => {
     working();
     working({ artifactId: "art_w2", expiresAt: T2, stagingRef: "art_w2.part" });
@@ -177,5 +204,120 @@ describe("retention", () => {
     // The same content address written with other separators is the same file.
     expect(blobStillReferenced(db, "/elsewhere/blobs/eee.txt")).toBe(true);
     expect(blobStillReferenced(db, "/data/blobs/fff.txt")).toBe(false);
+  });
+
+  /*
+   * Every writer of the content-addressed store, each on its own: one that is missed here is one whose file a release
+   * elsewhere deletes from under it.
+   */
+  describe("asks every writer of the store, by digest as well as by path", () => {
+    const hex = "0123456789abcdef".repeat(4);
+    const blobPath = `/data/blobs/${hex.slice(0, 32)}.png`;
+
+    beforeEach(() => {
+      db.prepare("INSERT INTO conversations (conversation_id, title, home_node_id, created_at, updated_at) VALUES ('conv_1', 't', 'node_1', ?, ?)").run(T0, T0);
+    });
+
+    it("finds nothing when no writer holds the bytes", () => {
+      expect(blobStillReferenced(db, blobPath)).toBe(false);
+    });
+
+    it("an attachment, by its sha256 when its path is another build's", () => {
+      db.prepare(
+        `INSERT INTO attachments (attachment_id, principal_id, conversation_id, filename, mime, kind, size_bytes, sha256, blob_path, created_at)
+         VALUES ('att_1', 'prn_me', 'conv_1', 'a.png', 'image/png', 'image', 3, ?, '/old/place/renamed.png', ?)`,
+      ).run(`sha256:${hex}`, T0);
+      expect(blobStillReferenced(db, blobPath)).toBe(true);
+    });
+
+    it("an image the person imported into a mini-app", () => {
+      db.prepare(
+        `INSERT INTO local_images (image_id, owner_principal_id, node_id, artifact_id, mime_type, byte_size, digest, alt_text, blob_path, created_at)
+         VALUES ('img_1', 'prn_me', 'node_1', 'art_img', 'image/png', 3, ?, 'anh', '/elsewhere/x.png', ?)`,
+      ).run(`sha256:${hex}`, T0);
+      expect(blobStillReferenced(db, blobPath)).toBe(true);
+    });
+
+    it("an imported image by its path, when its file name carries no digest to match", () => {
+      db.prepare(
+        `INSERT INTO local_images (image_id, owner_principal_id, node_id, artifact_id, mime_type, byte_size, digest, alt_text, blob_path, created_at)
+         VALUES ('img_2', 'prn_me', 'node_1', 'art_img2', 'image/png', 3, ?, 'anh', 'C:\\old\\blobs\\anh-cu.png', ?)`,
+      ).run(`sha256:${"f".repeat(64)}`, T0);
+      expect(blobStillReferenced(db, "/data/blobs/anh-cu.png")).toBe(true);
+      expect(blobStillReferenced(db, "/data/blobs/anh-khac.png")).toBe(false);
+    });
+
+    it("a file a delegated task offered back, which has no path column at all", () => {
+      db.prepare(
+        `INSERT INTO task_artifacts (task_id, direction, peer_artifact_id, peer_node_id, name, digest, size_bytes, mime_type, state, created_at, updated_at)
+         VALUES ('task_1', 'offered', 'art_p', 'node_2', 'out.png', ?, 3, 'image/png', 'offered', ?, ?)`,
+      ).run(`sha256:${hex}`, T0, T0);
+      expect(blobStillReferenced(db, blobPath)).toBe(true);
+    });
+
+    it("a peer's received artifact, recorded by digest only", () => {
+      upsertArtifact(db, {
+        artifactId: "art_peer",
+        digest: `sha256:${hex}`,
+        sizeBytes: 3,
+        mimeType: "image/png",
+        classification: "private",
+        originNodeId: "node_2",
+        createdAt: T0,
+      });
+      expect(blobStillReferenced(db, blobPath)).toBe(true);
+    });
+
+    it("evidence that recorded the bytes' digest", () => {
+      db.prepare(
+        `INSERT INTO evidence (evidence_id, run_id, kind, verdict, summary, ref, digest, observed_at)
+         VALUES ('ev_1', NULL, 'screenshot', 'pass', 'frame', NULL, ?, ?)`,
+      ).run(`sha256:${hex}`, T0);
+      expect(blobStillReferenced(db, blobPath)).toBe(true);
+    });
+
+    it("a session card that kept a captured frame in its message", () => {
+      db.prepare(
+        `INSERT INTO messages (message_id, conversation_id, role, author_node_id, task_id, delivery, document, sequence, created_at)
+         VALUES ('msg_1', 'conv_1', 'assistant', 'node_1', NULL, 'delivered', ?, 1, ?)`,
+      ).run(JSON.stringify({ blocks: [{ type: "session", previewFrame: { digest: `sha256:${hex}` } }] }), T0);
+      expect(blobStillReferenced(db, blobPath)).toBe(true);
+    });
+  });
+});
+
+describe("which conversation holds an instance", () => {
+  beforeEach(() => {
+    for (const id of ["conv_1", "conv_2"]) {
+      db.prepare("INSERT INTO conversations (conversation_id, title, home_node_id, created_at, updated_at) VALUES (?, 't', 'node_1', ?, ?)").run(id, T0, T0);
+    }
+    for (const id of ["winst_1", "winst_2", "winst_3"]) {
+      db.prepare(
+        `INSERT INTO widget_instances (instance_id, definition_id, definition_version, package_digest, owner_node_id, owner_principal_id,
+           revision, presentation_revision, data_revision, action_binding_revision, lifecycle, document, updated_at)
+         VALUES (?, 'def', '1.0.0', 'sha256:x', 'node_1', 'prn_me', 1, 1, 1, 1, 'active', '{}', ?)`,
+      ).run(id, T0);
+    }
+    db.prepare(
+      `INSERT INTO messages (message_id, conversation_id, role, author_node_id, task_id, delivery, document, sequence, created_at)
+       VALUES ('msg_1', 'conv_1', 'assistant', 'node_1', NULL, 'delivered', '{}', 1, ?)`,
+    ).run(T0);
+    db.prepare(
+      `INSERT INTO widget_snapshots (snapshot_id, instance_id, message_id, captured_revision, captured_at, stale, document)
+       VALUES ('snap_1', 'winst_1', 'msg_1', 1, ?, 0, '{}')`,
+    ).run(T0);
+    db.prepare(
+      `INSERT INTO pins (pin_id, conversation_id, instance_id, display_mode, position, refresh_policy, created_at)
+       VALUES ('pin_1', 'conv_2', 'winst_2', 'compact', 0, 'manual', ?)`,
+    ).run(T0);
+  });
+
+  it("through the message that placed it, or the pin that keeps it open, and nowhere else", () => {
+    expect(instanceIsInConversation(db, { conversationId: "conv_1", instanceId: "winst_1" })).toBe(true);
+    expect(instanceIsInConversation(db, { conversationId: "conv_2", instanceId: "winst_2" })).toBe(true);
+    // A real instance and a real conversation that do not belong together.
+    expect(instanceIsInConversation(db, { conversationId: "conv_2", instanceId: "winst_1" })).toBe(false);
+    expect(instanceIsInConversation(db, { conversationId: "conv_1", instanceId: "winst_2" })).toBe(false);
+    expect(instanceIsInConversation(db, { conversationId: "conv_1", instanceId: "winst_3" })).toBe(false);
   });
 });

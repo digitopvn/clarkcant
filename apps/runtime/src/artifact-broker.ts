@@ -1,4 +1,5 @@
 import {
+  ARTIFACT_EXTENSIONS,
   ARTIFACT_LIMITS,
   ARTIFACT_REF_VERSION,
   type ArtifactRef,
@@ -17,6 +18,7 @@ import {
 import {
   type BrokerArtifactRecord,
   type Database,
+  artifactUsageForInstance,
   artifactUsageForPrincipal,
   attachmentUsageForPrincipal,
   blobStillReferenced,
@@ -25,15 +27,19 @@ import {
   extendArtifactGrant,
   getArtifactGrant,
   getBrokerArtifact,
+  instanceIsInConversation,
   insertAttachment,
   insertBrokerArtifact,
   listExpiredWorkingArtifacts,
+  liveStagingRefs,
   putArtifactGrant,
   recordWorkingArtifactWrite,
   revokeArtifactGrant,
   sealWorkingArtifact,
   transaction,
 } from "@clarkcant/storage";
+
+import { readdirSync } from "node:fs";
 
 import { attachmentRefFromRecord } from "./attachments.ts";
 import {
@@ -46,6 +52,7 @@ import {
   removeStagedBlob,
   sealStagedBlob,
   sniffContentType,
+  stagingDir,
   writeBlob,
 } from "./blobs.ts";
 
@@ -61,8 +68,10 @@ import {
  *
  * - **Bytes only through the blob store.** Staged writes, sealing and ranged reads are `blobs.ts`'s, so there is one
  *   writer with one naming scheme and one containment check.
- * - **One quota.** An artifact's bytes count with the principal's attachments against `ATTACHMENT_LIMITS`, through
- *   `validateAttachmentCandidate` — the same arithmetic, not a copy of it.
+ * - **One quota, and a share of it per widget.** An artifact's bytes count with the principal's attachments against
+ *   `ATTACHMENT_LIMITS`, through `validateAttachmentCandidate` — the same arithmetic, not a copy of it — and one widget
+ *   instance may hold at most `ARTIFACT_LIMITS.instanceQuotaBytes` of them, so a widget that saves often cannot leave
+ *   the composer with no room. A widget frees its share with `discardArtifact`.
  * - **Nothing leaves that names a place.** A result carries an `ArtifactRef` or bytes; never a blob path, a staging
  *   name or where a picked file was read from.
  */
@@ -103,6 +112,23 @@ export function storedBytesForPrincipal(db: Database, principalId: string): numb
   return attachmentUsageForPrincipal(db, principalId) + artifactUsageForPrincipal(db, principalId);
 }
 
+/**
+ * Refuse bytes that would take one widget instance past its share of the quota.
+ *
+ * Checked after the principal's quota, so a person whose whole quota is full is told that first: freeing space there is
+ * theirs to do, whereas a widget over its own share is the widget's to fix, by discarding files it no longer needs.
+ */
+function checkInstanceQuota(db: Database, instanceId: string, addedBytes: number): ArtifactRefusal | undefined {
+  const used = artifactUsageForInstance(db, instanceId);
+  if (used + addedBytes <= ARTIFACT_LIMITS.instanceQuotaBytes && (addedBytes > 0 || used < ARTIFACT_LIMITS.instanceQuotaBytes)) {
+    return undefined;
+  }
+  return refuse(
+    "ARTIFACT_INSTANCE_QUOTA_EXCEEDED",
+    `this widget already holds ${used} of the ${ARTIFACT_LIMITS.instanceQuotaBytes} bytes one widget may keep; discard files it no longer needs with artifacts.discard`,
+  );
+}
+
 /** Map an attachment-pipeline refusal to the artifact refusal with the same meaning. */
 function fromAttachmentCode(code: string): ArtifactRefusalCode {
   switch (code) {
@@ -137,7 +163,13 @@ function authorize(
     artifact:
       record === undefined
         ? undefined
-        : { ownerPrincipalId: record.ownerPrincipalId, state: record.state, expiresAt: record.expiresAt },
+        : {
+            ownerPrincipalId: record.ownerPrincipalId,
+            state: record.state,
+            expiresAt: record.expiresAt,
+            kind: record.kind,
+            instanceId: record.instanceId,
+          },
     grant: record === undefined ? undefined : getArtifactGrant(deps.db, record.artifactId, input.instanceId),
     nowMs: deps.now().getTime(),
   });
@@ -181,6 +213,8 @@ export function storePickedArtifact(
     usedBytes: storedBytesForPrincipal(deps.db, input.principalId),
   });
   if (!checked.ok) return refuse(fromAttachmentCode(checked.code), checked.message);
+  const overShare = checkInstanceQuota(deps.db, input.instanceId, input.bytes.byteLength);
+  if (overShare !== undefined) return overShare;
 
   const written = writeBlob({ dataDir: deps.dataDir, bytes: input.bytes, extension: sniffed.extension });
   const now = deps.now();
@@ -232,6 +266,9 @@ export function createWorkingArtifact(
     usedBytes: storedBytesForPrincipal(deps.db, input.principalId),
   });
   if (!checked.ok) return refuse(fromAttachmentCode(checked.code), checked.message);
+  // An empty artifact costs nothing, but one the widget could not write a byte to would only fail later.
+  const overShare = checkInstanceQuota(deps.db, input.instanceId, 0);
+  if (overShare !== undefined) return overShare;
 
   const now = deps.now();
   const artifactId = deps.newId("art");
@@ -276,6 +313,53 @@ export function describeArtifact(
   const allowed = authorize(deps, { ...input, need: "read" });
   if (!allowed.ok) return allowed;
   return { ok: true, ref: artifactRefFromRecord(allowed.record) };
+}
+
+/** Types whose bytes are text a model can be shown as an excerpt. Everything else is described, never quoted. */
+const EXCERPT_TYPES: ReadonlySet<string> = new Set(["text/plain", "text/markdown", "text/csv", "application/json"]);
+
+/** How much of a text file an agent button's context quotes, in bytes, before the per-reference character clip. */
+export const ARTIFACT_CONTEXT_EXCERPT_BYTES = 3_000;
+
+export interface ArtifactContextRead {
+  ref: ArtifactRef;
+  /** The start of a text file, decoded; absent for a type that is not text. */
+  excerpt?: { text: string; bytes: number; complete: boolean };
+}
+
+/**
+ * What an agent button's `artifact:<id>` reference reads: the file's name, type and size, and for a text file the start
+ * of its contents.
+ *
+ * The same decision as every other use of a ref, for the instance whose button was pressed — its grant, the principal,
+ * the conversation — and nothing more: a button cannot read a file its widget could not. The artifact must belong to
+ * the conversation the press happened in, and the instance must be one that conversation holds, so a reference cannot
+ * carry a file from one conversation into another's turn. Bounded twice: a fixed number of bytes is read, never the
+ * whole file, and the caller clips the rendered text again.
+ */
+export function readArtifactForContext(
+  deps: ArtifactBrokerDeps,
+  input: { principalId: string; instanceId: string; conversationId: string; artifactId: string },
+): BrokerResult<ArtifactContextRead> {
+  const allowed = authorize(deps, { ...input, need: "read" });
+  if (!allowed.ok) return allowed;
+  const { record } = allowed;
+  if (
+    record.conversationId !== input.conversationId ||
+    !instanceIsInConversation(deps.db, { conversationId: input.conversationId, instanceId: input.instanceId })
+  ) {
+    return refuse("ARTIFACT_NOT_GRANTED", "that artifact belongs to another conversation");
+  }
+  const ref = artifactRefFromRecord(record);
+  if (!EXCERPT_TYPES.has(record.mimeType)) return { ok: true, ref };
+  if (record.sizeBytes === 0) return { ok: true, ref, excerpt: { text: "", bytes: 0, complete: true } };
+
+  const length = Math.min(record.sizeBytes, ARTIFACT_CONTEXT_EXCERPT_BYTES);
+  const read = readArtifactRange(deps, { ...input, offset: 0, length });
+  if (!read.ok) return read;
+  // Streaming decode, so a cut through the middle of a character leaves that character out instead of a U+FFFD.
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(read.bytes, { stream: !read.eof });
+  return { ok: true, ref, excerpt: { text, bytes: read.bytes.byteLength, complete: read.eof } };
 }
 
 /** One bounded range of an artifact's bytes. */
@@ -338,6 +422,8 @@ export function appendArtifactChunk(
     usedBytes: storedBytesForPrincipal(deps.db, input.principalId),
   });
   if (!quota.ok) return refuse(fromAttachmentCode(quota.code), quota.message);
+  const overShare = checkInstanceQuota(deps.db, input.instanceId, input.bytes.byteLength);
+  if (overShare !== undefined) return overShare;
   if (record.stagingRef === undefined) return refuse("ARTIFACT_BYTES_MISSING", "that artifact has no staged bytes");
 
   const appended = appendStagedBlob({
@@ -362,6 +448,9 @@ export function appendArtifactChunk(
   return { ok: true, ref: artifactRefFromRecord({ ...record, sizeBytes: appended.sizeBytes, expiresAt }) };
 }
 
+/** Types an empty working artifact may be finalized as. */
+const EMPTY_TEXT_TYPES: ReadonlySet<string> = new Set(["text/plain", "text/markdown", "text/csv"]);
+
 /**
  * Fix a working artifact's bytes.
  *
@@ -379,7 +468,15 @@ export function finalizeArtifact(
   if (record.stagingRef === undefined) return refuse("ARTIFACT_BYTES_MISSING", "that artifact has no staged bytes");
   const staged = readStagedBlob({ dataDir: deps.dataDir, stagingRef: record.stagingRef });
   if (!staged.ok) return refuse("ARTIFACT_BYTES_MISSING", staged.message);
-  const sniffed = sniffContentType(staged.bytes, record.mimeType);
+  /*
+   * An empty text file is a real file — a cleared note, a CSV with no rows yet — and text has no magic bytes to sniff, so
+   * an empty one is taken as the text type it was created as. An empty picture or PDF is not a picture or a PDF, and the
+   * sniff refuses it as before.
+   */
+  const emptyText = staged.bytes.byteLength === 0 && EMPTY_TEXT_TYPES.has(record.mimeType);
+  const sniffed = emptyText
+    ? { ok: true as const, mime: record.mimeType, extension: ARTIFACT_EXTENSIONS[record.mimeType]?.[0] ?? "txt" }
+    : sniffContentType(staged.bytes, record.mimeType);
   if (!sniffed.ok) return refuse(fromAttachmentCode(sniffed.code), sniffed.message);
   if (sniffed.mime !== record.mimeType) {
     return refuse("ARTIFACT_TYPE_MISMATCH", `the bytes are ${sniffed.mime} but the artifact was created as ${record.mimeType}`);
@@ -483,6 +580,40 @@ export function revokeArtifactAccess(
   };
 }
 
+/**
+ * Let go of a file the widget made: its row, its grants, and the bytes nothing else points at.
+ *
+ * Only the instance that created a working or finalized artifact may discard it, and only while the person has not
+ * taken its access away. A file the person chose (`external`) is not the widget's to delete; neither is one another
+ * widget made. A file the widget attached to the conversation stays attached — the attachment points at the same bytes,
+ * so they are kept — and a file the person saved stays where they saved it.
+ */
+export function discardArtifact(
+  deps: ArtifactBrokerDeps,
+  input: { principalId: string; instanceId: string; artifactId: string },
+): BrokerResult<object> {
+  const record = getBrokerArtifact(deps.db, input.artifactId);
+  if (record === undefined) return refuse("ARTIFACT_NOT_FOUND", "that artifact is not on this node");
+  if (record.ownerPrincipalId !== input.principalId) {
+    return refuse("ARTIFACT_CROSS_PRINCIPAL", "that artifact belongs to another principal");
+  }
+  if (record.instanceId !== input.instanceId || (record.kind !== "working" && record.kind !== "finalized")) {
+    return refuse(
+      "ARTIFACT_NOT_CREATOR",
+      record.kind === "external"
+        ? "a file the person chose is theirs; a widget cannot discard it"
+        : "only the widget that made a file can discard it",
+    );
+  }
+  const grant = getArtifactGrant(deps.db, record.artifactId, input.instanceId);
+  if (grant?.revokedAt !== undefined) {
+    return refuse("ARTIFACT_GRANT_REVOKED", "this widget's access to that artifact was revoked");
+  }
+  deleteBrokerArtifact(deps.db, record.artifactId);
+  releaseBytes(deps, record.blobPath === undefined ? [] : [record.blobPath], record.stagingRef === undefined ? [] : [record.stagingRef]);
+  return { ok: true };
+}
+
 /** Remove bytes nobody points at any more. A blob another row shares is left where it is. */
 function releaseBytes(deps: Pick<ArtifactBrokerDeps, "db" | "dataDir">, blobPaths: readonly string[], stagingRefs: readonly string[]): void {
   for (const stagingRef of stagingRefs) removeStagedBlob({ dataDir: deps.dataDir, stagingRef });
@@ -508,6 +639,29 @@ export function sweepExpiredArtifacts(deps: Pick<ArtifactBrokerDeps, "db" | "dat
 }
 
 /**
+ * Remove staged files no writable artifact points at.
+ *
+ * Run once when the node starts. A node that stopped between creating a staging file and recording its row, or between
+ * sealing one and clearing the row's staging name, leaves a file in `blobs/staging/` nothing will ever read or sweep;
+ * this is what takes it away. A file whose name is not one the node makes is left alone: it is not the node's to judge.
+ */
+export function sweepOrphanedStaging(deps: Pick<ArtifactBrokerDeps, "db" | "dataDir">): { removed: number } {
+  let entries: string[];
+  try {
+    entries = readdirSync(stagingDir(deps.dataDir));
+  } catch {
+    return { removed: 0 };
+  }
+  const live = liveStagingRefs(deps.db);
+  let removed = 0;
+  for (const entry of entries) {
+    if (live.has(entry)) continue;
+    if (removeStagedBlob({ dataDir: deps.dataDir, stagingRef: entry })) removed += 1;
+  }
+  return { removed };
+}
+
+/**
  * Delete a conversation's artifacts and the bytes nothing else points at.
  *
  * What a conversation-delete policy calls, with `releaseConversationAttachments`; finalized artifacts follow their
@@ -526,12 +680,22 @@ export function releaseConversationArtifacts(deps: {
 /**
  * Start the periodic sweep of expired working artifacts. Unref'd and stopped by the caller when the node closes, like
  * every other background interval on this node.
+ *
+ * Before the first interval, once: staged files a previous process left behind (`sweepOrphanedStaging`). That runs
+ * here, at start, because only then can no widget be half-way through creating one.
  */
 export function startArtifactSweep(
   deps: Pick<ArtifactBrokerDeps, "db" | "dataDir">,
   options: { intervalMs?: number; now?: () => Date } = {},
 ): { stop: () => void } {
   const now = options.now ?? ((): Date => new Date());
+  try {
+    sweepOrphanedStaging(deps);
+  } catch (cause) {
+    process.stderr.write(
+      `artifact sweep: could not clear leftover staged files (${cause instanceof Error ? cause.message : String(cause)}); they stay on disk until the next start\n`,
+    );
+  }
   const timer = setInterval(() => {
     try {
       sweepExpiredArtifacts({ ...deps, now });

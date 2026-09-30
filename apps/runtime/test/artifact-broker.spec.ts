@@ -1,11 +1,11 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, truncateSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ARTIFACT_LIMITS, ATTACHMENT_LIMITS, type Instant } from "@clarkcant/contracts";
-import { createInstance } from "@clarkcant/core";
+import { createInstance, pinInstance } from "@clarkcant/core";
 import { TABLE } from "@clarkcant/data-canvas";
 import {
   getArtifactGrant,
@@ -18,11 +18,12 @@ import {
 
 import {
   type ArtifactBrokerDeps,
-  appendArtifactChunk,
-  createWorkingArtifact,
+  readArtifactForContext,
   readArtifactRange,
   releaseConversationArtifacts,
+  startArtifactSweep,
   sweepExpiredArtifacts,
+  sweepOrphanedStaging,
 } from "../src/artifact-broker.ts";
 import { attachmentBrief, releaseConversationAttachments } from "../src/attachments.ts";
 import {
@@ -57,13 +58,22 @@ function owner(): string {
   return services.runtime.identity.ownerPrincipalId;
 }
 
-function instance(ownerPrincipalId = owner()): string {
-  return createInstance(services.conductor, {
+/** A widget instance, pinned in the test conversation — the node refuses an instance a conversation does not hold. */
+function instance(ownerPrincipalId = owner(), inConversation = conversationId): string {
+  const created = createInstance(services.conductor, {
     definition: TABLE,
     packageDigest: "sha256:table",
     ownerPrincipalId: ownerPrincipalId as never,
     props: { title: "Tệp", datasetRef: "dataset_none", columns: ["name"] },
   }).instanceId;
+  const pinned = pinInstance(services.conductor, {
+    conversationId: inConversation,
+    instanceId: created,
+    displayMode: "compact",
+    maxPins: 64,
+  });
+  expect(pinned.ok).toBe(true);
+  return created;
 }
 
 function brokerAt(nowIso: string): ArtifactBrokerDeps {
@@ -123,7 +133,10 @@ function expectNoLocation(response: GatewayResponse): void {
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-artifact-broker-"));
   services = bootNodeServices({ dataDir: dir, label: "artifact broker test node" });
-  deps = { services, now: () => AT as never };
+  // Conversation ids from a counter: the default is the millisecond clock, and a test that opens two in one
+  // millisecond would collide on it.
+  let conversations = 0;
+  deps = { services, now: () => AT as never, newConversationId: () => `conv_broker_${String((conversations += 1))}` };
   const created = await call("POST", "/conversations", { title: "tệp" });
   conversationId = (created.body as { conversationId: string }).conversationId;
   instanceId = instance();
@@ -368,20 +381,73 @@ describe("a ref is a pointer, not a permission", () => {
     expect((await write(artifactId, 8, "x")).body).toMatchObject({ code: "ARTIFACT_GRANT_REVOKED" });
   });
 
-  it("refuses an expired grant on a finalized artifact that does not itself expire", () => {
-    const broker = brokerAt(AT);
-    const created = createWorkingArtifact(broker, { principalId: owner(), conversationId, instanceId, mimeType: "text/plain" });
-    if (!created.ok) throw new Error(created.message);
-    const artifactId = created.ref.artifactId;
-    appendArtifactChunk(broker, { principalId: owner(), instanceId, artifactId, offset: 0, bytes: new TextEncoder().encode("xin chao") });
-    services.runtime.db
-      .prepare("UPDATE artifacts SET expires_at = NULL, state = 'sealed', kind = 'finalized' WHERE artifact_id = ?")
-      .run(artifactId);
+  it("keeps a finalized file readable by the widget that made it, and ends every other widget's grant on time", async () => {
+    const artifactId = await create("text/plain", "da-luu.txt");
+    await write(artifactId, 0, "xin chao");
+    expect((await call("POST", widget(`/${artifactId}/finalize`))).status).toBe(200);
+    // The maker's grant is as old as its last write; a day later it would have run out.
+    const makerGrant = getArtifactGrant(services.runtime.db, artifactId, instanceId);
+    expect(Date.parse(makerGrant?.expiresAt ?? AT)).toBeLessThan(Date.parse(AT) + ARTIFACT_LIMITS.grantTtlMs + 1000 * 60 * 60);
+    // Another widget the file was shared with holds an ordinary grant, which runs out.
+    const other = instance();
+    putArtifactGrant(services.runtime.db, {
+      artifactId,
+      instanceId: other,
+      principalId: owner(),
+      access: "read",
+      createdAt: AT as Instant,
+      expiresAt: new Date(Date.parse(AT) + ARTIFACT_LIMITS.grantTtlMs).toISOString() as Instant,
+    });
     const past = new Date(Date.parse(AT) + ARTIFACT_LIMITS.grantTtlMs + 1).toISOString();
-    expect(readArtifactRange(brokerAt(past), { principalId: owner(), instanceId, artifactId, offset: 0, length: 4 })).toMatchObject({
+    const later = new Date(Math.max(Date.parse(past), Date.parse(makerGrant?.expiresAt ?? AT) + 1)).toISOString();
+    // The widget that saved a file can open it again the next day: a saved file is not a lease.
+    expect(readArtifactRange(brokerAt(later), { principalId: owner(), instanceId, artifactId, offset: 0, length: 4 })).toMatchObject({ ok: true });
+    expect(readArtifactRange(brokerAt(later), { principalId: owner(), instanceId: other, artifactId, offset: 0, length: 4 })).toMatchObject({
       ok: false,
       code: "ARTIFACT_GRANT_EXPIRED",
     });
+    // Revoking still ends the maker's access: keeping the file readable is not keeping it past the person's say.
+    services.runtime.db
+      .prepare("UPDATE artifact_grants SET revoked_at = ? WHERE artifact_id = ? AND instance_id = ?")
+      .run(AT, artifactId, instanceId);
+    expect(readArtifactRange(brokerAt(later), { principalId: owner(), instanceId, artifactId, offset: 0, length: 4 })).toMatchObject({
+      ok: false,
+      code: "ARTIFACT_GRANT_REVOKED",
+    });
+  });
+
+  it("answers a widget route only for an instance the conversation in its path holds", async () => {
+    const elsewhere = (await call("POST", "/conversations", { title: "khác" })).body as { conversationId: string };
+    const stranger = instance(owner(), elsewhere.conversationId);
+    // A real instance, a real conversation, but not together: the path does not pair them just by naming both.
+    const created = await call("POST", widget("", stranger), { mimeType: "text/plain" });
+    expect(created.status).toBe(404);
+    expect(created.body).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+    const artifactId = await create();
+    expect((await call("GET", widget(`/${artifactId}`, stranger))).status).toBe(404);
+    // An instance nothing holds at all is refused the same way.
+    const loose = createInstance(services.conductor, {
+      definition: TABLE,
+      packageDigest: "sha256:table",
+      ownerPrincipalId: owner() as never,
+      props: { title: "Tệp", datasetRef: "dataset_none", columns: ["name"] },
+    }).instanceId;
+    expect((await call("POST", widget("", loose), { mimeType: "text/plain" })).status).toBe(404);
+  });
+});
+
+describe("a file read as an agent button's context", () => {
+  it("is read only for a widget the conversation still holds, even one with a live grant", async () => {
+    const artifactId = await create("text/markdown", "ghi-chu.md");
+    expect((await write(artifactId, 0, "# Ghi chú\n")).status).toBe(200);
+    expect((await call("POST", widget(`/${artifactId}/finalize`))).status).toBe(200);
+    const input = { principalId: owner(), instanceId, conversationId, artifactId };
+    expect(readArtifactForContext(brokerAt(AT), input)).toMatchObject({ ok: true, excerpt: { text: "# Ghi chú\n", complete: true } });
+
+    // The widget leaves the conversation; its grant to the file has not run out, and still does not reach it here.
+    services.runtime.db.prepare("DELETE FROM pins WHERE instance_id = ?").run(instanceId);
+    expect(getArtifactGrant(services.runtime.db, artifactId, instanceId)).toBeDefined();
+    expect(readArtifactForContext(brokerAt(AT), input)).toMatchObject({ ok: false, code: "ARTIFACT_NOT_GRANTED" });
   });
 });
 
@@ -453,9 +519,15 @@ describe("handing a finalized artifact to the conversation", () => {
     const artifactId = await finalized("# Xuất\n");
     const saved = await call("POST", `/artifacts/${artifactId}/export`, { suggestedName: "ban-luu.md" });
     expect(saved.status).toBe(200);
-    expect(saved.binary?.headers?.["content-disposition"]).toBe('attachment; filename="ban-luu.md"');
+    expect(saved.binary?.headers?.["content-disposition"]).toBe("attachment; filename=\"ban-luu.md\"; filename*=UTF-8''ban-luu.md");
     expect(Buffer.from(saved.binary?.bytes ?? new Uint8Array()).toString()).toBe("# Xuất\n");
     expect((await call("POST", `/artifacts/${artifactId}/export`, { suggestedName: "../ban.md" })).status).toBe(400);
+
+    // The saved name ends in the type's extension, whatever the widget suggested, so the file opens as what it is.
+    const bare = await call("POST", `/artifacts/${artifactId}/export`, { suggestedName: "ban-luu" });
+    expect(bare.binary?.headers?.["content-disposition"]).toContain('filename="ban-luu.md"');
+    const disguised = await call("POST", `/artifacts/${artifactId}/export`, { suggestedName: "chay-toi.exe" });
+    expect(disguised.binary?.headers?.["content-disposition"]).toContain('filename="chay-toi.md"');
 
     const opened = await call("GET", `/artifacts/${artifactId}/content`);
     expect(opened.binary?.headers?.["content-disposition"]).toContain("inline");
@@ -463,7 +535,164 @@ describe("handing a finalized artifact to the conversation", () => {
   });
 });
 
+describe("a widget lets go of a file it made", () => {
+  const discard = (artifactId: string, target = instanceId) => call("DELETE", widget(`/${artifactId}`, target));
+
+  it("discards a working file with its staged bytes, and a finalized one with bytes nothing else holds", async () => {
+    const working = await create();
+    await write(working, 0, "nhap");
+    const gone = await discard(working);
+    expect(gone.status).toBe(200);
+    expect(gone.body).toEqual({ discarded: true, artifactId: working });
+    expect(getBrokerArtifact(services.runtime.db, working)).toBeUndefined();
+    expect(getArtifactGrant(services.runtime.db, working, instanceId)).toBeUndefined();
+    expect(readdirSync(stagingDir(dir))).toEqual([]);
+
+    const sealed = await create("text/plain", "xong.txt");
+    await write(sealed, 0, "da xong");
+    await call("POST", widget(`/${sealed}/finalize`));
+    const blobs = (): string[] => readdirSync(join(dir, "blobs")).filter((name) => name !== "staging");
+    expect(blobs()).toHaveLength(1);
+    expect((await discard(sealed)).status).toBe(200);
+    expect(blobs()).toHaveLength(0);
+    // Gone is gone: a second discard, or any use of the old ref, is told it is not there.
+    expect((await discard(sealed)).body).toMatchObject({ code: "ARTIFACT_NOT_FOUND" });
+    expect((await call("GET", widget(`/${sealed}/content`))).status).toBe(404);
+  });
+
+  it("keeps the bytes of a file it attached, because the attachment points at them too", async () => {
+    const artifactId = await create("text/plain", "dinh-kem.txt");
+    await write(artifactId, 0, "gui kem");
+    await call("POST", widget(`/${artifactId}/finalize`));
+    const attached = await call("POST", widget(`/${artifactId}/attach`));
+    const { attachmentRef } = attached.body as { attachmentRef: { attachmentId: string } };
+    expect((await discard(artifactId)).status).toBe(200);
+    const tool = createReadAttachmentTool({ db: services.runtime.db as never, principalId: owner(), conversationId, dataDir: dir });
+    expect((await tool.execute({ attachmentId: attachmentRef.attachmentId })).text).toContain("gui kem");
+  });
+
+  it("refuses a file the person chose, and a file another widget made, even one it was granted", async () => {
+    const picked = await call("POST", widget("/pick"), { name: "cua-toi.txt", mimeType: "text/plain", contentBase64: Buffer.from("cua toi").toString("base64") });
+    const pickedId = (picked.body as RefBody).artifactRef.artifactId;
+    const chosen = await discard(pickedId);
+    expect(chosen.status).toBe(403);
+    expect(chosen.body).toMatchObject({ code: "ARTIFACT_NOT_CREATOR" });
+    expect(getBrokerArtifact(services.runtime.db, pickedId)).toBeDefined();
+
+    const artifactId = await create();
+    const other = instance();
+    putArtifactGrant(services.runtime.db, {
+      artifactId,
+      instanceId: other,
+      principalId: owner(),
+      access: "write",
+      createdAt: AT as Instant,
+      expiresAt: "2099-01-01T00:00:00.000Z" as Instant,
+    });
+    const notMine = await discard(artifactId, other);
+    expect(notMine.status).toBe(403);
+    expect(notMine.body).toMatchObject({ code: "ARTIFACT_NOT_CREATOR" });
+    expect(getBrokerArtifact(services.runtime.db, artifactId)).toBeDefined();
+  });
+
+  it("refuses once the person revoked the widget's access", async () => {
+    const artifactId = await create();
+    await call("DELETE", widget(`/${artifactId}/grant`));
+    expect((await discard(artifactId)).body).toMatchObject({ code: "ARTIFACT_GRANT_REVOKED" });
+  });
+});
+
+describe("one widget's share of the quota", () => {
+  /** Stands in for files this widget already saved: a finalized row of that size, owned by the instance. */
+  function alreadyHolds(sizeBytes: number, target = instanceId): void {
+    insertBrokerArtifact(services.runtime.db, {
+      artifactId: `art_held_${target}`,
+      ownerPrincipalId: owner(),
+      kind: "finalized",
+      state: "sealed",
+      conversationId,
+      instanceId: target,
+      name: "da-luu.txt",
+      mimeType: "text/plain",
+      sizeBytes,
+      digest: `sha256:${"f".repeat(64)}`,
+      blobPath: join(dir, "blobs", "ffff.txt"),
+      stagingRef: undefined,
+      createdAt: AT as Instant,
+      expiresAt: undefined,
+      originNodeId: services.runtime.identity.nodeId,
+    });
+  }
+
+  it("refuses bytes past the instance cap long before the principal's quota, and only for that widget", async () => {
+    expect(ARTIFACT_LIMITS.instanceQuotaBytes).toBe(128 * 1024 * 1024);
+    expect(ARTIFACT_LIMITS.instanceQuotaBytes).toBeLessThan(ATTACHMENT_LIMITS.principalQuotaBytes);
+    const artifactId = await create();
+    alreadyHolds(ARTIFACT_LIMITS.instanceQuotaBytes - 2);
+
+    const over = await write(artifactId, 0, "abc");
+    expect(over.status).toBe(409);
+    expect(over.body).toMatchObject({ code: "ARTIFACT_INSTANCE_QUOTA_EXCEEDED" });
+    expect((over.body as { message: string }).message).toContain("artifacts.discard");
+    expect((await write(artifactId, 0, "ab")).status).toBe(200);
+
+    // Full: a new file, or a picked one, is refused for this widget.
+    expect((await call("POST", widget(), { mimeType: "text/plain" })).body).toMatchObject({ code: "ARTIFACT_INSTANCE_QUOTA_EXCEEDED" });
+    const picked = await call("POST", widget("/pick"), { name: "a.txt", mimeType: "text/plain", contentBase64: Buffer.from("x").toString("base64") });
+    expect(picked.body).toMatchObject({ code: "ARTIFACT_INSTANCE_QUOTA_EXCEEDED" });
+
+    // Another widget in the same conversation still has its own share.
+    const other = instance();
+    expect((await call("POST", widget("", other), { mimeType: "text/plain" })).status).toBe(201);
+
+    // Discarding frees the share.
+    expect((await call("DELETE", widget(`/${artifactId}`))).status).toBe(200);
+    expect((await call("DELETE", widget(`/art_held_${instanceId}`))).status).toBe(200);
+    expect((await call("POST", widget(), { mimeType: "text/plain" })).status).toBe(201);
+  });
+});
+
+describe("an empty file", () => {
+  it("finalizes an empty text file, and still refuses an empty picture", async () => {
+    const note = await create("text/markdown", "trong.md");
+    const finalized = await call("POST", widget(`/${note}/finalize`));
+    expect(finalized.status).toBe(200);
+    expect((finalized.body as RefBody).artifactRef).toMatchObject({ kind: "finalized", sizeBytes: 0, mimeType: "text/markdown" });
+    expect((finalized.body as RefBody).artifactRef.digest).toBe(
+      "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+
+    const picture = await create("image/png", "trong.png");
+    const refused = await call("POST", widget(`/${picture}/finalize`));
+    expect(refused.status).toBe(415);
+    expect(getBrokerArtifact(services.runtime.db, picture)).toMatchObject({ kind: "working" });
+  });
+});
+
 describe("retention", () => {
+  it("clears staged files a previous process left behind, and only those, when the node starts", async () => {
+    const live = await create();
+    await write(live, 0, "dang viet");
+    mkdirSync(stagingDir(dir), { recursive: true });
+    writeFileSync(join(stagingDir(dir), "art_leftover.part"), "mo coi");
+    // Not a name the node makes: not the node's to delete.
+    writeFileSync(join(stagingDir(dir), "someone-elses.txt"), "giu");
+
+    expect(sweepOrphanedStaging({ db: services.runtime.db, dataDir: dir })).toEqual({ removed: 1 });
+    expect(readdirSync(stagingDir(dir)).sort()).toEqual([`${live}.part`, "someone-elses.txt"]);
+    expect((await write(live, 9, " tiep")).status).toBe(200);
+
+    // And the node's start runs it.
+    writeFileSync(join(stagingDir(dir), "art_leftover2.part"), "mo coi");
+    const sweep = startArtifactSweep({ db: services.runtime.db, dataDir: dir }, { intervalMs: 60_000 });
+    sweep.stop();
+    expect(readdirSync(stagingDir(dir))).not.toContain("art_leftover2.part");
+  });
+
+  it("does nothing when there is no staging folder yet", () => {
+    expect(sweepOrphanedStaging({ db: services.runtime.db, dataDir: join(dir, "nowhere") })).toEqual({ removed: 0 });
+  });
+
   it("sweeps a working artifact whose time ran out, with its staged bytes", async () => {
     const artifactId = await create();
     await write(artifactId, 0, "tam thoi");

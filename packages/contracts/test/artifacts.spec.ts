@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   ARTIFACT_CHUNK_BASE64_MAX,
+  ARTIFACT_EXTENSIONS,
   ARTIFACT_LIMITS,
+  ARTIFACT_MIME_ALLOWLIST,
   ARTIFACT_REFUSAL_CODES,
   artifactAcceptMatches,
   artifactAcceptSchema,
+  artifactFileName,
   artifactRefSchema,
   artifactRefusalStatus,
   checkArtifactRange,
@@ -117,6 +120,25 @@ describe("deciding a use of a ref", () => {
     expect(decide({ need: "write", grant: { ...grant, access: "read" } })).toMatchObject({ ok: false, code: "ARTIFACT_NOT_WRITABLE" });
   });
 
+  it("keeps a finalized file readable by the widget that wrote it after its grant's time, and nothing more", () => {
+    const sealed = { ownerPrincipalId: "prn_me", state: "sealed" as const, kind: "finalized" as const, instanceId: "winst_a" };
+    const lapsed = { ...grant, access: "read" as const, expiresAt: EARLIER };
+    expect(decide({ artifact: sealed, grant: lapsed })).toEqual({ ok: true });
+    // Another widget holding a lapsed grant on the same file is refused on time.
+    expect(decide({ artifact: sealed, instanceId: "winst_b", grant: { ...lapsed, instanceId: "winst_b" } })).toMatchObject({
+      ok: false,
+      code: "ARTIFACT_GRANT_EXPIRED",
+    });
+    // A file the person chose runs out for the widget it was handed to, and says to ask the person again.
+    const picked = decide({ artifact: { ...sealed, kind: "external" }, grant: lapsed });
+    expect(picked).toMatchObject({ ok: false, code: "ARTIFACT_GRANT_EXPIRED" });
+    expect(picked.ok ? "" : picked.message).toContain("choose the file again");
+    // Still a read only, and still never past a revocation or another principal.
+    expect(decide({ artifact: sealed, grant: lapsed, need: "write" })).toMatchObject({ ok: false, code: "ARTIFACT_GRANT_EXPIRED" });
+    expect(decide({ artifact: sealed, grant: { ...lapsed, revokedAt: EARLIER } })).toMatchObject({ ok: false, code: "ARTIFACT_GRANT_REVOKED" });
+    expect(decide({ artifact: sealed, grant: lapsed, principalId: "prn_other" })).toMatchObject({ ok: false, code: "ARTIFACT_CROSS_PRINCIPAL" });
+  });
+
   it("names the first thing that was wrong: ownership before the grant", () => {
     expect(decide({ principalId: "prn_other", grant: undefined })).toMatchObject({ code: "ARTIFACT_CROSS_PRINCIPAL" });
   });
@@ -160,6 +182,35 @@ describe("accept lists and names", () => {
 
   it("maps every refusal to a status", () => {
     for (const code of ARTIFACT_REFUSAL_CODES) expect(artifactRefusalStatus(code)).toBeGreaterThanOrEqual(400);
+    // A widget touching a file it did not make is a permission; a full share is a state the widget can change.
+    expect(artifactRefusalStatus("ARTIFACT_NOT_CREATOR")).toBe(403);
+    expect(artifactRefusalStatus("ARTIFACT_INSTANCE_QUOTA_EXCEEDED")).toBe(409);
+  });
+
+  it("holds one widget's share inside the principal's quota", () => {
+    expect(ARTIFACT_LIMITS.instanceQuotaBytes).toBe(128 * 1024 * 1024);
+    expect(ARTIFACT_LIMITS.instanceQuotaBytes).toBeGreaterThanOrEqual(ARTIFACT_LIMITS.maxBytes);
+  });
+
+  it("names a saved file by its bytes' type, whatever the widget suggested", () => {
+    expect(artifactFileName("ghi-chu.md", "text/markdown")).toBe("ghi-chu.md");
+    expect(artifactFileName("invoice.bat", "text/plain")).toBe("invoice.txt");
+    expect(artifactFileName("Kế hoạch", "text/markdown")).toBe("Kế hoạch.md");
+    expect(artifactFileName("ảnh.JPEG", "image/jpeg")).toBe("ảnh.JPEG");
+    expect(artifactFileName("bao-cao. . ", "application/pdf")).toBe("bao-cao.pdf");
+    expect(artifactFileName("  ", "text/csv")).toBe("file.csv");
+    // Every allowed type has a name to be saved under.
+    for (const mime of ARTIFACT_MIME_ALLOWLIST) expect(ARTIFACT_EXTENSIONS[mime]?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("shortens a long name by character, never through one", () => {
+    const long = artifactFileName(`${"ệ".repeat(300)}.exe`, "text/plain");
+    expect(Array.from(long)).toHaveLength(ARTIFACT_LIMITS.nameMaxChars);
+    expect(long.endsWith(".txt")).toBe(true);
+    const emoji = artifactFileName(`${"😀".repeat(300)}.exe`, "text/plain");
+    expect(Array.from(emoji)).toHaveLength(ARTIFACT_LIMITS.nameMaxChars);
+    // No lone surrogate: the name survives a round trip through UTF-8 unchanged.
+    expect(new TextDecoder().decode(new TextEncoder().encode(emoji))).toBe(emoji);
   });
 });
 

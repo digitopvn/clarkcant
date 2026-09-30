@@ -351,7 +351,7 @@ export function openApiDocument(): Record<string, unknown> {
           responses: {
             "201": ok("{ artifactRef }"),
             "403": ok("PERSON_ONLY on a machine surface"),
-            "409": ok("ARTIFACT_QUOTA_EXCEEDED"),
+            "409": ok("ARTIFACT_INSTANCE_QUOTA_EXCEEDED or ARTIFACT_QUOTA_EXCEEDED"),
             "413": ok("ARTIFACT_TOO_LARGE"),
             "415": ok("ARTIFACT_TYPE_MISMATCH, ARTIFACT_TYPE_UNSUPPORTED or ARTIFACT_TYPE_NOT_ACCEPTED"),
             ...refusals,
@@ -363,6 +363,15 @@ export function openApiDocument(): Record<string, unknown> {
           summary: "Describe an artifact this instance was granted",
           parameters: [conversationId, instanceId, artifactId],
           responses: { "200": ok("{ artifactRef }"), "403": ok("ARTIFACT_NOT_GRANTED, ARTIFACT_GRANT_EXPIRED or ARTIFACT_GRANT_REVOKED"), ...refusals },
+        },
+        delete: {
+          summary: "Discard a file this instance made",
+          description:
+            "Only a file the calling instance created, working or finalized; a file the person chose, or one another widget " +
+            "made, is 403 ARTIFACT_NOT_CREATOR. The record and every grant on it go; the bytes go too unless an attachment " +
+            "or another record still points at them. What was discarded no longer counts against the instance's share.",
+          parameters: [conversationId, instanceId, artifactId],
+          responses: { "200": ok("{ discarded: true, artifactId }"), "403": ok("ARTIFACT_NOT_CREATOR, ARTIFACT_NOT_GRANTED or ARTIFACT_GRANT_REVOKED"), ...refusals },
         },
       },
       "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/content": {
@@ -387,7 +396,7 @@ export function openApiDocument(): Record<string, unknown> {
             "repeated or reordered chunk is refused with 409 ARTIFACT_OFFSET_MISMATCH instead of stored twice.",
           parameters: [conversationId, instanceId, artifactId],
           requestBody: { content: { "application/json": { schema: { type: "object", required: ["offset", "contentBase64"] } } } },
-          responses: { "200": ok("{ artifactRef }"), "409": ok("ARTIFACT_OFFSET_MISMATCH, ARTIFACT_NOT_WRITABLE or ARTIFACT_QUOTA_EXCEEDED"), "413": ok("ARTIFACT_CHUNK_TOO_LARGE or ARTIFACT_TOO_LARGE"), ...refusals },
+          responses: { "200": ok("{ artifactRef }"), "409": ok("ARTIFACT_OFFSET_MISMATCH, ARTIFACT_NOT_WRITABLE, ARTIFACT_INSTANCE_QUOTA_EXCEEDED (128 MiB per instance) or ARTIFACT_QUOTA_EXCEEDED"), "413": ok("ARTIFACT_CHUNK_TOO_LARGE or ARTIFACT_TOO_LARGE"), ...refusals },
         },
       },
       "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/finalize": {
