@@ -76,6 +76,15 @@ import {
   readTree,
   treeProblems,
   treeText,
+  BOARD_MOVE_OPERATION,
+  BOARD_APPROVAL_OPERATION,
+  BOARD_RESOLVE_OPERATION,
+  BOARD_ACKNOWLEDGE_OPERATION,
+  MAX_BOARD_COLUMNS,
+  MAX_BOARD_CARDS,
+  readBoard,
+  boardProblems,
+  boardText,
   compileActionBinding,
   readXyChart,
   xyChartData,
@@ -107,6 +116,7 @@ import {
   STATUS_CARD_KIND,
   TIMELINE,
   TREE,
+  BOARD,
   WIDGETS as CATALOG_WIDGETS,
   primitivePropsProblems,
 } from "@clarkcant/data-canvas";
@@ -171,6 +181,7 @@ export function buildViewCatalog(
     CALENDAR.id,
     TIMELINE.id,
     TREE.id,
+    BOARD.id,
   ]);
   const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
@@ -221,6 +232,7 @@ export function buildViewCatalog(
     calendarView(deps),
     timelineView(deps, () => compose?.timezone() ?? nodeTimeZone()),
     treeView(deps),
+    boardView(deps, actions),
   );
   if (compose === undefined) return simple;
 
@@ -905,6 +917,80 @@ function treeView(deps: WidgetDeps): ViewDescriptor {
         },
       });
       return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
+    },
+  };
+}
+
+function boardView(deps: WidgetDeps, bindingDeps: (() => ActionBindingDeps) | undefined): ViewDescriptor {
+  return {
+    id: BOARD.id,
+    label: BOARD.semanticDescription,
+    notes:
+      `props.columns is 1-${String(MAX_BOARD_COLUMNS)} of {id,title,limit?}; props.cards is up to ${String(MAX_BOARD_CARDS)} of {id,columnId,title,description?,labels?,assignee?}. ` +
+      `Card and column ids are unique. An optional props.action must be an invoke proposal that receives selected-event fields ` +
+      `cardId, fromColumnId, toColumnId and position. Without it, moves change only this board's view state.`,
+    shownText: `Shown: ${BOARD.id}. Moves change the view order; when an invoke action is bound, a move is pending until that action answers.`,
+    build: (request) => {
+      const { action, ...props } = request.props;
+      const full = validateProps(BOARD, props);
+      if (!full.ok) throw new Error(`${BOARD.id} has props that do not fit its schema: ${full.problems.join(", ")}`);
+      const problems = boardProblems(props);
+      if (problems.length > 0) throw new Error(`${BOARD.id} cannot be shown: ${problems.join("; ")}`);
+      const board = readBoard(props);
+      if (board === undefined) throw new Error(`${BOARD.id} cannot be shown: its props do not describe a board`);
+      if (action !== undefined && (typeof action !== "object" || action === null || (action as { kind?: unknown }).kind !== "invoke")) {
+        throw new Error(`${BOARD.id} only accepts an invoke action for externally bound moves`);
+      }
+      const packageDigest = definitionDigest(BOARD);
+      const compiledExternal = action === undefined ? undefined : (() => {
+        if (bindingDeps === undefined) throw new Error(`this node cannot bind an action to ${BOARD.id}`);
+        const result = compileWidgetAction(bindingDeps(), {
+          definitionRef: { id: BOARD.id, version: BOARD.version, packageDigest },
+          label: "Board move",
+          action,
+          ownerPrincipalId: request.principal.principalId,
+          carries: {
+            source: "selected-event",
+            noun: "board move",
+            keys: ["cardId", "fromColumnId", "toColumnId", "position"],
+            schema: () => ({ type: "object", additionalProperties: false, properties: {
+              cardId: { type: "string", enum: board.cards.map((card) => card.id) },
+              fromColumnId: { type: "string", enum: board.columns.map((column) => column.id) },
+              toColumnId: { type: "string", enum: board.columns.map((column) => column.id) },
+              position: { type: "integer", minimum: 0, maximum: MAX_BOARD_CARDS },
+            }, required: ["cardId", "fromColumnId", "toColumnId", "position"] }),
+          },
+        });
+        if (!result.ok) throw new Error(result.message);
+        return result;
+      })();
+      const { snapshot } = placeInstance(deps, {
+        definition: BOARD,
+        packageDigest,
+        ownerPrincipalId: request.principal.principalId,
+        props,
+        bind: (instanceId) => {
+          const viewBindings = [BOARD_MOVE_OPERATION, BOARD_APPROVAL_OPERATION, BOARD_RESOLVE_OPERATION, BOARD_ACKNOWLEDGE_OPERATION].map((operation) => {
+            const result = compileActionBinding({
+              bindingId: deps.newId("act"),
+              instance: { instanceId, ownerNodeId: deps.nodeId, definitionRef: { id: BOARD.id, version: BOARD.version, packageDigest }, actionBindingRevision: 1 },
+              packageGeneration: packageDigest,
+              label: operation,
+              proposal: { kind: "view", operation, args: {} },
+              inputSchema: { type: "object", additionalProperties: true },
+              allowedDataRefs: [], fixedConstraints: {}, effectCategory: "read", requiresApproval: false, limits: {},
+              bindingDigest: `sha256:${operation}:${instanceId}`, at: deps.now(), knownCapabilities: new Set(),
+            });
+            if (!result.ok) throw new Error(result.message);
+            return result.binding;
+          });
+          return [...viewBindings, ...(compiledExternal === undefined ? [] : [compiledExternal.bindTo(instanceId)])];
+        },
+        messageId: request.messageId,
+        textAlternative: keptText(BOARD.id, "", boardText(board, { order: Object.fromEntries(board.columns.map((column) => [column.id, board.cards.filter((card) => card.columnId === column.id).map((card) => card.id)])) })),
+        presentationRef: `catalog:${BOARD.id}`,
+      });
+      return { type: "surface", definitionRef: { id: BOARD.id, version: BOARD.version }, snapshot };
     },
   };
 }

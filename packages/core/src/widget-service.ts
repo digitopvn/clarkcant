@@ -57,6 +57,18 @@ import {
   widgetInstanceSchema,
   widgetSnapshotSchema,
   xyChartViewProblems,
+  BOARD_ID,
+  BOARD_MOVE_OPERATION,
+  BOARD_APPROVAL_OPERATION,
+  BOARD_RESOLVE_OPERATION,
+  BOARD_ACKNOWLEDGE_OPERATION,
+  type BoardState,
+  readBoard,
+  readBoardState,
+  boardMoveProblems,
+  moveBoardCard,
+  boardApprovalState,
+  settleBoardMove,
 } from "@clarkcant/contracts";
 
 import {
@@ -1165,6 +1177,10 @@ export const M1_VIEW_OPERATIONS = [
   "chart.view",
   "calendar.view",
   "timeline.select",
+  BOARD_MOVE_OPERATION,
+  BOARD_APPROVAL_OPERATION,
+  BOARD_RESOLVE_OPERATION,
+  BOARD_ACKNOWLEDGE_OPERATION,
   TREE_SELECT_OPERATION,
   TREE_TOGGLE_OPERATION,
 ] as const;
@@ -1184,6 +1200,10 @@ const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
   "timeline.select": "presentation",
   [TREE_SELECT_OPERATION]: "presentation",
   [TREE_TOGGLE_OPERATION]: "presentation",
+  [BOARD_MOVE_OPERATION]: "presentation",
+  [BOARD_APPROVAL_OPERATION]: "presentation",
+  [BOARD_RESOLVE_OPERATION]: "presentation",
+  [BOARD_ACKNOWLEDGE_OPERATION]: "presentation",
 };
 
 export interface MiniAppActionRequest extends ActionInvocation {
@@ -1361,6 +1381,9 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
   }
 
   const validation =
+    operation === BOARD_MOVE_OPERATION || operation === BOARD_APPROVAL_OPERATION || operation === BOARD_RESOLVE_OPERATION || operation === BOARD_ACKNOWLEDGE_OPERATION
+      ? { ok: true as const, patch: {} }
+      :
     operation === "chart.view"
       ? chartViewPatch(deps, instance, request.input)
       : operation === CALENDAR_VIEW_OPERATION
@@ -1405,6 +1428,35 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
         : state.expandedIds.filter((id) => id !== nodeId);
       patch = { expandedIds, ...(state.selectedId === undefined ? {} : { selectedId: state.selectedId }) };
     }
+    if (operation === BOARD_MOVE_OPERATION || operation === BOARD_APPROVAL_OPERATION || operation === BOARD_RESOLVE_OPERATION || operation === BOARD_ACKNOWLEDGE_OPERATION) {
+      const board = instance.definitionRef.id === BOARD_ID ? readBoard(instance.props) : undefined;
+      if (board === undefined) return { ok: false, code: "INVALID_INPUT", message: "this action is not on a readable board" };
+      const state = readBoardState(current?.body, board);
+      let next: BoardState;
+      if (operation === BOARD_MOVE_OPERATION) {
+        const externalBound = instance.actionBindingIds.some((id) => getActionBinding(deps, id)?.proposal.kind === "invoke");
+        const problems = boardMoveProblems(board, state, { ...request.input, external: externalBound });
+        if (problems.length > 0 || typeof request.input.cardId !== "string" || typeof request.input.fromColumnId !== "string" || typeof request.input.toColumnId !== "string" || typeof request.input.position !== "number") {
+          return { ok: false, code: "INVALID_INPUT", message: problems[0] ?? "a board move is incomplete" };
+        }
+        next = moveBoardCard(board, state, { cardId: request.input.cardId, fromColumnId: request.input.fromColumnId, toColumnId: request.input.toColumnId, position: request.input.position, external: externalBound });
+      } else if (operation === BOARD_APPROVAL_OPERATION) {
+        if (typeof request.input.approvalId !== "string" || request.input.approvalId.length < 1 || request.input.approvalId.length > 128 || state.pendingMove === undefined) {
+          return { ok: false, code: "INVALID_INPUT", message: "an approval id and pending board move are required" };
+        }
+        next = boardApprovalState(state, request.input.approvalId);
+      } else if (operation === BOARD_RESOLVE_OPERATION) {
+        const outcome = request.input.outcome;
+        if (outcome !== "done" && outcome !== "refused" && outcome !== "uncertain") return { ok: false, code: "INVALID_INPUT", message: "a board outcome must be done, refused or uncertain" };
+        if (state.pendingMove === undefined || (request.input.approvalId !== undefined && request.input.approvalId !== state.pendingMove.approvalId)) return { ok: false, code: "INVALID_INPUT", message: "the board move no longer matches this result" };
+        next = settleBoardMove(state, outcome);
+      } else {
+        if (state.pendingMove?.outcome !== "uncertain") return { ok: false, code: "INVALID_INPUT", message: "only an uncertain board move can be acknowledged" };
+        const { pendingMove: _pending, ...acknowledged } = state;
+        next = acknowledged;
+      }
+      patch = next as unknown as Record<string, unknown>;
+    }
     if (operation === "state.event") {
       // Applied here, to the values the node holds, by the same rules the page ran: what is stored is what the graph
       // says the event does, never a value the page computed and sent.
@@ -1418,9 +1470,10 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
       if (!applied.ok) return { ok: false, code: "INVALID_INPUT", message: applied.problem };
       patch = { graph: applied.values };
     }
-    // A chart or calendar view and a timeline's selection are the widget's whole state, so each replaces what was stored:
-    // a selection cleared is a key removed.
-    const replaces = operation === "chart.view" || operation === CALENDAR_VIEW_OPERATION || operation === TIMELINE_SELECT_OPERATION;
+    // Chart, calendar, timeline and board operations each produce the widget's whole bounded view state, so each
+    // replaces what was stored. This also removes a selection or pending board move that was cleared.
+    const replaces = operation === "chart.view" || operation === CALENDAR_VIEW_OPERATION || operation === TIMELINE_SELECT_OPERATION ||
+      operation === BOARD_MOVE_OPERATION || operation === BOARD_APPROVAL_OPERATION || operation === BOARD_RESOLVE_OPERATION || operation === BOARD_ACKNOWLEDGE_OPERATION;
     const body: Record<string, unknown> = replaces ? patch : { ...(current?.body ?? {}), ...patch };
     if (operation === TREE_SELECT_OPERATION && request.input.selectedId === "") delete body.selectedId;
     const stateRevision = (current?.revision ?? 0) + 1;
@@ -2025,6 +2078,18 @@ function validateViewInput(operation: string, input: Record<string, unknown>): I
       }
       return { ok: true, patch: {} };
     }
+    case BOARD_MOVE_OPERATION: {
+      if (Object.keys(input).some((key) => !["cardId", "fromColumnId", "toColumnId", "position", "external"].includes(key)) ||
+          typeof input.cardId !== "string" || typeof input.fromColumnId !== "string" || typeof input.toColumnId !== "string" ||
+          !Number.isInteger(input.position) || typeof input.external !== "boolean") return { ok: false, message: "a board move must name its card, columns, position and external binding state" };
+      return { ok: true, patch: {} };
+    }
+    case BOARD_APPROVAL_OPERATION:
+      return typeof input.approvalId === "string" && Object.keys(input).length === 1 ? { ok: true, patch: {} } : { ok: false, message: "a board approval carries one approval id" };
+    case BOARD_RESOLVE_OPERATION:
+      return Object.keys(input).every((key) => ["outcome", "approvalId"].includes(key)) ? { ok: true, patch: {} } : { ok: false, message: "a board resolution carries an outcome and optional approval id" };
+    case BOARD_ACKNOWLEDGE_OPERATION:
+      return Object.keys(input).length === 0 ? { ok: true, patch: {} } : { ok: false, message: "acknowledging a board move carries no input" };
     default:
       return { ok: false, message: `"${operation}" has no input contract` };
   }

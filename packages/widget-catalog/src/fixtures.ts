@@ -424,6 +424,18 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
     },
     { id: "tree.empty", label: "Cây trống", props: { title: "Không có mục", nodes: [] }, mode: "read-only" },
   ],
+  "canvas.board@1": [
+    {
+      id: "board.normal",
+      label: "Bảng giao hàng có thể thao tác",
+      props: {
+        title: "Giao hàng",
+        columns: [{ id: "todo", title: "Cần làm" }, { id: "doing", title: "Đang làm" }, { id: "done", title: "Hoàn tất" }],
+        cards: [{ id: "schema", columnId: "todo", title: "Cập nhật hợp đồng", labels: [{ text: "P1", tone: "warning" }] }, { id: "review", columnId: "doing", title: "Rà soát thay đổi", assignee: "Linh" }],
+      },
+      mode: "interactive",
+    },
+  ],
   "canvas.image@1": [
     {
       id: "image.normal",

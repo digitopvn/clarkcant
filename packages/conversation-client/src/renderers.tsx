@@ -80,6 +80,14 @@ import {
   TREE_ID,
   TREE_SELECT_OPERATION,
   TREE_TOGGLE_OPERATION,
+  BOARD_ID,
+  BOARD_ACKNOWLEDGE_OPERATION,
+  BOARD_MOVE_OPERATION,
+  boardMoveProblems,
+  moveBoardCard,
+  readBoard,
+  readBoardState,
+  type BoardMove,
   type TreeNode,
   readTree,
   readTreeState,
@@ -3959,6 +3967,150 @@ function TreeWidgetView({ props, state, onAction, onStateChange }: RendererProps
   );
 }
 
+function BoardWidgetView({ props, state, onAction }: RendererProps): ReactElement {
+  const t = useT();
+  const board = useMemo(() => readBoard(props), [props]);
+  const stored = useMemo(() => board === undefined ? undefined : readBoardState(state, board), [board, state]);
+  const [boardState, setBoardState] = useState(stored);
+  const [pickup, setPickup] = useState<{ cardId: string; origin: NonNullable<typeof stored> }>();
+  const cardNodes = useRef(new Map<string, HTMLDivElement>());
+  const pointer = useRef<{ cardId: string; fromColumnId: string; fromPosition: number; targetColumnId: string; position: number } | undefined>(undefined);
+  const [announcement, setAnnouncement] = useState("");
+  useEffect(() => setBoardState(stored), [stored]);
+  useEffect(() => {
+    if (pickup !== undefined) cardNodes.current.get(pickup.cardId)?.focus();
+  }, [boardState, pickup]);
+
+  if (board === undefined || boardState === undefined) {
+    return <Frame title={t("widgets.board.title")} dataset={undefined} role="group"><p role="status">{t("widgets.board.unreadable")}</p></Frame>;
+  }
+  const title = board.title || t("widgets.board.title");
+  const pending = boardState.pendingMove;
+  const externalBound = state?.externalBound === true;
+  const order = (columnId: string): string[] => boardState.order[columnId] ?? [];
+  const firstCardId = board.columns.flatMap((column) => order(column.id))[0];
+  const commitMove = (move: BoardMove): void => {
+    if (boardMoveProblems(board, pickup?.origin ?? boardState, move).length > 0) return;
+    const next = moveBoardCard(board, pickup?.origin ?? boardState, { ...move, external: externalBound });
+    setBoardState(next);
+    setPickup(undefined);
+    setAnnouncement(`${t("widgets.board.moved")} ${board.cards.find((card) => card.id === move.cardId)?.title ?? ""} — ${board.columns.find((column) => column.id === move.toColumnId)?.title ?? ""}, ${String(move.position + 1)}`);
+    onAction?.(BOARD_MOVE_OPERATION, { cardId: move.cardId, fromColumnId: move.fromColumnId, toColumnId: move.toColumnId, position: move.position });
+  };
+  const movePreview = (columnId: string, position: number): void => {
+    if (pickup === undefined || boardMoveProblems(board, pickup.origin, { cardId: pickup.cardId, fromColumnId: boardColumnForBoardState(pickup.origin, pickup.cardId), toColumnId: columnId, position }).length > 0) return;
+    setBoardState(moveBoardCard(board, pickup.origin, { cardId: pickup.cardId, fromColumnId: boardColumnForBoardState(pickup.origin, pickup.cardId), toColumnId: columnId, position }));
+    setAnnouncement(`${t("widgets.board.moving")} ${board.cards.find((card) => card.id === pickup.cardId)?.title ?? ""} — ${board.columns.find((column) => column.id === columnId)?.title ?? ""}, ${String(position + 1)}`);
+  };
+  const cancelPickup = (): void => {
+    if (pickup !== undefined) setBoardState(pickup.origin);
+    setPickup(undefined);
+    pointer.current = undefined;
+    setAnnouncement(t("widgets.board.cancelled"));
+  };
+  const finishPointer = (): void => {
+    const drag = pointer.current;
+    pointer.current = undefined;
+    if (drag === undefined) return;
+    if (drag.fromColumnId === drag.targetColumnId && drag.fromPosition === drag.position) return;
+    commitMove({ cardId: drag.cardId, fromColumnId: drag.fromColumnId, toColumnId: drag.targetColumnId, position: drag.position });
+  };
+
+  return (
+    <Frame title={title} dataset={undefined} role="group">
+      <div data-board-root="true" style={{ overflowX: "auto", overscrollBehaviorX: "contain" }}
+        onPointerMove={(event) => {
+          if (pointer.current === undefined) return;
+          const target = document.elementFromPoint(event.clientX, event.clientY);
+          const column = target?.closest<HTMLElement>("[data-board-column]");
+          if (column === null || column === undefined) return;
+          const columnId = column.dataset.boardColumn;
+          if (columnId === undefined) return;
+          const cardElement = target?.closest<HTMLElement>("[data-board-card]");
+          const cardIndex = cardElement?.parentElement?.getAttribute("data-board-position");
+          const sourceColumnId = pointer.current.fromColumnId;
+          const sourceIndex = pointer.current.fromPosition;
+          const hoveredIndex = cardIndex === null || cardIndex === undefined ? order(columnId).length : Number(cardIndex);
+          const position = sourceColumnId === columnId
+            ? cardIndex === null || cardIndex === undefined
+              ? Math.max(0, hoveredIndex - 1)
+              : Math.max(0, hoveredIndex - Number(sourceIndex < hoveredIndex))
+            : hoveredIndex;
+          if (pointer.current.targetColumnId !== columnId || pointer.current.position !== position) {
+            const card = board.cards.find((entry) => entry.id === pointer.current?.cardId);
+            setAnnouncement(`${t("widgets.board.moving")} ${card?.title ?? ""} — ${board.columns.find((entry) => entry.id === columnId)?.title ?? ""}, ${String(position + 1)}`);
+          }
+          pointer.current = { ...pointer.current, targetColumnId: columnId, position };
+        }}
+        onPointerUp={finishPointer} onPointerCancel={cancelPickup}>
+        {!externalBound && pending === undefined && <p role="note" data-board-mode="local">{t("widgets.board.localMode")}</p>}
+        {pending?.outcome === "uncertain" ? <p role="status" data-board-status="uncertain">{t("widgets.board.uncertain")} <button type="button" className="cc-action" onClick={() => onAction?.(BOARD_ACKNOWLEDGE_OPERATION, {})}>{t("widgets.board.acknowledge")}</button></p>
+          : pending?.approvalId !== undefined ? <p role="status" data-board-status="approval">{t("widgets.board.awaitingApproval")}</p>
+            : pending !== undefined ? <p role="status" data-board-status="pending">{t("widgets.board.pending")}</p>
+              : typeof state?.actionMessage === "string" ? <p role="status" data-board-status={String(state.actionTone ?? "")}>{state.actionMessage}</p> : null}
+        <div role="list" aria-label={title} style={{ display: "grid", gridAutoColumns: "minmax(220px, 1fr)", gridAutoFlow: "column", gap: "var(--cc-space-sm)", minWidth: 0, paddingBlock: "var(--cc-space-xs)" }}>
+          {board.columns.map((column) => (
+            <section key={column.id} data-board-column={column.id} aria-label={`${column.title}, ${String(order(column.id).length)} ${t("widgets.board.cards")}`} style={{ minWidth: 0, border: "1px solid var(--cc-border-subtle)", borderRadius: "var(--cc-radius-md)", padding: "var(--cc-space-sm)", background: "var(--cc-surface-raised)" }}>
+              <h3 style={{ margin: "0 0 var(--cc-space-sm)", fontSize: "var(--cc-font-size-sm)" }}>{column.title}<span aria-hidden="true"> · {String(order(column.id).length)}{column.limit === undefined ? "" : ` / ${String(column.limit)}`}</span></h3>
+              <div style={{ display: "grid", gap: "var(--cc-space-xs)" }}>
+                {order(column.id).map((cardId, index) => {
+                  const card = board.cards.find((entry) => entry.id === cardId);
+                  if (card === undefined) return null;
+                  const selected = boardState.selectedCardId === card.id;
+                  return <article key={card.id} data-board-position={index} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "var(--cc-space-xs)", border: "1px solid var(--cc-border-subtle)", borderRadius: "var(--cc-radius-sm)", padding: "var(--cc-space-xs)", background: "var(--cc-surface)", outline: selected ? "2px solid var(--cc-focus)" : undefined }}>
+                    <div ref={(element) => { if (element === null) cardNodes.current.delete(card.id); else cardNodes.current.set(card.id, element); }} role="group" data-board-card={card.id} tabIndex={selected || boardState.selectedCardId === undefined && firstCardId === card.id ? 0 : -1} aria-label={`${card.title}, ${column.title}`} onFocus={() => setBoardState({ ...boardState, selectedCardId: card.id })}
+                      onKeyDown={(event) => {
+                        if (pending !== undefined) return;
+                        if (event.key === "Escape" && pickup !== undefined) { event.preventDefault(); cancelPickup(); return; }
+                        if ((event.key === " " || event.key === "Enter") && pickup === undefined) { event.preventDefault(); setPickup({ cardId: card.id, origin: boardState }); setBoardState({ ...boardState, selectedCardId: card.id }); setAnnouncement(`${t("widgets.board.pickedUp")} ${card.title}`); return; }
+                        if ((event.key === " " || event.key === "Enter") && pickup?.cardId === card.id) { event.preventDefault(); const toColumnId = boardColumnForBoardState(boardState, card.id); const position = Math.max(0, order(toColumnId).indexOf(card.id)); const fromColumnId = boardColumnForBoardState(pickup.origin, card.id); commitMove({ cardId: card.id, fromColumnId, toColumnId, position }); return; }
+                        if (pickup?.cardId === card.id && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+                          event.preventDefault();
+                          const fromColumnId = boardColumnForBoardState(boardState, card.id);
+                          const sourceIndex = order(fromColumnId).indexOf(card.id);
+                          const columnIndex = board.columns.findIndex((entry) => entry.id === fromColumnId);
+                          const targetColumn = event.key === "ArrowLeft" ? board.columns[Math.max(0, columnIndex - 1)] : event.key === "ArrowRight" ? board.columns[Math.min(board.columns.length - 1, columnIndex + 1)] : board.columns[columnIndex];
+                          const targetOrder = order(targetColumn?.id ?? fromColumnId);
+                          const position = event.key === "ArrowUp" ? Math.max(0, sourceIndex - 1) : event.key === "ArrowDown" ? Math.min(Math.max(0, targetOrder.length - 1), sourceIndex + 1) : Math.min(sourceIndex, targetOrder.length);
+                          movePreview(targetColumn?.id ?? fromColumnId, position);
+                        }
+                      }}>
+                      <strong>{card.title}</strong>
+                      {card.description !== undefined && <p style={{ margin: "var(--cc-space-xs) 0 0" }}>{card.description}</p>}
+                      {card.assignee !== undefined && <p style={{ margin: "var(--cc-space-xs) 0 0" }}>{t("widgets.board.assignee")}: {card.assignee}</p>}
+                      {card.labels.length > 0 && <ul aria-label={t("widgets.board.labels")} style={{ display: "flex", flexWrap: "wrap", gap: "var(--cc-space-xs)", listStyle: "none", padding: 0, margin: "var(--cc-space-xs) 0 0" }}>{card.labels.map((label, labelIndex) => <li key={`${label.text}-${String(labelIndex)}`} data-tone={label.tone ?? "neutral"} style={{ border: "1px solid var(--cc-border-subtle)", borderRadius: "999px", paddingInline: "var(--cc-space-xs)" }}>{label.text}<span className="cc-sr-only"> — {t(`widgets.board.tone.${label.tone ?? "neutral"}` as MessageKey)}</span></li>)}</ul>}
+                    </div>
+                    <button type="button" className="cc-icon-btn" aria-label={`${t("widgets.board.dragHandle")}: ${card.title}`} data-board-drag-handle={card.id} style={{ minWidth: 44, minHeight: 44, touchAction: "none", cursor: "grab" }} disabled={pending !== undefined}
+                      onPointerDown={(event) => {
+                        if (pending !== undefined) return;
+                        // Real pointer capture keeps a drag alive outside its original card; synthetic test events have
+                        // no active browser pointer to capture.
+                        if (event.isTrusted) event.currentTarget.setPointerCapture(event.pointerId);
+                        const fromColumnId = boardColumnForBoardState(boardState, card.id);
+                        const fromPosition = order(fromColumnId).indexOf(card.id);
+                        pointer.current = { cardId: card.id, fromColumnId, fromPosition, targetColumnId: fromColumnId, position: fromPosition };
+                        setBoardState({ ...boardState, selectedCardId: card.id });
+                        setAnnouncement(`${t("widgets.board.pickedUp")} ${card.title}`);
+                      }} onPointerUp={finishPointer} onKeyDown={(event) => { if (event.key === "Escape") cancelPickup(); }}>
+                      <span aria-hidden="true">⠿</span>
+                    </button>
+                  </article>;
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+        <p className="cc-sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</p>
+        {typeof state?.message === "string" && state.message !== "" && <p role="status" data-board-status="refused">{state.message}</p>}
+      </div>
+    </Frame>
+  );
+}
+
+function boardColumnForBoardState(state: { order: Record<string, string[]> }, cardId: string): string {
+  return Object.entries(state.order).find(([, ids]) => ids.includes(cardId))?.[0] ?? "";
+}
+
 /* ------------------------------------------------------------------ *
  * Status, progress and details cards
  * ------------------------------------------------------------------ */
@@ -4517,6 +4669,7 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.form@1": FormView,
   "canvas.list@1": ListView,
   [TREE_ID]: TreeWidgetView,
+  [BOARD_ID]: BoardWidgetView,
   "canvas.status@1": StatusCardView,
   "canvas.progress@1": ProgressCardView,
   "canvas.details@1": DetailsCardView,

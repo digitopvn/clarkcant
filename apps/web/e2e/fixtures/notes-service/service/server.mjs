@@ -14,6 +14,12 @@ import { join } from "node:path";
 const flag = process.argv.indexOf("--data");
 const DATA_DIR = flag >= 0 && process.argv[flag + 1] !== undefined ? process.argv[flag + 1] : "/data";
 const STORE = join(DATA_DIR, "notes.json");
+const BOARD_STORE = join(DATA_DIR, "board.json");
+const INITIAL_BOARD = { todo: ["schema"], doing: ["review"], done: [] };
+
+function initialBoard() {
+  return { todo: ["schema"], doing: ["review"], done: [] };
+}
 
 const TOOLS = [
   {
@@ -45,6 +51,21 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
+  {
+    name: "move_board_card",
+    description: "Record a board card move.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cardId: { type: "string", minLength: 1, maxLength: 64 },
+        fromColumnId: { type: "string", minLength: 1, maxLength: 64 },
+        toColumnId: { type: "string", minLength: 1, maxLength: 64 },
+        position: { type: "integer", minimum: 0, maximum: 120 },
+      },
+      required: ["cardId", "fromColumnId", "toColumnId", "position"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 function readNotes() {
@@ -62,6 +83,27 @@ function writeNotes(notes) {
   const next = `${STORE}.next`;
   writeFileSync(next, JSON.stringify(notes));
   renameSync(next, STORE);
+}
+
+function readBoard() {
+  if (!existsSync(BOARD_STORE)) return initialBoard();
+  try {
+    const parsed = JSON.parse(readFileSync(BOARD_STORE, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return initialBoard();
+    return Object.fromEntries(Object.entries(INITIAL_BOARD).map(([columnId, initial]) => [
+      columnId,
+      Array.isArray(parsed[columnId]) && parsed[columnId].every((cardId) => typeof cardId === "string") ? parsed[columnId] : [...initial],
+    ]));
+  } catch {
+    return initialBoard();
+  }
+}
+
+function writeBoard(board) {
+  mkdirSync(DATA_DIR, { recursive: true });
+  const next = `${BOARD_STORE}.next`;
+  writeFileSync(next, JSON.stringify(board));
+  renameSync(next, BOARD_STORE);
 }
 
 function send(payload) {
@@ -138,6 +180,27 @@ function handle(request) {
     if (name === "list_notes") {
       const notes = readNotes();
       send({ jsonrpc: "2.0", id, result: text(notes.length === 0 ? "No notes yet." : notes.join(" | ")) });
+      return;
+    }
+    if (name === "move_board_card") {
+      const { cardId, fromColumnId, toColumnId, position } = params?.arguments ?? {};
+      if (typeof cardId !== "string" || typeof fromColumnId !== "string" || typeof toColumnId !== "string" || !Number.isInteger(position)) {
+        send({ jsonrpc: "2.0", id, result: text("A board move needs a card, two columns and a position.", true) });
+        return;
+      }
+      const board = readBoard();
+      const source = board[fromColumnId];
+      const target = board[toColumnId];
+      const sourceIndex = source?.indexOf(cardId) ?? -1;
+      const targetLength = target === undefined ? -1 : target.length - Number(fromColumnId === toColumnId);
+      if (source === undefined || target === undefined || sourceIndex < 0 || !Number.isInteger(position) || position < 0 || position > targetLength) {
+        send({ jsonrpc: "2.0", id, result: text("The board no longer has that card position; no move was saved.", true) });
+        return;
+      }
+      source.splice(sourceIndex, 1);
+      target.splice(position, 0, cardId);
+      writeBoard(board);
+      send({ jsonrpc: "2.0", id, result: text(`Moved ${cardId}. Board order: ${JSON.stringify(board)}.`) });
       return;
     }
     send({ jsonrpc: "2.0", id, error: { code: -32602, message: `unknown tool ${String(name)}` } });

@@ -131,6 +131,12 @@ const META: Record<string, CatalogMeta> = {
     aliases: ["tree", "hierarchy", "outline", "cây", "phân cấp", "cấu trúc"],
     status: "stable",
   },
+  "canvas.board@1": {
+    displayName: "Bảng kanban",
+    tags: ["board", "kanban", "tasks"],
+    aliases: ["board", "kanban", "task board", "bảng", "công việc"],
+    status: "stable",
+  },
   "canvas.image@1": {
     displayName: "Ảnh",
     tags: ["media", "image"],

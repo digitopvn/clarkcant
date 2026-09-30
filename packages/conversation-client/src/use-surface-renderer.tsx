@@ -9,6 +9,11 @@ import {
   TREE_ID,
   TREE_SELECT_OPERATION,
   TREE_TOGGLE_OPERATION,
+  BOARD_ID,
+  BOARD_MOVE_OPERATION,
+  BOARD_APPROVAL_OPERATION,
+  BOARD_RESOLVE_OPERATION,
+  BOARD_ACKNOWLEDGE_OPERATION,
   XY_CHART_KIND,
   XY_CHART_VIEW_OPERATION,
 } from "@clarkcant/contracts";
@@ -93,7 +98,7 @@ const LIST_DEFINITION_ID = "canvas.list@1";
  */
 const BOUND_DEFINITION_IDS = new Set(["canvas.cta@1", "canvas.action@1", FORM_DEFINITION_ID]);
 /** Widgets whose view the page keeps for the session: a table's sort and page, a form's draft, a list's selection. */
-const LOCAL_VIEW_DEFINITION_IDS = new Set([TABLE_DEFINITION_ID, FORM_DEFINITION_ID, LIST_DEFINITION_ID]);
+const LOCAL_VIEW_DEFINITION_IDS = new Set([TABLE_DEFINITION_ID, FORM_DEFINITION_ID, LIST_DEFINITION_ID, BOARD_ID]);
 /** What a widget says when the node refused the view it asked to hold, by the view operation it asked through. */
 const VIEW_REFUSED: Record<string, MessageKey> = {
   [XY_CHART_VIEW_OPERATION]: "widgets.xyChart.viewRefused",
@@ -110,6 +115,7 @@ interface ActionRun {
   pending: boolean;
   message?: string;
   tone?: "done" | "waiting" | "refused";
+  approvalId?: string;
 }
 
 function newInvocationId(): string {
@@ -218,14 +224,14 @@ export function useSurfaceRenderer({
    * latest waiting change is sent, so a burst of clicks is one write per round trip and ends at what the person last
    * chose. A refusal drops the waiting change and says why beside the widget, which then draws the view the node holds.
    */
-  const viewQueues = useRef(new Map<string, { inFlight: boolean; queued?: Record<string, unknown> }>());
+  const viewQueues = useRef(new Map<string, { inFlight: boolean; queued?: { view: Record<string, unknown>; onSettled?: (timeline: Timeline) => void } }>());
   /** A refusal said beside a widget, and how many there have been: each one sets the widget back to the node's view. */
   const [viewRefusals, setViewRefusals] = useState<Record<string, { message: string; count: number }>>({});
   const sendView = useCallback(
-    (conversation: string, instanceId: string, datasetRef: string | undefined, action: TimelineAction, revision: number, view: Record<string, unknown>, refused: MessageKey): void => {
+    (conversation: string, instanceId: string, datasetRef: string | undefined, action: TimelineAction, revision: number, view: Record<string, unknown>, refused: MessageKey, onSettled?: (timeline: Timeline) => void): void => {
       const queue = viewQueues.current.get(instanceId) ?? { inFlight: false };
       if (queue.inFlight) {
-        viewQueues.current.set(instanceId, { inFlight: true, queued: view });
+        viewQueues.current.set(instanceId, { inFlight: true, queued: { view, ...(onSettled === undefined ? {} : { onSettled }) } });
         return;
       }
       viewQueues.current.set(instanceId, { inFlight: true });
@@ -244,8 +250,8 @@ export function useSurfaceRenderer({
         .then((result) => {
           const queued = viewQueues.current.get(instanceId)?.queued;
           viewQueues.current.set(instanceId, { inFlight: false });
-          if (queued !== undefined) sendView(conversation, instanceId, datasetRef, action, result.revision, queued, refused);
-          else applyTimeline(result.timeline);
+          if (queued !== undefined) sendView(conversation, instanceId, datasetRef, action, result.revision, queued.view, refused, queued.onSettled);
+          else { applyTimeline(result.timeline); onSettled?.(result.timeline); }
         })
         .catch((cause: unknown) => {
           viewQueues.current.set(instanceId, { inFlight: false });
@@ -277,7 +283,7 @@ export function useSurfaceRenderer({
     onActionsRunningChange?.(anyActionRunning);
   }, [anyActionRunning, onActionsRunningChange]);
   const runAction = useCallback(
-    (conversation: string, instance: Timeline["instances"][number], action: TimelineAction, input: Record<string, unknown>): void => {
+    (conversation: string, instance: Timeline["instances"][number], action: TimelineAction, input: Record<string, unknown>, onResult?: (result: Awaited<ReturnType<GatewayClient["invokeAction"]>> | undefined, cause?: unknown) => void): void => {
       const id = instance.instanceId;
       setActionRuns((current) => ({ ...current, [id]: { pending: true } }));
       void client
@@ -292,8 +298,9 @@ export function useSurfaceRenderer({
           applyTimeline(result.timeline);
           // Started or waiting on an approval card is not done; the words for each are said in the person's language.
           const tone = result.outcome === "background" || result.approvalRequired !== undefined ? "waiting" : "done";
-          const run: ActionRun = { pending: false, tone, message: actionResultMessage(t, result) };
+          const run: ActionRun = { pending: false, tone, message: actionResultMessage(t, result), ...(result.approvalRequired === undefined ? {} : { approvalId: result.approvalRequired.approvalId }) };
           setActionRuns((current) => ({ ...current, [id]: run }));
+          onResult?.(result);
         })
         .catch((cause: unknown) => {
           // Said from the node's code and details, never its English sentence or a raw code: what failed, what was
@@ -303,10 +310,38 @@ export function useSurfaceRenderer({
               ? actionRefusalMessage(t, { code: cause.code, reason: cause.reason, details: cause.details })
               : t("widgets.action.refusedGeneric");
           setActionRuns((current) => ({ ...current, [id]: { pending: false, tone: "refused", message } }));
+          onResult?.(undefined, cause);
         });
     },
     [applyTimeline, client, refreshDataset, t],
   );
+
+  const settledApprovals = useRef(new Set<string>());
+  useEffect(() => {
+    if (conversationId === undefined || timeline === undefined) return;
+    const receipts = new Map<string, "done" | "refused">();
+    for (const message of timeline.messages) for (const block of message.blocks) {
+      if (block.type !== "tool-activity") continue;
+      const args = (block.args ?? {}) as Record<string, unknown>;
+      if (typeof args.approvalId !== "string") continue;
+      if (args.decision === "denied" || args.outcome === "refused") receipts.set(args.approvalId, "refused");
+      else if (args.outcome === "done") receipts.set(args.approvalId, "done");
+    }
+    for (const [instanceId, run] of Object.entries(actionRuns)) {
+      const approvalId = run.approvalId;
+      const outcome = approvalId === undefined ? undefined : receipts.get(approvalId);
+      if (approvalId === undefined || outcome === undefined || settledApprovals.current.has(approvalId)) continue;
+      const instance = instanceById.get(instanceId);
+      const action = instance?.actions?.find((candidate) => candidate.viewOperation === BOARD_RESOLVE_OPERATION);
+      if (instance === undefined || action === undefined || !action.available) continue;
+      settledApprovals.current.add(approvalId);
+      sendView(conversationId, instanceId, undefined, action, instance.revision, { approvalId, outcome }, "widgets.action.refusedGeneric");
+      setActionRuns((current) => {
+        const { approvalId: _approvalId, ...settled } = current[instanceId] ?? { pending: false };
+        return { ...current, [instanceId]: settled };
+      });
+    }
+  }, [actionRuns, conversationId, instanceById, sendView, timeline]);
 
   return useCallback(
     (input: SurfaceBlockRef): ReactElement => {
@@ -399,7 +434,9 @@ export function useSurfaceRenderer({
       const exportStatus = exports[instance.instanceId];
       // One widget, one binding: a button, a form and a list are each made with at most one, and neither the renderer
       // nor this hook learns what it does.
-      const boundAction = instance.actions?.[0];
+      const boundAction = definitionId === BOARD_ID
+        ? instance.actions?.find((candidate) => candidate.viewOperation === undefined)
+        : instance.actions?.[0];
       const needsBinding = BOUND_DEFINITION_IDS.has(definitionId);
       const sends = needsBinding || (isList && boundAction !== undefined);
       const actionRun = actionRuns[instance.instanceId];
@@ -415,13 +452,19 @@ export function useSurfaceRenderer({
               : definitionId === TIMELINE_ID
                 ? TIMELINE_SELECT_OPERATION
                 : undefined;
-      const viewOperations = definitionId === TREE_ID ? [TREE_SELECT_OPERATION, TREE_TOGGLE_OPERATION] : viewOperation === undefined ? [] : [viewOperation];
+      const viewOperations = definitionId === TREE_ID
+        ? [TREE_SELECT_OPERATION, TREE_TOGGLE_OPERATION]
+        : definitionId === BOARD_ID
+          ? [BOARD_MOVE_OPERATION, BOARD_APPROVAL_OPERATION, BOARD_RESOLVE_OPERATION, BOARD_ACKNOWLEDGE_OPERATION]
+          : viewOperation === undefined ? [] : [viewOperation];
       const viewRefusal = viewRefusals[instance.instanceId];
       const widgetState: Record<string, unknown> | undefined =
         viewOperations.length > 0
         ? {
             // The view the node holds; the widget draws a change at once and adopts this when it moves.
             ...(instance.state ?? {}),
+            ...(definitionId === BOARD_ID && boundAction !== undefined ? { externalBound: true } : {}),
+            ...(definitionId === BOARD_ID && actionRun?.message !== undefined ? { actionMessage: actionRun.message, actionTone: actionRun.tone } : {}),
             ...(viewRefusal === undefined ? {} : { message: viewRefusal.message, viewReset: viewRefusal.count }),
           }
         : !keepsView && !sends
@@ -493,7 +536,37 @@ export function useSurfaceRenderer({
                         const matchingAction = instance.actions?.find((candidate) => candidate.viewOperation === action) ?? boundAction;
                         if (matchingAction !== undefined && matchingAction.available && conversationId !== undefined) {
                           const datasetRef = instance.props.datasetRef;
-                          sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, matchingAction, instance.revision, payload, VIEW_REFUSED[action] ?? "widgets.xyChart.viewRefused");
+                          const viewInput = definitionId === BOARD_ID && action === BOARD_MOVE_OPERATION
+                            ? { ...payload, external: boundAction !== undefined }
+                            : payload;
+                          sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, matchingAction, instance.revision, viewInput, VIEW_REFUSED[action] ?? "widgets.xyChart.viewRefused", (nextTimeline) => {
+                            if (definitionId !== BOARD_ID || action !== BOARD_MOVE_OPERATION || boundAction === undefined) return;
+                            const current = nextTimeline.instances.find((entry) => entry.instanceId === instance.instanceId);
+                            const invoke = current?.actions?.find((candidate) => candidate.viewOperation === undefined);
+                            if (current === undefined || invoke === undefined) return;
+                            if (!invoke.available) {
+                              const resolve = current.actions?.find((candidate) => candidate.viewOperation === BOARD_RESOLVE_OPERATION);
+                              if (resolve !== undefined) sendView(conversationId, current.instanceId, undefined, resolve, current.revision, { outcome: "refused" }, "widgets.action.refusedGeneric");
+                              return;
+                            }
+                            runAction(conversationId, current, invoke, payload, (result, cause) => {
+                              const latest = result?.timeline ?? nextTimeline;
+                              const settledInstance = latest.instances.find((entry) => entry.instanceId === instance.instanceId);
+                              if (settledInstance === undefined) return;
+                              const operation = result?.approvalRequired !== undefined ? BOARD_APPROVAL_OPERATION : BOARD_RESOLVE_OPERATION;
+                              const viewAction = settledInstance.actions?.find((candidate) => candidate.viewOperation === operation);
+                              if (viewAction === undefined || !viewAction.available) return;
+                              const input = result?.approvalRequired !== undefined
+                                ? { approvalId: result.approvalRequired.approvalId }
+                                : { outcome: result === undefined
+                                  ? cause instanceof GatewayError && cause.details.outcome === "uncertain" ? "uncertain" : "refused"
+                                  : result.outcome === "done" ? "done" : "uncertain",
+                                  ...(settledInstance.state?.pendingMove && typeof settledInstance.state.pendingMove === "object" && typeof (settledInstance.state.pendingMove as { approvalId?: unknown }).approvalId === "string"
+                                    ? { approvalId: (settledInstance.state.pendingMove as { approvalId: string }).approvalId }
+                                    : {}) };
+                              sendView(conversationId, settledInstance.instanceId, undefined, viewAction, settledInstance.revision, input, "widgets.action.refusedGeneric");
+                            });
+                          });
                         }
                         return;
                       }
