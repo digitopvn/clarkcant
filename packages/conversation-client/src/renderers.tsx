@@ -39,6 +39,7 @@ import {
   hunkHeader,
   numberedHunkLines,
   readArtifactViewer,
+  type ArtifactRef,
   emptyValueOf,
   eventDayCount,
   eventsOnDay,
@@ -82,8 +83,10 @@ import {
 } from "@clarkcant/contracts";
 
 import type { ResolvedDataset } from "./api.ts";
+import { artifactReason } from "./artifact-messages.ts";
 import { formatFileSize } from "./attachments.ts";
 import { calendarWeek, eventSegment, moveDay, moveInList, nowIndex } from "./calendar-layout.ts";
+import type { SaveOutcome } from "./download.ts";
 import {
   CHART_HEIGHT,
   CHART_PAD,
@@ -198,6 +201,19 @@ export interface RendererProps {
    * nobody wrote.
    */
   sample?: boolean | undefined;
+  /**
+   * Open and Save As for a file card that points at an artifact the node holds.
+   *
+   * Injected by a host that can reach the node as the person; absent in a preview or a detached window, where a card
+   * with an artifact says it cannot open the file here rather than drawing buttons that fail.
+   */
+  artifactFiles?: ArtifactFileHost | undefined;
+}
+
+/** What a host lends a file card for an artifact: the bytes to preview, and a save the person drives. */
+export interface ArtifactFileHost {
+  open(ref: ArtifactRef): Promise<Blob>;
+  saveAs(ref: ArtifactRef, suggestedName: string): Promise<SaveOutcome>;
 }
 
 export type CatalogRenderer = (props: RendererProps) => ReactElement | null;
@@ -3379,8 +3395,25 @@ function fileMark(name: string): string {
   return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1, dot + 5).toUpperCase() : "•";
 }
 
-/** A file named and described. It has no link, no open and no download: it says so rather than drawing a dead button. */
-function FileViewerView({ props }: RendererProps): ReactElement {
+/** How much of a text file the card shows. The rest is one Save As away, and the card says so. */
+const FILE_PREVIEW_TEXT_BYTES = 64 * 1024;
+
+type FilePreview =
+  | { state: "closed" }
+  | { state: "opening" }
+  | { state: "text"; text: string; cut: boolean }
+  | { state: "image"; url: string }
+  | { state: "none" }
+  | { state: "failed"; reason: string };
+
+/**
+ * A file named and described.
+ *
+ * Without an artifact it has no link, no open and no download, and says so rather than drawing a dead button. With one,
+ * the host lends it Open — a preview drawn by the page from bytes the node sends as the person, never a link the card
+ * follows — and Save As, which the person drives.
+ */
+function FileViewerView({ props, artifactFiles }: RendererProps): ReactElement {
   const t = useT();
   const content = useMemo(() => readArtifactViewer("file", props), [props]);
   const title = nonEmptyText(content?.card.title) ?? t("widgets.file.title");
@@ -3416,10 +3449,127 @@ function FileViewerView({ props }: RendererProps): ReactElement {
           )}
         </div>
       </div>
-      <p className="cc-freshness" data-file-named-only="true" style={{ margin: 0 }}>
-        {t("widgets.file.namedOnly")}
-      </p>
+      {card.artifactRef === undefined ? (
+        <p className="cc-freshness" data-file-named-only="true" style={{ margin: 0 }}>
+          {t("widgets.file.namedOnly")}
+        </p>
+      ) : artifactFiles === undefined ? (
+        <p className="cc-freshness" data-file-no-host="true" style={{ margin: 0 }}>
+          {t("widgets.file.noHost")}
+        </p>
+      ) : (
+        <FileArtifactControls artifactRef={card.artifactRef} name={card.name} host={artifactFiles} />
+      )}
     </Frame>
+  );
+}
+
+/** Open and Save As for one artifact, and what either one did. */
+function FileArtifactControls({ artifactRef, name, host }: { artifactRef: ArtifactRef; name: string; host: ArtifactFileHost }): ReactElement {
+  const t = useT();
+  const previewId = useId();
+  const [preview, setPreview] = useState<FilePreview>({ state: "closed" });
+  const [saving, setSaving] = useState(false);
+  const [saveNote, setSaveNote] = useState<{ tone: "ok" | "failed"; text: string } | undefined>(undefined);
+  const imageUrl = preview.state === "image" ? preview.url : undefined;
+  useEffect(() => (imageUrl === undefined ? undefined : () => URL.revokeObjectURL(imageUrl)), [imageUrl]);
+
+  // Worded by the refusal's code in the person's language, never an error's own text: that may name a path on disk.
+  const reasonOf = (cause: unknown): string => artifactReason(cause, t);
+
+  const open = async (): Promise<void> => {
+    setPreview({ state: "opening" });
+    try {
+      const blob = await host.open(artifactRef);
+      // The type is the node's, from the artifact's record, not the card's words or the blob's own guess.
+      const type = artifactRef.mimeType;
+      if (type.startsWith("image/")) {
+        setPreview({ state: "image", url: URL.createObjectURL(blob) });
+      } else if (type.startsWith("text/") || type === "application/json") {
+        const text = await blob.slice(0, FILE_PREVIEW_TEXT_BYTES).text();
+        setPreview({ state: "text", text, cut: blob.size > FILE_PREVIEW_TEXT_BYTES });
+      } else {
+        setPreview({ state: "none" });
+      }
+    } catch (cause) {
+      setPreview({ state: "failed", reason: reasonOf(cause) });
+    }
+  };
+
+  const save = async (): Promise<void> => {
+    setSaving(true);
+    setSaveNote(undefined);
+    try {
+      const outcome = await host.saveAs(artifactRef, artifactRef.name);
+      // A browser download has only started, so it is said as that rather than as saved.
+      if (outcome.outcome !== "cancelled") {
+        const said = outcome.outcome === "downloaded" ? "widgets.file.downloaded" : "widgets.file.saved";
+        setSaveNote({ tone: "ok", text: t(said).replace("{name}", outcome.name) });
+      }
+    } catch (cause) {
+      setSaveNote({ tone: "failed", text: t("widgets.file.saveFailed").replace("{reason}", reasonOf(cause)) });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const expanded = preview.state !== "closed";
+  return (
+    <div className="cc-viewer-file-artifact" data-file-artifact={artifactRef.artifactId}>
+      <div className="cc-viewer-file-actions">
+        <button
+          type="button"
+          className="cc-viewer-file-button"
+          data-file-open="true"
+          aria-expanded={expanded}
+          aria-controls={previewId}
+          disabled={preview.state === "opening"}
+          onClick={() => (expanded ? setPreview({ state: "closed" }) : void open())}
+        >
+          {preview.state === "opening" ? t("widgets.file.opening") : expanded ? t("widgets.file.closePreview") : t("widgets.file.open")}
+        </button>
+        <button type="button" className="cc-viewer-file-button" data-file-save="true" disabled={saving} onClick={() => void save()}>
+          {saving ? t("widgets.file.saving") : t("widgets.file.saveAs")}
+        </button>
+      </div>
+      {saveNote !== undefined && (
+        <p
+          className="cc-freshness"
+          data-file-save-state={saveNote.tone}
+          role={saveNote.tone === "failed" ? "alert" : "status"}
+          style={{ margin: 0 }}
+        >
+          {saveNote.text}
+        </p>
+      )}
+      <div id={previewId} data-file-preview={preview.state} hidden={!expanded || preview.state === "opening"}>
+        {preview.state === "text" && (
+          <>
+            <pre className="cc-viewer-file-preview" tabIndex={0} aria-label={t("widgets.file.previewLabel").replace("{name}", name)}>
+              {preview.text}
+            </pre>
+            {preview.cut && (
+              <p className="cc-freshness" style={{ margin: 0 }}>
+                {t("widgets.file.previewCut")}
+              </p>
+            )}
+          </>
+        )}
+        {preview.state === "image" && (
+          <img className="cc-viewer-file-image" src={preview.url} alt={t("widgets.file.previewLabel").replace("{name}", name)} />
+        )}
+        {preview.state === "none" && (
+          <p className="cc-freshness" style={{ margin: 0 }}>
+            {t("widgets.file.noPreview")}
+          </p>
+        )}
+        {preview.state === "failed" && (
+          <p className="cc-freshness" data-file-open-failed="true" role="alert" style={{ margin: 0 }}>
+            {t("widgets.file.openFailed").replace("{reason}", preview.reason)}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -27,6 +27,38 @@ export interface DesktopBridge {
    * back as the request's text rather than as a second way to start a session.
    */
   pickDirectory(input?: { title?: string }): Promise<{ ok: boolean; path?: string; canceled?: boolean; refused?: string }>;
+  /**
+   * The OS file dialog, for a widget's pick. Answers with the chosen file's bare name, type and bytes and an opaque
+   * handle the main process maps to its path — the path itself never reaches the renderer. `mimeType` is empty when
+   * the extension names no type the node holds; the node then reads the bytes. A refusal is a fixed code (`refused`,
+   * one of `FILE_REFUSALS` in `file-bridge.mjs`) and at most the file system's own code (`errorCode`), never a message.
+   */
+  pickFile(input: { title?: string; accept?: readonly string[]; filterName?: string }): Promise<{
+    ok: boolean;
+    canceled?: boolean;
+    refused?: string;
+    errorCode?: string;
+    file?: { name: string; mimeType: string; contentBase64: string; handle: string };
+  }>;
+  /**
+   * Save As for exported bytes, or a write back over a picked file named by its handle. Desktop only. `mimeType` decides
+   * the extension offered and whether a picked file may be replaced; `labels` are the dialogs' words in the person's
+   * language.
+   */
+  saveFile(input: {
+    suggestedName: string;
+    mimeType: string;
+    contentBase64: string;
+    replaceHandle?: string;
+    labels?: { filterName: string; replaceTitle: string; replaceMessage: string; replace: string; cancel: string };
+  }): Promise<{
+    ok: boolean;
+    canceled?: boolean;
+    saved?: boolean;
+    name?: string;
+    refused?: string;
+    errorCode?: string;
+  }>;
   /** Secret entry happens in a host-owned window, never in a widget frame. */
   requestCredential(input: { requestId: string; purpose: string }): Promise<{ ok: boolean; stored?: boolean }>;
   setKeepRunningOnWindowClose(keep: boolean): Promise<{ ok: boolean; keepRunningOnWindowClose?: boolean }>;
@@ -43,6 +75,8 @@ export const DESKTOP_BRIDGE_METHODS = [
   "openExternal",
   "notify",
   "pickDirectory",
+  "pickFile",
+  "saveFile",
   "requestCredential",
   "setKeepRunningOnWindowClose",
   "status",

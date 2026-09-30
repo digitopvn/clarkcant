@@ -338,6 +338,35 @@ những gì thao tác tạo ra (`snoozedUntil`, `workId` kèm `state` và `posit
 lần thứ hai nhận `404`. Mọi thao tác, bị từ chối hay không, đều được ghi thành một sự kiện `inbox.notice-action` kèm
 bề mặt đã yêu cầu nó và kết quả. Các route theo từng thao tác ở trên vẫn trả lời như trước.
 
+Các tệp mà widget giữ theo tham chiếu (`artifacts@1`, [widget-development.vi.md §10.1](widget-development.vi.md#101-tệp-theo-tham-chiếu-artifacts1))
+nằm trong `/openapi.json`. Mọi câu trả lời mang một `ArtifactRef` (`{ v, artifactId, kind, mimeType, sizeBytes, name,
+digest? }`), các byte, hoặc một lời từ chối có mã nêu rõ điều gì sai (`packages/contracts/src/artifacts.ts`). Không
+câu trả lời nào mang đường dẫn.
+
+| Method | Path | Body / câu trả lời |
+|---|---|---|
+| GET | `/artifacts/{artifactId}` | – artifact, kèm `artifactRef` của nó nếu là tệp một widget đang giữ; của principal khác thì `404 ARTIFACT_NOT_FOUND` |
+| GET | `/artifacts/{artifactId}/content` | – các byte của một artifact đã cố định, cho nút Mở của host; `409 ARTIFACT_NOT_FINALIZED` khi nó còn đang được ghi |
+| POST | `/artifacts/{artifactId}/export` | `{ suggestedName? }` — Lưu thành…: các byte dưới dạng tải xuống, theo một tên tệp chứ không bao giờ là đường dẫn. **Chỉ người dùng** |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts` | `{ mimeType, name? }` — một artifact `working` mà instance này được ghi; `201 { artifactRef }` |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/pick` | `{ name, mimeType, contentBase64, accept? }` — một tệp người dùng chọn qua giao diện của host, cấp cho instance này. **Chỉ người dùng** |
+| GET | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – ref, nếu grant của instance này vẫn còn hiệu lực |
+| GET | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/content?offset=&length=` | – `{ artifactRef, offset, eof, contentBase64 }`, tối đa 262.144 byte |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/chunks` | `{ offset, contentBase64 }` — tối đa 262.144 byte, bắt đầu đúng chỗ artifact đang kết thúc |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/finalize` | – cố định các byte sau khi đối chiếu chúng với kiểu đã khai báo |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | – `201 { artifactRef, attachmentRef }` qua luồng đính kèm; người dùng gửi nó cùng tin nhắn kế tiếp |
+| DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – bỏ một tệp instance này đã tạo, cùng byte của nó trừ khi một tệp đính kèm hoặc bản ghi khác vẫn trỏ tới; tệp của instance khác là `403 ARTIFACT_NOT_CREATOR` |
+
+Mọi route của instance đều được kiểm tra lại theo grant của instance đó. Ref là con trỏ, không phải quyền, nên một
+grant đã hết hạn (`403 ARTIFACT_GRANT_EXPIRED`) hoặc bị thu hồi (`403 ARTIFACT_GRANT_REVOKED`) sẽ chặn ngay lời gọi
+kế tiếp. Kích thước, kiểu và hạn mức theo quy tắc đính kèm (`413 ARTIFACT_TOO_LARGE`, `415 ARTIFACT_TYPE_MISMATCH`,
+`409 ARTIFACT_QUOTA_EXCEEDED`), và một instance giữ tối đa 128 MiB trong hạn mức đó
+(`409 ARTIFACT_INSTANCE_QUOTA_EXCEEDED`), tính các tệp nó đã tạo và các tệp đính kèm nó làm từ chúng nhưng không tính
+các tệp người dùng đã chọn cho nó. Đính kèm một tệp đã được đính kèm sẽ trả về đúng tệp đính kèm đó.
+Tên tệp trong `Content-Disposition` được gửi theo RFC 6266: một `filename` ASCII và tên thật dưới dạng UTF-8 mã hoá
+phần trăm trong `filename*`. Ký tự điều khiển bidi bị bỏ khỏi cả hai, dấu phần trăm thành `_` trong tên ASCII, và
+một tên dài hơn 120 ký tự được rút ngắn ở phần trước phần mở rộng, phần mở rộng luôn được giữ.
+
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
 
@@ -370,7 +399,12 @@ grant, và ghi nhận một thao tác không ai thấy kết quả đã có hi�
 một client AI nói được "lần push đó đã thành công" thì có thể tự gỡ trạng thái chưa rõ của task của chính nó rồi tự
 báo là đã xong). Xuất một bảng ra file CSV
 (`POST /conversations/{id}/widgets/{instanceId}/export`) cũng bị các relay đó từ chối: file được viết cho người đang
-xem bảng, không trao cho một client máy. Dừng, trả lời câu hỏi và đọc vẫn dùng được, và `act_on_notice` cũng vậy:
+xem bảng, không trao cho một client máy. Lưu artifact của một widget ra tệp
+(`POST /artifacts/{artifactId}/export`) và giao cho widget một tệp người dùng đã chọn
+(`POST /conversations/{id}/widgets/{instanceId}/artifacts/pick`) cũng bị từ chối như vậy. Điều bị giữ lại là hành động,
+không phải dữ liệu: lưu là người dùng chọn giữ một tệp, và một client máy vẫn đọc được byte của artifact đã cố định qua
+`GET /artifacts/{artifactId}/content`. Việc chọn tệp cấp cho widget những byte mà chỉ lựa chọn của người dùng mới được
+trao. Dừng, trả lời câu hỏi và đọc vẫn dùng được, và `act_on_notice` cũng vậy:
 nó không bao giờ đưa ra câu trả lời của người dùng về một thao tác chưa rõ kết quả hay việc cài bản cập nhật của một
 thông báo (`403 PERSON_ONLY` cho cả hai, route cập nhật bị từ chối như trên). `read_inbox` đánh dấu tiêu đề và nội
 dung của mọi thông báo là dữ liệu do việc khác báo lại, không bao giờ là chỉ dẫn, và giữ mỗi thông báo trên một dòng.

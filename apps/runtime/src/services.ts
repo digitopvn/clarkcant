@@ -260,6 +260,8 @@ export interface NodeServices {
    * `wireRuntime` — those tests exercise the sweep function itself rather than the timer around it.
    */
   expirySweep?: { stop(): void };
+  /** Removes working artifacts whose time ran out. Assigned after boot like `expirySweep`, and stopped with it. */
+  artifactSweep?: { stop(): void };
   /**
    * What makes a person's standing requests happen on their own: timers, signals matched into runs, runs started.
    *

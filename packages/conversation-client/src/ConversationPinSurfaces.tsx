@@ -1,5 +1,7 @@
 import type { ReactElement, RefObject } from "react";
 
+import type { AttachmentRef } from "@clarkcant/contracts";
+
 import type { GatewayClient, Timeline } from "./api.ts";
 import { PinnedLiveSurface } from "./DesktopSurfaces.tsx";
 import { useT } from "./i18n/locale-context.tsx";
@@ -14,6 +16,8 @@ export interface ConversationPinSurfacesProps {
   setError: (message: string | undefined) => void;
   liveTrigger: RefObject<HTMLElement | null>;
   scroller: RefObject<HTMLDivElement | null>;
+  /** A widget attached a finalized file: it goes into the composer as a chip the person may send or remove. */
+  onAttachArtifact?: (attachment: AttachmentRef) => void;
 }
 
 /**
@@ -48,6 +52,7 @@ export function ConversationPinSurfaces({
   setError,
   liveTrigger,
   scroller,
+  onAttachArtifact,
 }: ConversationPinSurfacesProps): ReactElement {
   const t = useT();
   const shelf =
@@ -98,6 +103,7 @@ export function ConversationPinSurfaces({
               refreshSignal={liveRefresh}
               title={typeof instanceById.get(pin.instanceId)?.props.title === "string" ? String(instanceById.get(pin.instanceId)?.props.title) : undefined}
               onTimeline={applyTimeline}
+              {...(onAttachArtifact === undefined ? {} : { onAttachArtifact })}
               onClose={() => {
                 // Collapsing is an unpin: the expanded view exists because the pin says so, and
                 // leaving the pin behind would make the next render open it again.

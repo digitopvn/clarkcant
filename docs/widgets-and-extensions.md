@@ -179,7 +179,7 @@ This records which parts of §4 are already in the repo and which are still desi
 **Not present (deferred, must not be claimed as done):**
 
 - `isolated-app` and `mcp-app`: the sandbox policy/registry has code and tests, but **the renderer runtime for isolated apps is not proven**. There is no app runtime in the repo.
-- The Google Calendar connector and custom iframe mini-apps are outside M1. An agent button cannot yet name an `artifact:` context reference (#313), and approving a workflow step runs that step alone rather than resuming the workflow.
+- The Google Calendar connector and custom iframe mini-apps are outside M1. Approving a workflow step runs that step alone rather than resuming the workflow.
 - The family coverage table in §4 is still the release-gate target: the repo currently has tests for the families the composed surface needs (`metrics`, `filter`, `trend`, `calendar`, `media`, `cta`, `tables`, `layout`), not for the whole list.
 
 - **File content reaches the agent**: text files go into the turn's prompt (`attachmentBrief` inserts the content, `read_attachment` re-reads it by id), **PDFs have their text extracted** with `apps/runtime/src/pdf-text.ts` (no added dependency), and two journeys prove the answer **uses** that content — one for a text file, one for a PDF ([attachments](../apps/web/e2e/attachments.spec.ts)). **An image is delivered as an image**: `read_attachment` returns `{ type: "image", data, mimeType }` and `toSdkTool` passes that block unchanged to the SDK, so the model receives the image itself rather than a sentence describing it. Two tests hold this: one at the adapter seam (`packages/pi-adapter/test/pi-adapter.spec.ts`, "hands the image to the SDK as an image block, not as a sentence about one") and one at the tool (`apps/runtime/test/read-attachment-tool.spec.ts`, "hands a picture over as a picture rather than describing it").
@@ -291,6 +291,9 @@ capabilities.request(requestedCapability)  # opens host consent, not grants itse
 host.focus / host.resize(request) / host.requestPin
 host.openExternal(approvedUrl)
 semantic.publish(summary, selectedIds, values?)  # a proposal; actions come from the instance's bindings
+artifacts.pick / read / create / write / finalize  # files by reference (artifacts@1), re-checked on every use
+artifacts.export / attachToConversation  # the host's Save As and the composer; the person decides
+artifacts.discard  # let go of a file this instance made
 lifecycle.onMount / onSuspend / onResume / onDispose
 ```
 
@@ -317,6 +320,8 @@ The CSP defines connect/resource/frame domains according to the consented packag
 Host-owned frame chrome shows app/source/account, permission controls and close/stop outside the iframe's control. Embedded UI can draw a fake approval, but it cannot mint a record; the user must be able to tell host consent apart by consistent chrome/placement.
 
 Unsafe HTML/SVG/Markdown is sanitized; Mermaid gets a strict wrapper and a worker timeout; no script callbacks from agent props. Datasets/attachments go through opaque refs, with no arbitrary paths, executable URLs, SQL or CSS property injection.
+
+Files follow the same rule (`artifacts@1`, [widget-development.md §10.1](widget-development.md#101-files-by-reference-artifacts1)). An isolated widget holds an `ArtifactRef`, never a path. The ref is a pointer, not a permission: the node re-checks every read, write, export and attach against the owner, the instance's expiring and revocable grant, and the artifact's state. Picking a file and saving a copy are host chrome outside the frame. On the desktop they use native dialogs; on the web they use a file input and a download. Replacing the original file is desktop-only. The bytes go through the attachment pipeline's type sniffing, allowlist, size ceiling and quota, and chunks are bounded at 256 KiB. One instance holds at most 128 MiB of the person's 1 GiB, a frame's file requests are rate-limited, and a widget can discard only a file it made. An agent button's `artifact:` context reference is read under the same decision as the pressed widget and reaches the model as the file's name, type and size plus, for text, a short excerpt marked as data. A widget that could draw its own "choose a file" button inside the frame still gets nothing until the person answers the host's prompt.
 
 ## 9. Frontend credentials: an exception that must be designed correctly
 

@@ -21,6 +21,7 @@ export * from "./presentation-bundles.ts";
 export * from "./calendar.ts";
 export * from "./local-images.ts";
 export * from "./attachments.ts";
+export * from "./artifact-refs.ts";
 export * from "./memory.ts";
 export * from "./work-runs.ts";
 export * from "./skipped-versions.ts";

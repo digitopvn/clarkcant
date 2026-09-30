@@ -22,6 +22,7 @@ import { handleRecordReadRoutes } from "./routes/record-read.ts";
 import { handleMiniAppDataRoutes } from "./routes/mini-app-data.ts";
 import { handleMemoryRoutes, handleSearchRoutes } from "./routes/search-memory.ts";
 import { handleWidgetServingRoutes } from "./routes/widget-serving.ts";
+import { handleArtifactRoutes } from "./routes/artifacts.ts";
 import { handleAttachmentRoutes } from "./routes/attachments.ts";
 import { handlePreviewRoutes } from "./routes/previews.ts";
 import { handlePreferenceRoutes } from "./routes/preferences.ts";
@@ -263,6 +264,11 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   if (segments[0] === "attachments") {
     return handleAttachmentRoutes({ services, request, segments, at });
   }
+
+  // Files a widget holds by reference, and the person's Open and Save As on them. Before the conversation family,
+  // which would otherwise answer `/conversations/:id/widgets/:instance/artifacts…` with its own 404.
+  const artifactResponse = handleArtifactRoutes({ services, request, segments });
+  if (artifactResponse !== undefined) return artifactResponse;
 
   if (segments[0] === "previews") {
     return handlePreviewRoutes({ services, request, segments });

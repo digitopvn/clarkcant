@@ -1,5 +1,18 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 
 import { isWithinRoot } from "./path-roots.ts";
@@ -125,6 +138,170 @@ export function removeBlob(input: { dataDir: string; blobPath: string }): boolea
     return true;
   } catch {
     return false;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Chunked writes
+ * ------------------------------------------------------------------ */
+
+/*
+ * Bytes a widget is still writing.
+ *
+ * A working artifact arrives a chunk at a time, and its content address is not known until the last chunk has: so its
+ * bytes are staged under `blobs/staging/`, appended in order, and moved into the content-addressed store when they are
+ * sealed. This stays in the one writer on purpose — the staging file gets the same owner-only mode and the same
+ * containment check as every other blob, and sealing names it exactly as `writeBlob` would have.
+ *
+ * A staging ref is a file name the node chose (`<artifactId>.part`), checked by pattern before it is joined to a
+ * directory, and never a path a caller supplies.
+ */
+
+const STAGING_REF_PATTERN = /^[A-Za-z0-9_-]{1,120}\.part$/;
+
+export function stagingDir(dataDir: string): string {
+  return join(blobsDir(dataDir), "staging");
+}
+
+/** The staging file for a ref, or nothing when the ref is not one this module would have made. */
+function stagingPath(dataDir: string, stagingRef: string): string | undefined {
+  if (!STAGING_REF_PATTERN.test(stagingRef)) return undefined;
+  const directory = resolve(stagingDir(dataDir));
+  const target = resolve(directory, stagingRef);
+  return isWithinRoot(directory, target) ? target : undefined;
+}
+
+export type StagedBlobResult =
+  | { ok: true; sizeBytes: number }
+  | { ok: false; code: "STAGING_REF_INVALID" | "STAGING_MISSING" | "STAGING_OFFSET_MISMATCH"; message: string; sizeBytes?: number };
+
+/** Start an empty staged file. Refuses to reuse one that exists, so two artifacts cannot share staged bytes. */
+export function createStagedBlob(input: { dataDir: string; stagingRef: string }): StagedBlobResult {
+  const target = stagingPath(input.dataDir, input.stagingRef);
+  if (target === undefined) return { ok: false, code: "STAGING_REF_INVALID", message: "that staging name is not one the node makes" };
+  mkdirSync(stagingDir(input.dataDir), { recursive: true });
+  writeFileSync(target, new Uint8Array(), { mode: 0o600, flag: "wx" });
+  return { ok: true, sizeBytes: 0 };
+}
+
+/**
+ * Append one chunk at the offset the writer expects.
+ *
+ * The offset is the writer's view of how long the file is, and a mismatch is refused rather than appended: a chunk
+ * sent twice, or two writers racing, would otherwise be stored twice or out of order and nobody would find out until
+ * the file was read.
+ */
+export function appendStagedBlob(input: {
+  dataDir: string;
+  stagingRef: string;
+  expectedSize: number;
+  bytes: Uint8Array;
+}): StagedBlobResult {
+  const target = stagingPath(input.dataDir, input.stagingRef);
+  if (target === undefined) return { ok: false, code: "STAGING_REF_INVALID", message: "that staging name is not one the node makes" };
+  let current: number;
+  try {
+    current = statSync(target).size;
+  } catch {
+    return { ok: false, code: "STAGING_MISSING", message: "the staged bytes for that artifact are no longer on disk" };
+  }
+  if (current !== input.expectedSize) {
+    return {
+      ok: false,
+      code: "STAGING_OFFSET_MISMATCH",
+      message: `the artifact is ${current} bytes long, so a chunk for offset ${input.expectedSize} does not follow it`,
+      sizeBytes: current,
+    };
+  }
+  appendFileSync(target, input.bytes, { mode: 0o600 });
+  return { ok: true, sizeBytes: current + input.bytes.byteLength };
+}
+
+/** Every staged byte, for sniffing before the bytes are sealed. */
+export function readStagedBlob(input: { dataDir: string; stagingRef: string }): BlobReadResult {
+  const target = stagingPath(input.dataDir, input.stagingRef);
+  if (target === undefined) {
+    return { ok: false, code: "BLOB_PATH_ESCAPES_ROOT", message: "that staging name is not one the node makes" };
+  }
+  try {
+    return { ok: true, bytes: readFileSync(target) };
+  } catch {
+    return { ok: false, code: "BLOB_MISSING", message: "the staged bytes for that artifact are no longer on disk" };
+  }
+}
+
+/**
+ * Move staged bytes into the content-addressed store.
+ *
+ * Named exactly as `writeBlob` names bytes, so a sealed artifact and an attachment of the same content are one file.
+ * When that file already exists the staged copy is dropped rather than written over it.
+ */
+export function sealStagedBlob(input: {
+  dataDir: string;
+  stagingRef: string;
+  extension: string;
+}): (BlobWriteResult & { ok: true; sizeBytes: number }) | Extract<BlobReadResult, { ok: false }> {
+  const staged = readStagedBlob(input);
+  if (!staged.ok) return staged;
+  const target = stagingPath(input.dataDir, input.stagingRef);
+  if (target === undefined) {
+    return { ok: false, code: "BLOB_PATH_ESCAPES_ROOT", message: "that staging name is not one the node makes" };
+  }
+  const digest = `sha256:${createHash("sha256").update(staged.bytes).digest("hex")}`;
+  const blobRef = `${digest.slice("sha256:".length, "sha256:".length + 32)}.${input.extension}`;
+  const blobPath = join(blobsDir(input.dataDir), blobRef);
+  if (existsSync(blobPath)) unlinkSync(target);
+  else renameSync(target, blobPath);
+  return { ok: true, blobPath, digest, blobRef, sizeBytes: staged.bytes.byteLength };
+}
+
+/** Drop staged bytes nobody will seal. A file that is already gone is not an error. */
+export function removeStagedBlob(input: { dataDir: string; stagingRef: string }): boolean {
+  const target = stagingPath(input.dataDir, input.stagingRef);
+  if (target === undefined) return false;
+  try {
+    unlinkSync(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read a bounded range of stored bytes, sealed or staged.
+ *
+ * The caller has already bounded `length` (`checkArtifactRange`); this reads at most that many bytes from `offset`
+ * and never the whole file, so a reader walking a large artifact holds one chunk at a time.
+ */
+export function readBlobRange(input: {
+  dataDir: string;
+  location: { blobPath: string } | { stagingRef: string };
+  offset: number;
+  length: number;
+}): BlobReadResult {
+  let target: string | undefined;
+  if ("stagingRef" in input.location) {
+    target = stagingPath(input.dataDir, input.location.stagingRef);
+  } else {
+    const root = resolve(blobsDir(input.dataDir));
+    const candidate = resolve(input.location.blobPath);
+    target = isWithinRoot(root, candidate) ? candidate : undefined;
+  }
+  if (target === undefined) {
+    return { ok: false, code: "BLOB_PATH_ESCAPES_ROOT", message: "the stored blob path is outside the blob directory" };
+  }
+  let descriptor: number;
+  try {
+    descriptor = openSync(target, "r");
+  } catch {
+    return { ok: false, code: "BLOB_MISSING", message: "the stored bytes for that file are no longer on disk" };
+  }
+  try {
+    const buffer = Buffer.alloc(Math.max(0, input.length));
+    const read = input.length === 0 ? 0 : readSync(descriptor, buffer, 0, input.length, input.offset);
+    return { ok: true, bytes: buffer.subarray(0, read) };
+  } finally {
+    closeSync(descriptor);
   }
 }
 

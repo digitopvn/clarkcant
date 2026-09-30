@@ -1,5 +1,5 @@
 import type { MessageKey } from "./i18n/messages.ts";
-import { useCallback, useEffect, useRef, useState, type ReactElement, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
 
 import { CALENDAR_ID, CALENDAR_VIEW_OPERATION, XY_CHART_KIND, XY_CHART_VIEW_OPERATION } from "@clarkcant/contracts";
 
@@ -13,8 +13,10 @@ import {
 } from "./api.ts";
 import { actionRefusalMessage, actionResultMessage, bindingUnavailableMessage } from "./action-messages.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
-import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
+import { type ArtifactFileHost, resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { tableExportRequestFrom } from "./table-model.ts";
+import { desktopDialogLabels } from "./artifact-messages.ts";
+import { downloadBlob, saveForPerson } from "./download.ts";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
 
 /**
@@ -98,20 +100,6 @@ function newInvocationId(): string {
   return `inv_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 }
 
-/** Hand a file to the browser's download flow, then release the object URL. */
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.rel = "noopener";
-  link.style.display = "none";
-  document.body.append(link);
-  link.click();
-  link.remove();
-  // The click starts the download synchronously; the URL is released once the browser has read it.
-  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-}
 
 export interface SurfaceRendererDeps {
   /** Passed, not read via `useT()`: this hook runs in `Conversation`'s body, before its provider mounts. */
@@ -162,6 +150,22 @@ export function useSurfaceRenderer({
    * an export writes or the values a person submits.
    */
   const localViews = useRef(new Map<string, Record<string, unknown>>());
+  /*
+   * Open and Save As for a file card that points at an artifact. Both go through the person's own routes, which check
+   * that the artifact is this principal's on every call; a card whose artifact is gone or someone else's says so.
+   */
+  const artifactFiles = useMemo<ArtifactFileHost>(
+    () => ({
+      open: (ref) => client.artifactContent(ref.artifactId),
+      saveAs: async (ref, name) => {
+        const exported = await client.exportArtifact(ref.artifactId, name);
+        // Named by the type the node sent the bytes as, not the one the card's ref claims.
+        const mimeType = exported.mimeType === "" ? ref.mimeType : exported.mimeType;
+        return saveForPerson(exported.blob, exported.filename, { mimeType, labels: desktopDialogLabels(t) });
+      },
+    }),
+    [client, t],
+  );
   const [exports, setExports] = useState<Record<string, ExportStatus>>({});
   const exportTable = useCallback(
     (conversation: string, instanceId: string, payload: Record<string, unknown>): void => {
@@ -448,6 +452,7 @@ export function useSurfaceRenderer({
                   }
                 : {})}
               {...(isTable ? { canExport: conversationId !== undefined } : {})}
+              {...(conversationId === undefined ? {} : { artifactFiles })}
               {...(needsBinding && !actionReady
                 ? {}
                 : {

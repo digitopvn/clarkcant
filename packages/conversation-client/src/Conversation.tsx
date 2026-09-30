@@ -214,6 +214,7 @@ export function Conversation({
     dragging,
     setDragging,
     addFiles,
+    addStored,
   } = useAttachmentComposer({
     client,
     conversationId,
@@ -532,6 +533,14 @@ export function Conversation({
           setError={setError}
           liveTrigger={liveTrigger}
           scroller={scroller}
+          onAttachArtifact={(attachment) =>
+            addStored({
+              attachmentId: attachment.attachmentId,
+              filename: attachment.filename,
+              mime: attachment.mime,
+              sizeBytes: attachment.sizeBytes,
+            })
+          }
         />
 
         <ConversationComposerBar

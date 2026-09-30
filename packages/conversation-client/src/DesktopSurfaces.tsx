@@ -22,6 +22,8 @@ import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
 import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent } from "./mini-app-surface.tsx";
 import { type FrameSource, WidgetFrame } from "./WidgetFrame.tsx";
+import { useWidgetArtifactHost } from "./widget-artifacts.tsx";
+import type { AttachmentRef } from "@clarkcant/contracts";
 import { useImageUrls } from "./use-image-urls.ts";
 
 export interface MenuBarPopoverProps {
@@ -143,6 +145,8 @@ export interface PinnedLiveSurfaceProps {
    * because the surface's truth is the node's answer and nothing the caller could hand it.
    */
   refreshSignal?: number | undefined;
+  /** A widget in this surface attached a finalized file: it goes into the composer for the person to send or remove. */
+  onAttachArtifact?: ((attachment: AttachmentRef) => void) | undefined;
 }
 
 /** How long a claim is held before it is refreshed. Shorter than the server's lease on purpose. */
@@ -239,8 +243,14 @@ export function PinnedLiveSurface({
   onTimeline,
   onClose,
   refreshSignal,
+  onAttachArtifact,
 }: PinnedLiveSurfaceProps): ReactElement {
   const t = useT();
+  /*
+   * Files for a widget in its own frame: requests the node answers against this instance's grant, and a pick or a save
+   * the person answers in host chrome drawn beside the frame (`widget-artifacts.tsx`).
+   */
+  const artifactHost = useWidgetArtifactHost({ client, conversationId, instanceId, widgetTitle: title, onAttach: onAttachArtifact });
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const [live, setLive] = useState<LiveWidgetResponse | IsolatedFrameLiveResponse | undefined>(undefined);
@@ -732,8 +742,10 @@ export function PinnedLiveSurface({
             requestPin: () => undefined,
             openExternal: () => undefined,
           }}
+          artifacts={artifactHost.broker}
         />
         )}
+        {frame !== null && artifactHost.chrome}
       </div>
     );
   }

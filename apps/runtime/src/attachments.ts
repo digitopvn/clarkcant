@@ -8,6 +8,7 @@ import {
 import {
   type AttachmentRecord,
   type Database,
+  blobStillReferenced,
   deleteAttachmentsForConversation,
   getAttachment,
   messagesSince,
@@ -77,8 +78,10 @@ export function releaseConversationAttachments(deps: {
   conversationId: string;
 }): { removed: number } {
   const deleted = deleteAttachmentsForConversation(deps.db, deps.conversationId);
-  for (const blobPath of deleted.blobPaths) {
-    removeBlob({ dataDir: deps.dataDir, blobPath });
+  // The store is content-addressed, so the same bytes may still be a widget's artifact, another conversation's
+  // attachment or an imported image: only a file no row points at any more is removed.
+  for (const blobPath of new Set(deleted.blobPaths)) {
+    if (!blobStillReferenced(deps.db, blobPath)) removeBlob({ dataDir: deps.dataDir, blobPath });
   }
   return { removed: deleted.removed };
 }

@@ -413,3 +413,169 @@ describe("the widget lifecycle", () => {
     await expect(pending).rejects.toThrow(/dispose/);
   });
 });
+
+describe("the artifacts@1 extension", () => {
+  const ref = (sizeBytes: number, kind: "working" | "finalized" = "working") => ({
+    v: 1 as const,
+    artifactId: "art_one",
+    kind,
+    name: "ghi-chu.txt",
+    mimeType: "text/plain",
+    sizeBytes,
+  });
+  type Sent = { kind?: string; requestId?: string; request?: { op: string; offset?: number; chunkBase64?: string } };
+
+  function ready(extensions?: string[]) {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    bus.deliver(initMessage(extensions === undefined ? {} : { extensions }));
+    const requests = () => (bus.sent as Sent[]).filter((message) => message.kind === "artifact.request");
+    const answer = (requestId: string, result: Record<string, unknown>) =>
+      bus.deliver({ kind: "artifact-result", nonce: NONCE, requestId, ...result });
+    return { bus, runtime, requests, answer };
+  }
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("refuses locally when the host did not offer it, and sends nothing", async () => {
+    const { runtime, requests } = ready();
+
+    expect(runtime.api().artifacts.available()).toBe(false);
+    await expect(runtime.api().artifacts.pick({ accept: ["text/plain"] })).rejects.toThrow(/artifacts@1/);
+    expect(requests()).toHaveLength(0);
+  });
+
+  it("resolves a pick the person closed as nothing chosen, not as an error", async () => {
+    const { runtime, requests, answer } = ready(["artifacts@1"]);
+    expect(runtime.api().artifacts.available()).toBe(true);
+
+    const picked = runtime.api().artifacts.pick({ accept: ["text/plain"] });
+    const [request] = requests();
+    expect(request?.request).toEqual({ op: "pick", accept: ["text/plain"] });
+    answer(request?.requestId ?? "", { status: "cancelled" });
+
+    await expect(picked).resolves.toBeUndefined();
+  });
+
+  it("reads a range as bytes and reports whether the file ended", async () => {
+    const { runtime, requests, answer } = ready(["artifacts@1"]);
+
+    const reading = runtime.api().artifacts.read(ref(5), { offset: 0, length: 5 });
+    answer(requests()[0]?.requestId ?? "", { status: "ok", chunkBase64: btoa("hello"), eof: true });
+    const { bytes, eof } = await reading;
+
+    expect(new TextDecoder().decode(bytes)).toBe("hello");
+    expect(eof).toBe(true);
+  });
+
+  it("carries a host refusal to the widget with its code", async () => {
+    const { runtime, requests, answer } = ready(["artifacts@1"]);
+
+    const reading = runtime.api().artifacts.read(ref(5), { offset: 0, length: 5 });
+    answer(requests()[0]?.requestId ?? "", { status: "refused", code: "ARTIFACT_GRANT_EXPIRED", message: "hết hạn" });
+
+    await expect(reading).rejects.toThrow(/ARTIFACT_GRANT_EXPIRED/);
+  });
+
+  it("sends writes in order, each at the offset the previous one left, and finalizes after the last", async () => {
+    const { runtime, requests, answer } = ready(["artifacts@1"]);
+    const api = runtime.api().artifacts;
+    const encoder = new TextEncoder();
+
+    const first = api.write(ref(0), encoder.encode("abc"));
+    const second = api.write(ref(0), encoder.encode("de"));
+    const finalized = api.finalize(ref(0));
+    await flush();
+
+    // Only the first is out: the second waits for the size the first leaves.
+    expect(requests()).toHaveLength(1);
+    expect(requests()[0]?.request).toMatchObject({ op: "write", offset: 0 });
+    answer(requests()[0]?.requestId ?? "", { status: "ok", ref: ref(3) });
+    await first;
+    await flush();
+
+    expect(requests()).toHaveLength(2);
+    expect(requests()[1]?.request).toMatchObject({ op: "write", offset: 3 });
+    answer(requests()[1]?.requestId ?? "", { status: "ok", ref: ref(5) });
+    await second;
+    await flush();
+
+    expect(requests()[2]?.request).toEqual({ op: "finalize", artifactId: "art_one" });
+    answer(requests()[2]?.requestId ?? "", { status: "ok", ref: ref(5, "finalized") });
+    await expect(finalized).resolves.toMatchObject({ kind: "finalized", sizeBytes: 5 });
+  });
+
+  it("refuses a chunk larger than one bridge message before sending it", async () => {
+    const { runtime, requests } = ready(["artifacts@1"]);
+
+    await expect(runtime.api().artifacts.write(ref(0), new Uint8Array(256 * 1024 + 1))).rejects.toThrow(/262144/);
+    expect(requests()).toHaveLength(0);
+  });
+
+  it("offers no filesystem on the author surface", () => {
+    const { runtime } = ready(["artifacts@1"]);
+    const surface = runtime.api() as unknown as Record<string, unknown>;
+
+    expect(surface["fs"]).toBeUndefined();
+    expect(Object.keys(runtime.api().artifacts).sort()).toEqual(
+      ["attachToConversation", "available", "create", "discard", "export", "finalize", "pick", "read", "write"].sort(),
+    );
+  });
+
+  it("queues requests past the host's in-flight limit and sends each as an earlier one is answered", async () => {
+    const { runtime, requests, answer } = ready(["artifacts@1"]);
+    const api = runtime.api().artifacts;
+
+    const reads = Array.from({ length: 6 }, (_, index) => api.read(ref(60), { offset: index * 10, length: 10 }));
+    await flush();
+
+    // Four out, two waiting: the host would answer a fifth with ARTIFACT_BUSY.
+    expect(requests()).toHaveLength(4);
+    answer(requests()[0]?.requestId ?? "", { status: "ok", chunkBase64: btoa("a"), eof: false });
+    await flush();
+    expect(requests()).toHaveLength(5);
+    expect(requests()[4]?.request).toMatchObject({ op: "read", offset: 40 });
+
+    for (const request of requests().slice(1)) answer(request.requestId ?? "", { status: "ok", chunkBase64: btoa("b"), eof: false });
+    await flush();
+    answer(requests()[5]?.requestId ?? "", { status: "ok", chunkBase64: btoa("c"), eof: true });
+
+    const results = await Promise.all(reads);
+    expect(results).toHaveLength(6);
+    expect(results.at(-1)?.eof).toBe(true);
+  });
+
+  it("rejects the requests still queued when the host disposes the frame", async () => {
+    const { bus, runtime, requests } = ready(["artifacts@1"]);
+    const api = runtime.api().artifacts;
+
+    const reads = Array.from({ length: 5 }, () => api.read(ref(5), { offset: 0, length: 5 }).catch((error: Error) => error.message));
+    await flush();
+    bus.deliver({ kind: "dispose", nonce: NONCE });
+
+    const outcomes = await Promise.all(reads);
+    expect(requests()).toHaveLength(4);
+    expect(outcomes.every((outcome) => typeof outcome === "string" && outcome.includes("disposed"))).toBe(true);
+  });
+
+  it("discards a file after the writes still on their way, and carries a refusal with its code", async () => {
+    const { runtime, requests, answer } = ready(["artifacts@1"]);
+    const api = runtime.api().artifacts;
+
+    const writing = api.write(ref(0), new TextEncoder().encode("abc"));
+    const discarded = api.discard(ref(0));
+    await flush();
+    expect(requests().map((request) => request.request?.op)).toEqual(["write"]);
+    answer(requests()[0]?.requestId ?? "", { status: "ok", ref: ref(3) });
+    await writing;
+    await flush();
+
+    expect(requests()[1]?.request).toEqual({ op: "discard", artifactId: "art_one" });
+    answer(requests()[1]?.requestId ?? "", { status: "ok" });
+    await expect(discarded).resolves.toBeUndefined();
+
+    const refused = api.discard(ref(3, "finalized"));
+    await flush();
+    answer(requests()[2]?.requestId ?? "", { status: "refused", code: "ARTIFACT_NOT_CREATOR", message: "not yours" });
+    await expect(refused).rejects.toThrow(/ARTIFACT_NOT_CREATOR/);
+  });
+});

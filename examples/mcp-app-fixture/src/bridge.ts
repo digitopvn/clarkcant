@@ -103,6 +103,7 @@ export function authorApiExposes(method: string): boolean {
     "capabilities",
     "host",
     "semantic",
+    "artifacts",
     "lifecycle",
   ];
   return surface.some((group) => group === method);

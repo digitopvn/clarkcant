@@ -5,14 +5,15 @@ import {
 } from "@clarkcant/contracts";
 import {
   type Database,
-  attachmentUsageForPrincipal,
   getAttachment,
   getConversation,
   insertAttachment,
 } from "@clarkcant/storage";
 
+import { storedBytesForPrincipal } from "../artifact-broker.ts";
 import { attachmentRefFromRecord } from "../attachments.ts";
 import { readBlob, sniffContentType, writeBlob } from "../blobs.ts";
+import { contentDisposition } from "./content-disposition.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
 /**
@@ -87,7 +88,8 @@ export function handleAttachmentRoutes(deps: AttachmentRouteDeps): GatewayRespon
       filename,
       mime: sniffed.mime,
       sizeBytes: bytes.byteLength,
-      usedBytes: attachmentUsageForPrincipal(runtime.db, principalId),
+      // One quota for everything this principal stores: attachments and the files its widgets hold.
+      usedBytes: storedBytesForPrincipal(runtime.db, principalId),
     });
     if (!checked.ok) return fail(attachmentRefusalStatus(checked.code), checked.code, checked.message);
 
@@ -142,7 +144,7 @@ export function handleAttachmentRoutes(deps: AttachmentRouteDeps): GatewayRespon
         contentType: record.mime,
         headers: {
           "x-content-type-options": "nosniff",
-          "content-disposition": `${inline ? "inline" : "attachment"}; filename="${dispositionName(record.filename)}"`,
+          "content-disposition": contentDisposition(inline ? "inline" : "attachment", record.filename),
         },
       },
     };
@@ -159,12 +161,4 @@ function attachmentRefusalStatus(code: string): number {
   return 415;
 }
 
-/**
- * A file name safe to put in a header.
- *
- * Quotes, backslashes and line breaks are removed rather than escaped: a name is untrusted text, and
- * a header that can be broken out of is a response-splitting bug rather than a formatting problem.
- */
-function dispositionName(filename: string): string {
-  return filename.replaceAll(/["\\\r\n]/g, "").slice(0, 120);
-}
+

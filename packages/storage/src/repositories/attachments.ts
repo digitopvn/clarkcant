@@ -27,14 +27,17 @@ export interface AttachmentRecord {
   sha256: string;
   blobPath: string;
   createdAt: string;
+  /** The widget file this attachment was made from, and the widget that made it; absent for one the person attached. */
+  sourceArtifactId?: string | undefined;
+  sourceInstanceId?: string | undefined;
 }
 
 export function insertAttachment(db: Database, input: AttachmentRecord): void {
   db.prepare(
     `INSERT INTO attachments
        (attachment_id, principal_id, conversation_id, filename, mime, kind, size_bytes, sha256,
-        blob_path, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        blob_path, created_at, source_artifact_id, source_instance_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.attachmentId,
     input.principalId,
@@ -46,7 +49,34 @@ export function insertAttachment(db: Database, input: AttachmentRecord): void {
     input.sha256,
     input.blobPath,
     input.createdAt,
+    input.sourceArtifactId ?? null,
+    input.sourceInstanceId ?? null,
   );
+}
+
+/** The attachment a widget already made from one of its files, if it made one: attaching a file twice gives the same one. */
+export function getAttachmentFromArtifact(
+  db: Database,
+  artifactId: string,
+  principalId: string,
+): AttachmentRecord | undefined {
+  const row = oneRow<Record<string, unknown>>(
+    db,
+    "SELECT * FROM attachments WHERE source_artifact_id = ? AND principal_id = ? ORDER BY created_at LIMIT 1",
+    artifactId,
+    principalId,
+  );
+  return row === undefined ? undefined : mapAttachment(row);
+}
+
+/** Bytes a widget instance attached to conversations, still kept there. Part of that widget's share of the quota. */
+export function attachmentUsageForInstance(db: Database, instanceId: string): number {
+  const row = oneRow<{ used: number | null }>(
+    db,
+    "SELECT COALESCE(SUM(size_bytes), 0) AS used FROM attachments WHERE source_instance_id = ?",
+    instanceId,
+  );
+  return Number(row?.used ?? 0);
 }
 
 /** Scoped to the principal, so one person's id is not another person's read. */
@@ -117,6 +147,12 @@ function mapAttachment(row: Record<string, unknown>): AttachmentRecord {
     sha256: String(row.sha256),
     blobPath: String(row.blob_path),
     createdAt: String(row.created_at),
+    ...(row.source_artifact_id === null || row.source_artifact_id === undefined
+      ? {}
+      : { sourceArtifactId: String(row.source_artifact_id) }),
+    ...(row.source_instance_id === null || row.source_instance_id === undefined
+      ? {}
+      : { sourceInstanceId: String(row.source_instance_id) }),
   };
 }
 

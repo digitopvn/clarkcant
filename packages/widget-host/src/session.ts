@@ -1,8 +1,11 @@
 import type { SemanticProposal } from "@clarkcant/contracts";
 import {
+  ARTIFACTS_EXTENSION,
   BRIDGE_PROTOCOL,
   BRIDGE_VERSION,
   acceptBridgeMessage,
+  type ArtifactRef as WireArtifactRef,
+  type ArtifactRequest,
   type HostToWidgetMessage,
   type WidgetToHostMessage,
 } from "@clarkcant/widget-sdk";
@@ -40,11 +43,36 @@ export type FrameRefusal =
   | "STALE_REVISION"
   | "CAPABILITY_NOT_BROKERED"
   | "ACTION_UNKNOWN"
+  | "EXTENSION_NOT_OFFERED"
+  | "ARTIFACT_BUSY"
+  | "ARTIFACT_RATE_LIMITED"
   | "DISPOSED";
+
+/**
+ * What the host answered one artifact request with.
+ *
+ * `cancelled` is the person saying no in host chrome; `refused` carries the node's code and sentence.
+ */
+export type FrameArtifactOutcome =
+  | { status: "ok"; ref?: WireArtifactRef | undefined; chunkBase64?: string | undefined; eof?: boolean | undefined }
+  | { status: "refused"; code: string; message: string }
+  | { status: "cancelled"; message?: string | undefined };
+
+/** The host's side of `artifacts@1`: one call per request, each re-checked by the node against this frame's grant. */
+export type FrameArtifactBroker = (request: ArtifactRequest) => Promise<FrameArtifactOutcome>;
 
 export type FrameAcceptance =
   | { ok: true; kind: WidgetToHostMessage["kind"]; detail?: string }
-  | { ok: false; code: FrameRefusal; message: string };
+  | {
+      ok: false;
+      code: FrameRefusal;
+      message: string;
+      /**
+       * The widget was sent an answer for this refusal — an artifact request turned away with `artifact-result` — so it
+       * is the widget's to handle, like a stale write. A host shows only refusals the widget was never told about.
+       */
+      answered?: true;
+    };
 
 /** What the node answered a state write with. */
 export type FrameStateOutcome =
@@ -129,9 +157,38 @@ export interface FrameSessionInput {
     openExternal: (url: string) => void;
   };
   post: (message: HostToWidgetMessage) => void;
+  /**
+   * The `artifacts@1` extension. Given, it is advertised in `init` and each request is handed here; absent (a host
+   * that has no broker, an older dev host), it is not advertised and a request is refused with an answer, so the
+   * widget is never left waiting.
+   */
+  artifacts?: FrameArtifactBroker;
   /** Overridable so a test can drive the budget without sending thousands of messages. */
   maxMessageBytes?: number;
   maxMessages?: number;
+  /**
+   * The ceiling for one artifact request, which carries up to one 256 KiB chunk as base64 and is therefore larger
+   * than every other message. Applied only to a message that says it is one, and the schema still bounds the chunk.
+   */
+  maxArtifactMessageBytes?: number;
+  /**
+   * The rate of artifact requests, counted apart from `maxMessages` because a 25 MiB file is a hundred chunks: a bucket
+   * of `artifactBurst` requests that refills at `artifactRefillPerSecond`. A rate rather than a lifetime budget, so a
+   * widget that autosaves for hours keeps working while one that floods the host is slowed to the refill.
+   */
+  artifactBurst?: number;
+  artifactRefillPerSecond?: number;
+  /** Artifact requests a frame may have unanswered at once. */
+  maxArtifactInFlight?: number;
+  /** Refusals kept for `refused()`, newest last. Older ones are dropped, so a frame that keeps failing cannot grow it. */
+  maxRecordedRefusals?: number;
+  /**
+   * Entries kept for `transcript()`, newest last. Older ones are dropped: a widget that autosaves for hours sends
+   * thousands of file requests, and each is an entry.
+   */
+  maxTranscriptEntries?: number;
+  /** The clock the rate is measured on, in milliseconds. */
+  now?: () => number;
 }
 
 export interface FrameSession {
@@ -149,9 +206,21 @@ export interface FrameSession {
   announceActions(actions: readonly FrameActionAvailability[]): void;
   dispose(): void;
   status(): "awaiting-init" | "ready" | "suspended" | "disposed";
-  /** What the frame said, in order. What a session records is what it is willing to be held to. */
+  /** What the frame said, in order — the latest `maxTranscriptEntries` of it. What a session records is what it is willing to be held to. */
   transcript(): readonly { kind: string; detail: string }[];
   refused(): readonly FrameRefusal[];
+}
+
+/**
+ * The request id to answer a rate-limited artifact request under, read without parsing the rest of it: only under this
+ * frame's own nonce, and in the id's own bounds. Anything else is refused without an answer. (A message from another
+ * window never gets this far: it is turned away before anything is counted.)
+ */
+function answerableRequestId(raw: unknown, nonce: string): string | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const { nonce: said, requestId } = raw as { nonce?: unknown; requestId?: unknown };
+  if (said !== nonce || typeof requestId !== "string" || requestId.length === 0 || requestId.length > 128) return undefined;
+  return requestId;
 }
 
 function pickEphemeral(patch: Record<string, unknown>, keys: ReadonlySet<string>): Record<string, unknown> {
@@ -161,7 +230,31 @@ function pickEphemeral(patch: Record<string, unknown>, keys: ReadonlySet<string>
 export function createFrameSession(input: FrameSessionInput): FrameSession {
   const maxMessageBytes = input.maxMessageBytes ?? 64 * 1024;
   const maxMessages = input.maxMessages ?? 200;
+  const maxArtifactMessageBytes = input.maxArtifactMessageBytes ?? 512 * 1024;
+  const artifactBurst = input.artifactBurst ?? 300;
+  const artifactRefillPerSecond = input.artifactRefillPerSecond ?? 10;
+  const maxArtifactInFlight = input.maxArtifactInFlight ?? 4;
+  const maxRecordedRefusals = input.maxRecordedRefusals ?? 64;
+  const maxTranscriptEntries = input.maxTranscriptEntries ?? 500;
+  const clock = input.now ?? ((): number => Date.now());
+  let artifactTokens = artifactBurst;
+  let artifactRefilledAt = clock();
+  /** Take one artifact request from the bucket, refilled for the time since the last one. */
+  const takeArtifactToken = (): boolean => {
+    const at = clock();
+    artifactTokens = Math.min(artifactBurst, artifactTokens + (Math.max(0, at - artifactRefilledAt) / 1000) * artifactRefillPerSecond);
+    artifactRefilledAt = at;
+    if (artifactTokens < 1) return false;
+    artifactTokens -= 1;
+    return true;
+  };
+  const artifactsInFlight = new Set<string>();
   const transcript: { kind: string; detail: string }[] = [];
+  /** Record what the frame said, dropping the oldest entries past the bound. */
+  const record = (entry: { kind: string; detail: string }): void => {
+    transcript.push(entry);
+    if (transcript.length > maxTranscriptEntries) transcript.splice(0, transcript.length - maxTranscriptEntries);
+  };
   const refusals: FrameRefusal[] = [];
   /**
    * Invocations seen, whether or not they have answered yet.
@@ -214,7 +307,35 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
 
   const refuse = (code: FrameRefusal, message: string): FrameAcceptance => {
     refusals.push(code);
+    if (refusals.length > maxRecordedRefusals) refusals.splice(0, refusals.length - maxRecordedRefusals);
     return { ok: false, code, message };
+  };
+  /** A refusal the widget has already been answered for, so the host leaves it to the widget. */
+  const refuseAnswered = (code: FrameRefusal, message: string): FrameAcceptance => {
+    refuse(code, message);
+    return { ok: false, code, message, answered: true };
+  };
+
+  /** Answer one artifact request, bounded as the bridge bounds it so the frame's schema accepts the answer. */
+  const postArtifactResult = (requestId: string, outcome: FrameArtifactOutcome): void => {
+    if (status === "disposed") return;
+    const base = { kind: "artifact-result" as const, nonce: input.nonce, requestId, status: outcome.status };
+    if (outcome.status === "ok") {
+      input.post({
+        ...base,
+        ...(outcome.ref === undefined ? {} : { ref: outcome.ref }),
+        ...(outcome.chunkBase64 === undefined ? {} : { chunkBase64: outcome.chunkBase64 }),
+        ...(outcome.eof === undefined ? {} : { eof: outcome.eof }),
+      });
+    } else if (outcome.status === "refused") {
+      input.post({
+        ...base,
+        code: (outcome.code === "" ? "ARTIFACT_REFUSED" : outcome.code).slice(0, 60),
+        message: (outcome.message === "" ? "refused" : outcome.message).slice(0, 600),
+      });
+    } else {
+      input.post({ ...base, ...(outcome.message === undefined || outcome.message === "" ? {} : { message: outcome.message.slice(0, 600) }) });
+    }
   };
 
   const init = (): Extract<HostToWidgetMessage, { kind: "init" }> => {
@@ -230,6 +351,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       stateRevision,
       brokeredCapabilities: [...input.brokeredCapabilities],
       allowedOrigins: [...input.allowedOrigins],
+      ...(input.artifacts === undefined ? {} : { extensions: [ARTIFACTS_EXTENSION] }),
     };
     input.post(message);
     status = "ready";
@@ -240,7 +362,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const dispatch = (message: WidgetToHostMessage): FrameAcceptance => {
     switch (message.kind) {
       case "ready":
-        transcript.push({ kind: "ready", detail: message.nonce });
+        record({ kind: "ready", detail: message.nonce });
         return { ok: true, kind: "ready" };
 
       case "state.update": {
@@ -267,7 +389,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
           state = { ...state, ...message.patch };
           stateRevision += 1;
           input.post({ kind: "state", nonce: input.nonce, state, revision: stateRevision });
-          transcript.push({ kind: "state.update", detail: String(stateRevision) });
+          record({ kind: "state.update", detail: String(stateRevision) });
           return { ok: true, kind: "state.update", detail: String(stateRevision) };
         }
 
@@ -279,7 +401,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
            */
           state = { ...state, ...message.patch };
           input.post({ kind: "state", nonce: input.nonce, state, revision: stateRevision });
-          transcript.push({ kind: "state.update", detail: "view-only" });
+          record({ kind: "state.update", detail: "view-only" });
           return { ok: true, kind: "state.update", detail: "view-only" };
         }
 
@@ -292,7 +414,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
             state = { ...outcome.state, ...viewState(), ...pickEphemeral(message.patch, ephemeral) };
             stateRevision = outcome.stateRevision;
             input.post({ kind: "state", nonce: input.nonce, state, revision: stateRevision });
-            transcript.push({ kind: "state.update", detail: String(stateRevision) });
+            record({ kind: "state.update", detail: String(stateRevision) });
             return;
           }
           if (outcome.state !== undefined) state = { ...outcome.state, ...viewState() };
@@ -304,7 +426,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
             revision: stateRevision,
             refused: { code: outcome.code.slice(0, 60), message: outcome.message.slice(0, 600) },
           });
-          transcript.push({ kind: "state.refused", detail: outcome.code });
+          record({ kind: "state.refused", detail: outcome.code });
         };
         void input
           .persistState({ expectedRevision: message.expectedRevision, patch: message.patch })
@@ -320,7 +442,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       }
 
       case "event":
-        transcript.push({ kind: "event", detail: message.name });
+        record({ kind: "event", detail: message.name });
         return { ok: true, kind: "event", detail: message.name };
 
       case "action.invoke": {
@@ -361,7 +483,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
             invocations.set(message.invocationId, outcome);
             postResult(message.actionBindingId, message.invocationId, outcome);
           });
-        transcript.push({ kind: "action.invoke", detail: message.actionBindingId });
+        record({ kind: "action.invoke", detail: message.actionBindingId });
         return { ok: true, kind: "action.invoke", detail: message.actionBindingId };
       }
 
@@ -373,7 +495,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
            */
           return refuse("CAPABILITY_NOT_BROKERED", `capability ${message.capabilityRef} was not brokered to this frame`);
         }
-        transcript.push({ kind: "capability.request", detail: message.capabilityRef });
+        record({ kind: "capability.request", detail: message.capabilityRef });
         return { ok: true, kind: "capability.request", detail: message.capabilityRef };
 
       case "host.request": {
@@ -383,14 +505,52 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         else if (message.request === "resize") input.chrome.resize(Number(message.argument ?? "0"));
         else if (message.request === "request-pin") input.chrome.requestPin();
         else input.chrome.openExternal(message.argument ?? "");
-        transcript.push({ kind: "host.request", detail: message.request });
+        record({ kind: "host.request", detail: message.request });
         return { ok: true, kind: "host.request", detail: message.request };
+      }
+
+      case "artifact.request": {
+        const { requestId, request } = message;
+        /*
+         * Every refusal here is also answered, because the widget's promise is waiting on this request id; a refusal
+         * recorded only on the host side would leave it waiting for good.
+         */
+        const turnAway = (code: FrameRefusal, reason: string): FrameAcceptance => {
+          postArtifactResult(requestId, { status: "refused", code, message: reason });
+          return refuseAnswered(code, reason);
+        };
+        if (input.artifacts === undefined) {
+          return turnAway("EXTENSION_NOT_OFFERED", `${ARTIFACTS_EXTENSION} is not offered to this frame`);
+        }
+        if (artifactsInFlight.has(requestId)) {
+          return turnAway("ARTIFACT_BUSY", "a request with that id is still being answered");
+        }
+        if (artifactsInFlight.size >= maxArtifactInFlight) {
+          return turnAway("ARTIFACT_BUSY", `at most ${String(maxArtifactInFlight)} file requests may wait at once`);
+        }
+        artifactsInFlight.add(requestId);
+        // What is recorded is the operation and the artifact id: never a name, a type the person chose, or bytes.
+        const detail = "artifactId" in request ? `${request.op} ${request.artifactId}` : request.op;
+        record({ kind: "artifact.request", detail });
+        void input
+          .artifacts(request)
+          .then((outcome) => postArtifactResult(requestId, outcome))
+          .catch(() => {
+            // A fixed sentence: what the broker threw is the host's, and may name things the widget must not learn.
+            postArtifactResult(requestId, {
+              status: "refused",
+              code: "ARTIFACT_UNAVAILABLE",
+              message: "the file request could not be completed",
+            });
+          })
+          .finally(() => artifactsInFlight.delete(requestId));
+        return { ok: true, kind: "artifact.request", detail };
       }
 
       case "semantic.publish":
         // Published for a reader who cannot see the widget, and for the next model turn and voice to know what it shows.
         // Handed on as a proposal: the node bounds and cleans it, and adds the actions from its own bindings.
-        transcript.push({ kind: "semantic.publish", detail: message.summary });
+        record({ kind: "semantic.publish", detail: message.summary });
         input.publishSemantic?.({
           summary: message.summary,
           selectedIds: message.selectedIds,
@@ -405,6 +565,14 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
 
     accept(event) {
       if (status === "disposed") return refuse("DISPOSED", "the frame has been disposed");
+      /*
+       * A message from another window is not this frame's, whatever it says: turned away before it is measured, counted
+       * or read, so another widget on the page cannot spend this frame's file rate or message budget — which would leave
+       * this widget refused for what someone else sent.
+       */
+      if (!event.sourceMatchesExpectedWindow) {
+        return refuse("SOURCE_MISMATCH", "the message did not come from the window the host registered for this instance");
+      }
 
       /*
        * Bounded before parsed. A frame that can send an arbitrarily large object can spend the host's memory on
@@ -416,12 +584,34 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       } catch {
         return refuse("SCHEMA_INVALID", "the message could not be serialised");
       }
-      if (bytes > maxMessageBytes) {
-        return refuse("TOO_LARGE", `message of ${String(bytes)} bytes exceeds ${String(maxMessageBytes)}`);
+      /*
+       * An artifact request may carry one chunk, so it has its own, larger ceiling and its own count. Which ceiling
+       * applies is read from the message's own `kind` before it is parsed — a claim, but a harmless one: a message that
+       * says it is an artifact request and is not fails the schema below, and the larger ceiling is still a bound.
+       */
+      const claimsArtifact =
+        typeof event.data === "object" && event.data !== null && (event.data as { kind?: unknown }).kind === "artifact.request";
+      const ceiling = claimsArtifact ? maxArtifactMessageBytes : maxMessageBytes;
+      /*
+       * Counted before anything else is looked at, so every message from this frame's window that says it is an artifact
+       * request spends from the rate — including one that is too large or malformed. Checking first and counting after
+       * would let a frame spend the host's validation for free by sending requests that always fail.
+       */
+      if (claimsArtifact && !takeArtifactToken()) {
+        const reason = `at most ${String(artifactRefillPerSecond)} file requests a second, after a burst of ${String(artifactBurst)}`;
+        const requestId = answerableRequestId(event.data, input.nonce);
+        if (requestId === undefined || artifactsInFlight.has(requestId)) return refuse("ARTIFACT_RATE_LIMITED", reason);
+        postArtifactResult(requestId, { status: "refused", code: "ARTIFACT_RATE_LIMITED", message: reason });
+        return refuseAnswered("ARTIFACT_RATE_LIMITED", reason);
       }
-      messages += 1;
-      if (messages > maxMessages) {
-        return refuse("MESSAGE_BUDGET_EXCEEDED", `frame sent more than ${String(maxMessages)} messages`);
+      if (bytes > ceiling) {
+        return refuse("TOO_LARGE", `message of ${String(bytes)} bytes exceeds ${String(ceiling)}`);
+      }
+      if (!claimsArtifact) {
+        messages += 1;
+        if (messages > maxMessages) {
+          return refuse("MESSAGE_BUDGET_EXCEEDED", `frame sent more than ${String(maxMessages)} messages`);
+        }
       }
 
       const accepted = acceptBridgeMessage({
@@ -439,7 +629,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       if (status === "disposed") return;
       status = "suspended";
       input.post({ kind: "suspend", nonce: input.nonce, reason });
-      transcript.push({ kind: "suspend", detail: reason });
+      record({ kind: "suspend", detail: reason });
     },
 
     announceActions(actions) {
@@ -453,7 +643,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       if (status === "disposed") return;
       status = "disposed";
       input.post({ kind: "dispose", nonce: input.nonce });
-      transcript.push({ kind: "dispose", detail: "" });
+      record({ kind: "dispose", detail: "" });
     },
 
     status: () => status,

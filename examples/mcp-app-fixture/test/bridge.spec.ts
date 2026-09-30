@@ -41,7 +41,7 @@ describe("the protocol has no secret-reading verb", () => {
   });
 
   it("exposes the groups it is supposed to", () => {
-    for (const group of ["props", "state", "events", "actions", "capabilities", "host", "semantic", "lifecycle"]) {
+    for (const group of ["props", "state", "events", "actions", "capabilities", "host", "semantic", "artifacts", "lifecycle"]) {
       expect(authorApiExposes(group)).toBe(true);
     }
   });

@@ -1,0 +1,35 @@
+{
+  "id": "com.example.artifact-widget.main@1",
+  "version": "0.1.0",
+  "renderer": "isolated-app",
+  "propsSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "maxLength": 200
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": false
+  },
+  "eventSchemas": {},
+  "stateSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": true
+  },
+  "stateVersion": 0,
+  "semanticDescription": "A widget that picks, reads, writes and saves files through the host.",
+  "requestedCapabilities": [],
+  "sizing": {
+    "compact": true,
+    "expanded": true,
+    "minHeight": 240
+  },
+  "textFallback": "Widget tệp: chọn, đọc, ghi và lưu tệp qua host; nội dung chưa xem được ở chế độ chỉ có chữ.",
+  "effectCategories": [],
+  "datasetRefs": []
+}

@@ -47,16 +47,23 @@ export interface DevShellState {
   readOnly: boolean;
   /** Declared capabilities, and what the simulator has decided for each. */
   capabilities: Record<string, "granted" | "denied">;
+  /**
+   * What the simulated picker answers the widget's next `artifacts.pick` with: a file in `fixtures/files/` by name, or
+   * `""` for a person who closes the picker. Both are real paths a widget has to handle, so both are a click away.
+   */
+  pickFile: string;
 }
 
 export interface DevShellAction {
-  kind: "fixture" | "viewport" | "theme" | "reduced-motion" | "offline" | "read-only" | "capability";
+  kind: "fixture" | "viewport" | "theme" | "reduced-motion" | "offline" | "read-only" | "capability" | "pick-file";
   value: string | boolean;
 }
 
 export function initialState(input: {
   fixtures: readonly string[];
   requestedCapabilities: readonly string[];
+  /** The names of the package's fixture files, which the simulated picker offers. */
+  files?: readonly string[];
 }): DevShellState {
   const first = input.fixtures[0] ?? "default";
   return {
@@ -71,6 +78,7 @@ export function initialState(input: {
      * when every capability is available, which is the state their users are least likely to be in.
      */
     capabilities: Object.fromEntries(input.requestedCapabilities.map((ref) => [ref, "denied" as const])),
+    pickFile: input.files?.[0] ?? "",
   };
 }
 
@@ -94,7 +102,7 @@ function basePreview(state: DevShellState): PreviewState {
 export function applyShellAction(
   state: DevShellState,
   action: DevShellAction,
-  known: { fixtures: readonly string[]; capabilities: readonly string[] },
+  known: { fixtures: readonly string[]; capabilities: readonly string[]; files?: readonly string[] },
 ): DevShellState {
   switch (action.kind) {
     case "fixture": {
@@ -139,6 +147,11 @@ export function applyShellAction(
       const current = state.capabilities[ref] ?? "denied";
       return { ...state, capabilities: { ...state.capabilities, [ref]: current === "granted" ? "denied" : "granted" } };
     }
+    case "pick-file": {
+      // A fixture file the package has, or cancel. A name that is not there is ignored, like an unknown fixture.
+      const name = typeof action.value === "string" ? action.value : "";
+      return name === "" || (known.files ?? []).includes(name) ? { ...state, pickFile: name } : state;
+    }
   }
 }
 
@@ -152,6 +165,7 @@ export function shellAttributes(state: DevShellState): Record<string, string> {
     "data-dev-reduced-motion": String(state.reducedMotion),
     "data-dev-offline": String(state.offline),
     "data-dev-read-only": String(state.readOnly),
+    "data-dev-pick-file": state.pickFile,
   };
 }
 
@@ -338,6 +352,8 @@ export interface ShellInput {
   requestedCapabilities: readonly string[];
   entryUrl: string;
   definition: { textFallback: string; semanticDescription: string };
+  /** Fixture files the simulated picker offers, by name. Absent for a catalog widget, which has no package. */
+  files?: readonly string[];
 }
 
 /**
@@ -398,6 +414,21 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
             );
           })
           .join("\n        ");
+
+  const files = input.files ?? [];
+  const pickerRows = [
+    ...files.map(
+      (name) =>
+        `<button type="button" data-dev-action="pick-file" data-dev-value="${escapeHtml(name)}"` +
+        `${state.pickFile === name ? ' data-dev-selected="true"' : ""}>${escapeHtml(name)}</button>`,
+    ),
+    `<button type="button" data-dev-action="pick-file" data-dev-value=""` +
+      `${state.pickFile === "" ? ' data-dev-selected="true"' : ""}>Cancel</button>`,
+  ].join("\n          ");
+  const pickerNote =
+    files.length === 0
+      ? "<p>No fixture files. Put files in <code>fixtures/files/</code> and a pick returns the one chosen here.</p>"
+      : "<p>The next pick returns the file chosen here. Exports and attaches are logged, never written to disk.</p>";
 
   return `<!doctype html>
 <html lang="vi">
@@ -471,6 +502,13 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
         <section>
           <h2>Capability simulator</h2>
           ${capabilityRows}
+        </section>
+        <section data-dev-picker>
+          <h2>File picker</h2>
+          ${pickerNote}
+          <div class="row">
+          ${pickerRows}
+          </div>
         </section>
         <section>
           <h2>Accessibility</h2>

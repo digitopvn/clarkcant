@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { artifactRefSchema } from "./artifacts.ts";
+
 import {
   cardSchemaProblems,
   codePointLabel,
@@ -156,6 +158,11 @@ export const fileViewerSchema = z.strictObject({
       if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
     })
     .optional(),
+  /**
+   * The artifact this card stands for, when the node holds it. A pointer, not a permission: the host offers Open and
+   * Save As for it, and the node checks on each that the person owns it. The card's other words stay the model's.
+   */
+  artifactRef: artifactRefSchema.optional(),
 });
 export type FileViewer = z.infer<typeof fileViewerSchema>;
 

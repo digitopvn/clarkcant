@@ -52,6 +52,29 @@ export function getWidgetInstance(db: Database, instanceId: string): WidgetInsta
   return row === undefined ? undefined : parseJson<WidgetInstance>(row.document, "widget_instances.document");
 }
 
+/**
+ * Whether a widget instance is part of a conversation: a message there kept a snapshot of it, or a pin there shows it.
+ *
+ * An instance has no conversation column of its own — the conversation holds the instance, through the message that
+ * placed it and the pin that keeps it open — so this is how a route that names both in its path checks they belong
+ * together, rather than trusting the path to have paired them.
+ */
+export function instanceIsInConversation(db: Database, input: { conversationId: string; instanceId: string }): boolean {
+  return (
+    oneRow<{ present: number }>(
+      db,
+      `SELECT 1 AS present WHERE
+         EXISTS (SELECT 1 FROM widget_snapshots s JOIN messages m ON m.message_id = s.message_id
+                  WHERE s.instance_id = ? AND m.conversation_id = ?)
+         OR EXISTS (SELECT 1 FROM pins WHERE instance_id = ? AND conversation_id = ?)`,
+      input.instanceId,
+      input.conversationId,
+      input.instanceId,
+      input.conversationId,
+    ) !== undefined
+  );
+}
+
 export function createPin(db: Database, pin: Pin): void {
   db.prepare(
     `INSERT INTO pins (pin_id, conversation_id, instance_id, display_mode, position, refresh_policy, background_grant_id, created_at)

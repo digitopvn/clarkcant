@@ -80,6 +80,8 @@ const messageBody = {
 
 const conversationId = { name: "conversationId", in: "path", required: true, schema: { type: "string" } };
 const questionId = { name: "questionId", in: "path", required: true, schema: { type: "string" } };
+const instanceId = { name: "instanceId", in: "path", required: true, schema: { type: "string" } };
+const artifactId = { name: "artifactId", in: "path", required: true, schema: { type: "string" } };
 
 function ok(description: string): Record<string, unknown> {
   return { description, content: { "application/json": { schema: { type: "object" } } } };
@@ -285,6 +287,134 @@ export function openApiDocument(): Record<string, unknown> {
             { name: "conversationId", in: "query", required: false, schema: { type: "string" } },
           ],
           responses: { "200": ok("{ trigger, query, suggestions: [{ key, trigger, kind, label, note?, disabledReason?, ref }] }"), ...refusals },
+        },
+      },
+      "/artifacts/{artifactId}": {
+        get: {
+          summary: "Describe an artifact",
+          description:
+            "{ artifact: { artifactId, digest, sizeBytes, mimeType, originNodeId, createdAt, expiresAt, expired } }, and " +
+            "for a file a widget holds also { artifactRef: { v, artifactId, kind, mimeType, sizeBytes, name, digest? } }. " +
+            "Nothing here carries a path. Another principal's artifact answers 404 ARTIFACT_NOT_FOUND.",
+          parameters: [artifactId],
+          responses: { "200": ok("{ artifactRef }"), ...refusals },
+        },
+      },
+      "/artifacts/{artifactId}/content": {
+        get: {
+          summary: "The bytes of a finalized artifact, for the host's own Open",
+          description:
+            "Sealed artifacts only; a working one answers 409 ARTIFACT_NOT_FINALIZED. Served with nosniff, inline " +
+            "only for images and text.",
+          parameters: [artifactId],
+          responses: { "200": { description: "The bytes, under the sniffed type" }, "409": ok("ARTIFACT_NOT_FINALIZED"), "410": ok("ARTIFACT_BYTES_MISSING"), ...refusals },
+        },
+      },
+      "/artifacts/{artifactId}/export": {
+        post: {
+          summary: "Save As: the bytes of a finalized artifact as a download",
+          description:
+            "{ suggestedName? }, a file name and never a path. Person-only: refused with 403 PERSON_ONLY on the " +
+            "WebSocket, MCP and `clarkcant api`, because it writes a file onto the person's machine.",
+          parameters: [artifactId],
+          requestBody: {
+            content: { "application/json": { schema: { type: "object", properties: { suggestedName: { type: "string", maxLength: 200 } } } } },
+          },
+          responses: {
+            "200": { description: "The bytes, as an attachment download" },
+            "403": ok("PERSON_ONLY on a machine surface"),
+            "409": ok("ARTIFACT_NOT_FINALIZED"),
+            ...refusals,
+          },
+        },
+      },
+      "/conversations/{conversationId}/widgets/{instanceId}/artifacts": {
+        post: {
+          summary: "Start a working artifact a widget instance may write",
+          description:
+            "{ mimeType, name? }. The type must be one the attachment pipeline accepts. The instance receives a write " +
+            "grant that expires; the artifact expires unless it is written to or finalized. Every later call is " +
+            "re-checked against the instance's grant.",
+          parameters: [conversationId, instanceId],
+          requestBody: { content: { "application/json": { schema: { type: "object", required: ["mimeType"] } } } },
+          responses: { "201": ok("{ artifactRef }"), "415": ok("ARTIFACT_TYPE_UNSUPPORTED"), ...refusals },
+        },
+      },
+      "/conversations/{conversationId}/widgets/{instanceId}/artifacts/pick": {
+        post: {
+          summary: "A file the person chose in host chrome, granted to one widget instance",
+          description:
+            "{ name, mimeType, contentBase64, accept? }. The bytes decide the type; name, type, size (25 MiB) and the " +
+            "principal's quota are the attachment rules. Person-only: 403 PERSON_ONLY on machine surfaces.",
+          parameters: [conversationId, instanceId],
+          requestBody: { content: { "application/json": { schema: { type: "object", required: ["name", "contentBase64"] } } } },
+          responses: {
+            "201": ok("{ artifactRef }"),
+            "403": ok("PERSON_ONLY on a machine surface"),
+            "409": ok("ARTIFACT_INSTANCE_QUOTA_EXCEEDED or ARTIFACT_QUOTA_EXCEEDED"),
+            "413": ok("ARTIFACT_TOO_LARGE"),
+            "415": ok("ARTIFACT_TYPE_MISMATCH, ARTIFACT_TYPE_UNSUPPORTED or ARTIFACT_TYPE_NOT_ACCEPTED"),
+            ...refusals,
+          },
+        },
+      },
+      "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}": {
+        get: {
+          summary: "Describe an artifact this instance was granted",
+          parameters: [conversationId, instanceId, artifactId],
+          responses: { "200": ok("{ artifactRef }"), "403": ok("ARTIFACT_NOT_GRANTED, ARTIFACT_GRANT_EXPIRED or ARTIFACT_GRANT_REVOKED"), ...refusals },
+        },
+        delete: {
+          summary: "Discard a file this instance made",
+          description:
+            "Only a file the calling instance created, working or finalized; a file the person chose, or one another widget " +
+            "made, is 403 ARTIFACT_NOT_CREATOR. The record and every grant on it go; the bytes go too unless an attachment " +
+            "or another record still points at them. What was discarded no longer counts against the instance's share.",
+          parameters: [conversationId, instanceId, artifactId],
+          responses: { "200": ok("{ discarded: true, artifactId }"), "403": ok("ARTIFACT_NOT_CREATOR, ARTIFACT_NOT_GRANTED or ARTIFACT_GRANT_REVOKED"), ...refusals },
+        },
+      },
+      "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/content": {
+        get: {
+          summary: "One bounded range of an artifact's bytes",
+          description: "offset (default 0) and length (1 to 262144, default 262144). A length past the end is shortened and eof is true.",
+          parameters: [
+            conversationId,
+            instanceId,
+            artifactId,
+            { name: "offset", in: "query", required: false, schema: { type: "integer", minimum: 0 } },
+            { name: "length", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 262_144 } },
+          ],
+          responses: { ...refusals, "200": ok("{ artifactRef, offset, eof, contentBase64 }"), "400": ok("ARTIFACT_RANGE_INVALID") },
+        },
+      },
+      "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/chunks": {
+        post: {
+          summary: "Append one chunk to a working artifact",
+          description:
+            "{ offset, contentBase64 }: at most 262144 bytes, and offset must equal the artifact's current size, so a " +
+            "repeated or reordered chunk is refused with 409 ARTIFACT_OFFSET_MISMATCH instead of stored twice.",
+          parameters: [conversationId, instanceId, artifactId],
+          requestBody: { content: { "application/json": { schema: { type: "object", required: ["offset", "contentBase64"] } } } },
+          responses: { "200": ok("{ artifactRef }"), "409": ok("ARTIFACT_OFFSET_MISMATCH, ARTIFACT_NOT_WRITABLE, ARTIFACT_INSTANCE_QUOTA_EXCEEDED (128 MiB per instance) or ARTIFACT_QUOTA_EXCEEDED"), "413": ok("ARTIFACT_CHUNK_TOO_LARGE or ARTIFACT_TOO_LARGE"), ...refusals },
+        },
+      },
+      "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/finalize": {
+        post: {
+          summary: "Fix a working artifact's bytes",
+          description: "The bytes are sniffed against the declared type; a disagreement is 415 ARTIFACT_TYPE_MISMATCH and the artifact stays writable.",
+          parameters: [conversationId, instanceId, artifactId],
+          responses: { "200": ok("{ artifactRef } with kind finalized and a digest"), "415": ok("ARTIFACT_TYPE_MISMATCH"), ...refusals },
+        },
+      },
+      "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/attach": {
+        post: {
+          summary: "Make a finalized artifact an attachment of this conversation",
+          description:
+            "Through the attachment pipeline (sniff, allowlist, quota). The answer's attachmentRef is sent with the " +
+            "person's next message like any other attachment; the model reads it through the attachment brief or read_attachment.",
+          parameters: [conversationId, instanceId, artifactId],
+          responses: { "201": ok("{ artifactRef, attachmentRef }"), "409": ok("ARTIFACT_NOT_FINALIZED"), ...refusals },
         },
       },
       "/stop": {

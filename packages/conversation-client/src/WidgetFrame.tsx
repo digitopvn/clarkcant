@@ -13,6 +13,7 @@ import type { SemanticProposal } from "@clarkcant/contracts";
  */
 import {
   createFrameSession,
+  type FrameArtifactBroker,
   type FrameActionAvailability,
   type FrameActionOutcome,
   type FrameSession,
@@ -96,6 +97,11 @@ export interface WidgetFrameProps {
     openExternal: (url: string) => void;
   };
   revision: number;
+  /**
+   * The host's side of `artifacts@1`. Given, the frame is told it may ask for files; absent, it is not, and a request is
+   * answered with a refusal. Read through the latest props, like every other callback, so it may change without a remount.
+   */
+  artifacts?: FrameArtifactBroker | undefined;
 }
 
 /**
@@ -292,6 +298,13 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
         requestPin: () => latest.current.chrome.requestPin(),
         openExternal: (url) => latest.current.chrome.openExternal(url),
       },
+      ...(latest.current.artifacts === undefined
+        ? {}
+        : {
+            artifacts: (request) =>
+              latest.current.artifacts?.(request) ??
+              Promise.resolve({ status: "refused" as const, code: "ARTIFACT_UNAVAILABLE", message: "the host stopped answering file requests" }),
+          }),
       // The frame is reached only this way: an opaque origin has no address to call, so `postMessage` is the whole
       // transport and `"*"` is correct — the session checks the window the message came from, not the target.
       post: (message) => frame.contentWindow?.postMessage(message, "*"),
@@ -300,6 +313,12 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
 
     const onMessage = (event: MessageEvent): void => {
       const matches = frame.contentWindow !== null && event.source === frame.contentWindow;
+      /*
+       * Every frame on the page hears every message posted to this window. One from another window is that window's —
+       * another widget's, or the page's own — and says nothing about this widget, so it is not this frame's to refuse:
+       * showing it as this widget's failure would let any other widget make this one look broken.
+       */
+      if (!matches) return;
       const accepted = live.accept({ data: event.data, sourceMatchesExpectedWindow: matches });
       if (accepted.ok) {
         // `ready` is the frame saying it has the init message, which is later than the element's `load` and is the
@@ -314,6 +333,8 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       // A write that lost a race is a conflict, not misbehaviour: the session already answered the widget with the
       // committed state, and it is the widget's to show. Marking the whole frame refused would say it broke.
       if (accepted.code === "STALE_REVISION") return;
+      // Likewise a file request turned away: the widget was answered (busy, rate-limited) and can wait and ask again.
+      if (accepted.answered === true) return;
       /*
        * Shown, not swallowed. A refusal is the difference between a widget that is quiet and a widget whose
        * messages are being dropped, and only one of those is worth a person's time.

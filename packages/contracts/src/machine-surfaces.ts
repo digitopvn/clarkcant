@@ -11,6 +11,8 @@
  * decides what a task may report about itself. Installing the update a notice announces is the person's too: it puts new
  * code on the machine and grants that code the capabilities its manifest asks for, which is exactly the trust an AI
  * client must not be able to widen for itself.
+ * Saving a widget's artifact to a file (Save As) and handing a widget a file the person picked are the person's too:
+ * one writes onto their machine, the other grants a widget bytes it could not otherwise reach.
  *
  * Segments are split the way the gateway splits them (on `/`, empty segments dropped, no decoding), so a path this
  * lets through cannot reach one of these routes under another spelling. A route guarded here must not decode the
@@ -20,7 +22,7 @@
 export function isPersonOnlyRoute(method: string, path: string): boolean {
   if (method.toUpperCase() !== "POST") return false;
   const segments = (path.split("?")[0] ?? "").split("/").filter((segment) => segment !== "");
-  const [first, second, third, fourth, fifth] = segments;
+  const [first, second, third, fourth, fifth, sixth] = segments;
   switch (segments.length) {
     case 1:
       // POST /grants
@@ -36,7 +38,9 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
       return (
         (first === "peers" && third === "confirm") ||
         (first === "app-intents" && second === "host-control") ||
-        (first === "effects" && third === "reconcile")
+        (first === "effects" && third === "reconcile") ||
+        // POST /artifacts/:id/export: Save As, the bytes of an artifact written to a file on the person's machine.
+        (first === "artifacts" && third === "export")
       );
     case 4:
       // POST /packages/approvals/:id/decision
@@ -51,6 +55,10 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
       if (first === "conversations" && third === "widgets" && fifth === "export") return true;
       // POST /inbox/notices/:id/actions/update: installing the version an update notice names.
       return first === "inbox" && second === "notices" && fourth === "actions" && fifth === "update";
+    case 6:
+      // POST /conversations/:id/widgets/:instanceId/artifacts/pick: a file the person chose in host chrome, granted to
+      // a widget. The grant is the person's choice; a machine surface cannot make it for them.
+      return first === "conversations" && third === "widgets" && fifth === "artifacts" && sixth === "pick";
     default:
       return false;
   }

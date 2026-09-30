@@ -334,6 +334,35 @@ is still pending answers the same `approvalId`. No surface can decide that appro
 or not, is recorded as an `inbox.notice-action` event with the surface it came from and its result. The per-action
 routes above still answer as before.
 
+Files a widget holds by reference (`artifacts@1`, [widget-development.md §10.1](widget-development.md#101-files-by-reference-artifacts1))
+are in `/openapi.json`. Every answer carries an `ArtifactRef` (`{ v, artifactId, kind, mimeType, sizeBytes, name,
+digest? }`), bytes, or a refusal whose code names what was wrong (`packages/contracts/src/artifacts.ts`). None
+carries a path.
+
+| Method | Path | Body / answer |
+|---|---|---|
+| GET | `/artifacts/{artifactId}` | – the artifact, and its `artifactRef` for a file a widget holds; another principal's is `404 ARTIFACT_NOT_FOUND` |
+| GET | `/artifacts/{artifactId}/content` | – the bytes of a finalized artifact, for the host's Open; `409 ARTIFACT_NOT_FINALIZED` while it is being written |
+| POST | `/artifacts/{artifactId}/export` | `{ suggestedName? }` — Save As: the bytes as a download under a file name, never a path. **Person-only** |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts` | `{ mimeType, name? }` — a working artifact this instance may write; `201 { artifactRef }` |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/pick` | `{ name, mimeType, contentBase64, accept? }` — a file the person chose in host chrome, granted to this instance. **Person-only** |
+| GET | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – the ref, if this instance's grant still holds |
+| GET | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/content?offset=&length=` | – `{ artifactRef, offset, eof, contentBase64 }`, at most 262,144 bytes |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/chunks` | `{ offset, contentBase64 }` — at most 262,144 bytes, starting where the artifact ends |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/finalize` | – fixes the bytes after checking them against the declared type |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | – `201 { artifactRef, attachmentRef }` through the attachment pipeline; the person sends it with their next message |
+| DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – discards a file this instance made, with its bytes unless an attachment or another record still points at them; another's is `403 ARTIFACT_NOT_CREATOR` |
+
+Every instance route is checked again against that instance's grant. A ref is a pointer, not a permission, so an
+expired (`403 ARTIFACT_GRANT_EXPIRED`) or revoked (`403 ARTIFACT_GRANT_REVOKED`) grant stops the next call. Sizes,
+types and quota follow the attachment rules (`413 ARTIFACT_TOO_LARGE`, `415 ARTIFACT_TYPE_MISMATCH`, `409
+ARTIFACT_QUOTA_EXCEEDED`), and one instance holds at most 128 MiB of the quota (`409 ARTIFACT_INSTANCE_QUOTA_EXCEEDED`),
+counting the files it made and the attachments it made from them but not the files the person picked for it. An attach
+of a file already attached answers with the same attachment.
+A file name in `Content-Disposition` is sent as RFC 6266 describes: an ASCII `filename` and the real name as
+percent-encoded UTF-8 in `filename*`. Bidi controls are dropped from both, a percent sign becomes `_` in the ASCII
+name, and a name longer than 120 characters is shortened before its extension, which is always kept.
+
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.
 
@@ -366,7 +395,12 @@ issuing a grant, and recording whether an action whose outcome nobody saw took e
 (`POST /effects/{effectId}/reconcile`; an AI client that could say "that push landed" could clear its own task's
 uncertainty and then report its own success). Exporting a table as a CSV file
 (`POST /conversations/{id}/widgets/{instanceId}/export`) is refused on the same relays too: the file is written for
-the person who is looking at the table, not handed to a machine client. Stop, answering a question and reading stay
+the person who is looking at the table, not handed to a machine client. Saving a widget's artifact
+(`POST /artifacts/{artifactId}/export`) and handing a widget a file the person picked
+(`POST /conversations/{id}/widgets/{instanceId}/artifacts/pick`) are refused the same way. What is held back is the
+act, not the data: saving is the person choosing to keep a file, and a machine client can still read a finalized
+artifact's bytes through `GET /artifacts/{artifactId}/content`. Picking grants a widget bytes only the person's choice
+may give it. Stop, answering a question and reading stay
 available, and so does `act_on_notice`: it never offers the person's answer about an unknown outcome or installing a
 notice's update (`403 PERSON_ONLY` for both, the update route refused as above). `read_inbox` marks every notice's
 title and body as data reported by other work, never instructions, and keeps each on one line. The discovery document

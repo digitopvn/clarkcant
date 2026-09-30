@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { catalogEntry } from "@clarkcant/widget-catalog";
 
 import { runCli } from "../src/cli.ts";
+import { createDevArtifactBroker, readFixtureFiles, type DevFixtureFile } from "../src/dev-artifacts.ts";
 import { startDevHost } from "../src/dev-host.ts";
 import {
   DEV_VIEWPORTS,
@@ -426,5 +427,196 @@ describe("the dev host serving a catalog widget", () => {
     await expect(
       startDevHost({ root: process.cwd(), builtin: "canvas.note@1", port: 0, watchFiles: false }),
     ).rejects.toThrow(/not both/);
+  });
+});
+
+describe("the simulated file picker", () => {
+  const encoder = new TextEncoder();
+  const NOTES: DevFixtureFile = { name: "ghi-chu.txt", mimeType: "text/plain", bytes: encoder.encode("xin chào") };
+  // Larger than one read, so a reader has to come back for the rest.
+  const BIG: DevFixtureFile = { name: "lon.csv", mimeType: "text/csv", bytes: new Uint8Array(262_144 + 10).fill(97) };
+
+  function broker(choice: { current: string }) {
+    return createDevArtifactBroker({ files: [NOTES, BIG], choosePick: () => choice.current });
+  }
+
+  it("returns the fixture file the shell chose, by name and digest, and nothing about where it is", async () => {
+    const choice = { current: "ghi-chu.txt" };
+    const outcome = await broker(choice).handle({ op: "pick", accept: ["text/*"] });
+
+    expect(outcome.status).toBe("ok");
+    if (outcome.status !== "ok") return;
+    expect(outcome.ref).toMatchObject({ v: 1, kind: "external", name: "ghi-chu.txt", mimeType: "text/plain", sizeBytes: 9 });
+    expect(outcome.ref?.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // The ref carries the bare name; the directory it was read from appears nowhere in the answer.
+    expect(JSON.stringify(outcome)).not.toContain("fixtures");
+  });
+
+  it("answers a closed picker as cancelled, and a type the widget did not ask for as refused", async () => {
+    const choice = { current: "" };
+    const simulated = broker(choice);
+
+    expect(await simulated.handle({ op: "pick", accept: [] })).toMatchObject({ status: "cancelled" });
+    choice.current = "ghi-chu.txt";
+    expect(await simulated.handle({ op: "pick", accept: ["image/*"] })).toMatchObject({
+      status: "refused",
+      code: "ARTIFACT_TYPE_NOT_ACCEPTED",
+    });
+  });
+
+  it("streams a file larger than one chunk in bounded reads", async () => {
+    const choice = { current: "lon.csv" };
+    const simulated = broker(choice);
+    const picked = await simulated.handle({ op: "pick", accept: ["text/csv"] });
+    const artifactId = picked.status === "ok" ? (picked.ref?.artifactId ?? "") : "";
+
+    const first = await simulated.handle({ op: "read", artifactId, offset: 0, length: 262_144 });
+    const second = await simulated.handle({ op: "read", artifactId, offset: 262_144, length: 262_144 });
+
+    expect(first).toMatchObject({ status: "ok", eof: false });
+    expect(second).toMatchObject({ status: "ok", eof: true });
+    const bytes = (outcome: typeof first) => (outcome.status === "ok" ? Buffer.from(outcome.chunkBase64 ?? "", "base64").byteLength : -1);
+    expect(bytes(first)).toBe(262_144);
+    expect(bytes(second)).toBe(10);
+    // A read longer than one chunk is refused rather than served.
+    expect(await simulated.handle({ op: "read", artifactId, offset: 0, length: 262_145 })).toMatchObject({ status: "refused" });
+  });
+
+  it("writes in order, finalizes, then saves and attaches — and refuses each step taken out of order", async () => {
+    const simulated = broker({ current: "" });
+    const created = await simulated.handle({ op: "create", mimeType: "text/plain", name: "bao-cao.txt" });
+    const artifactId = created.status === "ok" ? (created.ref?.artifactId ?? "") : "";
+
+    expect(await simulated.handle({ op: "export", artifactId, suggestedName: "bao-cao.txt" })).toMatchObject({
+      code: "ARTIFACT_NOT_FINALIZED",
+    });
+    expect(await simulated.handle({ op: "write", artifactId, offset: 0, chunkBase64: "YWJj" })).toMatchObject({ status: "ok" });
+    expect(await simulated.handle({ op: "write", artifactId, offset: 0, chunkBase64: "YWJj" })).toMatchObject({
+      code: "ARTIFACT_OFFSET_MISMATCH",
+    });
+    expect(await simulated.handle({ op: "finalize", artifactId })).toMatchObject({ status: "ok", ref: { kind: "finalized", sizeBytes: 3 } });
+    expect(await simulated.handle({ op: "write", artifactId, offset: 3, chunkBase64: "YWJj" })).toMatchObject({
+      code: "ARTIFACT_NOT_WRITABLE",
+    });
+    expect(await simulated.handle({ op: "export", artifactId, suggestedName: "ban-sao.txt" })).toMatchObject({ status: "ok" });
+    expect(await simulated.handle({ op: "attach", artifactId })).toMatchObject({ status: "ok" });
+
+    expect(simulated.events().map((event) => `${event.op} ${event.name}`)).toEqual([
+      "create bao-cao.txt",
+      "finalize bao-cao.txt",
+      "export ban-sao.txt",
+      "attach bao-cao.txt",
+    ]);
+  });
+
+  it("discards a file the widget made, and refuses one the person chose, as the node does", async () => {
+    const simulated = broker({ current: "ghi-chu.txt" });
+    const created = await simulated.handle({ op: "create", mimeType: "text/plain", name: "nhap.txt" });
+    const createdId = created.status === "ok" ? (created.ref?.artifactId ?? "") : "";
+    const picked = await simulated.handle({ op: "pick", accept: ["text/plain"] });
+    const pickedId = picked.status === "ok" ? (picked.ref?.artifactId ?? "") : "";
+
+    expect(await simulated.handle({ op: "discard", artifactId: createdId })).toEqual({ status: "ok" });
+    expect(await simulated.handle({ op: "read", artifactId: createdId, offset: 0, length: 1 })).toMatchObject({ code: "ARTIFACT_NOT_FOUND" });
+    expect(await simulated.handle({ op: "discard", artifactId: pickedId })).toMatchObject({ code: "ARTIFACT_NOT_CREATOR" });
+    // The refused discard is not recorded: only what the dev host did.
+    expect(simulated.events().map((event) => event.op)).toEqual(["create", "pick", "discard"]);
+  });
+
+  it("holds a widget to its share of the node's space, so a widget that never discards is caught while developing", async () => {
+    const quarterMiB = Buffer.alloc(262_144, 97).toString("base64");
+    const simulated = broker({ current: "" });
+    const created = await simulated.handle({ op: "create", mimeType: "text/plain" });
+    const artifactId = created.status === "ok" ? (created.ref?.artifactId ?? "") : "";
+
+    // 25 MiB per file, so the share is reached across several files.
+    let refusal: Awaited<ReturnType<typeof simulated.handle>> | undefined;
+    let current = artifactId;
+    let offset = 0;
+    for (let written = 0; written < 520 && refusal === undefined; written += 1) {
+      if (offset + 262_144 > 26_214_400) {
+        const next = await simulated.handle({ op: "create", mimeType: "text/plain" });
+        current = next.status === "ok" ? (next.ref?.artifactId ?? "") : "";
+        offset = 0;
+      }
+      const outcome = await simulated.handle({ op: "write", artifactId: current, offset, chunkBase64: quarterMiB });
+      if (outcome.status === "refused") refusal = outcome;
+      else offset += 262_144;
+    }
+
+    expect(refusal).toMatchObject({ code: "ARTIFACT_INSTANCE_QUOTA_EXCEEDED" });
+  });
+
+  it("refuses a type no node holds and an id it never minted", async () => {
+    const simulated = broker({ current: "" });
+
+    expect(await simulated.handle({ op: "create", mimeType: "application/x-msdownload" })).toMatchObject({
+      code: "ARTIFACT_TYPE_UNSUPPORTED",
+    });
+    expect(await simulated.handle({ op: "read", artifactId: "art_someone_else", offset: 0, length: 1 })).toMatchObject({
+      code: "ARTIFACT_NOT_FOUND",
+    });
+    expect(await simulated.handle({ op: "pick", accept: ["../etc"] })).toMatchObject({ code: "SCHEMA_INVALID" });
+  });
+
+  it("offers only files a node would hold, and says why the others were skipped", async () => {
+    const root = await tempPackage();
+    mkdirSync(join(root, "fixtures", "files"));
+    writeFileSync(join(root, "fixtures", "files", "ghi-chu.txt"), "xin chào");
+    writeFileSync(join(root, "fixtures", "files", "setup.exe"), "MZ");
+
+    const read = readFixtureFiles(root);
+
+    expect(read.files.map((file) => file.name)).toEqual(["ghi-chu.txt"]);
+    expect(read.skipped).toEqual(["setup.exe: not a type a node holds"]);
+  });
+
+  it("switches the next pick between fixture files and Cancel, and ignores a file that is not there", () => {
+    const known = { ...KNOWN, files: ["ghi-chu.txt", "lon.csv"] };
+    const state = initialState({ fixtures: KNOWN.fixtures, requestedCapabilities: [], files: known.files });
+
+    expect(state.pickFile).toBe("ghi-chu.txt");
+    expect(applyShellAction(state, { kind: "pick-file", value: "lon.csv" }, known).pickFile).toBe("lon.csv");
+    expect(applyShellAction(state, { kind: "pick-file", value: "" }, known).pickFile).toBe("");
+    expect(applyShellAction(state, { kind: "pick-file", value: "C:/secrets.txt" }, known).pickFile).toBe("ghi-chu.txt");
+  });
+
+  it("answers the frame's pick through the dev host, from the package's fixture files", async () => {
+    const root = await tempPackage();
+    mkdirSync(join(root, "fixtures", "files"));
+    writeFileSync(join(root, "fixtures", "files", "ghi-chu.txt"), "xin chào");
+    const host = await startDevHost({ root, port: 0, watchFiles: false });
+    try {
+      const shell = await (await fetch(host.url)).text();
+      expect(shell).toContain('data-dev-action="pick-file" data-dev-value="ghi-chu.txt"');
+
+      host.apply({ kind: "fixture", value: "default" });
+      const state = (await (await fetch(`${host.url}dev/api/state`)).json()) as { bridge: boolean; props: unknown };
+      // A package's frame is handed the props of the fixture on screen in the handshake the shell sends.
+      expect(state.bridge).toBe(true);
+      expect(state.props).toEqual({ title: "Xin chào" });
+
+      const response = await fetch(`${host.url}dev/api/artifacts`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ op: "pick", accept: ["text/plain"] }),
+      });
+      const text = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(JSON.parse(text)).toMatchObject({ status: "ok", ref: { name: "ghi-chu.txt", kind: "external" } });
+      expect(text).not.toContain(root);
+      expect(host.artifactEvents()).toEqual([{ op: "pick", name: "ghi-chu.txt", sizeBytes: 9 }]);
+
+      host.apply({ kind: "pick-file", value: "" });
+      const cancelled = await fetch(`${host.url}dev/api/artifacts`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ op: "pick", accept: [] }),
+      });
+      expect(await cancelled.json()).toMatchObject({ status: "cancelled" });
+    } finally {
+      await host.close();
+    }
   });
 });
