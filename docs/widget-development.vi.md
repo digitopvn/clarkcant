@@ -1214,6 +1214,32 @@ Không expose:
 - registerSidebar;
 - arbitrary host window access.
 
+### Diện mạo (`appearance@1`)
+
+`appearance.current()` trả về `AppearanceSnapshot` đã kiểm tra và đóng băng sâu dùng để vẽ widget này, hoặc `undefined`
+khi host không cung cấp extension. `appearance.subscribe(handler)` nhận các revision thay đổi và trả về hàm huỷ đăng
+ký. Snapshot ban đầu có trước `lifecycle.onMount`; thay đổi không mount lại frame, ghi state, công bố nội dung semantic
+hay bắt đầu lượt model. Snapshot đã phân giải phạm vi sáng/tối thực tế và giảm chuyển động. Nó chỉ chứa token công khai
+có giới hạn và revision, không chứa theme thô, thông tin xác thực hay quyền truy cập host.
+
+SDK core không phụ thuộc DOM. Với widget DOM, import `bindAppearance` từ `@clarkcant/widget-sdk/dom`, rồi gọi
+`const unbind = bindAppearance(document.documentElement, api.appearance)` và gọi `unbind()` khi dispose.
+`applyAppearanceToElement(element, snapshot)` áp dụng một snapshot đã kiểm tra. Các helper chỉ ghi biến token chuẩn
+và thuộc tính diện mạo trên phần tử được truyền vào; giữ nguyên biến riêng của tác giả. Runtime `/widget-runtime.js`
+do host phục vụ cũng export các helper này.
+
+Định nghĩa widget có thể khai báo `"appearanceMode": "fixed"` cho hệ thống giao diện riêng; thiếu trường hoặc
+`"adaptive"` nghĩa là thích ứng. Widget Lab và thẻ chi tiết cho biết widget dùng chế độ fixed. Directory có thể mang
+khai báo `widgetAppearance` tuỳ chọn (`[{ "id": "…", "mode": "fixed" }]`) để hiển thị trên marketplace; định nghĩa
+đã cài và kiểm tra digest vẫn là nguồn quyết định. Widget fixed vẫn nhận diện mạo và phải tôn trọng giảm chuyển động.
+
+Bridge phiên bản 2 mang `appearance` ban đầu tuỳ chọn và công bố `appearance@1`; message cập nhật là
+`{ kind: "appearance.changed", nonce, revision, appearance }`, với revision trùng khớp và kiểm tra source/nonce hiện
+có. SDK mới nhận host phiên bản 1 không có extension này. SDK cũ phiên bản 1 đóng gói trong widget phải được nâng cấp
+để chạy với host phiên bản 2; hãy dùng runtime do host cung cấp hoặc build lại bằng SDK hiện tại. Composition tách ra
+cửa sổ riêng nhận cùng revision đã phân giải qua bootstrap/event chỉ đọc của desktop, không truy vấn theme hay nhận
+thông tin xác thực. Đổi diện mạo giữ nguyên presentation đã lưu, props, state, nguồn gốc và văn bản dự phòng.
+
 ### 10.1 Tệp theo tham chiếu (`artifacts@1`)
 
 Một widget chạy trong frame riêng có thể làm việc với tệp mà không bao giờ cầm một tệp nào. Nó chỉ giữ một

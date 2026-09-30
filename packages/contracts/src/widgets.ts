@@ -86,6 +86,8 @@ export const widgetDefinitionSchema = z.strictObject({
   id: z.string().min(1).max(160),
   version: z.string().min(1).max(80),
   renderer: widgetRendererSchema,
+  /** Absent means adaptive. Fixed visual systems are disclosed in Widget Lab and package details. */
+  appearanceMode: z.enum(["adaptive", "fixed"]).optional(),
   /** Runtime JSON Schema. Validated on every render, never passed through to DOM. */
   propsSchema: z.record(z.string(), z.unknown()),
   eventSchemas: z.record(z.string(), z.record(z.string(), z.unknown())),

@@ -301,6 +301,14 @@ lifecycle.onMount / onSuspend / onResume / onDispose
 
 `requestPin` is a proposal unless it originated directly from a clear user gesture. The SDK has no `readAllSecrets`, `shell`, `queryCoreDb`, `disableCSP`, `approve`, `installAnything` or `registerSidebar`.
 
+Widgets receive the checked public appearance through `appearance.current()` / `appearance.subscribe(handler)`
+(`appearance@1`, bridge v2). Built-ins and declarative Mini Apps use the same semantic tokens; isolated frames follow
+changes without remounting or semantic writes. Detached compositions receive the host's exact resolved snapshot through
+a read-only relay, without credentials or theme queries. Definitions default to adaptive and may declare
+`appearanceMode: "fixed"`, disclosed in Lab/detail and in marketplace results when the directory provides the claim.
+Historical content, props, state, provenance and fallback text stay intact; reduced motion wins in either mode.
+See [the author API and compatibility rules](widget-development.md#appearance-appearance1).
+
 ### Trust tiers
 
 | Type | Execution | Default permissions |

@@ -239,6 +239,13 @@ describe("IPC is answered only for the shell document (sender validation)", () =
     }
   });
 
+  it("only the conversation shell can send an appearance update", () => {
+    const detachedUrl = "file:///Applications/clarkcant/detached.html";
+    expect(reviewIpcCall(sender(SHELL_URL), "desktop:updateAppearance", SHELL_URL, detachedUrl).allowed).toBe(true);
+    expect(reviewIpcCall(sender(detachedUrl), "desktop:updateAppearance", SHELL_URL, detachedUrl).allowed).toBe(false);
+    expect(reviewIpcCall(sender(SHELL_URL, frame(SHELL_URL)), "desktop:updateAppearance", SHELL_URL, detachedUrl).allowed).toBe(false);
+  });
+
   it("allowlists exactly the channels the bridge uses", () => {
     /*
      * Written out rather than derived from the preload bridge on purpose: the point is that adding a channel
@@ -269,6 +276,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:setFullScreen",
       "desktop:setKeepRunning",
       "desktop:setWindowMode",
+      "desktop:updateAppearance",
       "detached:bootstrap",
       "detached:intent",
       "detached:release",

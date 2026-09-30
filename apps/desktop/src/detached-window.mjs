@@ -12,7 +12,23 @@
  * window is showing it.
  */
 
+import { z } from "zod";
+
+import appearanceSchema from "./appearance-schema.json" with { type: "json" };
 import { DETACHED_WINDOW_CHANNELS, createWindowOptions } from "./security.mjs";
+
+const appearanceContract = z.fromJSONSchema(appearanceSchema);
+
+/** Same canonical schema as the client/iframe; no raw theme or privileged fields cross the relay. */
+export function reviewDetachedAppearance(payload) {
+  try {
+    if (JSON.stringify(payload).length > 32_768) return { ok: false, reason: "appearance exceeds the relay limit" };
+    const checked = appearanceContract.safeParse(payload);
+    return checked.success ? { ok: true, appearance: checked.data } : { ok: false, reason: "appearance does not match the public contract" };
+  } catch {
+    return { ok: false, reason: "appearance must be bounded JSON" };
+  }
+}
 
 /**
  * The channels a detached window may use.
@@ -34,7 +50,7 @@ export const DETACHED_CHANNELS = Object.freeze([
  * instance's own data, and the reason it can travel is that it carries no credential — having it lets the window
  * *draw* the widget, and drawing is all a window without a token can do.
  */
-const BOOTSTRAP_FIELDS = Object.freeze(["instanceRef", "title", "widgetKind", "live"]);
+const BOOTSTRAP_FIELDS = Object.freeze(["instanceRef", "title", "widgetKind", "live", "appearance"]);
 
 /**
  * Fields that would make a detached window privileged if they ever appeared.
@@ -66,6 +82,7 @@ export function detachedBootstrap(input) {
     title: String(record.title ?? ""),
     widgetKind: String(record.widgetKind ?? "widget"),
     live: record.live,
+    ...(record.appearance === undefined ? {} : { appearance: record.appearance }),
   };
 }
 
@@ -90,6 +107,8 @@ export function reviewDetachedBootstrap(payload) {
   if (unknown.length > 0) {
     return { ok: false, reason: `the bootstrap carries fields a detached window does not receive: ${unknown.join(", ")}` };
   }
+  const appearance = payload.appearance === undefined ? undefined : reviewDetachedAppearance(payload.appearance);
+  if (appearance !== undefined && !appearance.ok) return appearance;
   if (payload.live === undefined || payload.live === null || typeof payload.live !== "object") {
     // A window with no composition has nothing to draw, and an empty frame reads as a widget that failed to load
     // rather than as a detach that could not be prepared.
@@ -100,7 +119,7 @@ export function reviewDetachedBootstrap(payload) {
     // that failed to load rather than as a request that made no sense.
     return { ok: false, reason: "a detached window needs the instance reference it is a view of" };
   }
-  return { ok: true, bootstrap: payload };
+  return { ok: true, bootstrap: { ...payload, ...(appearance === undefined ? {} : { appearance: appearance.appearance }) } };
 }
 
 /**

@@ -4,6 +4,7 @@ import type { AppearanceResponse, ThemeContrastFailureView, ThemeProtectedFailur
 
 import type { GatewayClient } from "./api.ts";
 import { applyAppearance } from "./appearance.ts";
+import { useWidgetAppearance } from "./use-widget-appearance.ts";
 
 /**
  * The theme the node says to draw, kept applied to the page.
@@ -46,7 +47,19 @@ export interface AppearanceRead {
   localProblem: LocalAppearanceProblem | undefined;
 }
 
+interface DesktopAppearanceBridge {
+  clarkcant?: { updateAppearance?: (snapshot: unknown) => Promise<unknown> };
+}
+
 export function useAppearance(client: GatewayClient): AppearanceState {
+  const drawn = useWidgetAppearance();
+  useEffect(() => {
+    const bridge = (window as unknown as DesktopAppearanceBridge).clarkcant;
+    if (drawn === undefined || typeof bridge?.updateAppearance !== "function") return;
+    void bridge.updateAppearance(drawn).catch((error: unknown) => {
+      console.error("detached appearance could not be relayed", error);
+    });
+  }, [drawn]);
   const [appearance, setAppearance] = useState<AppearanceResponse | undefined>(undefined);
   const [localProblem, setLocalProblem] = useState<LocalAppearanceProblem | undefined>(undefined);
   const [generation, setGeneration] = useState(0);

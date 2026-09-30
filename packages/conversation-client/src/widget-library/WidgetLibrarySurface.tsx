@@ -321,6 +321,7 @@ export function WidgetLibrarySurface({
               )}
 
               <div className="cc-widget-detail-preview" data-widget-lab-pane-preview="true">
+                {selected.definition.appearanceMode === "fixed" && <p className="cc-card-note" data-widget-appearance="fixed">{t("widgets.appearance.fixed")}</p>}
                 {effectiveFixture === undefined ? (
                   <p className="cc-widget-preview-missing" data-widget-preview-missing={selected.cardId}>
                     {t("widgets.library.noFixture")}

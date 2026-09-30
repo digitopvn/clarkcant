@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { themeStylesheet } from "@clarkcant/design-tokens";
+import { compileAppearance, themeStylesheet } from "@clarkcant/design-tokens";
 
-import { APPEARANCE_ATTRIBUTE, APPEARANCE_STORAGE_KEY, applyAppearance, installStyleSheets } from "../src/appearance.ts";
+import { APPEARANCE_ATTRIBUTE, APPEARANCE_STORAGE_KEY, applyAppearance, applyRelayedAppearance, installStyleSheets, readAppearanceSnapshot, subscribeToAppearanceSnapshot } from "../src/appearance.ts";
 
 /**
  * Applying a theme to a page that is already running.
@@ -19,6 +19,7 @@ interface FakeStyle {
 
 const appended: FakeStyle[] = [];
 const root = { dataset: {} as Record<string, string> };
+const body = { dataset: {} as Record<string, string> };
 const stored = new Map<string, string>();
 let original: unknown;
 let originalStorage: unknown;
@@ -34,6 +35,7 @@ beforeAll(() => {
   // No constructable sheets here, so the `<style>` fallback is what gets exercised; both paths replace one sheet.
   (globalThis as { document?: unknown }).document = {
     documentElement: root,
+    body,
     head: { append: (...styles: FakeStyle[]) => appended.push(...styles) },
     createElement: (): FakeStyle => ({ dataset: {}, textContent: "" }),
   };
@@ -61,6 +63,37 @@ const DUSK = {
 };
 
 describe("applyAppearance", () => {
+  it("resolves the in-app reduced-motion preference for the global desktop relay", () => {
+    const normal = readAppearanceSnapshot()!;
+    body.dataset.ccReducedMotion = "true";
+    try {
+      const reduced = readAppearanceSnapshot()!;
+      expect(reduced.tokens.motion.micro).toBe("0ms");
+      expect(reduced.revision).not.toBe(normal.revision);
+    } finally {
+      delete body.dataset.ccReducedMotion;
+    }
+    expect(readAppearanceSnapshot()?.revision).toBe(normal.revision);
+  });
+  it("publishes only drawn checked snapshots, deduplicates them and accepts the host's detached revision", () => {
+    const revisions: string[] = [];
+    const unsubscribe = subscribeToAppearanceSnapshot(() => revisions.push(readAppearanceSnapshot()!.revision));
+    applyAppearance({ theme: DUSK, themeRef: "package:com.example.dusk#dusk" });
+    const drawn = readAppearanceSnapshot()!;
+    expect(drawn.themeRef).toBe("package:com.example.dusk#dusk");
+    applyAppearance({ theme: DUSK, themeRef: "package:com.example.dusk#dusk" });
+    expect(readAppearanceSnapshot()).toBe(drawn);
+    expect(revisions).toHaveLength(1);
+    unsubscribe();
+    const reduced = compileAppearance({ scheme: "light", reducedMotion: true });
+    expect(applyRelayedAppearance(reduced)).toBe(true);
+    expect(readAppearanceSnapshot()?.revision).toBe(reduced.revision);
+    const before = tokens();
+    expect(applyRelayedAppearance({ ...reduced, localToken: "refuse" })).toBe(false);
+    expect(tokens()).toBe(before);
+    expect(revisions).toHaveLength(1);
+    applyAppearance({ theme: null, themeRef: "builtin:clark" });
+  });
   it("starts on Clark Default, in a token sheet of its own ahead of the component sheet", () => {
     expect(appended.map((style) => style.dataset["clarkcant"])).toEqual(["tokens", "styles"]);
     expect(tokens()).toBe(themeStylesheet());

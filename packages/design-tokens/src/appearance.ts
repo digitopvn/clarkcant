@@ -45,7 +45,7 @@ export const CLARK_THEME: ThemeDocument = {
  * without the other would stamp `builtin:clark` on another theme's tokens, and a consumer that trusts the name — a
  * cache, a fallback notice, a widget told which theme it is drawn in — would be told something untrue.
  */
-export type CompileAppearanceInput =
+export type CompileAppearanceInput = { reducedMotion?: boolean } & (
   | {
       /** The scheme to draw in, already resolved from the person's choice. */
       scheme: ResolvedColorScheme;
@@ -58,7 +58,7 @@ export type CompileAppearanceInput =
       theme: ThemeDocument;
       /** The reference the theme was selected by. */
       themeRef: string;
-    };
+    });
 
 /** Compile one theme in one scheme. Throws if the input pairs a theme and a reference wrongly, or if the result would break the snapshot contract. */
 export function compileAppearance(input: CompileAppearanceInput): AppearanceSnapshot {
@@ -79,7 +79,7 @@ export function compileAppearance(input: CompileAppearanceInput): AppearanceSnap
     type: TYPE_SCALE,
     space: SPACE,
     radius,
-    motion: themeMotion(theme),
+    motion: input.reducedMotion === true ? MOTION_REDUCED : themeMotion(theme),
     // Host-owned: a theme can make motion faster, slower or stepped, and reduced motion is still none at all.
     motionReduced: MOTION_REDUCED,
     layout: LAYOUT,

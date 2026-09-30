@@ -55,6 +55,7 @@ import {
   detachedWindowOptions,
   reviewDetachedBootstrap,
   reviewDetachedIntent,
+  reviewDetachedAppearance,
 } from "./detached-window.mjs";
 import {
   COMPACT_MIN_SIZE,
@@ -183,6 +184,7 @@ const EXPECTED_BRIDGE_METHODS = Object.freeze([
   "setKeepRunningOnWindowClose",
   "setWindowMode",
   "status",
+  "updateAppearance",
 ].sort());
 
 /**
@@ -765,6 +767,7 @@ function registerHandlers() {
         title: input?.title,
         widgetKind: input?.widgetKind,
         live: input?.live,
+        appearance: input?.appearance,
       }),
     );
     if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
@@ -842,6 +845,15 @@ function registerHandlers() {
     if (detached === undefined) return { ok: true, attached: false };
     detached.window.close();
     return { ok: true, attached: true };
+  });
+
+  handle("desktop:updateAppearance", async (input) => {
+    const checked = reviewDetachedAppearance(input);
+    if (!checked.ok) return { ok: false, refused: checked.reason };
+    if (detached === undefined || detached.bootstrap.appearance?.revision === checked.appearance.revision) return { ok: true };
+    detached.bootstrap = { ...detached.bootstrap, appearance: checked.appearance };
+    detached.window.webContents.send("detached:appearance", checked.appearance);
+    return { ok: true };
   });
 
   handle("detached:bootstrap", async () => {
@@ -1122,6 +1134,8 @@ async function runSmokeTest() {
   /** What the detached window could see, so a failure there is diagnosable rather than a bare `false`. */
   let detachedObserved = {};
   try {
+    // Compiler output checked for drift by the desktop unit tests; fixture data is loaded only in smoke mode.
+    const appearance = JSON.parse(readFileSync(join(here, "../test/fixtures/appearance.json"), "utf8"));
     shellDocumentUrl = node.url;
     nodeOriginUrl = node.url;
     nodeIdentityOverride = "smoke-token-not-a-credential";
@@ -1138,6 +1152,7 @@ async function runSmokeTest() {
         conversationId: "conv_smoke",
         instanceId: "widget_smoke",
         title: "Bang dieu khien",
+        appearance: appearance.initial,
         live: {
           compositionId: "comp_smoke",
           readOnly: false,
@@ -1174,6 +1189,41 @@ async function runSmokeTest() {
               "return bridge === undefined ? [] : Object.keys(bridge).sort(); })()",
           );
 
+    step = "subscribe to the detached appearance relay";
+    await opened.webContents.executeJavaScript(
+      "window.__appearanceEvents = []; window.__stopAppearance = window.clarkcantDetached.onAppearance(" +
+      "value => window.__appearanceEvents.push(value)); true",
+    );
+    step = "send the checked appearance through the shell bridge";
+    const updated = await detachShell.webContents.executeJavaScript(
+      `window.clarkcant.updateAppearance(${JSON.stringify(appearance.next)})`,
+    );
+    let events = [];
+    for (let attempt = 0; attempt < 40 && events.length === 0; attempt += 1) {
+      events = await opened.webContents.executeJavaScript("window.__appearanceEvents");
+      if (events.length === 0) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const repeated = await detachShell.webContents.executeJavaScript(
+      `window.clarkcant.updateAppearance(${JSON.stringify(appearance.next)})`,
+    );
+    const refused = await detachShell.webContents.executeJavaScript(
+      `window.clarkcant.updateAppearance(${JSON.stringify({ ...appearance.next, rawTheme: {} })})`,
+    );
+    const latest = await opened.webContents.executeJavaScript("window.clarkcantDetached.bootstrap()");
+    await opened.webContents.executeJavaScript("window.__stopAppearance(); true");
+    await detachShell.webContents.executeJavaScript(
+      `window.clarkcant.updateAppearance(${JSON.stringify(appearance.initial)})`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    events = await opened.webContents.executeJavaScript("window.__appearanceEvents");
+    checks.push(
+      ["the initial detached snapshot is the exact host revision", JSON.stringify(bootstrap?.bootstrap?.appearance) === JSON.stringify(appearance.initial)],
+      ["the live relay delivers one checked revision without reopening the window", updated?.ok === true && repeated?.ok === true &&
+        detached?.window === opened && JSON.stringify(events) === JSON.stringify([appearance.next])],
+      ["the updated bootstrap retains that same appearance revision", JSON.stringify(latest?.bootstrap?.appearance) === JSON.stringify(appearance.next)],
+      ["a raw theme is refused before reaching the detached window", refused?.ok === false],
+    );
+
     step = "close the detached window";
     opened?.close();
     // The close handler releases the lease and messages the shell; neither is synchronous with `close()`.
@@ -1194,12 +1244,12 @@ async function runSmokeTest() {
       [
         "the bootstrap carries the widget and no credential",
         bootstrap?.ok === true &&
-          bootstrapKeys === JSON.stringify(["instanceRef", "live", "title", "widgetKind"]) &&
+          bootstrapKeys === JSON.stringify(["appearance", "instanceRef", "live", "title", "widgetKind"]) &&
           !JSON.stringify(bootstrap.bootstrap).includes("localToken"),
       ],
       [
-        "the detached window reaches only its own three verbs",
-        JSON.stringify(verbs) === JSON.stringify(["bootstrap", "intent", "release"]),
+        "the detached window reaches only its own verbs and read-only appearance subscription",
+        JSON.stringify(verbs) === JSON.stringify(["bootstrap", "intent", "onAppearance", "release"]),
       ],
       ["closing the window gives the lease back", release !== undefined],
       ["and the shell is told to take the instance back", Array.isArray(reattached) && reattached.length === 1],

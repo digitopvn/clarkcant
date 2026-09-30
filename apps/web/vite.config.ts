@@ -18,6 +18,7 @@ export default defineConfig({
     alias: {
       "@clarkcant/contracts": `${workspace}packages/contracts/src/index.ts`,
       "@clarkcant/design-tokens": `${workspace}packages/design-tokens/src/index.ts`,
+      "@clarkcant/widget-sdk/dom": `${workspace}packages/widget-sdk/src/dom.ts`,
       "@clarkcant/widget-sdk": `${workspace}packages/widget-sdk/src/index.ts`,
       "@clarkcant/conversation-client": `${workspace}packages/conversation-client/src/index.ts`,
     },

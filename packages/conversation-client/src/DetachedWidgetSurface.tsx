@@ -4,6 +4,8 @@ import { MiniAppSurface, STATE_EVENT_OPERATION, actionForIntent } from "./mini-a
 import { toSurfaceViewFromLive } from "./DesktopSurfaces.tsx";
 import type { LiveWidgetResponse } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
+import type { AppearanceSnapshot } from "@clarkcant/contracts";
+import { applyRelayedAppearance } from "./appearance.ts";
 
 /**
  * The detached widget window's document.
@@ -22,7 +24,7 @@ import { useT } from "./i18n/locale-context.tsx";
 export interface DetachedBridge {
   bootstrap(): Promise<{
     ok: boolean;
-    bootstrap?: { instanceRef: string; title: string; widgetKind: string; live: LiveWidgetResponse };
+    bootstrap?: { instanceRef: string; title: string; widgetKind: string; live: LiveWidgetResponse; appearance?: AppearanceSnapshot };
     refused?: string;
   }>;
   intent(input: {
@@ -32,6 +34,7 @@ export interface DetachedBridge {
     input: Record<string, unknown>;
   }): Promise<{ ok: boolean; result?: unknown; refused?: string }>;
   release(): Promise<{ ok: boolean }>;
+  onAppearance?(listener: (snapshot: unknown) => void): () => void;
 }
 
 export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): ReactElement {
@@ -50,6 +53,11 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
 
   useEffect(() => {
     let cancelled = false;
+    let receivedAppearance = false;
+    const apply = (raw: unknown): void => {
+      if (!cancelled && applyRelayedAppearance(raw)) receivedAppearance = true;
+    };
+    const unsubscribe = bridge.onAppearance?.(apply);
     void bridge.bootstrap().then((answer) => {
       if (cancelled) return;
       if (!answer.ok || answer.bootstrap === undefined) {
@@ -58,10 +66,12 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
         setRefusal(answer.refused ?? "the host did not send this instance");
         return;
       }
+      if (answer.bootstrap.appearance !== undefined && !receivedAppearance) apply(answer.bootstrap.appearance);
       setLoaded(answer.bootstrap);
     });
     return () => {
       cancelled = true;
+      unsubscribe?.();
     };
   }, [bridge]);
 

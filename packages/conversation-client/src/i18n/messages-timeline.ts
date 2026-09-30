@@ -663,6 +663,7 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.gallery.sourceInstalled": "Installed package",
   "widgets.gallery.sourceLocal": "Local development package",
   "widgets.gallery.experimentalSuffix": " · experimental",
+  "widgets.appearance.fixed": "Widget này sử dụng giao diện riêng.",
 
   // widget-library/WidgetInspector.tsx
   "widgets.inspector.nothingDeclared": "Không có gì được khai báo.",
@@ -1461,6 +1462,7 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.gallery.sourceInstalled": "Installed package",
   "widgets.gallery.sourceLocal": "Local development package",
   "widgets.gallery.experimentalSuffix": " · experimental",
+  "widgets.appearance.fixed": "This widget uses its own visual system.",
 
   "widgets.inspector.nothingDeclared": "Nothing declared.",
 

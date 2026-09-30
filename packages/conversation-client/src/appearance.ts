@@ -1,10 +1,12 @@
 import {
   BUILTIN_CLARK_THEME_REF,
+  appearanceSnapshotSchema,
   checkThemeDocument,
   type ThemeContrastFailureView,
   type ThemeDocument,
   type ThemeOrb,
   type ThemeProtectedFailureView,
+  type AppearanceSnapshot,
 } from "@clarkcant/contracts";
 import { appearanceStylesheet, compileAppearance, themeDrawProblem, type ThemeDrawProblem } from "@clarkcant/design-tokens";
 
@@ -51,9 +53,13 @@ export class ThemeDrawError extends Error {
 
 export interface CompiledAppearance {
   css: string;
+  snapshots?: AppearanceSnapshots;
+  reducedSnapshots?: AppearanceSnapshots;
   /** Both schemes' revisions: the page is drawn in whichever the colour scheme resolves to, and either can change. */
   revision: string;
 }
+
+type AppearanceSnapshots = Readonly<Record<"dark" | "light", AppearanceSnapshot>>;
 
 /**
  * Compile a theme into the token stylesheet, both schemes.
@@ -66,9 +72,17 @@ export function compileThemeStylesheet(theme: ThemeDocument | undefined, themeRe
     const refused = themeDrawProblem(theme);
     if (refused !== undefined) throw new ThemeDrawError(refused);
   }
-  const dark = compileAppearance(theme === undefined ? { scheme: "dark" } : { scheme: "dark", theme, themeRef });
-  const light = compileAppearance(theme === undefined ? { scheme: "light" } : { scheme: "light", theme, themeRef });
-  return { css: appearanceStylesheet({ dark, light }), revision: `${dark.revision}-${light.revision}` };
+  const compile = (scheme: "dark" | "light", reducedMotion = false): AppearanceSnapshot => compileAppearance(
+    theme === undefined ? { scheme, reducedMotion } : { scheme, theme, themeRef, reducedMotion },
+  );
+  const dark = compile("dark");
+  const light = compile("light");
+  return {
+    css: appearanceStylesheet({ dark, light }),
+    revision: `${dark.revision}-${light.revision}`,
+    snapshots: { dark, light },
+    reducedSnapshots: { dark: compile("dark", true), light: compile("light", true) },
+  };
 }
 
 /**
@@ -216,12 +230,60 @@ export function subscribeToThemeOrb(onChange: () => void): () => void {
 }
 
 function writeTokens(compiled: CompiledAppearance): void {
-  if (typeof document === "undefined" || tokenSheet === undefined) return;
-  // Nothing changed: leave the sheet alone, so a refetch that returns the same theme restyles nothing.
-  if (document.documentElement.dataset[APPEARANCE_ATTRIBUTE] === compiled.revision) return;
-  if (tokenSheet.kind === "constructed") tokenSheet.sheet.replaceSync(compiled.css);
-  else tokenSheet.element.textContent = compiled.css;
-  document.documentElement.dataset[APPEARANCE_ATTRIBUTE] = compiled.revision;
+  if (typeof document !== "undefined" && tokenSheet !== undefined && document.documentElement.dataset[APPEARANCE_ATTRIBUTE] !== compiled.revision) {
+    if (tokenSheet.kind === "constructed") tokenSheet.sheet.replaceSync(compiled.css);
+    else tokenSheet.element.textContent = compiled.css;
+    document.documentElement.dataset[APPEARANCE_ATTRIBUTE] = compiled.revision;
+  }
+  if (compiled.snapshots !== undefined && compiled.reducedSnapshots !== undefined && drawnAppearance.revision !== compiled.revision) {
+    drawnAppearance = compiled;
+    for (const listener of appearanceListeners) listener();
+  }
+}
+
+let drawnAppearance = clarkStylesheet();
+const appearanceListeners = new Set<() => void>();
+
+/** The checked appearance actually drawn, including a Lab subtree's scheme and reduced motion. */
+export function readAppearanceSnapshot(scope?: Element | null): AppearanceSnapshot | undefined {
+  const root = typeof document === "undefined" ? undefined : document.documentElement;
+  const scopedScheme = scope?.closest("[data-cc-theme]")?.getAttribute("data-cc-theme");
+  const scheme = (scopedScheme ?? root?.dataset.ccTheme) === "light" ? "light" : "dark";
+  const reduced = scope?.closest('[data-cc-reduced-motion="true"]') != null
+    || (typeof document !== "undefined" && document.body?.dataset.ccReducedMotion === "true")
+    || (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  return (reduced ? drawnAppearance.reducedSnapshots : drawnAppearance.snapshots)?.[scheme];
+}
+
+/** One drawn snapshot path for iframe and detached renderers; no node/theme query. */
+export function subscribeToAppearanceSnapshot(listener: () => void): () => void {
+  appearanceListeners.add(listener);
+  const observer = typeof MutationObserver === "function" ? new MutationObserver(listener) : undefined;
+  if (typeof document !== "undefined") {
+    observer?.observe(document.documentElement, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: ["data-cc-theme", "data-cc-reduced-motion"],
+    });
+  }
+  const media = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : undefined;
+  media?.addEventListener("change", listener);
+  return () => {
+    appearanceListeners.delete(listener);
+    observer?.disconnect();
+    media?.removeEventListener("change", listener);
+  };
+}
+
+/** A detached surface draws the host's resolved snapshot, without credentials or a theme lookup. */
+export function applyRelayedAppearance(raw: unknown): boolean {
+  const checked = appearanceSnapshotSchema.safeParse(raw);
+  if (!checked.success) return false;
+  const snapshot = checked.data;
+  const pair = { dark: snapshot, light: snapshot };
+  writeTokens({ css: appearanceStylesheet(pair), revision: snapshot.revision, snapshots: pair, reducedSnapshots: pair });
+  if (typeof document !== "undefined") document.documentElement.dataset.ccTheme = snapshot.scheme;
+  return true;
 }
 
 function readCachedAppearance(): { theme: unknown; themeRef: string } | undefined {

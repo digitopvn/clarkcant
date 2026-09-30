@@ -23,7 +23,8 @@ import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
 import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent } from "./mini-app-surface.tsx";
 import { type FrameSource, WidgetFrame } from "./WidgetFrame.tsx";
 import { useWidgetArtifactHost } from "./widget-artifacts.tsx";
-import type { AttachmentRef } from "@clarkcant/contracts";
+import type { AppearanceSnapshot, AttachmentRef } from "@clarkcant/contracts";
+import { readAppearanceSnapshot } from "./appearance.ts";
 import { useImageUrls } from "./use-image-urls.ts";
 
 export interface MenuBarPopoverProps {
@@ -212,6 +213,7 @@ interface ShellDetachBridge {
     instanceId: string;
     title?: string;
     live: unknown;
+    appearance?: AppearanceSnapshot | undefined;
   }): Promise<{ ok: boolean; refused?: string }>;
   onWidgetReattached?(callback: (payload: { instanceRef?: string }) => void): (() => void) | void;
 }
@@ -461,6 +463,7 @@ export function PinnedLiveSurface({
       instanceId,
       ...(title === undefined ? {} : { title }),
       live,
+      appearance: readAppearanceSnapshot(),
     });
     if (!answer.ok) {
       setNotice(answer.refused ?? t("shell.live.detachFailed"));

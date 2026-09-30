@@ -57,6 +57,7 @@ export const IPC_CHANNELS = Object.freeze([
    */
   "desktop:detachWidget",
   "desktop:attachWidget",
+  "desktop:updateAppearance",
   "detached:bootstrap",
   "detached:intent",
   "detached:release",

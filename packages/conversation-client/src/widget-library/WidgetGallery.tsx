@@ -86,6 +86,7 @@ export function WidgetGallery({ entries, onSelect }: WidgetGalleryProps): ReactE
                 <span className="cc-widget-card-name">{entry.displayName}</span>
                 <span className="cc-widget-card-family">{entry.family}</span>
                 <span className="cc-widget-card-desc">{entry.description}</span>
+                {entry.definition.appearanceMode === "fixed" && <span data-widget-appearance="fixed">{t("widgets.appearance.fixed")}</span>}
                 <span className="cc-widget-card-source">
                   {entry.source === "builtin"
                     ? t("widgets.gallery.sourceBuiltin")

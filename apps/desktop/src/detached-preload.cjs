@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld("clarkcantDetached", {
   bootstrap() {
     return ipcRenderer.invoke("detached:bootstrap");
   },
+  onAppearance(callback) {
+    const listener = (_event, snapshot) => callback(snapshot);
+    ipcRenderer.on("detached:appearance", listener);
+    return () => ipcRenderer.removeListener("detached:appearance", listener);
+  },
   /**
    * Asks the host to perform an action on this instance.
    *

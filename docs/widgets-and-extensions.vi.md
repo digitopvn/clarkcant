@@ -301,6 +301,14 @@ lifecycle.onMount / onSuspend / onResume / onDispose
 
 `requestPin` là proposal trừ khi originated trực tiếp từ user gesture đã rõ. SDK không có `readAllSecrets`, `shell`, `queryCoreDb`, `disableCSP`, `approve`, `installAnything` hoặc `registerSidebar`.
 
+Widget nhận diện mạo công khai đã kiểm tra qua `appearance.current()` / `appearance.subscribe(handler)`
+(`appearance@1`, bridge v2). Built-in và Mini App khai báo dùng cùng token semantic; iframe cách ly nhận thay đổi mà
+không mount lại hay ghi semantic. Composition tách cửa sổ nhận đúng snapshot đã phân giải của host qua relay chỉ đọc,
+không nhận thông tin xác thực hay truy vấn theme. Định nghĩa mặc định thích ứng và có thể khai báo
+`appearanceMode: "fixed"`, được ghi rõ trong Lab/chi tiết và kết quả marketplace khi directory cung cấp khai báo.
+Nội dung lịch sử, props, state, nguồn gốc và văn bản dự phòng giữ nguyên; giảm chuyển động luôn được ưu tiên ở cả hai
+chế độ. Xem [API tác giả và quy tắc tương thích](widget-development.vi.md#diện-mạo-appearance1).
+
 ### Trust tiers
 
 | Type | Execution | Quyền mặc định |

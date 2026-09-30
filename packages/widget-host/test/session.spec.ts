@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { compileAppearance } from "@clarkcant/design-tokens";
 
 import { createFrameSession, type FrameSessionInput } from "../src/session.ts";
 
@@ -52,6 +53,26 @@ function makeSession(overrides: Partial<FrameSessionInput> = {}) {
 function fromFrame(data: Record<string, unknown>, sourceMatches = true) {
   return { data: { nonce: NONCE, ...data }, sourceMatchesExpectedWindow: sourceMatches };
 }
+
+it("initializes with the current appearance and restyles without a semantic/state write or remount", () => {
+  const dark = compileAppearance({ scheme: "dark" });
+  const light = compileAppearance({ scheme: "light" });
+  const { session, posted, ran } = makeSession({ appearance: dark, revision: 7, stateRevision: 3 });
+  session.announceAppearance(light);
+  expect(posted).toEqual([]);
+  expect(session.init()).toMatchObject({ appearance: light, extensions: ["appearance@1"], revision: 7, stateRevision: 3 });
+  session.announceAppearance(light);
+  expect(posted).toHaveLength(1);
+  session.announceAppearance(dark);
+  expect(posted.at(-1)).toMatchObject({ kind: "appearance.changed", nonce: NONCE, revision: dark.revision, appearance: dark });
+  expect(posted.map((message) => message.kind)).toEqual(["init", "appearance.changed"]);
+  expect(ran).toEqual([]);
+  expect(session.transcript()).toEqual([]);
+  session.dispose();
+  const count = posted.length;
+  session.announceAppearance(light);
+  expect(posted).toHaveLength(count);
+});
 
 describe("what the host advertises at init", () => {
   it("sends the exact nonce, and only the capabilities it will broker", () => {
