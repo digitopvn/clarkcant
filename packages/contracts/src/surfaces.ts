@@ -27,6 +27,16 @@ import { widgetSnapshotSchema } from "./widgets.ts";
 export const messageRoleSchema = z.enum(["user", "assistant", "system", "tool"]);
 export type MessageRole = z.infer<typeof messageRoleSchema>;
 
+/** The person's own surfaces a user message can come in on (`MessageRecord.surface`). */
+export const messageSurfaceSchema = z.enum(["composer", "voice"]);
+export type MessageSurface = z.infer<typeof messageSurfaceSchema>;
+/**
+ * The request header the page's composer sends with a message it posts. Relays (the WebSocket `request` frame, MCP)
+ * build their own headers and never forward a client's, and `clarkcant` sends none, so a message posted through any of
+ * them is stored without a surface.
+ */
+export const COMPOSER_SURFACE_HEADER = "x-clarkcant-surface";
+
 export const textBlockSchema = z.strictObject({
   type: z.literal("text"),
   format: z.enum(["plain", "markdown"]),
@@ -847,6 +857,14 @@ export const messageRecordSchema = z.strictObject({
   createdAt: instantSchema,
   /** Delivery state, so "sent" is never shown before the node accepted it. */
   delivery: z.enum(["draft", "sending", "accepted", "failed"]),
+  /**
+   * The person's own surface a user message came in on: this node's page composer, or voice. Set by the node that
+   * stored it, never taken from what a client claims in a body; absent on every message a machine surface (MCP, the
+   * WebSocket relay, `clarkcant api`), a widget, the host itself or a peer put into the conversation, and on messages
+   * stored before it was recorded. What only the person may decide from their words — which sites a browser task may
+   * act on — reads only messages that carry it.
+   */
+  surface: messageSurfaceSchema.optional(),
 });
 export type MessageRecord = z.infer<typeof messageRecordSchema>;
 

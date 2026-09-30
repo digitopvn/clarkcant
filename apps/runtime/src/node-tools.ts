@@ -58,6 +58,7 @@ import { rememberMemory, type MemoryDeps } from "./memory.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import { createSearchHistoryTool } from "./session-search.ts";
 import { type AutomationToolDeps, createAutomationTools } from "./automation-tools.ts";
+import { type BrowserTaskToolDeps, createBrowserTaskTool } from "./browser-task-tool.ts";
 import { createWorkTools } from "./work-tools.ts";
 import type { HostControlAcks } from "./host-control-acks.ts";
 
@@ -208,6 +209,12 @@ export function createNodeTools(input: {
    * with no conversation has nowhere for it to report.
    */
   automations?: AutomationToolDeps;
+  /**
+   * Doing something on a website the person named, as a browser task (`browser-task-tool.ts`).
+   *
+   * Absent means `start_browser_task` is not registered: a node that runs no background task has no browser to give.
+   */
+  browserTasks?: BrowserTaskToolDeps;
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -273,6 +280,7 @@ export function createNodeTools(input: {
     ...(input.inbox === undefined ? [] : [createReadInboxTool(input.inbox)]),
     ...(input.ui === undefined ? [] : [createInspectUiTool(input.ui)]),
     ...(input.automations === undefined ? [] : createAutomationTools(input.automations)),
+    ...(input.browserTasks === undefined ? [] : [createBrowserTaskTool(input.browserTasks)]),
   ];
 }
 

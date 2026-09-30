@@ -13,7 +13,7 @@ import {
 
 import { InlineStatus, SegmentedControl, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
-import type { GatewayClient } from "../api.ts";
+import type { GatewayClient, RecentEffectAction } from "../api.ts";
 import { hasDesktopChrome } from "../desktop-compact.ts";
 import {
   desktopNotifyStatus,
@@ -58,10 +58,31 @@ export interface ControlSettingsProps {
    */
   client: GatewayClient;
   /** The effects this node performed without an approval card, newest first. */
-  recentEffects: readonly { at: string; description: string; mode: string; category: string }[];
+  recentEffects: readonly RecentEffectEntry[];
   recentProblem: string | undefined;
   /** Called after a successful autonomy save, so the shell's `data-policy-mode` follows it. */
   onPolicyChange?: () => void;
+}
+
+export interface RecentEffectEntry {
+  at: string;
+  description: string;
+  action?: RecentEffectAction;
+  mode: string;
+  category: string;
+}
+
+/**
+ * What an effect did, in the person's language. A press on a page arrives as data and is worded here; any other
+ * effect keeps the node's own fixed words (a command, a package id), which are the same in every language.
+ */
+export function recentEffectText(effect: Pick<RecentEffectEntry, "description" | "action">, t: (key: MessageKey) => string): string {
+  const action = effect.action;
+  if (action === undefined) return effect.description;
+  // A function replacement, so a `$` in a button's name is written as it is rather than read as a pattern.
+  return t("settings.control.effects.browserClick")
+    .replace("{label}", () => action.label)
+    .replace("{page}", () => action.page);
 }
 
 /** The words the node acts on, rather than a summary of them. */
@@ -723,7 +744,7 @@ export function ControlSettings({
           <ul className="cc-effect-list">
             {recentEffects.map((effect) => (
               <li key={`${effect.at}-${effect.description}`} data-effect-entry="true">
-                <code>{effect.category}</code> {effect.description}
+                <code>{effect.category}</code> {recentEffectText(effect, t)}
                 <span className="cc-setting-desc"> · {effect.mode} · {effect.at}</span>
               </li>
             ))}

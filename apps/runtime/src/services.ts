@@ -40,6 +40,7 @@ import { loadLocalEmbedder } from "./embeddings-local.ts";
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 import type { SkillCatalog } from "./composer-references.ts";
 import type { ServiceHost } from "./service-host.ts";
+import { BROWSER_TASK_CAPABILITY, BROWSER_TASK_NOT_ROUTABLE } from "./task-browser.ts";
 import type { TaskDispatcher } from "./task-dispatch.ts";
 import {
   type VectorIndexService,
@@ -404,6 +405,23 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
       },
     );
   }
+  // The browser is registered so the dispatcher's policy gate can read its effect category, and never usable: only a
+  // browser task the person asked for is dispatched to it, never a message the conductor routes on its own.
+  registerCapability(
+    { db: runtime.db, nodeId },
+    {
+      ...BROWSER_TASK_CAPABILITY,
+      executionNodeId: nodeId as never,
+      readiness: {
+        installed: false,
+        loaded: false,
+        authenticated: false,
+        authorized: false,
+        healthy: false,
+        blockedReason: BROWSER_TASK_NOT_ROUTABLE,
+      },
+    },
+  );
 
   // The sample dataset is registered through the same path a real one would use, so the
   // renderer never special-cases demo data and the freshness label comes from one place.

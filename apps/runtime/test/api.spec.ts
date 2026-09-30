@@ -6,7 +6,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { nodeIdSchema } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
 import { createTask, requestApproval, setPreference, type ModelTurnInput } from "@clarkcant/core";
-import { appendMessage, nextMessageSequence, oneRow, readCredential, readPreference } from "@clarkcant/storage";
+import {
+  appendMessage,
+  latestMessages,
+  nextMessageSequence,
+  oneRow,
+  readCredential,
+  readPreference,
+} from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { commandDigest } from "../src/run-command.ts";
@@ -177,6 +184,33 @@ describe("J1 over the API", async () => {
     expect(body.instances[0]?.definitionId).toBe("canvas.table@1");
     expect(body.instances[0]?.props.datasetRef).toBe("dataset_fixture_usage");
     expect(body.metadata.messageCount).toBe(2);
+  });
+
+  it("marks a message as the person's own only when the node's composer sent it", async () => {
+    conversationId = await createConversation();
+    const post = (text: string, surface?: string) =>
+      handleRequest(deps, {
+        method: "POST",
+        path: `/conversations/${conversationId}/messages`,
+        query: {},
+        headers: {
+          authorization: `Bearer ${token()}`,
+          ...(surface === undefined ? {} : { "x-clarkcant-surface": surface }),
+        },
+        body: JSON.stringify({ text, demo: true }),
+      });
+    // The composer's own mark; a machine client posting with its token alone (MCP, the relay, `clarkcant api`); and a
+    // client claiming a surface only the node itself may record.
+    expect((await post("từ ô soạn thảo", "composer")).status).toBe(202);
+    expect((await post("từ một client máy")).status).toBe(202);
+    expect((await post("tự nhận là giọng nói", "voice")).status).toBe(202);
+
+    const users = latestMessages(services.runtime.db, conversationId, 30).filter((message) => message.role === "user");
+    const surfaceOf = (text: string) =>
+      users.find((message) => message.blocks.some((block) => block.type === "text" && block.content === text))?.surface;
+    expect(surfaceOf("từ ô soạn thảo")).toBe("composer");
+    expect(surfaceOf("từ một client máy")).toBeUndefined();
+    expect(surfaceOf("tự nhận là giọng nói")).toBeUndefined();
   });
 
   it("rejects an empty message rather than storing a blank turn", async () => {

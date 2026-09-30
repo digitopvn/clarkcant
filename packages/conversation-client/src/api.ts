@@ -22,6 +22,7 @@ import type {
 } from "@clarkcant/contracts";
 
 import {
+  COMPOSER_SURFACE_HEADER,
   appIntentDecisionSchema,
   composerSuggestionsResponseSchema,
   effectReconcileResponseSchema,
@@ -64,6 +65,13 @@ import {
   connectTerminalSocket,
   terminalSocketUrl,
 } from "./terminal-socket.ts";
+
+/** A press on a page the node recorded in its activity log: what was pressed, and the page's host and path. */
+export interface RecentEffectAction {
+  verb: "click";
+  label: string;
+  page: string;
+}
 
 export interface GatewayClientOptions {
   baseUrl: string;
@@ -864,6 +872,8 @@ export class GatewayClient {
         authorization: `Bearer ${this.#token}`,
         "content-type": "application/json",
         accept: "text/event-stream",
+        // Typed into this page's composer: the node stores the message as the person's own words.
+        [COMPOSER_SURFACE_HEADER]: "composer",
       },
       body: JSON.stringify(messageBody(text, options)),
       ...(listeners.signal === undefined ? {} : { signal: listeners.signal }),
@@ -996,7 +1006,10 @@ export class GatewayClient {
       kind: string;
       mode: string;
       category: string;
+      /** Fixed words, for an effect the client has no wording of its own for. */
       description: string;
+      /** A press on a page, as data, which the client words in the person's language. */
+      action?: RecentEffectAction;
       operationDigest: string;
       because: string;
     }[];

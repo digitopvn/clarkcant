@@ -12,6 +12,7 @@ import {
   upsertTask,
 } from "@clarkcant/storage";
 
+import { type BrowserPressLocale, browserPressOfIntent, describeBrowserPress } from "./browser-press.ts";
 import type { TaskServiceDeps } from "./task-service.ts";
 
 /**
@@ -233,7 +234,7 @@ function settlementPlan(
   // Uncertain about something nobody answered for: not this function's to settle.
   if (reconciled.length === 0) return undefined;
   const didNotLand = reconciled.find((effect) => answered.get(effect.effectId) === "failed");
-  const landed = reconciled.filter((effect) => answered.get(effect.effectId) === "confirmed").map(quotedEffectIntent).join(", ");
+  const landed = reconciled.filter((effect) => answered.get(effect.effectId) === "confirmed").map((effect) => quotedEffectIntent(effect)).join(", ");
 
   if (entered.from === "cancel_requested") {
     return {
@@ -269,8 +270,14 @@ function settlementPlan(
   };
 }
 
-/** An effect as a person recognises it: the start of its own intent (a command, before where it ran), quoted. */
-export function quotedEffectIntent(effect: EffectRecord): string {
+/**
+ * An effect as a person recognises it, in their language: the start of its own intent (a command, before where it ran),
+ * quoted. A press on a page is worded rather than quoted, since its record is data in a fixed form and its label carries
+ * its own quotes.
+ */
+export function quotedEffectIntent(effect: EffectRecord, locale: BrowserPressLocale = "vi"): string {
+  const press = browserPressOfIntent(effect.intent);
+  if (press !== undefined) return `${locale === "en" ? "the action" : "thao tác"} ${describeBrowserPress(press, locale)}`;
   const intent = effect.intent.split(" — ")[0] ?? effect.intent;
   const flat = intent.replace(/\s+/g, " ").trim();
   return `“${flat.length <= 80 ? flat : `${flat.slice(0, 79)}…`}”`;

@@ -10,8 +10,10 @@ import {
   type Instant,
   type MessageBlock,
   type MessageRecord,
+  type MessageSurface,
   type Principal,
   type ReferenceBlock,
+  COMPOSER_SURFACE_HEADER,
   capabilityRefSchema,
   commandEnvelopeSchema,
   graphSemanticState,
@@ -792,6 +794,15 @@ function backgroundEndingReply(signal: AbortSignal, cause: unknown, title: strin
   return `Việc nền không xong: ${cause instanceof Error ? cause.message : String(cause)}`;
 }
 
+/**
+ * Whether a message was typed into the page's composer: the header the page sends, which no relay forwards
+ * (`COMPOSER_SURFACE_HEADER`). Anything else — no header, another value, a list of them — is not the composer.
+ */
+function composerSurface(request: GatewayRequest): { surface?: MessageSurface } {
+  const value = request.headers[COMPOSER_SURFACE_HEADER];
+  return value === "composer" ? { surface: "composer" } : {};
+}
+
 export function appendHostReply(
   services: Pick<NodeServices, "runtime" | "conductor" | "search">,
   input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant },
@@ -1040,6 +1051,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       referenceBlocks: references.blocks,
       // Only the demo path asks for a scripted sample; a real message never gets one.
       ...(parsed.value.demo === true ? { demo: true } : {}),
+      ...composerSurface(request),
       emit: (event) => {
         if (event.type === "host-control") hostControlDecisions.push(event.decision);
       },
@@ -1142,6 +1154,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
               attachmentRefs: attachments.refs,
               referenceBlocks: references.blocks,
               ...(parsed.value.demo === true ? { demo: true } : {}),
+              ...composerSurface(request),
             },
             send,
           ),
@@ -1868,6 +1881,7 @@ async function streamUserMessage(
     attachmentRefs?: readonly AttachmentRef[];
     referenceBlocks?: readonly ReferenceBlock[];
     demo?: boolean;
+    surface?: MessageSurface;
   },
   send: (chunk: string) => void,
 ): Promise<void> {
@@ -1880,6 +1894,7 @@ async function streamUserMessage(
       attachmentRefs: input.attachmentRefs ?? [],
       referenceBlocks: input.referenceBlocks ?? [],
       ...(input.demo === true ? { demo: true } : {}),
+      ...(input.surface === undefined ? {} : { surface: input.surface }),
       emit: (event) => {
         // One frame per event the turn produced, named as the turn named it. Translating here would
         // mean two vocabularies for the same facts, and the transcript stores one of them.

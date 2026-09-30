@@ -7,6 +7,7 @@ import {
   type Instant,
   type MessageBlock,
   type MessageRecord,
+  type MessageSurface,
   type Principal,
   type ReferenceBlock,
   type TaskRecord,
@@ -316,6 +317,12 @@ export interface UserMessageInput {
    */
   channel?: "voice" | "chat";
   /**
+   * The person's own surface this message was typed or said on, stored on the message (`MessageRecord.surface`). Set
+   * only by the composer's route and the voice path; every other caller leaves it out, so its message never counts as
+   * the person's own words.
+   */
+  surface?: MessageSurface;
+  /**
    * Files this message carries.
    *
    * The refs arrive already authorised — the gateway resolves each id against the conversation and the
@@ -441,6 +448,7 @@ function appendUser(
   text: string,
   at: Instant,
   extraBlocks: readonly MessageBlock[] = [],
+  surface?: MessageSurface,
 ): MessageRecord {
   const message: MessageRecord = {
     messageId: deps.newId("msg") as MessageRecord["messageId"],
@@ -460,6 +468,7 @@ function appendUser(
     authorNodeId: deps.nodeId as MessageRecord["authorNodeId"],
     createdAt: at,
     delivery: "accepted",
+    ...(surface === undefined ? {} : { surface }),
   };
   appendMessage(deps.db, message, nextMessageSequence(deps.db, conversationId));
   return message;
@@ -517,7 +526,8 @@ export function recordVoiceTranscript(
   const recorded: MessageRecord[] = [];
 
   if (input.userText.trim() !== "") {
-    recorded.push(appendUser(deps, input.conversationId, input.userText, input.at));
+    // Said aloud in a voice session: the person's own words, on their own surface.
+    recorded.push(appendUser(deps, input.conversationId, input.userText, input.at, [], "voice"));
   }
 
   if (input.assistantText.trim() !== "") {
@@ -553,6 +563,7 @@ export async function handleUserMessage(
     input.text,
     at,
     [...attachmentBlocks(input.attachmentRefs ?? []), ...referenceBlocks(input.referenceBlocks ?? [])],
+    input.surface,
   );
   void userMessage;
 

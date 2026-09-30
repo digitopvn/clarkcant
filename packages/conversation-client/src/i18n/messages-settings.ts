@@ -294,6 +294,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.control.effects.heading": "Việc đã chạy không hỏi",
   "settings.control.effects.intro": "Ở mức tự chủ, việc chạy mà không có thẻ duyệt vẫn để lại dấu vết ở đây. Đây là chỗ kiểm tra lại.",
   "settings.control.effects.none": "Chưa có việc nào chạy mà không hỏi.",
+  "settings.control.effects.browserClick": "Trình duyệt: bấm “{label}” trên {page}",
 
   // InboxNotificationSettings
   "settings.control.notifications.heading": "Thông báo hộp thư",
@@ -713,6 +714,7 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.control.effects.heading": "Effects run without asking",
   "settings.control.effects.intro": "At Autonomous, work that runs without an approval card still leaves a trace here. This is where to check it.",
   "settings.control.effects.none": "Nothing has run without asking yet.",
+  "settings.control.effects.browserClick": "Browser: click “{label}” on {page}",
 
   "settings.control.notifications.heading": "Inbox notifications",
   "settings.control.notifications.intro":

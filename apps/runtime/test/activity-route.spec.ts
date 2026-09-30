@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_EXECUTION_POLICY_CONFIG, instantSchema, voiceCapabilitiesSchema } from "@clarkcant/contracts";
-import { decideExecution, recordEffectExecution } from "@clarkcant/core";
+import { browserPress, decideExecution, describeBrowserPress, recordEffectExecution } from "@clarkcant/core";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -57,6 +57,7 @@ interface EffectEntry {
   mode: string;
   category: string;
   description: string;
+  action?: { verb: string; label: string; page: string };
   operationDigest: string;
   because: string;
 }
@@ -68,7 +69,11 @@ async function effects(): Promise<EffectEntry[]> {
 }
 
 /** Write one audit record the way the command tool does, so the route is read from real data. */
-function record(command: string, category: "local-write" | "external-write" = "local-write"): void {
+function record(
+  command: string,
+  category: "local-write" | "external-write" = "local-write",
+  action?: ReturnType<typeof browserPress>,
+): void {
   const digest = `sha256:${"a".repeat(40)}`;
   const decision = decideExecution({
     policy: DEFAULT_EXECUTION_POLICY_CONFIG,
@@ -92,8 +97,19 @@ function record(command: string, category: "local-write" | "external-write" = "l
       category,
       operationDigest: digest,
       description: command,
+      ...(action === undefined ? {} : { action }),
     },
   );
+}
+
+/** Write one activity document by hand, the way an older build or a damaged row would leave it. */
+function rawActivity(eventId: string, sequence: number, document: unknown): void {
+  services.runtime.db
+    .prepare(
+      `INSERT INTO events (event_id, source_node_id, stream, source_sequence, kind, document, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(eventId, services.runtime.identity.nodeId, "activity", sequence, "effect.executed", JSON.stringify(document), AT);
 }
 
 describe("the activity route reports what ran without asking", () => {
@@ -171,6 +187,37 @@ describe("the activity route reports what ran without asking", () => {
     const serialised = JSON.stringify(await effects());
     expect(serialised).not.toContain("sk-live-should-not-travel");
     expect(serialised).not.toContain("apiKey");
+  });
+
+  it("carries a press on a page as data, so the surface can word it in the person's language", async () => {
+    const press = browserPress("Send application", "shop.example/apply");
+    record(`browser ${describeBrowserPress(press, "en")} (task task_1)`, "external-write", press);
+
+    const [entry] = await effects();
+    expect(entry?.action).toEqual({ verb: "click", label: "Send application", page: "shop.example/apply" });
+    // The fixed words stay, for a surface that cannot word it itself, and they are in no one person's language.
+    expect(entry?.description).toBe("browser click “Send application” on shop.example/apply (task task_1)");
+    // A command has no press to word.
+    record("git status --short");
+    expect((await effects())[0]?.action).toBeUndefined();
+  });
+
+  it("leaves out a press that is not the shape the writer records", async () => {
+    rawActivity("evt_verb", 97, { description: "a", action: { verb: "type", label: "x", page: "shop.example" } });
+    rawActivity("evt_label", 96, { description: "b", action: { verb: "click", label: 7, page: "shop.example" } });
+    rawActivity("evt_long", 95, { description: "c", action: { verb: "click", label: "x".repeat(500), page: "shop.example" } });
+    rawActivity("evt_page", 94, { description: "d", action: { verb: "click", label: "x", page: "" } });
+    rawActivity("evt_extra", 93, { description: "e", action: { verb: "click", label: "x", page: "shop.example", token: "secret" } });
+
+    const listed = await effects();
+    const byDescription = new Map(listed.map((entry) => [entry.description, entry.action]));
+    expect(byDescription.get("a")).toBeUndefined();
+    expect(byDescription.get("b")).toBeUndefined();
+    expect(byDescription.get("c")).toBeUndefined();
+    expect(byDescription.get("d")).toBeUndefined();
+    // Only the named fields travel, never whatever else the document holds.
+    expect(byDescription.get("e")).toEqual({ verb: "click", label: "x", page: "shop.example" });
+    expect(JSON.stringify(listed)).not.toContain("secret");
   });
 });
 

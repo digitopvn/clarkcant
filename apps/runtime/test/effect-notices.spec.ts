@@ -163,6 +163,49 @@ describe("an effect whose outcome is unknown", () => {
     expect(body).toContain("và 99 thao tác khác cũng vậy");
   });
 
+  it("tells the person to check a browser submission on the site it went to, within the same length", () => {
+    const notice = unknownEffectNotice({
+      effects: Array.from({ length: 100 }, (_, index) => ({
+        taskId: "task_browser",
+        capabilityRef: "browser.playwright@1",
+        intent: `browser click “${"Gửi đơn ".repeat(40)}” on shop.example/checkout — tgt_task-${String(index)}`,
+        reconciliationEvidence: "click on el_1 sent 1 request(s) that had no answer after 5000 ms",
+      })),
+      task: { conversationId: "conv_browser", goal: "đặt hàng ".repeat(100) },
+      at: AT,
+    });
+    const body = notice?.body ?? "";
+    expect(body.length).toBeLessThanOrEqual(500);
+    expect(body).toContain("trang không trả lời");
+    expect(body).toContain("Hãy kiểm tra trên trang đó");
+    expect(body).not.toContain("remote Git");
+    // The target the browser ran in says nothing to a person, so it is not quoted.
+    expect(body).not.toContain("tgt_task");
+    expect(body.endsWith("trước khi làm lại.")).toBe(true);
+    // A button name cut short still closes its quote, and the action is never wrapped in a second pair.
+    expect(body.startsWith("Thao tác bấm “Gửi đơn")).toBe(true);
+    expect((body.match(/“/gu) ?? []).length).toBe((body.match(/”/gu) ?? []).length);
+    expect(body).not.toContain("““");
+
+    const short = unknownEffectNotice({
+      effects: [
+        {
+          taskId: "task_browser",
+          capabilityRef: "browser.playwright@1",
+          intent: "browser click “Send” on shop.example/checkout — tgt_task-1",
+        },
+      ],
+      task: { conversationId: "conv_browser", goal: "Đặt hàng\n\nBắt đầu từ: https://shop.example/checkout" },
+      at: AT,
+    });
+    // The press is recorded as data and worded in the notice's language: Vietnamese throughout, the request without
+    // its addresses line.
+    expect(short?.body).toContain(
+      "Thao tác bấm “Send” trên shop.example/checkout cho việc “Đặt hàng” đã được gửi đi nhưng trang không trả lời",
+    );
+    expect(short?.body).not.toContain("click");
+  });
+
   it("gives each task its own notice, and counts a task's other unknown effects in it", () => {
     const { taskId } = taskInConversation("gửi hai thay đổi");
     handOff(taskId, "git push origin a", "unknown");

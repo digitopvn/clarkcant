@@ -1,5 +1,8 @@
 import { parseThemeRef, type Instant } from "@clarkcant/contracts";
 import {
+  BROWSER_PRESS_LABEL_MAX,
+  BROWSER_PRESS_PAGE_MAX,
+  type BrowserPress,
   EXECUTION_POLICY_PREFERENCE_KEY,
   listRegisteredPreferences,
   readExecutionPolicyPreference,
@@ -30,6 +33,18 @@ export interface PreferenceRouteDeps {
   request: GatewayRequest;
   segments: string[];
   at: () => string;
+}
+
+/**
+ * A recorded press on a page, passed on only when it is the shape `recordEffectExecution` writes: the client words it
+ * in the person's language, so anything else is left out and the fixed description stands in for it.
+ */
+function activityAction(value: unknown): BrowserPress | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { verb, label, page } = value as Record<string, unknown>;
+  if (verb !== "click" || typeof label !== "string" || typeof page !== "string") return undefined;
+  if (label.length > BROWSER_PRESS_LABEL_MAX || page === "" || page.length > BROWSER_PRESS_PAGE_MAX) return undefined;
+  return { verb, label, page };
 }
 
 /**
@@ -96,12 +111,14 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
         const document = (typeof event.document === "object" && event.document !== null
           ? event.document
           : {}) as Record<string, unknown>;
+        const action = activityAction(document.action);
         return {
           at: event.occurredAt,
           kind: event.kind,
           mode: typeof document.mode === "string" ? document.mode : "unknown",
           category: typeof document.category === "string" ? document.category : "unknown",
           description: typeof document.description === "string" ? document.description : "",
+          ...(action === undefined ? {} : { action }),
           operationDigest: typeof document.operationDigest === "string" ? document.operationDigest : "",
           because: typeof document.because === "string" ? document.because : "",
         };

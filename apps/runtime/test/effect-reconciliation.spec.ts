@@ -386,6 +386,19 @@ describe("saying it took effect, typed or spoken", () => {
     });
   });
 
+  it("names a press on a page in the language the person reads, never in the language it was recorded in", () => {
+    const { taskId } = runningTask("gửi đơn");
+    unknownEffect(taskId, "browser click “Send application” on shop.example/apply — tgt_1");
+
+    expect(decide("chưa có hiệu lực", "voice")).toMatchObject({
+      readBack: "Ghi nhận thao tác bấm “Send application” trên shop.example/apply chưa có hiệu lực? Ghi nhận xong thì không đổi lại được.",
+    });
+    inEnglish();
+    expect(decide("that took effect", "voice")).toMatchObject({
+      readBack: "Record that the action click “Send application” on shop.example/apply took effect? Once recorded, it cannot be changed.",
+    });
+  });
+
   it("refuses rather than guesses when nothing, or more than one thing, is waiting", () => {
     expect(decide("đã có hiệu lực")).toMatchObject({ kind: "refused", say: expect.stringContaining("Không có việc nào") });
 

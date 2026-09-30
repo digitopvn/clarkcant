@@ -18,10 +18,13 @@ import {
 import {
   allWorkerTools,
   CAPABILITY_PROJECT_CODE_CHANGE,
+  createBrowserTools,
   createCommandTools,
   READ_PROJECT_FILE_TOOL,
   RUN_COMMAND_TOOL,
+  USE_BROWSER_TOOL,
   WRITE_PROJECT_FILE_TOOL,
+  type HostBrowserReply,
   type HostCommandReply,
 } from "../src/tools.ts";
 
@@ -442,5 +445,51 @@ describe("a worker's command is a request to the host", () => {
     expect(allWorkerTools([root]).some((tool) => tool.name === RUN_COMMAND_TOOL)).toBe(false);
     const withChannel = allWorkerTools([root], { commands: { request: async () => ({ kind: "refused", text: "" }) } });
     expect(withChannel.some((tool) => tool.name === RUN_COMMAND_TOOL)).toBe(true);
+  });
+});
+
+describe("a worker's browser action is a request to the host", () => {
+  function browserTool(reply: HostBrowserReply): { tool: WorkerTool; sent: unknown[] } {
+    const sent: unknown[] = [];
+    const [tool] = createBrowserTools({
+      request: async (request) => {
+        sent.push(request);
+        return reply;
+      },
+    });
+    if (tool === undefined) throw new Error("no browser tool");
+    return { tool, sent };
+  }
+
+  it("carries the action and its fields to the host, and returns what the page showed", async () => {
+    const { tool, sent } = browserTool({ kind: "done", text: "el_1 button \"Send\" (submits)" });
+    expect(tool.name).toBe(USE_BROWSER_TOOL);
+    await expect(tool.execute({ action: "click", ref: "el_1", consequential: true, why: "" })).resolves.toEqual({
+      text: "el_1 button \"Send\" (submits)",
+    });
+    // An empty value is still a value to type; a model's `false` never makes a click less consequential than the page says.
+    await tool.execute({ action: "fill", ref: "el_2", value: "", consequential: false });
+    expect(sent).toEqual([
+      { action: "click", ref: "el_1", consequential: true },
+      { action: "fill", ref: "el_2", value: "" },
+    ]);
+  });
+
+  it("fails the call when the outcome is unknown, so a submit nobody saw answered is not evidence of anything", async () => {
+    const { tool } = browserTool({ kind: "unknown", text: "the page did not answer; do not repeat it" });
+    await expect(tool.execute({ action: "click", ref: "el_1" })).rejects.toThrow("do not repeat it");
+  });
+
+  it("fails the call when the host refused it, and refuses an action it does not know before asking", async () => {
+    const { tool, sent } = browserTool({ kind: "refused", text: "refused: not a site the person allowed" });
+    await expect(tool.execute({ action: "open", url: "https://elsewhere.example/" })).rejects.toThrow("not a site");
+    await expect(tool.execute({ action: "download" })).rejects.toThrow('parameter "action" must be one of');
+    expect(sent).toHaveLength(1);
+  });
+
+  it("is offered only when the host gave the worker a browser", () => {
+    expect(allWorkerTools([root]).some((tool) => tool.name === USE_BROWSER_TOOL)).toBe(false);
+    const withBrowser = allWorkerTools([root], { browser: { request: async () => ({ kind: "refused", text: "" }) } });
+    expect(withBrowser.some((tool) => tool.name === USE_BROWSER_TOOL)).toBe(true);
   });
 });

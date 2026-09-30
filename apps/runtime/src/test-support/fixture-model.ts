@@ -12,6 +12,7 @@ import {
   markEffectUnknown,
   modelReplyCard,
   prepareEffect,
+  readExecutionPolicy,
   requestApproval,
   listInstalledPackages,
   saveActionBinding,
@@ -22,6 +23,7 @@ import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
 import { getNotification, listLocalImages, upsertArtifact, upsertDataset, upsertEffect } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 
 import { createAskUserQuestionTool } from "../ask-user-question.ts";
@@ -45,6 +47,7 @@ import { createRequestSecretTool, type RequestSecretDeps } from "../request-secr
 import { commandDigest } from "../run-command.ts";
 import { captureBrowserFrame, previewPageUrl } from "./browser-frame.ts";
 import { type NodeServices } from "../services.ts";
+import { createTaskBrowserBroker, taskProfileDir } from "../task-browser.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
 
@@ -951,6 +954,92 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
         return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
       }
+    }
+
+    /*
+     * A browser task whose submit is never answered — a real browser, a real page and the product's own broker.
+     *
+     * What is scripted is the model's part and the dispatch: this fixture is a composer, not a model that calls tools,
+     * so it creates the task and the broker itself rather than through `start_browser_task` and the dispatcher, and it
+     * asks for the steps a worker would. The page is served by this node and never answers the form it receives, the
+     * managed browser is the pack's Playwright driver, and every step goes through the broker a dispatched browser task
+     * gets, so the ledger row, the task turning uncertain and the inbox notice are all written by the calls production
+     * makes. A second press is asked for too, to show it is refused.
+     */
+    if (/gửi đơn trên trang không phản hồi|lost browser submit/iu.test(input.text)) {
+      const services = deps.services();
+      const now = () => instantSchema.parse(new Date().toISOString());
+      const taskDeps = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now, newId: services.conductor.newId };
+      let submissions = 0;
+      const page = createServer((request, response) => {
+        if (request.method === "POST") {
+          submissions += 1;
+          request.resume();
+          return; // never answered: the case the ledger exists for
+        }
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(
+          `<!doctype html><html><head><title>Apply</title></head><body><form method="post" action="/apply">` +
+            `<input name="name" aria-label="Your name"><button>Send application</button></form></body></html>`,
+        );
+      });
+      await new Promise<void>((resolve, reject) => {
+        page.once("error", reject);
+        page.listen(0, "127.0.0.1", resolve);
+      });
+      const address = page.address();
+      const origin = address === null || typeof address === "string" ? "" : `http://127.0.0.1:${String(address.port)}`;
+      const task = createTask(taskDeps, {
+        conversationId: input.conversationId as never,
+        goal: `Gửi đơn ứng tuyển ở ${origin}/apply`,
+        principal: {
+          principalId: input.principal.principalId as never,
+          kind: "user" as const,
+          nodeId: services.runtime.identity.nodeId as never,
+        },
+        // The checked list the browser tool stores: this page, which is the node's own.
+        origin: { kind: "interactive", principalId: input.principal.principalId, sites: [origin] },
+      });
+      applyTaskEvent(taskDeps, task.taskId, "resolve.start");
+      advanceResolving(taskDeps, task.taskId, { kind: "ready", executionNodeId: services.runtime.identity.nodeId });
+      applyTaskEvent(taskDeps, task.taskId, "dispatch.acknowledged");
+      const ask = createTaskBrowserBroker({
+        ledger: { services, taskId: task.taskId },
+        conversationId: input.conversationId,
+        intent: { kind: "interactive" },
+        policy: () => readExecutionPolicy({ db: services.runtime.db, now }, input.principal.principalId),
+        principalId: input.principal.principalId,
+        allowedOrigins: [origin],
+        // Nobody approved anything: the press goes ahead only while the node's policy lets it by itself.
+        admission: "policy",
+        profileDir: taskProfileDir(join(deps.dataDir, "browser-profiles"), task.taskId),
+        answerTimeoutMs: 1500,
+      });
+      let outcome: string;
+      try {
+        const opened = await ask({ action: "open", url: `${origin}/apply` });
+        const name = /^(\S+) input\S* "Your name"/mu.exec(opened.text)?.[1];
+        if (opened.kind !== "done" || name === undefined) throw new Error(`the page did not open: ${opened.text}`);
+        await ask({ action: "fill", ref: name, value: "Ada" });
+        const observed = await ask({ action: "observe" });
+        const send = /^(\S+) button "Send application" \(submits\)/mu.exec(observed.text)?.[1];
+        if (send === undefined) throw new Error(`the page has no submit to press: ${observed.text}`);
+        const pressed = await ask({ action: "click", ref: send });
+        const again = await ask({ action: "click", ref: send });
+        outcome =
+          `lần bấm gửi: ${pressed.kind === "unknown" ? "chưa rõ kết quả" : pressed.kind}; ` +
+          `bấm lại: ${again.kind === "refused" ? "bị từ chối" : again.kind}; trang đã nhận ${String(submissions)} lần gửi.`;
+      } catch (cause) {
+        outcome = `trình duyệt không chạy được (${cause instanceof Error ? cause.message.slice(0, 300) : String(cause)}).`;
+      } finally {
+        await ask.close();
+        page.closeAllConnections();
+        await new Promise<void>((resolve) => page.close(() => resolve()));
+      }
+      const reply =
+        `Đây là việc trên trình duyệt do fixture tạo, không phải model thật — ${outcome} ` +
+        `Hộp thư có một thông báo để bạn ghi nhận nếu kết quả chưa rõ.`;
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     }
 
     /*
