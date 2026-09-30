@@ -348,7 +348,8 @@ The person's own page reaches it from the notice's Update button, or from a spok
 `update` for the same notice while one is installing answers `409 ACTION_IN_PROGRESS`. `update` answers the install
 route's own refusals unchanged, and `202` with `{ "outcome": "approval-required", "approvalId", "version" }` when the
 person's execution mode asks before installing; nothing is installed then, and a second request while that approval
-is still pending answers the same `approvalId`. No surface can decide that approval yet (#341). Otherwise `200` with
+is still pending answers the same `approvalId`. That approval waits in the inbox as an `install-approval` item, where
+the person decides it (below). Otherwise `200` with
 `{ noticeId, action, outcome: "done" }` plus what the action produced (`snoozedUntil`, `workId` with `state` and
 `position`, `version` with `pendingCapabilities` and `deniedCapabilities` for an installed update, `questionId`);
 `retry` and `ask-again` take the old notice out, so asking twice answers `404` the second time. Every action, refused
@@ -384,6 +385,28 @@ A file name in `Content-Disposition` is sent as RFC 6266 describes: an ASCII `fi
 percent-encoded UTF-8 in `filename*`. Bidi controls are dropped from both, a percent sign becomes `_` in the ASCII
 name, and a name longer than 120 characters is shortened before its extension, which is always kept.
 
+**Installing a package is person-only.** `POST /packages/install` `{ "packageId", "version" }` is what the app's own
+Install button and a notice's `update` call; no agent tool installs a package (the package tool lists, uninstalls,
+restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with `403 PERSON_ONLY`.
+When the person's execution mode asks before installing, it answers `202` with
+`{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
+`waiting` as `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions,
+description, operationDigest, requestedAt, expiresAt }`: `permissions` is what the listing says the package asks for,
+and `operationDigest` the listed artifact's digest the question is about. It is listed only while the directory still
+lists that artifact; a package or version republished since is left out, and installing it again asks about what it is
+now. The person decides it with `POST /packages/approvals/:id/decision`
+`{ "decision": "granted" | "denied", "digest": "<operationDigest>" }`, the same person-only route that decides a
+package capability. `denied` answers `200` `{ decision, packageId, version }` and installs nothing. `granted` runs the
+same install again, with every check it makes, bound to that digest: a listing whose digest changed since the question
+is refused with `409 DIGEST_MISMATCH` before anything is decided, and the approval stays pending; a policy that now
+forbids installing still refuses (`403 POLICY_REFUSED`); success answers `200` with
+`{ decision: "granted", installed: { packageId, version }, generationId, state, pendingCapabilities,
+deniedCapabilities }`. A decision on another digest is `409 APPROVAL_FORGED`, a second decision
+`409 APPROVAL_ALREADY_DECIDED`, and one after the ten-minute deadline `409 APPROVAL_EXPIRED`. An approval nobody
+decided in time is settled as expired by the node's periodic sweep, which leaves a notice saying nothing was
+installed. Every outcome (`asked`, `installed`, `denied`, `expired`, `refused` or `failed`, with its code) is recorded
+as a `package.install-approval` event.
+
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.
 
@@ -410,8 +433,8 @@ part of the stable description and may change.
 tool for it would let an AI client approve its own guarded action. Approvals stay on the person's own surfaces, and
 the generic relays (a WebSocket `request` frame, `clarkcant api`) and MCP refuse every route that records a person's
 decision with `403 PERSON_ONLY` for the same reason: approving a guarded action (on a card, or one a running task
-raised), deciding a package capability,
-confirming an app intent, reporting what the page did with an action the agent asked for, trusting a paired peer,
+raised), deciding a package capability, installing a package (`POST /packages/install`) or deciding an install the
+person's execution mode asked about, confirming an app intent, reporting what the page did with an action the agent asked for, trusting a paired peer,
 issuing a grant, and recording whether an action whose outcome nobody saw took effect
 (`POST /effects/{effectId}/reconcile`; an AI client that could say "that push landed" could clear its own task's
 uncertainty and then report its own success). Exporting a table as a CSV file
@@ -457,8 +480,8 @@ stdio, for clients that launch a process (the bridge reads the token from `~/.cl
 ← { "type": "response", "id": "1", "status": 200, "body": null }
 ```
 
-- Any REST route except a person's decision can be sent as a `request` frame; the answer is the gateway's own status
-  and body.
+- Any REST route except a person's decision or installing a package can be sent as a `request` frame; the answer is
+  the gateway's own status and body.
 - `id` is echoed exactly as sent, string or number.
 - Query parameters go in a `query` object on the frame, not in `path`.
 - Up to 16 requests may run at once per socket, told apart by `id`.
@@ -478,7 +501,7 @@ from a checkout with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
 | `clarkcant status` | node label, URL, model |
 | `clarkcant conversations` / `new [title]` / `read <id>` | conversations |
 | `clarkcant stop` | emergency stop |
-| `clarkcant api <METHOD> <path> [jsonBody]` | any route except a person's decision |
+| `clarkcant api <METHOD> <path> [jsonBody]` | any route except a person's decision or installing a package |
 | `clarkcant mcp` | MCP over stdio |
 | `clarkcant discover` | the discovery document |
 

@@ -480,7 +480,13 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   focus. Ghi rõ thời điểm node đọc hộp thư; không bao giờ ngụ ý là live.
 - **"Đang chờ bạn" trước, "Thông báo" sau.** Việc chờ gồm lệnh cần duyệt (hiện đúng dòng lệnh sẽ chạy, thời gian còn
   lại), quyền gói mở rộng xin cấp, approval một task đang chạy xin (không có thẻ — worker không viết được thẻ, nhưng
-  vẫn Duyệt/Từ chối được qua route riêng của nó), và câu hỏi Clark đang hỏi. Duyệt một approval của task chạy lại
+  vẫn Duyệt/Từ chối được qua route riêng của nó), một lần cài mà chế độ thực thi hỏi trước (#341), và câu hỏi Clark
+  đang hỏi. Mục cài có tiêu đề "Cài {tên} {phiên bản}?", nói gói xin những quyền gì theo đúng lời của trang gói, và mức
+  mà gói chạy; mã gói nằm trong phần Chi tiết. "Duyệt và cài" cài đúng phiên bản đó, qua cùng các bước kiểm tra như mọi
+  lần cài, và báo "Đã cài {tên} {phiên bản}."; Từ chối thì báo chưa cài gì và các gói đang cài vẫn giữ nguyên. Nếu trang
+  gói đã đổi sau khi hỏi, duyệt sẽ không cài gì và nhắc cài lại để được hỏi về đúng thứ nó đang là. Chỉ người dùng quyết
+  định mục này: các agent, MCP, relay WebSocket và `clarkcant api` không cài được gói và không quyết định được một lần
+  cài. Duyệt một approval của task chạy lại
   ngay task đó với quyền vừa cấp, không hỏi lại lần hai; từ chối, hoặc để hết hạn, thì việc dừng hẳn và hội thoại
   được báo như vậy — không để một việc treo "đang chờ" mãi. Mô tả việc chờ là câu đọc được, không có mã nội bộ. Duyệt/Từ chối trong hộp thư đi qua đúng route của thẻ (hoặc
   route riêng khi không có thẻ); câu hỏi chỉ có "Mở hội thoại", vì câu trả lời thuộc về hội thoại đã hỏi.
@@ -590,9 +596,11 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   thao tác chỉ người dùng làm được; nơi đó cũng đánh dấu lời của chính thông báo là dữ liệu do việc khác báo lại, không
   bao giờ là chỉ dẫn. Sau đó agent gọi `act_on_notice`, và nhật ký ghi đó là việc của agent hoặc của voice agent,
   không phải của người dùng. Mở hội thoại, Hỏi Clark, Thêm vào ngữ cảnh, Xem trong Cài đặt và Sao chép chi tiết thay
-  đổi thứ đang hiện hoặc đang giữ trên màn hình của người dùng nên vẫn là nút trên màn hình đó; câu trả lời về một thao tác không ai thấy kết quả vẫn
-  là của người dùng (bên dưới). Bản cập nhật mà chế độ thực thi yêu cầu duyệt trước khi cài sẽ nói rõ điều đó và không
-  cài gì; node hiện chưa có màn hình nào để duyệt yêu cầu đó (#341). Lời từ chối được nói bằng ngôn ngữ của người đọc,
+  đổi thứ đang hiện hoặc đang giữ trên màn hình của người dùng nên vẫn là nút trên màn hình đó; câu trả lời về một thao
+  tác không ai thấy kết quả vẫn là của người dùng (bên dưới). Bản cập nhật mà chế độ thực thi yêu cầu duyệt trước khi
+  cài thì chưa cài gì và nói rằng lần cài đang chờ trong hộp thư, ở mục "Đang chờ bạn"; panel đánh dấu đúng mục đó để
+  người dùng duyệt hoặc từ chối (#341). Bấm Cài trên một kết quả marketplace trong cùng chế độ cũng báo như vậy cạnh
+  nút, kèm nút "Mở Hộp thư" mở hộp thư ngay tại mục đó. Lời từ chối được nói bằng ngôn ngữ của người đọc,
   dựa trên mã lý do của node, không bao giờ hiện chính mã đó.
 - **Thao tác không ai thấy kết quả thì hỏi người dùng** (#273). Khi một lệnh đi ra ngoài node (một lần push, một lần
   deploy) hết giờ hoặc bị dừng trước khi báo lại, task chờ ở trạng thái chưa rõ và hộp thư có đúng một thông báo về nó,
@@ -625,7 +633,7 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   báo: …", "Đang chờ bạn: …"). Focus không bao giờ rơi vào một nút của hàng, nên Duyệt hay Cập nhật luôn là một lần bấm
   có chủ ý sau khi người dùng đã đọc mục đó. Khi mục đó đã được quyết định, trả lời hoặc
   bỏ ở nơi khác trong lúc chờ, hộp thư mở ở đầu và nói rõ điều đó. Thông báo chỉ mang id của mục (`notice:…`,
-  `question:…`, `command-approval:…`, `capability-approval:…`, `task-approval:…`), được desktop shell và trang kiểm
+  `question:…`, `command-approval:…`, `capability-approval:…`, `install-approval:…`, `task-approval:…`), được desktop shell và trang kiểm
   tra theo cùng một ngữ pháp; mọi thứ khác mở hộp thư ở đầu. Click vào web notification cũng làm như vậy. Nút ngay trên
   thông báo của hệ điều hành chưa được đưa ra (#340): trên Windows chúng cần app được đóng gói có danh tính, còn
   các notification server trên Linux khác nhau ở chỗ có hiện chúng hay không. Trên trình duyệt là Web Notification API, chỉ bật sau khi người dùng bấm nút trong

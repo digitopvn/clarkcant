@@ -351,8 +351,9 @@ một agent nêu tên nó. Trang của chính người dùng đi tới nó từ 
 nói mà người dùng đã xác nhận. Một `update` thứ hai cho cùng thông báo trong lúc bản trước đang cài nhận
 `409 ACTION_IN_PROGRESS`. `update` trả nguyên các lời từ chối của route cài đặt, và `202` với
 `{ "outcome": "approval-required", "approvalId", "version" }` khi chế độ thực thi của người dùng yêu cầu hỏi trước khi
-cài; khi đó không có gì được cài, và yêu cầu lần nữa trong lúc approval đó còn chờ nhận lại đúng `approvalId` đó. Hiện
-chưa bề mặt nào quyết định được approval đó (#341). Còn lại là `200` với `{ noticeId, action, outcome: "done" }` cùng
+cài; khi đó không có gì được cài, và yêu cầu lần nữa trong lúc approval đó còn chờ nhận lại đúng `approvalId` đó.
+Approval đó chờ trong hộp thư dưới dạng một mục `install-approval`, nơi người dùng quyết định nó (xem bên dưới). Còn
+lại là `200` với `{ noticeId, action, outcome: "done" }` cùng
 những gì thao tác tạo ra (`snoozedUntil`, `workId` kèm `state` và `position`, `version` kèm `pendingCapabilities` và
 `deniedCapabilities` cho một bản cập nhật đã cài, `questionId`); `retry` và `ask-again` gỡ thông báo cũ, nên yêu cầu
 lần thứ hai nhận `404`. Mọi thao tác, bị từ chối hay không, đều được ghi thành một sự kiện `inbox.notice-action` kèm
@@ -387,6 +388,27 @@ Tên tệp trong `Content-Disposition` được gửi theo RFC 6266: một `file
 phần trăm trong `filename*`. Ký tự điều khiển bidi bị bỏ khỏi cả hai, dấu phần trăm thành `_` trong tên ASCII, và
 một tên dài hơn 120 ký tự được rút ngắn ở phần trước phần mở rộng, phần mở rộng luôn được giữ.
 
+**Cài một gói chỉ dành cho người dùng.** `POST /packages/install` `{ "packageId", "version" }` là route mà nút Cài
+của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói (tool quản lý gói chỉ
+liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
+`403 PERSON_ONLY`. Khi chế độ thực thi của người dùng yêu cầu hỏi trước khi cài, route trả `202` với
+`{ "code": "APPROVAL_REQUIRED", "approvalId" }` và không cài gì. Câu hỏi đó chờ trong `GET /inbox`, ở `waiting`, dưới
+dạng `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions, description,
+operationDigest, requestedAt, expiresAt }`: `permissions` là những quyền mà listing nói gói xin, còn `operationDigest`
+là digest của artifact được liệt kê mà câu hỏi nói tới. Mục này chỉ được liệt kê khi thư mục vẫn còn liệt kê đúng
+artifact đó; một gói hay phiên bản được phát hành lại từ đó bị bỏ ra, và cài lại nó sẽ hỏi về chính nó ở hiện tại.
+Người dùng quyết định bằng `POST /packages/approvals/:id/decision`
+`{ "decision": "granted" | "denied", "digest": "<operationDigest>" }`, cùng route chỉ dành cho người dùng dùng để quyết
+định capability của gói. `denied` trả `200` `{ decision, packageId, version }` và không cài gì. `granted` chạy lại
+đúng lần cài đó, với mọi kiểm tra của nó, gắn với digest đó: một listing có digest đã đổi kể từ lúc hỏi bị từ chối với
+`409 DIGEST_MISMATCH` trước khi quyết định bất cứ điều gì, và approval vẫn ở trạng thái chờ; một chính sách giờ cấm cài
+vẫn từ chối (`403 POLICY_REFUSED`); thành công trả `200` với `{ decision: "granted", installed: { packageId, version },
+generationId, state, pendingCapabilities, deniedCapabilities }`. Quyết định trên một digest khác là
+`409 APPROVAL_FORGED`, quyết định lần hai là `409 APPROVAL_ALREADY_DECIDED`, và quyết định sau hạn mười phút là
+`409 APPROVAL_EXPIRED`. Approval không ai quyết định kịp được lượt quét định kỳ của node chốt là hết hạn, kèm một thông
+báo rằng chưa có gì được cài. Mọi kết quả (`asked`, `installed`, `denied`, `expired`, `refused` hoặc `failed`, kèm mã)
+đều được ghi thành một sự kiện `package.install-approval`.
+
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
 
@@ -413,8 +435,8 @@ có thể thay đổi.
 nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và
 các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng MCP từ chối mọi route ghi nhận quyết định
 của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard (trên thẻ, hoặc do một task đang
-chạy raise ra), quyết định capability của package,
-xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, tin cậy một peer đã ghép cặp, cấp
+chạy raise ra), quyết định capability của package, cài một gói (`POST /packages/install`) hoặc quyết định một lần
+cài mà chế độ thực thi của người dùng đã hỏi, xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, tin cậy một peer đã ghép cặp, cấp
 grant, và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
 một client AI nói được "lần push đó đã thành công" thì có thể tự gỡ trạng thái chưa rõ của task của chính nó rồi tự
 báo là đã xong). Xuất một bảng ra file CSV
@@ -460,8 +482,8 @@ socket `/voice` và `/terminal`:
 ← { "type": "response", "id": "1", "status": 200, "body": null }
 ```
 
-- Gửi được mọi route REST, trừ quyết định của con người, dưới dạng frame `request`; câu trả lời là status và body
-  của chính gateway.
+- Gửi được mọi route REST, trừ quyết định của con người và việc cài gói, dưới dạng frame `request`; câu trả lời là
+  status và body của chính gateway.
 - `id` được trả lại đúng như khi gửi, dù là chuỗi hay số.
 - Tham số query đặt trong object `query` của frame, không đặt trong `path`.
 - Tối đa 16 request chạy đồng thời trên một socket, phân biệt bằng `id`.
@@ -481,7 +503,7 @@ socket `/voice` và `/terminal`:
 | `clarkcant status` | nhãn node, URL, model |
 | `clarkcant conversations` / `new [title]` / `read <id>` | hội thoại |
 | `clarkcant stop` | dừng khẩn cấp |
-| `clarkcant api <METHOD> <path> [jsonBody]` | gọi route bất kỳ, trừ quyết định của con người |
+| `clarkcant api <METHOD> <path> [jsonBody]` | gọi route bất kỳ, trừ quyết định của con người và việc cài gói |
 | `clarkcant mcp` | MCP qua stdio |
 | `clarkcant discover` | discovery document |
 
