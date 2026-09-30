@@ -636,7 +636,7 @@ nội bộ. Trên desktop, renderer gọi `desktop:notify`; main process giữ t
 màn hình, và khi click thì khôi phục cửa sổ shell khỏi orb/compact, focus nó rồi gửi `desktop:notificationClicked`
 **chỉ tới cửa sổ shell** (không bao giờ tới cửa sổ widget tách rời); preload trả về hàm huỷ đăng ký listener đó
 (`onWidgetReattached` cũng vậy). Renderer gửi kèm `desktop:notify` đích trong hộp thư của mục (`notice:<id>`,
-`question:<id>`, `command-approval:<id>`, `capability-approval:<id>`, `task-approval:<id>`); main process chỉ giữ nó
+`question:<id>`, `command-approval:<id>`, `capability-approval:<id>`, `install-approval:<id>`, `task-approval:<id>`); main process chỉ giữ nó
 khi khớp ngữ pháp (`reviewNotificationTarget` trong `security.mjs`, cùng pattern với `inboxTargetSchema`), khi click
 chỉ gửi lại đúng chuỗi đó, và preload chỉ chép một `target` kiểu chuỗi vào callback. Trang kiểm tra lại lần nữa
 (`inboxTargetOf`) và mở hộp thư bằng `inbox.open` mang `inboxTarget`: hộp thư đánh dấu hàng đó, cuộn nó vào tầm nhìn

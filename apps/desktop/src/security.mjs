@@ -281,7 +281,7 @@ export function reviewIpcCall(event, channel, rendererUrl, detachedUrl) {
  * pattern as `inboxTargetSchema` in `@clarkcant/contracts`; this file stays free of workspace imports, so a test holds
  * the two to each other (`security.spec.ts`).
  */
-export const INBOX_TARGET_PATTERN = /^(notice|question|command-approval|capability-approval|task-approval):[A-Za-z0-9._:@/-]{1,160}$/;
+export const INBOX_TARGET_PATTERN = /^(notice|question|command-approval|capability-approval|install-approval|task-approval):[A-Za-z0-9._:@/-]{1,160}$/;
 
 /**
  * Where a clicked OS notification should open the inbox, as the shell will pass it on: an id and nothing else, or

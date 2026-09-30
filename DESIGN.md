@@ -484,7 +484,13 @@ Shipped:
 - **"Waiting on you" first, "Notifications" second.** Waiting items include commands needing approval (showing the
   exact command line that will run, remaining time), permission requests from extension packages, an approval a running task
   is requesting (no card — the worker can't write a card, but it can still be Approved/Denied through its own route),
-  and a question Clark is asking. Approving a running task's approval re-runs that task with the newly granted
+  an install the execution mode asked about (#341), and a question Clark is asking. An install item is titled "Install
+  {name} {version}?" and says what the package asks for, in the listing's own words, and the lane it runs in; the
+  package id sits behind Details. "Approve and install" installs exactly that version, with the same checks as any
+  install, and says "Installed {name} {version}."; Deny says it was not installed and what is installed is unchanged.
+  When the listing changed after the question, approving installs nothing and says to install it again to be asked
+  about what it is now. Only the person decides it: the agents, MCP, the WebSocket relay and `clarkcant api` cannot
+  install a package or decide an install. Approving a running task's approval re-runs that task with the newly granted
   permission, without asking a second time; denying, or letting it expire, stops the work outright and the conversation
   reports it as such — no item is left hanging "waiting" forever. Waiting items are described in readable sentences, no
   internal codes. Approve/Deny in the inbox goes through the card's own route (or a dedicated route when there's no
@@ -601,9 +607,11 @@ Shipped:
   they can take now, the ones they cannot and why, and the ones only the person can take; it marks the notifications'
   own words as data reported by other work, never instructions. Then they call `act_on_notice`, and the audit records
   these as the agent's or the voice agent's, not the person's. Opening a conversation, Ask Clark, Add to context,
-  Review in Settings and Copy details change what the person's screen shows or holds and stay buttons on that screen; the answers about an action
-  whose outcome nobody saw stay the person's (below). An update whose install the execution mode asks about says so and
-  installs nothing; the node has no screen yet where that approval can be given (#341). A refusal is said in the
+  Review in Settings and Copy details change what the person's screen shows or holds and stay buttons on that screen;
+  the answers about an action whose outcome nobody saw stay the person's (below). An update whose install the execution
+  mode asks about installs nothing yet and says the install waits in the inbox under "Waiting for you"; the panel marks
+  that item, where the person approves or denies it (#341). Pressing Install on a marketplace result under the same mode
+  says the same beside the button, with an "Open inbox" control that opens the inbox on that item. A refusal is said in the
   reader's language, from the node's reason code, never as the code itself.
 - **An action whose outcome nobody saw asks the person** (#273). When a command that reaches outside the node (a push, a
   deploy) timed out or was stopped before it reported, the task waits as uncertain and the inbox has one notice about
@@ -637,7 +645,7 @@ Shipped:
   "Waiting for you: …"). Focus never lands on one of its buttons, so an Approve or Update is always a deliberate press
   after the person has read the item. When the item was decided,
   answered or dismissed elsewhere meanwhile, the inbox opens at the top and says so. A notification carries only the
-  item's id (`notice:…`, `question:…`, `command-approval:…`, `capability-approval:…`, `task-approval:…`), checked
+  item's id (`notice:…`, `question:…`, `command-approval:…`, `capability-approval:…`, `install-approval:…`, `task-approval:…`), checked
   against the same grammar by the desktop shell and by the page; anything else opens the inbox at the top. The web
   notification's click does the same. Buttons on the OS notification itself are not offered (#340): on Windows
   they need a packaged app identity, and Linux notification servers differ in whether they show them. On the browser

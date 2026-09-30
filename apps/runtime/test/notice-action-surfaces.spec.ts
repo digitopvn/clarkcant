@@ -439,6 +439,10 @@ describe("POST /inbox/notices/:noticeId/actions/:action", () => {
       body.approvalId,
     );
     expect(pending).toEqual([{ approval_id: body.approvalId, decision: "pending" }]);
+    // And it waits where the person decides it: in the inbox, as the install it is, not as a notice.
+    expect((await inbox()).waiting).toEqual([
+      expect.objectContaining({ kind: "install-approval", approvalId: body.approvalId, packageId: PACKAGE_ID, version: "1.1.0" }),
+    ]);
     // Asked again while that approval is still waiting: the same approval, not a second one for the same install.
     const again = noticeOperationResponseSchema.parse((await act(notice.notificationId, "update")).body);
     expect(again.approvalId).toBe(body.approvalId);
@@ -548,7 +552,7 @@ describe("act_on_notice, the main and the voice agent's tool", () => {
         response: { noticeId: "ntf_1", action: "update", outcome: "approval-required", version: "1.1.0", approvalId: "appr_1" },
       }),
     ).toBe(
-      "Not installed: the user's execution mode asks for approval before installing 1.1.0, and no screen can show that approval yet, so nothing was installed.",
+      'Not installed yet: the user\'s execution mode asks for approval before installing 1.1.0. It is waiting for them in the inbox, under "Waiting for you", where only they can approve or deny it.',
     );
     expect(
       describeNoticeOperation({

@@ -1548,6 +1548,23 @@ export class GatewayClient {
   }
 
   /**
+   * Decide an install the execution policy asked about. Approving installs exactly the version the approval named,
+   * through the node's own install; a refusal (the listing changed, the policy now forbids it, the install failed) is
+   * thrown like any other. Either way what is installed may have changed, so the package listeners hear about it.
+   */
+  decideInstallApproval(
+    approval: { approvalId: string; operationDigest: string },
+    decision: "granted" | "denied",
+  ): Promise<{ decision: "granted" | "denied"; installed?: { packageId: string; version: string }; generationId?: string }> {
+    return this.#changedPackages(
+      this.#call("POST", `/packages/approvals/${encodeURIComponent(approval.approvalId)}/decision`, {
+        decision,
+        digest: approval.operationDigest,
+      }),
+    );
+  }
+
+  /**
    * The widget definitions of the packages installed on this node.
    *
    * Each package answers for itself: its widgets, or why this node could not read them. A caller that turned the

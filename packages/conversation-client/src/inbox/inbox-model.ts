@@ -165,7 +165,7 @@ export function noticesMayBeCapped(notices: readonly Notice[], limit: number = N
 }
 
 /** The gateway's own error code, when `cause` carries one — the only part of a refusal the client should trust as fact. */
-function gatewayErrorCode(cause: unknown): string | undefined {
+export function gatewayErrorCode(cause: unknown): string | undefined {
   if (typeof cause !== "object" || cause === null) return undefined;
   const code = (cause as { code?: unknown }).code;
   return typeof code === "string" ? code : undefined;

@@ -187,6 +187,36 @@ describe("decideInboxNotifications", () => {
     ]);
   });
 
+  it("titles an install approval with the package and version, and says what it asks for, as the panel does", () => {
+    const item: WaitingItem = {
+      kind: "install-approval",
+      approvalId: "a2",
+      packageId: "com.example.calendar",
+      version: "1.2.0",
+      displayName: "Calendar Plus",
+      riskTier: "isolated-ui",
+      permissions: ["Đọc lịch của bạn"],
+      description: "cài Calendar Plus 1.2.0 (isolated-ui)",
+      operationDigest: "sha256:x",
+      requestedAt: NOW,
+      expiresAt: "2026-09-24T07:10:00.000Z" as Instant,
+    };
+    const result = decideInboxNotifications(baseInput({ waiting: [item, { ...item, approvalId: "a3", permissions: [] }] }));
+    expect(result.candidates).toEqual([
+      {
+        id: "install-approval:a2",
+        group: "waitingApprovals",
+        title: t("inbox.install.title").replace("{name}", "Calendar Plus").replace("{version}", "1.2.0"),
+        body: t("inbox.install.asks").replace("{permissions}", "Đọc lịch của bạn"),
+        reason: "new",
+      },
+      expect.objectContaining({ id: "install-approval:a3", body: t("inbox.install.asksNothing") }),
+    ]);
+    // The package id and the artifact digest stay behind the panel's details, never in a notification.
+    expect(JSON.stringify(result.candidates)).not.toContain("com.example.calendar");
+    expect(JSON.stringify(result.candidates)).not.toContain("sha256");
+  });
+
   it("never includes the raw command field in a waiting item's notification", () => {
     const result = decideInboxNotifications(baseInput({ waiting: [commandApproval("w1", { command: "rm -rf /secret" })] }));
     expect(JSON.stringify(result.candidates)).not.toContain("rm -rf");

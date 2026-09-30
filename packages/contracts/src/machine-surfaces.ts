@@ -10,7 +10,8 @@
  * Saying whether an effect whose outcome was unknown took effect is the person's for the same reason as an approval: it
  * decides what a task may report about itself. Installing the update a notice announces is the person's too: it puts new
  * code on the machine and grants that code the capabilities its manifest asks for, which is exactly the trust an AI
- * client must not be able to widen for itself.
+ * client must not be able to widen for itself. Installing a package at all is the person's for the same reason, and so
+ * is deciding an install their execution policy asked about: that decision runs the install.
  * Saving a widget's artifact to a file (Save As) and handing a widget a file the person picked are the person's too:
  * one writes onto their machine, the other grants a widget bytes it could not otherwise reach.
  *
@@ -28,8 +29,9 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
       // POST /grants
       return first === "grants";
     case 2:
-      // POST /app-intents/confirm
-      return first === "app-intents" && second === "confirm";
+      // POST /app-intents/confirm, and POST /packages/install: putting a package's code on the machine. Only the app's
+      // own install button calls it; the agents list, uninstall and roll back packages but never install one.
+      return (first === "app-intents" && second === "confirm") || (first === "packages" && second === "install");
     case 3:
       // POST /peers/:id/confirm, and POST /app-intents/host-control/:controlId: the screen's own report of
       // what it did with an agent's app-control action, which a machine surface must not be able to forge.
@@ -43,7 +45,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
         (first === "artifacts" && third === "export")
       );
     case 4:
-      // POST /packages/approvals/:id/decision
+      // POST /packages/approvals/:id/decision: a capability for an installed generation, or an install the policy asked about
       return first === "packages" && second === "approvals" && fourth === "decision";
     case 5:
       // POST /conversations/:id/approvals/:approvalId/decide (a card) and
@@ -68,5 +70,5 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, installing updates and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, installing packages and updates, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });

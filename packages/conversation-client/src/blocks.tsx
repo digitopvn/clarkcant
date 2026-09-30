@@ -405,6 +405,8 @@ export interface PackageInstallState {
   message?: string;
   generationId?: string;
   verified?: string;
+  /** The inbox item the install waits on, when the execution policy asked first. */
+  approvalId?: string;
 }
 
 /** How a question the agent asked stopped waiting, as the node recorded it in the transcript. */
@@ -474,6 +476,11 @@ export interface BlockActions {
   onInstallPackage?: (input: { packageId: string; version: string }) => void;
   /** The attempt for each package id, so the card shows an outcome instead of a spinner that never ends. */
   packageInstall?: Record<string, PackageInstallState>;
+  /**
+   * Opens the inbox on one waiting item (an `inbox.open` app intent), for an install that waits on the person's
+   * decision there. Absent where there is no inbox to open, and then the card offers no such button.
+   */
+  onOpenInbox?: (target: string) => void;
   /**
    * The answer being composed for a question card, owned by the surface that draws it.
    *
@@ -1864,7 +1871,7 @@ export function FormCardBlock({
  * still admissible, so a reader who cannot see it cannot tell whether a takeover actually took effect.
  */
 /** The risk lanes in words, because a lane name is not something a reader should have to learn. */
-function riskLaneLabel(t: (key: MessageKey) => string, lane: string): string {
+export function riskLaneLabel(t: (key: MessageKey) => string, lane: string): string {
   switch (lane) {
     case "isolated-ui":
       return t("blocks.marketplace.lane.isolatedUi");
@@ -1973,6 +1980,19 @@ export function MarketplaceResultsBlock({
                         {installState.message ?? ""}
                       </span>
                     )}
+                    {/* The install waits in the inbox, where the person decides it: one step there, never a decision here. */}
+                    {installState?.status === "approval-required" &&
+                      installState.approvalId !== undefined &&
+                      actions.onOpenInbox !== undefined && (
+                        <button
+                          type="button"
+                          className="cc-chip"
+                          data-install-open-inbox={installState.approvalId}
+                          onClick={() => actions.onOpenInbox?.(`install-approval:${installState.approvalId ?? ""}`)}
+                        >
+                          {t("blocks.marketplace.openInbox")}
+                        </button>
+                      )}
                   </div>
                 )}
               </li>

@@ -86,7 +86,7 @@ describe("carrying out a notice action", () => {
 
 describe("a notification's inbox target", () => {
   it("keeps a target the grammar allows, for each kind of item", () => {
-    for (const target of ["notice:ntf_1", "question:q_1", "command-approval:appr_1", "capability-approval:appr_2", "task-approval:task_1:appr_3"]) {
+    for (const target of ["notice:ntf_1", "question:q_1", "command-approval:appr_1", "capability-approval:appr_2", "install-approval:appr_4", "task-approval:task_1:appr_3"]) {
       expect(inboxTargetOf(target)).toBe(target);
     }
   });

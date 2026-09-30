@@ -2,6 +2,7 @@ import { type Instant, type MessageBlock, type MessageRecord } from "@clarkcant/
 import { applyTaskEvent } from "@clarkcant/core";
 import { allRows, getTask, parseJson } from "@clarkcant/storage";
 
+import { expireInstallApprovals } from "./application/install-approval.ts";
 import { QUESTION_TTL_MS, expireQuestions, interactionFromBlock } from "./interactions.ts";
 import { interactionDepsFor } from "./routes/conversations.ts";
 import { answerApprovalDecision } from "./delegation-handlers.ts";
@@ -19,7 +20,8 @@ import type { NodeServices } from "./services.ts";
  *
  * It does not invent a new "expired" state. An approval already becomes `expired` the moment anything tries to
  * decide it past its deadline (`decideApprovalWithinTransaction`); this sweep only reads rows still sitting
- * `pending` past `expires_at` — nobody tried, so nobody wrote that — and reports them the same way. A question's
+ * `pending` past `expires_at` — nobody tried, so nobody wrote that — and reports them the same way. The one row it
+ * does write `expired` is an install approval's, because its expiry is an outcome the install record audits. A question's
  * own `expireQuestions` already exists for exactly this (a tool-activity block recording `decision: "expired"`)
  * and is reused here rather than duplicated; it is idempotent, so a sweep that runs twice on the same question
  * writes that block once.
@@ -49,9 +51,9 @@ interface ExpiredApprovalRow {
  * Approvals still `pending` whose deadline has passed, each reported once.
  *
  * A task approval's conversation is its task's; a command approval's is wherever its card was written, found the
- * same way the inbox finds it for the still-open case. A capability approval (an install's `ask`, `task_id` and
- * card both absent) has no conversation to point at, so it is left out — the same reason the inbox never offers
- * one without a card: a pointer to nowhere is not a notice, it is noise.
+ * same way the inbox finds it for the still-open case. A capability approval (`task_id` and card both absent) has
+ * no conversation to point at, so it is left out — the same reason the inbox never offers one without a card: a
+ * pointer to nowhere is not a notice, it is noise. An install approval is the exception, settled below.
  *
  * A task approval also settles the task it belongs to, when that task is still `waiting_approval`: nobody
  * decided in time, so `run.approval_expired` is the honest terminal outcome rather than leaving the task parked
@@ -71,12 +73,35 @@ function sweepExpiredApprovals(services: ExpiryNoticeServices, now: Instant): vo
   );
   if (rows.length === 0) return;
 
+  /*
+   * An install the person's policy asked about has no conversation either, but it is not noise to leave out: the
+   * person pressed Install and walked away, and nothing tells them it never happened. It becomes `expired` (and is
+   * audited as such) here, once, and the notice says so without pointing anywhere but the inbox it is read in.
+   */
+  const expiredInstalls = expireInstallApprovals(
+    services,
+    rows.filter((row) => row.task_id === null),
+  );
+  for (const expired of expiredInstalls) {
+    tryRecordNodeNotice(services, {
+      sourceKind: "system",
+      category: "alert",
+      severity: "warning",
+      title: "Yêu cầu cài đặt đã hết hạn, chưa có gì được cài",
+      body: expired.description,
+      dedupKey: `expired:${expired.approvalId}`,
+      at: now,
+    });
+  }
+  const settledInstalls = new Set(expiredInstalls.map((expired) => expired.approvalId));
+
   const cardConversations = findCardConversations(
     services,
-    rows.filter((row) => row.task_id === null).map((row) => row.approval_id),
+    rows.filter((row) => row.task_id === null && !settledInstalls.has(row.approval_id)).map((row) => row.approval_id),
   );
 
   for (const row of rows) {
+    if (settledInstalls.has(row.approval_id)) continue;
     if (row.task_id !== null) {
       const expired = applyTaskEvent(
         { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => now, newId: services.conductor.newId },

@@ -628,7 +628,7 @@ never a command line, capability ref or internal id. On desktop the renderer cal
 keeps a reference to each `Notification` still on screen, and on click restores the shell window from orb/compact,
 focuses it and sends `desktop:notificationClicked` **only to the shell window** (never to a detached widget window);
 preload returns a function that unsubscribes that listener (as does `onWidgetReattached`). The renderer passes the
-item's inbox target (`notice:<id>`, `question:<id>`, `command-approval:<id>`, `capability-approval:<id>`,
+item's inbox target (`notice:<id>`, `question:<id>`, `command-approval:<id>`, `capability-approval:<id>`, `install-approval:<id>`,
 `task-approval:<id>`) with `desktop:notify`; the main process keeps it only if it matches the grammar
 (`reviewNotificationTarget` in `security.mjs`, the same pattern as `inboxTargetSchema`), sends only that string back
 on click, and preload copies only a string `target` into the callback. The page checks it again (`inboxTargetOf`)

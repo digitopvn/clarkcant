@@ -18,6 +18,7 @@ import {
   parseJson,
 } from "@clarkcant/storage";
 
+import { listPendingInstallApprovals } from "./application/install-approval.ts";
 import { listPendingCapabilityApprovals } from "./application/package-install.ts";
 import { QUESTION_TTL_MS, pendingForConversation } from "./interactions.ts";
 import { noticeActionsFor } from "./notice-actions.ts";
@@ -235,6 +236,7 @@ export function waitingItems(services: InboxServices, now: Instant): WaitingItem
   return [
     ...pendingCommandApprovals(services, now),
     ...pendingCapabilityApprovals(services, now),
+    ...listPendingInstallApprovals(services, now),
     ...pendingTaskApprovals(services, now),
     ...pendingQuestions(services, now),
   ].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));

@@ -150,7 +150,7 @@ export function describeNoticeOperation(outcome: NoticeOperationOutcome): string
     case "update":
       // Only the person's own surface installs, so a model never sees these; worded anyway so nothing it reads is false.
       return response.outcome === "approval-required"
-        ? `Not installed: the user's execution mode asks for approval before installing ${response.version ?? "this version"}, and no screen can show that approval yet, so nothing was installed.`
+        ? `Not installed yet: the user's execution mode asks for approval before installing ${response.version ?? "this version"}. It is waiting for them in the inbox, under "Waiting for you", where only they can approve or deny it.`
         : `Done: version ${response.version ?? ""} is installed and the notice is dismissed.${capabilitiesSaid(response)}`;
     case "skip-version":
       return `Done: version ${response.version ?? ""} and older will not be reported again, and the notice is dismissed.`;

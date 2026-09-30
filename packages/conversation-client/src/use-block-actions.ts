@@ -25,6 +25,8 @@ export interface BlockActionsDeps {
    * child of its return, not an ancestor of it — is mounted.
    */
   t: (key: MessageKey) => string;
+  /** Opens the inbox on one waiting item: where an install the execution policy asked about is decided. */
+  openInbox?: (target: string) => void;
 }
 
 /**
@@ -44,6 +46,7 @@ export function useBlockActions({
   setError,
   send,
   t,
+  openInbox,
 }: BlockActionsDeps): BlockActions {
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | undefined>(undefined);
 
@@ -300,7 +303,12 @@ export function useBlockActions({
             ...current,
             [packageId]:
               answer.code === "APPROVAL_REQUIRED"
-                ? { status: "approval-required", message: answer.message ?? t("shell.package.approvalRequired") }
+                ? {
+                    status: "approval-required",
+                    // Where to decide it, in the person's language, rather than the policy's own reason in the node's.
+                    message: t("shell.package.approvalRequired"),
+                    ...(answer.approvalId === undefined ? {} : { approvalId: answer.approvalId }),
+                  }
                 : {
                     status: "installed",
                     message: t("shell.package.installed"),
@@ -397,6 +405,7 @@ export function useBlockActions({
       artifactOpen,
       onInstallPackage: installPackage,
       packageInstall,
+      ...(openInbox === undefined ? {} : { onOpenInbox: openInbox }),
       onControlTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
       onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
       controlSession,
@@ -415,6 +424,7 @@ export function useBlockActions({
       installPackage,
       openArtifact,
       openCardIds,
+      openInbox,
       packageInstall,
       questionDraft,
       questionPendingId,

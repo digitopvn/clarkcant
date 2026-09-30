@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { riskLaneSchema } from "./directory.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 
 /**
@@ -393,6 +394,30 @@ export const waitingItemSchema = z.discriminatedUnion("kind", [
     requestedAt: instantSchema,
     expiresAt: instantSchema,
   }),
+  /**
+   * Installing a package version that the person's execution policy asks about first.
+   *
+   * Its own kind rather than a `capability-approval` without a `ref`: a capability approval grants one capability to a
+   * generation that is already installed, and deciding it installs nothing. This one installs a version, so it carries
+   * what the person decides on (the package, the version, what the listing says it asks for and the lane it runs in)
+   * and approving it runs the install. `operationDigest` is the directory entry's artifact digest: approving installs
+   * that artifact and nothing else, so an entry that changed after the ask is refused rather than installed on the old
+   * approval.
+   */
+  z.strictObject({
+    kind: z.literal("install-approval"),
+    approvalId: z.string().min(1),
+    packageId: z.string().min(1),
+    version: z.string().min(1),
+    displayName: z.string().min(1),
+    riskTier: riskLaneSchema,
+    /** The listing's own summary of what the package asks for; the manifest inside the artifact is the authority. */
+    permissions: z.array(z.string()),
+    description: z.string(),
+    operationDigest: z.string().min(1),
+    requestedAt: instantSchema,
+    expiresAt: instantSchema,
+  }),
   z.strictObject({
     kind: z.literal("question"),
     questionId: z.string().min(1),
@@ -574,17 +599,24 @@ export type NoticeOperationResponse = z.infer<typeof noticeOperationResponseSche
 /**
  * Where an OS or web notification leads when it is clicked: one notice (`notice:<noticeId>`) or one waiting item, keyed
  * the way the inbox keys it (`question:<questionId>`, `command-approval:<approvalId>`, `capability-approval:<approvalId>`,
- * `task-approval:<approvalId>`).
+ * `install-approval:<approvalId>`, `task-approval:<approvalId>`).
  *
  * Only an id travels, never a title, a body or anything secret: the payload passes through the operating system, and
  * whatever the inbox shows for the target is read from the node when the inbox opens. A target that no longer resolves
  * is said so there, rather than silently landing on the top of the list.
  */
-export const INBOX_TARGET_KINDS = ["notice", "question", "command-approval", "capability-approval", "task-approval"] as const;
+export const INBOX_TARGET_KINDS = [
+  "notice",
+  "question",
+  "command-approval",
+  "capability-approval",
+  "install-approval",
+  "task-approval",
+] as const;
 export const inboxTargetSchema = z
   .string()
   .max(200)
-  .regex(/^(notice|question|command-approval|capability-approval|task-approval):[A-Za-z0-9._:@/-]{1,160}$/, {
+  .regex(/^(notice|question|command-approval|capability-approval|install-approval|task-approval):[A-Za-z0-9._:@/-]{1,160}$/, {
     error: "must name a notice or a waiting item",
   });
 export type InboxTarget = z.infer<typeof inboxTargetSchema>;
