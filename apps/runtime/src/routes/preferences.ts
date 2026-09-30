@@ -1,4 +1,5 @@
-import { parseThemeRef, type Instant } from "@clarkcant/contracts";
+import { accentPreferenceSchema, parseThemeRef, type Instant } from "@clarkcant/contracts";
+import { CLARK_THEME, customizedTheme, themeDrawProblem } from "@clarkcant/design-tokens";
 import {
   BROWSER_PRESS_LABEL_MAX,
   BROWSER_PRESS_PAGE_MAX,
@@ -12,7 +13,7 @@ import {
 } from "@clarkcant/core";
 import { recentEvents } from "@clarkcant/storage";
 
-import { readThemeRegistry, resolveThemeRef, themeRegistryDeps, type ThemeServices } from "../application/themes.ts";
+import { readAppearanceCustomization, readThemeRegistry, resolveAppearance, resolveThemeRef, themeRegistryDeps, type ThemeServices } from "../application/themes.ts";
 import { projectPolicyPreference, undoPolicyPreference, writePolicyPreference } from "../autonomy-settings.ts";
 import { nodeWork } from "../work-supervisor.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -170,6 +171,18 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
      */
     // A value that is not a reference at all is left to the key's own schema, which refuses it as malformed.
     const chosenTheme = requested === "experience.themeRef" && typeof parsed.value.value === "string" ? parsed.value.value : undefined;
+    const accent = requested === "experience.accent" ? accentPreferenceSchema.safeParse(parsed.value.value) : undefined;
+    if ((accent?.success === true && accent.data !== null) || (chosenTheme !== undefined && parseThemeRef(chosenTheme) !== undefined)) {
+      const themeDeps = themeRegistryDeps(deps.services);
+      const registry = readThemeRegistry(themeDeps);
+      const current = resolveAppearance(themeDeps, registry, chosenTheme);
+      const customization = readAppearanceCustomization(themeDeps);
+      if (accent?.success === true) customization.accent = accent.data;
+      const problem = themeDrawProblem(customizedTheme(current.theme ?? CLARK_THEME, customization));
+      if (problem !== undefined) return fail(409, problem.code,
+        `the accent would hide text or protected states, so the preference was kept: ${problem.message}`,
+        problem.code === "THEME_LOW_CONTRAST" ? { contrast: problem.contrast } : { protected: problem.protected });
+    }
     if (chosenTheme !== undefined && parseThemeRef(chosenTheme) !== undefined) {
       const resolved = resolveThemeRef(readThemeRegistry(themeRegistryDeps(deps.services)), chosenTheme);
       if (!resolved.ok) {

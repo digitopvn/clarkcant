@@ -1,10 +1,9 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { extname, join, normalize, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 
-import react from "@vitejs/plugin-react";
-import { createServer as createViteServer, type ViteDevServer } from "vite";
+import type { ViteDevServer } from "vite";
+import { createDevModuleServer } from "./dev-module-server.ts";
 
 import { readPackage } from "@clarkcant/core";
 import { catalogFrameHtml, catalogTarget } from "./catalog-target.ts";
@@ -316,7 +315,6 @@ interface ShellSource {
 }
 
 /** The widget-cli package directory, which is Vite's root when the frame is a catalog widget. */
-const CLI_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 function packageSource(requested: string): ShellSource {
   const root = resolve(requested);
@@ -387,15 +385,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
    */
   const vite: ViteDevServer | undefined =
     root === undefined
-      ? await createViteServer({
-          configFile: false,
-          root: CLI_ROOT,
-          appType: "custom",
-          logLevel: "error",
-          plugins: [react()],
-          // The frame is an opaque origin, so its module requests arrive with `Origin: null`.
-          server: { middlewareMode: true, hmr: false, cors: true },
-        })
+      ? await createDevModuleServer(true)
       : undefined;
 
   const fixtures = source.fixtures;

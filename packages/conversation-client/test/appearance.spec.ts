@@ -63,6 +63,16 @@ const DUSK = {
 };
 
 describe("applyAppearance", () => {
+  it("publishes and caches personal appearance through the same host and detached snapshot path", () => {
+    const customization = { accent: { dark: "#7AA2F7", light: "#2453A8" }, density: "compact" as const };
+    expect(applyAppearance({ theme: null, themeRef: "builtin:clark", customization }).ok).toBe(true);
+    const expected = compileAppearance({ scheme: "dark", customization });
+    expect(readAppearanceSnapshot()).toEqual(expected);
+    expect(JSON.parse(stored.get(APPEARANCE_STORAGE_KEY) ?? "null")).toMatchObject({ theme: null, customization });
+    expect(applyRelayedAppearance(expected)).toBe(true);
+    expect(readAppearanceSnapshot()).toEqual(expected);
+    applyAppearance({ theme: null, themeRef: "builtin:clark" });
+  });
   it("resolves the in-app reduced-motion preference for the global desktop relay", () => {
     const normal = readAppearanceSnapshot()!;
     body.dataset.ccReducedMotion = "true";

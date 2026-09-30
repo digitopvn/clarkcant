@@ -190,6 +190,31 @@ disabled controls, the host's own cards (their edge, plain surface and buttons: 
 approval's Approve and Deny, the inbox's answers or Stop) and reduced motion, from the system or from
 Settings, are the host's whatever a theme says. It is selected as `package:<package id>#<theme id>`, and a
 theme-only package is a UI refresh, never a Pi restart. Installed themes appear under Settings → Experience → Theme.
+
+**Theme authoring and Theme Lab.** The existing package CLI has `clark theme init <dir>`, `dev [dir] [--port <port>]`,
+`test [dir]` and `pack [dir]`. From a checkout, invoke `node packages/widget-cli/src/cli.ts theme <command>`.
+Init writes a generalized manifest and `themes/main.json`, refusing a nonempty directory. Dev binds to loopback
+port 4319 by default, serves checked theme data and the shared production preview, reloads edits while retaining the
+preview draft, and closes watchers on Ctrl-C. It accepts only its own origin and never writes runtime preferences.
+The preview reuses production transcript, composer, controls, cards/widgets, Settings, modal, approval/error/status
+and Orb components, with clearly labelled local examples. Scheme, normal/phone/compact viewport, reduced motion,
+compiled tokens, recipes and audit results are inspectable.
+
+Test uses the installed-theme reader, compiler and both audits on arbitrary theme documents: manifest, contained
+regular files, bounded typography, reduced durations/easings and no executable styling or remote resources. Package
+symlinks are refused. Pure theme packages require no privileged permissions and cannot contain script, CSS, HTML or
+executable payloads; other declared facets retain their trust lanes. Browser layout/keyboard is explicitly
+`requires-dev-host`, not an automatic pass. Pack uses the same immutable package artifact and file hashes as widgets,
+adds theme-document digests and records unverified checks. Changed bytes under an already packed version are refused.
+
+Settings → Experience → Browse themes opens the same Lab without losing the real conversation or focus. Preview is
+read-only; Use this theme writes the canonical preference. The registered writer records six distinct recent choices.
+Personal accent and density use the shared compiler/snapshot, including widgets and detached surfaces. Accent is a
+checked dark/light hex pair or `null` for the theme; contrast and protected-state audits must pass before it is stored.
+If an update makes a saved accent unsafe, the theme's accent is drawn with an explicit fallback and the saved choice
+is retained. Compact spacing preserves typography, layout minima and small padding. Reset customization resets
+accent, density, motion and Orb while keeping theme, scheme and language; platform reduced motion always wins.
+
 **How the node runs a service facet.** The node runs one container for each `tools` facet of every active package
 generation, and stops it when the generation stops being active (`apps/runtime/src/service-host.ts`). A service is
 third-party code and a separate process is not a sandbox, so the container is the boundary. `serviceRunArgs` in

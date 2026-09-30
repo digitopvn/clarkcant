@@ -103,11 +103,11 @@ function addDusk(version: string, accent: string): void {
   });
 }
 
-async function call(method: string, path: string, body?: unknown): Promise<GatewayResponse> {
+async function call(method: string, path: string, body?: unknown, query: GatewayRequest["query"] = {}): Promise<GatewayResponse> {
   const request: GatewayRequest = {
     method,
     path,
-    query: {},
+    query,
     headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
     body: body === undefined ? "" : JSON.stringify(body),
   };
@@ -176,6 +176,50 @@ afterEach(() => {
 });
 
 describe("the themes this node can draw", () => {
+  it("previews a checked installed theme without changing the saved choice", async () => {
+    addDusk("1.0.0", "#7AA2F7");
+    await install(DUSK, "1.0.0");
+    const preview = await call("GET", "/appearance", undefined, { themeRef: DUSK_REF });
+    expect(preview.status).toBe(200);
+    expect((preview.body as AppearanceBody).appliedRef).toBe(DUSK_REF);
+    expect((await appearance()).selectedRef).toBe("builtin:clark");
+    const malformed = await call("GET", "/appearance", undefined, { themeRef: "../../outside" });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body).toMatchObject({ code: "INVALID_SCHEMA" });
+    const missing = await call("GET", "/appearance", undefined, { themeRef: "package:com.example.missing#main" });
+    expect((missing.body as AppearanceBody).fallback?.code).toBe("THEME_NOT_INSTALLED");
+    expect((await appearance()).selectedRef).toBe("builtin:clark");
+  });
+
+  it("stores audited accent and density, refusing unreadable color without changing the preference", async () => {
+    const accent = { dark: "#7AA2F7", light: "#2453A8" };
+    const write = await call("PUT", "/preferences/experience.accent", { value: accent });
+    expect(write.status, JSON.stringify(write.body)).toBe(200);
+    expect((await call("PUT", "/preferences/experience.density", { value: "compact" })).status).toBe(200);
+    expect((await call("GET", "/appearance")).body).toMatchObject({ customization: { accent, density: "compact" } });
+    const refused = await call("PUT", "/preferences/experience.accent", { value: { dark: "#111114", light: "#FFFFFF" } });
+    expect(refused.status).toBe(409);
+    expect((await call("GET", "/appearance")).body).toMatchObject({ customization: { accent, density: "compact" } });
+  });
+
+  it("keeps a saved accent when an installed update makes it unsafe, drawing the theme's own accent with a reason", async () => {
+    addDusk("1.0.0", "#7AA2F7");
+    await install(DUSK, "1.0.0");
+    await choose(DUSK_REF);
+    const accent = { dark: "#C9B8FF", light: "#5A3FB0" };
+    const write = await call("PUT", "/preferences/experience.accent", { value: accent });
+    expect(write.status, JSON.stringify(write.body)).toBe(200);
+    addPackage({ id: DUSK, version: "2.0.0", facets: [themeFacet("dusk")], files: {
+      "themes/dusk.json": { ...theme("dusk", "#7AA2F7"), colors: { dark: { accent: "#7AA2F7", danger: "#C9B8FF" } } },
+    } });
+    await install(DUSK, "2.0.0");
+    expect((await call("GET", "/appearance")).body).toMatchObject({
+      appliedRef: DUSK_REF, fallback: null, customization: { accent: null, density: "comfortable" },
+      customizationFallback: { code: "THEME_PROTECTED" },
+    });
+    const prefs = (await call("GET", "/preferences")).body as { preferences: { key: string; value: unknown }[] };
+    expect(prefs.preferences.find((pref) => pref.key === "experience.accent")?.value).toEqual(accent);
+  });
   it("is Clark Default alone until a package provides another", async () => {
     const listed = await themes();
 

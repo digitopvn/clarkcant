@@ -1138,7 +1138,7 @@ Credentials **don't** get their own tab: each key lives in the domain that expla
 TypeSafe in AI & Routing), per section 11.6.
 
 A control only appears once the behavior behind it exists. A preference already declared in the registry that
-nothing reads yet (density, background routing, voice picker) gets **no** control, and the reason is stated where the
+nothing reads yet (background routing, voice picker) gets **no** control, and the reason is stated where the
 user would look for it — silently skipping it is worse, because the user would think the app is broken.
 
 ### 11.1 Experience
@@ -1205,9 +1205,20 @@ Use segmented controls, toggles and swatches:
   speaker's product language away from Vietnamese. Only default chrome (composer, timeline chrome,
   settings, error copy, voice controls, marketplace headings) is translated; agent output is never
   translated.
-- Accent.
+- Theme Lab: Browse themes opens a temporary Gallery above Settings. Opening puts focus on the selected theme once;
+  subsequent preview updates do not steal it. Picking in the Gallery previews production components locally, and
+  Apply uses the same confirmed preference write as the main theme list. The last six choices are available as
+  recent themes. The conversation and its draft stay mounted. Examples are labelled and never run a model turn or
+  operate real approvals, files or voice. Scheme, normal/narrow/compact width and reduced-motion switches belong to
+  the preview; token, recipe and audit details are disclosures within this authoring utility.
+- Accent: bounded six-digit hex colors for dark and light, audited before storage with the production contrast and
+  protected-state checks. Refusal keeps the saved appearance. If an installed update makes the saved accent unsafe,
+  draw the theme's own accent, explain the fallback, and keep the preference for recovery.
 - Motion: Full / Reduced / Follow system.
-- Density: Comfortable / Compact.
+- Density: Comfortable / Compact, compiled into shared spacing tokens while preserving type and layout minima.
+- Reset theme customization clears accent, density, motion and explicit Orb tuning through the existing preference
+  reset/Undo path. It preserves the selected theme, color scheme and language; each confirmed change is redrawn, and
+  a failed write stops the remaining reset and reports the failure.
 - Window behavior: remember size, start mode.
 - Wake phrase: on/off + local-listening status.
 - Keyboard shortcuts: opens a subpanel.

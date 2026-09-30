@@ -114,6 +114,31 @@ afterEach(() => {
 });
 
 describe("dispatching a task runs a worker", () => {
+  it.each([false, true])("refuses a delayed dispatch after storage closes, with admission closed: %s", async (closeAdmission) => {
+    node = testNode();
+    const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId);
+    let workers = 0;
+    let settlements = 0;
+    const dispatcher = createTaskDispatcher({
+      conductor: node.conductor,
+      projectRoots: () => [],
+      ownedRoots: () => [],
+      onSettled: () => { settlements += 1; },
+      runWorker: async () => { workers += 1; return fakeWorkerResult([]); },
+    });
+    const input = { taskId: task.taskId, capabilityRef: "project.file.read@1", executionNodeId: node.runtime.identity.nodeId };
+    if (closeAdmission) dispatcher.close();
+    node.close();
+    node = undefined;
+    const queued = await new Promise<boolean>((resolve) => setImmediate(() => resolve(dispatcher.dispatch(input))));
+    await vi_flush();
+    expect(queued).toBe(false);
+    expect(workers).toBe(0);
+    expect(settlements).toBe(0);
+    expect(dispatcher.runningCount()).toBe(0);
+    expect(dispatcher.queuedCount()).toBe(0);
+  });
+
   it("succeeds and settles the task through verification when the run produces verified evidence", async () => {
     node = testNode();
     const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId);

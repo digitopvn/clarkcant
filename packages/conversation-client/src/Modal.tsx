@@ -10,7 +10,7 @@
  * leaves a keyboard user somewhere they did not choose.
  */
 
-import { type CSSProperties, type ReactElement, type ReactNode, useCallback, useEffect, useRef } from "react";
+import { type CSSProperties, type ReactElement, type ReactNode, useCallback, useEffect, useId, useRef } from "react";
 
 import { useT } from "./i18n/locale-context.tsx";
 
@@ -56,16 +56,23 @@ function returnFocusTarget(opener: Element | null): HTMLElement | null {
 export function Modal({ open, onClose, title, description, children, actions, width }: ModalProps): ReactElement | null {
   const t = useT();
   const dialog = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
   // Captured on open so focus can go back where it came from rather than to the top of the page.
   const opener = useRef<Element | null>(null);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      const dialogs = document.querySelectorAll('[data-modal="true"]');
+      if (dialogs.item(dialogs.length - 1) !== dialog.current) return;
       if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
         onClose();
         return;
       }
       if (event.key !== "Tab") return;
+      event.stopImmediatePropagation();
 
       // Cycled inside the dialog rather than allowed to escape to the page behind it, which is
       // still on screen and would otherwise be reachable by keyboard while visually covered.
@@ -137,22 +144,22 @@ export function Modal({ open, onClose, title, description, children, actions, wi
         className="cc-modal"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="cc-modal-title"
-        {...(description === undefined ? {} : { "aria-describedby": "cc-modal-desc" })}
+        aria-labelledby={titleId}
+        {...(description === undefined ? {} : { "aria-describedby": descriptionId })}
         ref={dialog}
         tabIndex={-1}
         data-modal="true"
         {...(width === undefined ? {} : { style: { "--cc-modal-width": width } as CSSProperties })}
       >
         <header className="cc-modal-head">
-          <h2 id="cc-modal-title">{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <button type="button" className="cc-icon-btn" onClick={onClose} aria-label={t("settings.modal.close")}>
             ✕
           </button>
         </header>
         <div className="cc-modal-body">
           {description !== undefined && (
-            <p id="cc-modal-desc" className="cc-panel-note" style={{ marginTop: 0 }}>
+            <p id={descriptionId} className="cc-panel-note" style={{ marginTop: 0 }}>
               {description}
             </p>
           )}

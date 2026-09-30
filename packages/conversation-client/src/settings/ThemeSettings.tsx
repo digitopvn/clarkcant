@@ -9,6 +9,7 @@ import {
   type ThemeProtectedFailureView,
   type ThemesResponse,
   type UncheckedThemePackageView,
+  type AppearanceResponse,
 } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
@@ -21,6 +22,8 @@ import type { AppearanceState } from "../use-appearance.ts";
 import { InlineStatus, SettingsRow } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import { contrastLines, protectedLines } from "./theme-contrast-lines.ts";
+import { Modal } from "../Modal.tsx";
+import { ThemeLabPreview } from "../theme-lab-preview.tsx";
 
 /**
  * Choosing a theme.
@@ -191,17 +194,47 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
   const locale = useLocale();
   const [listing, setListing] = useState<ThemesResponse | undefined>(undefined);
   const [unreachable, setUnreachable] = useState(false);
-  const options = useRef<HTMLDivElement>(null);
   const answeredRequest = useRef(0);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [previewRef, setPreviewRef] = useState<string>(BUILTIN_CLARK_THEME_REF);
+  const [preview, setPreview] = useState<AppearanceResponse>();
+  const [previewProblem, setPreviewProblem] = useState(false);
+  const [previewPending, setPreviewPending] = useState(false);
+  const gallery = useRef<HTMLDivElement>(null);
+  const galleryFocused = useRef(false);
+
+  useEffect(() => {
+    if (!galleryOpen) { galleryFocused.current = false; return; }
+    if (listing === undefined || galleryFocused.current) return;
+    const chosen = Array.from(gallery.current?.querySelectorAll<HTMLButtonElement>("[data-theme-ref]") ?? [])
+      .find((button) => button.dataset.themeRef === previewRef);
+    if (chosen === undefined) return;
+    chosen.focus();
+    galleryFocused.current = true;
+  }, [galleryOpen, listing]);
+
+  useEffect(() => {
+    if (!galleryOpen) return;
+    let current = true;
+    setPreviewPending(true);
+    setPreviewProblem(false);
+    client.appearance(previewRef).then((next) => {
+      if (!current) return;
+      setPreview(next);
+      setPreviewPending(false);
+    }, () => {
+      if (!current) return;
+      setPreviewProblem(true);
+      setPreviewPending(false);
+    });
+    return () => { current = false; };
+  }, [client, galleryOpen, previewRef, appearance.generation]);
 
   useEffect(() => {
     if (galleryRequest === undefined || galleryRequest === answeredRequest.current || listing === undefined) return;
     answeredRequest.current = galleryRequest;
-    const group = options.current;
-    if (group === null) return;
-    const current = group.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ?? group.querySelector("button");
-    group.scrollIntoView({ block: "nearest" });
-    current?.focus();
+    setPreviewRef(appearance.appearance?.selectedRef ?? BUILTIN_CLARK_THEME_REF);
+    setGalleryOpen(true);
   }, [galleryRequest, listing]);
 
   // Re-read whenever the appearance was re-read: that is when a package may have come or gone.
@@ -223,6 +256,19 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
   }, [client, appearance.generation]);
 
   const selectedRef = prefs.text("experience.themeRef", BUILTIN_CLARK_THEME_REF);
+  const storedRecent = prefs.preference("experience.recentThemes")?.value;
+  const recent = Array.isArray(storedRecent)
+    ? storedRecent.flatMap((ref) => {
+        const theme = listing?.themes.find((candidate) => candidate.themeRef === ref);
+        return theme === undefined ? [] : [theme];
+      })
+    : [];
+  const choose = (ref: string): void => {
+    prefs.write("experience.themeRef", ref, () => {
+      prefs.reload();
+      void appearance.refresh();
+    });
+  };
 
   /*
    * The theme changed without this list writing it: a typed or spoken request, or the agent, chose one while Settings
@@ -254,9 +300,8 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
           <p className="cc-panel-note" data-theme-list="loading">
             {unreachable ? t("settings.experience.themePicker.unreachable") : t("settings.experience.themePicker.loading")}
           </p>
-        ) : (
+        ) : galleryOpen ? null : (
           <div
-            ref={options}
             className="cc-theme-options"
             role="group"
             aria-label={t("settings.experience.themePicker.label")}
@@ -269,13 +314,41 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
                 selected={selectedRef === theme.themeRef}
                 applied={appliedRef === theme.themeRef}
                 pending={prefs.pending === "experience.themeRef"}
-                onChoose={() => prefs.write("experience.themeRef", theme.themeRef, () => void appearance.refresh())}
+                onChoose={() => choose(theme.themeRef)}
                 t={t}
               />
             ))}
           </div>
         )}
       </SettingsRow>
+      {galleryOpen || recent.length === 0 ? null : <div className="cc-theme-recent" role="group" aria-label={t("themeLab.recent")} data-theme-recent>
+        <span>{t("themeLab.recent")}</span>
+        {recent.map((theme) => <button key={theme.themeRef} type="button" className="cc-badge"
+          aria-pressed={selectedRef === theme.themeRef} disabled={prefs.pending !== undefined}
+          onClick={() => choose(theme.themeRef)}>{theme.displayName}</button>)}
+      </div>}
+      <button type="button" className="cc-action" data-theme-browse onClick={() => {
+        setPreviewRef(selectedRef);
+        setGalleryOpen(true);
+      }}>{t("themeLab.browse")}</button>
+      <Modal open={galleryOpen} onClose={() => setGalleryOpen(false)} title={t("themeLab.title")}
+        width="min(70rem, calc(100vw - var(--cc-space-xl)))">
+        <div className="cc-theme-gallery-layout" data-theme-gallery ref={gallery}>
+          <div className="cc-theme-options" role="group" aria-label={t("settings.experience.themePicker.label")}>
+            {listing?.themes.map((theme) => <ThemeOption key={theme.themeRef} theme={theme}
+              selected={previewRef === theme.themeRef} applied={appliedRef === theme.themeRef}
+              pending={false} onChoose={() => setPreviewRef(theme.themeRef)} t={t} />)}
+          </div>
+          {previewPending ? <p role="status">{t("themeLab.loading")}</p> : null}
+          {previewProblem ? <p role="status">{t("themeLab.unreachable")}</p> : null}
+          {preview === undefined ? null : <ThemeLabPreview theme={preview.theme} themeRef={preview.appliedRef}
+            customization={preview.customization} problem={preview.fallback?.message ?? preview.customizationFallback?.message} />}
+          <button type="button" className="cc-action" data-theme-apply
+            disabled={previewPending || previewProblem || preview === undefined || preview.selectedRef !== previewRef || preview.fallback !== null || prefs.pending !== undefined}
+            onClick={() => choose(previewRef)}>{t("themeLab.apply")}</button>
+          <InlineStatus status={prefs.status} forKey="experience.themeRef" />
+        </div>
+      </Modal>
       {unreachable && listing !== undefined ? (
         <p className="cc-panel-note" data-theme-list="stale">
           {t("settings.experience.themePicker.unreachable")}

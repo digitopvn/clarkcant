@@ -31,7 +31,8 @@ import { asJsonValue } from "@clarkcant/storage";
 
 import {
   getPreference,
-  setPreference,
+  type setPreference,
+  setPreferences,
   undoPreference,
   type PreferenceDeps,
   type PreferenceRecord,
@@ -184,13 +185,31 @@ export function writeRegisteredPreference(
     return { ok: false, code: "PREFERENCE_INVALID", message: describeValidationIssues(parsed.error) };
   }
 
-  const record = setPreference(deps, {
-    principalId: input.principalId,
-    key: definition.key,
-    scope: definition.scope,
-    value: parsed.data,
-    source: input.source ?? "user",
-  });
+  const source = input.source ?? "user";
+  const writes: Parameters<typeof setPreference>[1][] = [
+    {
+      principalId: input.principalId,
+      key: definition.key,
+      scope: definition.scope,
+      value: parsed.data,
+      source,
+    },
+  ];
+  if (definition.key === "experience.themeRef") {
+    const prior = readRegisteredPreference(deps, {
+      principalId: input.principalId,
+      key: "experience.recentThemes",
+    })?.value;
+    const recent = Array.isArray(prior) ? prior : [];
+    writes.push({
+      principalId: input.principalId,
+      key: "experience.recentThemes",
+      scope: "global",
+      source,
+      value: [parsed.data, ...recent.filter((ref) => ref !== parsed.data)].slice(0, 6),
+    });
+  }
+  const record = setPreferences(deps, writes)[0]!;
   return { ok: true, preference: envelope(definition, record) };
 }
 

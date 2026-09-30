@@ -1,7 +1,7 @@
-import { memo, type CSSProperties, type ReactElement } from "react";
+import { memo, type ReactElement } from "react";
 
 import type { GatewayClient, Timeline } from "./api.ts";
-import { AgentAvatar } from "./AgentAvatar.tsx";
+import { TranscriptRow } from "./transcript-row.tsx";
 import { renderBlock, type BlockActions, type SurfaceBlockRef } from "./blocks.tsx";
 import { useT } from "./i18n/locale-context.tsx";
 
@@ -41,38 +41,9 @@ function TimelineMessageRowComponent({
 }: TimelineMessageRowProps): ReactElement {
   const t = useT();
   return (
-    <article
-      className="cc-row"
-      data-role={message.role}
-      // Staggered so a reply with several parts arrives as a sequence rather than as one block;
-      // capped, because the tenth row should not wait a second to appear.
-      style={
-        {
-          "--cc-enter-delay": `${Math.min(index, 6) * 60}ms`,
-          ...(settled ? { contentVisibility: "auto", containIntrinsicSize: "0 auto 120px" } : {}),
-        } as CSSProperties
-      }
-    >
-      {message.role === "assistant" ? (
-        // Full width, with the agent's mark beside it: a reply is the agent talking, and boxing it
-        // like the user's message would make both sides look like utterances.
-        <div className="cc-assistant">
-          <AgentAvatar />
-          <div className="cc-assistant-body">
-            {message.blocks.map((block, blockIndex) =>
-              renderBlock(block, blockIndex, renderSurface, blockActions, client, t),
-            )}
-          </div>
-        </div>
-      ) : (
-        // A bubble, because it is the user's own words coming back to them at a glance.
-        <div className="cc-bubble" data-bubble="user">
-          {message.blocks.map((block, blockIndex) =>
-            renderBlock(block, blockIndex, renderSurface, blockActions, client, t),
-          )}
-        </div>
-      )}
-    </article>
+    <TranscriptRow role={message.role} index={index} settled={settled}>
+      {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions, client, t))}
+    </TranscriptRow>
   );
 }
 

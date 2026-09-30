@@ -341,6 +341,16 @@ sẽ bị từ chối bằng `409` kèm đúng mã, lý do và `contrast` hoặc
 không đẩy thay đổi gói về client: client đọc lại `/appearance` sau khi chính nó thay đổi một gói và khi cửa sổ được
 nhìn lại. Hình dạng dữ liệu ở `packages/contracts/src/themes.ts`.
 
+`GET /appearance?themeRef=<tham chiếu đã encode>` phân giải chủ đề đã kiểm tra để preview chỉ đọc, không ghi
+preference. Tham chiếu sai hình dạng trả `400`; chủ đề không có trả fallback thường. Diện mạo cá nhân thêm
+`customization: { accent, density }` khi có: accent là `null` hoặc `{ dark: "#RRGGBB", light: "#RRGGBB" }`, density
+là `comfortable | compact`. Ghi qua preference đã đăng ký `experience.accent` và `experience.density`.
+Màu nhấn phải qua kiểm tra cả hai chế độ và trạng thái bảo vệ trước khi ghi (cả khi chọn chủ đề với màu nhấn đã lưu);
+từ chối trả `409`, giữ nguyên dữ liệu. `customizationFallback` nói vì sao bản cập nhật đã cài làm màu nhấn cũ không
+an toàn; màu của chủ đề được vẽ và preference cũ vẫn giữ. Compiler sở hữu các lựa chọn này, nên renderer iframe và
+detached nhận cùng snapshot có giới hạn. `experience.recentThemes` chứa tối đa sáu tham chiếu khác nhau, cập nhật
+nguyên tử cùng một lần ghi chủ đề đã đăng ký.
+
 Widget nhận `AppearanceSnapshot` công khai đã phân giải thay vì phản hồi theme thô này. Bridge v2 có thể mang
 `appearance` trong init kèm `appearance@1`, rồi gửi
 `{ kind: "appearance.changed", nonce, revision, appearance }` có revision trùng khớp, được kiểm tra source/nonce.

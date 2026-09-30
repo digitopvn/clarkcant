@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
@@ -16,7 +16,9 @@ import { runConformance, type ConformanceReport } from "./conformance.ts";
 import type { FrameFacts } from "./dev-shell.ts";
 import { startDevHost } from "./dev-host.ts";
 import { publishedDefinitions, versionRuleViolations, type PublishedDefinitions } from "./version-rules.ts";
-import { readPackage } from "@clarkcant/core";
+import { installedThemes, readPackage } from "@clarkcant/core";
+import { packageFiles } from "./package-files.ts";
+import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
 
 /**
  * `clark widget …` — the author's commands, from `docs/widget-development.md` §16.
@@ -59,6 +61,7 @@ function usage(): string {
     "clark widget <command> [dir]",
     "",
     ...WIDGET_COMMANDS.map((entry) => `  ${entry.usage}`),
+    ...THEME_COMMANDS.map((entry) => `  ${entry.usage}`),
     "",
     // Named because it is the product decision behind the whole surface: a local path needs no account.
     "A local path needs no account. init, test, pack and dev all work without a directory or a login.",
@@ -207,17 +210,6 @@ function report(result: ConformanceReport): string {
 
 /* ------------------------------------------------------------------ pack */
 
-function walk(root: string, dir = root): string[] {
-  const files: string[] = [];
-  for (const name of readdirSync(dir)) {
-    if (name === "dist" || name === "node_modules") continue;
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) files.push(...walk(root, path));
-    else files.push(relative(root, path).replaceAll("\\", "/"));
-  }
-  return files.sort();
-}
-
 /**
  * Frame facts a browser collected, read from a file.
  *
@@ -234,23 +226,30 @@ function readFrames(path: string): FrameFacts | undefined {
   }
 }
 
-function pack(root: string): number {
-  const result = runConformance(root);
+function pack(root: string, result = runConformance(root)): number {
   if (!result.ok) {
     process.stderr.write(`${report(result)}\n\nRefusing to pack a package that fails conformance.\n`);
     return 1;
   }
   const pkg = readPackage(root);
   const facet = pkg.facets[0];
-  if (facet === undefined) {
-    process.stderr.write("no widget facet is declared\n");
+  const themes = installedThemes({ source: { kind: "local", path: root } });
+  if (facet === undefined && (!themes.ok || themes.themes.length === 0)) {
+    process.stderr.write("no widget or theme facet is declared\n");
     return 1;
   }
 
-  const files = walk(root).map((path) => {
-    const bytes = readFileSync(join(root, path));
-    return { path, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
-  });
+  let files: { path: string; bytes: number; sha256: string }[];
+  try {
+    files = packageFiles(root).map(({ path, bytes }) => ({ path, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }));
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+  const definition = facet === undefined ? undefined : definitionDigest(facet.definition);
+  const themeDigests = themes.ok && themes.themes.length > 0 ? Object.fromEntries(themes.themes.map((theme) => [
+    theme.facetId, `sha256:${createHash("sha256").update(JSON.stringify(theme.document)).digest("hex")}`,
+  ])) : undefined;
 
   /*
    * The digest covers identity and content: the manifest's id and version, the definition's own digest (which is
@@ -260,7 +259,8 @@ function pack(root: string): number {
   const canonical = {
     id: pkg.manifest.id,
     version: pkg.manifest.version,
-    definition: definitionDigest(facet.definition),
+    ...(definition === undefined ? {} : { definition }),
+    ...(themeDigests === undefined ? {} : { themes: themeDigests }),
     files,
   };
   const digest = `sha256:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`;
@@ -293,7 +293,8 @@ function pack(root: string): number {
     id: pkg.manifest.id,
     version: pkg.manifest.version,
     digest,
-    definitionDigest: definitionDigest(facet.definition),
+    ...(definition === undefined ? {} : { definitionDigest: definition }),
+    ...(themeDigests === undefined ? {} : { themeDigests }),
     files,
     // Recorded rather than omitted: the artifact says what was not verified, so a reader of the metadata is not
     // left assuming the browser checks passed.
@@ -452,6 +453,7 @@ function publish(root: string): number {
 
 export async function runCli(argv: readonly string[]): Promise<number> {
   const [group, command, ...rest] = argv;
+  if (group === "theme") return runThemeCli(argv.slice(1), { pack, report });
   if (group !== "widget" || command === undefined) {
     process.stdout.write(`${usage()}\n`);
     return 2;

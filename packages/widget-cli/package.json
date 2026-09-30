@@ -22,6 +22,7 @@
     "typecheck": "tsc -p ../../tsconfig.json"
   },
   "dependencies": {
+    "@clarkcant/design-tokens": "workspace:*",
     "@clarkcant/contracts": "workspace:*",
     "@clarkcant/conversation-client": "workspace:*",
     "@clarkcant/widget-host": "workspace:*",
