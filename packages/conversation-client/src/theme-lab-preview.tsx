@@ -84,9 +84,9 @@ export function ThemeLabPreview({ theme, themeRef, problem, customization }: The
         onOpenVoice={() => setNotice(t("themeLab.localOnly"))} modelAlias={undefined} modelNote="" error={undefined} messages={[]} />
       {notice === undefined ? null : <p role="status">{notice}</p>}
       <section className="cc-panel-section"><h3>{t("themeLab.controls")}</h3>
-        <SettingsRow label={t("themeLab.field")}><input className="cc-input" aria-label={t("themeLab.field")} value={field} onChange={(event) => setField(event.target.value)} /></SettingsRow>
-        <button type="button" className="cc-btn" onClick={() => setModal(true)}>{t("themeLab.modal")}</button>
-        <button type="button" className="cc-btn" disabled>{t("settings.applies.immediate")}</button>
+        <SettingsRow label={t("themeLab.field")}><input className="cc-field-input" aria-label={t("themeLab.field")} value={field} onChange={(event) => setField(event.target.value)} /></SettingsRow>
+        <button type="button" className="cc-action" onClick={() => setModal(true)}>{t("themeLab.modal")}</button>
+        <button type="button" className="cc-action" disabled>{t("settings.applies.immediate")}</button>
       </section>
       <SettingsRow label={t("themeLab.settings")}><ToggleSwitch name="example-motion" label={t("themeLab.reduced")} checked={reduced} onChange={setReduced} /></SettingsRow>
       {widget === undefined || fixture === undefined ? null : <WidgetPreview entry={widget} fixture={fixture} />}
@@ -96,7 +96,7 @@ export function ThemeLabPreview({ theme, themeRef, problem, customization }: The
         {(["connected", "unconfigured", "revoked"] as const).map((status) => <ConnectionCardBlock key={status} block={{ owner: "host", provider: t("themeLab.status"), status }} />)}
       </section>
       <Modal open={modal} onClose={() => setModal(false)} title={t("themeLab.settings")} description={t("themeLab.examples")}>
-        <SettingsRow label={t("themeLab.field")}><input className="cc-input" aria-label={t("themeLab.field")} value={field} onChange={(event) => setField(event.target.value)} /></SettingsRow>
+        <SettingsRow label={t("themeLab.field")}><input className="cc-field-input" aria-label={t("themeLab.field")} value={field} onChange={(event) => setField(event.target.value)} /></SettingsRow>
       </Modal>
     </div>
     <details><summary>{t("themeLab.tokens")}</summary><pre data-preview-tokens>{JSON.stringify(snapshot.tokens, null, 2)}</pre></details>

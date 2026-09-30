@@ -327,7 +327,7 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
           aria-pressed={selectedRef === theme.themeRef} disabled={prefs.pending !== undefined}
           onClick={() => choose(theme.themeRef)}>{theme.displayName}</button>)}
       </div>}
-      <button type="button" className="cc-btn" data-theme-browse onClick={() => {
+      <button type="button" className="cc-action" data-theme-browse onClick={() => {
         setPreviewRef(selectedRef);
         setGalleryOpen(true);
       }}>{t("themeLab.browse")}</button>
@@ -343,7 +343,7 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
           {previewProblem ? <p role="status">{t("themeLab.unreachable")}</p> : null}
           {preview === undefined ? null : <ThemeLabPreview theme={preview.theme} themeRef={preview.appliedRef}
             customization={preview.customization} problem={preview.fallback?.message ?? preview.customizationFallback?.message} />}
-          <button type="button" className="cc-btn" data-theme-apply
+          <button type="button" className="cc-action" data-theme-apply
             disabled={previewPending || previewProblem || preview === undefined || preview.selectedRef !== previewRef || preview.fallback !== null || prefs.pending !== undefined}
             onClick={() => choose(previewRef)}>{t("themeLab.apply")}</button>
           <InlineStatus status={prefs.status} forKey="experience.themeRef" />

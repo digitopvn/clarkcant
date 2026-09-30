@@ -40,8 +40,8 @@ export function ThemeCustomization({ prefs, appearance, onOrbChange }: {
           maxLength={7} value={dark} onChange={(event) => setDark(event.currentTarget.value)} required /></label>
         <label>{t("settings.experience.theme.light")} <input data-accent-scheme="light" type="text" pattern="#[0-9a-fA-F]{6}"
           maxLength={7} value={light} onChange={(event) => setLight(event.currentTarget.value)} required /></label>
-        <button className="cc-btn" type="submit" disabled={prefs.pending !== undefined} data-accent-save>{t("themeLab.saveAccent")}</button>
-        <button className="cc-btn" type="button" disabled={prefs.pending !== undefined}
+        <button className="cc-action" type="submit" disabled={prefs.pending !== undefined} data-accent-save>{t("themeLab.saveAccent")}</button>
+        <button className="cc-action" type="button" disabled={prefs.pending !== undefined}
           onClick={() => prefs.reset("experience.accent", refresh)}>{t("themeLab.themeAccent")}</button>
       </form>
     </SettingsRow>
@@ -59,7 +59,7 @@ export function ThemeCustomization({ prefs, appearance, onOrbChange }: {
         onChange={(value) => prefs.write("experience.density", value, refresh)} />
     </SettingsRow>
     <InlineStatus status={prefs.status} forKey="experience.density" />
-    <button type="button" className="cc-btn" disabled={prefs.pending !== undefined} data-theme-customization-reset onClick={() => reset(0)}>{t("themeLab.reset")}</button>
+    <button type="button" className="cc-action" disabled={prefs.pending !== undefined} data-theme-customization-reset onClick={() => reset(0)}>{t("themeLab.reset")}</button>
     <p className="cc-panel-note">{t("themeLab.resetNote")}</p>
     {prefs.status?.key === "orb.custom" ? <InlineStatus status={prefs.status} forKey="orb.custom" /> : null}
   </div>;
