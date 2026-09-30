@@ -781,7 +781,9 @@ draws a chart the node would refuse.
 
 A field name is 1–64 characters on one line, not only spaces, with none of the hidden characters of §8.4. The fields
 are named, never guessed: a chart with no `x` or no `y` is refused, and so is a field named twice, `x` repeated in `y`,
-or a label for a field the chart does not plot. `stacked` belongs to an area chart and `pointLabel` to a scatter plot.
+a label for a field the chart does not plot, or a `pointLabel` that is `x` or one of the series (a point is named by a
+field it is not placed by, so the table under the chart never has the same column twice). `stacked` belongs to an area
+chart and `pointLabel` to a scatter plot.
 
 A model places each one with `show_view`. They are in the `chart` family, which no layout region reads, so a model
 places each on its own.
@@ -792,8 +794,9 @@ What the node guarantees:
   it, and refuses in the same turn, with the reason, when the dataset is not on this node or is not theirs, when a
   named field is not in it (the reason lists the fields it has), or when a row does not fit: a missing value, a value
   that is not a number (a numeric string such as `"12"` is not one), an x that is not a number on a scatter plot, an
-  area chart's x that mixes numbers and text or whose numbers do not rise row by row, or a negative value in a stacked
-  area. Up to five problems are named, then `and N more problem(s) in the same rows`. No instance is left behind.
+  area chart's x that mixes numbers and text or whose numbers do not rise row by row, a negative value in a stacked
+  area, or a stacked row whose series add up to more than a number can hold (each value fits, but the stack drawn is
+  their sum). Up to five problems are named, then `and N more problem(s) in the same rows`. No instance is left behind.
 - **The points are bounded.** A chart draws the first 500 rows. Only those rows are checked, and the chart, its text
   and its semantic document say how many of how many it draws.
 - **What a person changes is a view the node keeps.** Hiding a series and selecting a point are the chart's view,
@@ -815,7 +818,8 @@ What the node guarantees:
 What the page does:
 
 - Each series has its own tone, line pattern and point shape, shown together in the legend, so a colour is never the
-  only signal. The legend is a row of buttons with `aria-pressed`; a hidden series says "(hidden)" in words. The last
+  only signal. There are six tones, so from the seventh series the colours repeat; each of the eight series still has a
+  line pattern and a point shape no other series has, and those tell them apart. The legend is a row of buttons with `aria-pressed`; a hidden series says "(hidden)" in words. The last
   shown series cannot be hidden, and the chart says why.
 - Every point is a button with a name that says its series, x and value, and its name when `pointLabel` gives one.
   One point is in the tab order. The arrow keys move along x, in the order of x for a scatter plot, and up and down
@@ -828,13 +832,19 @@ What the page does:
 - A scatter plot titles its axes: the y axis above the plot and the x axis under it, each with its label and unit.
 - A table of the rows drawn, with the chart's names for its fields, is under the chart. A field is read only from the
   row itself, so a field named `constructor` or `toString` is plotted and named like any other.
+- A hidden character of §8.4 in the rows' text, such as a bidi control in an x category or a point's name, is shown as a
+  marker such as `⟨U+202E⟩` wherever the chart says that text: on the axis, in a point's name, in the selected point,
+  the text alternative and the semantic document. In the table it is the same marker the code viewer draws, with a
+  title that says what the character is. It never reorders the text around it.
 - Everything the chart says is in the person's language. Rows that no longer fit are described from the row, field
   and value the shared checks found, not from the node's English sentence, and a refused view is said as a sentence
   of the page's own. The node's English reasons are for the model and the logs.
 - The axes never do unbounded work. Ticks are counted before they are made, at most 50, and each is its index times a
   round step. Values so close that no round step separates them, such as `0.3` and `0.1 + 0.2`, are drawn as one
-  value with room either side. Labels past a billion or finer than a millionth are written with an exponent and as
-  many significant digits as the step needs, so a `1e-12` scale is not labelled `0` throughout.
+  value with room either side. Labels use `k`, `M`, `B` and `T` up to a thousand trillion, and past that, or when the
+  step is finer than a millionth of the unit, an exponent and as many significant digits as the step needs, so a
+  `1e-12` scale is not labelled `0` throughout. The plot starts far enough right for the widest label to be drawn
+  whole, up to two fifths of the chart's width.
 - Above 60 points an area chart draws only the point that has focus and the one selected, so the line stays readable;
   every point can still be reached with the keyboard.
 - The chart adds no motion of its own, fits its width down to 390 px, and follows the light and dark themes. In the

@@ -84,11 +84,13 @@ import {
   type PointCursor,
   pointOrder,
   seriesDash,
+  TICK_GAP,
   stackBands,
   valueLabelShown,
 } from "./chart-layout.ts";
 import { highlightedCode } from "./markdown.tsx";
 import { vendorEmbedUrl } from "./media-embed.ts";
+import { fillMessage } from "./i18n/fill-message.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import {
   formatTableTotal,
@@ -292,18 +294,17 @@ function useMeasuredWidth(fallback: number): [(element: HTMLElement | null) => v
 }
 
 function ChartGrid({ geometry }: { geometry: ChartGeometry }): ReactElement {
-  const labels = formatTicks(geometry.ticks);
   return (
     <g aria-hidden="true">
       {geometry.ticks.map((tick, index) => (
         <g key={tick}>
-          <line className="grid" x1={CHART_PAD.left} x2={geometry.width - CHART_PAD.right} y1={geometry.scaleY(tick)} y2={geometry.scaleY(tick)} />
-          <text className="label" x={CHART_PAD.left - 6} y={geometry.scaleY(tick)} textAnchor="end" dominantBaseline="middle">
-            {labels[index]}
+          <line className="grid" x1={geometry.left} x2={geometry.width - CHART_PAD.right} y1={geometry.scaleY(tick)} y2={geometry.scaleY(tick)} />
+          <text className="label" x={geometry.left - TICK_GAP} y={geometry.scaleY(tick)} textAnchor="end" dominantBaseline="middle">
+            {geometry.labels[index]}
           </text>
         </g>
       ))}
-      <line className="axis" x1={CHART_PAD.left} y1={geometry.zero} x2={geometry.width - CHART_PAD.right} y2={geometry.zero} />
+      <line className="axis" x1={geometry.left} y1={geometry.zero} x2={geometry.width - CHART_PAD.right} y2={geometry.zero} />
     </g>
   );
 }
@@ -340,8 +341,8 @@ function SeriesNote({ choice }: { choice: { requested?: string; series?: string;
   return (
     <p className="cc-freshness" data-chart-series={choice.series ?? ""} style={{ margin: 0 }}>
       {choice.series === undefined
-        ? t("widgets.chart.seriesMissing").replace("{series}", named)
-        : t("widgets.chart.showingSeries").replace("{series}", named)}
+        ? fillMessage(t("widgets.chart.seriesMissing"), { series: named })
+        : fillMessage(t("widgets.chart.showingSeries"), { series: named })}
     </p>
   );
 }
@@ -371,7 +372,7 @@ function LineChart({ props, dataset, state }: RendererProps): ReactElement {
   // Inset from both edges, so the first value label clears the value axis and the last one the card edge.
   const inset = Math.min(18, geometry.plotWidth / 4);
   const step = values.length > 1 ? (geometry.plotWidth - inset * 2) / (values.length - 1) : 0;
-  const x = (index: number): number => CHART_PAD.left + (values.length > 1 ? inset + index * step : geometry.plotWidth / 2);
+  const x = (index: number): number => geometry.left + (values.length > 1 ? inset + index * step : geometry.plotWidth / 2);
   const stride = labelStride(values.length, geometry.plotWidth);
   const line = values.map((value, index) => `${index === 0 ? "M" : "L"} ${x(index)} ${geometry.scaleY(value)}`).join(" ");
   const area = values.length > 1 ? `${line} L ${x(values.length - 1)} ${geometry.zero} L ${x(0)} ${geometry.zero} Z` : "";
@@ -449,7 +450,7 @@ function BarChart({ props, dataset, state }: RendererProps): ReactElement {
             <ChartGrid geometry={geometry} />
             {points.map(({ label: rowLabel, value }, index) => {
               const y = geometry.scaleY(value);
-              const center = CHART_PAD.left + index * slot + slot / 2;
+              const center = geometry.left + index * slot + slot / 2;
               return (
                 <g key={index} className="datum">
                   <rect
@@ -956,7 +957,7 @@ function Donut({ props, dataset, state }: RendererProps): ReactElement {
   if (!result.ok) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
-        <Unavailable reason={t("widgets.donut.cannotDraw").replace("{reason}", result.reason)} />
+        <Unavailable reason={fillMessage(t("widgets.donut.cannotDraw"), { reason: result.reason })} />
       </Frame>
     );
   }
@@ -983,7 +984,7 @@ function Donut({ props, dataset, state }: RendererProps): ReactElement {
             className="cc-donut"
             viewBox="0 0 160 160"
             role="img"
-            aria-label={t("widgets.donut.ariaSlices").replace("{title}", title).replace("{count}", String(result.slices.length))}
+            aria-label={fillMessage(t("widgets.donut.ariaSlices"), { title, count: result.slices.length })}
           >
             {result.slices.map((slice, index) => {
               const length = slice.share * circumference;
@@ -1080,10 +1081,6 @@ function withUnit(value: number | string | undefined, unit: string | undefined):
   return unit === undefined ? String(value ?? "") : `${String(value ?? "")} ${unit}`;
 }
 
-/** A message with each `{name}` filled from `values` in one pass, so a value that itself holds `{name}` stays as written. */
-function fillMessage(template: string, values: Readonly<Record<string, string | number>>): string {
-  return template.replace(/\{(\w+)\}/gu, (whole, name: string) => (Object.hasOwn(values, name) ? String(values[name]) : whole));
-}
 
 /** A row problem in the person's language, from the row, field and value the contract found, never the node's English. */
 function xyIssueText(t: (key: MessageKey) => string, issue: XyDataIssue): string {
@@ -1119,6 +1116,8 @@ function SeriesKey({ index }: { index: number }): ReactElement {
 function XyTable({ chart, rows }: { chart: XyChart; rows: readonly Record<string, unknown>[] }): ReactElement {
   const t = useT();
   const columns = [chart.x, ...chart.y, ...(chart.pointLabel === undefined ? [] : [chart.pointLabel])];
+  // A cell is the dataset's own text: a hidden character in it is drawn as a marker that says what it is, never applied.
+  const describe = (hidden: HiddenCharacter): string => fillMessage(t(HIDDEN_TITLE[hidden.kind]), { codePoint: hidden.codePoint });
   return (
     <details className="cc-text-alt">
       <summary>{t("widgets.textAlternative.summary")}</summary>
@@ -1137,7 +1136,7 @@ function XyTable({ chart, rows }: { chart: XyChart; rows: readonly Record<string
             {rows.map((row, index) => (
               <tr key={index}>
                 {columns.map((column) => (
-                  <td key={column}>{String(ownField(row, column) ?? "")}</td>
+                  <td key={column}>{withHiddenMarkers(String(ownField(row, column) ?? ""), describe)}</td>
                 ))}
               </tr>
             ))}
@@ -1229,7 +1228,7 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
   const yMax = Math.max(...yValues);
   // An area is measured from zero, since its fill is the amount; a scatter plot is measured over the values it has.
   const geometry = chartGeometry(width, yValues, chart.kind === "scatter" ? niceSpan(yMin, yMax) : niceRange(Math.min(yMin, 0), Math.max(yMax, 0)));
-  const left = CHART_PAD.left;
+  const left = geometry.left;
   const right = width - CHART_PAD.right;
   const inset = Math.min(18, geometry.plotWidth / 4);
 
@@ -1277,7 +1276,7 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
   return (
     <Frame title={title} dataset={dataset} role="chart">
       <>
-        <ul className="cc-xy-legend" aria-label={t("widgets.xyChart.legend").replace("{title}", title)} data-xy-legend="true">
+        <ul className="cc-xy-legend" aria-label={fillMessage(t("widgets.xyChart.legend"), { title })} data-xy-legend="true">
           {data.series.map((series, index) => {
             const hidden = view.hiddenSeries.includes(series.field);
             return (
@@ -1285,7 +1284,7 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
                 <button
                   type="button"
                   aria-pressed={!hidden}
-                  title={t("widgets.xyChart.toggleSeries").replace("{series}", series.label)}
+                  title={fillMessage(t("widgets.xyChart.toggleSeries"), { series: series.label })}
                   data-series={series.field}
                   onClick={() => toggleSeries(series.field)}
                 >
@@ -1317,7 +1316,10 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
             className="cc-chart"
             viewBox={`0 0 ${width} ${CHART_HEIGHT}`}
             role="group"
-            aria-label={t("widgets.xyChart.points").replace("{title}", stacked ? `${title} (${t("widgets.xyChart.stacked")})` : title).replace("{count}", String(data.shown))}
+            aria-label={fillMessage(t("widgets.xyChart.points"), {
+              title: stacked ? `${title} (${t("widgets.xyChart.stacked")})` : title,
+              count: data.shown,
+            })}
             aria-describedby={hintId}
             data-xy-chart={chart.kind}
             data-stacked={stacked ? "true" : "false"}
@@ -1369,7 +1371,7 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
                 <g
                   key={series.field}
                   role="group"
-                  aria-label={t("widgets.xyChart.seriesPoints").replace("{series}", series.label)}
+                  aria-label={fillMessage(t("widgets.xyChart.seriesPoints"), { series: series.label })}
                   data-slice-tone={seriesIndex % DONUT_TONES}
                   data-series-points={series.field}
                 >
@@ -1436,7 +1438,7 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
         <div className="cc-xy-selected" aria-live="polite" data-selected-point={view.selected === undefined ? "" : `${view.selected.series}#${String(view.selected.index)}`}>
           {selectedText !== undefined && (
             <>
-              <span>{t("widgets.xyChart.selected").replace("{point}", selectedText)}</span>
+              <span>{fillMessage(t("widgets.xyChart.selected"), { point: selectedText })}</span>
               <button type="button" className="cc-xy-clear" onClick={() => commit({ hiddenSeries: view.hiddenSeries })}>
                 {t("widgets.xyChart.clearSelection")}
               </button>
@@ -1445,7 +1447,7 @@ function XyChartRenderer({ definitionId, props, dataset, state, onAction }: Rend
         </div>
         {data.total > data.shown && (
           <p className="cc-freshness" data-xy-truncated="true" style={{ margin: 0 }}>
-            {t("widgets.xyChart.truncated").replace("{shown}", String(data.shown)).replace("{total}", String(data.total))}
+            {fillMessage(t("widgets.xyChart.truncated"), { shown: data.shown, total: data.total })}
           </p>
         )}
         <XyTable chart={chart} rows={rows.slice(0, data.shown)} />

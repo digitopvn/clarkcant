@@ -78,6 +78,14 @@ describe("xy charts: props", () => {
     expect(xyChartProblems("scatter", { ...SCATTER, stacked: true }).join(" ")).toMatch(/stacked/u);
     expect(xyChartProblems("area", { ...AREA, pointLabel: "week" }).join(" ")).toMatch(/pointLabel/u);
   });
+
+  it("refuses a pointLabel that is the x field or a series, since a point is named by something it is not placed by", () => {
+    const already = (field: string): string => `"pointLabel" names "${field}", which is already plotted; a point is named by a field it is not placed by`;
+    expect(xyChartProblems("scatter", { ...SCATTER, pointLabel: "minutes" })).toEqual([already("minutes")]);
+    expect(xyChartProblems("scatter", { ...SCATTER, pointLabel: "runs" })).toEqual([already("runs")]);
+    expect(readXyChart("scatter", { ...SCATTER, pointLabel: "runs" })).toBeUndefined();
+    expect(xyChartProblems("scatter", SCATTER)).toEqual([]);
+  });
 });
 
 describe("xy charts: rows", () => {
@@ -109,7 +117,7 @@ describe("xy charts: rows", () => {
   });
 
   it("needs a scatter's x to be a number", () => {
-    expect(xyChartProblems("scatter", { ...SCATTER, x: "week", labels: {} }, ROWS)[0]).toBe('row 1\'s "week" is "W36", not a number');
+    expect(xyChartProblems("scatter", { ...SCATTER, x: "week", pointLabel: undefined, labels: {} }, ROWS)[0]).toBe('row 1\'s "week" is "W36", not a number');
   });
 
   it("needs an area's numeric x to rise row by row, and not to mix numbers and text", () => {
@@ -127,6 +135,20 @@ describe("xy charts: rows", () => {
     expect(xyChartProblems("area", { ...AREA, stacked: true }, rows)).toEqual([
       'row 1\'s "failures" is -1; a stacked area adds its series, so none of them can be negative',
     ]);
+  });
+
+  it("refuses a stacked row whose series add up to more than a number can hold, and draws the same row unstacked", () => {
+    const y = Array.from({ length: MAX_CHART_SERIES }, (_, index) => `s${String(index)}`);
+    const row = Object.fromEntries([["week", "W1"], ...y.map((field) => [field, 1e308])]);
+    const props = { datasetRef: "ds", x: "week", y };
+    expect(xyChartProblems("area", { ...props, stacked: true }, [Object.fromEntries([["week", "W0"], ...y.map((field) => [field, 1])]), row])).toEqual([
+      "row 2's series add up to more than a number can hold, and a stacked area draws their sum",
+    ]);
+    const chart = readXyChart("area", { ...props, stacked: true });
+    if (chart === undefined) throw new Error("the props do not describe a chart");
+    expect(xyChartDataIssues(chart, [row])).toEqual([{ code: "stacked-sum-not-finite", row: 1 }]);
+    // Each value is a number; only their sum is not, and only a stacked area draws the sum.
+    expect(xyChartProblems("area", props, [row])).toEqual([]);
   });
 
   it("says at most five row problems and counts the rest", () => {
@@ -275,6 +297,26 @@ describe("xy charts: what the axes measure", () => {
     expect(xyChartSemantic(chart, data, { hiddenSeries: [] }).values).toMatchObject({ xAxis: "Minutes (min)", yAxis: "Runs (ms)" });
     // With no labels and no units, the axes are named by their fields.
     expect(xyAxisTitles(scatter({ labels: {}, xUnit: undefined, y: ["runs", "failures"] }))).toEqual({ x: "minutes", y: "runs, failures" });
+  });
+});
+
+describe("xy charts: hidden characters in the data", () => {
+  const BIDI = String.fromCodePoint(0x202e);
+
+  it("shows a hidden character in an x category or a point name as a marker, everywhere the chart says it", () => {
+    const rows = [
+      { week: `W36${BIDI}evil`, runs: 1, failures: 0, minutes: 1 },
+      { week: "W37", runs: 2, failures: 1, minutes: 2 },
+    ];
+    const areaData = xyChartData(area(), rows);
+    expect(areaData.xs[0]).toBe("W36⟨U+202E⟩evil");
+    const scatterData = xyChartData(scatter(), rows);
+    expect(scatterData.names[0]).toBe("W36⟨U+202E⟩evil");
+    expect(xyPointText(scatter(), scatterData, "runs", 0)).toContain("(W36⟨U+202E⟩evil)");
+    for (const said of [xyChartText(area(), areaData), JSON.stringify(xyChartSemantic(area(), areaData, { hiddenSeries: [] }))]) {
+      expect(said).toContain("⟨U+202E⟩");
+      expect(said).not.toContain(BIDI);
+    }
   });
 });
 

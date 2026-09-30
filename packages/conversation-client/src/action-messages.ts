@@ -41,6 +41,15 @@ const REFUSAL_KEYS: Record<string, MessageKey> = {
 };
 
 /**
+ * The sentence for a binding the node says cannot run at all, such as one whose capability is missing or not signed in,
+ * or undefined for any other code. A chart's own view binding is refused for its own reasons, and says those itself.
+ */
+export function bindingUnavailableMessage(t: Translate, code: string | undefined): string | undefined {
+  const key = code === undefined ? undefined : REFUSAL_KEYS[code];
+  return key !== undefined && key.startsWith("widgets.action.unavailable.") ? t(key) : undefined;
+}
+
+/**
  * Why a call that was sent has no answer that can be trusted, as the opening of the sentence. Each ends by saying
  * whether it took effect is unknown; what happens next is added from `recorded`.
  */

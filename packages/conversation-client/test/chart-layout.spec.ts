@@ -18,6 +18,7 @@ import {
   niceRange,
   niceSpan,
   niceTicks,
+  plotLeft,
   pointOrder,
   seriesDash,
   stackBands,
@@ -82,6 +83,42 @@ describe("tick labels for an axis", () => {
   it("uses one unit across the axis", () => {
     expect(formatTicks([0, 5_000, 10_000])).toEqual(["0", "5k", "10k"]);
     expect(formatTicks([0, 40, 80, 120, 160])).toEqual(["0", "40", "80", "120", "160"]);
+  });
+
+  it("prints billions and trillions with a suffix, and anything larger with an exponent", () => {
+    expect(formatTicks(niceTicks(5e9))).toEqual(["0", "2B", "4B", "6B"]);
+    expect(formatTicks([0, 2.5e12, 5e12])).toEqual(["0", "2.5T", "5T"]);
+    const huge = formatTicks(niceTicks(1e15));
+    expect(huge.at(-1)).toBe("1e15");
+    expect(new Set(huge).size).toBe(huge.length);
+  });
+
+  it("keeps a narrow span at a large value apart instead of printing one unit on every tick", () => {
+    const labels = formatTicks([1e12, 1e12 + 2, 1e12 + 4]);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels.at(-1)).toBe("1.000000000004e12");
+  });
+});
+
+describe("room for the value labels", () => {
+  /** How wide a label is drawn at most: 11px tabular digits, never wider than 7px each. */
+  const drawnWidth = (label: string): number => label.length * 7;
+
+  it("starts the plot far enough right that the widest label is drawn whole", () => {
+    for (const values of [[0, 5e9], [0, 1e15], [-250_500_000, 0], [1e-12, 5e-12], [1e12, 1e12 + 16]]) {
+      const low = Math.min(...values);
+      const high = Math.max(...values);
+      const geometry = chartGeometry(640, values, low < 0 ? niceRange(low, high) : niceSpan(low, high));
+      const widest = Math.max(...geometry.labels.map(drawnWidth));
+      // Labels end 6px left of the plot and start after the left edge.
+      expect(geometry.left - 6 - widest, String(values)).toBeGreaterThanOrEqual(0);
+      expect(geometry.plotWidth).toBe(640 - geometry.left - CHART_PAD.right);
+    }
+  });
+
+  it("keeps the usual pad for short labels and never gives the labels more than two fifths of the chart", () => {
+    expect(chartGeometry(640, [0, 100], niceTicks(100)).left).toBe(CHART_PAD.left);
+    expect(plotLeft(["-1.234567890123e-300"], 200)).toBe(80);
   });
 });
 

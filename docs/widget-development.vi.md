@@ -777,8 +777,9 @@ chữ. Node và trang cùng dùng bộ hàm này, nên trang không bao giờ v�
 
 Tên trường dài 1–64 ký tự trên một dòng, không chỉ toàn dấu cách, và không chứa ký tự ẩn nào trong §8.4. Các trường
 được gọi tên, không bao giờ bị đoán: biểu đồ thiếu `x` hoặc thiếu `y` bị từ chối, và cũng vậy với một trường được gọi
-hai lần, `x` lặp lại trong `y`, hay một nhãn cho trường mà biểu đồ không vẽ. `stacked` chỉ dành cho biểu đồ vùng, còn
-`pointLabel` chỉ dành cho biểu đồ phân tán.
+hai lần, `x` lặp lại trong `y`, một nhãn cho trường mà biểu đồ không vẽ, hay một `pointLabel` trùng với `x` hoặc với
+một chuỗi (một điểm được gọi tên bằng trường không dùng để đặt nó, nên bảng dưới biểu đồ không bao giờ có hai cột
+giống nhau). `stacked` chỉ dành cho biểu đồ vùng, còn `pointLabel` chỉ dành cho biểu đồ phân tán.
 
 Model đặt từng biểu đồ bằng `show_view`. Chúng thuộc họ `chart`, họ mà không vùng bố cục nào đọc, nên model đặt mỗi
 biểu đồ riêng lẻ.
@@ -789,8 +790,9 @@ Những gì node bảo đảm:
   đồ, và từ chối ngay trong lượt đó, kèm lý do, khi dataset không có trên node này hoặc không thuộc về họ, khi một
   trường được gọi tên không có trong đó (lý do liệt kê các trường nó có), hoặc khi một hàng không khớp: thiếu giá trị,
   giá trị không phải số (một chuỗi dạng số như `"12"` không phải số), x không phải số trên biểu đồ phân tán, x của biểu
-  đồ vùng lẫn cả số và chữ hoặc có các số không tăng dần theo từng hàng, hay một giá trị âm trong biểu đồ vùng xếp
-  chồng. Tối đa năm vấn đề được nêu tên, sau đó là `and N more problem(s) in the same rows`. Không instance nào bị bỏ
+  đồ vùng lẫn cả số và chữ hoặc có các số không tăng dần theo từng hàng, một giá trị âm trong biểu đồ vùng xếp chồng,
+  hay một hàng xếp chồng có tổng các chuỗi vượt quá số lớn nhất có thể biểu diễn (từng giá trị đều hợp lệ, nhưng
+  chồng được vẽ là tổng của chúng). Tối đa năm vấn đề được nêu tên, sau đó là `and N more problem(s) in the same rows`. Không instance nào bị bỏ
   lại.
 - **Số điểm có giới hạn.** Một biểu đồ vẽ 500 hàng đầu tiên. Chỉ những hàng đó được kiểm tra, và biểu đồ, phần chữ và
   tài liệu ngữ nghĩa của nó đều nói nó vẽ bao nhiêu trên tổng số bao nhiêu.
@@ -814,7 +816,8 @@ Những gì node bảo đảm:
 Những gì trang làm:
 
 - Mỗi chuỗi có sắc màu, kiểu nét và hình dạng điểm riêng, hiện cùng nhau trong chú giải, nên màu sắc không bao giờ là
-  tín hiệu duy nhất. Chú giải là một hàng nút có `aria-pressed`; chuỗi bị ẩn ghi "(đã ẩn)" bằng chữ. Không thể ẩn chuỗi
+  tín hiệu duy nhất. Có sáu sắc màu, nên từ chuỗi thứ bảy màu sắc lặp lại; mỗi chuỗi trong tám chuỗi vẫn có kiểu nét và
+  hình dạng điểm không chuỗi nào khác có, và chính chúng phân biệt các chuỗi. Chú giải là một hàng nút có `aria-pressed`; chuỗi bị ẩn ghi "(đã ẩn)" bằng chữ. Không thể ẩn chuỗi
   cuối cùng đang hiện, và biểu đồ nói lý do.
 - Mỗi điểm là một nút có tên nói chuỗi, x và giá trị của nó, cùng tên điểm khi `pointLabel` có. Một điểm nằm trong thứ
   tự tab. Phím mũi tên trái phải di chuyển dọc trục x, theo thứ tự x với biểu đồ phân tán, lên và xuống đổi chuỗi;
@@ -826,13 +829,19 @@ Những gì trang làm:
 - Biểu đồ phân tán có tiêu đề trục: trục y ở trên vùng vẽ và trục x ở dưới, mỗi trục kèm nhãn và đơn vị.
 - Bên dưới biểu đồ có một bảng các hàng đã vẽ, với tên biểu đồ đặt cho các trường. Một trường chỉ được đọc từ chính
   hàng đó, nên trường tên `constructor` hay `toString` được vẽ và gọi tên như mọi trường khác.
+- Ký tự ẩn của §8.4 trong phần chữ của các hàng, như ký tự điều khiển bidi trong một giá trị x dạng chữ hay trong tên
+  một điểm, được hiện thành dấu đánh dấu như `⟨U+202E⟩` ở mọi nơi biểu đồ nói phần chữ đó: trên trục, trong tên điểm,
+  trong điểm được chọn, văn bản thay thế và tài liệu ngữ nghĩa. Trong bảng, đó là cùng dấu đánh dấu mà trình xem mã
+  vẽ, kèm tiêu đề nói ký tự đó là gì. Nó không bao giờ đảo thứ tự phần chữ xung quanh.
 - Mọi điều biểu đồ nói đều bằng ngôn ngữ của người dùng. Các hàng không còn khớp được mô tả từ hàng, trường và giá trị
   mà bộ kiểm tra dùng chung tìm ra, không phải từ câu tiếng Anh của node, và một khung nhìn bị từ chối được nói bằng
   câu của chính trang. Lý do tiếng Anh của node dành cho model và nhật ký.
 - Các trục không bao giờ làm việc không giới hạn. Số vạch chia được đếm trước khi tạo, tối đa 50, và mỗi vạch là chỉ
   số của nó nhân với một bước tròn. Các giá trị gần nhau tới mức không bước tròn nào tách được, như `0.3` và
-  `0.1 + 0.2`, được vẽ như một giá trị với khoảng trống hai bên. Nhãn vượt quá một tỷ hoặc nhỏ hơn một phần triệu được
-  viết với số mũ và đủ chữ số có nghĩa mà bước cần, nên thang `1e-12` không bị ghi `0` ở mọi vạch.
+  `0.1 + 0.2`, được vẽ như một giá trị với khoảng trống hai bên. Nhãn dùng `k`, `M`, `B` và `T` cho tới một nghìn nghìn
+  tỷ; vượt quá mức đó, hoặc khi bước nhỏ hơn một phần triệu của đơn vị, nhãn được viết với số mũ và đủ chữ số có nghĩa
+  mà bước cần, nên thang `1e-12` không bị ghi `0` ở mọi vạch. Vùng vẽ bắt đầu đủ xa về bên phải để nhãn rộng nhất được
+  vẽ trọn vẹn, tối đa hai phần năm chiều rộng biểu đồ.
 - Khi có hơn 60 điểm, biểu đồ vùng chỉ vẽ điểm đang có focus và điểm được chọn, để đường vẫn dễ đọc; mọi điểm vẫn tới
   được bằng bàn phím.
 - Biểu đồ không tự thêm chuyển động nào, vừa với chiều rộng xuống tới 390 px, và theo theme sáng và tối. Trong Widget

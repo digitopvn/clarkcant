@@ -195,6 +195,48 @@ test("a stacked area says it is stacked, and a chart over more rows than it hold
   await expect(big.locator(".cc-xy-selected")).toContainText(last);
 });
 
+test("the arrow keys walk a scatter plot's points in the order of x, not the order of its rows", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  const conversation = watchConversation(page);
+  await openApp(page);
+  const chart = await place(page, "phân tán");
+  await expect(chart.locator("[data-series-points='latency'] [data-point]")).toHaveCount(24);
+
+  // The rows put Tải 37 second, but the point after Tải 0 is the next smallest x: Tải 3, in row 20.
+  const entry = chart.locator("[data-point][tabindex='0']");
+  await expect(entry).toHaveAttribute("data-point", "latency#0");
+  await expect(entry).toHaveAttribute("aria-label", "Độ trễ · Tải 0 %: 40 ms (node-1)");
+  await entry.focus();
+  const walked: (string | null)[] = [];
+  for (let step = 0; step < 3; step += 1) {
+    await page.keyboard.press("ArrowRight");
+    walked.push(await focusedPoint(page));
+  }
+  expect(walked).toEqual(["latency#19", "latency#11", "latency#3"]);
+  await expect(chart.locator("[data-point='latency#19']")).toHaveAttribute("aria-label", "Độ trễ · Tải 3 %: 57 ms (node-20)");
+  await page.keyboard.press("ArrowLeft");
+  expect(await focusedPoint(page)).toBe("latency#11");
+  // One series, so up and down stay on it.
+  await page.keyboard.press("ArrowDown");
+  expect(await focusedPoint(page)).toBe("latency#11");
+  // Home and End go to the smallest and the largest x, wherever their rows are.
+  await page.keyboard.press("End");
+  expect(await focusedPoint(page)).toBe("latency#8");
+  await page.keyboard.press("Home");
+  expect(await focusedPoint(page)).toBe("latency#0");
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(chart.locator("[data-selected-point='latency#8']")).toContainText("Đã chọn: Độ trễ · Tải 96 %: 104 ms (node-9)");
+  // The point still focused is the one selected, and the node keeps it.
+  expect(await focusedPoint(page)).toBe("latency#8");
+  const instanceId = await instanceOf(chart);
+  await expect
+    .poll(() => heldView(page, conversation(), instanceId), { timeout: 10_000 })
+    .toMatchObject({ hiddenSeries: [], selected: { series: "latency", index: 8 } });
+});
+
 test("a field the rows lack and a value that is not a number are refused with the host's reason, and no chart is drawn", async ({ page }) => {
   test.setTimeout(60_000);
   await openApp(page);

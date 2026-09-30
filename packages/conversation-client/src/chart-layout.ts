@@ -99,19 +99,28 @@ export function niceRange(min: number, max: number, target = 4): number[] {
 export function formatTicks(ticks: number[]): string[] {
   const largest = Math.max(0, ...ticks.map((tick) => Math.abs(tick)));
   const gap = ticks.length > 1 ? Math.abs((ticks[1] ?? 0) - (ticks[0] ?? 0)) : 0;
-  // Past what a k or M reads well at, or finer than six decimals, a label is a number with an exponent and as many
-  // significant digits as the step needs: fixed decimals printed every tick of a 1e-12 scale as "0".
-  if (largest >= 1e9 || (gap > 0 && gap < 1e-6)) {
+  const [unit, suffix] =
+    largest >= 1e12 ? [1e12, "T"] : largest >= 1e9 ? [1e9, "B"] : largest >= 1e6 ? [1e6, "M"] : largest >= 1e4 ? [1e3, "k"] : [1, ""];
+  const step = gap / unit;
+  // Past what a T reads well at, or where the step needs more than six decimals of the unit, a label is a number with
+  // an exponent and as many significant digits as the step needs: fixed decimals printed every tick of a 1e-12 scale
+  // as "0", and every tick of 1T to 1T + 16 as "1T".
+  if (largest >= 1e15 || (step > 0 && step < 1e-6)) {
     const digits = gap > 0 && largest > 0 ? Math.min(Math.max(0, Math.floor(Math.log10(largest)) - Math.floor(Math.log10(gap))), 14) : 2;
     return ticks.map((tick) => (tick === 0 ? "0" : withExponent(tick, digits)));
   }
-  const [unit, suffix] = largest >= 1_000_000 ? [1_000_000, "M"] : largest >= 10_000 ? [1_000, "k"] : [1, ""];
-  const step = ticks.length > 1 ? Math.abs((ticks[1] ?? 0) - (ticks[0] ?? 0)) / unit : 0;
-  const decimals = step > 0 ? Math.min(Math.max(0, -Math.floor(Math.log10(step))), 6) : 2;
+  const decimals = step > 0 ? stepDecimals(step) : 2;
   return ticks.map((tick) => {
     const scaled = Number((tick / unit).toFixed(decimals));
     return scaled === 0 ? "0" : `${scaled}${suffix}`;
   });
+}
+
+/** The fewest decimals, up to six, that print `step` as it is: a 2.5T step is "2.5T", never rounded to "3T". */
+function stepDecimals(step: number): number {
+  let decimals = Math.min(Math.max(0, -Math.floor(Math.log10(step))), 6);
+  while (decimals < 6 && Math.abs(Number(step.toFixed(decimals)) - step) > step * 1e-9) decimals += 1;
+  return decimals;
 }
 
 /** `value` as "1.25e-12": its significant digits and a power of ten, without trailing zeros or a plus sign. */
@@ -150,11 +159,31 @@ export const CHART_HEIGHT = 180;
 /** Room for the value axis on the left and the category labels underneath. */
 export const CHART_PAD = { left: 36, right: 12, top: 18, bottom: 24 } as const;
 
+/** How wide one character of a tick label is drawn: 11px tabular digits, with room to spare. */
+const TICK_CHAR_WIDTH = 7;
+/** The space between a value label and the plot it labels. */
+export const TICK_GAP = 6;
+
+/**
+ * How far the plot starts from the left: the usual pad, or as much as the widest value label needs, so a label such as
+ * "-250.5M" or "1.25e-12" is drawn whole rather than cut off at the edge. It never takes more than two fifths of the
+ * chart, so the plot keeps its room.
+ */
+export function plotLeft(labels: readonly string[], width: number): number {
+  const widest = Math.max(0, ...labels.map((label) => label.length));
+  const needed = Math.ceil(widest * TICK_CHAR_WIDTH) + TICK_GAP + 2;
+  return Math.max(CHART_PAD.left, Math.min(needed, Math.floor(width * 0.4)));
+}
+
 export interface ChartGeometry {
   width: number;
+  /** Where the plot starts: `plotLeft` of the value labels. */
+  left: number;
   plotWidth: number;
   plotHeight: number;
   ticks: number[];
+  /** The value labels, one per tick, as `formatTicks` prints them. */
+  labels: string[];
   /** Where the value zero sits; the axis line is drawn here, and bars grow from it. */
   zero: number;
   scaleY: (value: number) => number;
@@ -172,11 +201,15 @@ export function chartGeometry(width: number, values: number[], ticks: number[] =
   const plotHeight = CHART_HEIGHT - CHART_PAD.top - CHART_PAD.bottom;
   const scaleY = (value: number): number =>
     CHART_PAD.top + plotHeight - ((value - bottom) / (top > bottom ? top - bottom : 1)) * plotHeight;
+  const labels = formatTicks(ticks);
+  const left = plotLeft(labels, width);
   return {
     width,
-    plotWidth: Math.max(width - CHART_PAD.left - CHART_PAD.right, 1),
+    left,
+    plotWidth: Math.max(width - left - CHART_PAD.right, 1),
     plotHeight,
     ticks,
+    labels,
     // A scale that does not reach zero draws its axis along its lowest gridline, not outside the plot.
     zero: scaleY(bottom <= 0 && top >= 0 ? 0 : bottom),
     scaleY,

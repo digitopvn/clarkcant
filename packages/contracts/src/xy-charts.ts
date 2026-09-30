@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { cardSchemaProblems, clipWithMarker, hiddenCharacterProblem, oneLineText } from "./text-rules.ts";
+import { cardSchemaProblems, clipWithMarker, hiddenCharacterProblem, markHiddenCharacters, oneLineText } from "./text-rules.ts";
 import type { SemanticValue } from "./widget-semantic.ts";
 import { SNAPSHOT_TEXT_LIMIT } from "./widgets.ts";
 
@@ -114,7 +114,10 @@ function parsed(kind: XyChartKind, props: unknown): Parsed {
   };
 }
 
-/** What the props say that their schema cannot: a series named twice, the x field also a series, a label for nothing. */
+/**
+ * What the props say that their schema cannot: a series named twice, the x field also a series, a point label that is
+ * already plotted, a label for nothing.
+ */
 function staticProblems(chart: XyChart): string[] {
   const problems: string[] = [];
   const seen = new Set<string>();
@@ -123,6 +126,9 @@ function staticProblems(chart: XyChart): string[] {
     seen.add(field);
   }
   if (seen.has(chart.x)) problems.push(`"${chart.x}" is both "x" and a series in "y"; a field is plotted on one axis`);
+  if (chart.pointLabel !== undefined && (chart.pointLabel === chart.x || seen.has(chart.pointLabel))) {
+    problems.push(`"pointLabel" names "${chart.pointLabel}", which is already plotted; a point is named by a field it is not placed by`);
+  }
   const named = new Set([chart.x, ...chart.y, ...(chart.pointLabel === undefined ? [] : [chart.pointLabel])]);
   for (const key of Object.keys(chart.labels)) {
     if (!named.has(key)) problems.push(`"labels" names "${key}", which is not a field this chart plots`);
@@ -193,6 +199,7 @@ export type XyDataIssue =
   | { code: "x-not-rising"; row: number; field: string; value: string; previousRow: number; previousValue: string }
   | { code: "x-not-placeable"; row: number; field: string; value: string }
   | { code: "negative-stacked"; row: number; field: string; value: string }
+  | { code: "stacked-sum-not-finite"; row: number }
   | { code: "not-a-label"; row: number; field: string; value: string }
   | { code: "more"; count: number };
 
@@ -257,6 +264,15 @@ export function xyChartDataIssues(chart: XyChart, rows: readonly unknown[], colu
       else if (!finite(value)) report({ code: "not-a-number", row: at, field: series, value: shown(value) });
       else if (chart.kind === "area" && chart.stacked && value < 0) report({ code: "negative-stacked", row: at, field: series, value: String(value) });
     }
+    // Each value can be a number while their sum is not: eight values of 1e308 stack past the largest double, and the
+    // band drawn from that sum would be a path of NaN.
+    if (chart.kind === "area" && chart.stacked) {
+      const sum = chart.y.reduce((total, series) => {
+        const value = ownField(row, series);
+        return finite(value) ? total + value : total;
+      }, 0);
+      if (!Number.isFinite(sum)) report({ code: "stacked-sum-not-finite", row: at });
+    }
 
     if (chart.pointLabel !== undefined && present(row, chart.pointLabel)) {
       const name = ownField(row, chart.pointLabel);
@@ -292,6 +308,8 @@ export function xyDataIssueText(issue: XyDataIssue): string {
       return `${at}'s "${issue.field}" is ${issue.value}, which is neither a number nor a label`;
     case "negative-stacked":
       return `${at}'s "${issue.field}" is ${issue.value}; a stacked area adds its series, so none of them can be negative`;
+    case "stacked-sum-not-finite":
+      return `${at}'s series add up to more than a number can hold, and a stacked area draws their sum`;
     case "not-a-label":
       return `${at}'s "${issue.field}" is ${issue.value}, not a label`;
   }
@@ -334,6 +352,10 @@ export interface XyChartData {
 /**
  * The points of rows that passed `xyChartDataProblems`.
  *
+ * Text from the rows, an x category or a point's label, carries each hidden character as a visible marker such as
+ * `⟨U+202E⟩`: a bidi control applied would reorder the label on screen and in what is read out, and an invisible one
+ * would hide inside it.
+ *
  * Read defensively anyway, because the page gets the rows over the wire: a value that is not a number is left out as
  * `NaN` rather than drawn as zero, and the caller is expected to have refused such rows already.
  */
@@ -341,14 +363,14 @@ export function xyChartData(chart: XyChart, rows: readonly unknown[]): XyChartDa
   const drawn = rows.slice(0, MAX_CHART_POINTS).map((row) => (isRecord(row) ? row : {}));
   const xs = drawn.map((row) => {
     const value = ownField(row, chart.x);
-    return finite(value) ? value : typeof value === "string" ? value : "";
+    return finite(value) ? value : typeof value === "string" ? markHiddenCharacters(value).text : "";
   });
   return {
     xs,
     numericX: chart.kind === "scatter" || (xs.length > 0 && xs.every((value) => typeof value === "number")),
     names: drawn.map((row) => {
       const value = chart.pointLabel === undefined ? undefined : ownField(row, chart.pointLabel);
-      return typeof value === "string" ? value : finite(value) ? String(value) : undefined;
+      return typeof value === "string" ? markHiddenCharacters(value).text : finite(value) ? String(value) : undefined;
     }),
     series: chart.y.map((field) => ({
       field,

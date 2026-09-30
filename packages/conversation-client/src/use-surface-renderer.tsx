@@ -11,7 +11,7 @@ import {
   type Timeline,
   type TimelineAction,
 } from "./api.ts";
-import { actionRefusalMessage, actionResultMessage } from "./action-messages.ts";
+import { actionRefusalMessage, actionResultMessage, bindingUnavailableMessage } from "./action-messages.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { tableExportRequestFrom } from "./table-model.ts";
@@ -232,9 +232,7 @@ export function useSurfaceRenderer({
           const message =
             code === "REVISION_MISMATCH"
               ? t("widgets.action.revisionMismatch")
-              : code !== undefined && UNAVAILABLE_KEYS[code] !== undefined
-                ? reasonFor(t, code, undefined)
-                : t("widgets.xyChart.viewRefused");
+              : (bindingUnavailableMessage(t, code) ?? t("widgets.xyChart.viewRefused"));
           setChartRefusals((current) => ({ ...current, [instanceId]: { message, count: (current[instanceId]?.count ?? 0) + 1 } }));
           // The node's view is what the chart draws again. A change that went through while a later one waited was not
           // applied yet, so the timeline is read back rather than trusted; and the node checked the view against the rows it

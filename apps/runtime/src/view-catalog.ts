@@ -560,7 +560,7 @@ const XY_CHART_NOTES: Readonly<Record<string, string>> = {
   [SCATTER_CHART.id]:
     `props.datasetRef names a dataset on this node; props.x is a numeric field and props.y is 1-${String(MAX_CHART_SERIES)} numeric ` +
     `fields, each drawn as its own series of points against x. Name every field exactly as the rows spell it: nothing is guessed. ` +
-    `Optional props.pointLabel (a field that names each point), props.labels ({"<field>":"<what to call it>"}), props.unit (y), ` +
+    `Optional props.pointLabel (a field other than x and y that names each point), props.labels ({"<field>":"<what to call it>"}), props.unit (y), ` +
     `props.xUnit and props.title. A chart draws the first ${String(MAX_CHART_POINTS)} rows and says how many it left out.`,
 };
 
