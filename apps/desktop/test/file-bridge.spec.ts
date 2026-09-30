@@ -1,4 +1,4 @@
-import { chmodSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -194,7 +194,9 @@ describe("writing a file whole", () => {
 
   it("writes through a short temporary name, whatever the file is called", async () => {
     const dir = folder();
-    const target = join(dir, `${"tên-rất-dài-".repeat(18)}.md`);
+    // 243 bytes in UTF-8: inside every system's 255-byte name limit, but past it once a name is built around it.
+    const target = join(dir, `${"tên-rất-dài-".repeat(15)}.md`);
+    expect(Buffer.byteLength(basename(target))).toBe(243);
     writeFileSync(target, "cũ");
     const temporaries: string[] = [];
     await writeFileWhole(target, Buffer.from("mới"), {
@@ -207,7 +209,8 @@ describe("writing a file whole", () => {
     expect(temporaries).toHaveLength(1);
     // The target's own name is not repeated in it, so a long name never makes the temporary one too long to create.
     expect(basename(temporaries[0] ?? "")).toMatch(/^\.cc-[0-9a-f]{12}\.tmp$/u);
-    expect(dirname(temporaries[0] ?? "")).toBe(dir);
+    // Beside the original, in its real folder (macOS keeps its temporary folder behind a link).
+    expect(dirname(temporaries[0] ?? "")).toBe(realpathSync(dir));
   });
 
   it("tries the rename again on Windows while another program briefly holds the file, and gives up cleanly", async () => {
