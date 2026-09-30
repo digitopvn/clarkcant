@@ -189,6 +189,9 @@ export function useTurnSend({
         return;
       }
 
+      // A selected file still uploading must remain with this draft, rather than being silently omitted from a turn.
+      if (!standalone && chips.some((chip) => chip.state === "checking")) return;
+
       setBusy(true);
       setError(undefined);
       // Cleared here, after the guard above: a send refused for being empty or for arriving while

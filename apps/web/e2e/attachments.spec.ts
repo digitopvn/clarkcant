@@ -97,6 +97,7 @@ function chips(page: Page) {
 }
 
 async function send(page: Page, text: string): Promise<void> {
+  await expect(page.locator('[data-attachment-chip][data-attachment-state="checking"]')).toHaveCount(0);
   await page.locator("[data-composer]").click();
   await page.keyboard.type(text);
   await page.keyboard.press("Enter");
@@ -195,6 +196,40 @@ test("the agent answers using the content of an attached pdf", async ({ page }) 
   await expect(page.locator('[data-role="assistant"]').last()).toContainText("Noi dung trong PDF", {
     timeout: 20_000,
   });
+});
+
+test("an upload still checking keeps the draft and selected file until a later send", async ({ page }) => {
+  let finishUpload!: () => void;
+  const uploadGate = new Promise<void>((resolve) => { finishUpload = resolve; });
+  const startedUpload = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/attachments");
+  await page.route("**/attachments", async (route) => { await uploadGate; await route.continue(); });
+  let messageWrites = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && /\/messages\/stream$/.test(new URL(request.url()).pathname)) messageWrites += 1;
+  });
+  try {
+    await openApp(page);
+    await attach(page, [PDF]);
+    await startedUpload;
+    await expect(chips(page)).toHaveAttribute("data-attachment-state", "checking");
+    const composer = page.locator("[data-composer]");
+    await composer.fill("đọc giúp tui tệp pdf này");
+    await composer.press("Enter");
+    await expect(page.locator("[data-send]")).toBeDisabled();
+    await expect(composer).toHaveValue("đọc giúp tui tệp pdf này");
+    await expect(chips(page)).toHaveCount(1);
+    expect(messageWrites).toBe(0);
+    finishUpload();
+    await expect(chips(page)).toHaveAttribute("data-attachment-state", "ready");
+    await expect(page.locator("[data-send]")).toBeEnabled();
+    await composer.press("Enter");
+    await expect(page.locator('[data-role="assistant"]').last()).toContainText("Noi dung trong PDF");
+    await expect(page.locator("[data-attachment-block]")).toHaveCount(1);
+    await expect(chips(page)).toHaveCount(0);
+    expect(messageWrites).toBe(1);
+  } finally {
+    finishUpload();
+  }
 });
 
 test("the attachments are still in the timeline after a reload", async ({ page }) => {
