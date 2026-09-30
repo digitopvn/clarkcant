@@ -67,6 +67,15 @@ import {
   timeInZone,
   timedDuration,
   type TableTotalFn,
+  TIMELINE_SELECT_OPERATION,
+  type TimelineEntry,
+  readTimeline,
+  readTimelineSelection,
+  timelineHiddenCount,
+  timelinePage,
+  timelinePageCount,
+  timelinePageOf,
+  timelineRange,
   XY_CHART_KIND,
   XY_CHART_VIEW_OPERATION,
   type XyChart,
@@ -110,6 +119,14 @@ import {
   valueLabelShown,
 } from "./chart-layout.ts";
 import { highlightedCode } from "./markdown.tsx";
+import {
+  clampTimelinePage,
+  foldedTimelineDescription,
+  moveTimelineFocus,
+  timelineDescriptionFolds,
+  timelineTabStop,
+  timelineToggle,
+} from "./timeline-layout.ts";
 import { vendorEmbedUrl } from "./media-embed.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
@@ -4017,6 +4034,291 @@ function DetailsCardView({ props, statedAt, sample }: RendererProps): ReactEleme
 }
 
 /* ------------------------------------------------------------------ *
+ * Activity timeline
+ * ------------------------------------------------------------------ */
+
+/** The day a timeline groups under, in words: the full date in the reader's language, read as that date wherever it is. */
+function timelineDayLabel(locale: string, day: string): string {
+  const at = new Date(`${day}T00:00:00Z`);
+  return Number.isNaN(at.getTime()) ? day : new Intl.DateTimeFormat(locale, { dateStyle: "full", timeZone: "UTC" }).format(at);
+}
+
+/**
+ * What happened, and when, as a list grouped by day.
+ *
+ * Everything shown is in the props: the model's entries, each on its day in the timeline's own timezone, so an entry at
+ * 23:30 in Saigon is on the Saigon day wherever the page is opened. A tone is said by a symbol and a word beside its
+ * colour, never by the colour alone. The entries of the page on screen are one list with one tab stop; the selected
+ * entry is the timeline's state, drawn at once and sent as the one bound view operation, and the selection the node then
+ * holds is adopted. A selection the node refused is undrawn and the reason is said beside it.
+ *
+ * Text that holds a hidden character is drawn with each one as a marker instead of applied: the node refuses them when
+ * the timeline is placed, and a timeline stored before a rule tightened still reads the way it is stored.
+ */
+function ActivityTimeline({ props, state, onAction, onStateChange, statedAt, sample }: RendererProps): ReactElement {
+  const t = useT();
+  const locale = useLocale();
+  const namedZone = typeof props.timezone === "string" && props.timezone !== "" ? props.timezone : undefined;
+  const zoneKnown = namedZone === undefined || isKnownTimeZone(namedZone);
+  const timeline = useMemo(() => readTimeline(props, { keepHidden: true }), [props]);
+  const describe = useCallback(
+    (hidden: HiddenCharacter) => fillMessage(t(HIDDEN_TITLE[hidden.kind]), { codePoint: hidden.codePoint }),
+    [t],
+  );
+  const hintId = useId();
+  const liveId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // The selection the node holds, adopted whenever it changes; between those, what the person just did is drawn at once.
+  const stored = readTimelineSelection(state, timeline);
+  // A refusal counts up `viewReset`, so a selection the node refused is undrawn even when the one it holds did not move.
+  const storedKey = `${stored.selectedId ?? ""}#${String(state?.viewReset ?? 0)}`;
+  const [selectedId, setSelectedId] = useState(stored.selectedId);
+  const [page, setPage] = useState(() => (timeline === undefined ? 0 : timelinePageOf(timeline, stored.selectedId)));
+  const [syncedKey, setSyncedKey] = useState(storedKey);
+  const [focusedId, setFocusedId] = useState<string | undefined>(undefined);
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(() => new Set());
+  const [announcement, setAnnouncement] = useState("");
+  if (syncedKey !== storedKey) {
+    setSyncedKey(storedKey);
+    setSelectedId(stored.selectedId);
+    if (timeline !== undefined && stored.selectedId !== undefined) setPage(timelinePageOf(timeline, stored.selectedId));
+  }
+
+  const title = timeline?.title ?? (typeof props.title === "string" && props.title.trim() !== "" ? props.title : t("widgets.timeline.title"));
+  if (timeline === undefined) {
+    return (
+      <Frame title={title} dataset={undefined} role="timeline">
+        <Unavailable reason={t("widgets.timeline.notReadable")} />
+      </Frame>
+    );
+  }
+
+  const mark = (text: string): ReactNode => withHiddenMarkers(text, describe);
+  const pages = timelinePageCount(timeline);
+  const shownPage = clampTimelinePage(page, pages);
+  const days = timelinePage(timeline, shownPage);
+  const pageIds = days.flatMap((day) => day.entries.map((entry) => entry.id));
+  const tabStop = timelineTabStop(pageIds, focusedId, selectedId);
+  const selected = selectedId === undefined ? undefined : timeline.entries.find((entry) => entry.id === selectedId);
+  const hidden = timelineHiddenCount(timeline);
+  const range = timelineRange(timeline);
+  const whenOf = (entry: TimelineEntry): string =>
+    entry.time === undefined
+      ? fillMessage(t("widgets.timeline.whenAllDay"), { day: timelineDayLabel(locale, entry.day) })
+      : fillMessage(t("widgets.timeline.whenAt"), { day: timelineDayLabel(locale, entry.day), time: entry.time });
+
+  const commit = (next: string | undefined): void => {
+    setSelectedId(next);
+    const entry = next === undefined ? undefined : timeline.entries.find((candidate) => candidate.id === next);
+    setAnnouncement(
+      entry === undefined ? t("widgets.timeline.cleared") : fillMessage(t("widgets.timeline.selectedLive"), { title: entry.title, when: whenOf(entry) }),
+    );
+    onStateChange?.({ selectedId: next });
+    onAction?.(TIMELINE_SELECT_OPERATION, { selectedId: next ?? "" });
+  };
+  const turnPage = (to: number): void => {
+    const next = clampTimelinePage(to, pages);
+    setPage(next);
+    setFocusedId(undefined);
+  };
+
+  const summary = [
+    fillMessage(t(timeline.entries.length === 1 ? "widgets.timeline.countOne" : "widgets.timeline.countMany"), {
+      count: String(timeline.entries.length),
+    }),
+    ...(range === undefined ? [] : [range.from === range.to ? range.from : fillMessage(t("widgets.timeline.range"), { from: range.from, to: range.to })]),
+    t(timeline.order === "newest" ? "widgets.timeline.order.newest" : "widgets.timeline.order.oldest"),
+    fillMessage(t("widgets.timeline.shownIn"), { timezone: timeline.timeZone }),
+  ].join(" · ");
+
+  const entryRow = (entry: TimelineEntry): ReactElement => {
+    const isSelected = entry.id === selectedId;
+    const folds = timelineDescriptionFolds(entry.description);
+    const open = !folds || unfolded.has(entry.id);
+    const descriptionId = `${liveId}-d-${String(entry.index)}`;
+    return (
+      <li key={entry.id} className="cc-timeline-entry" data-timeline-entry-row={entry.id} data-tone={entry.tone}>
+        <button
+          type="button"
+          className="cc-timeline-entry-button"
+          data-timeline-entry={entry.id}
+          data-all-day={entry.allDay ? "true" : "false"}
+          aria-pressed={isSelected}
+          tabIndex={entry.id === tabStop ? 0 : -1}
+          onFocus={() => setFocusedId(entry.id)}
+          onClick={() => commit(timelineToggle(selectedId, entry.id))}
+        >
+          <span className="cc-timeline-mark" data-tone={entry.tone} aria-hidden="true">
+            {TONE_MARK[entry.tone]}
+          </span>
+          <span className="cc-timeline-time">{entry.time === undefined ? t("widgets.timeline.allDay") : <time dateTime={entry.at}>{entry.time}</time>}</span>
+          <span className="cc-badge cc-timeline-tone" data-tone={TONE_BADGE[entry.tone]} data-timeline-tone-word={entry.tone}>
+            {t(`widgets.status.tone.${entry.tone}` as MessageKey)}
+          </span>
+          <span className="cc-timeline-entry-title">{mark(entry.title)}</span>
+          {entry.actor !== undefined && (
+            <span className="cc-timeline-actor" data-timeline-actor="">
+              {mark(fillMessage(t("widgets.timeline.by"), { actor: entry.actor }))}
+            </span>
+          )}
+        </button>
+        {entry.description !== undefined && (
+          <div className="cc-timeline-description" data-timeline-description={entry.id}>
+            <p id={descriptionId} data-folded={open ? "false" : "true"}>
+              {mark(open ? entry.description : foldedTimelineDescription(entry.description))}
+            </p>
+            {folds && (
+              <button
+                type="button"
+                className="cc-timeline-fold"
+                data-timeline-fold={entry.id}
+                aria-expanded={open}
+                aria-controls={descriptionId}
+                onClick={() =>
+                  setUnfolded((current) => {
+                    const next = new Set(current);
+                    if (next.has(entry.id)) next.delete(entry.id);
+                    else next.add(entry.id);
+                    return next;
+                  })
+                }
+              >
+                {t(open ? "widgets.timeline.showLess" : "widgets.timeline.showMore")}
+              </button>
+            )}
+          </div>
+        )}
+      </li>
+    );
+  };
+
+  return (
+    <Frame title={title} dataset={undefined} role="timeline">
+      <div
+        ref={rootRef}
+        className="cc-timeline-root"
+        data-timeline-page={shownPage + 1}
+        data-timeline-selected={selectedId ?? ""}
+        onKeyDown={(keyEvent) => {
+          if (keyEvent.key === "Escape" && selectedId !== undefined) {
+            keyEvent.preventDefault();
+            commit(undefined);
+            return;
+          }
+          const target = keyEvent.target as HTMLElement;
+          const id = target.getAttribute("data-timeline-entry");
+          if (id === null) return;
+          const next = moveTimelineFocus(keyEvent.key, pageIds.indexOf(id), pageIds.length);
+          if (next === undefined) return;
+          keyEvent.preventDefault();
+          const nextId = pageIds[next];
+          if (nextId === undefined) return;
+          setFocusedId(nextId);
+          rootRef.current?.querySelectorAll<HTMLButtonElement>("[data-timeline-entry]")[next]?.focus();
+        }}
+      >
+        <p className="cc-freshness cc-timeline-summary" data-timeline-summary="" style={{ margin: 0 }}>
+          {summary}
+        </p>
+        {typeof state?.message === "string" && state.message !== "" && (
+          <p className="cc-freshness" role="status" data-timeline-message="true" style={{ margin: 0 }}>
+            {state.message}
+          </p>
+        )}
+        {!zoneKnown && (
+          <p className="cc-freshness" data-timeline-note="timezone" style={{ margin: 0 }}>
+            {fillMessage(t("widgets.timeline.timeZoneUnknown"), { timezone: namedZone ?? "" })}
+          </p>
+        )}
+        {timeline.entries.length === 0 ? (
+          <p className="cc-freshness" data-timeline-empty="true" style={{ margin: 0 }}>
+            {t("widgets.timeline.empty")}
+          </p>
+        ) : (
+          <ol
+            className="cc-timeline-days"
+            aria-label={fillMessage(t("widgets.timeline.listLabel"), { timezone: timeline.timeZone })}
+            aria-describedby={hintId}
+          >
+            {days.map((day) => {
+              const dayId = `${liveId}-day-${day.day}`;
+              return (
+                <li key={day.day} className="cc-timeline-day" data-timeline-day={day.day}>
+                  <p id={dayId} className="cc-timeline-day-head">
+                    <time dateTime={day.day}>{timelineDayLabel(locale, day.day)}</time>
+                  </p>
+                  <ul className="cc-timeline-entries" aria-labelledby={dayId}>
+                    {day.entries.map(entryRow)}
+                  </ul>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+        {pages > 1 && (
+          <nav className="cc-timeline-pager" aria-label={t("widgets.timeline.pager")}>
+            <button type="button" data-timeline-previous="" disabled={shownPage === 0} onClick={() => turnPage(shownPage - 1)}>
+              {t("widgets.timeline.previousPage")}
+            </button>
+            <span className="cc-freshness" data-timeline-page-label="">
+              {fillMessage(t("widgets.timeline.page"), { page: String(shownPage + 1), pages: String(pages) })}
+            </span>
+            <button type="button" data-timeline-next="" disabled={shownPage === pages - 1} onClick={() => turnPage(shownPage + 1)}>
+              {t("widgets.timeline.nextPage")}
+            </button>
+          </nav>
+        )}
+        <p id={hintId} className="cc-sr-only">
+          {t("widgets.timeline.keyboardHint")}
+        </p>
+        <p className="cc-sr-only" aria-live="polite" data-timeline-live="">
+          {announcement}
+        </p>
+        {selected !== undefined && (
+          <div className="cc-timeline-detail" data-timeline-selected-entry={selected.id} role="group" aria-label={t("widgets.timeline.selected")}>
+            <strong>{mark(selected.title)}</strong>
+            <span>{whenOf(selected)}</span>
+            <span>
+              <span className="cc-timeline-mark" data-tone={selected.tone} aria-hidden="true">
+                {TONE_MARK[selected.tone]}
+              </span>{" "}
+              {t(`widgets.status.tone.${selected.tone}` as MessageKey)}
+            </span>
+            <button type="button" className="cc-timeline-clear" data-timeline-clear="" onClick={() => commit(undefined)}>
+              {t("widgets.timeline.clear")}
+            </button>
+          </div>
+        )}
+        {timeline.truncated && (
+          <p className="cc-freshness" data-timeline-note="truncated" style={{ margin: 0 }}>
+            {t("widgets.timeline.truncated")}
+          </p>
+        )}
+        {hidden > 0 && (
+          <p className="cc-freshness cc-viewer-hidden" data-timeline-hidden={hidden} style={{ margin: 0 }}>
+            {fillMessage(t("widgets.timeline.hidden"), { count: String(hidden) })}
+          </p>
+        )}
+        {timeline.entries.length > 0 && (
+          <details className="cc-timeline-text" data-timeline-text="">
+            <summary>{t("widgets.timeline.asText")}</summary>
+            <ul>
+              {timeline.entries.map((entry) => (
+                <li key={entry.id} data-timeline-text-entry={entry.id}>
+                  {whenOf(entry)} · {t(`widgets.status.tone.${entry.tone}` as MessageKey)} · {mark(entry.title)}
+                  {entry.actor === undefined ? null : <> · {mark(fillMessage(t("widgets.timeline.by"), { actor: entry.actor }))}</>}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
+      <Provenance asOf={undefined} stated statedAt={statedAt} sample={sample} />
+    </Frame>
+  );
+}
+/* ------------------------------------------------------------------ *
  * Registry
  * ------------------------------------------------------------------ */
 
@@ -4038,6 +4340,7 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.metrics@1": Metrics,
   "canvas.filter@1": PeriodFilter,
   "canvas.calendar@1": Calendar,
+  "canvas.timeline@1": ActivityTimeline,
   "canvas.image@1": LocalImage,
   "canvas.carousel@1": Carousel,
   "canvas.gallery@1": Gallery,
