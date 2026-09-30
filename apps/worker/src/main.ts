@@ -10,16 +10,31 @@
  * successful run of the worker, not a failure of it. Exit 2 means the worker itself could not
  * run.
  *
- * There is no live provider configured in this environment, so `--adapter real` reports its
- * unavailability instead of pretending.
+ * `--adapter real` runs the model the brief names (else `CC_MODEL_PROVIDER`/`CC_MODEL_ID`), and a worker given
+ * neither exits 2 rather than letting the SDK pick one nobody chose. With `--credential-stdin`, the provider's key is
+ * read from stdin as `{"apiKey":"…"}` before anything else happens: never from an argument, which any process on the
+ * machine can list, and never from the environment, which everything this process started would inherit.
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { FakePiAdapter, RealPiAdapter, modelFromEnv, type PiAdapter, type ScriptedTurn } from "@clarkcant/pi-adapter";
+import {
+  FakePiAdapter,
+  RealPiAdapter,
+  modelFromEnv,
+  type ModelSelection,
+  type PiAdapter,
+  type ScriptedTurn,
+} from "@clarkcant/pi-adapter";
 
-import { runWorker, workerBriefEnvelopeSchema, type WorkerBriefEnvelope, type WorkerDeps } from "./index.ts";
+import {
+  redactSecrets,
+  runWorker,
+  workerBriefEnvelopeSchema,
+  type WorkerBriefEnvelope,
+  type WorkerDeps,
+} from "./index.ts";
 import { allWorkerTools, processBrowserChannel, processCommandChannel } from "./tools.ts";
 
 interface Args {
@@ -35,6 +50,8 @@ interface Args {
    * adapter's generic text reply.
    */
   scriptPath: string | undefined;
+  /** Whether the host writes the provider key to stdin. */
+  credentialStdin: boolean;
 }
 
 function parseArgs(argv: readonly string[]): Args {
@@ -44,6 +61,7 @@ function parseArgs(argv: readonly string[]): Args {
     adapter: "fake",
     dataDir: undefined,
     scriptPath: undefined,
+    credentialStdin: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -63,9 +81,47 @@ function parseArgs(argv: readonly string[]): Args {
     } else if (flag === "--script" && value !== undefined) {
       args.scriptPath = value;
       index += 1;
+    } else if (flag === "--credential-stdin") {
+      args.credentialStdin = true;
     }
   }
   return args;
+}
+
+/** The key this process was handed, once read: cut out of everything it prints, including a crash's stack. */
+const secrets: string[] = [];
+
+function write(stream: NodeJS.WriteStream, text: string): void {
+  stream.write(redactSecrets(text, secrets));
+}
+
+/** A key is a line of text; anything longer than this on stdin is not one. */
+const MAX_CREDENTIAL_BYTES = 16 * 1024;
+
+/**
+ * The provider key the host wrote to stdin, read whole and then left only in the returned value.
+ *
+ * Nothing about it is ever written out: a malformed handoff is reported by what was wrong with its shape, never by what
+ * it contained.
+ */
+async function readCredential(): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of process.stdin) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8");
+    size += buffer.length;
+    if (size > MAX_CREDENTIAL_BYTES) throw new Error(`the credential handoff is longer than ${String(MAX_CREDENTIAL_BYTES)} bytes`);
+    chunks.push(buffer);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new Error("the credential handoff is not JSON");
+  }
+  const apiKey = parsed !== null && typeof parsed === "object" ? (parsed as { apiKey?: unknown }).apiKey : undefined;
+  if (typeof apiKey !== "string" || apiKey.trim() === "") throw new Error("the credential handoff carries no key");
+  return apiKey.trim();
 }
 
 /** Read and validate the fake adapter's script file, when one was given. */
@@ -121,10 +177,34 @@ async function main(): Promise<number> {
     return 2;
   }
 
-  // A worker started with no model configured says so rather than resolving one nobody chose.
-  // The adapter refuses an unknown provider or model by name, and the environment is where the
-  // credential for it has to be, so this is the whole of the worker's model configuration.
-  const model = modelFromEnv(process.env);
+  // The key first, before anything else runs, so it is never held any longer or anywhere wider than it has to be.
+  let apiKey: string | undefined;
+  if (args.credentialStdin) {
+    try {
+      apiKey = await readCredential();
+    } catch (cause) {
+      process.stderr.write(`worker: could not read the credential: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+      return 2;
+    }
+    secrets.push(apiKey);
+  }
+
+  // A worker started with no model says so rather than resolving one nobody chose. The model is the host's choice,
+  // carried on the brief; the environment is the fallback for a worker started by hand. The adapter refuses an unknown
+  // provider or model by name.
+  const briefed = envelope.model;
+  const model: ModelSelection | undefined =
+    briefed === undefined
+      ? modelFromEnv(process.env)
+      : {
+          provider: briefed.provider,
+          id: briefed.id,
+          ...(briefed.thinkingLevel === undefined ? {} : { thinkingLevel: briefed.thinkingLevel }),
+        };
+  if (args.adapter === "real" && model === undefined) {
+    process.stderr.write("worker: the real adapter was asked for, but no model was given to this worker\n");
+    return 2;
+  }
   // A worker writes its transcript into the data directory it was given, so a later run can resume
   // it and the history index can read it. A fake adapter is left in memory: it has no transcript to
   // resume, and pretending otherwise would be a fixture imitating a fact.
@@ -132,7 +212,11 @@ async function main(): Promise<number> {
     args.adapter === "real"
       ? new RealPiAdapter({
           cwd: process.cwd(),
+          // A worker is given its tools by the host and nothing else: no extension, skill, prompt template or
+          // instructions file found on this machine is loaded into it.
+          isolated: true,
           ...(model === undefined ? {} : { model }),
+          ...(apiKey === undefined ? {} : { apiKey }),
           ...(args.dataDir === undefined ? {} : { sessionDir: join(args.dataDir, "sessions") }),
         })
       : (() => {
@@ -142,7 +226,8 @@ async function main(): Promise<number> {
   const availability = await adapter.availability();
   if (!availability.available) {
     // Honest failure: an unavailable adapter is not a worker that ran and found nothing.
-    process.stderr.write(
+    write(
+      process.stderr,
       `worker: the ${args.adapter} adapter is not available: ${availability.reason ?? "no reason given"}\n`,
     );
     return 2;
@@ -155,6 +240,7 @@ async function main(): Promise<number> {
   const deps: WorkerDeps = {
     adapter,
     nodeId: args.nodeId,
+    secrets,
     availableTools: allWorkerTools(envelope.projectRoots, {
       ...(envelope.writableRoots === undefined ? {} : { writableRoots: envelope.writableRoots }),
       ...(commands === undefined ? {} : { commands }),
@@ -164,11 +250,14 @@ async function main(): Promise<number> {
 
   const result = await runWorker(envelope, deps);
 
-  process.stdout.write(
+  write(
+    process.stdout,
     `${JSON.stringify(
       {
         adapter: args.adapter,
         adapterVersion: availability.sdkVersion,
+        // Which model did the work, so the host can write it down. Never the key.
+        ...(args.adapter === "real" && model !== undefined ? { model: `${model.provider}/${model.id}` } : {}),
         stopReason: result.stopReason,
         usage: result.usage,
         withheldCapabilities: result.withheldCapabilities,
@@ -181,9 +270,7 @@ async function main(): Promise<number> {
   );
 
   const verdicts = result.record.evidence.map((item) => item.verdict);
-  process.stderr.write(
-    `worker: ${result.stopReason}; evidence ${verdicts.join(", ") || "none"}\n`,
-  );
+  write(process.stderr, `worker: ${result.stopReason}; evidence ${verdicts.join(", ") || "none"}\n`);
   return 0;
 }
 
@@ -194,9 +281,7 @@ main().then(
     if (process.connected) process.disconnect();
   },
   (cause: unknown) => {
-    process.stderr.write(
-      `worker: ${cause instanceof Error ? cause.stack : String(cause)}\n`,
-    );
+    write(process.stderr, `worker: ${cause instanceof Error ? cause.stack : String(cause)}\n`);
     process.exitCode = 2;
     if (process.connected) process.disconnect();
   },

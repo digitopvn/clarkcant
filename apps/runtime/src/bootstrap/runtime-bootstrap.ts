@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import { type Instant } from "@clarkcant/contracts";
 import { type CoordinationDeps, directoryIndexPath, readDirectoryIndex, readExecutionPolicy } from "@clarkcant/core";
-import { appendAuditEvent } from "@clarkcant/storage";
+import { appendAuditEvent, readCredential } from "@clarkcant/storage";
 
 import { DEFAULT_NARROWING } from "../autonomy-settings.ts";
 import { machineRoots } from "../fs-search.ts";
@@ -35,6 +35,7 @@ import { removeIdleTaskProfiles } from "../task-browser.ts";
 import { createTaskDispatcher } from "../task-dispatch.ts";
 import { startUpdateCheckTimer } from "../update-checks.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
+import { nodeWorkerModel } from "../worker-model.ts";
 import { type FixtureGates } from "./fixtures.ts";
 
 /**
@@ -263,6 +264,14 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   if (!sessionFixture) {
     const dispatcher = createTaskDispatcher({
       conductor: deps.services.conductor,
+      // The worker runs this node's model, chosen the way background work is; with no model, a task is refused before a
+      // worker starts rather than run on a script that cannot do it.
+      workerModel: nodeWorkerModel({
+        modelTurn,
+        env: process.env,
+        storedCredential: (name) =>
+          readCredential(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId, name),
+      }),
       projectRoots: () => deps.services.projects.roots(),
       ownedRoots: () =>
         ownedResources([...deps.services.projects.roots(), deps.services.runtime.dataDir, process.cwd()]).roots,

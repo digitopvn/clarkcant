@@ -23,7 +23,7 @@
 import { createHash } from "node:crypto";
 
 import { type Evidence, type Instant, runRecordSchema, type RunRecord } from "@clarkcant/contracts";
-import type { PiAdapter, ToolDefinition, WorkerBrief, WorkerEvent } from "@clarkcant/pi-adapter";
+import type { PiAdapter, ToolDefinition, WorkerBrief, WorkerEvent, WorkerUsage } from "@clarkcant/pi-adapter";
 import { z } from "zod";
 
 /** Evidence is capped by the contract; one slot is reserved for a truncation note. */
@@ -56,6 +56,18 @@ export const workerBriefEnvelopeSchema = z.strictObject({
   allowedCapabilityRefs: z.array(z.string().min(1).max(200)).max(256),
   maxWallClockMs: z.int().positive().optional(),
   maxTokens: z.int().positive().optional(),
+  /**
+   * The model this run is worked by, as the host chose it. Absent means the worker's own environment decides, which for a
+   * dispatched worker is nothing at all: its environment carries no model and no key. Never a credential — the key for it
+   * travels separately, over stdin, so this file can sit in a temporary directory without holding a secret.
+   */
+  model: z
+    .strictObject({
+      provider: z.string().min(1).max(100),
+      id: z.string().min(1).max(200),
+      thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
+    })
+    .optional(),
   /** Set when this run retries an earlier one, so lineage is never lost. */
   replacesRunId: z.string().min(1).max(128).optional(),
 });
@@ -102,6 +114,13 @@ export interface WorkerDeps {
    */
   drive?: (sessionId: string, goal: string) => Promise<void>;
   onEvent?: (event: WorkerEvent) => void;
+  /**
+   * Text that must never reach the run record, such as the provider key this worker was handed.
+   *
+   * Cut out of a message before it is shortened into a summary, not after: a provider error that quotes the key and is
+   * cut in the middle of it would otherwise leave a prefix no exact-match redaction downstream can recognise.
+   */
+  secrets?: readonly string[];
 }
 
 export type WorkerStopReason = "settled" | "wall-clock-budget" | "token-budget" | "failed";
@@ -154,6 +173,30 @@ function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+/** `text` with every occurrence of each non-empty secret replaced by a marker that says something was removed. */
+export function redactSecrets(text: string, secrets: readonly string[] = []): string {
+  let redacted = text;
+  for (const secret of secrets) {
+    if (secret !== "") redacted = redacted.split(secret).join("[redacted]");
+  }
+  return redacted;
+}
+
+/**
+ * What a session has spent, in tokens: the adapter's total when it gives one, else the sum of the parts it does give.
+ *
+ * A real provider reports input, output and cache tokens separately and no total, so a budget read from the total alone
+ * would never be reached by the one kind of session it exists for. Absent only when the adapter reports nothing at all,
+ * so "spent nothing" and "this adapter does not say" stay two different answers.
+ */
+export function spentTokens(usage: WorkerUsage): number | undefined {
+  if (usage.tokens !== undefined) return usage.tokens;
+  const parts = [usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens].filter(
+    (part): part is number => part !== undefined,
+  );
+  return parts.length === 0 ? undefined : parts.reduce((sum, part) => sum + part, 0);
+}
+
 /**
  * Run one worker session and return its evidence.
  *
@@ -178,16 +221,6 @@ export async function runWorker(
   const withheldCapabilities = [...withheld];
   const permittedNames = new Set(permitted.map((tool) => tool.name));
 
-  const brief: WorkerBrief = {
-    goal: envelope.goal,
-    projectRoots: envelope.projectRoots,
-    allowedCapabilityRefs: envelope.allowedCapabilityRefs,
-    ...(envelope.maxWallClockMs === undefined ? {} : { maxWallClockMs: envelope.maxWallClockMs }),
-    ...(envelope.maxTokens === undefined ? {} : { maxTokens: envelope.maxTokens }),
-  };
-
-  const handle = await deps.adapter.createWorkerSession(brief);
-
   // Rule 2: evidence is captured where the tool result exists, so the digest is of real output.
   const observed: Evidence[] = [];
   const failures: Evidence[] = [];
@@ -198,56 +231,101 @@ export async function runWorker(
     failures.push({
       kind: "log-excerpt",
       ref,
-      summary: `${toolName} failed: ${truncate(message, SUMMARY_OUTPUT_CHARS)}`,
+      summary: `${toolName} failed: ${truncate(redactSecrets(message, deps.secrets), SUMMARY_OUTPUT_CHARS)}`,
       verdict: "contradicted",
       observedAt: now(),
     });
   };
 
-  for (const tool of permitted) {
-    await deps.adapter.registerTool(handle.sessionId, {
-      name: tool.name,
-      label: tool.label,
-      description: tool.description,
-      parameters: tool.parameters,
-      execute: async (params: Record<string, unknown>) => {
-        const ref = `worker:${handle.sessionId}:${tool.name}`;
-        try {
-          const { wrote, ...result } = await tool.execute(params);
-          if (wrote !== undefined && (outputs.has(wrote.path) || outputs.size < MAX_OUTPUTS)) {
-            outputs.set(wrote.path, wrote.sha256);
-          }
-          observed.push({
-            kind: tool.proves,
-            ref,
-            digest: digestOf([tool.name, stableJson(params), result.text]),
-            summary: `${tool.name} reported: ${truncate(result.text, SUMMARY_OUTPUT_CHARS)}`,
-            verdict: "verified",
-            observedAt: now(),
-          });
-          return result;
-        } catch (cause) {
-          recordFailure(tool.name, ref, describe(cause));
-          throw cause;
-        }
-      },
-    });
-  }
+  // Filled in once the session exists. A tool is only ever called after the prompt, which is after that.
+  let sessionId = "";
 
+  /*
+   * The permitted tools, wrapped so each call leaves evidence, and handed over when the session is created.
+   *
+   * At creation rather than added afterwards: a real session fixes its tool registry when it is created, and a tool
+   * appended later never reaches the allowlist the system prompt is written from, so a model would be told it has no
+   * tools and invent some. Rule 1 still holds, because only the permitted tools are in this list at all.
+   */
+  const customTools: ToolDefinition[] = permitted.map((tool) => ({
+    name: tool.name,
+    label: tool.label,
+    description: tool.description,
+    parameters: tool.parameters,
+    ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
+    execute: async (params: Record<string, unknown>) => {
+      const ref = `worker:${sessionId}:${tool.name}`;
+      try {
+        const { wrote, ...result } = await tool.execute(params);
+        if (wrote !== undefined && (outputs.has(wrote.path) || outputs.size < MAX_OUTPUTS)) {
+          outputs.set(wrote.path, wrote.sha256);
+        }
+        observed.push({
+          kind: tool.proves,
+          ref,
+          digest: digestOf([tool.name, stableJson(params), result.text]),
+          summary: `${tool.name} reported: ${truncate(redactSecrets(result.text, deps.secrets), SUMMARY_OUTPUT_CHARS)}`,
+          verdict: "verified",
+          observedAt: now(),
+        });
+        return result;
+      } catch (cause) {
+        recordFailure(tool.name, ref, describe(cause));
+        throw cause;
+      }
+    },
+  }));
+
+  const brief: WorkerBrief = {
+    goal: envelope.goal,
+    projectRoots: envelope.projectRoots,
+    allowedCapabilityRefs: envelope.allowedCapabilityRefs,
+    customTools,
+    ...(envelope.maxWallClockMs === undefined ? {} : { maxWallClockMs: envelope.maxWallClockMs }),
+    ...(envelope.maxTokens === undefined ? {} : { maxTokens: envelope.maxTokens }),
+  };
+
+  const handle = await deps.adapter.createWorkerSession(brief);
+  sessionId = handle.sessionId;
+
+  // Narrowed to exactly the permitted names: anything the adapter added on its own is not this run's to offer.
   await deps.adapter.setActiveTools(handle.sessionId, [...permittedNames]);
+
+  /*
+   * The token budget, checked after every turn rather than once the session has settled.
+   *
+   * A real model spends as it goes, so a ceiling read only at the end is a bill, not a limit. Crossing it aborts the
+   * session, which cancels the provider call in flight, and the run reports the budget as why it stopped.
+   */
+  let budgetStop: WorkerStopReason | undefined;
+  const overTokenBudget = (): number | undefined => {
+    if (envelope.maxTokens === undefined) return undefined;
+    const spent = spentTokens(deps.adapter.usage(handle.sessionId));
+    return spent !== undefined && spent > envelope.maxTokens ? spent : undefined;
+  };
 
   // A tool the adapter says failed is a contradiction even if it never reached our wrapper.
   const unsubscribe = deps.adapter.subscribe(handle.sessionId, (event) => {
     deps.onEvent?.(event);
     if (event.type === "error") {
-      recordFailure("session", `worker:${handle.sessionId}`, event.message);
+      // The abort this run asked for is the budget's doing, which the run reports as its own reason.
+      if (budgetStop === undefined) recordFailure("session", `worker:${handle.sessionId}`, event.message);
     }
     if (event.type === "tool-end" && event.isError && permittedNames.has(event.toolName)) {
       recordFailure(event.toolName, `worker:${handle.sessionId}:${event.toolCallId}`, "tool reported an error");
     }
+    if (event.type === "turn-end" && budgetStop === undefined) {
+      const spent = overTokenBudget();
+      if (spent !== undefined) {
+        budgetStop = "token-budget";
+        void deps.adapter
+          .abort(handle.sessionId, `token budget of ${String(envelope.maxTokens)} exceeded at ${String(spent)}`)
+          .catch(() => undefined);
+      }
+    }
   });
 
-  const drive = deps.drive ?? ((sessionId: string, goal: string) => deps.adapter.prompt(sessionId, goal));
+  const drive = deps.drive ?? ((id: string, goal: string) => deps.adapter.prompt(id, goal));
 
   let stopReason: WorkerStopReason = "settled";
   try {
@@ -281,21 +359,18 @@ export async function runWorker(
     }
   } catch (cause) {
     stopReason = "failed";
-    recordFailure("session", `worker:${handle.sessionId}`, describe(cause));
+    if (budgetStop === undefined) recordFailure("session", `worker:${handle.sessionId}`, describe(cause));
   }
+  if (budgetStop !== undefined) stopReason = budgetStop;
 
-  const usage = deps.adapter.usage(handle.sessionId);
+  const adapterUsage = deps.adapter.usage(handle.sessionId);
+  const tokens = spentTokens(adapterUsage);
+  const usage = tokens === undefined ? { turns: adapterUsage.turns } : { turns: adapterUsage.turns, tokens };
 
-  if (
-    stopReason === "settled" &&
-    envelope.maxTokens !== undefined &&
-    (usage.tokens ?? 0) > envelope.maxTokens
-  ) {
+  // The last turn's spend is only known once it ends, so a session that settled past its budget is still stopped by it.
+  if (stopReason === "settled" && envelope.maxTokens !== undefined && tokens !== undefined && tokens > envelope.maxTokens) {
     stopReason = "token-budget";
-    await deps.adapter.abort(
-      handle.sessionId,
-      `token budget of ${envelope.maxTokens} exceeded at ${usage.tokens ?? 0}`,
-    );
+    await deps.adapter.abort(handle.sessionId, `token budget of ${String(envelope.maxTokens)} exceeded at ${String(tokens)}`);
   }
 
   unsubscribe();

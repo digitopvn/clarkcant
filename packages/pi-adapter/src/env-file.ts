@@ -130,16 +130,36 @@ export const DEFAULT_MODEL_BUDGET: ModelBudget = { maxWallClockMs: 120_000, maxT
  * would believe a restriction is in force when it is not.
  */
 export function modelBudgetFromEnv(env: NodeJS.ProcessEnv): ModelBudget {
-  const read = (name: string, fallback: number): number => {
-    const raw = env[name]?.trim();
-    if (raw === undefined || raw === "") return fallback;
-    const value = Number(raw);
-    return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
-  };
   return {
-    maxWallClockMs: read("CC_MODEL_MAX_WALL_CLOCK_MS", DEFAULT_MODEL_BUDGET.maxWallClockMs),
-    maxTokens: read("CC_MODEL_MAX_TOKENS", DEFAULT_MODEL_BUDGET.maxTokens),
+    maxWallClockMs: positiveFromEnv(env, "CC_MODEL_MAX_WALL_CLOCK_MS", DEFAULT_MODEL_BUDGET.maxWallClockMs),
+    maxTokens: positiveFromEnv(env, "CC_MODEL_MAX_TOKENS", DEFAULT_MODEL_BUDGET.maxTokens),
   };
+}
+
+/**
+ * Limits on a dispatched task's worker, for a task that set none of its own.
+ *
+ * Separate from the turn budget because the two measure different things. A worker works a task over many model
+ * calls, each re-sending the whole context so far (instructions, tool schemas, every page it has read), and its token
+ * count is the sum of all of them: input, output and cache reads and writes, which is what the provider bills. A
+ * browser task of a few steps passes the turn budget's 32 000 on ordinary use, and a ceiling that stops ordinary work
+ * after its effects have happened is worse than none. These still bound a worker that loops.
+ */
+export const DEFAULT_WORKER_BUDGET: ModelBudget = { maxWallClockMs: 600_000, maxTokens: 500_000 };
+
+/** The worker budget, from the environment, read the same way as the turn budget. */
+export function workerBudgetFromEnv(env: NodeJS.ProcessEnv): ModelBudget {
+  return {
+    maxWallClockMs: positiveFromEnv(env, "CC_WORKER_MAX_WALL_CLOCK_MS", DEFAULT_WORKER_BUDGET.maxWallClockMs),
+    maxTokens: positiveFromEnv(env, "CC_WORKER_MAX_TOKENS", DEFAULT_WORKER_BUDGET.maxTokens),
+  };
+}
+
+function positiveFromEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name]?.trim();
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
 /**

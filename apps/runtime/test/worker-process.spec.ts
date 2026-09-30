@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { WorkerBriefEnvelope } from "@clarkcant/app-worker";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { runWorkerProcess } from "../src/worker-process.ts";
+import { runWorkerProcess, workerEnvironment } from "../src/worker-process.ts";
 
 /**
  * Dispatching a worker as a process.
@@ -85,5 +85,32 @@ describe("the runtime starts a worker of its own", () => {
     // Missing taskRevision: the worker validates the brief at the process boundary and exits 2.
     const invalid = { ...brief(), taskRevision: undefined } as unknown as WorkerBriefEnvelope;
     await expect(runWorkerProcess({ nodeId: "node_test", brief: invalid })).rejects.toThrow(/could not run/);
+  });
+
+  it("refuses to run a real model it was given no model for, rather than letting one be picked", async () => {
+    await expect(
+      runWorkerProcess({ nodeId: "node_test", brief: brief(), adapter: "real", credential: "sk-unused-in-this-test" }),
+    ).rejects.toThrow(/no model was given to this worker/);
+  });
+
+  it("starts a real-model worker without any provider key in its environment, whatever this process holds", () => {
+    const source = {
+      PATH: "/usr/bin",
+      HOME: "/home/person",
+      OPENAI_API_KEY: "sk-in-the-node-environment",
+      ANTHROPIC_API_KEY: "sk-also-here",
+      CC_MODEL_PROVIDER: "openai",
+      SSH_AUTH_SOCK: "/tmp/agent.sock",
+      SystemRoot: "C:\\Windows",
+    };
+    const env = workerEnvironment("real", "/data/pi-agent", source);
+
+    expect(Object.values(env).some((value) => value.startsWith("sk-"))).toBe(false);
+    expect(env).not.toHaveProperty("CC_MODEL_PROVIDER");
+    expect(env).not.toHaveProperty("SSH_AUTH_SOCK");
+    expect(env["PATH"]).toBe("/usr/bin");
+    expect(env["PI_CODING_AGENT_DIR"]).toBe("/data/pi-agent");
+    // The scripted worker gets the build profile and nothing a model would need.
+    expect(workerEnvironment("fake", "/data/pi-agent", source)).toEqual({ PATH: "/usr/bin", HOME: "/home/person" });
   });
 });

@@ -1,3 +1,4 @@
+import { spawn, type SpawnOptions } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,12 +20,15 @@ import {
   createTask,
   writeRegisteredPreference,
 } from "@clarkcant/core";
+import { DEFAULT_MODEL_BUDGET, DEFAULT_WORKER_BUDGET } from "@clarkcant/pi-adapter";
 import { allRows, effectsForTask, getTask } from "@clarkcant/storage";
 
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { BROWSER_CAPABILITY, type TaskBrowserDriver, type TaskBrowserHost } from "../src/task-browser.ts";
-import { createTaskDispatcher, type TaskDispatcherDeps } from "../src/task-dispatch.ts";
+import { createTaskDispatcher, type TaskDispatcherDeps, type WorkerModelSource } from "../src/task-dispatch.ts";
+import { nodeWorkerModel } from "../src/worker-model.ts";
 import { runWorkerProcess, type WorkerProcessOptions } from "../src/worker-process.ts";
+import { STUB_MODEL, STUB_PROVIDER, startStubProvider, writeStubAgentDir, type StubProvider, type StubReply } from "./stub-model-provider.ts";
 
 /**
  * A task dispatched to the browser, end to end on one node.
@@ -382,5 +386,209 @@ describe("a task dispatched to the browser", () => {
     expect(workerStarted).toBe(false);
     expect(opened).toBe(0);
     expect(settled).toEqual([]);
+  });
+});
+
+/**
+ * The same task, worked by a real model: the worker process runs the Pi SDK against a provider on 127.0.0.1 that
+ * answers from a script, so nothing here calls a vendor. The provider's key is one the stub checks for and nothing else
+ * has: it reaches the worker only over stdin, and every place it must never be is searched for it.
+ */
+describe("a task dispatched to the browser, on the node's model", () => {
+  /** Made up for this suite; the stub's configuration has no key, so one that arrives came through the handoff. */
+  const KEY = `sk-stub-${"7f3a9c".repeat(6)}`;
+  let stub: StubProvider | undefined;
+
+  afterEach(async () => {
+    await stub?.close();
+    stub = undefined;
+  });
+
+  /**
+   * The node's worker model, as the node wires it, with the stub as the model turn's choice and its key stored. The
+   * worker budget is the node's default unless a test sets `CC_WORKER_MAX_TOKENS`.
+   */
+  function stubModel(agentDir: string, maxTokens?: number): WorkerModelSource {
+    return nodeWorkerModel({
+      modelTurn: { workerModel: async () => ({ provider: STUB_PROVIDER, id: STUB_MODEL, via: "configured" }) },
+      env: { PI_CODING_AGENT_DIR: agentDir, ...(maxTokens === undefined ? {} : { CC_WORKER_MAX_TOKENS: String(maxTokens) }) },
+      storedCredential: (name) => (name === STUB_PROVIDER ? KEY : undefined),
+    });
+  }
+
+  /** Every way the worker was started and everything it printed, as the process saw it. */
+  interface Spawned {
+    args: string[];
+    env: Record<string, string>;
+    cwd: string | undefined;
+    output: string;
+  }
+
+  async function runOnStub(
+    script: (index: number) => StubReply,
+    options: { maxTokens?: number; stopAfterFirstRequest?: boolean } = {},
+  ) {
+    stub = await startStubProvider(script);
+    const agentDir = writeStubAgentDir(join(dir, "pi-agent"), stub.baseUrl);
+    const { taskId } = dispatchedTask("Nộp đơn ở https://shop.example/form");
+    const page = lostSubmitDriver();
+    const settled: { outcome: string; message: string }[] = [];
+    const spawned: Spawned[] = [];
+    let given: WorkerProcessOptions | undefined;
+    let result: unknown;
+
+    const recordingSpawn = ((command: string, args: readonly string[], spawnOptions: SpawnOptions) => {
+      const entry: Spawned = {
+        args: [...args],
+        env: { ...(spawnOptions.env as Record<string, string>) },
+        cwd: typeof spawnOptions.cwd === "string" ? spawnOptions.cwd : undefined,
+        output: "",
+      };
+      spawned.push(entry);
+      const child = spawn(command, args, spawnOptions);
+      child.stdout?.on("data", (chunk: Buffer | string) => (entry.output += String(chunk)));
+      child.stderr?.on("data", (chunk: Buffer | string) => (entry.output += String(chunk)));
+      return child;
+    }) as unknown as typeof spawn;
+
+    const dispatcher = dispatcherFor(
+      {
+        host: { services, profilesDir: join(dir, "browser-profiles"), lookup, openDriver: () => ({ ok: true, driver: page.driver }) },
+        workerModel: stubModel(agentDir, options.maxTokens),
+        runWorker: async (workerOptions) => {
+          given = workerOptions;
+          result = await runWorkerProcess({ ...workerOptions, spawnImpl: recordingSpawn });
+          return result as Awaited<ReturnType<typeof runWorkerProcess>>;
+        },
+      },
+      settled,
+    );
+    dispatcher.dispatch({ taskId, capabilityRef: BROWSER_CAPABILITY, executionNodeId: services.runtime.identity.nodeId });
+    if (options.stopAfterFirstRequest === true) {
+      await waitUntil(() => stub !== undefined && stub.requests.length > 0, 40_000);
+      dispatcher.stop(taskId);
+    }
+    await waitUntil(() => settled.length > 0, 50_000);
+    await waitUntil(() => !dispatcher.holds(taskId), 10_000);
+    return { taskId, page, settled, spawned, given, result, stub };
+  }
+
+  it("works the task on the node's model, offered use_browser and nothing else, with the key over stdin only", async () => {
+    // Each call re-sends everything read so far, as a real one does: together they pass one conversation turn's
+    // 32 000-token budget, which is the ceiling a task's worker must not be held to.
+    const usage = { prompt: 14_000, completion: 400 };
+    const run = await runOnStub((index) =>
+      index === 0
+        ? { kind: "tools", usage, calls: [{ name: "use_browser", arguments: { action: "open", url: "https://shop.example/form", why: "open the form" } }] }
+        : index === 1
+          ? { kind: "tools", usage, calls: [{ name: "use_browser", arguments: { action: "click", ref: "el_send", why: "send the application" } }] }
+          : { kind: "text", usage, text: "I clicked send; the page never answered." },
+    );
+
+    // The model the node runs was asked, with the key the node holds, and offered exactly the browser.
+    expect(run.stub.requests.length).toBeGreaterThanOrEqual(3);
+    for (const request of run.stub.requests) {
+      expect(request.model).toBe(STUB_MODEL);
+      expect(request.authorization).toBe(`Bearer ${KEY}`);
+      expect(request.tools).toEqual(["use_browser"]);
+    }
+    expect(run.given?.adapter).toBe("real");
+    expect(run.given?.brief.model).toEqual({ provider: STUB_PROVIDER, id: STUB_MODEL });
+    expect(run.given?.brief.allowedCapabilityRefs).toEqual(["browser.playwright@1"]);
+    expect(run.given?.onCommand).toBeUndefined();
+    expect((run.result as { adapter?: string; model?: string }).adapter).toBe("real");
+    expect((run.result as { model?: string }).model).toBe(`${STUB_PROVIDER}/${STUB_MODEL}`);
+    // The node's worker budget, not its per-turn one, and the run spent more than a turn's worth without being stopped.
+    expect(run.given?.brief.maxTokens).toBe(DEFAULT_WORKER_BUDGET.maxTokens);
+    expect((run.result as { usage?: { tokens?: number } }).usage?.tokens).toBeGreaterThan(DEFAULT_MODEL_BUDGET.maxTokens);
+
+    // What the model did is what settled the task: the lost submit is an unknown effect and the task is uncertain.
+    expect(run.page.clicks).toHaveLength(1);
+    expect(run.settled[0]?.outcome).toBe("uncertain");
+    expect(effectsForTask(services.runtime.db, run.taskId).map((effect) => effect.state)).toEqual(["unknown"]);
+
+    // The key was never an argument, never in the worker's environment, never printed, never in what came back.
+    expect(run.spawned).toHaveLength(1);
+    const [worker] = run.spawned;
+    expect(worker?.args).toContain("--credential-stdin");
+    expect(worker?.args.join(" ")).not.toContain(KEY);
+    expect(Object.values(worker?.env ?? {}).some((value) => value.includes(KEY))).toBe(false);
+    expect(worker?.env["PI_CODING_AGENT_DIR"]).toBe(join(dir, "pi-agent"));
+    // Started in the run's own empty directory, not wherever the node was started from.
+    expect(worker?.cwd).toBeDefined();
+    expect(worker?.cwd).not.toBe(process.cwd());
+    expect(worker?.cwd).toContain("clarkcant-worker-run-");
+    expect(worker?.output).not.toContain(KEY);
+    expect(JSON.stringify(run.result)).not.toContain(KEY);
+    expect(run.settled[0]?.message).not.toContain(KEY);
+
+    // Which model ran is on the node's trail, with where its key came from and not the key.
+    const trail = allRows<{ summary: string; ref: string }>(
+      services.runtime.db,
+      "SELECT summary, ref FROM audit_log WHERE kind = 'model'",
+    );
+    expect(trail).toHaveLength(1);
+    expect(trail[0]?.summary).toContain(`worker started on ${STUB_PROVIDER}/${STUB_MODEL}`);
+    expect(trail[0]?.summary).toContain("key from a stored credential");
+    expect(JSON.stringify(allRows(services.runtime.db, "SELECT * FROM audit_log"))).not.toContain(KEY);
+  }, 90_000);
+
+  it("stops the worker at its token budget after the turn that crossed it, before asking the model again", async () => {
+    const run = await runOnStub(
+      () => ({
+        kind: "tools",
+        calls: [{ name: "use_browser", arguments: { action: "open", url: "https://shop.example/form", why: "open it" } }],
+        usage: { prompt: 4_000, completion: 1_000 },
+      }),
+      { maxTokens: 1_000 },
+    );
+
+    // One turn, and the budget ended the run there: the model was never asked a second time.
+    expect(run.stub.requests).toHaveLength(1);
+    expect(run.given?.brief.maxTokens).toBe(1_000);
+    expect(run.settled[0]?.outcome).toBe("failed");
+    expect(run.settled[0]?.message).toContain("token budget of 1000 was exceeded");
+  }, 90_000);
+
+  it("ends the provider call when the person stops the task", async () => {
+    const run = await runOnStub(() => ({ kind: "hang" }), { stopAfterFirstRequest: true });
+
+    await waitUntil(() => run.stub.closedByClient() > 0, 10_000);
+    expect(run.stub.closedByClient()).toBe(1);
+    expect(run.settled[0]?.message).toContain("stopped on request");
+  }, 90_000);
+
+  it("keeps the key out of what comes back even when the provider's error quotes it and the quote is cut short", async () => {
+    // Placed so a summary cut at a few hundred characters ends inside the key, leaving a prefix no exact match finds.
+    const message = `Incorrect API key provided: ${".".repeat(200)}${KEY} was refused.`;
+    const run = await runOnStub(() => ({ kind: "reject", status: 401, message }));
+
+    expect(run.stub.requests.length).toBeGreaterThanOrEqual(1);
+    const prefix = KEY.slice(0, 16);
+    const [worker] = run.spawned;
+    // Nothing the worker printed, nothing it returned and nothing the task says holds the key or any leading part of it.
+    for (const text of [worker?.output ?? "", JSON.stringify(run.result ?? null), run.settled[0]?.message ?? ""]) {
+      expect(text).not.toContain(prefix);
+    }
+    // And the provider's refusal did reach the record, with the key cut out of it rather than the error dropped, and
+    // the task says it failed rather than that it finished having done nothing.
+    expect(worker?.output).toContain("the model's provider refused the turn");
+    expect(worker?.output).toContain("Incorrect API key provided");
+    expect(worker?.output).toContain("[redacted]");
+    expect(run.settled[0]?.outcome).toBe("failed");
+    expect(JSON.stringify(allRows(services.runtime.db, "SELECT * FROM audit_log"))).not.toContain(prefix);
+  }, 90_000);
+
+  it("refuses a task on a node with no model before any worker starts", async () => {
+    const { taskId } = dispatchedTask("Nộp đơn ở https://shop.example/form");
+    const { settled, workerStarted, opened } = await refusedBeforeWorker(taskId, {
+      workerModel: nodeWorkerModel({ modelTurn: undefined, env: {}, storedCredential: () => undefined }),
+    });
+
+    expect(workerStarted).toBe(false);
+    expect(opened).toBe(0);
+    expect(settled[0]?.outcome).toBe("failed");
+    expect(settled[0]?.message).toContain("this node has no model configured to do the work");
+    expect(getTask(services.runtime.db, taskId)?.state).toBe("failed");
   });
 });

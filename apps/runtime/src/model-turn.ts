@@ -147,6 +147,15 @@ export interface ModelTurn {
    */
   runInBackground: (input: BackgroundRunInput) => Promise<string>;
 
+  /**
+   * The model a dispatched task's worker runs, decided as it is about to start.
+   *
+   * The same choice `runInBackground` makes, because a dispatched worker is background work too and nobody is watching
+   * it: the policy layer's route among the node's pool when it gives one, else the model this node runs now (the
+   * person's pick, else the environment's). Never a separate setting, so there is one place that decides.
+   */
+  workerModel: () => Promise<ModelSelection & { via: "routed" | "configured" }>;
+
   /** How long the conversation's current turn has been running, or undefined when none is. */
   runningMs: (conversationId: string) => number | undefined;
 
@@ -1016,6 +1025,15 @@ export async function createModelTurn(options: {
     runningMs: (conversationId: string): number | undefined => {
       const turn = turns.get(conversationId);
       return turn?.inFlight === true && turn.startedAtMs !== undefined ? Date.now() - turn.startedAtMs : undefined;
+    },
+
+    workerModel: async (): Promise<ModelSelection & { via: "routed" | "configured" }> => {
+      // Routing must never be the reason a worker does not start: a route that fails falls back like one that found
+      // nothing eligible.
+      const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel().catch(() => undefined);
+      if (routed !== undefined) return { provider: routed.provider, id: routed.id, via: "routed" };
+      const current = options.model?.() ?? selection;
+      return { ...current, via: "configured" };
     },
 
     runInBackground: async (input: BackgroundRunInput): Promise<string> => {

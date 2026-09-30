@@ -227,6 +227,31 @@ describe("settling is not succeeding", () => {
     expect(contradicted).toBeDefined();
     expect(contradicted?.summary).toContain("the file is unreadable");
   });
+
+  it("cuts a secret out of a failure before shortening it, so no leading part of it survives the cut", async () => {
+    const secret = `sk-test-${"a1b2c3".repeat(6)}`;
+    const adapter = new FakePiAdapter();
+    const failing = stubTool({
+      execute: async () => {
+        // The secret straddles the point where a summary is cut, as a provider error quoting a key can.
+        throw new Error(`${"x".repeat(280)}${secret} was refused`);
+      },
+    });
+
+    const result = await runWorker(
+      brief(),
+      deps(adapter, [failing], {
+        secrets: [secret],
+        drive: async (sessionId) => {
+          await adapter.callTool(sessionId, "read_report", {}).catch(() => undefined);
+        },
+      }),
+    );
+
+    const summaries = JSON.stringify(result.record.evidence);
+    expect(summaries).not.toContain(secret.slice(0, 12));
+    expect(summaries).toContain("[redacted]");
+  });
 });
 
 describe("the budget stops the run instead of being noticed afterwards", () => {

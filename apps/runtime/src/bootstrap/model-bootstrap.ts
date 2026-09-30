@@ -9,7 +9,7 @@ import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
 import { referenceBrief, referencesForLastUserMessage } from "../composer-references.ts";
-import { personTextOf } from "../browser-task-tool.ts";
+import { type BrowserTaskToolDeps, personTextOf } from "../browser-task-tool.ts";
 import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { decideModelRoute } from "../jev-decider.ts";
@@ -28,7 +28,6 @@ import { registerSessionFile } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import { registerNodeTools } from "../tool-catalogue.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
-import { DISPATCHED_WORKERS_RUN_A_REAL_MODEL } from "../worker-process.ts";
 
 /**
  * The model turn, and everything it reads from the node.
@@ -72,6 +71,34 @@ export interface ModelBootstrapDeps {
   /** The views the model may show, filled before a turn runs. */
   viewCatalog: () => readonly ViewDescriptor[];
   wiring: ModelWiring;
+}
+
+/**
+ * What `start_browser_task` needs, or nothing when the tool is not to be offered.
+ *
+ * Offered only by a node that runs background tasks and whose dispatched workers run its model: without both, the tool
+ * could start a task but nothing could ever do the work, which is a control that cannot do what it says. The sites a
+ * task may act on are checked against what the person wrote on their own surfaces in this conversation, read back when
+ * the tool is called.
+ */
+export function browserTaskToolDepsFor(
+  services: NodeServices,
+  turn: { principalId: string; conversationId: string },
+): BrowserTaskToolDeps | undefined {
+  if (services.taskDispatch?.workersRunAModel() !== true) return undefined;
+  return {
+    tasks: {
+      db: services.runtime.db,
+      nodeId: services.runtime.identity.nodeId,
+      now: () => instantSchema.parse(new Date().toISOString()),
+      newId: services.conductor.newId,
+    },
+    principalId: turn.principalId,
+    conversationId: turn.conversationId,
+    personText: () =>
+      personTextOf(latestMessages(services.runtime.db, turn.conversationId, 30), services.runtime.identity.nodeId),
+    dispatcher: () => services.taskDispatch,
+  };
 }
 
 /**
@@ -236,6 +263,10 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
       if (search === undefined || projects === undefined || command === undefined) return [];
       const interactions = deps.wiring.interactions(turn.conversationId);
       const secrets = deps.wiring.secrets();
+      const browserTasks = browserTaskToolDepsFor(deps.services(), {
+        principalId: search.principalId,
+        conversationId: turn.conversationId,
+      });
       const tools = createNodeTools({
         search,
         projects,
@@ -325,30 +356,8 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           fingerprint: deps.services().runtime.identity.fingerprint,
           peerCapabilities: (peerNodeId) => askPeerCapabilities(deps.services().runtime, peerNodeId),
         },
-        // "Do this on example.com": a browser task, offered only by a node that runs background tasks, and only once the
-        // worker such a task gets runs a real model (#346) — until then the tool could start a task but never do the
-        // work, which is a control that cannot do what it says. The sites it may act on are checked against what the
-        // person wrote on their own surfaces in this conversation, read back when the tool is called.
-        ...(deps.services().taskDispatch === undefined || !DISPATCHED_WORKERS_RUN_A_REAL_MODEL
-          ? {}
-          : {
-              browserTasks: {
-                tasks: {
-                  db: deps.services().runtime.db,
-                  nodeId: deps.services().runtime.identity.nodeId,
-                  now: () => instantSchema.parse(new Date().toISOString()),
-                  newId: deps.services().conductor.newId,
-                },
-                principalId: search.principalId,
-                conversationId: turn.conversationId,
-                personText: () =>
-                  personTextOf(
-                    latestMessages(deps.services().runtime.db, turn.conversationId, 30),
-                    deps.services().runtime.identity.nodeId,
-                  ),
-                dispatcher: () => deps.services().taskDispatch,
-              },
-            }),
+        // "Do this on example.com": a browser task, offered only where its worker runs a model (see the function).
+        ...(browserTasks === undefined ? {} : { browserTasks }),
         // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
         packages: {
           packages: packageInstallDepsOf(deps.services()),

@@ -137,6 +137,31 @@ describe("the callback reaches the loader as an inline extension", () => {
   });
 });
 
+describe("an isolated session loads nothing from the machine", () => {
+  const DISCOVERY = ["noExtensions", "noSkills", "noPromptTemplates", "noThemes", "noContextFiles"];
+
+  it("turns off every kind of discovery the loader has, and still applies the adapter's own extension", async () => {
+    const sdk = stubSdk();
+    await new RealPiAdapter({
+      cwd: process.cwd(),
+      isolated: true,
+      personalInstructions: () => "Prefer concise answers.",
+      sdk: sdk.module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+    }).createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
+
+    const options = sdk.loaderOptions.at(0) ?? {};
+    for (const flag of DISCOVERY) expect(options[flag], flag).toBe(true);
+    expect(options.extensionFactories).toHaveLength(1);
+  });
+
+  it("leaves discovery as the SDK has it for a session that is not isolated", async () => {
+    const sdk = stubSdk();
+    await adapterWith(sdk).createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
+    const options = sdk.loaderOptions.at(0) ?? {};
+    for (const flag of DISCOVERY) expect(options[flag], flag).toBeUndefined();
+  });
+});
+
 describe("the handler appends to the prompt the SDK composed", () => {
   it("keeps the product and security instructions and adds the user's after them", async () => {
     const sdk = stubSdk();

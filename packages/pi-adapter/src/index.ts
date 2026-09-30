@@ -51,11 +51,13 @@ export {
 export {
   applyEnvFile,
   DEFAULT_MODEL_BUDGET,
+  DEFAULT_WORKER_BUDGET,
   keyVariableFor,
   modelBudgetFromEnv,
   modelFromEnv,
   parseEnvFile,
   PROVIDER_KEY_VARIABLES,
+  workerBudgetFromEnv,
   type EnvFileResult,
   type ModelBudget,
   type ModelSelection,
