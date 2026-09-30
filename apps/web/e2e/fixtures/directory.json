@@ -395,8 +395,8 @@
     },
     "permissionsSummary": [],
     "riskTier": "declarative",
-    "sizeBytes": 5392,
-    "digest": "sha256:100e25a3dbfc5c3533795d5fd33ebb34b7dbfbf4c221c4f931538122b4103fda"
+    "sizeBytes": 15818,
+    "digest": "sha256:934e1b5cf9caed6c79d367d870b957b6c2160f5f24c9243bfe6c8598bef48f25"
   },
   {
     "packageId": "org.clarkcant.neo-brutalism",
@@ -437,7 +437,7 @@
     },
     "permissionsSummary": [],
     "riskTier": "declarative",
-    "sizeBytes": 5408,
-    "digest": "sha256:9beb9218366130fb4a1fc15f05720812179068b6630e550032eaf81aa97958af"
+    "sizeBytes": 15834,
+    "digest": "sha256:ca76278dfa074e1b429683a33a56787d875e36b05144840755fd04154c02a133"
   }
 ]

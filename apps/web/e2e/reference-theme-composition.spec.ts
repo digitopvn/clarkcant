@@ -45,18 +45,25 @@ for (const name of ["pixel-arcade", "neo-brutalism"]) for (const width of [1280,
     await expect(chart).toBeVisible();
     await composition.evaluate((element) => element.setAttribute("data-reference-kept", "true"));
     await composer.fill("Reference theme keeps the actual conversation draft");
+    const themeRef = `package:${packageId}#${name}`;
     await page.locator("[data-settings='true']").click();
-    await page.locator(`[data-theme-ref='package:${packageId}#${name}']`).click();
+    await page.locator(`[data-theme-ref='${themeRef}']`).click();
     await page.keyboard.press("Escape");
     await expect(composition).toHaveAttribute("data-reference-kept", "true");
     await expect(composer).toHaveValue("Reference theme keeps the actual conversation draft");
     await expect(page.locator("html")).toHaveAttribute("data-cc-theme", scheme);
-    const actual = await composition.evaluate((element) => {
-      const local = getComputedStyle(element);
-      const host = getComputedStyle(document.documentElement);
-      return ["--cc-accent", "--cc-radius-card", "--cc-line", "--cc-card-shadow"].map((key) => [local.getPropertyValue(key).trim(), host.getPropertyValue(key).trim()]);
-    });
-    for (const [local, host] of actual) { expect(local).not.toBe(""); expect(local).toBe(host); }
+    await expect.poll(async () => {
+      const response = await request.get(`${gateway}/appearance`, { headers });
+      if (!response.ok()) return undefined;
+      return ((await response.json()) as { appliedRef?: string }).appliedRef;
+    }).toBe(themeRef);
+    for (const key of ["--cc-accent", "--cc-radius-card", "--cc-line", "--cc-card-shadow"]) {
+      await expect.poll(() => composition.evaluate((element, variable) => {
+        const local = getComputedStyle(element).getPropertyValue(variable).trim();
+        const host = getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
+        return local !== "" && local === host;
+      }, key), { message: `${key} should reach the existing composition from the host theme` }).toBe(true);
+    }
     await expect(chart).toBeVisible();
     await page.screenshot({ path: join(evidence, `composition-${name}-${width}-${scheme}.png`) });
     await page.emulateMedia({ reducedMotion: "reduce" });

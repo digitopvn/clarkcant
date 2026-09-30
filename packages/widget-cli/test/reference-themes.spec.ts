@@ -32,7 +32,11 @@ for (const { name, borderWidth, headingWeight, cardRadius } of referenceThemes) 
     expect(manifest.requestedCapabilities).toEqual([]);
     expect(manifest.permissions).toEqual({ networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] });
     expect(manifest.publisher.license).toBe("Apache-2.0");
-    expect(readFileSync(join(source, "LICENSE"), "utf8")).toContain("Apache License");
+    const license = readFileSync(join(source, "LICENSE"), "utf8");
+    expect(license).toContain("Apache License");
+    expect(license).toContain("TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION");
+    expect(license).toContain("4. Redistribution.");
+    expect(license).toContain("END OF TERMS AND CONDITIONS");
     expect(packageFiles(source).map((file) => file.path)).toEqual(["LICENSE", "README.md", "clarkcant.json", `themes/${name}.json`]);
   });
   it.each(["dark", "light"] as const)("retains host-owned status, text scale and zero-motion behavior in %s", (scheme) => {
