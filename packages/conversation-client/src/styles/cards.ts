@@ -97,6 +97,9 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-artifact-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cc-space-xs); }
 .cc-artifact-notice p { flex: 1 1 16ch; min-width: 0; }
 .cc-artifact-notice[data-tone="error"] p { color: var(--cc-danger); }
+/* A marketplace result's source, risk lane and digest: three parts that read apart and wrap on a phone. */
+.cc-marketplace-meta { display: flex; flex-wrap: wrap; gap: var(--cc-space-xxs) var(--cc-space-md); min-width: 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-marketplace-meta > span { min-width: 0; overflow-wrap: anywhere; }
 .cc-artifact-notice p:focus-visible, .cc-artifact-prompt-title:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 /* The browser's own file input, opened by the host's button: kept in the page for the browser, out of the tab order. */
 .cc-artifact-file-input { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
