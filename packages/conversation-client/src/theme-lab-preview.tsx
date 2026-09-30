@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, type CSSProperties, type ReactElement } from "react";
 
 import { type ThemeDocument, type AppearanceCustomization, checkThemeDocument } from "@clarkcant/contracts";
-import { appearanceDeclarations, compileAppearance, auditThemeDocument, customizedTheme, CLARK_THEME, themeDrawProblem } from "@clarkcant/design-tokens";
+import { appearanceDeclarations, backdropPattern, compileAppearance, auditThemeDocument, customizedTheme, CLARK_THEME, themeDrawProblem } from "@clarkcant/design-tokens";
 import { CATALOG_ENTRIES } from "@clarkcant/widget-catalog";
 
 import { ApprovalCardBlock, ConnectionCardBlock, TextBlock } from "./blocks.tsx";
@@ -48,6 +48,7 @@ export function ThemeLabPreview({ theme, themeRef, problem, customization }: The
   const { "color-scheme": colorScheme, ...variables } = declarations;
   const style = { ...variables, colorScheme, width: viewport === "narrow" ? "320px" : viewport === "compact" ? "480px" : "960px", maxWidth: "100%" } as CSSProperties;
   const profile = resolveOrbProfile({ theme: safeTheme?.orb, reducedMotion: reduced });
+  const backdrop = backdropPattern(snapshot.tokens.identity);
   const widget = CATALOG_ENTRIES.find((entry) => entry.fixtures.length > 0);
   const fixture = widget?.fixtures[0];
   const submit = (): void => {
@@ -71,6 +72,7 @@ export function ThemeLabPreview({ theme, themeRef, problem, customization }: The
     </div>
     <div className="cc-theme-lab-canvas" data-theme-preview-canvas data-cc-theme={scheme} data-cc-reduced-motion={reduced ? "true" : "false"}
       data-preview-revision={snapshot.revision} style={style}>
+      <div className="cc-dot-grid" aria-hidden="true" style={{ backgroundImage: backdrop.image }} />
       <Orb size={96} profile={profile} appearanceRevision={snapshot.revision} />
       <h3>{t("themeLab.conversation")}</h3>
       <TranscriptRow role="assistant" index={0} settled={false}><TextBlock block={{ content: t("themeLab.reply") }} /></TranscriptRow>

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
-import { ThemeLabPreview } from "@clarkcant/conversation-client";
+import { installStyles, ThemeLabPreview } from "@clarkcant/conversation-client";
 
 import type { ThemeDevView } from "./theme-dev-host.ts";
 
@@ -44,4 +44,7 @@ function ThemeDevRuntime(): ReactElement {
 }
 
 const host = typeof document === "undefined" ? null : document.getElementById("cc-theme-dev-root");
-if (host !== null) createRoot(host).render(<ThemeDevRuntime />);
+if (host !== null) {
+  installStyles();
+  createRoot(host).render(<ThemeDevRuntime />);
+}

@@ -22,6 +22,8 @@ for (const width of [1280, 390]) {
         await page.goto(host.url);
         const preview = page.locator("[data-theme-preview-canvas]");
         await expect(preview).toBeVisible();
+        await expect(preview).toHaveCSS("overflow", "hidden");
+        await expect(preview).toHaveCSS("border-top-style", "solid");
         await page.locator(`.cc-theme-lab-controls [data-segment="${scheme}"]`).click();
         await expect(preview).toHaveAttribute("data-cc-theme", scheme);
         const textarea = preview.locator("textarea");

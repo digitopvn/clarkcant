@@ -4,6 +4,9 @@ export const THEME_LAB_CSS = `
 .cc-theme-lab-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-md); margin-bottom: var(--cc-space-lg); }
 .cc-theme-lab-canvas { position: relative; transform: translateZ(0); color-scheme: dark; box-sizing: border-box; padding: var(--cc-space-md); color: var(--cc-text); background: var(--cc-canvas); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card); overflow: hidden; margin-inline: auto; }
 .cc-theme-lab-canvas[data-cc-theme="light"] { color-scheme: light; }
+.cc-theme-lab-canvas { isolation: isolate; font-family: var(--cc-font-body, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); }
+.cc-theme-lab-canvas h3 { font-family: var(--cc-font-display, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); font-weight: var(--cc-weight-heading, 600); }
+.cc-theme-lab-canvas .cc-dot-grid::after { background-image: inherit; }
 .cc-theme-lab-canvas > * + * { margin-top: var(--cc-space-md); }
 .cc-theme-lab-canvas .cc-composer-wrap { position: relative; width: 100%; margin-inline: auto; padding-inline: 0; }
 .cc-theme-lab-canvas .cc-settings-row { min-width: 0; }
