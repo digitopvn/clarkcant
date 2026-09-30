@@ -106,7 +106,7 @@ describe("inputs, forms, search and lists", () => {
 
   it("keeps a search query, a list selection and a calendar's view on the page inside a composed surface", () => {
     const surface = readFileSync(join(SOURCE, "mini-app-surface.tsx"), "utf8");
-    expect(surface).toContain('const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change", "calendar.view"]);');
+    expect(surface).toContain('const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change", "calendar.view", "timeline.select"]);');
     expect(surface).toContain("if (VIEW_EVENTS.has(action)) return;");
   });
 });

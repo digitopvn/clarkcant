@@ -1007,6 +1007,92 @@ với một lịch ở Thành phố Hồ Chí Minh. Nó bao gồm từng kiểu 
 hôm nay và "bây giờ" theo múi giờ của lịch, sự kiện cả ngày và sự kiện qua đêm, một thời điểm không có độ lệch được
 một trình duyệt ở Los Angeles đọc theo múi giờ của lịch, việc từ chối một sự kiện node không còn giữ, một tháng không tồn tại, giảm chuyển động, 390 px có cảm ứng ở theme sáng, và thư viện.
 
+### 8.8 Dòng thời gian hoạt động
+
+`canvas.timeline@1` cho biết điều gì đã xảy ra và khi nào: các mục có ngày giờ do model nêu, được sắp theo thời gian và
+nhóm theo ngày. Mọi thứ nó hiện đều nằm trong props. Nó không đọc nguồn dữ liệu trực tiếp nào và không bao giờ nói mình
+đang cập nhật trực tiếp; mục mới hơn đến dưới dạng props mới. Mục được chọn là trạng thái widget của dòng thời gian. Một
+bộ hàm duy nhất, trong [activity-timeline.ts](../packages/contracts/src/activity-timeline.ts), kiểm tra props, đặt mỗi
+mục vào đúng ngày, kiểm tra một lựa chọn và viết phần chữ. Node và trang cùng dùng bộ hàm này.
+
+| Prop | Là gì |
+| --- | --- |
+| `entries` | Bắt buộc, tối đa 200 mục. Mỗi mục là `{ id, at, title, description?, actor?, tone? }`. |
+| `title` | Tuỳ chọn, tối đa 200 ký tự. |
+| `order` | Tuỳ chọn: `newest` (mặc định) hoặc `oldest`, tức mới nhất hay cũ nhất trước. |
+| `pageSize` | Tuỳ chọn: số mục trên một trang, từ 5 đến 50; 10 khi bỏ trống. |
+| `timezone` | Tuỳ chọn: múi giờ IANA dùng để xác định ngày. |
+| `truncated` | Tuỳ chọn: `true` khi model đã lược bớt mục, và dòng thời gian nói điều đó. |
+
+`id` của một mục dài tối đa 120 ký tự và không trùng trên dòng thời gian. `title` là một dòng tối đa 200 ký tự, `actor`
+một dòng tối đa 80 ký tự, còn `description` tối đa 1.000 ký tự và có thể xuống dòng. `tone` là một trong `neutral` (mặc
+định), `info`, `success`, `warning` và `danger`. `at` là một trong hai dạng:
+
+- **Một thời điểm kèm độ lệch**: `2026-09-30T21:05:00+07:00` hoặc `2026-09-30T14:05:00Z`. Thời điểm không có độ lệch
+  bị từ chối, vì ở mỗi múi giờ nó lại chỉ một khoảnh khắc khác.
+- **Một ngày** (`2026-09-30`) cho mục cả ngày. Mục đó nằm trên đúng ngày ấy dù được đọc ở đâu, không bao giờ bị hiểu
+  thành nửa đêm ở một múi giờ nào đó.
+
+Chữ là chữ thuần: không HTML, không liên kết, không callback, và không có khoá nào ngoài các khoá trên. Model đặt dòng
+thời gian bằng `show_view`. Trước khi có instance, node từ chối, kèm lý do: thời điểm bị thiếu, không có độ lệch hoặc
+không có thật (`2026-02-30`, giờ lớn hơn 23), một id dùng hai lần, một tone không có, quá nhiều mục, chữ quá dài, ký tự
+ẩn hoặc ký tự điều khiển hai chiều (được gọi theo mã, ví dụ `U+202E`), và múi giờ node không biết. Dòng thời gian bị
+từ chối không để lại gì.
+
+Những gì node bảo đảm:
+
+- **Node và trang đọc ra cùng những ngày.** Khi props không nêu múi giờ, node ghi một múi giờ vào props lúc đặt dòng
+  thời gian: múi giờ hiển thị của node, hoặc `UTC` khi không gọi được tên một múi giờ đã biết. Một mục nằm trên ngày của
+  nó theo múi giờ đó, ví dụ 17:40 UTC ngày 29 nằm trên ngày 30 ở `Asia/Saigon`. Giờ mùa hè được tính đúng, kể cả giờ bị
+  lặp lại và giờ bị bỏ qua. Trong một ngày, mục cả ngày đứng đầu, sau đó là các mục có giờ theo thứ tự của dòng thời
+  gian.
+- **Điều người dùng chọn là trạng thái mà node giữ lại.** Các mục ghi qua một binding `timeline.select` duy nhất của
+  dòng thời gian: `{ selectedId }`, trong đó `selectedId` rỗng là bỏ chọn. Đây là một thao tác khung nhìn: nó chỉ đọc và
+  không thay đổi gì khác. Node kiểm tra từng lựa chọn theo các mục node đang giữ. Một id không thuộc các mục đó, một khoá
+  khác `selectedId`, hoặc một hình dạng khác bị từ chối kèm lý do, ví dụ `"gone" is not an entry on this timeline now`,
+  và trạng thái được giữ nguyên.
+- **Văn bản thay thế là lời của chính dòng thời gian**: mỗi ngày một lần, rồi các mục của ngày đó kèm giờ, tone và người
+  thực hiện, ví dụ `2026-09-30: all day Release freeze [info]; 23:30 Deploy started [info] by Lan`. Văn bản được rút
+  gọn kèm dấu đánh dấu cho vừa snapshot.
+- **Voice và `inspect_ui` đọc dòng thời gian như nó đang là.** Tài liệu ngữ nghĩa (§9) cho biết số mục, thứ tự, múi giờ,
+  ngày đầu và ngày cuối, có mục nào bị lược bớt hay không, số mục theo từng tone, và mục được chọn cùng thời gian và tone
+  của nó. Mục đó cũng nằm trong `selectedIds`. Tài liệu nằm trong giới hạn ngữ nghĩa kể cả với dòng thời gian lớn nhất.
+- **Trong một surface được ghép**, dòng thời gian là một lá `timeline`, và `timeline.select` `{ selectedId }` có thể cấp
+  dữ liệu cho bố cục (§8.3). Khi không được nối, lựa chọn được giữ trên surface.
+
+Những gì trang làm:
+
+- Mỗi ngày là một tiêu đề với ngày đầy đủ theo ngôn ngữ của người dùng, và các mục của ngày là một danh sách. Một mục
+  hiện giờ của nó, hoặc "Cả ngày" kèm viền đôi, tone dưới dạng một ký hiệu và một chữ bên cạnh màu, tiêu đề và người
+  thực hiện. Mô tả dài mở ra ở dạng thu gọn, kèm nút để xem phần còn lại.
+- Các mục là nút có `aria-pressed`. Một mục trên trang nằm trong thứ tự tab. Phím mũi tên chuyển giữa các mục của trang,
+  Home và End tới mục đầu và mục cuối, Enter hoặc Space chọn hoặc bỏ chọn một mục, và Esc bỏ chọn. Tiêu điểm luôn được
+  vẽ ra. Một vùng live nói mục vừa được chọn hoặc lựa chọn vừa được bỏ.
+- Mục được chọn được mô tả bên dưới danh sách, kèm một nút bỏ chọn. Dòng thời gian dài hơn được chia trang, có nút trang
+  trước và trang sau, và mở ra ở trang có mục đang được chọn.
+- Danh sách văn bản của mọi mục chỉ cách một cú nhấp, và dòng thời gian nói khi có mục bị lược bớt.
+- Khi node từ chối một lựa chọn, dòng thời gian nói điều đó bằng ngôn ngữ của người dùng và vẽ lựa chọn node đang giữ.
+  Múi giờ trang không biết được đọc thành UTC, và dòng thời gian nói điều đó.
+- Chữ được vẽ thành chữ. Ký tự ẩn trong một dòng thời gian được lưu từ trước khi quy tắc chặt hơn được hiện thành dấu
+  đánh dấu, và dòng thời gian nói có bao nhiêu ký tự như vậy.
+- Dòng thời gian không tự thêm chuyển động nào. Khi dòng thời gian hẹp hơn 480 px, tiêu đề và người thực hiện của một
+  mục xuống dòng dưới giờ của mục, nên nó dùng được ở 390 px. Dòng thời gian theo theme sáng và tối. Trong Widget
+  Library, các fixture dùng được mà không cần node, và việc chọn mục cũng hoạt động ở đó.
+
+Không thuộc dòng thời gian: thời lượng, kiểu xem Gantt và nguồn dữ liệu trực tiếp.
+
+Kiểm thử: [activity-timeline.spec.ts](../packages/contracts/test/activity-timeline.spec.ts) cho các quy tắc, ngày qua
+các múi giờ và giờ mùa hè, phần chữ và tài liệu ngữ nghĩa;
+[activity-timeline.spec.ts](../apps/runtime/test/activity-timeline.spec.ts) cho việc đặt, các lần từ chối, múi giờ node
+ghi vào, lựa chọn và lá bố cục;
+[activity-timeline.spec.ts](../packages/conversation-client/test/activity-timeline.spec.ts) cho bàn phím, chia trang và
+thu gọn; [timeline-schemas.spec.ts](../packages/widget-catalog/test/timeline-schemas.spec.ts), kiểm tra rằng JSON Schema
+và các quy tắc chấp nhận và từ chối cùng những props, và rằng mọi fixture trong thư viện đều là thứ node sẽ đặt; và
+journey trình duyệt [activity-timeline.spec.ts](../apps/web/e2e/activity-timeline.spec.ts). Journey chạy trong một
+trình duyệt ở New York với một dòng thời gian ở Sài Gòn. Nó bao gồm các ngày, bàn phím, lựa chọn được giữ sau khi tải
+lại và được bỏ bằng Esc, một lựa chọn node từ chối, một id lặp và một ký tự ẩn bị từ chối khi đặt, chia trang, giảm
+chuyển động, thư viện, và 390 px có cảm ứng ở theme sáng và tối.
+
 ---
 
 ## 9. Semantic contract cho voice và lượt kế tiếp

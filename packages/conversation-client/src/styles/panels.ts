@@ -367,6 +367,70 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   .cc-calendar-agenda-day { grid-template-columns: minmax(0, 1fr); }
 }
 
+/*
+ * The activity timeline. Each day heads its entries; each entry is one button with its time, a tone said by a symbol and
+ * a word, its title and who did it, so a tone is never told by colour alone. The rail on the left is decoration. The
+ * timeline measures its own width, so a narrow column stacks the time above the title instead of squeezing both.
+ */
+.cc-timeline-root { container-type: inline-size; display: flex; flex-direction: column; gap: var(--cc-space-sm); min-width: 0; }
+.cc-timeline-summary { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.cc-timeline-days { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-md); }
+.cc-timeline-day { display: flex; flex-direction: column; gap: var(--cc-space-xs); min-width: 0; }
+.cc-timeline-day-head { margin: 0; font-size: var(--cc-text-label); font-weight: 600; color: var(--cc-text); }
+.cc-timeline-entries {
+  list-style: none; margin: 0; padding: 0 0 0 var(--cc-space-sm); display: flex; flex-direction: column; gap: var(--cc-space-xs);
+  border-left: 2px solid var(--cc-border);
+}
+.cc-timeline-entry { display: flex; flex-direction: column; gap: var(--cc-space-xxs); min-width: 0; }
+.cc-timeline-entry-button {
+  width: 100%; min-width: 0; min-height: 40px; display: grid; grid-template-columns: auto 4.5em auto minmax(0, 1fr); align-items: center;
+  gap: var(--cc-space-xxs) var(--cc-space-sm); padding: var(--cc-space-xs) var(--cc-space-sm);
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge); background: var(--cc-card); color: var(--cc-text);
+  font: inherit; font-size: var(--cc-text-body-sm); text-align: left; cursor: pointer; transition: background-color var(--cc-motion-micro);
+}
+.cc-timeline-entry-button:hover { background: var(--cc-elevated); }
+.cc-timeline-entry-button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-timeline-entry-button[aria-pressed="true"] {
+  border-color: var(--cc-accent); box-shadow: inset 0 0 0 1px var(--cc-accent);
+  background: color-mix(in oklab, var(--cc-accent) 14%, var(--cc-card));
+}
+/* An all-day entry says "All day" in words and draws its edge doubled, so it is told apart from a timed one without colour. */
+.cc-timeline-entry-button[data-all-day="true"] { border-left: 4px double var(--cc-accent); }
+.cc-timeline-mark {
+  flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--cc-radius-pill);
+  font-size: var(--cc-text-label); font-weight: 700; color: var(--cc-text-muted); border: 1px solid var(--cc-border); background: var(--cc-elevated);
+}
+.cc-timeline-mark[data-tone="info"] { color: var(--cc-accent); border-color: color-mix(in oklab, var(--cc-accent) 45%, transparent); }
+.cc-timeline-mark[data-tone="success"] { color: var(--cc-success); border-color: color-mix(in oklab, var(--cc-success) 45%, transparent); }
+.cc-timeline-mark[data-tone="warning"] { color: var(--cc-warning); border-color: color-mix(in oklab, var(--cc-warning) 45%, transparent); }
+.cc-timeline-mark[data-tone="danger"] { color: var(--cc-danger); border-color: color-mix(in oklab, var(--cc-danger) 45%, transparent); }
+.cc-timeline-time { color: var(--cc-text-muted); font-size: var(--cc-text-label); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cc-timeline-tone { justify-self: start; }
+.cc-timeline-entry-title { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.cc-timeline-actor { grid-column: 2 / -1; min-width: 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-timeline-description { display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-xxs); padding-left: var(--cc-space-sm); }
+.cc-timeline-description p {
+  margin: 0; font-size: var(--cc-text-body-sm); color: var(--cc-text-muted); white-space: pre-line; overflow-wrap: anywhere; max-width: 100%;
+}
+.cc-timeline-fold, .cc-timeline-clear, .cc-timeline-pager button {
+  min-height: 32px; padding: 0 var(--cc-space-sm); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  background: transparent; color: var(--cc-text); font: inherit; font-size: var(--cc-text-label); cursor: pointer;
+}
+.cc-timeline-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); }
+.cc-timeline-pager button:disabled { opacity: 0.5; cursor: not-allowed; }
+.cc-timeline-pager span { font-variant-numeric: tabular-nums; }
+.cc-timeline-detail {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-xxs);
+  padding: var(--cc-space-sm); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  background: var(--cc-elevated); font-size: var(--cc-text-label); overflow-wrap: anywhere; max-width: 100%;
+}
+.cc-timeline-text summary { cursor: pointer; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-timeline-text ul { margin: var(--cc-space-xs) 0 0; padding-left: var(--cc-space-lg); font-size: var(--cc-text-label); }
+.cc-timeline-text li { overflow-wrap: anywhere; }
+@container (max-width: 480px) {
+  .cc-timeline-entry-button { display: flex; flex-wrap: wrap; }
+  .cc-timeline-entry-title, .cc-timeline-actor { flex: 1 1 100%; }
+}
 .cc-image { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-xs); }
 .cc-image img { max-width: 100%; height: auto; border-radius: var(--cc-radius-badge); border: var(--cc-line, 1px solid) var(--cc-border); background: var(--cc-elevated); }
 

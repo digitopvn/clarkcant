@@ -28,6 +28,7 @@ import {
   upsertDataset,
   upsertEffect,
 } from "@clarkcant/storage";
+import { fixturesFor } from "@clarkcant/widget-catalog";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -1149,6 +1150,40 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           conversationId: input.conversationId,
         });
         return { text: `Fixture: đặt lịch mẫu${which === "" ? "" : ` ${which}`} trên dữ liệu mẫu (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
+
+    /*
+     * The activity timeline from the Library's own fixture, placed through the same view `show_view` uses. "cũ trước"
+     * lists the oldest first, five to a page. "trùng" repeats an entry id and "ký tự ẩn" hides a direction override in
+     * a title, so the refusal a model would read is the host's own sentence.
+     */
+    const timeline = /^(?:đặt|place)\s+dòng thời gian(?:\s+(cũ trước|trùng|ký tự ẩn))?$/iu.exec(input.text.trim());
+    if (timeline !== null) {
+      const which = (timeline[1] ?? "").toLowerCase();
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.timeline@1");
+      const fixture = fixturesFor("canvas.timeline@1").find((entry) => entry.id === (which === "cũ trước" ? "timeline.oldest" : "timeline.normal"));
+      if (view === undefined || fixture === undefined) return undefined;
+      const entries = fixture.props.entries as Record<string, unknown>[];
+      const props: Record<string, unknown> =
+        which === "trùng"
+          ? { ...fixture.props, entries: [...entries, { ...entries[0], title: "Bản sao" }] }
+          : which === "ký tự ẩn"
+            ? { ...fixture.props, entries: [{ ...entries[0], title: "Đóng băng‮mã nguồn" }, ...entries.slice(1)] }
+            : fixture.props;
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt dòng thời gian${which === "" ? "" : ` ${which}`} (không phải model thật).`, block };
       } catch (cause) {
         const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
         return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };

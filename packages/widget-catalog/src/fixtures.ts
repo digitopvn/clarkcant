@@ -70,6 +70,31 @@ function calendarDataset(): FixtureDataset {
   };
 }
 
+/**
+ * A release's activity, as a model would state it: instants with their own offsets, one all-day entry, every tone, an
+ * actor on some, and one description long enough to collapse. In Asia/Saigon the alert at 17:40 UTC on the 29th is
+ * shortly after midnight on the 30th.
+ */
+const TIMELINE_ENTRIES: Record<string, unknown>[] = [
+  { id: "freeze", at: "2026-09-30", title: "Đóng băng mã nguồn", tone: "info", actor: "Nhóm phát hành" },
+  {
+    id: "deploy-started",
+    at: "2026-09-30T21:05:00+07:00",
+    title: "Bắt đầu triển khai production",
+    tone: "info",
+    actor: "Pipeline",
+    description:
+      "Triển khai theo từng đợt: 10% máy chủ trước, theo dõi tỉ lệ lỗi trong 15 phút rồi mới mở rộng.\n" +
+      "Nếu tỉ lệ lỗi vượt 1%, pipeline tự dừng và giữ phiên bản cũ. Không cần thao tác tay trong lúc chờ; " +
+      "kết quả từng đợt được ghi vào kênh phát hành.",
+  },
+  { id: "tests-passed", at: "2026-09-30T08:42:00Z", title: "Toàn bộ kiểm thử đã qua", tone: "success", actor: "CI" },
+  { id: "disk-alert", at: "2026-09-29T17:40:00Z", title: "Cảnh báo dung lượng đĩa", tone: "warning", description: "Ổ /var đạt 91%. Đã xếp lịch dọn log." },
+  { id: "migration-failed", at: "2026-09-29T10:20:00+07:00", title: "Chạy thử migration thất bại", tone: "danger", actor: "Lan" },
+  { id: "rc-tagged", at: "2026-09-28T16:00:00+07:00", title: "Gắn thẻ bản RC1", actor: "Minh" },
+  { id: "kickoff", at: "2026-09-28T02:00:00Z", title: "Họp khởi động phát hành" },
+];
+
 const METRIC_ROWS: Record<string, unknown>[] = [
   { label: "Số lần chạy", value: 158, unit: "lần" },
   { label: "Lần thất bại", value: 5, unit: "lần" },
@@ -340,6 +365,37 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       label: "Tháng trống",
       props: { datasetRef: "fixture_calendar_empty", month: "2026-10", timezone: "Europe/Berlin" },
       dataset: { datasetId: "fixture_calendar_empty", source: "sample", columns: ["date", "title"], rows: [] },
+      mode: "read-only",
+    },
+  ],
+  "canvas.timeline@1": [
+    {
+      id: "timeline.normal",
+      label: "Hoạt động phát hành, mới nhất trước",
+      props: {
+        title: "Phát hành 2.4",
+        timezone: "Asia/Saigon",
+        entries: TIMELINE_ENTRIES,
+      },
+      state: { selectedId: "deploy-started" },
+      mode: "interactive",
+    },
+    {
+      id: "timeline.oldest",
+      label: "Cũ nhất trước, chia trang",
+      props: { title: "Phát hành 2.4", timezone: "Asia/Saigon", order: "oldest", pageSize: 5, entries: TIMELINE_ENTRIES },
+      mode: "interactive",
+    },
+    {
+      id: "timeline.truncated",
+      label: "Đã lược bớt mục",
+      props: { title: "Nhật ký gần đây", timezone: "Europe/Berlin", truncated: true, entries: TIMELINE_ENTRIES.slice(0, 3) },
+      mode: "read-only",
+    },
+    {
+      id: "timeline.empty",
+      label: "Chưa có hoạt động",
+      props: { title: "Nhật ký gần đây", timezone: "Asia/Saigon", entries: [] },
       mode: "read-only",
     },
   ],

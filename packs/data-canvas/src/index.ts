@@ -32,6 +32,20 @@ import {
   CALENDAR_VIEWS,
   CALENDAR_VIEW_OPERATION,
   MAX_EVENT_KEY,
+  MAX_TIMELINE_ACTOR,
+  MAX_TIMELINE_DESCRIPTION,
+  MAX_TIMELINE_ENTRIES,
+  MAX_TIMELINE_ID,
+  MAX_TIMELINE_TIMEZONE,
+  MAX_TIMELINE_TITLE,
+  MULTI_LINE_PATTERN,
+  TIMELINE_AT_PATTERN,
+  TIMELINE_ID,
+  TIMELINE_ORDERS,
+  TIMELINE_PAGE_SIZES,
+  TIMELINE_SELECT_OPERATION,
+  TIMELINE_TIMEZONE_PATTERN,
+  timelineProblems,
   MAX_CHART_POINTS,
   MAX_CHART_SERIES,
   MAX_FIELD_NAME,
@@ -1170,6 +1184,80 @@ export const SCATTER_CHART: WidgetDefinition = {
 };
 
 /**
+ * An activity timeline: dated entries the model states, sorted by time and grouped by day in the timeline's timezone.
+ *
+ * Everything on it is what the model wrote; nothing reads a feed, so it never says it is live. The selected entry is
+ * widget state the node holds, written through the one view binding the timeline is placed with (`timeline.select`),
+ * and the same event can feed a composed surface's state.
+ */
+export const TIMELINE: WidgetDefinition = {
+  id: TIMELINE_ID,
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: oneLineProp(MAX_TIMELINE_TITLE),
+      entries: {
+        type: "array",
+        maxItems: MAX_TIMELINE_ENTRIES,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: MAX_TIMELINE_ID, pattern: ONE_LINE_REQUIRED_PATTERN, description: "Unique within the timeline" },
+            at: {
+              type: "string",
+              maxLength: 40,
+              pattern: TIMELINE_AT_PATTERN,
+              description: "An instant with its offset (2026-09-30T09:15:00+07:00) or a date for an all-day entry (2026-09-30)",
+            },
+            title: oneLineProp(MAX_TIMELINE_TITLE, 1),
+            description: { type: "string", maxLength: MAX_TIMELINE_DESCRIPTION, pattern: MULTI_LINE_PATTERN },
+            actor: oneLineProp(MAX_TIMELINE_ACTOR),
+            tone: { type: "string", enum: [...STATUS_TONES] },
+          },
+          required: ["id", "at", "title"],
+        },
+      },
+      order: { type: "string", enum: [...TIMELINE_ORDERS], description: "newest (the default) or oldest first" },
+      pageSize: { type: "integer", minimum: TIMELINE_PAGE_SIZES.min, maximum: TIMELINE_PAGE_SIZES.max },
+      timezone: {
+        type: "string",
+        minLength: 1,
+        maxLength: MAX_TIMELINE_TIMEZONE,
+        pattern: TIMELINE_TIMEZONE_PATTERN,
+        description: "The IANA timezone days are read in; the node's own when left out",
+      },
+      truncated: { type: "boolean", description: "Set when entries were left out" },
+    },
+    required: ["entries"],
+  },
+  eventSchemas: {
+    [TIMELINE_SELECT_OPERATION]: {
+      type: "object",
+      additionalProperties: false,
+      properties: { selectedId: { type: "string", maxLength: MAX_TIMELINE_ID } },
+      required: ["selectedId"],
+    },
+  },
+  stateSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: { selectedId: { type: "string", minLength: 1, maxLength: MAX_TIMELINE_ID } },
+  },
+  stateVersion: 1,
+  sizing: { compact: true, expanded: true, minHeight: 160 },
+  semanticDescription:
+    "Activity timeline the model states: dated entries with a tone and an actor, grouped by day, newest or oldest first, with one entry selected",
+  requestedCapabilities: [],
+  textFallback: "A timeline appears as text: each day, then its entries with their time, tone and actor.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/**
  * A personal note.
  *
  * Exported here, beside the other descriptors, but deliberately **not** in `WIDGETS`: that list is
@@ -1237,6 +1325,7 @@ export const WIDGETS = [
   CODE,
   DIFF,
   FILE,
+  TIMELINE,
 ];
 
 /**
@@ -1285,6 +1374,9 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   // fields, which these two refuse. No layout region reads this family, so each is placed on its own.
   "canvas.area@1": "chart",
   "canvas.scatter@1": "chart",
+  // A timeline reads nothing from the node; a layout places it in its own region, where its selection can feed the
+  // surface's state.
+  "canvas.timeline@1": "timeline",
 };
 
 /**
@@ -1318,6 +1410,7 @@ export function primitivePropsProblems(definitionId: string, props: Readonly<Rec
   // The props alone; the rows are checked where they are read, by the chart's own view.
   const chart = XY_CHART_KIND[definitionId];
   if (chart !== undefined) return xyChartProblems(chart, props);
+  if (definitionId === TIMELINE.id) return timelineProblems(props);
   return [];
 }
 export function familyOf(definitionId: string): string {

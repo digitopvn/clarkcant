@@ -1,7 +1,7 @@
 import type { MessageKey } from "./i18n/messages.ts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
 
-import { CALENDAR_ID, CALENDAR_VIEW_OPERATION, XY_CHART_KIND, XY_CHART_VIEW_OPERATION } from "@clarkcant/contracts";
+import { CALENDAR_ID, CALENDAR_VIEW_OPERATION, TIMELINE_ID, TIMELINE_SELECT_OPERATION, XY_CHART_KIND, XY_CHART_VIEW_OPERATION } from "@clarkcant/contracts";
 
 import {
   GatewayError,
@@ -84,6 +84,12 @@ const LIST_DEFINITION_ID = "canvas.list@1";
 const BOUND_DEFINITION_IDS = new Set(["canvas.cta@1", "canvas.action@1", FORM_DEFINITION_ID]);
 /** Widgets whose view the page keeps for the session: a table's sort and page, a form's draft, a list's selection. */
 const LOCAL_VIEW_DEFINITION_IDS = new Set([TABLE_DEFINITION_ID, FORM_DEFINITION_ID, LIST_DEFINITION_ID]);
+/** What a widget says when the node refused the view it asked to hold, by the view operation it asked through. */
+const VIEW_REFUSED: Record<string, MessageKey> = {
+  [XY_CHART_VIEW_OPERATION]: "widgets.xyChart.viewRefused",
+  [CALENDAR_VIEW_OPERATION]: "widgets.calendar.viewRefused",
+  [TIMELINE_SELECT_OPERATION]: "widgets.timeline.selectRefused",
+};
 /** The argument an agent-bound list item is sent under when the binding names none. */
 const DEFAULT_ITEM_KEY = "itemId";
 
@@ -388,9 +394,15 @@ export function useSurfaceRenderer({
       // A widget with no binding, or no conversation to run it in, is drawn view-only instead of as a live control.
       const actionReady = boundAction !== undefined && conversationId !== undefined;
       const keepsView = LOCAL_VIEW_DEFINITION_IDS.has(definitionId);
-      // The one view operation a chart or a calendar keeps its view on the node through.
+      // The one view operation a chart, a calendar or a timeline keeps its view on the node through.
       const viewOperation =
-        XY_CHART_KIND[definitionId] !== undefined ? XY_CHART_VIEW_OPERATION : definitionId === CALENDAR_ID ? CALENDAR_VIEW_OPERATION : undefined;
+        XY_CHART_KIND[definitionId] !== undefined
+          ? XY_CHART_VIEW_OPERATION
+          : definitionId === CALENDAR_ID
+            ? CALENDAR_VIEW_OPERATION
+            : definitionId === TIMELINE_ID
+              ? TIMELINE_SELECT_OPERATION
+              : undefined;
       const viewRefusal = viewRefusals[instance.instanceId];
       const widgetState: Record<string, unknown> | undefined =
         viewOperation !== undefined
@@ -462,12 +474,12 @@ export function useSurfaceRenderer({
                         if (exportStatus !== "pending") exportTable(conversationId, instance.instanceId, payload);
                         return;
                       }
-                      // A chart's or a calendar's view goes through its own binding, without a "done" line: the widget itself
+                      // A chart's, a calendar's or a timeline's view goes through its own binding, without a "done" line: the widget itself
                       // shows it.
                       if (viewOperation !== undefined && action === viewOperation) {
                         if (boundAction !== undefined && boundAction.available && conversationId !== undefined) {
                           const datasetRef = instance.props.datasetRef;
-                          sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, boundAction, instance.revision, payload, viewOperation === CALENDAR_VIEW_OPERATION ? "widgets.calendar.viewRefused" : "widgets.xyChart.viewRefused");
+                          sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, boundAction, instance.revision, payload, VIEW_REFUSED[viewOperation] ?? "widgets.xyChart.viewRefused");
                         }
                         return;
                       }

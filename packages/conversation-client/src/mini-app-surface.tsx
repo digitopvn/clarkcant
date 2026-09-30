@@ -127,12 +127,12 @@ const AVAILABILITY_TEXT_KEY: Record<RegionAvailability, MessageKey | undefined> 
 export const STATE_EVENT_OPERATION = "state.event";
 
 /**
- * Events that only describe the view: a search's settled query, a list's selection and a calendar's view. Unless the
- * surface's graph listens to them they stay on the page, like the table sort, because nothing on the node answers them;
- * forwarding one would reach the action route as if a person had pressed something. A calendar's selected day is still
+ * Events that only describe the view: a search's settled query, a list's selection, a calendar's view and a timeline's
+ * selected entry. Unless the surface's graph listens to them they stay on the page, like the table sort, because nothing
+ * on the node answers them; forwarding one would reach the action route as if a person had pressed something. A calendar's selected day is still
  * sent as `date.select`, which the surface itself answers.
  */
-const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change", "calendar.view"]);
+const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change", "calendar.view", "timeline.select"]);
 
 /**
  * The binding an intent goes to: a section's `state.event` binding for a graph event, and its other binding for

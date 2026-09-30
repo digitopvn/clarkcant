@@ -119,6 +119,12 @@ const META: Record<string, CatalogMeta> = {
     aliases: ["calendar", "lịch", "ngày"],
     status: "stable",
   },
+  "canvas.timeline@1": {
+    displayName: "Dòng thời gian hoạt động",
+    tags: ["timeline", "time", "activity"],
+    aliases: ["timeline", "activity", "history", "log", "dòng thời gian", "hoạt động", "lịch sử", "nhật ký"],
+    status: "stable",
+  },
   "canvas.image@1": {
     displayName: "Ảnh",
     tags: ["media", "image"],

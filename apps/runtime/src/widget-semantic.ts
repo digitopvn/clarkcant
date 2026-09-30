@@ -23,8 +23,11 @@ import {
   readXyChartView,
   xyChartData,
   xyChartSemantic,
+  readTimeline,
+  readTimelineSelection,
+  timelineSemantic,
 } from "@clarkcant/contracts";
-import { ARTIFACT_VIEWER_KIND, CALENDAR, STATUS_CARD_KIND } from "@clarkcant/data-canvas";
+import { ARTIFACT_VIEWER_KIND, CALENDAR, STATUS_CARD_KIND, TIMELINE } from "@clarkcant/data-canvas";
 import { type WidgetDeps, getActionBinding, getInstance, liveStateOf, semanticViewOf } from "@clarkcant/core";
 import {
   findCompositionByInstance,
@@ -168,6 +171,14 @@ export function buildWidgetSemantic(
       availableActions,
       freshness: dataset?.freshness ?? "unknown",
     });
+  }
+
+  // A timeline says how many entries it holds, the days they cover, how many have each tone and the entry selected, from
+  // its props and the state row. Its freshness is unknown: the entries are what the model stated when it placed it.
+  const timeline = definitionId === TIMELINE.id ? readTimeline(instance.props) : undefined;
+  if (timeline !== undefined) {
+    const selection = readTimelineSelection(liveStateOf(deps, instanceId, TIMELINE)?.body, timeline);
+    return normalizeSemanticDoc({ instanceId, definitionId, ...timelineSemantic(timeline, selection), availableActions, freshness: "unknown" });
   }
   return normalizeSemanticDoc({ instanceId, definitionId, summary: `${definitionId} (${instance.lifecycle})`, availableActions });
 }

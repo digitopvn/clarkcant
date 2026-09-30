@@ -60,6 +60,7 @@ export const compositionSlotSchema = z.enum([
   "table",
   "list",
   "calendar",
+  "timeline",
   "image",
   "note",
   "cta",

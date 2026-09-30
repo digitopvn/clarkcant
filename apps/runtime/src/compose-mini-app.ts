@@ -262,6 +262,11 @@ export function leafProps(
     base.month = input.initialState.selectedDate?.slice(0, 7) ?? localMonth(input.initialState.timezone);
     base.timezone = input.initialState.timezone;
   }
+  // A timeline groups its entries into days in the timezone it names; one that names none is grouped in the node's, and
+  // written down so the page and the node read the same days.
+  if (slot === "timeline" && base.timezone === undefined) {
+    base.timezone = input.initialState.timezone;
+  }
   if (slot === "image") {
     base.imageRef = input.imageRef?.imageId;
     base.alt = input.imageRef?.altText;
