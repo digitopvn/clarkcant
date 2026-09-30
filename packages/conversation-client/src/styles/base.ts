@@ -344,6 +344,12 @@ body {
   position: absolute; inline-size: 1px; block-size: 1px; padding: 0; margin: -1px; overflow: hidden;
   clip-path: inset(50%); white-space: nowrap; border: 0;
 }
+/* "Copy details" shows its outcome in place of its label; all its labels share one cell, so its width never changes. */
+.cc-inbox-copy-label { display: inline-grid; justify-items: center; }
+.cc-inbox-copy-label > *, .cc-inbox-copy-sizer::before, .cc-inbox-copy-sizer::after { grid-area: 1 / 1; }
+.cc-inbox-copy-sizer { display: grid; visibility: hidden; }
+.cc-inbox-copy-sizer::before { content: attr(data-one); }
+.cc-inbox-copy-sizer::after { content: attr(data-two); }
 /* "More" opens in place under the row's buttons rather than as a floating menu: nothing to position, nothing to clip. */
 .cc-inbox-more { display: inline-flex; align-items: center; gap: var(--cc-space-xs); }
 .cc-inbox-more-caret { display: inline-block; transition: transform var(--cc-motion-micro) var(--cc-motion-easing); }

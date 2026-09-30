@@ -534,7 +534,10 @@ Shipped:
     from the notification's own fields and nothing else: no token, no path the notification does not show, no internal
     code. Every hidden or bidi character is written as a visible marker (`⟨U+202E⟩`), and a line break inside the title
     or an id is marked too, so a copied notification cannot pass for other lines. The result is said in the inbox's
-    status line, which a screen reader hears without focus moving; focus stays on the button and "More" stays open. A
+    status line, which a screen reader hears without focus moving; focus stays on the button and "More" stays open.
+    Because that line may be scrolled out of view, the button's own label also says "Copied" or "Couldn't copy" for
+    about two seconds, then reads "Copy details" again. It keeps its width and its accessible name meanwhile, so the row
+    does not reflow and the result is heard only once, and nothing animates. A
     clipboard the browser refuses, or a page without one, is said in words ("Could not copy: …") and the inbox stays
     open for selecting the text by hand.
   - **What can be done about the thing itself leads** when that thing can still take it. The node works this out on

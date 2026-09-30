@@ -113,6 +113,9 @@ type Load = { state: "loading" } | { state: "failed"; reason: string } | { state
 type Undo = { kind: "restore" | "unsnooze" | "unsuppress" | "unskip"; noticeId: string };
 type Status = { tone: "done" | "failed"; text: string; undo?: Undo };
 
+/** How long "Copy details" shows what its press did before it reads "Copy details" again. */
+const COPY_OUTCOME_MS = 2000;
+
 /** Where focus goes once the render that follows an action has landed, when a disabled button can take it again. */
 type FocusTarget = { kind: "notice"; noticeId: string } | { kind: "heading" } | { kind: "status" };
 
@@ -167,6 +170,10 @@ export function InboxPanel({
   const inFlight = useRef<string | undefined>(undefined);
   // Counts "Copy details" presses, so only the latest one's result is said.
   const copyAttempt = useRef(0);
+  // What the last copy did, shown for a moment on the pressed button itself: the status line may be scrolled out of view.
+  const [copyOutcome, setCopyOutcome] = useState<{ noticeId: string; tone: "done" | "failed" } | undefined>(undefined);
+  const copyOutcomeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(copyOutcomeTimer.current), []);
   // Held in a ref because the conversation hands a fresh closure on every render, and the read-on-open effect below
   // must run once per opening rather than once per render of the surface behind it.
   const changed = useRef(onChanged);
@@ -708,9 +715,16 @@ export function InboxPanel({
     const text = noticeDetailsText(notice, t);
     const attempt = ++copyAttempt.current;
     setStatus(undefined);
+    clearTimeout(copyOutcomeTimer.current);
+    setCopyOutcome(undefined);
     // Only the latest press speaks: an earlier write that settles late does not overwrite what the last one said.
     const say = (next: Status) => {
-      if (attempt === copyAttempt.current) setStatus(next);
+      if (attempt !== copyAttempt.current) return;
+      setStatus(next);
+      // The button says it too, for about two seconds, without being a second live region: its accessible name is its
+      // aria-label, which does not change, so a screen reader hears the result once, from the status line.
+      setCopyOutcome({ noticeId: notice.noticeId, tone: next.tone });
+      copyOutcomeTimer.current = setTimeout(() => setCopyOutcome(undefined), COPY_OUTCOME_MS);
     };
     // A page with no clipboard at all (an insecure page has none) throws here, as does a write that throws rather than
     // rejecting: both become the same refusal, settled after the press's own render so the emptied line is drawn first.
@@ -807,7 +821,11 @@ export function InboxPanel({
             {t("inbox.action.addToContext")}
           </button>
         );
-      case "copy-details":
+      case "copy-details": {
+        const outcome = copyOutcome?.noticeId === notice.noticeId ? copyOutcome.tone : undefined;
+        const idle = t("inbox.action.copyDetails");
+        const copied = t("inbox.action.copyDetailsDone");
+        const failed = t("inbox.action.copyDetailsFailed");
         return (
           <button
             key="copy-details"
@@ -815,12 +833,20 @@ export function InboxPanel({
             className="cc-action"
             {...emphasis}
             data-inbox-copy-details={notice.noticeId}
+            data-copy-outcome={outcome ?? "idle"}
             aria-label={t("inbox.action.copyDetailsAria").replace("{title}", notice.title)}
             onClick={() => copyDetails(notice)}
           >
-            {t("inbox.action.copyDetails")}
+            {/* Every label the button can show is laid in the same cell, the unseen ones drawn invisibly by CSS, so the
+                button is as wide as its longest label in this language and never changes width. */}
+            <span className="cc-inbox-copy-label">
+              <span>{outcome === "done" ? copied : outcome === "failed" ? failed : idle}</span>
+              <span className="cc-inbox-copy-sizer" aria-hidden="true" data-one={idle} data-two={copied} />
+              <span className="cc-inbox-copy-sizer" aria-hidden="true" data-one={failed} data-two="" />
+            </span>
           </button>
         );
+      }
       case "mark-read":
       case "mark-unread": {
         const read = action.id === "mark-read";

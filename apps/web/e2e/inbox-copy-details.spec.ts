@@ -96,6 +96,26 @@ async function recordLiveRegion(dialog: Locator): Promise<void> {
   });
 }
 
+const COPY_LABEL = "Sao chép chi tiết";
+
+/**
+ * The pressed button says what its press did, for sighted people whose status line is scrolled away, then reads "Copy
+ * details" again. It keeps its width, its focus and its accessible name meanwhile, so nothing reflows and a screen reader
+ * hears the result only once, from the status line.
+ */
+async function expectOutcomeOnButton(page: Page, copy: Locator, outcome: string, width: number): Promise<void> {
+  await expect(copy).toHaveText(outcome);
+  await expect(copy).toHaveAccessibleName(/^Sao chép chi tiết thông báo: /);
+  await expect(copy).not.toHaveAttribute("aria-live");
+  expect(Math.abs(((await copy.boundingBox())?.width ?? 0) - width)).toBeLessThanOrEqual(0.5);
+  await expect(copy).toBeFocused();
+  // It lasts long enough to be read, and then goes back.
+  await page.waitForTimeout(1_000);
+  await expect(copy).toHaveText(outcome);
+  await expect(copy).toHaveText(COPY_LABEL, { timeout: 5_000 });
+  await expect(copy).toBeFocused();
+}
+
 const liveRegionSeen = (page: Page): Promise<string[]> =>
   page.evaluate(() => (window as unknown as { liveRegionSeen: string[] }).liveRegionSeen);
 
@@ -120,12 +140,16 @@ test("Copy details puts the notice's own fields on the clipboard, hidden charact
   });
   expect(Math.abs(startsAt)).toBeLessThanOrEqual(1);
   await recordLiveRegion(dialog);
+  const width = (await copy.boundingBox())?.width ?? 0;
 
   await page.keyboard.press("Enter");
   await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText(COPIED);
   // Nothing on the node changed, so nothing moved: focus is still on the button, "More" is still open.
   await expect(copy).toBeFocused();
   await expect(menu).toBeVisible();
+  await expectOutcomeOnButton(page, copy, "Đã sao chép", width);
+  // The status line said it once while the button showed it: the button is not a second announcement.
+  expect((await liveRegionSeen(page)).filter((text) => text === COPIED)).toHaveLength(1);
 
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   // The system clipboard may store line breaks its own way (Windows writes CRLF), so lines are split on either.
@@ -153,6 +177,7 @@ test("a clipboard the browser refuses is said in words, the inbox stays open, an
   const notice = await backgroundNotice(page, "kiểm tra sao chép bị từ chối");
   const { dialog, menu, copy } = await reachCopyByKeyboard(page, notice.noticeId);
   const failed = dialog.locator('[data-inbox-status="failed"]');
+  const width = (await copy.boundingBox())?.width ?? 0;
 
   // Refused as a browser refuses without permission or focus.
   await page.evaluate(() => {
@@ -166,6 +191,8 @@ test("a clipboard the browser refuses is said in words, the inbox stays open, an
   await expect(dialog).toBeVisible();
   await expect(menu).toBeVisible();
   await expect(copy).toBeFocused();
+  // "Không sao chép được" is the longest label, and still the button keeps the width it had.
+  await expectOutcomeOnButton(page, copy, "Không sao chép được", width);
 
   // A write that throws instead of rejecting says the same, rather than leaving the line empty.
   await page.evaluate(() => {

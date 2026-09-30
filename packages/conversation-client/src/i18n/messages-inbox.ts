@@ -88,6 +88,8 @@ export const MESSAGES_INBOX_VI = {
   "inbox.context.full": "Tin nhắn đang soạn đã có đủ tham chiếu. Bỏ bớt một cái trong ô soạn rồi thử lại.",
   "inbox.action.copyDetails": "Sao chép chi tiết",
   "inbox.action.copyDetailsAria": "Sao chép chi tiết thông báo: {title}",
+  "inbox.action.copyDetailsDone": "Đã sao chép",
+  "inbox.action.copyDetailsFailed": "Không sao chép được",
   "inbox.copied": "Đã sao chép chi tiết thông báo.",
   "inbox.copyFailed":
     "Không sao chép được: trình duyệt không cho ghi vào bộ nhớ tạm. Hộp thư vẫn mở; bạn có thể bôi đen chữ của thông báo rồi tự sao chép.",
@@ -313,6 +315,8 @@ export const MESSAGES_INBOX_EN = {
   "inbox.context.full": "The message being written already carries as many references as it can. Remove one from the composer and try again.",
   "inbox.action.copyDetails": "Copy details",
   "inbox.action.copyDetailsAria": "Copy the notice's details: {title}",
+  "inbox.action.copyDetailsDone": "Copied",
+  "inbox.action.copyDetailsFailed": "Couldn't copy",
   "inbox.copied": "Copied the notice's details.",
   "inbox.copyFailed":
     "Could not copy: the browser did not allow writing to the clipboard. The inbox stays open; you can select the notice's text and copy it yourself.",

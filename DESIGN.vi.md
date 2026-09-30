@@ -527,7 +527,9 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
     tự ẩn hoặc ký tự bidi được viết thành một dấu nhìn thấy được (`⟨U+202E⟩`), và dấu xuống dòng nằm trong tiêu đề hay
     trong id cũng được đánh dấu, nên một thông báo được sao chép không thể giả làm các dòng khác. Kết quả được nói trong
     dòng trạng thái của hộp thư, trình đọc màn hình nghe được mà focus không di chuyển; focus ở lại trên nút và "Khác"
-    vẫn mở. Khi trình duyệt không cho ghi vào bộ nhớ tạm, hoặc trang không có bộ nhớ tạm, điều đó được nói bằng chữ
+    vẫn mở. Vì dòng đó có thể đã bị cuộn khuất, chính nhãn của nút cũng hiện "Đã sao chép" hoặc "Không sao chép được"
+    trong khoảng hai giây rồi trở lại "Sao chép chi tiết". Trong lúc đó nút giữ nguyên độ rộng và tên cho trình đọc màn
+    hình, nên hàng nút không bị xô lệch và kết quả chỉ được đọc một lần; không có hiệu ứng chuyển động nào. Khi trình duyệt không cho ghi vào bộ nhớ tạm, hoặc trang không có bộ nhớ tạm, điều đó được nói bằng chữ
     ("Không sao chép được: …") và hộp thư vẫn mở để người dùng tự bôi đen chữ.
   - **Việc làm được với chính thứ mà thông báo nói tới đứng đầu**, khi thứ đó vẫn còn làm được. Node tính việc này ở
     mỗi lần đọc, như những thao tác khác.
