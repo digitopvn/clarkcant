@@ -439,7 +439,23 @@ test("the week view is usable at phone width without scrolling sideways, in the 
     const widths = await calendar.locator("li.cc-calendar-week-day").evaluateAll((items) => items.map((item) => item.getBoundingClientRect().width));
     expect(widths).toHaveLength(7);
     for (const width of widths) expect(width).toBeGreaterThan(250);
-    await calendar.locator(`li[data-date='2026-10-07'] ${event(OFFSITE)}`).tap();
+    /*
+     * Tapped from the middle of the screen, and only once the point it lands on is the event itself: scrolled only "if
+     * needed", the event can sit at the top edge, where whatever else the shared node has put at the top of the page can
+     * take the touch instead.
+     */
+    const offsite = calendar.locator(`li[data-date='2026-10-07'] ${event(OFFSITE)}`);
+    await offsite.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
+    await expect
+      .poll(() =>
+        offsite.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return hit !== null && element.contains(hit);
+        }),
+      )
+      .toBe(true);
+    await offsite.tap();
     await expect(calendar.locator(selectedEvent(OFFSITE))).toContainText("Cả ngày, 2026-10-07 đến 2026-10-09");
     await expect(calendar.locator(selectedEvent(OFFSITE))).toContainText("Kéo dài 3 ngày");
     expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
