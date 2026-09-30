@@ -4,6 +4,7 @@ import type { ArtifactRef, AttachmentRef } from "@clarkcant/contracts";
 import type { FrameArtifactBroker, FrameArtifactOutcome } from "@clarkcant/widget-host/session";
 
 import { type GatewayClient, GatewayError } from "./api.ts";
+import { artifactReason, artifactTypesLabel, DesktopFileError, desktopDialogLabels } from "./artifact-messages.ts";
 import { formatFileSize, toBase64 } from "./attachments.ts";
 import { desktopFileBridge, saveForPerson } from "./download.ts";
 import { useT } from "./i18n/locale-context.tsx";
@@ -18,13 +19,17 @@ import { useT } from "./i18n/locale-context.tsx";
  * buttons open the OS dialogs; in a browser, picking is the browser's own file input and saving is its download.
  *
  * No path reaches the widget or this page: a pick returns a reference, a save returns whether it was saved, and a file
- * written back on the desktop is named by an opaque handle the shell's main process keeps.
+ * written back on the desktop is named by an opaque handle the shell's main process keeps. Nor does an error's text:
+ * the widget is told the node's own refusal or a fixed sentence, and the person reads a sentence in their language
+ * chosen by the refusal's code (`artifact-messages.ts`).
  */
 
 export interface WidgetArtifactHostInput {
   client: GatewayClient;
   conversationId: string;
   instanceId: string;
+  /** The widget's title, so the person knows which widget is asking. */
+  widgetTitle?: string | undefined;
   /** A finalized artifact the widget attached: it goes into the composer, where the person decides whether to send it. */
   onAttach?: ((attachment: AttachmentRef) => void) | undefined;
 }
@@ -37,14 +42,33 @@ interface Notice {
   text: string;
 }
 
-/** A refusal the widget can read: the node's own code and sentence when it gave one. */
-export function artifactRefusal(cause: unknown): FrameArtifactOutcome {
+/**
+ * A refusal the widget can read: the node's own code and sentence when the node gave one, and otherwise a fixed one.
+ *
+ * Never the message of any other error. What threw on the way — a fetch, the desktop bridge, the file system behind it —
+ * may name a path on the person's disk, and the widget is exactly who must not learn it.
+ */
+export function artifactRefusal(cause: unknown, during: "request" | "pick" | "save" = "request"): FrameArtifactOutcome {
   if (cause instanceof GatewayError) return { status: "refused", code: cause.code, message: cause.reason };
-  return {
-    status: "refused",
-    code: "ARTIFACT_UNAVAILABLE",
-    message: cause instanceof Error && cause.message !== "" ? cause.message : "the node could not be reached",
-  };
+  if (during === "pick") return { status: "refused", code: "ARTIFACT_PICK_FAILED", message: "the person's file could not be handed over" };
+  if (during === "save") return { status: "refused", code: "ARTIFACT_SAVE_FAILED", message: "the file was not saved" };
+  return { status: "refused", code: "ARTIFACT_UNAVAILABLE", message: "the node could not be reached" };
+}
+
+/** Node refusals that mean the widget has no room left, which the person is told about as well as the widget. */
+const OUT_OF_ROOM = new Set(["ARTIFACT_QUOTA_EXCEEDED", "ARTIFACT_INSTANCE_QUOTA_EXCEEDED"]);
+
+/**
+ * A browser's own guess at a file's type, or — when it has none, as for `.md` on some systems — the type its extension
+ * names. Either is only a claim: the node reads the bytes and refuses a file that is not what it says.
+ */
+export function pickedFileType(file: { name: string; type: string }): string {
+  if (file.type !== "") return file.type;
+  const extension = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase() : "";
+  if (extension === "md" || extension === "markdown") return "text/markdown";
+  if (extension === "csv") return "text/csv";
+  if (extension === "json") return "application/json";
+  return "";
 }
 
 export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker: FrameArtifactBroker; chrome: ReactElement | null } {
@@ -130,12 +154,19 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
             setNotice({ tone: "info", text: t("widgets.artifacts.attached").replace("{name}", attached.attachmentRef.filename) });
             return { status: "ok", ref: attached.artifactRef };
           }
+          case "discard":
+            await client.discardArtifact(conversationId, instanceId, request.artifactId);
+            return { status: "ok" };
           default: {
             request satisfies never;
             return { status: "refused", code: "ARTIFACT_UNSUPPORTED", message: "this host does not know that request" };
           }
         }
       } catch (cause) {
+        // Out of room is the widget's problem to solve, but the person should know why its files stopped saving.
+        if (cause instanceof GatewayError && OUT_OF_ROOM.has(cause.code)) {
+          setNotice({ tone: "error", text: t("widgets.artifacts.quotaNotice").replace("{reason}", artifactReason(cause, t)) });
+        }
         return artifactRefusal(cause);
       }
     },
@@ -154,12 +185,8 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
         const ref = await client.pickArtifact({ conversationId, instanceId, accept: current.accept, ...file });
         settle({ status: "ok", ref });
       } catch (cause) {
-        const refusal = artifactRefusal(cause);
-        setNotice({
-          tone: "error",
-          text: t("widgets.artifacts.pickFailed").replace("{reason}", refusal.status === "refused" ? refusal.message : ""),
-        });
-        settle(refusal);
+        setNotice({ tone: "error", text: t("widgets.artifacts.pickFailed").replace("{reason}", artifactReason(cause, t)) });
+        settle(artifactRefusal(cause, "pick"));
       }
     },
     [settle, t],
@@ -167,13 +194,18 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
 
   const pickInBrowser = useCallback(
     async (file: File) => {
-      await storePicked({
-        name: file.name,
-        mimeType: file.type === "" ? "application/octet-stream" : file.type,
-        contentBase64: toBase64(new Uint8Array(await file.arrayBuffer())),
-      });
+      let contentBase64: string;
+      try {
+        contentBase64 = toBase64(new Uint8Array(await file.arrayBuffer()));
+      } catch {
+        setNotice({ tone: "error", text: t("widgets.artifacts.pickFailed").replace("{reason}", t("widgets.artifacts.reason.readFailed")) });
+        settle(artifactRefusal(undefined, "pick"));
+        return;
+      }
+      // The browser's type as it gave it: an empty one is read from the bytes by the node, never forced to a binary type.
+      await storePicked({ name: file.name, mimeType: pickedFileType(file), contentBase64 });
     },
-    [storePicked],
+    [settle, storePicked, t],
   );
 
   const pickOnDesktop = useCallback(async () => {
@@ -182,16 +214,17 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
     if (current?.kind !== "pick" || bridge === undefined) return;
     setBusy(true);
     const answer: Awaited<ReturnType<typeof bridge.pickFile>> = await bridge
-      .pickFile({ title: t("widgets.artifacts.pickTitle"), accept: current.accept })
-      .catch((cause: unknown) => ({ ok: false, refused: cause instanceof Error ? cause.message : String(cause) }));
+      .pickFile({ title: pickTitle(t, latest.current.widgetTitle), accept: current.accept, filterName: t("widgets.artifacts.dialog.filterName") })
+      // A bridge that threw says nothing this page may repeat: only that the desktop did not finish.
+      .catch(() => ({ ok: false, refused: "DESKTOP_FAILED" }));
     if (!answer.ok || answer.file === undefined) {
       if (answer.ok && answer.canceled === true) {
         settle({ status: "cancelled" });
         return;
       }
-      const reason = answer.refused ?? "";
-      setNotice({ tone: "error", text: t("widgets.artifacts.pickFailed").replace("{reason}", reason) });
-      settle({ status: "refused", code: "ARTIFACT_PICK_FAILED", message: reason === "" ? "the file could not be read" : reason });
+      const cause = new DesktopFileError(answer.refused ?? "DESKTOP_FAILED", answer.errorCode);
+      setNotice({ tone: "error", text: t("widgets.artifacts.pickFailed").replace("{reason}", artifactReason(cause, t)) });
+      settle(artifactRefusal(cause, "pick"));
       return;
     }
     original.current = { name: answer.file.name, handle: answer.file.handle };
@@ -205,22 +238,22 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
       setBusy(true);
       try {
         const exported = await latest.current.client.exportArtifact(current.ref.artifactId, current.suggestedName);
-        const outcome = await saveForPerson(exported.blob, exported.filename, {
+        const saved = await saveForPerson(exported.blob, exported.filename, {
+          mimeType: current.ref.mimeType,
           replaceHandle: replace ? original.current?.handle : undefined,
+          labels: desktopDialogLabels(t),
         });
-        if (!outcome.saved) {
+        if (saved.outcome === "cancelled") {
           settle({ status: "cancelled" });
           return;
         }
-        setNotice({ tone: "info", text: t("widgets.artifacts.saved").replace("{name}", outcome.name) });
+        // A browser download has only started; saying it was saved would claim something this page cannot know.
+        const said = saved.outcome === "downloaded" ? "widgets.artifacts.downloaded" : "widgets.artifacts.saved";
+        setNotice({ tone: "info", text: t(said).replace("{name}", saved.name) });
         settle({ status: "ok", ref: current.ref });
       } catch (cause) {
-        const refusal = artifactRefusal(cause);
-        setNotice({
-          tone: "error",
-          text: t("widgets.artifacts.saveFailed").replace("{reason}", refusal.status === "refused" ? refusal.message : ""),
-        });
-        settle(refusal);
+        setNotice({ tone: "error", text: t("widgets.artifacts.saveFailed").replace("{reason}", artifactReason(cause, t)) });
+        settle(artifactRefusal(cause, "save"));
       }
     },
     [settle, t],
@@ -233,6 +266,7 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
         busy={busy}
         notice={notice}
         desktop={desktopFileBridge() !== undefined}
+        widgetTitle={input.widgetTitle}
         originalName={original.current?.name}
         onPickFile={(file) => void pickInBrowser(file)}
         onPickDesktop={() => void pickOnDesktop()}
@@ -244,11 +278,18 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
   return { broker, chrome };
 }
 
+/** Who is asking, in the prompt's first line: the widget by its title when it has one. */
+function pickTitle(t: (key: "widgets.artifacts.pickTitle" | "widgets.artifacts.pickTitleNamed") => string, widget: string | undefined): string {
+  const named = widget?.trim();
+  return named === undefined || named === "" ? t("widgets.artifacts.pickTitle") : t("widgets.artifacts.pickTitleNamed").replace("{widget}", named);
+}
+
 interface ArtifactChromeProps {
   prompt: Prompt | undefined;
   busy: boolean;
   notice: Notice | undefined;
   desktop: boolean;
+  widgetTitle: string | undefined;
   originalName: string | undefined;
   onPickFile: (file: File) => void;
   onPickDesktop: () => void;
@@ -268,6 +309,7 @@ function ArtifactChrome({
   busy,
   notice,
   desktop,
+  widgetTitle,
   originalName,
   onPickFile,
   onPickDesktop,
@@ -278,27 +320,30 @@ function ArtifactChrome({
   const t = useT();
   const titleId = useId();
   const input = useRef<HTMLInputElement>(null);
-  const primary = useRef<HTMLButtonElement>(null);
+  const title = useRef<HTMLParagraphElement>(null);
   const noticeLine = useRef<HTMLParagraphElement>(null);
 
   /*
-   * A new question takes the keyboard, so a person who did not click in the frame can still answer it; once answered,
-   * the keyboard goes to the line saying what happened, rather than to the page's start. A notice that follows no
-   * question (an attach) is announced and leaves the keyboard where it was.
+   * A new question takes the keyboard, so a person who did not click in the frame can still answer it — at its title,
+   * never its button: the widget chose when to ask, and a key pressed for the widget a moment earlier must not land on
+   * Save or Choose. Once answered, the keyboard goes to the line saying what happened, rather than to the page's start.
+   * A notice that follows no question (an attach) is announced and leaves the keyboard where it was.
    */
   const promptKind = prompt?.kind;
   const askedBefore = useRef(false);
   useEffect(() => {
     if (promptKind !== undefined) {
       askedBefore.current = true;
-      primary.current?.focus();
+      title.current?.focus();
       return;
     }
     if (askedBefore.current && notice !== undefined) noticeLine.current?.focus();
     askedBefore.current = false;
   }, [promptKind, notice]);
 
-  const types = prompt?.kind === "pick" && prompt.accept.length > 0 ? prompt.accept.join(", ") : t("widgets.artifacts.anyType");
+  const types = artifactTypesLabel(prompt?.kind === "pick" ? prompt.accept : [], t);
+  const widget = widgetTitle?.trim();
+  const named = widget !== undefined && widget !== "";
 
   return (
     <section
@@ -314,8 +359,8 @@ function ArtifactChrome({
     >
       {prompt?.kind === "pick" && (
         <>
-          <p className="cc-artifact-prompt-title" id={titleId}>
-            {t("widgets.artifacts.pickTitle")}
+          <p ref={title} tabIndex={-1} className="cc-artifact-prompt-title" id={titleId} data-artifact-title="true">
+            {pickTitle(t, widgetTitle)}
           </p>
           <p>{t("widgets.artifacts.pickBody")}</p>
           <p className="cc-artifact-prompt-detail" data-artifact-accept="true">
@@ -339,7 +384,6 @@ function ArtifactChrome({
           )}
           <div className="cc-artifact-prompt-actions">
             <button
-              ref={primary}
               type="button"
               className="cc-artifact-button"
               data-primary="true"
@@ -357,8 +401,10 @@ function ArtifactChrome({
       )}
       {prompt?.kind === "export" && (
         <>
-          <p className="cc-artifact-prompt-title" id={titleId}>
-            {t("widgets.artifacts.saveTitle").replace("{name}", prompt.suggestedName)}
+          <p ref={title} tabIndex={-1} className="cc-artifact-prompt-title" id={titleId} data-artifact-title="true">
+            {named
+              ? t("widgets.artifacts.saveTitleNamed").replace("{widget}", widget).replace("{name}", prompt.suggestedName)
+              : t("widgets.artifacts.saveTitle").replace("{name}", prompt.suggestedName)}
           </p>
           <p className="cc-artifact-prompt-detail">
             {t("widgets.artifacts.saveBody").replace("{size}", formatFileSize(prompt.ref.sizeBytes))}
@@ -370,7 +416,6 @@ function ArtifactChrome({
           )}
           <div className="cc-artifact-prompt-actions">
             <button
-              ref={primary}
               type="button"
               className="cc-artifact-button"
               data-primary="true"

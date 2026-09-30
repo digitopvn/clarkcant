@@ -6,10 +6,15 @@
  * renderer**. A chosen file comes back as its bare name, its type and its bytes; the renderer may later ask to write
  * back to "the file it picked", and it names that file by an opaque handle this process minted — the path behind the
  * handle never leaves the main process.
+ *
+ * Nor does anything else the file system says. An error from opening or writing a file carries its path in its message
+ * (`EBUSY: resource busy or locked, open 'C:\\Users\\…'`), so what goes back is a fixed code the renderer turns into a
+ * sentence in the person's language, and at most the error's own code (`EBUSY`, `EPERM`) — never its message.
  */
 
 import { randomBytes } from "node:crypto";
-import { basename } from "node:path";
+import { rename, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 /**
  * The content types a node accepts for a file, and the extensions each is saved and filtered by.
@@ -29,6 +34,33 @@ export const PICKABLE_TYPES = Object.freeze([
   { mime: "text/csv", extensions: ["csv"] },
   { mime: "application/json", extensions: ["json"] },
 ]);
+
+/**
+ * Why a pick or a save did not happen, as a code the renderer words. Fixed, so no text a file system or a dialog chose
+ * reaches the page.
+ */
+export const FILE_REFUSALS = Object.freeze([
+  "INVALID_REQUEST",
+  "NO_WINDOW",
+  "NOT_A_FILE",
+  "FILE_TOO_LARGE",
+  "READ_FAILED",
+  "WRITE_FAILED",
+  "HANDLE_UNKNOWN",
+  "REPLACE_TYPE_MISMATCH",
+]);
+
+/**
+ * A refusal the bridge may answer with: the code, and — when the cause is a file-system error — only that error's code.
+ * The cause's message is never read, because that is where the path is.
+ */
+export function fileRefusal(code, cause) {
+  const refused = FILE_REFUSALS.includes(code) ? code : "INVALID_REQUEST";
+  const errno = typeof cause === "object" && cause !== null && typeof cause.code === "string" && /^E[A-Z]{2,15}$/.test(cause.code)
+    ? cause.code
+    : undefined;
+  return { ok: false, refused, ...(errno === undefined ? {} : { errorCode: errno }) };
+}
 
 /** The largest file the picker reads: the node's own ceiling for one file. */
 export const MAX_PICK_BYTES = 26_214_400;
@@ -50,13 +82,41 @@ export function mimeForFileName(name) {
  *
  * Only types the node would take are offered. An empty accept list is every type the node takes, not every file.
  */
-export function dialogFiltersForAccept(accept) {
+export function dialogFiltersForAccept(accept, filterName = "Files") {
   const wanted = Array.isArray(accept) ? accept.filter((entry) => typeof entry === "string" && MIME_PATTERN.test(entry)) : [];
   const matches = (mime) =>
     wanted.length === 0 ||
     wanted.some((entry) => entry === mime || (entry.endsWith("/*") && mime.startsWith(entry.slice(0, -1))));
   const extensions = PICKABLE_TYPES.filter((entry) => matches(entry.mime)).flatMap((entry) => entry.extensions);
-  return extensions.length === 0 ? [] : [{ name: "Files", extensions }];
+  return extensions.length === 0 ? [] : [{ name: filterName, extensions }];
+}
+
+/** The extensions a type is saved under, or `undefined` for a type the node does not hold. */
+export function extensionsForType(mimeType) {
+  return PICKABLE_TYPES.find((entry) => entry.mime === mimeType)?.extensions;
+}
+
+/**
+ * The name to pre-fill in Save As: a bare name (`suggestedSaveName`) ending in the type's extension.
+ *
+ * The same rule the node applies to an export's name, applied again here because this is the process that writes the
+ * file: a `text/plain` file suggested as `invoice.bat` is offered as `invoice.txt`, never as something the OS would run.
+ */
+export function saveNameForType(name, mimeType) {
+  const bare = suggestedSaveName(name).replace(/[. ]+$/u, "");
+  const extensions = extensionsForType(mimeType);
+  if (extensions === undefined) return bare === "" ? "file" : bare;
+  const dot = bare.lastIndexOf(".");
+  const hasExtension = dot > 0 && /^[\p{L}\p{N}_-]{1,16}$/u.test(bare.slice(dot + 1));
+  const current = hasExtension ? bare.slice(dot + 1).toLowerCase() : "";
+  if (extensions.includes(current)) return bare;
+  const stem = hasExtension ? bare.slice(0, dot) : bare;
+  return `${stem === "" ? "file" : stem}.${extensions[0]}`;
+}
+
+/** A dialog string the renderer passed in the person's language, or the English one when it passed none. */
+function label(value, fallback) {
+  return typeof value === "string" && value.trim() !== "" ? value.trim().slice(0, 200) : fallback;
 }
 
 /** A picker request as the host will act on it. */
@@ -66,7 +126,7 @@ export function reviewPickFileRequest(input) {
   if (!Array.isArray(accept) || accept.length > 16 || !accept.every((entry) => typeof entry === "string" && MIME_PATTERN.test(entry))) {
     return { allowed: false, reason: "accept is a list of at most 16 MIME types such as text/plain or image/*" };
   }
-  const filters = dialogFiltersForAccept(accept);
+  const filters = dialogFiltersForAccept(accept, label(input.filterName, "Files"));
   if (accept.length > 0 && filters.length === 0) {
     return { allowed: false, reason: "none of the accepted types is a file this node can hold" };
   }
@@ -104,13 +164,55 @@ export function reviewSaveFileRequest(input) {
     return { allowed: false, reason: "the bytes are not valid base64" };
   }
   if (input.replaceHandle !== undefined && (typeof input.replaceHandle !== "string" || !/^fh_[a-f0-9]{32}$/.test(input.replaceHandle))) {
-    return { allowed: false, reason: "a file handle is one this window was given by the picker" };
+    return { allowed: false, reason: "a file handle is one the picker minted in this app" };
   }
+  // The type decides the extension and what may be replaced, so a save names one the node holds.
+  if (typeof input.mimeType !== "string" || extensionsForType(input.mimeType) === undefined) {
+    return { allowed: false, reason: "a save names the file's type, one the node holds" };
+  }
+  const labels = typeof input.labels === "object" && input.labels !== null ? input.labels : {};
+  const extensions = extensionsForType(input.mimeType);
   return {
     allowed: true,
-    suggestedName: suggestedSaveName(input.suggestedName),
+    mimeType: input.mimeType,
+    suggestedName: saveNameForType(input.suggestedName, input.mimeType),
     replaceHandle: input.replaceHandle,
+    filters: [{ name: label(labels.filterName, "Files"), extensions }],
+    dialog: {
+      replaceTitle: label(labels.replaceTitle, "Replace file"),
+      replaceMessage: label(labels.replaceMessage, "Replace {name} with this version?"),
+      replace: label(labels.replace, "Replace"),
+      cancel: label(labels.cancel, "Cancel"),
+    },
   };
+}
+
+/**
+ * Whether a file on disk may be replaced by bytes of this type: its extension must name the same type.
+ *
+ * Writing a PDF over `notes.md` would leave a file that no longer opens as what its name says; the person is asked to
+ * use Save As instead.
+ */
+export function replaceKeepsType(targetName, mimeType) {
+  return extensionsForType(mimeType) !== undefined && mimeForFileName(targetName) === mimeType;
+}
+
+/**
+ * Write a file whole or not at all.
+ *
+ * The bytes go to a temporary file beside the target, and that file is renamed over it: a rename within one folder
+ * replaces the old file in one step, so a failure part-way — a full disk, a locked file, a crash — leaves the original
+ * as it was instead of truncated. The temporary file is removed when the write does not finish.
+ */
+export async function writeFileWhole(target, bytes) {
+  const temporary = join(dirname(target), `.${basename(target)}.${randomBytes(6).toString("hex")}.tmp`);
+  try {
+    await writeFile(temporary, bytes, { flag: "wx" });
+    await rename(temporary, target);
+  } catch (cause) {
+    await unlink(temporary).catch(() => undefined);
+    throw cause;
+  }
 }
 
 /**

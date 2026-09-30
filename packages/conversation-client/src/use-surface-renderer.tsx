@@ -15,6 +15,7 @@ import { actionRefusalMessage, actionResultMessage, bindingUnavailableMessage } 
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { type ArtifactFileHost, resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { tableExportRequestFrom } from "./table-model.ts";
+import { desktopDialogLabels } from "./artifact-messages.ts";
 import { downloadBlob, saveForPerson } from "./download.ts";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
 
@@ -148,7 +149,8 @@ export function useSurfaceRenderer({
    * a remounted widget back the way it was left. It is not persisted, and it is never sent anywhere except as the view
    * an export writes or the values a person submits.
    */
-  const localViews = useRef(new Map<string, Record<string, unknown>>());  /*
+  const localViews = useRef(new Map<string, Record<string, unknown>>());
+  /*
    * Open and Save As for a file card that points at an artifact. Both go through the person's own routes, which check
    * that the artifact is this principal's on every call; a card whose artifact is gone or someone else's says so.
    */
@@ -157,10 +159,10 @@ export function useSurfaceRenderer({
       open: (ref) => client.artifactContent(ref.artifactId),
       saveAs: async (ref, name) => {
         const exported = await client.exportArtifact(ref.artifactId, name);
-        return saveForPerson(exported.blob, exported.filename);
+        return saveForPerson(exported.blob, exported.filename, { mimeType: ref.mimeType, labels: desktopDialogLabels(t) });
       },
     }),
-    [client],
+    [client, t],
   );
   const [exports, setExports] = useState<Record<string, ExportStatus>>({});
   const exportTable = useCallback(

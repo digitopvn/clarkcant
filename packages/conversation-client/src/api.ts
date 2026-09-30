@@ -1782,6 +1782,11 @@ export class GatewayClient {
     return { artifactRef: this.#artifactRef(body), attachmentRef: attachment.data };
   }
 
+  /** Give back an artifact this instance made. The node refuses one the person chose, or another widget's. */
+  async discardArtifact(conversationId: string, instanceId: string, artifactId: string): Promise<void> {
+    await this.#call<unknown>("DELETE", this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}`));
+  }
+
   /** What the node holds for an artifact this principal owns: its reference, never where its bytes are. */
   async describeArtifact(artifactId: string): Promise<ArtifactRef> {
     return this.#artifactRef(await this.#call("GET", `/artifacts/${encodeURIComponent(artifactId)}`));

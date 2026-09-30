@@ -27,14 +27,17 @@ import { startSmokeNode } from "./smoke-node.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import {
   MAX_PICK_BYTES,
   createFileHandles,
+  fileRefusal,
   mimeForFileName,
+  replaceKeepsType,
   reviewPickFileRequest,
   reviewSaveFileRequest,
+  writeFileWhole,
 } from "./file-bridge.mjs";
 
 import {
@@ -453,9 +456,9 @@ function registerHandlers() {
    */
   handle("desktop:pickFile", async (input) => {
     const review = reviewPickFileRequest(input);
-    if (!review.allowed) return { ok: false, refused: review.reason };
+    if (!review.allowed) return fileRefusal("INVALID_REQUEST");
     const window = liveShellWindow();
-    if (window === undefined) return { ok: false, refused: "no window is available for the picker" };
+    if (window === undefined) return fileRefusal("NO_WINDOW");
     const outcome = await dialog.showOpenDialog(window, {
       title: review.title,
       properties: ["openFile"],
@@ -463,10 +466,17 @@ function registerHandlers() {
     });
     if (outcome.canceled || outcome.filePaths.length === 0) return { ok: true, canceled: true };
     const chosen = outcome.filePaths[0];
-    const info = await stat(chosen);
-    if (!info.isFile()) return { ok: false, refused: "that is not a file" };
-    if (info.size > MAX_PICK_BYTES) return { ok: false, refused: `a file must be at most ${MAX_PICK_BYTES} bytes` };
-    const bytes = await readFile(chosen);
+    // A file that vanished, is locked or cannot be read answers with a code: the error's message names the path.
+    let bytes;
+    try {
+      const info = await stat(chosen);
+      if (!info.isFile()) return fileRefusal("NOT_A_FILE");
+      if (info.size > MAX_PICK_BYTES) return fileRefusal("FILE_TOO_LARGE");
+      bytes = await readFile(chosen);
+    } catch (cause) {
+      return fileRefusal("READ_FAILED", cause);
+    }
+    if (bytes.byteLength > MAX_PICK_BYTES) return fileRefusal("FILE_TOO_LARGE");
     const name = basename(chosen);
     return {
       ok: true,
@@ -478,31 +488,40 @@ function registerHandlers() {
   /*
    * Save a file the person exported. Save As always asks where; writing back over a picked file asks first too, and
    * names only the file's name in the question. Either way the answer is whether it was saved, not where.
+   *
+   * The dialogs speak the person's language: the renderer passes their strings, and the file's type decides the
+   * extension Save As offers. A write lands whole or not at all (`writeFileWhole`), so a failure leaves the original.
    */
   handle("desktop:saveFile", async (input) => {
     const review = reviewSaveFileRequest(input);
-    if (!review.allowed) return { ok: false, refused: review.reason };
+    if (!review.allowed) return fileRefusal("INVALID_REQUEST");
     const window = liveShellWindow();
-    if (window === undefined) return { ok: false, refused: "no window is available for Save As" };
+    if (window === undefined) return fileRefusal("NO_WINDOW");
     let target;
     if (review.replaceHandle !== undefined) {
       target = fileHandles.pathFor(review.replaceHandle);
-      if (target === undefined) return { ok: false, refused: "that file is no longer known to this window; use Save As" };
+      if (target === undefined) return fileRefusal("HANDLE_UNKNOWN");
+      // Replacing keeps the file's type: a PDF written over notes.md would no longer open as what its name says.
+      if (!replaceKeepsType(basename(target), review.mimeType)) return fileRefusal("REPLACE_TYPE_MISMATCH");
       const confirm = await dialog.showMessageBox(window, {
         type: "question",
-        title: "Replace file",
-        message: `Replace ${basename(target)} with this version?`,
-        buttons: ["Cancel", "Replace"],
+        title: review.dialog.replaceTitle,
+        message: review.dialog.replaceMessage.replace("{name}", basename(target)),
+        buttons: [review.dialog.cancel, review.dialog.replace],
         defaultId: 0,
         cancelId: 0,
       });
       if (confirm.response !== 1) return { ok: true, canceled: true };
     } else {
-      const outcome = await dialog.showSaveDialog(window, { defaultPath: review.suggestedName });
+      const outcome = await dialog.showSaveDialog(window, { defaultPath: review.suggestedName, filters: review.filters });
       if (outcome.canceled || outcome.filePath === undefined || outcome.filePath === "") return { ok: true, canceled: true };
       target = outcome.filePath;
     }
-    await writeFile(target, Buffer.from(input.contentBase64, "base64"));
+    try {
+      await writeFileWhole(target, Buffer.from(input.contentBase64, "base64"));
+    } catch (cause) {
+      return fileRefusal("WRITE_FAILED", cause);
+    }
     return { ok: true, canceled: false, saved: true, name: basename(target) };
   });
   handle("desktop:requestCredential", async (input) => {

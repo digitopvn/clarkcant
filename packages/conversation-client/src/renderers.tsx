@@ -83,8 +83,10 @@ import {
 } from "@clarkcant/contracts";
 
 import type { ResolvedDataset } from "./api.ts";
+import { artifactReason } from "./artifact-messages.ts";
 import { formatFileSize } from "./attachments.ts";
 import { calendarWeek, eventSegment, moveDay, moveInList, nowIndex } from "./calendar-layout.ts";
+import type { SaveOutcome } from "./download.ts";
 import {
   CHART_HEIGHT,
   CHART_PAD,
@@ -211,7 +213,7 @@ export interface RendererProps {
 /** What a host lends a file card for an artifact: the bytes to preview, and a save the person drives. */
 export interface ArtifactFileHost {
   open(ref: ArtifactRef): Promise<Blob>;
-  saveAs(ref: ArtifactRef, suggestedName: string): Promise<{ saved: boolean; name: string }>;
+  saveAs(ref: ArtifactRef, suggestedName: string): Promise<SaveOutcome>;
 }
 
 export type CatalogRenderer = (props: RendererProps) => ReactElement | null;
@@ -3472,8 +3474,8 @@ function FileArtifactControls({ artifactRef, name, host }: { artifactRef: Artifa
   const imageUrl = preview.state === "image" ? preview.url : undefined;
   useEffect(() => (imageUrl === undefined ? undefined : () => URL.revokeObjectURL(imageUrl)), [imageUrl]);
 
-  const reasonOf = (cause: unknown): string =>
-    cause instanceof Error ? cause.message.replace(/^[A-Z_]+: /u, "") : String(cause);
+  // Worded by the refusal's code in the person's language, never an error's own text: that may name a path on disk.
+  const reasonOf = (cause: unknown): string => artifactReason(cause, t);
 
   const open = async (): Promise<void> => {
     setPreview({ state: "opening" });
@@ -3499,7 +3501,11 @@ function FileArtifactControls({ artifactRef, name, host }: { artifactRef: Artifa
     setSaveNote(undefined);
     try {
       const outcome = await host.saveAs(artifactRef, artifactRef.name);
-      if (outcome.saved) setSaveNote({ tone: "ok", text: t("widgets.file.saved").replace("{name}", outcome.name) });
+      // A browser download has only started, so it is said as that rather than as saved.
+      if (outcome.outcome !== "cancelled") {
+        const said = outcome.outcome === "downloaded" ? "widgets.file.downloaded" : "widgets.file.saved";
+        setSaveNote({ tone: "ok", text: t(said).replace("{name}", outcome.name) });
+      }
     } catch (cause) {
       setSaveNote({ tone: "failed", text: t("widgets.file.saveFailed").replace("{reason}", reasonOf(cause)) });
     } finally {

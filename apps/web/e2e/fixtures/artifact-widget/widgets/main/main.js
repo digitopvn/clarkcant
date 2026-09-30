@@ -144,6 +144,13 @@ function draw() {
 
   api.semantic.publish(String(props.title ?? "widget tệp"), []);
   root.append(title, available, actions, status, pickedLine, readLine, preview, copyLine);
+  /*
+   * The frame opens at the host's default height and cannot grow on its own. On a phone the buttons wrap and push the
+   * status lines below that default, so the widget asks for its content's height whenever that changes.
+   */
+  const fit = () => api.host.resize({ height: Math.ceil(document.documentElement.scrollHeight) });
+  new window.ResizeObserver(fit).observe(document.body);
+  fit();
   root.setAttribute("data-widget-ready", "true");
 }
 

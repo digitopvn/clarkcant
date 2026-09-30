@@ -327,6 +327,8 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       // A write that lost a race is a conflict, not misbehaviour: the session already answered the widget with the
       // committed state, and it is the widget's to show. Marking the whole frame refused would say it broke.
       if (accepted.code === "STALE_REVISION") return;
+      // Likewise a file request turned away: the widget was answered (busy, rate-limited) and can wait and ask again.
+      if (accepted.answered === true) return;
       /*
        * Shown, not swallowed. A refusal is the difference between a widget that is quiet and a widget whose
        * messages are being dropped, and only one of those is worth a person's time.

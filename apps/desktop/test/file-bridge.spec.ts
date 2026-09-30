@@ -1,12 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  FILE_REFUSALS,
   createFileHandles,
   dialogFiltersForAccept,
+  fileRefusal,
   mimeForFileName,
+  replaceKeepsType,
   reviewPickFileRequest,
   reviewSaveFileRequest,
+  saveNameForType,
   suggestedSaveName,
+  writeFileWhole,
 } from "../src/file-bridge.mjs";
 
 /**
@@ -48,14 +57,14 @@ describe("what Save As may write", () => {
     expect(suggestedSaveName(undefined)).toBe("file");
   });
 
-  it("writes back only to a handle this window was given, in the handle's own shape", () => {
-    expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=", replaceHandle: "C:/secrets.txt" }).allowed).toBe(false);
+  it("writes back only to a handle the picker minted, in the handle's own shape", () => {
+    expect(reviewSaveFileRequest({ suggestedName: "a.txt", mimeType: "text/plain", contentBase64: "aGk=", replaceHandle: "C:/secrets.txt" }).allowed).toBe(false);
     // Something that only starts like a handle is not one: the whole shape is the check.
-    expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=", replaceHandle: "fh_../../secrets.txt" }).allowed).toBe(false);
-    expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=", replaceHandle: `fh_${"A".repeat(32)}` }).allowed).toBe(false);
-    expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=", replaceHandle: `fh_${"a".repeat(32)}` }).allowed).toBe(true);
-    expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "not base64!" }).allowed).toBe(false);
-    expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=" })).toMatchObject({ allowed: true, suggestedName: "a.txt" });
+    expect(reviewSaveFileRequest({ suggestedName: "a.txt", mimeType: "text/plain", contentBase64: "aGk=", replaceHandle: "fh_../../secrets.txt" }).allowed).toBe(false);
+    expect(reviewSaveFileRequest({ suggestedName: "a.txt", mimeType: "text/plain", contentBase64: "aGk=", replaceHandle: `fh_${"A".repeat(32)}` }).allowed).toBe(false);
+    expect(reviewSaveFileRequest({ suggestedName: "a.txt", mimeType: "text/plain", contentBase64: "aGk=", replaceHandle: `fh_${"a".repeat(32)}` }).allowed).toBe(true);
+    expect(reviewSaveFileRequest({ suggestedName: "a.txt", mimeType: "text/plain", contentBase64: "not base64!" }).allowed).toBe(false);
+    expect(reviewSaveFileRequest({ suggestedName: "a.txt", mimeType: "text/plain", contentBase64: "aGk=" })).toMatchObject({ allowed: true, suggestedName: "a.txt" });
   });
 
   it("keeps the path behind a handle in this process, bounded", () => {
@@ -72,5 +81,111 @@ describe("what Save As may write", () => {
     expect(handles.pathFor(third)).toBe("/home/me/three.txt");
     expect(handles.size()).toBe(2);
     expect(handles.pathFor("fh_" + "0".repeat(32))).toBeUndefined();
+  });
+});
+
+describe("what a failed pick or save tells the page", () => {
+  it("answers with a fixed code and the error's own code, never the message that names the path", () => {
+    const cause = Object.assign(new Error("EBUSY: resource busy or locked, open 'C:\\Users\\x\\f.csv'"), { code: "EBUSY" });
+
+    const refusal = fileRefusal("READ_FAILED", cause);
+
+    expect(refusal).toEqual({ ok: false, refused: "READ_FAILED", errorCode: "EBUSY" });
+    expect(JSON.stringify(refusal)).not.toContain("Users");
+    expect(JSON.stringify(refusal)).not.toContain("f.csv");
+  });
+
+  it("drops an error code that is not one, and a refusal code it does not know", () => {
+    // A code is where a path could hide too, when something other than the file system threw.
+    expect(fileRefusal("WRITE_FAILED", { code: "C:\\Users\\x\\f.csv" })).toEqual({ ok: false, refused: "WRITE_FAILED" });
+    expect(fileRefusal("WRITE_FAILED", "C:\\Users\\x\\f.csv")).toEqual({ ok: false, refused: "WRITE_FAILED" });
+    expect(fileRefusal("the file C:\\Users\\x\\f.csv is gone")).toEqual({ ok: false, refused: "INVALID_REQUEST" });
+    expect(FILE_REFUSALS).toContain("REPLACE_TYPE_MISMATCH");
+  });
+});
+
+describe("what Save As offers for a type", () => {
+  it("names the file with its type's extension, so a text file is never offered as something the OS runs", () => {
+    expect(saveNameForType("invoice.bat", "text/plain")).toBe("invoice.txt");
+    expect(saveNameForType("Kế hoạch", "text/markdown")).toBe("Kế hoạch.md");
+    expect(saveNameForType("bao-cao.CSV", "text/csv")).toBe("bao-cao.CSV");
+    expect(saveNameForType("ảnh.jpeg", "image/jpeg")).toBe("ảnh.jpeg");
+    expect(saveNameForType("../../evil.exe", "application/pdf")).toBe("evil.pdf");
+    expect(saveNameForType("ghi chú. ", "text/plain")).toBe("ghi chú.txt");
+    expect(saveNameForType("..", "text/plain")).toBe("file.txt");
+  });
+
+  it("offers only the type's extensions in the dialog, under the person's own words", () => {
+    const review = reviewSaveFileRequest({
+      suggestedName: "bao-cao.exe",
+      mimeType: "text/csv",
+      contentBase64: "aGk=",
+      labels: { filterName: "Tệp", replaceTitle: "Thay tệp", replaceMessage: "Thay {name} bằng bản này?", replace: "Thay", cancel: "Hủy" },
+    });
+
+    expect(review).toMatchObject({
+      allowed: true,
+      suggestedName: "bao-cao.csv",
+      filters: [{ name: "Tệp", extensions: ["csv"] }],
+      dialog: { replaceTitle: "Thay tệp", replaceMessage: "Thay {name} bằng bản này?", replace: "Thay", cancel: "Hủy" },
+    });
+  });
+
+  it("falls back to English words when the page passes none, and refuses a save that names no type the node holds", () => {
+    expect(reviewSaveFileRequest({ suggestedName: "a", mimeType: "text/plain", contentBase64: "aGk=" })).toMatchObject({
+      dialog: { replaceTitle: "Replace file", replace: "Replace", cancel: "Cancel" },
+      filters: [{ name: "Files", extensions: expect.arrayContaining(["txt"]) }],
+    });
+    expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=" }).allowed).toBe(false);
+    expect(reviewSaveFileRequest({ suggestedName: "a.exe", mimeType: "application/x-msdownload", contentBase64: "aGk=" }).allowed).toBe(false);
+  });
+
+  it("replaces a picked file only with bytes of the same type", () => {
+    expect(replaceKeepsType("notes.md", "text/markdown")).toBe(true);
+    expect(replaceKeepsType("Báo cáo.CSV", "text/csv")).toBe(true);
+    expect(replaceKeepsType("notes.md", "application/pdf")).toBe(false);
+    expect(replaceKeepsType("setup.exe", "application/octet-stream")).toBe(false);
+  });
+
+  it("names the picker's filter in the person's words", () => {
+    expect(reviewPickFileRequest({ accept: ["text/csv"], filterName: "Tệp" })).toMatchObject({ filters: [{ name: "Tệp", extensions: ["csv"] }] });
+  });
+});
+
+describe("writing a file whole", () => {
+  const folders: string[] = [];
+  afterEach(() => {
+    for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
+  });
+  const folder = () => {
+    const made = mkdtempSync(join(tmpdir(), "cc-file-bridge-"));
+    folders.push(made);
+    return made;
+  };
+
+  it("replaces the file's contents and leaves nothing else beside it", async () => {
+    const dir = folder();
+    const target = join(dir, "Kế hoạch.md");
+    writeFileSync(target, "cũ");
+
+    await writeFileWhole(target, Buffer.from("mới"));
+
+    expect(readFileSync(target, "utf8")).toBe("mới");
+    expect(readdirSync(dir)).toEqual(["Kế hoạch.md"]);
+  });
+
+  it("leaves the original as it was and removes its temporary file when the write cannot finish", async () => {
+    const dir = folder();
+    const target = join(dir, "a-folder.md");
+    // A folder where the file should be: the rename over it fails, as a locked file would.
+    const blocker = join(target, "inside.txt");
+    writeFileSync(join(dir, "keep.md"), "giữ");
+    rmSync(target, { force: true });
+    await import("node:fs/promises").then(({ mkdir, writeFile }) => mkdir(target).then(() => writeFile(blocker, "x")));
+
+    await expect(writeFileWhole(target, Buffer.from("mới"))).rejects.toBeDefined();
+
+    expect(readdirSync(dir).sort()).toEqual(["a-folder.md", "keep.md"]);
+    expect(readFileSync(blocker, "utf8")).toBe("x");
   });
 });

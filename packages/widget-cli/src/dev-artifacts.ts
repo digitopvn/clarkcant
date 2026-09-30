@@ -97,7 +97,7 @@ export function readFixtureFiles(root: string): { files: DevFixtureFile[]; skipp
 
 /** What the dev host did with a file, for the shell's log. Names and sizes only. */
 export interface DevArtifactEvent {
-  op: "pick" | "create" | "finalize" | "export" | "attach";
+  op: "pick" | "create" | "finalize" | "export" | "attach" | "discard";
   name: string;
   sizeBytes: number;
 }
@@ -143,6 +143,15 @@ export function createDevArtifactBroker(input: {
   const find = (artifactId: string): HeldArtifact | undefined => held.get(artifactId);
   const missing = (): FrameArtifactOutcome =>
     refuse("ARTIFACT_NOT_FOUND", "that artifact is not held by this dev host (it forgets everything when it stops)");
+  /** Bytes this widget holds, against the node's per-widget share, so a widget that never discards is caught here. */
+  const heldBytes = (): number => [...held.values()].reduce((sum, artifact) => sum + artifact.ref.sizeBytes, 0);
+  const overShare = (adding: number): FrameArtifactOutcome | undefined =>
+    heldBytes() + adding > ARTIFACT_LIMITS.instanceQuotaBytes
+      ? refuse(
+          "ARTIFACT_INSTANCE_QUOTA_EXCEEDED",
+          `a widget holds at most ${String(ARTIFACT_LIMITS.instanceQuotaBytes)} bytes of files; discard some with artifacts.discard`,
+        )
+      : undefined;
 
   const handle = async (raw: unknown): Promise<FrameArtifactOutcome> => {
     const parsed = artifactRequestSchema.safeParse(raw);
@@ -158,6 +167,8 @@ export function createDevArtifactBroker(input: {
         if (!artifactAcceptMatches(request.accept, file.mimeType)) {
           return refuse("ARTIFACT_TYPE_NOT_ACCEPTED", `${file.name} is ${file.mimeType}, which the widget did not ask for`);
         }
+        const full = overShare(file.bytes.byteLength);
+        if (full !== undefined) return full;
         const ref: ArtifactRef = {
           v: 1,
           artifactId: mint(),
@@ -209,6 +220,8 @@ export function createDevArtifactBroker(input: {
         if (artifact.ref.sizeBytes + chunk.byteLength > ARTIFACT_LIMITS.maxBytes) {
           return refuse("ARTIFACT_TOO_LARGE", `an artifact is at most ${String(ARTIFACT_LIMITS.maxBytes)} bytes`);
         }
+        const full = overShare(chunk.byteLength);
+        if (full !== undefined) return full;
         artifact.chunks.push(chunk);
         artifact.ref = { ...artifact.ref, sizeBytes: artifact.ref.sizeBytes + chunk.byteLength };
         return { status: "ok", ref: artifact.ref };
@@ -233,6 +246,17 @@ export function createDevArtifactBroker(input: {
         const recorded = request.op === "export" ? { ...artifact.ref, name: request.suggestedName } : artifact.ref;
         record(request.op, recorded);
         return { status: "ok", ref: artifact.ref };
+      }
+      case "discard": {
+        const artifact = find(request.artifactId);
+        if (artifact === undefined) return missing();
+        // As the node: a file the person chose is theirs, and only a file the widget made can be given back.
+        if (artifact.ref.kind === "external") {
+          return refuse("ARTIFACT_NOT_CREATOR", "a file the person chose is theirs; a widget cannot discard it");
+        }
+        held.delete(request.artifactId);
+        record("discard", artifact.ref);
+        return { status: "ok" };
       }
     }
   };

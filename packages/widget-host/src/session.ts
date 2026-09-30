@@ -45,7 +45,7 @@ export type FrameRefusal =
   | "ACTION_UNKNOWN"
   | "EXTENSION_NOT_OFFERED"
   | "ARTIFACT_BUSY"
-  | "ARTIFACT_BUDGET_EXCEEDED"
+  | "ARTIFACT_RATE_LIMITED"
   | "DISPOSED";
 
 /**
@@ -63,7 +63,16 @@ export type FrameArtifactBroker = (request: ArtifactRequest) => Promise<FrameArt
 
 export type FrameAcceptance =
   | { ok: true; kind: WidgetToHostMessage["kind"]; detail?: string }
-  | { ok: false; code: FrameRefusal; message: string };
+  | {
+      ok: false;
+      code: FrameRefusal;
+      message: string;
+      /**
+       * The widget was sent an answer for this refusal — an artifact request turned away with `artifact-result` — so it
+       * is the widget's to handle, like a stale write. A host shows only refusals the widget was never told about.
+       */
+      answered?: true;
+    };
 
 /** What the node answered a state write with. */
 export type FrameStateOutcome =
@@ -162,10 +171,19 @@ export interface FrameSessionInput {
    * than every other message. Applied only to a message that says it is one, and the schema still bounds the chunk.
    */
   maxArtifactMessageBytes?: number;
-  /** Artifact requests a frame may make, counted apart from `maxMessages`: a 25 MiB file is a hundred chunks. */
-  maxArtifactRequests?: number;
+  /**
+   * The rate of artifact requests, counted apart from `maxMessages` because a 25 MiB file is a hundred chunks: a bucket
+   * of `artifactBurst` requests that refills at `artifactRefillPerSecond`. A rate rather than a lifetime budget, so a
+   * widget that autosaves for hours keeps working while one that floods the host is slowed to the refill.
+   */
+  artifactBurst?: number;
+  artifactRefillPerSecond?: number;
   /** Artifact requests a frame may have unanswered at once. */
   maxArtifactInFlight?: number;
+  /** Refusals kept for `refused()`, newest last. Older ones are dropped, so a frame that keeps failing cannot grow it. */
+  maxRecordedRefusals?: number;
+  /** The clock the rate is measured on, in milliseconds. */
+  now?: () => number;
 }
 
 export interface FrameSession {
@@ -188,6 +206,17 @@ export interface FrameSession {
   refused(): readonly FrameRefusal[];
 }
 
+/**
+ * The request id to answer a rate-limited artifact request under, read without parsing the rest of it: only from this
+ * frame's own window, under its own nonce, and in the id's own bounds. Anything else is refused without an answer.
+ */
+function answerableRequestId(raw: unknown, nonce: string, sourceMatches: boolean): string | undefined {
+  if (!sourceMatches || typeof raw !== "object" || raw === null) return undefined;
+  const { nonce: said, requestId } = raw as { nonce?: unknown; requestId?: unknown };
+  if (said !== nonce || typeof requestId !== "string" || requestId.length === 0 || requestId.length > 128) return undefined;
+  return requestId;
+}
+
 function pickEphemeral(patch: Record<string, unknown>, keys: ReadonlySet<string>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(patch).filter(([key]) => keys.has(key)));
 }
@@ -196,9 +225,22 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const maxMessageBytes = input.maxMessageBytes ?? 64 * 1024;
   const maxMessages = input.maxMessages ?? 200;
   const maxArtifactMessageBytes = input.maxArtifactMessageBytes ?? 512 * 1024;
-  const maxArtifactRequests = input.maxArtifactRequests ?? 2000;
+  const artifactBurst = input.artifactBurst ?? 300;
+  const artifactRefillPerSecond = input.artifactRefillPerSecond ?? 10;
   const maxArtifactInFlight = input.maxArtifactInFlight ?? 4;
-  let artifactRequests = 0;
+  const maxRecordedRefusals = input.maxRecordedRefusals ?? 64;
+  const clock = input.now ?? ((): number => Date.now());
+  let artifactTokens = artifactBurst;
+  let artifactRefilledAt = clock();
+  /** Take one artifact request from the bucket, refilled for the time since the last one. */
+  const takeArtifactToken = (): boolean => {
+    const at = clock();
+    artifactTokens = Math.min(artifactBurst, artifactTokens + (Math.max(0, at - artifactRefilledAt) / 1000) * artifactRefillPerSecond);
+    artifactRefilledAt = at;
+    if (artifactTokens < 1) return false;
+    artifactTokens -= 1;
+    return true;
+  };
   const artifactsInFlight = new Set<string>();
   const transcript: { kind: string; detail: string }[] = [];
   const refusals: FrameRefusal[] = [];
@@ -253,7 +295,13 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
 
   const refuse = (code: FrameRefusal, message: string): FrameAcceptance => {
     refusals.push(code);
+    if (refusals.length > maxRecordedRefusals) refusals.splice(0, refusals.length - maxRecordedRefusals);
     return { ok: false, code, message };
+  };
+  /** A refusal the widget has already been answered for, so the host leaves it to the widget. */
+  const refuseAnswered = (code: FrameRefusal, message: string): FrameAcceptance => {
+    refuse(code, message);
+    return { ok: false, code, message, answered: true };
   };
 
   /** Answer one artifact request, bounded as the bridge bounds it so the frame's schema accepts the answer. */
@@ -457,7 +505,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
          */
         const turnAway = (code: FrameRefusal, reason: string): FrameAcceptance => {
           postArtifactResult(requestId, { status: "refused", code, message: reason });
-          return refuse(code, reason);
+          return refuseAnswered(code, reason);
         };
         if (input.artifacts === undefined) {
           return turnAway("EXTENSION_NOT_OFFERED", `${ARTIFACTS_EXTENSION} is not offered to this frame`);
@@ -468,10 +516,6 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         if (artifactsInFlight.size >= maxArtifactInFlight) {
           return turnAway("ARTIFACT_BUSY", `at most ${String(maxArtifactInFlight)} file requests may wait at once`);
         }
-        artifactRequests += 1;
-        if (artifactRequests > maxArtifactRequests) {
-          return turnAway("ARTIFACT_BUDGET_EXCEEDED", `frame made more than ${String(maxArtifactRequests)} file requests`);
-        }
         artifactsInFlight.add(requestId);
         // What is recorded is the operation and the artifact id: never a name, a type the person chose, or bytes.
         const detail = "artifactId" in request ? `${request.op} ${request.artifactId}` : request.op;
@@ -479,11 +523,12 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         void input
           .artifacts(request)
           .then((outcome) => postArtifactResult(requestId, outcome))
-          .catch((error: unknown) => {
+          .catch(() => {
+            // A fixed sentence: what the broker threw is the host's, and may name things the widget must not learn.
             postArtifactResult(requestId, {
               status: "refused",
               code: "ARTIFACT_UNAVAILABLE",
-              message: error instanceof Error && error.message !== "" ? error.message : "the file request could not be completed",
+              message: "the file request could not be completed",
             });
           })
           .finally(() => artifactsInFlight.delete(requestId));
@@ -527,6 +572,18 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       const claimsArtifact =
         typeof event.data === "object" && event.data !== null && (event.data as { kind?: unknown }).kind === "artifact.request";
       const ceiling = claimsArtifact ? maxArtifactMessageBytes : maxMessageBytes;
+      /*
+       * Counted before anything else is looked at, so every message that says it is an artifact request spends from the
+       * rate — including one that is too large, malformed or from the wrong window. Checking first and counting after
+       * would let a frame spend the host's validation for free by sending requests that always fail.
+       */
+      if (claimsArtifact && !takeArtifactToken()) {
+        const reason = `at most ${String(artifactRefillPerSecond)} file requests a second, after a burst of ${String(artifactBurst)}`;
+        const requestId = answerableRequestId(event.data, input.nonce, event.sourceMatchesExpectedWindow);
+        if (requestId === undefined || artifactsInFlight.has(requestId)) return refuse("ARTIFACT_RATE_LIMITED", reason);
+        postArtifactResult(requestId, { status: "refused", code: "ARTIFACT_RATE_LIMITED", message: reason });
+        return refuseAnswered("ARTIFACT_RATE_LIMITED", reason);
+      }
       if (bytes > ceiling) {
         return refuse("TOO_LARGE", `message of ${String(bytes)} bytes exceeds ${String(ceiling)}`);
       }

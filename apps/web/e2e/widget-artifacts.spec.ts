@@ -100,13 +100,26 @@ test("a widget picks through host chrome, reads in chunks, and saves and attache
   // The host offered the extension in its init, which the widget can only know from that message.
   await expect(frame.locator("[data-artifact-available='true']")).toHaveCount(1);
 
-  // The question is the host's, outside the frame, and takes the keyboard so it can be answered without a pointer.
+  /*
+   * The question is the host's, outside the frame. It names the widget asking and the kinds of file in words, and takes
+   * the keyboard at its title — so a screen reader starts with who is asking, and Enter cannot pick by accident.
+   */
   await frame.locator("[data-artifact-pick]").click();
   const pickPrompt = page.locator("[data-artifact-prompt='pick']");
   await expect(pickPrompt).toBeVisible();
+  const pickTitle = pickPrompt.locator("[data-artifact-title]");
+  await expect(pickTitle).toBeFocused();
+  await expect(pickTitle).toHaveText(/^“.+” xin một tệp$/u);
+  await expect(pickPrompt.locator("[data-artifact-accept]")).toContainText("tệp văn bản");
+  await expect(pickPrompt.locator("[data-artifact-accept]")).not.toContainText("text/*");
+  await page.screenshot({ path: testInfo.outputPath("artifact-pick-1280-dark.png"), fullPage: true });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.screenshot({ path: testInfo.outputPath("artifact-pick-1280-light.png"), fullPage: true });
+  expect(await horizontalOverflow(page)).toBe(0);
+  await page.emulateMedia({ colorScheme: "dark" });
+  // One Tab reaches the choice; the title itself is not a stop in the tab order.
+  await page.keyboard.press("Tab");
   await expect(pickPrompt.locator("[data-artifact-choose]")).toBeFocused();
-  await expect(pickPrompt.locator("[data-artifact-accept]")).toContainText("text/*");
-  await page.screenshot({ path: testInfo.outputPath("artifact-pick-1280-dark.png") });
 
   // Escape is the person saying no, and the widget hears "cancelled", not an error.
   await page.keyboard.press("Escape");
@@ -141,15 +154,18 @@ test("a widget picks through host chrome, reads in chunks, and saves and attache
   await expect(savePrompt).toBeVisible();
   await expect(savePrompt.locator("[data-artifact-web-original]")).toBeVisible();
   await expect(savePrompt.locator("[data-artifact-replace]")).toHaveCount(0);
-  await expect(savePrompt.locator("[data-artifact-save]")).toBeFocused();
-  await page.screenshot({ path: testInfo.outputPath("artifact-save-1280-dark.png") });
+  await expect(savePrompt.locator("[data-artifact-title]")).toBeFocused();
+  await page.screenshot({ path: testInfo.outputPath("artifact-save-1280-dark.png"), fullPage: true });
   const download = page.waitForEvent("download");
   await savePrompt.locator("[data-artifact-save]").click();
   const saved = await download;
   expect(saved.suggestedFilename()).toBe("ban-viet-hoa.txt");
   expect(readFileSync(await saved.path(), "utf8")).toBe(COPY_TEXT);
   await expect(frame.locator("[data-artifact-status='saved']")).toHaveCount(1, { timeout: 20_000 });
-  await expect(page.locator("[data-artifact-notice='info']")).toContainText("ban-viet-hoa.txt");
+  // A browser only starts a download, so the person is told that — not that the file was saved somewhere.
+  const notice = page.locator("[data-artifact-notice='info']");
+  await expect(notice).toContainText("Đã bắt đầu tải xuống “ban-viet-hoa.txt”");
+  await expect(notice).not.toContainText("Đã lưu");
 
   // Attaching puts the copy in the composer; the person sends it, and the reply reads its content.
   await frame.locator("[data-artifact-attach]").click();
@@ -206,18 +222,18 @@ test("the widget's file comes back as a card the person can open and save, in bo
   const saved = await download;
   expect(saved.suggestedFilename()).toBe("ban-viet-hoa.txt");
   expect(readFileSync(await saved.path(), "utf8")).toBe(COPY_TEXT);
-  await expect(card.locator("[data-file-save-state='ok']")).toBeVisible();
+  await expect(card.locator("[data-file-save-state='ok']")).toContainText("Đã bắt đầu tải xuống “ban-viet-hoa.txt”");
 
   const overflow: Record<string, number> = {};
   for (const colorScheme of ["dark", "light"] as const) {
     await page.emulateMedia({ colorScheme });
     await card.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: testInfo.outputPath(`artifact-file-card-1280-${colorScheme}.png`) });
+    await page.screenshot({ path: testInfo.outputPath(`artifact-file-card-1280-${colorScheme}.png`), fullPage: true });
     overflow[`1280-${colorScheme}`] = await horizontalOverflow(page);
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await card.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: testInfo.outputPath("artifact-file-card-390-light.png") });
+  await page.screenshot({ path: testInfo.outputPath("artifact-file-card-390-light.png"), fullPage: true });
   overflow["390-light"] = await horizontalOverflow(page);
   const cardBox = await card.boundingBox();
   expect(cardBox === null ? Number.POSITIVE_INFINITY : cardBox.x + cardBox.width).toBeLessThanOrEqual(390);
@@ -239,13 +255,24 @@ test("the host's file questions fit a phone and both themes", async ({ page }, t
   for (const colorScheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme });
     await pickPrompt.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: testInfo.outputPath(`artifact-pick-390-${colorScheme}.png`) });
+    await page.screenshot({ path: testInfo.outputPath(`artifact-pick-390-${colorScheme}.png`), fullPage: true });
     overflow[`390-${colorScheme}`] = await horizontalOverflow(page);
   }
   const box = await pickPrompt.boundingBox();
   expect(box === null ? Number.POSITIVE_INFINITY : box.x + box.width).toBeLessThanOrEqual(390);
   await pickPrompt.locator("[data-artifact-cancel]").click();
   await expect(frame.locator("[data-artifact-status='cancelled']")).toHaveCount(1);
+
+  // On a phone the widget's buttons wrap; it asks for its content's height, so its status line is inside the frame.
+  const frameBox = await page.locator("[data-pin-live] [data-widget-frame] iframe").boundingBox();
+  const statusBox = await frame.locator("[data-artifact-status]").boundingBox();
+  expect(frameBox).not.toBeNull();
+  expect(statusBox).not.toBeNull();
+  if (frameBox !== null && statusBox !== null) {
+    expect(statusBox.y + statusBox.height).toBeLessThanOrEqual(frameBox.y + frameBox.height);
+  }
+  await page.locator("[data-pin-live] [data-widget-frame]").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("artifact-widget-390-dark.png"), fullPage: true });
 
   testInfo.annotations.push({ type: "horizontal-overflow", description: JSON.stringify(overflow) });
   expect(overflow).toEqual({ "390-light": 0, "390-dark": 0 });

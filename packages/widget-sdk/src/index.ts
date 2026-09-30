@@ -42,6 +42,11 @@ export const ARTIFACT_BRIDGE_LIMITS = Object.freeze({
   chunkBase64Chars: Math.ceil(262_144 / 3) * 4,
   /** Entries in a picker's accept list. */
   maxAccept: 16,
+  /**
+   * Requests one frame may have waiting for an answer. The runtime queues any beyond this and sends each as an earlier
+   * one is answered, so a `Promise.all` over many reads is slower, not refused.
+   */
+  maxInFlight: 4,
   nameMaxChars: 200,
 });
 
@@ -81,6 +86,11 @@ export const artifactRequestSchema = z.discriminatedUnion("op", [
   /** Save As. The host's own dialog; the widget suggests a name and learns only whether the person saved. */
   z.strictObject({ op: z.literal("export"), artifactId: artifactIdWire, suggestedName: nameWire }),
   z.strictObject({ op: z.literal("attach"), artifactId: artifactIdWire }),
+  /**
+   * Give back a file this widget made, freeing its share of the node's space. Only the widget that created it may; a
+   * file the person chose is theirs, and one already sent in a message keeps its bytes for that message.
+   */
+  z.strictObject({ op: z.literal("discard"), artifactId: artifactIdWire }),
 ]);
 export type ArtifactRequest = z.infer<typeof artifactRequestSchema>;
 
@@ -381,10 +391,18 @@ export interface WidgetAuthorApi {
     write(ref: ArtifactRef, chunk: Uint8Array): Promise<ArtifactRef>;
     /** Fix the bytes. The host checks they are what the artifact was created as. */
     finalize(ref: ArtifactRef): Promise<ArtifactRef>;
-    /** Ask the person to save a copy. The host's own Save As; resolves whether they saved. */
+    /**
+     * Ask the person to save a copy: the host's own Save As on the desktop, the browser's download on the web. Resolves
+     * `true` once the file was saved or its download started, `false` when the person declined.
+     */
     export(ref: ArtifactRef, options: { suggestedName: string }): Promise<boolean>;
     /** Offer a finalized artifact to the conversation. The person sends it with their next message. */
     attachToConversation(ref: ArtifactRef): Promise<void>;
+    /**
+     * Give back a file this frame's widget made, freeing its share of the node's space (128 MiB per widget). Only the
+     * widget that created it may; a file the person chose is theirs. Bytes already sent in a message stay with it.
+     */
+    discard(ref: ArtifactRef): Promise<void>;
   };
   lifecycle: {
     onMount(handler: () => void): void;

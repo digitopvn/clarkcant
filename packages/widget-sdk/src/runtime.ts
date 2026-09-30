@@ -102,6 +102,24 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
   const artifactWaiters = new Map<string, { resolve: (result: ArtifactResult) => void; reject: (error: Error) => void }>();
   let artifactRequests = 0;
   /**
+   * Requests past the host's in-flight limit, waiting their turn in the order they were made. The host answers a fifth
+   * request with `ARTIFACT_BUSY`; queuing here means a widget that reads many ranges at once is paced, not refused.
+   */
+  const artifactQueue: { request: ArtifactRequest; resolve: (result: ArtifactResult) => void; reject: (error: Error) => void }[] = [];
+  const sendArtifactRequest = (entry: (typeof artifactQueue)[number]): void => {
+    artifactRequests += 1;
+    const requestId = `artreq-${String(artifactRequests)}`;
+    artifactWaiters.set(requestId, { resolve: entry.resolve, reject: entry.reject });
+    send({ kind: "artifact.request", nonce: speakingNonce(), requestId, request: entry.request });
+  };
+  const drainArtifactQueue = (): void => {
+    while (status !== "disposed" && artifactWaiters.size < ARTIFACT_BRIDGE_LIMITS.maxInFlight) {
+      const next = artifactQueue.shift();
+      if (next === undefined) return;
+      sendArtifactRequest(next);
+    }
+  };
+  /**
    * Writes to one artifact, chained so they reach the host in order and each names the offset the last one left.
    * Two chunks in flight at once would both name the same offset, and the host would refuse the second.
    */
@@ -230,10 +248,11 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       actionWaiters.clear();
       pendingWrite?.reject(new Error("widget runtime: the host disposed the frame before the write was committed"));
       pendingWrite = undefined;
-      for (const waiter of artifactWaiters.values()) {
+      for (const waiter of [...artifactWaiters.values(), ...artifactQueue]) {
         waiter.reject(new Error("widget runtime: the host disposed the frame before the file request answered"));
       }
       artifactWaiters.clear();
+      artifactQueue.length = 0;
       deps.endpoint.removeEventListener("message", handleMessage);
       return;
     }
@@ -249,6 +268,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       if (waiter === undefined) return;
       artifactWaiters.delete(message.requestId);
       waiter.resolve(message);
+      drainArtifactQueue();
       return;
     }
 
@@ -290,10 +310,8 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         reject(new Error(`widget runtime: yêu cầu artifact không hợp lệ: ${parsed.error.issues[0]?.message ?? "sai dạng"}`));
         return;
       }
-      artifactRequests += 1;
-      const requestId = `artreq-${String(artifactRequests)}`;
-      artifactWaiters.set(requestId, { resolve, reject });
-      send({ kind: "artifact.request", nonce: speakingNonce(), requestId, request: parsed.data });
+      artifactQueue.push({ request: parsed.data, resolve, reject });
+      drainArtifactQueue();
     });
 
   /** An answer that must be `ok`, with a ref. A refusal becomes an error that names the host's code first. */
@@ -479,6 +497,14 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       attachToConversation: async (ref) => {
         const result = await artifactRequest({ op: "attach", artifactId: ref.artifactId });
         if (result.status !== "ok") throw artifactError(result);
+      },
+      discard: async (ref) => {
+        // After any write still on its way, so the host is not asked to write to a file it has just let go.
+        await (writeChains.get(ref.artifactId) ?? Promise.resolve()).catch(() => undefined);
+        const result = await artifactRequest({ op: "discard", artifactId: ref.artifactId });
+        if (result.status !== "ok") throw artifactError(result);
+        writeChains.delete(ref.artifactId);
+        knownSizes.delete(ref.artifactId);
       },
     },
     lifecycle: {

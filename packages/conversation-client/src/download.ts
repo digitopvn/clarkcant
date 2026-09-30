@@ -6,6 +6,7 @@
  * name and bytes and learns only whether the file was saved. Neither path tells the page where the file went.
  */
 
+import { DesktopFileError } from "./artifact-messages.ts";
 import { toBase64 } from "./attachments.ts";
 
 /** Hand a file to the browser's download flow, then release the object URL. */
@@ -23,21 +24,50 @@ export function downloadBlob(blob: Blob, filename: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
-/** What the desktop shell answers a pick or a save with. Only names, types, bytes and opaque handles — never a path. */
+/**
+ * What the desktop shell answers a pick or a save with. Only names, types, bytes and opaque handles — never a path.
+ * A refusal is a fixed code (`refused`) and at most the file system's own code (`errorCode`), never a message.
+ */
 export interface DesktopFileBridge {
-  pickFile(input: { title?: string; accept?: readonly string[] }): Promise<{
+  pickFile(input: { title?: string; accept?: readonly string[]; filterName?: string }): Promise<{
     ok: boolean;
     canceled?: boolean;
     refused?: string;
+    errorCode?: string;
     file?: { name: string; mimeType: string; contentBase64: string; handle: string };
   }>;
-  saveFile(input: { suggestedName: string; contentBase64: string; replaceHandle?: string }): Promise<{
+  saveFile(input: {
+    suggestedName: string;
+    mimeType: string;
+    contentBase64: string;
+    replaceHandle?: string;
+    labels?: DesktopDialogLabels;
+  }): Promise<{
     ok: boolean;
     canceled?: boolean;
     saved?: boolean;
     name?: string;
     refused?: string;
+    errorCode?: string;
   }>;
+}
+
+/** The desktop dialogs' words in the person's language (`desktopDialogLabels`). */
+export interface DesktopDialogLabels {
+  filterName: string;
+  replaceTitle: string;
+  replaceMessage: string;
+  replace: string;
+  cancel: string;
+}
+
+/**
+ * What became of a save: written by the OS Save As (`saved`), handed to the browser's download flow (`downloaded`) —
+ * which only starts a download, so it is never reported as saved — or declined in the dialog (`cancelled`).
+ */
+export interface SaveOutcome {
+  outcome: "saved" | "downloaded" | "cancelled";
+  name: string;
 }
 
 /**
@@ -68,24 +98,33 @@ export async function blobToBase64(blob: Blob): Promise<string> {
  * Put exported bytes where the person chooses: the OS Save As on the desktop (or, given a handle, back over the file
  * they picked, after the shell asks), the browser's download otherwise.
  *
- * Answers whether it was saved and under which bare name — never where. A refusal from the shell throws with its reason.
+ * Answers what became of it and under which bare name — never where. A refusal from the shell throws a
+ * `DesktopFileError` carrying its code, so the sentence the person reads is this page's, in their language.
  */
 export async function saveForPerson(
   blob: Blob,
   filename: string,
-  options: { replaceHandle?: string | undefined } = {},
-): Promise<{ saved: boolean; name: string }> {
+  options: { mimeType: string; replaceHandle?: string | undefined; labels?: DesktopDialogLabels | undefined },
+): Promise<SaveOutcome> {
   const bridge = desktopFileBridge();
   if (bridge === undefined) {
     downloadBlob(blob, filename);
-    return { saved: true, name: filename };
+    return { outcome: "downloaded", name: filename };
   }
-  const answer = await bridge.saveFile({
-    suggestedName: filename,
-    contentBase64: await blobToBase64(blob),
-    ...(options.replaceHandle === undefined ? {} : { replaceHandle: options.replaceHandle }),
-  });
-  if (answer.ok && answer.canceled === true) return { saved: false, name: filename };
-  if (!answer.ok || answer.saved !== true) throw new Error(answer.refused ?? "the file could not be written");
-  return { saved: true, name: answer.name ?? filename };
+  let answer: Awaited<ReturnType<DesktopFileBridge["saveFile"]>>;
+  try {
+    answer = await bridge.saveFile({
+      suggestedName: filename,
+      mimeType: options.mimeType,
+      contentBase64: await blobToBase64(blob),
+      ...(options.replaceHandle === undefined ? {} : { replaceHandle: options.replaceHandle }),
+      ...(options.labels === undefined ? {} : { labels: options.labels }),
+    });
+  } catch {
+    // A bridge that threw says nothing this page can safely repeat.
+    throw new DesktopFileError("DESKTOP_FAILED");
+  }
+  if (answer.ok && answer.canceled === true) return { outcome: "cancelled", name: filename };
+  if (!answer.ok || answer.saved !== true) throw new DesktopFileError(answer.refused ?? "WRITE_FAILED", answer.errorCode);
+  return { outcome: "saved", name: answer.name ?? filename };
 }

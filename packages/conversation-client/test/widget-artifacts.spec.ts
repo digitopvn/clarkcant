@@ -1,7 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GatewayClient, GatewayError } from "../src/api.ts";
-import { artifactRefusal } from "../src/widget-artifacts.tsx";
+import { artifactReason, artifactTypesLabel, DesktopFileError, desktopDialogLabels } from "../src/artifact-messages.ts";
+import { saveForPerson } from "../src/download.ts";
+import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
+import { artifactRefusal, pickedFileType } from "../src/widget-artifacts.tsx";
+
+const vi_t = (key: MessageKey): string => MESSAGES_VI[key];
+const en_t = (key: MessageKey): string => MESSAGES_EN[key];
+const HOST_PATH = "C:\\Users\\x\\f.csv";
 
 /**
  * The client's end of a widget's file requests.
@@ -119,11 +126,134 @@ describe("what the widget is told when the node refuses", () => {
     });
   });
 
-  it("says the node was unreachable when nothing answered", () => {
+  it("says the node was unreachable when nothing answered, in a fixed sentence rather than the error's", () => {
     expect(artifactRefusal(new TypeError("Failed to fetch"))).toEqual({
       status: "refused",
       code: "ARTIFACT_UNAVAILABLE",
-      message: "Failed to fetch",
+      message: "the node could not be reached",
     });
+  });
+
+  it("never hands the widget the text of an error that names a path on the person's disk", () => {
+    const leaks = [
+      new Error(`EBUSY: resource busy or locked, open '${HOST_PATH}'`),
+      new DesktopFileError("READ_FAILED", "EBUSY"),
+      new DesktopFileError(`the file ${HOST_PATH} is gone`),
+      HOST_PATH,
+    ];
+    for (const during of ["request", "pick", "save"] as const) {
+      for (const cause of leaks) {
+        const refusal = artifactRefusal(cause, during);
+        expect(JSON.stringify(refusal)).not.toContain("Users");
+        expect(refusal).toMatchObject({ status: "refused" });
+      }
+    }
+    expect(artifactRefusal(new DesktopFileError("READ_FAILED"), "pick")).toMatchObject({ code: "ARTIFACT_PICK_FAILED" });
+    expect(artifactRefusal(new DesktopFileError("WRITE_FAILED"), "save")).toMatchObject({ code: "ARTIFACT_SAVE_FAILED" });
+  });
+});
+
+describe("what the person reads about a widget's files", () => {
+  it("names accepted types as a person says them, in either language", () => {
+    expect(artifactTypesLabel(["text/*"], vi_t)).toBe("tệp văn bản");
+    expect(artifactTypesLabel(["image/png", "application/pdf"], vi_t)).toBe("ảnh PNG, tệp PDF");
+    expect(artifactTypesLabel(["image/png", "application/pdf"], en_t)).toBe("PNG images, PDF files");
+    expect(artifactTypesLabel(["text/csv", "text/csv"], en_t)).toBe("CSV spreadsheets");
+    expect(artifactTypesLabel(["application/zip"], en_t)).toBe("files of type application/zip");
+    expect(artifactTypesLabel([], vi_t)).toBe(MESSAGES_VI["widgets.artifacts.anyType"]);
+  });
+
+  it("words a refusal by its code in the person's language, never in the node's English or an error's text", () => {
+    const quota = new GatewayError(409, "ARTIFACT_INSTANCE_QUOTA_EXCEEDED", "this widget holds 134217728 bytes of files");
+    expect(artifactReason(quota, vi_t)).toBe("Widget này đã dùng hết chỗ lưu tệp dành cho nó.");
+    expect(artifactReason(quota, en_t)).toBe("This widget has used all the file space it is allowed.");
+    // A code this page has no sentence for is said generally, not in the node's words.
+    expect(artifactReason(new GatewayError(400, "ARTIFACT_SOMETHING_NEW", "english reason"), vi_t)).toBe("Node đã từ chối yêu cầu này.");
+    expect(artifactReason(new DesktopFileError("READ_FAILED", "EBUSY"), vi_t)).toBe("Không đọc được tệp trên máy này. (EBUSY)");
+    expect(artifactReason(new Error(`open '${HOST_PATH}'`), en_t)).toBe("The node could not be reached.");
+  });
+
+  it("keeps a desktop refusal's codes only in their own shapes", () => {
+    const shaped = new DesktopFileError(`gone: ${HOST_PATH}`, HOST_PATH);
+    expect(shaped.code).toBe("DESKTOP_FAILED");
+    expect(shaped.errorCode).toBeUndefined();
+    expect(shaped.message).not.toContain("Users");
+  });
+
+  it("passes the dialogs' words in the person's language", () => {
+    expect(desktopDialogLabels(vi_t)).toEqual({
+      filterName: "Tệp",
+      replaceTitle: "Ghi đè tệp",
+      replaceMessage: "Ghi đè “{name}” bằng bản này?",
+      replace: "Ghi đè",
+      cancel: MESSAGES_VI["widgets.artifacts.cancel"],
+    });
+  });
+});
+
+describe("what a browser pick sends as the file's type", () => {
+  it("sends the browser's type as given, and never a binary type for a file the browser could not name", () => {
+    expect(pickedFileType({ name: "a.png", type: "image/png" })).toBe("image/png");
+    expect(pickedFileType({ name: "ghi-chu.md", type: "" })).toBe("text/markdown");
+    expect(pickedFileType({ name: "so-lieu.CSV", type: "" })).toBe("text/csv");
+    // Empty, so the node reads the bytes: a .log file is text, not application/octet-stream.
+    expect(pickedFileType({ name: "nhat-ky.log", type: "" })).toBe("");
+    expect(pickedFileType({ name: "README", type: "" })).toBe("");
+  });
+});
+
+describe("what a save reports", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const bridge = (answer: Record<string, unknown> | Error) => {
+    const saveFile = vi.fn(async () => {
+      if (answer instanceof Error) throw answer;
+      return answer;
+    });
+    vi.stubGlobal("window", { clarkcant: { pickFile: vi.fn(), saveFile }, setTimeout });
+    return saveFile;
+  };
+
+  it("says a browser download started, never that it saved", async () => {
+    const clicked: string[] = [];
+    vi.stubGlobal("window", { setTimeout: () => 0 });
+    vi.stubGlobal("document", {
+      createElement: () => {
+        const link = { download: "", href: "", rel: "", style: {}, click: () => clicked.push(link.download), remove: () => undefined };
+        return link;
+      },
+      body: { append: () => undefined },
+    });
+
+    const outcome = await saveForPerson(new Blob(["abc"]), "Kế hoạch.md", { mimeType: "text/markdown" });
+
+    expect(outcome).toEqual({ outcome: "downloaded", name: "Kế hoạch.md" });
+    expect(clicked).toEqual(["Kế hoạch.md"]);
+  });
+
+  it("hands the desktop the file's type and the dialogs' words, and reports what it did", async () => {
+    const saveFile = bridge({ ok: true, canceled: false, saved: true, name: "Kế hoạch.md" });
+
+    const outcome = await saveForPerson(new Blob(["abc"]), "Kế hoạch.md", { mimeType: "text/markdown", labels: desktopDialogLabels(vi_t) });
+
+    expect(outcome).toEqual({ outcome: "saved", name: "Kế hoạch.md" });
+    expect(saveFile).toHaveBeenCalledWith(expect.objectContaining({ mimeType: "text/markdown", labels: expect.objectContaining({ filterName: "Tệp" }) }));
+    bridge({ ok: true, canceled: true });
+    await expect(saveForPerson(new Blob(["abc"]), "a.md", { mimeType: "text/markdown" })).resolves.toEqual({ outcome: "cancelled", name: "a.md" });
+  });
+
+  it("throws the desktop's code, not its text, when the save was refused or the bridge threw", async () => {
+    bridge({ ok: false, refused: "WRITE_FAILED", errorCode: "EACCES" });
+    await expect(saveForPerson(new Blob(["abc"]), "a.md", { mimeType: "text/markdown" })).rejects.toMatchObject({
+      code: "WRITE_FAILED",
+      errorCode: "EACCES",
+    });
+
+    bridge(new Error(`EPERM: operation not permitted, open '${HOST_PATH}'`));
+    const thrown = await saveForPerson(new Blob(["abc"]), "a.md", { mimeType: "text/markdown" }).catch((error: unknown) => error);
+    expect(thrown).toBeInstanceOf(DesktopFileError);
+    expect(String((thrown as Error).message)).not.toContain("Users");
   });
 });

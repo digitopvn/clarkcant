@@ -250,7 +250,7 @@ export function PinnedLiveSurface({
    * Files for a widget in its own frame: requests the node answers against this instance's grant, and a pick or a save
    * the person answers in host chrome drawn beside the frame (`widget-artifacts.tsx`).
    */
-  const artifactHost = useWidgetArtifactHost({ client, conversationId, instanceId, onAttach: onAttachArtifact });
+  const artifactHost = useWidgetArtifactHost({ client, conversationId, instanceId, widgetTitle: title, onAttach: onAttachArtifact });
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const [live, setLive] = useState<LiveWidgetResponse | IsolatedFrameLiveResponse | undefined>(undefined);

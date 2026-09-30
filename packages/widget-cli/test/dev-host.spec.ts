@@ -509,6 +509,44 @@ describe("the simulated file picker", () => {
     ]);
   });
 
+  it("discards a file the widget made, and refuses one the person chose, as the node does", async () => {
+    const simulated = broker({ current: "ghi-chu.txt" });
+    const created = await simulated.handle({ op: "create", mimeType: "text/plain", name: "nhap.txt" });
+    const createdId = created.status === "ok" ? (created.ref?.artifactId ?? "") : "";
+    const picked = await simulated.handle({ op: "pick", accept: ["text/plain"] });
+    const pickedId = picked.status === "ok" ? (picked.ref?.artifactId ?? "") : "";
+
+    expect(await simulated.handle({ op: "discard", artifactId: createdId })).toEqual({ status: "ok" });
+    expect(await simulated.handle({ op: "read", artifactId: createdId, offset: 0, length: 1 })).toMatchObject({ code: "ARTIFACT_NOT_FOUND" });
+    expect(await simulated.handle({ op: "discard", artifactId: pickedId })).toMatchObject({ code: "ARTIFACT_NOT_CREATOR" });
+    // The refused discard is not recorded: only what the dev host did.
+    expect(simulated.events().map((event) => event.op)).toEqual(["create", "pick", "discard"]);
+  });
+
+  it("holds a widget to its share of the node's space, so a widget that never discards is caught while developing", async () => {
+    const quarterMiB = Buffer.alloc(262_144, 97).toString("base64");
+    const simulated = broker({ current: "" });
+    const created = await simulated.handle({ op: "create", mimeType: "text/plain" });
+    const artifactId = created.status === "ok" ? (created.ref?.artifactId ?? "") : "";
+
+    // 25 MiB per file, so the share is reached across several files.
+    let refusal: Awaited<ReturnType<typeof simulated.handle>> | undefined;
+    let current = artifactId;
+    let offset = 0;
+    for (let written = 0; written < 520 && refusal === undefined; written += 1) {
+      if (offset + 262_144 > 26_214_400) {
+        const next = await simulated.handle({ op: "create", mimeType: "text/plain" });
+        current = next.status === "ok" ? (next.ref?.artifactId ?? "") : "";
+        offset = 0;
+      }
+      const outcome = await simulated.handle({ op: "write", artifactId: current, offset, chunkBase64: quarterMiB });
+      if (outcome.status === "refused") refusal = outcome;
+      else offset += 262_144;
+    }
+
+    expect(refusal).toMatchObject({ code: "ARTIFACT_INSTANCE_QUOTA_EXCEEDED" });
+  });
+
   it("refuses a type no node holds and an id it never minted", async () => {
     const simulated = broker({ current: "" });
 
