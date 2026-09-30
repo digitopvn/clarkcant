@@ -496,13 +496,17 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     làm hỏng cả danh sách. Thao tác của một thông báo **không được lưu**: `apps/runtime/src/notice-actions.ts`
     (`noticeActionsFor`) tính lại ở mỗi lần đọc từ subject và trạng thái hiện tại — hội thoại mà task giờ thuộc về, hội
     thoại đó còn tồn tại không — trong một danh sách đóng do host cài đặt (`open`, `ask-clark`, `add-to-context`,
-    `mark-read`/`mark-unread`, `dismiss`, `snooze`/`unsnooze`, `suppress`/`unsuppress`, và các thao tác bên dưới:
+    `mark-read`/`mark-unread`, `dismiss`, `snooze`/`unsnooze`, `suppress`/`unsuppress`, `copy-details`, và các thao
+    tác bên dưới:
     `retry`, `update`, `review-update`, `skip-version`, `ask-again`), mỗi thao tác đặt ở `primary`, `secondary` hoặc
     `menu`, tối đa 12 thao tác mỗi thông báo. Thao tác không làm được lúc này có thể được liệt kê trong "Khác" kèm lý
     do `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) thay vì được đưa ra để bấm.
     Nơi tạo thông báo không bao giờ góp thêm thao tác. "Hỏi Clark" và "Thêm vào
     ngữ cảnh" mang thông báo dưới dạng tham chiếu `notice` của ô soạn; `composer-references.ts` đọc lại nó cho chủ sở
-    hữu và trích nội dung vào brief của lượt dưới dạng dữ liệu.
+    hữu và trích nội dung vào brief của lượt dưới dạng dữ liệu. "Sao chép chi tiết" (#349) nằm cuối trong "Khác" ở mọi
+    thông báo; màn hình viết bản tóm tắt dạng chữ thuần từ chính các trường của thông báo (`noticeDetailsText` trong
+    `inbox-model.ts`), với ký tự ẩn và ký tự bidi thành dấu từ `markHiddenCharacters`, và route của node trả
+    `409 SURFACE_ACTION` cho nó giống như "Mở".
   - **Hoãn** (#196, migration 33: `notifications.snoozed_until`). Client đưa ra bốn mốc tính theo đồng hồ của thiết bị
     (`snoozePresets` trong `inbox-model.ts`: một giờ nữa, tối nay lúc 18:00 — chỉ khi chưa đến 17:00 —, sáng mai lúc
     08:00, thứ Hai tuần sau lúc 08:00); node nhận mọi `until` nằm sau hiện tại và không xa quá 30 ngày

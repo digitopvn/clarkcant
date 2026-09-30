@@ -6,11 +6,16 @@ import {
   type Notice,
   type NoticeAction,
   type NoticeActionUnavailable,
+  type NoticeCategory,
   type NoticeOperationResponse,
   type NoticeSeverity,
   type NoticeSourceKind,
+  type NoticeSubject,
   type NoticeSuppression,
   type WaitingItem,
+  codePointLabel,
+  hiddenCharacterMarker,
+  markHiddenCharacters,
 } from "@clarkcant/contracts";
 
 import type { MessageKey } from "../i18n/messages.ts";
@@ -496,4 +501,90 @@ export function noticeActionGroups(notice: Notice): { buttons: NoticeAction[]; m
   ];
   const order = (placement: NoticeAction["placement"]) => list.filter((action) => action.placement === placement);
   return { buttons: [...order("primary"), ...order("secondary")].slice(0, 2), menu: order("menu") };
+}
+/**
+ * What "Copy details" puts on the clipboard: a plain-text summary of one notice, from its own fields and nothing else.
+ *
+ * Its title and body, where it came from and what kind of notice it is, how serious, when, and what it is about by kind
+ * and id: what a person would paste into a report. Not the notice's id, its conversation, the node that sent it, its
+ * actions or whether it was read, which are the node's bookkeeping; the summary never says more than the notice does.
+ * Labels are in the panel's language, and every kind is worded rather than given as its wire code.
+ *
+ * Each hidden or bidi character in the notice's words is written as its marker (`⟨U+202E⟩`, as charts and code viewers
+ * draw it), so the pasted text reads the way it is stored rather than the way a control would reorder it. In a one-line
+ * field a line break is marked too, and every further line of the body is indented, so no field can pass for a line of
+ * the summary.
+ */
+export function noticeDetailsText(notice: Notice, t: (key: MessageKey) => string): string {
+  const line = (key: MessageKey, value: string): string => `${t(key)}: ${value}`;
+  const lines = [line("inbox.details.title", oneLine(notice.title))];
+  if (notice.body !== undefined && notice.body !== "") {
+    const [first = "", ...rest] = markHiddenCharacters(notice.body).text.split("\n");
+    lines.push(line("inbox.details.body", first), ...rest.map((more) => `  ${more}`));
+  }
+  lines.push(
+    line("inbox.details.source", `${t(noticeSourceKey(notice.sourceKind))} · ${t(noticeCategoryKey(notice.category))}`),
+    line("inbox.details.severity", t(noticeSeverityKey(notice.severity))),
+    line("inbox.details.time", oneLine(notice.createdAt)),
+  );
+  if (notice.subject !== undefined) {
+    const subject = noticeSubjectKindAndId(notice.subject);
+    lines.push(line("inbox.details.subject", `${t(subject.key)} · ${oneLine(subject.id)}`));
+  }
+  return lines.join("\n");
+}
+
+/** One line of a notice's own text, with every hidden character, a line break or a tab included, written as its marker. */
+function oneLine(value: string): string {
+  return markHiddenCharacters(value).text.replace(/[\n\t]/g, (character) => hiddenCharacterMarker(codePointLabel(character)));
+}
+
+function noticeCategoryKey(category: NoticeCategory): MessageKey {
+  switch (category) {
+    case "result":
+      return "inbox.category.result";
+    case "update":
+      return "inbox.category.update";
+    case "message":
+      return "inbox.category.message";
+    case "alert":
+      return "inbox.category.alert";
+  }
+}
+
+function noticeSeverityKey(severity: NoticeSeverity): MessageKey {
+  switch (severity) {
+    case "info":
+      return "inbox.severity.info";
+    case "success":
+      return "inbox.severity.success";
+    case "warning":
+      return "inbox.severity.warning";
+    case "error":
+      return "inbox.severity.error";
+  }
+}
+
+/** What a notice is about, as its kind in words and the one id that names that thing. */
+function noticeSubjectKindAndId(subject: NoticeSubject): { key: MessageKey; id: string } {
+  switch (subject.kind) {
+    case "conversation":
+      return { key: "inbox.subject.conversation", id: subject.conversationId };
+    case "background-work":
+      return { key: "inbox.subject.backgroundWork", id: subject.workId };
+    case "task":
+      return { key: "inbox.subject.task", id: subject.taskId };
+    case "package":
+      return { key: "inbox.subject.package", id: subject.packageId };
+    case "pi-update":
+      return { key: "inbox.subject.piUpdate", id: subject.packageName };
+    case "peer":
+      return { key: "inbox.subject.peer", id: subject.nodeId };
+    case "question":
+      return { key: "inbox.subject.question", id: subject.questionId };
+    case "automation":
+      return { key: "inbox.subject.automation", id: subject.intentId };
+    case "signal-source":
+      return { key: "inbox.subject.signalSource", id: subject.sourceKey };
+  }
 }

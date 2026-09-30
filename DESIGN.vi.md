@@ -520,6 +520,15 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
     giờ bị tắt báo. Các thông báo sau thuộc loại đã tắt vẫn được liệt kê nhưng đến ở trạng thái đã đọc và không hiện
     thông báo ngoài ứng dụng. Danh sách "Loại không báo" thu gọn nói bằng chữ mỗi dòng bao gồm gì và ở mức nào (ví
     dụ "Việc tự động “…” — mức cảnh báo"), kèm một tiêu đề ví dụ, và "Báo lại" đảo lại; Hoàn tác cũng vậy.
+  - **Sao chép chi tiết**, nằm cuối trong "Khác" ở mọi thông báo (#349), đưa một bản tóm tắt dạng chữ thuần vào bộ nhớ
+    tạm để báo lại ở nơi khác: tiêu đề, nội dung, nguồn và loại thông báo, mức độ, thời điểm, và thông báo nói về cái
+    gì theo loại và id, mỗi dòng có nhãn bằng ngôn ngữ của người đọc. Bản tóm tắt do màn hình viết từ chính các trường
+    của thông báo và không có gì khác: không token, không đường dẫn nào mà thông báo không hiện, không mã nội bộ. Mọi ký
+    tự ẩn hoặc ký tự bidi được viết thành một dấu nhìn thấy được (`⟨U+202E⟩`), và dấu xuống dòng nằm trong tiêu đề hay
+    trong id cũng được đánh dấu, nên một thông báo được sao chép không thể giả làm các dòng khác. Kết quả được nói trong
+    dòng trạng thái của hộp thư, trình đọc màn hình nghe được mà focus không di chuyển; focus ở lại trên nút và "Khác"
+    vẫn mở. Khi trình duyệt không cho ghi vào bộ nhớ tạm, hoặc trang không có bộ nhớ tạm, điều đó được nói bằng chữ
+    ("Không sao chép được: …") và hộp thư vẫn mở để người dùng tự bôi đen chữ.
   - **Việc làm được với chính thứ mà thông báo nói tới đứng đầu**, khi thứ đó vẫn còn làm được. Node tính việc này ở
     mỗi lần đọc, như những thao tác khác.
     - **Chạy lại** đứng đầu ở việc nền bị lỗi, bị dừng hoặc bị gián đoạn, khi bản ghi của việc và hội thoại của nó vẫn
@@ -578,8 +587,8 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   id của từng thông báo cùng các thao tác agent làm được ngay lúc đó, những thao tác chưa làm được kèm lý do, và những
   thao tác chỉ người dùng làm được; nơi đó cũng đánh dấu lời của chính thông báo là dữ liệu do việc khác báo lại, không
   bao giờ là chỉ dẫn. Sau đó agent gọi `act_on_notice`, và nhật ký ghi đó là việc của agent hoặc của voice agent,
-  không phải của người dùng. Mở hội thoại, Hỏi Clark, Thêm vào ngữ cảnh và Xem trong Cài đặt thay đổi thứ đang hiện
-  trên màn hình của người dùng nên vẫn là nút trên màn hình đó; câu trả lời về một thao tác không ai thấy kết quả vẫn
+  không phải của người dùng. Mở hội thoại, Hỏi Clark, Thêm vào ngữ cảnh, Xem trong Cài đặt và Sao chép chi tiết thay
+  đổi thứ đang hiện hoặc đang giữ trên màn hình của người dùng nên vẫn là nút trên màn hình đó; câu trả lời về một thao tác không ai thấy kết quả vẫn
   là của người dùng (bên dưới). Bản cập nhật mà chế độ thực thi yêu cầu duyệt trước khi cài sẽ nói rõ điều đó và không
   cài gì; node hiện chưa có màn hình nào để duyệt yêu cầu đó (#341). Lời từ chối được nói bằng ngôn ngữ của người đọc,
   dựa trên mã lý do của node, không bao giờ hiện chính mã đó.

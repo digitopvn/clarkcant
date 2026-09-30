@@ -528,6 +528,15 @@ Shipped:
     arrive read and raise no notification outside the app. A collapsed "Quieted kinds" list says in words what
     each one covers and at what level (e.g. "Automation “…” — warning level"), with an example title, and "Notify
     again" reverses it; Undo does too.
+  - **Copy details**, last under "More" on every notification (#349), puts a plain-text summary on the clipboard for
+    reporting it somewhere else: its title, its body, where it came from and what kind it is, its severity, its time,
+    and what it is about by kind and id, each labelled in the reader's language. The summary is written by the screen
+    from the notification's own fields and nothing else: no token, no path the notification does not show, no internal
+    code. Every hidden or bidi character is written as a visible marker (`⟨U+202E⟩`), and a line break inside the title
+    or an id is marked too, so a copied notification cannot pass for other lines. The result is said in the inbox's
+    status line, which a screen reader hears without focus moving; focus stays on the button and "More" stays open. A
+    clipboard the browser refuses, or a page without one, is said in words ("Could not copy: …") and the inbox stays
+    open for selecting the text by hand.
   - **What can be done about the thing itself leads** when that thing can still take it. The node works this out on
     every read, like the rest.
     - **Run again** leads on background work that failed, was stopped or was interrupted, while its record and its
@@ -588,8 +597,8 @@ Shipped:
   the package runs without them. The agents first read the inbox, which lists each notification's id with the actions
   they can take now, the ones they cannot and why, and the ones only the person can take; it marks the notifications'
   own words as data reported by other work, never instructions. Then they call `act_on_notice`, and the audit records
-  these as the agent's or the voice agent's, not the person's. Opening a conversation, Ask Clark, Add to context and
-  Review in Settings change what the person's screen shows and stay buttons on that screen; the answers about an action
+  these as the agent's or the voice agent's, not the person's. Opening a conversation, Ask Clark, Add to context,
+  Review in Settings and Copy details change what the person's screen shows or holds and stay buttons on that screen; the answers about an action
   whose outcome nobody saw stay the person's (below). An update whose install the execution mode asks about says so and
   installs nothing; the node has no screen yet where that approval can be given (#341). A refusal is said in the
   reader's language, from the node's reason code, never as the code itself.

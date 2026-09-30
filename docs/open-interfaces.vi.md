@@ -338,8 +338,8 @@ hoặc `voice`: người dùng đã yêu cầu bằng cách nào, được ghi l
 xác minh). Trừ `mark-read` và `mark-unread`, node đối chiếu thao tác với `actions` của thông báo ngay lúc đó và từ chối
 mọi thứ khác mà không đổi gì: `400 UNKNOWN_ACTION` với tên không phải thao tác của thông báo, `403 PERSON_ONLY` với
 `reconcile-confirmed` và `reconcile-failed` (câu trả lời của người dùng, có route riêng bên dưới), `409 SURFACE_ACTION`
-với `open`, `ask-clark`, `add-to-context` và `review-update` (chúng đổi thứ đang hiện trên màn hình của người dùng, nên
-chỉ màn hình đó làm được), `404 RESOURCE_NOT_FOUND` với thông báo đã mất, đã bị bỏ hoặc thuộc principal khác,
+với `open`, `ask-clark`, `add-to-context`, `review-update` và `copy-details` (chúng đổi thứ đang hiện hoặc đang giữ trên
+màn hình của người dùng, nên chỉ màn hình đó làm được), `404 RESOURCE_NOT_FOUND` với thông báo đã mất, đã bị bỏ hoặc thuộc principal khác,
 `409 ACTION_NOT_OFFERED` khi thông báo lúc này không đưa ra thao tác đó, và `409 ACTION_UNAVAILABLE` kèm mã `reason`
 (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) khi thao tác được liệt kê nhưng lúc này không làm
 được; client diễn đạt lý do đó cho người đọc, còn `message` tiếng Anh là để ghi log. `restore` là hoàn tác của

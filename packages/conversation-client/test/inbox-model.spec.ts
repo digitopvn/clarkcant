@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { Instant, Notice, NoticeSuppression, WaitingItem } from "@clarkcant/contracts";
+import { type Instant, type Notice, type NoticeSuppression, type WaitingItem, findHiddenCharacter } from "@clarkcant/contracts";
 
-import { MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
+import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 import {
   canOpenOtherConversation,
   decideFailureCategory,
@@ -13,6 +13,7 @@ import {
   nextNoticeFocusTarget,
   noticeActionGroups,
   noticeConversationTarget,
+  noticeDetailsText,
   noticeIdsToMarkRead,
   noticeKindQuieted,
   noticeReconcileEffect,
@@ -398,5 +399,70 @@ describe("a notice's actions", () => {
     expect(ref.label.startsWith("Việc nền đã xong rất dài")).toBe(true);
     expect(ref.label.endsWith("…")).toBe(true);
     expect(noticeReference({ ...notice("ntf_3"), title: "Xong" }).ref.label).toBe("Xong");
+  });
+});
+describe("a notice's details, as Copy details writes them", () => {
+  const en = (key: MessageKey): string => MESSAGES_EN[key];
+
+  it("says the notice's own fields in the panel's language, each kind in words", () => {
+    const failed: Notice = {
+      ...notice("ntf_7"),
+      severity: "error",
+      title: "Việc nền bị lỗi",
+      body: "Không đọc được tệp.\nĐã giữ bản nháp.",
+      subject: { kind: "background-work", workId: "work_42", conversationId: "conv_1" },
+    };
+    expect(noticeDetailsText(failed, t)).toBe(
+      [
+        "Thông báo: Việc nền bị lỗi",
+        "Nội dung: Không đọc được tệp.",
+        "  Đã giữ bản nháp.",
+        "Nguồn: Việc nền · Kết quả",
+        "Mức độ: Lỗi",
+        `Thời điểm: ${READ_AT}`,
+        "Về: Việc nền · work_42",
+      ].join("\n"),
+    );
+    expect(noticeDetailsText({ ...failed, body: undefined, sourceKind: "package", category: "update", severity: "info", subject: { kind: "package", packageId: "demo" } }, en)).toBe(
+      ["Notice: Việc nền bị lỗi", "Source: Extension · Update", "Severity: Information", `Time: ${READ_AT}`, "About: Extension package · demo"].join("\n"),
+    );
+  });
+
+  it("writes every hidden and bidi character as a marker, and no field can pass for a line of its own", () => {
+    const tricky: Notice = {
+      ...notice("ntf_8"),
+      // A right-to-left override, a zero-width space and a line break in a one-line field.
+      title: "Tệp \u202Egnp.exe\u200B xong\nMức độ: Thành công",
+      // A first-strong isolate, a tag character, a carriage return and a line that looks like a label.
+      body: "Dòng \u2068một\u2069\r\nMức độ: Thành công \u{E0041}",
+      subject: { kind: "task", taskId: "task_\u2066x\u2069" },
+    };
+    const text = noticeDetailsText(tricky, t);
+    expect(findHiddenCharacter(text, { lineBreaks: true })).toBeUndefined();
+    expect(text).toContain("Thông báo: Tệp ⟨U+202E⟩gnp.exe⟨U+200B⟩ xong⟨U+000A⟩Mức độ: Thành công");
+    expect(text).toContain("Nội dung: Dòng ⟨U+2068⟩một⟨U+2069⟩⟨U+000D⟩\n  Mức độ: Thành công ⟨U+E0041⟩");
+    expect(text).toContain("Về: Task · task_⟨U+2066⟩x⟨U+2069⟩");
+    // The only line that starts with the severity label is the summary's own.
+    expect(text.split("\n").filter((line) => line.startsWith("Mức độ:"))).toEqual(["Mức độ: Thành công"]);
+  });
+
+  it("says nothing beyond the notice's own fields: no id, conversation, node, actions, read or snooze state", () => {
+    const busy: Notice = {
+      ...notice("ntf_SECRET_ID"),
+      title: "Nhắc việc đã chạy",
+      conversationId: "conv_SECRET",
+      originNodeId: "node_SECRET",
+      readAt: "2026-09-24T07:05:00.000Z" as Instant,
+      snoozedUntil: "2026-09-25T08:00:00.000Z" as Instant,
+      actions: [{ id: "open", placement: "primary" }],
+      subject: { kind: "automation", intentId: "intent_1", label: "label_SECRET", taskId: "task_SECRET", conversationId: "conv_SECRET_2" },
+    };
+    const text = noticeDetailsText(busy, t);
+    for (const leaked of ["SECRET", "2026-09-24T07:05", "2026-09-25", "open", "automation", "background", "success", "result"]) {
+      expect(text, leaked).not.toContain(leaked);
+    }
+    expect(text).toBe(
+      ["Thông báo: Nhắc việc đã chạy", "Nguồn: Việc nền · Kết quả", "Mức độ: Thành công", `Thời điểm: ${READ_AT}`, "Về: Việc tự động · intent_1"].join("\n"),
+    );
   });
 });

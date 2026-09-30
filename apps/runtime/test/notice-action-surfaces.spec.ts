@@ -328,7 +328,7 @@ describe("POST /inbox/notices/:noticeId/actions/:action", () => {
     const unknown = await act(notificationId, "explode");
     expect(unknown.status).toBe(400);
     expect(codeOf(unknown)).toBe("UNKNOWN_ACTION");
-    for (const surfaceAction of ["open", "ask-clark", "add-to-context", "review-update"]) {
+    for (const surfaceAction of ["open", "ask-clark", "add-to-context", "review-update", "copy-details"]) {
       const refused = await act(notificationId, surfaceAction);
       expect(refused.status).toBe(409);
       expect(codeOf(refused)).toBe("SURFACE_ACTION");

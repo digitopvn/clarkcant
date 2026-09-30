@@ -49,6 +49,9 @@ export interface NoticeActionContext {
  * suppressions now, so the menu cannot offer to quiet a kind that is already quiet; a kind too wide to quiet
  * (`noticeKindQuietable`: a reminder, a notice tied to no automation, source, package or node) offers neither. A notice
  * that is snoozed is not in the list at all; the one thing to do with it is bring it back.
+ *
+ * "Copy details" is behind "More" on every notice in the list, after the rest: it only puts the notice's own words on
+ * the person's clipboard, which only their screen can do, so the route refuses it like "Open" (`SURFACE_ACTION`).
  */
 export function noticeActionsFor(
   db: Database,
@@ -102,6 +105,8 @@ export function noticeActionsFor(
   } else if (noticeKindQuietable(notice)) {
     actions.push({ id: "suppress", placement: "menu" });
   }
+  // A low-priority action, for reporting a notice somewhere else: always last among what can be taken.
+  actions.push({ id: "copy-details", placement: "menu" });
   if (open !== undefined && !canOpen) actions.push(open);
   actions.push(...operations.unavailable);
   return actions;

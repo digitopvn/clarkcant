@@ -491,12 +491,15 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     (`noticeActionsFor`) works them out on every read from the subject and the current state — the conversation a task
     now belongs to, whether that conversation still exists — from a closed list the host implements (`open`,
     `ask-clark`, `add-to-context`, `mark-read`/`mark-unread`, `dismiss`, `snooze`/`unsnooze`,
-    `suppress`/`unsuppress`, and the operations below: `retry`, `update`, `review-update`, `skip-version`,
-    `ask-again`), each placed `primary`, `secondary` or `menu`, at most 12 per notice. An action that cannot be taken
+    `suppress`/`unsuppress`, `copy-details`, and the operations below: `retry`, `update`, `review-update`,
+    `skip-version`, `ask-again`), each placed `primary`, `secondary` or `menu`, at most 12 per notice. An action that cannot be taken
     now may be listed under "More" with an `unavailable` reason (`conversation-gone`, `work-gone`, `package-gone`,
     `already-current`) rather than offered. A producer never contributes an action.
     "Ask Clark" and "Add to context" carry the notice as a `notice` composer reference; `composer-references.ts`
     re-reads it for the owner and quotes its text in the turn brief as data.
+    "Copy details" (#349) is last under "More" on every notice; the screen writes its plain-text summary from the
+    notice's own fields (`noticeDetailsText` in `inbox-model.ts`), with hidden and bidi characters as markers from
+    `markHiddenCharacters`, and the node's route answers it `409 SURFACE_ACTION` like "Open".
   - **Snooze** (#196, migration 33: `notifications.snoozed_until`). The client offers four presets worked out on the
     device's clock (`snoozePresets` in `inbox-model.ts`: in one hour, this evening at 18:00 — only before 17:00 —,
     tomorrow at 08:00, next Monday at 08:00); the node accepts any `until` ahead of now and at most 30 days away

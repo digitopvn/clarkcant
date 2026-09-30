@@ -339,6 +339,11 @@ body {
 .cc-inbox-notice:focus-visible, .cc-inbox-item:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 /* The outcome of an action, with "Undo" beside it after a dismissal. */
 .cc-inbox-status { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
+/* With nothing to say, the status line takes no room and draws nothing, but stays in the accessibility tree. */
+.cc-inbox-status[data-empty="true"] {
+  position: absolute; inline-size: 1px; block-size: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 /* "More" opens in place under the row's buttons rather than as a floating menu: nothing to position, nothing to clip. */
 .cc-inbox-more { display: inline-flex; align-items: center; gap: var(--cc-space-xs); }
 .cc-inbox-more-caret { display: inline-block; transition: transform var(--cc-motion-micro) var(--cc-motion-easing); }

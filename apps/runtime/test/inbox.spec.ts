@@ -657,6 +657,8 @@ describe("notices", () => {
       { id: "snooze", placement: "menu" },
       { id: "dismiss", placement: "menu" },
       { id: "suppress", placement: "menu" },
+      // Copying its details is last among what can be taken, on every notice.
+      { id: "copy-details", placement: "menu" },
     ]);
     // Something that went wrong is something to act on; its task is gone, but its conversation still opens.
     expect(byTitle.get("Việc chạy nền không xong")?.slice(0, 2)).toEqual([
@@ -671,6 +673,7 @@ describe("notices", () => {
       { id: "mark-read", placement: "menu" },
       { id: "snooze", placement: "menu" },
       { id: "suppress", placement: "menu" },
+      { id: "copy-details", placement: "menu" },
       // It names a version of a package this node does not run, so there is nothing to update.
       { id: "update", placement: "menu", unavailable: "package-gone" },
     ]);
