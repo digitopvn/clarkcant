@@ -33,6 +33,13 @@ const DETAIL_CHARS = 200;
  */
 export const MIN_STEP_MS = 250;
 
+/**
+ * How early a step's own timeout may fire and still be the run's deadline. A step is given what is left of the run as its
+ * timeout, so the two timers end at the same moment and either may fire first; well under `MIN_STEP_MS`, so a service
+ * that timed out on a shorter limit of its own keeps its own words.
+ */
+const DEADLINE_SLACK_MS = 25;
+
 type Value = unknown;
 
 /** The order steps run in: every step after the steps it depends on, and otherwise in the order they were written. */
@@ -420,7 +427,8 @@ async function runSteps(
     }
 
     const stopped = input.signal.aborted;
-    const deadlineHit = !stopped && run.deadline.aborted;
+    const budgetSpent = nowMs() - started >= input.deadlineMs - DEADLINE_SLACK_MS;
+    const deadlineHit = !stopped && (run.deadline.aborted || (outcome.code === "SERVICE_TIMED_OUT" && budgetSpent));
     if (!outcome.sent) {
       // Nothing reached the service. A stop or the deadline that withdrew it before it was written is a run stopped
       // before this step; any other refusal is the step refused.

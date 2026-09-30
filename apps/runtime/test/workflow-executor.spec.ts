@@ -243,6 +243,43 @@ describe("a run", () => {
     expect(result.report.message).not.toContain("unknown");
   });
 
+  describe("a step whose own timeout fires before the run's deadline timer", () => {
+    // The step was given what was left of the run, so its timeout is the run's deadline even when it fires first.
+    function timedOutAt(elapsedMs: number, effectCategory: "local-write" | "read") {
+      let clock = 0;
+      return harness(
+        async () => {
+          clock = elapsedMs;
+          return { kind: "refused", status: 504, code: "SERVICE_TIMED_OUT", message: "timed out", sent: true, effectCategory };
+        },
+        { nowMs: () => clock },
+      );
+    }
+
+    it("says a read changed nothing and that the workflow ran out of time", async () => {
+      const { deps } = timedOutAt(5_000, "read");
+      const result = await runWorkflow(deps, { steps: [invokeStep("look")], input: {}, deadlineMs: 5_000, signal: new AbortController().signal });
+      expect(result.report).toMatchObject({ completed: false, stoppedAt: "look", code: "WORKFLOW_DEADLINE" });
+      expect(result.report.steps[0]).toMatchObject({ status: "failed", readOnly: true, detail: "the workflow's 5 s ran out while it ran" });
+      expect(result.report.message).toContain("It only reads, so nothing changed.");
+    });
+
+    it("holds a write as uncertain, with the inbox question, and names the deadline", async () => {
+      const { deps } = timedOutAt(5_000 - 10, "local-write");
+      const result = await runWorkflow(deps, { steps: [invokeStep("add")], input: {}, deadlineMs: 5_000, signal: new AbortController().signal });
+      expect(result.report).toMatchObject({ completed: false, stoppedAt: "add", code: "WORKFLOW_DEADLINE" });
+      expect(result.report.steps[0]).toMatchObject({ status: "uncertain", recorded: true, detail: "the workflow's 5 s ran out while it ran" });
+      expect(result.report.message).toContain("whether it took effect is unknown");
+    });
+
+    it("keeps the service's own words when it timed out on a shorter limit of its own", async () => {
+      const { deps } = timedOutAt(1_000, "read");
+      const result = await runWorkflow(deps, { steps: [invokeStep("look")], input: {}, deadlineMs: 5_000, signal: new AbortController().signal });
+      expect(result.report).toMatchObject({ completed: false, stoppedAt: "look", code: "SERVICE_TIMED_OUT" });
+      expect(result.report.steps[0]).toMatchObject({ detail: "the service did not answer in time" });
+    });
+  });
+
   it("reports a step the service never received as refused, not as one that may have run", async () => {
     const { deps } = harness(async () => ({
       kind: "refused",
