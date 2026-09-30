@@ -78,6 +78,8 @@ export const directoryEntrySchema = z.strictObject({
   /** Preview media, optional: a package without one is listed rather than hidden. */
   preview: z.strictObject({ imageUrl: z.string().min(1).max(1000).optional(), videoUrl: z.string().min(1).max(1000).optional() }),
   facets: z.array(facetKindSchema).min(1).max(64),
+  /** Optional discovery claims; the installed, digest-checked widget definition remains authoritative. */
+  widgetAppearance: z.array(z.strictObject({ id: z.string().min(1).max(160), mode: z.enum(["adaptive", "fixed"]) })).max(64).optional(),
   /**
    * Each facet with the lane it runs in.
    *

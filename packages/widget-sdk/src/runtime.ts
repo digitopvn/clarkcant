@@ -1,4 +1,5 @@
 import {
+  APPEARANCE_EXTENSION,
   ARTIFACT_BRIDGE_LIMITS,
   ARTIFACTS_EXTENSION,
   BRIDGE_PROTOCOL,
@@ -11,6 +12,7 @@ import {
   type ArtifactRequest,
   type HostToWidgetMessage,
   type WidgetAuthorApi,
+  type ReadonlyAppearanceSnapshot,
   type WidgetToHostMessage,
 } from "./index.ts";
 
@@ -66,6 +68,13 @@ export interface RuntimeDeps {
 
 export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
   let status: RuntimeStatus = "awaiting-init";
+  let appearance: ReadonlyAppearanceSnapshot | undefined;
+  const appearanceHandlers = new Set<(snapshot: ReadonlyAppearanceSnapshot) => void>();
+  const setAppearance = (next: ReadonlyAppearanceSnapshot): void => {
+    if (appearance?.revision === next.revision) return;
+    appearance = freezeSnapshot(next);
+    for (const handler of appearanceHandlers) handler(appearance);
+  };
   let instanceId: string | undefined;
   let nonce: string | undefined;
   let props: Record<string, unknown> = {};
@@ -156,6 +165,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     if (message.stateRevision !== undefined) stateRevision = message.stateRevision;
     brokered = new Set(message.brokeredCapabilities);
     extensions = new Set(message.extensions ?? []);
+    if (extensions.has(APPEARANCE_EXTENSION) && message.appearance !== undefined) setAppearance(message.appearance);
     status = "ready";
     send({ kind: "ready", nonce });
     for (const handler of mountHandlers) handler();
@@ -205,6 +215,10 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       return;
     }
 
+    if (message.kind === "appearance.changed") {
+      if (status !== "disposed" && extensions.has(APPEARANCE_EXTENSION)) setAppearance(message.appearance);
+      return;
+    }
     if (message.kind === "props") {
       props = message.props;
       // A props message after a suspension is the host bringing the widget back rather than a new lifecycle.
@@ -253,6 +267,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       }
       artifactWaiters.clear();
       artifactQueue.length = 0;
+      appearanceHandlers.clear();
       deps.endpoint.removeEventListener("message", handleMessage);
       return;
     }
@@ -323,6 +338,14 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
   };
 
   const api: WidgetAuthorApi = {
+    appearance: {
+      current: () => appearance,
+      subscribe: (handler) => {
+        if (status === "disposed") return () => undefined;
+        appearanceHandlers.add(handler);
+        return () => { appearanceHandlers.delete(handler); };
+      },
+    },
     props: {
       read: () => props,
       subscribe: (handler) => {
@@ -557,4 +580,12 @@ function fromBase64(text: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+/** The validated message is a detached copy; freeze every nested value before handing it to widget code. */
+function freezeSnapshot<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const child of Object.values(value)) freezeSnapshot(child);
+    Object.freeze(value);
+  }
+  return value;
 }

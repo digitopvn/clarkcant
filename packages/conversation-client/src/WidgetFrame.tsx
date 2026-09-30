@@ -21,6 +21,7 @@ import {
 } from "@clarkcant/widget-host/session";
 
 import { useT } from "./i18n/locale-context.tsx";
+import { useWidgetAppearance } from "./use-widget-appearance.ts";
 
 /**
  * A widget running in its own frame.
@@ -191,6 +192,9 @@ export function afterFrameLoad(mount: FrameMount, canRenew: boolean, nowMs: numb
 export function WidgetFrame(input: WidgetFrameProps): ReactElement {
   const t = useT();
   const element = useRef<HTMLIFrameElement>(null);
+  const appearance = useWidgetAppearance(element);
+  const latestAppearance = useRef(appearance);
+  latestAppearance.current = appearance;
   const session = useRef<FrameSession | undefined>(undefined);
   const nonce = useRef<string>(newNonce());
   /*
@@ -262,6 +266,7 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       instanceId: input.instanceId,
       nonce: nonce.current,
       props: latest.current.props,
+      ...(latestAppearance.current === undefined ? {} : { appearance: latestAppearance.current }),
       ...(latest.current.state === undefined ? {} : { state: latest.current.state }),
       ...(latest.current.stateRevision === undefined ? {} : { stateRevision: latest.current.stateRevision }),
       ...(latest.current.ephemeralStateKeys === undefined ? {} : { ephemeralStateKeys: latest.current.ephemeralStateKeys }),
@@ -362,6 +367,10 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
      * are read from the ref above at the moment they are needed, so a busy parent can re-render all it likes.
      */
   }, [input.instanceId, input.url]);
+
+  useEffect(() => {
+    if (appearance !== undefined) session.current?.announceAppearance(appearance);
+  }, [appearance]);
 
   /*
    * What the node last said about the service-backed bindings, passed on as it changes. The session holds it until

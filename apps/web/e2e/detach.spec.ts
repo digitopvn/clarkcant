@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { compileAppearance } from "@clarkcant/design-tokens";
 
 /**
  * The detached widget window, as a page.
@@ -48,6 +49,10 @@ async function stubBridge(page: import("@playwright/test").Page, answer: unknown
     const calls: Recorded[] = [];
     (window as unknown as { __detachedCalls: Recorded[] }).__detachedCalls = calls;
     (window as unknown as { clarkcantDetached: unknown }).clarkcantDetached = {
+      onAppearance: (listener: (snapshot: unknown) => void) => {
+        (window as unknown as { __emitAppearance: (snapshot: unknown) => void }).__emitAppearance = listener;
+        return () => { calls.push("unsubscribe"); };
+      },
       bootstrap: async () => {
         calls.push("bootstrap");
         return bootstrapAnswer;
@@ -63,6 +68,36 @@ async function stubBridge(page: import("@playwright/test").Page, answer: unknown
     };
   }, answer);
 }
+
+test("the detached composition draws the host revision and follows a checked appearance relay in place", async ({ page }) => {
+  const initial = compileAppearance({ scheme: "dark" });
+  const next = compileAppearance({ scheme: "light", reducedMotion: true });
+  await stubBridge(page, { ok: true, bootstrap: { ...BOOTSTRAP, appearance: initial } });
+  let nodeRequests = 0;
+  page.on("request", (request) => {
+    if (/\/(conversations|themes|preferences|widgets)\b/.test(new URL(request.url()).pathname)) nodeRequests += 1;
+  });
+  await page.goto("/?detached=1");
+  const surface = page.locator("[data-detached-surface='true']");
+  await expect(surface).toHaveAttribute("data-detached-instance", BOOTSTRAP.instanceRef);
+  await expect(page.locator("html")).toHaveAttribute("data-cc-appearance", initial.revision);
+  await surface.evaluate((element) => element.setAttribute("data-test-identity", "kept"));
+  const before = await surface.innerText();
+  const emit = (snapshot: unknown) => page.evaluate((value) => {
+    (window as unknown as { __emitAppearance: (snapshot: unknown) => void }).__emitAppearance(value);
+  }, snapshot);
+  await emit(next);
+  await expect(page.locator("html")).toHaveAttribute("data-cc-appearance", next.revision);
+  await expect(page.locator("html")).toHaveAttribute("data-cc-theme", "light");
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-accent").trim().toUpperCase())).toBe(next.tokens.color.accent.toUpperCase());
+  await expect(surface).toHaveAttribute("data-test-identity", "kept");
+  expect(await surface.innerText()).toBe(before);
+  await emit({ ...initial, localToken: "forbidden" });
+  await emit({ ...initial, tokens: { ...initial.tokens, color: { ...initial.tokens.color, accent: "url(https://invalid.example)" } } });
+  await expect(page.locator("html")).toHaveAttribute("data-cc-appearance", next.revision);
+  expect(nodeRequests).toBe(0);
+  expect(await page.evaluate(() => sessionStorage.getItem("cc_token"))).toBeNull();
+});
 
 test("the detached window draws the instance the host handed over, and asks it to hand back", async ({ page }) => {
   await stubBridge(page, { ok: true, bootstrap: BOOTSTRAP });

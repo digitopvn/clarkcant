@@ -1212,6 +1212,32 @@ Do not expose:
 - registerSidebar;
 - arbitrary host window access.
 
+### Appearance (`appearance@1`)
+
+`appearance.current()` returns the checked, deeply frozen `AppearanceSnapshot` used to draw this widget, or `undefined`
+when the host did not offer the extension. `appearance.subscribe(handler)` follows changed revisions and returns an
+unsubscribe function. The initial snapshot is available before `lifecycle.onMount`; changes do not remount the frame,
+write state, publish semantic content, or start a model turn. The snapshot resolves the actual light/dark scope and
+reduced motion. It contains bounded public tokens and a revision, never a raw theme, credentials or host access.
+
+The SDK core has no DOM dependency. For a DOM widget, import `bindAppearance` from `@clarkcant/widget-sdk/dom`, then
+call `const unbind = bindAppearance(document.documentElement, api.appearance)` and call `unbind()` on disposal.
+`applyAppearanceToElement(element, snapshot)` applies a single checked snapshot. These helpers write only the canonical
+token variables and appearance attributes on the supplied element; unrelated author variables remain. The host-served
+`/widget-runtime.js` also exports these helpers.
+
+Widget definitions may declare `"appearanceMode": "fixed"` for their own visual system; absent or `"adaptive"` means
+adaptive. Widget Lab and detail cards disclose fixed mode. Directory entries may carry optional `widgetAppearance`
+claims (`[{ "id": "…", "mode": "fixed" }]`) for marketplace disclosure; the installed, digest-checked definition
+remains authoritative. A fixed widget still receives appearance and must respect reduced motion.
+
+Bridge version 2 carries an optional initial `appearance` and advertises `appearance@1`; live messages are
+`{ kind: "appearance.changed", nonce, revision, appearance }`, with matching revisions and the existing source/nonce
+checks. The new SDK accepts version-1 hosts without this extension. A bundled old version-1 SDK must be upgraded for
+a version-2 host; use the host-provided runtime or rebuild with the current SDK. A detached composition receives the
+same resolved revision through the desktop's read-only bootstrap/event relay, without fetching a theme or receiving
+credentials. Appearance changes leave saved presentations, props, state, provenance and fallback text intact.
+
 ### 10.1 Files by reference (`artifacts@1`)
 
 A widget in its own frame can work with files without ever holding one. It holds an `ArtifactRef`:

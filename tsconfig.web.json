@@ -26,6 +26,9 @@
       "@clarkcant/widget-sdk": [
         "packages/widget-sdk/src/index.ts"
       ],
+      "@clarkcant/widget-sdk/dom": [
+        "packages/widget-sdk/src/dom.ts"
+      ],
       "@clarkcant/widget-catalog": [
         "packages/widget-catalog/src/index.ts"
       ],

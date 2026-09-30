@@ -1408,6 +1408,7 @@ export function createSearchDirectoryTool(input: {
             source: entry.source,
             digest: entry.digest,
             riskTier: entry.riskTier,
+            ...(entry.widgetAppearance === undefined ? {} : { widgetAppearance: entry.widgetAppearance }),
             facets: entry.facets,
             platforms: entry.platforms,
           })),

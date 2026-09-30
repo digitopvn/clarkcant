@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { BRIDGE_PROTOCOL, BRIDGE_VERSION } from "../src/index.ts";
+import { compileAppearance } from "@clarkcant/design-tokens";
+import { APPEARANCE_EXTENSION, BRIDGE_PROTOCOL, BRIDGE_VERSION } from "../src/index.ts";
 import { createWidgetRuntime, type MessageEndpoint } from "../src/runtime.ts";
 
 /**
@@ -12,6 +13,75 @@ import { createWidgetRuntime, type MessageEndpoint } from "../src/runtime.ts";
  */
 
 const NONCE = "nonce-issued-for-this-frame";
+
+describe("read-only widget appearance", () => {
+  it("publishes init before mount, freezes a copy and changes no semantic or state revision", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    const dark = compileAppearance({ scheme: "dark" });
+    const light = compileAppearance({ scheme: "light" });
+    const revisions: string[] = [];
+    const unsubscribe = runtime.api().appearance.subscribe((snapshot) => revisions.push(snapshot.revision));
+    expect(runtime.api().appearance.current()).toBeUndefined();
+    let mounts = 0;
+    runtime.api().lifecycle.onMount(() => {
+      mounts += 1;
+      expect(runtime.api().appearance.current()?.revision).toBe(dark.revision);
+    });
+    bus.deliver(initMessage({ appearance: dark, extensions: [APPEARANCE_EXTENSION], revision: 7, stateRevision: 3 }));
+    const initial = runtime.api().appearance.current();
+    expect(Object.isFrozen(initial?.tokens.color)).toBe(true);
+    expect(Reflect.set(initial!.tokens.color, "canvas", "#ffffff")).toBe(false);
+    expect(initial?.tokens.color.canvas).toBe(dark.tokens.color.canvas);
+    dark.tokens.color.canvas = "#ffffff";
+    expect(initial?.tokens.color.canvas).not.toBe(dark.tokens.color.canvas);
+    bus.sent.length = 0;
+    const changed = { kind: "appearance.changed", nonce: NONCE, revision: light.revision, appearance: light };
+    bus.deliver(changed);
+    bus.deliver(changed);
+    expect(revisions).toEqual([initial!.revision, light.revision]);
+    expect(mounts).toBe(1);
+    expect(runtime.api().props.read()).toEqual({ title: "doanh thu" });
+    expect(bus.sent).toEqual([]);
+    const action = runtime.api().actions.invoke("keep-revision", {}, "appearance-action");
+    expect(bus.sent.at(-1)).toMatchObject({ kind: "action.invoke", expectedRevision: 7 });
+    const invocation = bus.sent.at(-1) as { invocationId: string };
+    bus.deliver({ kind: "action-result", nonce: NONCE, actionBindingId: "keep-revision", invocationId: invocation.invocationId, status: "accepted", message: "done" });
+    await action;
+    expect(runtime.api().state.revision()).toBe(3);
+    unsubscribe();
+    bus.deliver({ kind: "appearance.changed", nonce: NONCE, revision: initial!.revision, appearance: initial });
+    expect(revisions).toHaveLength(2);
+    bus.deliver({ kind: "dispose", nonce: NONCE });
+    bus.deliver(changed);
+    expect(runtime.status()).toBe("disposed");
+    expect(revisions).toHaveLength(2);
+  });
+
+  it("refuses foreign nonce, inconsistent revisions, raw documents and malformed token values", () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    const dark = compileAppearance({ scheme: "dark" });
+    const light = compileAppearance({ scheme: "light" });
+    bus.deliver(initMessage({ appearance: dark, extensions: [APPEARANCE_EXTENSION] }));
+    const message = { kind: "appearance.changed", nonce: NONCE, revision: light.revision, appearance: light };
+    bus.deliver({ ...message, nonce: "another-frame-nonce" });
+    bus.deliver({ ...message, revision: dark.revision });
+    bus.deliver({ ...message, appearance: { ...light, rawTheme: { css: "body{}" } } });
+    bus.deliver({ ...message, appearance: { ...light, tokens: { ...light.tokens, color: { ...light.tokens.color, canvas: "url(https://bad.test)" } } } });
+    expect(runtime.api().appearance.current()?.revision).toBe(dark.revision);
+  });
+
+  it("still handshakes with a v1 host and ignores an unoffered appearance extension", () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    bus.deliver(initMessage({ version: 1 }));
+    expect(runtime.status()).toBe("ready");
+    const appearance = compileAppearance({ scheme: "light" });
+    bus.deliver({ kind: "appearance.changed", nonce: NONCE, revision: appearance.revision, appearance });
+    expect(runtime.api().appearance.current()).toBeUndefined();
+  });
+});
 
 function channel() {
   const sent: { kind?: string }[] = [];

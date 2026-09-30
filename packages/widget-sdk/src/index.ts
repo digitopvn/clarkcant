@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { appearanceSnapshotSchema, type AppearanceSnapshot } from "@clarkcant/contracts";
 
 /**
  * Widget author contracts and the host bridge codec.
@@ -15,7 +16,11 @@ import { z } from "zod";
  */
 
 export const BRIDGE_PROTOCOL = "agent.widgetbridge";
-export const BRIDGE_VERSION = 1;
+export const BRIDGE_VERSION = 2;
+export const APPEARANCE_EXTENSION = "appearance@1";
+
+export type DeepReadonly<T> = T extends object ? {readonly [K in keyof T]: DeepReadonly<T[K]>} : T;
+export type ReadonlyAppearanceSnapshot = DeepReadonly<AppearanceSnapshot>;
 
 /* ------------------------------------------------------------------ *
  * The artifacts extension
@@ -98,7 +103,9 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("init"),
     protocol: z.literal(BRIDGE_PROTOCOL),
-    version: z.literal(BRIDGE_VERSION),
+    version: z.union([z.literal(1), z.literal(BRIDGE_VERSION)]),
+    /** Bridge v2 carries only the normalized public contract, never a theme document. */
+    appearance: appearanceSnapshotSchema.optional(),
     instanceId: z.string().min(1).max(128),
     nonce: z.string().min(16).max(200),
     props: z.record(z.string(), z.unknown()),
@@ -128,6 +135,12 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
      */
     extensions: z.array(z.string().min(1).max(60)).max(16).optional(),
   }),
+  z.strictObject({
+    kind: z.literal("appearance.changed"),
+    nonce: z.string().min(16).max(200),
+    revision: appearanceSnapshotSchema.shape.revision,
+    appearance: appearanceSnapshotSchema,
+  }).refine((message) => message.revision === message.appearance.revision, {message: "appearance revision must match its snapshot"}),
   z.strictObject({
     kind: z.literal("props"),
     nonce: z.string().min(16).max(200),
@@ -337,6 +350,12 @@ export interface ActionAvailability {
 }
 
 export interface WidgetAuthorApi {
+  appearance: {
+    /** Undefined before init, or when an older host does not offer appearance. */
+    current(): ReadonlyAppearanceSnapshot | undefined;
+    /** Read-only notifications; registering before init observes its initial snapshot. */
+    subscribe(handler: (snapshot: ReadonlyAppearanceSnapshot) => void): () => void;
+  };
   props: {
     read(): Record<string, unknown>;
     /** Called whenever the host sends new props, so a widget can re-render without polling. */

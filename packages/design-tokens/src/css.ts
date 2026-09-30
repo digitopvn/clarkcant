@@ -13,7 +13,7 @@ import {
 } from "@clarkcant/contracts";
 
 import { type CompileAppearanceInput, compileAppearance } from "./appearance.ts";
-import { identityStylesheet } from "./identity.ts";
+import { identityDeclarations, identityStylesheet } from "./identity.ts";
 
 /**
  * Emit an appearance as CSS custom properties.
@@ -61,37 +61,48 @@ const LAYOUT_VARIABLES: Record<LayoutTokenName, string> = {
   modalWidth: "--cc-modal-width",
 };
 
-/** One snapshot as the declaration block for its scheme. */
-export function appearanceToCss(snapshot: AppearanceSnapshot): string {
+/** The canonical bounded token-to-property mapping, shared with the optional widget DOM adapter. */
+function baseAppearanceDeclarations(snapshot: AppearanceSnapshot): Record<string, string> {
   const { scheme, tokens } = snapshot;
-  const lines: string[] = [
+  const values: Record<string, string> = {
     // Without this, every control the user agent draws itself — buttons, scrollbars, form
     // fields, the caret — keeps the light default regardless of the palette, which is how a
     // dark interface ends up with a bright grey pill in the middle of it.
-    `  color-scheme: ${scheme};`,
-  ];
+    "color-scheme": scheme,
+  };
 
   for (const name of COLOR_TOKEN_NAMES) {
-    lines.push(`  ${COLOR_VARIABLES[name]}: ${tokens.color[name]};`);
+    values[COLOR_VARIABLES[name]] = tokens.color[name];
   }
   // Size and leading are emitted as a pair, so a component cannot take the size and forget
   // the leading that was chosen to go with it.
   for (const name of TYPE_TOKEN_NAMES) {
-    lines.push(`  --cc-text-${kebab(name)}: ${tokens.type[name].size};`);
-    lines.push(`  --cc-leading-${kebab(name)}: ${tokens.type[name].lineHeight};`);
+    values[`--cc-text-${kebab(name)}`] = tokens.type[name].size;
+    values[`--cc-leading-${kebab(name)}`] = tokens.type[name].lineHeight;
   }
   for (const name of SPACE_TOKEN_NAMES) {
-    lines.push(`  --cc-space-${name}: ${tokens.space[name]};`);
+    values[`--cc-space-${name}`] = tokens.space[name];
   }
   for (const name of RADIUS_TOKEN_NAMES) {
-    lines.push(`  --cc-radius-${name}: ${tokens.radius[name]};`);
+    values[`--cc-radius-${name}`] = tokens.radius[name];
   }
   for (const name of MOTION_TOKEN_NAMES) {
-    lines.push(`  --cc-motion-${name}: ${tokens.motion[name]};`);
+    values[`--cc-motion-${name}`] = tokens.motion[name];
   }
   for (const name of LAYOUT_TOKEN_NAMES) {
-    lines.push(`  ${LAYOUT_VARIABLES[name]}: ${tokens.layout[name]};`);
+    values[LAYOUT_VARIABLES[name]] = tokens.layout[name];
   }
+  return values;
+}
+
+export function appearanceDeclarations(snapshot: AppearanceSnapshot): Record<string, string | undefined> {
+  return { ...baseAppearanceDeclarations(snapshot), ...identityDeclarations(snapshot.tokens.identity) };
+}
+
+/** One snapshot as the declaration block for its scheme. */
+export function appearanceToCss(snapshot: AppearanceSnapshot): string {
+  const scheme = snapshot.scheme;
+  const lines = Object.entries(baseAppearanceDeclarations(snapshot)).map(([name, value]) => `  ${name}: ${value};`);
 
   /*
    * The bare attribute selector as well as the root one, so a scheme can be scoped to a subtree. The Widget Lab

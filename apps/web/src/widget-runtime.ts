@@ -7,4 +7,5 @@
  * more than a re-export: a second implementation of the protocol living here is exactly what must not happen.
  */
 export { createWidgetRuntime, readyMessage } from "@clarkcant/widget-sdk";
+export { bindAppearance, applyAppearanceToElement } from "@clarkcant/widget-sdk/dom";
 export type { BridgeRejection, MessageEndpoint, RuntimeStatus, WidgetRuntime } from "@clarkcant/widget-sdk";

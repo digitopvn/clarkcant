@@ -1,6 +1,7 @@
-import type { SemanticProposal } from "@clarkcant/contracts";
+import { appearanceSnapshotSchema, type AppearanceSnapshot, type SemanticProposal } from "@clarkcant/contracts";
 import {
   ARTIFACTS_EXTENSION,
+  APPEARANCE_EXTENSION,
   BRIDGE_PROTOCOL,
   BRIDGE_VERSION,
   acceptBridgeMessage,
@@ -102,6 +103,7 @@ export interface FrameActionAvailability {
 
 export interface FrameSessionInput {
   instanceId: string;
+  appearance?: AppearanceSnapshot;
   /** Issued by the host, never exposed outside this frame. */
   nonce: string;
   props: Record<string, unknown>;
@@ -204,6 +206,8 @@ export interface FrameSession {
    * service-backed binding has nothing to be told.
    */
   announceActions(actions: readonly FrameActionAvailability[]): void;
+  /** Restyle the existing frame without changing its instance or semantic revisions. */
+  announceAppearance(appearance: AppearanceSnapshot): void;
   dispose(): void;
   status(): "awaiting-init" | "ready" | "suspended" | "disposed";
   /** What the frame said, in order — the latest `maxTranscriptEntries` of it. What a session records is what it is willing to be held to. */
@@ -275,6 +279,12 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   let status: "awaiting-init" | "ready" | "suspended" | "disposed" = "awaiting-init";
   let availability: readonly FrameActionAvailability[] = [];
   let announced = "";
+  let appearance = input.appearance === undefined ? undefined : appearanceSnapshotSchema.parse(input.appearance);
+  let appearanceRevision = "";
+  const initExtensions = [
+    ...(input.artifacts === undefined ? [] : [ARTIFACTS_EXTENSION]),
+    ...(appearance === undefined ? [] : [APPEARANCE_EXTENSION]),
+  ];
   const postActions = (): void => {
     if (availability.length === 0) return;
     const key = JSON.stringify(availability);
@@ -351,8 +361,10 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       stateRevision,
       brokeredCapabilities: [...input.brokeredCapabilities],
       allowedOrigins: [...input.allowedOrigins],
-      ...(input.artifacts === undefined ? {} : { extensions: [ARTIFACTS_EXTENSION] }),
+      ...(initExtensions.length === 0 ? {} : { extensions: initExtensions }),
+      ...(appearance === undefined ? {} : { appearance }),
     };
+    appearanceRevision = appearance?.revision ?? "";
     input.post(message);
     status = "ready";
     postActions();
@@ -637,6 +649,15 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       availability = actions;
       // Before init there is no frame listening; `init` sends what was held.
       if (status !== "awaiting-init") postActions();
+    },
+
+    announceAppearance(next) {
+      if (status === "disposed" || appearance === undefined) return;
+      const checked = appearanceSnapshotSchema.parse(next);
+      appearance = checked;
+      if (status === "awaiting-init" || checked.revision === appearanceRevision) return;
+      appearanceRevision = checked.revision;
+      input.post({ kind: "appearance.changed", nonce: input.nonce, revision: checked.revision, appearance: checked });
     },
 
     dispose() {

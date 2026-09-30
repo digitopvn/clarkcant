@@ -206,6 +206,9 @@ importers:
       '@clarkcant/conversation-client':
         specifier: workspace:*
         version: link:../../packages/conversation-client
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
     devDependencies:
       electron:
         specifier: 44.3.0
@@ -430,6 +433,12 @@ importers:
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
+      '@types/react-dom':
+        specifier: 19.3.0
+        version: 19.3.0(@types/react@19.3.0)
+      react-dom:
+        specifier: 19.3.0
+        version: 19.3.0(react@19.3.0)
 
   packages/core:
     dependencies:
@@ -602,6 +611,9 @@ importers:
       '@clarkcant/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@clarkcant/design-tokens':
+        specifier: workspace:*
+        version: link:../design-tokens
       zod:
         specifier: 4.6.5
         version: 4.6.5

@@ -1950,6 +1950,10 @@ export function MarketplaceResultsBlock({
                   {displayName} <span className="cc-marketplace-version">{version}</span>
                 </div>
                 {description !== "" && <div className="cc-marketplace-desc">{description}</div>}
+                {Array.isArray(result.widgetAppearance) && result.widgetAppearance.some((entry) =>
+                  entry !== null && typeof entry === "object" && entry.mode === "fixed") && (
+                  <div className="cc-marketplace-desc" data-widget-appearance="fixed">{t("widgets.appearance.fixed")}</div>
+                )}
                 <div className="cc-marketplace-meta">
                   <span data-marketplace-source="true">{describePackageSource(result.source, t)}</span>
                   <span data-marketplace-risk={lane}>{riskLaneLabel(t, lane)}</span>

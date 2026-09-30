@@ -338,6 +338,15 @@ this node cannot draw is refused with `409` and the same code, reason and `contr
 stored. The node does not push package changes: a client re-reads `/appearance` after it changes a package and when its
 window comes back into view. The shapes are `packages/contracts/src/themes.ts`.
 
+Widgets consume the resolved public `AppearanceSnapshot` rather than this raw theme response. Bridge v2 optionally
+includes `appearance` in init with `appearance@1`, then sends source/nonce-checked
+`{ kind: "appearance.changed", nonce, revision, appearance }` with matching revisions. The DOM-independent SDK exposes
+deeply frozen `appearance.current()` / `subscribe(handler)`; no state write or capability accompanies the snapshot.
+The desktop detached bootstrap/event relay carries the same checked revision without credentials. Widget definitions
+may declare `appearanceMode: "adaptive" | "fixed"` (absent means adaptive); directory entries optionally carry
+`widgetAppearance: [{ id, mode }]` as discovery claims, never authority. See
+[widget authoring and bridge compatibility](widget-development.md#appearance-appearance1).
+
 A theme document declaring `appearanceApi.min` 2 may also choose the rest of the look, always by name or bounded number
 and never as CSS: `typography` (font profiles and heading weight), `border`, `shadow`, `motion` (speed and easing;
 reduced motion stays none whatever it says), `icons`, `radius.field`, `recipes` (one host-owned recipe per button, card,

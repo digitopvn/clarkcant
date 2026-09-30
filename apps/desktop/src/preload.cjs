@@ -85,6 +85,9 @@ const bridge = {
   attachWidget() {
     return ipcRenderer.invoke("desktop:attachWidget");
   },
+  updateAppearance(snapshot) {
+    return ipcRenderer.invoke("desktop:updateAppearance", snapshot);
+  },
   /**
    * Told when a detached window closes, so the shell can take the instance back.
    *

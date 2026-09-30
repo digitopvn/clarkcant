@@ -32,6 +32,8 @@
   },
   "devDependencies": {
     "@clarkcant/data-canvas": "workspace:*",
+    "react-dom": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@types/react": "^19.3.0"
   }
 }

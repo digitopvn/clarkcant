@@ -1,0 +1,835 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "appearanceApi": {
+      "type": "number",
+      "const": 2
+    },
+    "tokenContractVersion": {
+      "type": "number",
+      "const": 2
+    },
+    "themeRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "scheme": {
+      "type": "string",
+      "enum": [
+        "dark",
+        "light"
+      ]
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8,64}$"
+    },
+    "tokens": {
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "object",
+          "properties": {
+            "canvas": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "window": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "card": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "elevated": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "code": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "border": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "textMuted": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "textTertiary": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "accent": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "onAccent": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "success": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "warning": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "danger": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "focus": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            }
+          },
+          "required": [
+            "canvas",
+            "window",
+            "card",
+            "elevated",
+            "code",
+            "border",
+            "text",
+            "textMuted",
+            "textTertiary",
+            "accent",
+            "onAccent",
+            "success",
+            "warning",
+            "danger",
+            "focus"
+          ],
+          "additionalProperties": false
+        },
+        "type": {
+          "type": "object",
+          "properties": {
+            "displayXl": {
+              "type": "object",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                },
+                "lineHeight": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                }
+              },
+              "required": [
+                "size",
+                "lineHeight"
+              ],
+              "additionalProperties": false
+            },
+            "displayLg": {
+              "type": "object",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                },
+                "lineHeight": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                }
+              },
+              "required": [
+                "size",
+                "lineHeight"
+              ],
+              "additionalProperties": false
+            },
+            "headingLg": {
+              "type": "object",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                },
+                "lineHeight": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                }
+              },
+              "required": [
+                "size",
+                "lineHeight"
+              ],
+              "additionalProperties": false
+            },
+            "headingMd": {
+              "type": "object",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                },
+                "lineHeight": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                }
+              },
+              "required": [
+                "size",
+                "lineHeight"
+              ],
+              "additionalProperties": false
+            },
+            "bodyLg": {
+              "type": "object",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                },
+                "lineHeight": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                }
+              },
+              "required": [
+                "size",
+                "lineHeight"
+              ],
+              "additionalProperties": false
+            },
+            "bodyMd": {
+              "type": "object",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                },
+                "lineHeight": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                }
+              },
+              "required": [
+                "size",
+                "lineHeight"
+              ],
+              "additionalProperties": false
+            },
+            "bodySm": {
+              "type": "object",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                },
+                "lineHeight": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                }
+              },
+              "required": [
+                "size",
+                "lineHeight"
+              ],
+              "additionalProperties": false
+            },
+            "label": {
+              "type": "object",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                },
+                "lineHeight": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                }
+              },
+              "required": [
+                "size",
+                "lineHeight"
+              ],
+              "additionalProperties": false
+            },
+            "monoSm": {
+              "type": "object",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                },
+                "lineHeight": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                }
+              },
+              "required": [
+                "size",
+                "lineHeight"
+              ],
+              "additionalProperties": false
+            },
+            "meta": {
+              "type": "object",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                },
+                "lineHeight": {
+                  "type": "string",
+                  "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+                }
+              },
+              "required": [
+                "size",
+                "lineHeight"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "displayXl",
+            "displayLg",
+            "headingLg",
+            "headingMd",
+            "bodyLg",
+            "bodyMd",
+            "bodySm",
+            "label",
+            "monoSm",
+            "meta"
+          ],
+          "additionalProperties": false
+        },
+        "space": {
+          "type": "object",
+          "properties": {
+            "xxs": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "xs": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "sm": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "md": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "lg": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "xl": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "xxl": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "s20": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "s40": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "s48": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "s64": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "s80": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            }
+          },
+          "required": [
+            "xxs",
+            "xs",
+            "sm",
+            "md",
+            "lg",
+            "xl",
+            "xxl",
+            "s20",
+            "s40",
+            "s48",
+            "s64",
+            "s80"
+          ],
+          "additionalProperties": false
+        },
+        "radius": {
+          "type": "object",
+          "properties": {
+            "badge": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "button": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "card": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "response": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "modal": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "pill": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            }
+          },
+          "required": [
+            "badge",
+            "button",
+            "card",
+            "response",
+            "modal",
+            "pill"
+          ],
+          "additionalProperties": false
+        },
+        "motion": {
+          "type": "object",
+          "properties": {
+            "micro": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "normal": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "panel": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "orb": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "enter": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "exit": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "glow": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "easing": {
+              "type": "string",
+              "pattern": "^(?:linear|steps\\([1-9]\\)|cubic-bezier\\(-?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?\\))$"
+            },
+            "bounce": {
+              "type": "string",
+              "pattern": "^(?:linear|steps\\([1-9]\\)|cubic-bezier\\(-?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?\\))$"
+            }
+          },
+          "required": [
+            "micro",
+            "normal",
+            "panel",
+            "orb",
+            "enter",
+            "exit",
+            "glow",
+            "easing",
+            "bounce"
+          ],
+          "additionalProperties": false
+        },
+        "motionReduced": {
+          "type": "object",
+          "properties": {
+            "micro": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "normal": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "panel": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "orb": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "enter": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "exit": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "glow": {
+              "type": "string",
+              "pattern": "^[0-9]{1,5}ms$"
+            },
+            "easing": {
+              "type": "string",
+              "pattern": "^(?:linear|steps\\([1-9]\\)|cubic-bezier\\(-?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?\\))$"
+            },
+            "bounce": {
+              "type": "string",
+              "pattern": "^(?:linear|steps\\([1-9]\\)|cubic-bezier\\(-?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?, -?[0-9](?:\\.[0-9]{1,3})?\\))$"
+            }
+          },
+          "required": [
+            "micro",
+            "normal",
+            "panel",
+            "orb",
+            "enter",
+            "exit",
+            "glow",
+            "easing",
+            "bounce"
+          ],
+          "additionalProperties": false
+        },
+        "layout": {
+          "type": "object",
+          "properties": {
+            "conversationMaxWidth": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "composerMaxWidth": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "composerMinHeight": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "topBarHeight": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "modalWidth": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            }
+          },
+          "required": [
+            "conversationMaxWidth",
+            "composerMaxWidth",
+            "composerMinHeight",
+            "topBarHeight",
+            "modalWidth"
+          ],
+          "additionalProperties": false
+        },
+        "identity": {
+          "type": "object",
+          "properties": {
+            "typography": {
+              "type": "object",
+              "properties": {
+                "body": {
+                  "type": "string",
+                  "enum": [
+                    "clark",
+                    "system",
+                    "serif",
+                    "rounded",
+                    "mono"
+                  ]
+                },
+                "display": {
+                  "type": "string",
+                  "enum": [
+                    "clark",
+                    "system",
+                    "serif",
+                    "rounded",
+                    "mono"
+                  ]
+                },
+                "mono": {
+                  "type": "string",
+                  "enum": [
+                    "clark",
+                    "typewriter"
+                  ]
+                },
+                "headingWeight": {
+                  "type": "integer",
+                  "minimum": 400,
+                  "maximum": 800,
+                  "multipleOf": 100
+                }
+              },
+              "required": [
+                "body",
+                "display",
+                "mono",
+                "headingWeight"
+              ],
+              "additionalProperties": false
+            },
+            "border": {
+              "type": "object",
+              "properties": {
+                "width": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 3
+                },
+                "style": {
+                  "type": "string",
+                  "enum": [
+                    "solid",
+                    "dashed"
+                  ]
+                }
+              },
+              "required": [
+                "width",
+                "style"
+              ],
+              "additionalProperties": false
+            },
+            "shadow": {
+              "type": "object",
+              "properties": {
+                "style": {
+                  "type": "string",
+                  "enum": [
+                    "soft",
+                    "hard",
+                    "none"
+                  ]
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8
+                },
+                "color": {
+                  "type": "string",
+                  "enum": [
+                    "text",
+                    "border",
+                    "accent"
+                  ]
+                }
+              },
+              "required": [
+                "style",
+                "offset",
+                "color"
+              ],
+              "additionalProperties": false
+            },
+            "fieldRadius": {
+              "type": "string",
+              "pattern": "^(?:0|[0-9]{1,4}(?:\\.[0-9]{1,4})?)(?:rem|px)$"
+            },
+            "iconStroke": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 2.5
+            },
+            "recipes": {
+              "type": "object",
+              "properties": {
+                "button": {
+                  "type": "string",
+                  "enum": [
+                    "quiet",
+                    "outlined",
+                    "solid",
+                    "raised",
+                    "beveled"
+                  ]
+                },
+                "card": {
+                  "type": "string",
+                  "enum": [
+                    "flat",
+                    "outlined",
+                    "raised"
+                  ]
+                },
+                "input": {
+                  "type": "string",
+                  "enum": [
+                    "quiet",
+                    "filled",
+                    "outlined",
+                    "underlined"
+                  ]
+                },
+                "modal": {
+                  "type": "string",
+                  "enum": [
+                    "floating",
+                    "framed"
+                  ]
+                },
+                "badge": {
+                  "type": "string",
+                  "enum": [
+                    "pill",
+                    "rounded",
+                    "square"
+                  ]
+                },
+                "composer": {
+                  "type": "string",
+                  "enum": [
+                    "floating",
+                    "integrated",
+                    "framed"
+                  ]
+                }
+              },
+              "required": [
+                "button",
+                "card",
+                "input",
+                "modal",
+                "badge",
+                "composer"
+              ],
+              "additionalProperties": false
+            },
+            "effects": {
+              "type": "object",
+              "properties": {
+                "backdrop": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "dot-grid",
+                        "hard-grid",
+                        "scanlines",
+                        "grain",
+                        "paper"
+                      ]
+                    },
+                    "intensity": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "scale": {
+                      "type": "integer",
+                      "minimum": 8,
+                      "maximum": 48
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "intensity",
+                    "scale"
+                  ],
+                  "additionalProperties": false
+                },
+                "surface": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "glass",
+                        "soft-glow",
+                        "paper",
+                        "grain"
+                      ]
+                    },
+                    "intensity": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "intensity"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "backdrop",
+                "surface"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "typography",
+            "border",
+            "shadow",
+            "fieldRadius",
+            "iconStroke",
+            "recipes",
+            "effects"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "color",
+        "type",
+        "space",
+        "radius",
+        "motion",
+        "motionReduced",
+        "layout",
+        "identity"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "appearanceApi",
+    "tokenContractVersion",
+    "themeRef",
+    "scheme",
+    "revision",
+    "tokens"
+  ],
+  "additionalProperties": false
+}

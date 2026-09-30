@@ -55,6 +55,7 @@ import {
   detachedWindowOptions,
   reviewDetachedBootstrap,
   reviewDetachedIntent,
+  reviewDetachedAppearance,
 } from "./detached-window.mjs";
 import {
   COMPACT_MIN_SIZE,
@@ -765,6 +766,7 @@ function registerHandlers() {
         title: input?.title,
         widgetKind: input?.widgetKind,
         live: input?.live,
+        appearance: input?.appearance,
       }),
     );
     if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
@@ -842,6 +844,15 @@ function registerHandlers() {
     if (detached === undefined) return { ok: true, attached: false };
     detached.window.close();
     return { ok: true, attached: true };
+  });
+
+  handle("desktop:updateAppearance", async (input) => {
+    const checked = reviewDetachedAppearance(input);
+    if (!checked.ok) return { ok: false, refused: checked.reason };
+    if (detached === undefined || detached.bootstrap.appearance?.revision === checked.appearance.revision) return { ok: true };
+    detached.bootstrap = { ...detached.bootstrap, appearance: checked.appearance };
+    detached.window.webContents.send("detached:appearance", checked.appearance);
+    return { ok: true };
   });
 
   handle("detached:bootstrap", async () => {
@@ -1198,8 +1209,8 @@ async function runSmokeTest() {
           !JSON.stringify(bootstrap.bootstrap).includes("localToken"),
       ],
       [
-        "the detached window reaches only its own three verbs",
-        JSON.stringify(verbs) === JSON.stringify(["bootstrap", "intent", "release"]),
+        "the detached window reaches only its own verbs and read-only appearance subscription",
+        JSON.stringify(verbs) === JSON.stringify(["bootstrap", "intent", "onAppearance", "release"]),
       ],
       ["closing the window gives the lease back", release !== undefined],
       ["and the shell is told to take the instance back", Array.isArray(reattached) && reattached.length === 1],

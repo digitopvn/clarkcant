@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { appearanceSnapshotSchema } from "@clarkcant/contracts";
+import { compileAppearance } from "@clarkcant/design-tokens";
 
 import {
   DETACHED_CHANNELS,
@@ -8,6 +11,7 @@ import {
   detachedWindowOptions,
   reviewDetachedBootstrap,
   reviewDetachedIntent,
+  reviewDetachedAppearance,
 } from "../src/detached-window.mjs";
 
 /**
@@ -23,6 +27,23 @@ import {
  */
 
 const PRELOAD = "/tmp/detached-preload.cjs";
+
+describe("the detached appearance boundary", () => {
+  it("uses the current canonical schema, accepts a snapshot and refuses raw/privileged styling", () => {
+    const generated = JSON.parse(readFileSync(new URL("../src/appearance-schema.json", import.meta.url), "utf8"));
+    expect(generated).toEqual(appearanceSnapshotSchema.toJSONSchema());
+    const appearance = compileAppearance({ scheme: "dark" });
+    expect(reviewDetachedAppearance(appearance)).toEqual({ ok: true, appearance });
+    expect(reviewDetachedAppearance({ ...appearance, token: "must-not-cross" }).ok).toBe(false);
+    expect(reviewDetachedAppearance({ ...appearance, tokens: { ...appearance.tokens, token: "must-not-cross" } }).ok).toBe(false);
+    expect(reviewDetachedAppearance({ ...appearance, tokens: { ...appearance.tokens, color: { ...appearance.tokens.color, canvas: "url(https://bad.test)" } } }).ok).toBe(false);
+    expect(reviewDetachedAppearance({ ...appearance, themeRef: "x".repeat(40_000) }).ok).toBe(false);
+    expect(reviewDetachedAppearance(undefined).ok).toBe(false);
+    const bootstrap = detachedBootstrap({ instanceRef: "widget_1", live: {}, appearance });
+    expect(reviewDetachedBootstrap(bootstrap).ok).toBe(true);
+    expect(reviewDetachedBootstrap({ ...bootstrap, appearance: { ...appearance, rawTheme: {} } }).ok).toBe(false);
+  });
+});
 
 describe("the detached bootstrap", () => {
   it("carries the widget host bootstrap and cannot be widened by its input", () => {
