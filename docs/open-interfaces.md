@@ -338,6 +338,16 @@ this node cannot draw is refused with `409` and the same code, reason and `contr
 stored. The node does not push package changes: a client re-reads `/appearance` after it changes a package and when its
 window comes back into view. The shapes are `packages/contracts/src/themes.ts`.
 
+`GET /appearance?themeRef=<encoded reference>` resolves a checked theme for read-only preview, without writing any
+preference. Malformed references answer `400`; unavailable themes return the normal fallback. Personal appearance
+adds optional `customization: { accent, density }`: accent is `null` or `{ dark: "#RRGGBB", light: "#RRGGBB" }`, density
+is `comfortable | compact`. Write these through registered `experience.accent` and `experience.density` preferences.
+Accent is audited in both schemes and for protected states before a write (including a theme choice under the saved
+accent); refusal is `409` and leaves storage unchanged. `customizationFallback` names why an installed update made a
+saved accent unsafe; the theme's accent is drawn and the saved preference is retained. The compiler owns these
+choices, so iframe and detached renderers receive the same bounded snapshot. `experience.recentThemes` contains up
+to six distinct references, updated atomically with a registered theme write.
+
 Widgets consume the resolved public `AppearanceSnapshot` rather than this raw theme response. Bridge v2 optionally
 includes `appearance` in init with `appearance@1`, then sends source/nonce-checked
 `{ kind: "appearance.changed", nonce, revision, appearance }` with matching revisions. The DOM-independent SDK exposes

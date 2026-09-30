@@ -1529,8 +1529,8 @@ export class GatewayClient {
   }
 
   /** The theme to draw now. A fallback names why it is not the one chosen. */
-  appearance(): Promise<AppearanceResponse> {
-    return this.#call("GET", "/appearance");
+  appearance(previewRef?: string): Promise<AppearanceResponse> {
+    return this.#call("GET", `/appearance${previewRef === undefined ? "" : `?themeRef=${encodeURIComponent(previewRef)}`}`);
   }
 
   capabilityApprovals(): Promise<{ approvals: PendingCapabilityApprovalView[] }> {

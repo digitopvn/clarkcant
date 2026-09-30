@@ -90,14 +90,20 @@ export function setPreference(
     source: PreferenceSource;
   },
 ): PreferenceRecord {
-  return transaction(deps.db, () => {
-    const existing = getPreference(deps, input);
-    const at = deps.now();
-    const revision = (existing?.revision ?? 0) + 1;
+  return setPreferences(deps, [input])[0]!;
+}
 
-    deps.db
-      .prepare(
-        `INSERT INTO preferences (principal_id, key, value, scope, source, revision, previous_value, created_at)
+/** Related preference records commit together, with one undo record per key. */
+export function setPreferences(deps: PreferenceDeps, inputs: readonly Parameters<typeof setPreference>[1][]): PreferenceRecord[] {
+  return transaction(deps.db, () =>
+    inputs.map((input) => {
+      const existing = getPreference(deps, input);
+      const at = deps.now();
+      const revision = (existing?.revision ?? 0) + 1;
+
+      deps.db
+        .prepare(
+          `INSERT INTO preferences (principal_id, key, value, scope, source, revision, previous_value, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (principal_id, key, scope) DO UPDATE SET
            value = excluded.value,
@@ -105,22 +111,23 @@ export function setPreference(
            revision = excluded.revision,
            previous_value = excluded.previous_value,
            created_at = excluded.created_at`,
-      )
-      .run(
-        input.principalId,
-        input.key,
-        toJson(input.value),
-        input.scope,
-        input.source,
-        revision,
-        existing === undefined ? null : toJson(existing.value),
-        at,
-      );
+        )
+        .run(
+          input.principalId,
+          input.key,
+          toJson(input.value),
+          input.scope,
+          input.source,
+          revision,
+          existing === undefined ? null : toJson(existing.value),
+          at,
+        );
 
-    const written = getPreference(deps, input);
-    if (!written) throw new Error(`preference ${input.key} was not written`);
-    return written;
-  });
+      const written = getPreference(deps, input);
+      if (!written) throw new Error(`preference ${input.key} was not written`);
+      return written;
+    }),
+  );
 }
 
 export type UndoOutcome =

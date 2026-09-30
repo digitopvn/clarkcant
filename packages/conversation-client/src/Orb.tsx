@@ -22,6 +22,8 @@ import { usePlatformReducedMotion } from "./typewriter.ts";
  */
 
 export interface OrbProps extends OrbOptions {
+  /** A scoped production preview changes its own tokens without changing the document's appearance revision. */
+  appearanceRevision?: string;
   /** Rendered size. The orb is round, so this is both width and height. */
   size: number;
   /** Class applied alongside the orb's own, for the fallback background and layout. */
@@ -87,9 +89,9 @@ function parseCssColor(value: string): readonly number[] | undefined {
  * rectangle. Read rather than hardcoded, and re-read whenever the theme changes, because a colour
  * captured at mount becomes the previous theme's colour the moment someone switches.
  */
-function readCanvasColor(): readonly number[] | undefined {
+function readCanvasColor(element: Element): readonly number[] | undefined {
   if (typeof getComputedStyle !== "function") return undefined;
-  const raw = getComputedStyle(document.documentElement).getPropertyValue("--cc-canvas").trim();
+  const raw = getComputedStyle(element).getPropertyValue("--cc-canvas").trim();
   return raw === "" ? undefined : parseCssColor(raw);
 }
 
@@ -100,6 +102,7 @@ export function Orb({
   pointerTarget,
   profile,
   onRenderMode,
+  appearanceRevision,
   ...options
 }: OrbProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -151,7 +154,7 @@ export function Orb({
     const canvas = canvasRef.current;
     if (canvas === null) return;
 
-    const canvasColor = readCanvasColor();
+    const canvasColor = readCanvasColor(canvas);
     const created = createOrbRenderer(canvas, {
       ...effective,
       // The page background wins over the orb's own default, so the canvas edge is invisible.
@@ -275,7 +278,7 @@ export function Orb({
     // resolved profile changes, so a personalized orb rebuilds once per profile change and never per render.
     // Reduced motion is a dependency for the same reason: it decides whether the loop runs at all, so a
     // switch flipped while the orb is on screen stops (or restarts) it rather than waiting for a reload.
-  }, [theme, pointerTarget, profile?.key, reduceMotion]);
+  }, [theme, appearanceRevision, pointerTarget, profile?.key, reduceMotion]);
 
   /*
    * What the machine without WebGL shows.

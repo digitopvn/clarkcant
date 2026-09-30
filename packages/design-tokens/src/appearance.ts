@@ -5,6 +5,7 @@ import {
   TOKEN_CONTRACT_VERSION,
   appearanceSnapshotSchema,
   type AppearanceSnapshot,
+  type AppearanceCustomization,
   type AppearanceTokens,
   type ResolvedColorScheme,
   type ThemeContrastFailureView,
@@ -13,7 +14,7 @@ import {
   type ThemeProtectedFailureView,
 } from "@clarkcant/contracts";
 
-import { type ContrastAudit, auditColors } from "./contrast.ts";
+import { type ContrastAudit, auditColors, contrastRatio } from "./contrast.ts";
 import { resolveIdentity } from "./identity.ts";
 import { auditProtectedSchemes } from "./protected.ts";
 import { CLARK_SCHEMES, type ColorTokens, LAYOUT, MOTION, MOTION_REDUCED, RADIUS, SPACE, TYPE_SCALE } from "./tokens.ts";
@@ -45,7 +46,7 @@ export const CLARK_THEME: ThemeDocument = {
  * without the other would stamp `builtin:clark` on another theme's tokens, and a consumer that trusts the name — a
  * cache, a fallback notice, a widget told which theme it is drawn in — would be told something untrue.
  */
-export type CompileAppearanceInput = { reducedMotion?: boolean } & (
+export type CompileAppearanceInput = { reducedMotion?: boolean; customization?: AppearanceCustomization | undefined } & (
   | {
       /** The scheme to draw in, already resolved from the person's choice. */
       scheme: ResolvedColorScheme;
@@ -68,7 +69,11 @@ export function compileAppearance(input: CompileAppearanceInput): AppearanceSnap
   if (input.theme === undefined && input.themeRef !== undefined && input.themeRef !== BUILTIN_CLARK_THEME_REF) {
     throw new Error(`${input.themeRef} names a theme, but none was given to compile`);
   }
-  const theme = input.theme ?? CLARK_THEME;
+  const theme = customizedTheme(input.theme ?? CLARK_THEME, input.customization);
+  if (input.customization?.accent != null) {
+    const problem = themeDrawProblem(theme);
+    if (problem !== undefined) throw new Error(problem.message);
+  }
   const radius: Record<string, string> = { ...RADIUS };
   for (const [name, rem] of Object.entries(theme.radius ?? {})) {
     // `field` is identity, not one of the version-1 radius tokens; `resolveIdentity` carries it.
@@ -77,7 +82,7 @@ export function compileAppearance(input: CompileAppearanceInput): AppearanceSnap
   const tokens = {
     color: themeColors(input.scheme, theme),
     type: TYPE_SCALE,
-    space: SPACE,
+    space: input.customization?.density === "compact" ? COMPACT_SPACE : SPACE,
     radius,
     motion: input.reducedMotion === true ? MOTION_REDUCED : themeMotion(theme),
     // Host-owned: a theme can make motion faster, slower or stepped, and reduced motion is still none at all.
@@ -94,6 +99,26 @@ export function compileAppearance(input: CompileAppearanceInput): AppearanceSnap
     revision: fingerprint(JSON.stringify([APPEARANCE_API_VERSION, TOKEN_CONTRACT_VERSION, themeRef, input.scheme, tokens])),
     tokens,
   });
+}
+
+// Compact spacing preserves type, layout minima and small hit-area padding.
+const COMPACT_SPACE = Object.fromEntries(
+  Object.entries(SPACE).map(([key, value]) => {
+    const rem = Number.parseFloat(value);
+    return [key, rem <= 0.5 ? value : remLength(rem * 0.75)];
+  }),
+);
+
+/** Personal colors remain data and are audited like the package's own colors. */
+export function customizedTheme(theme: ThemeDocument, customization?: AppearanceCustomization): ThemeDocument {
+  if (customization?.accent == null) return theme;
+  const colors = { ...theme.colors };
+  for (const scheme of RESOLVED_COLOR_SCHEMES) {
+    const accent = customization.accent[scheme];
+    const onAccent = contrastRatio("#000000", accent) >= contrastRatio("#FFFFFF", accent) ? "#000000" : "#FFFFFF";
+    colors[scheme] = { ...colors[scheme], accent, onAccent };
+  }
+  return { ...theme, colors };
 }
 
 /** The contrast audit of a compiled snapshot: the same pairs and thresholds Clark Default is held to. */

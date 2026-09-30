@@ -23,7 +23,7 @@ import { z } from "zod";
 import { GUARD_CLASSES, guardClassSchema, jevUnavailablePolicySchema } from "./execution.ts";
 import { orbPalettePreferenceSchema } from "./orb-palette.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
-import { BUILTIN_CLARK_THEME_REF, DEFAULT_COLOR_SCHEME, colorSchemeSchema, themeRefSchema } from "./themes.ts";
+import { BUILTIN_CLARK_THEME_REF, DEFAULT_COLOR_SCHEME, accentPreferenceSchema, colorSchemeSchema, themeRefSchema } from "./themes.ts";
 
 /** Where a preference lives. A key declares one, and a write cannot choose another. */
 export const preferenceScopeNameSchema = z.enum(["global", "node", "conversation"]);
@@ -587,6 +587,20 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: DEFAULT_COLOR_SCHEME,
     schema: colorSchemeSchema,
+  },
+  "experience.accent": {
+    key: "experience.accent",
+    scope: "global",
+    applies: "immediate",
+    default: null,
+    schema: accentPreferenceSchema,
+  },
+  "experience.recentThemes": {
+    key: "experience.recentThemes",
+    scope: "global",
+    applies: "immediate",
+    default: [],
+    schema: z.array(themeRefSchema).max(6),
   },
   "experience.motion": {
     key: "experience.motion",

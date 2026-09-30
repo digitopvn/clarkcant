@@ -20,7 +20,7 @@ export interface ConversationComposerBarProps {
   chips: readonly AttachmentChip[];
   onRemoveChip: (id: string) => void;
   /** The `/` and `@` picker, and the references chosen with it. */
-  references: ComposerReferencesState;
+  references?: ComposerReferencesState;
   draft: string;
   setDraft: (draft: string) => void;
   placeholder: string;
@@ -98,7 +98,7 @@ export function ConversationComposerBar({
         void addFiles(pasted);
       }}
     >
-      {references.live.length === 0 ? null : (
+      {references === undefined || references.live.length === 0 ? null : (
         // What the message will carry besides its text, beside the files: the same row a person already reads before
         // sending. Removing a chip also takes its token out of the draft, so the two never disagree.
         <ul className="cc-tray" data-reference-chips="true" aria-label={t("composer.references.chips")}>
@@ -148,7 +148,7 @@ export function ConversationComposerBar({
       {/* The ring, drawn under the composer so the light travels around its edge rather than across it. */}
       <div className="cc-composer-shell">
         <span className="cc-composer-glow" aria-hidden="true" />
-        <ComposerSuggestions state={references} />
+        {references === undefined ? null : <ComposerSuggestions state={references} />}
         <form
           className="cc-composer"
           onSubmit={(event) => {
@@ -190,26 +190,23 @@ export function ConversationComposerBar({
             rows={1}
             data-composer="true"
             // The picker is a listbox this field controls, so focus stays where the person is typing.
-            role="combobox"
-            aria-autocomplete="list"
-            aria-expanded={references.open}
-            aria-controls={COMPOSER_LISTBOX_ID}
-            {...(references.open && references.suggestions.length > 0
+            {...(references === undefined ? {} : { role: "combobox", "aria-autocomplete": "list" as const, "aria-expanded": references.open, "aria-controls": COMPOSER_LISTBOX_ID })}
+            {...(references?.open === true && references.suggestions.length > 0
               ? { "aria-activedescendant": composerOptionId(references.activeIndex) }
               : {})}
             onChange={(event) => {
               setDraft(event.target.value);
-              references.track(event.currentTarget);
+              references?.track(event.currentTarget);
             }}
-            onSelect={(event) => references.track(event.currentTarget)}
-            onBlur={references.leave}
-            onCompositionStart={() => references.setComposing(true)}
+            onSelect={(event) => references?.track(event.currentTarget)}
+            onBlur={references?.leave}
+            onCompositionStart={() => references?.setComposing(true)}
             onCompositionEnd={(event) => {
-              references.setComposing(false);
-              references.track(event.currentTarget);
+              references?.setComposing(false);
+              references?.track(event.currentTarget);
             }}
             onKeyDown={(event) => {
-              if (references.onKeyDown(event)) return;
+              if (references?.onKeyDown(event) === true) return;
               // An input method still composing a word takes its own Enter to finish it; that is not a send.
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();

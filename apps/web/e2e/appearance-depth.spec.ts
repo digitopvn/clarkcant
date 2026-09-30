@@ -454,6 +454,15 @@ test("a typed sentence and the keyboard alone choose a theme through the same wr
   expect(ring).not.toBe("none");
   await page.keyboard.press("Enter");
   await expect(clark).toHaveAttribute("aria-pressed", "true");
+  // Gallery selection previews locally; the keyboard reaches Apply to commit the same preference write.
+  await expect.poll(() => rootVar(page, "--cc-accent")).toBe(DEPTH_DARK_ACCENT);
+  const apply = page.locator("[data-theme-apply]");
+  await expect(apply).toBeEnabled();
+  for (let step = 0; step < 60 && !(await apply.evaluate((element) => element === document.activeElement)); step += 1) {
+    await page.keyboard.press("Tab");
+  }
+  await expect(apply).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect.poll(() => rootVar(page, "--cc-accent"), { timeout: 15_000 }).toBe(clarkAccent);
   await recordOverflow(page, "298-keyboard-gallery-390-dark");
   await page.keyboard.press("Escape");

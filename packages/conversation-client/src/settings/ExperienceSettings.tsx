@@ -20,6 +20,7 @@ import type { ResolvedColorScheme } from "@clarkcant/contracts";
 import { InlineStatus, RangeField, SegmentedControl, SettingsRow } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import { ThemeSettings } from "./ThemeSettings.tsx";
+import { ThemeCustomization } from "./theme-customization.tsx";
 import { useT, useLocaleState } from "../i18n/locale-context.tsx";
 import type { MessageKey } from "../i18n/messages.ts";
 
@@ -29,9 +30,7 @@ import type { MessageKey } from "../i18n/messages.ts";
  * The first tab, because it is the one whose answer is visible immediately and whose effect is entirely
  * local — no provider, no key, nothing to configure first.
  *
- * Only controls whose behaviour exists are rendered. `experience.density` is declared in the registry for a
- * later phase and deliberately has no control here: a switch that changes nothing is worse than a switch
- * that is missing, because the user concludes the app is broken rather than that the feature is not here.
+ * Personal colors and spacing use the shared appearance compiler; motion and Orb retain their own bounded preferences.
  */
 
 function themeLabels(t: (key: MessageKey) => string): Record<ThemeChoice, string> {
@@ -225,6 +224,7 @@ export function ExperienceSettings({
         </p>
         <InlineStatus status={prefs.status} forKey="experience.colorScheme" />
         <ThemeSettings client={client} prefs={prefs} appearance={appearance} galleryRequest={themeGalleryRequest} />
+        <ThemeCustomization prefs={prefs} appearance={appearance} onOrbChange={onOrbChange} />
       </section>
 
       <section className="cc-panel-section">

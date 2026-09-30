@@ -1,12 +1,14 @@
 import {
   BUILTIN_CLARK_THEME_REF,
   appearanceSnapshotSchema,
+  appearanceCustomizationSchema,
   checkThemeDocument,
   type ThemeContrastFailureView,
   type ThemeDocument,
   type ThemeOrb,
   type ThemeProtectedFailureView,
   type AppearanceSnapshot,
+  type AppearanceCustomization,
 } from "@clarkcant/contracts";
 import { appearanceStylesheet, compileAppearance, themeDrawProblem, type ThemeDrawProblem } from "@clarkcant/design-tokens";
 
@@ -67,13 +69,13 @@ type AppearanceSnapshots = Readonly<Record<"dark" | "light", AppearanceSnapshot>
  * Throws when the theme fails the contrast or protected-state audit Clark Default is held to, or when the result would break the
  * snapshot contract: either way the caller draws Clark Default and says why.
  */
-export function compileThemeStylesheet(theme: ThemeDocument | undefined, themeRef: string): CompiledAppearance {
+export function compileThemeStylesheet(theme: ThemeDocument | undefined, themeRef: string, customization?: AppearanceCustomization): CompiledAppearance {
   if (theme !== undefined) {
     const refused = themeDrawProblem(theme);
     if (refused !== undefined) throw new ThemeDrawError(refused);
   }
   const compile = (scheme: "dark" | "light", reducedMotion = false): AppearanceSnapshot => compileAppearance(
-    theme === undefined ? { scheme, reducedMotion } : { scheme, theme, themeRef, reducedMotion },
+    theme === undefined ? { scheme, reducedMotion, customization } : { scheme, theme, themeRef, reducedMotion, customization },
   );
   const dark = compile("dark");
   const light = compile("light");
@@ -164,20 +166,23 @@ export type AppliedAppearance =
  *
  * `theme` is `null` for Clark Default. Anything else is treated as untrusted input and checked before it is compiled.
  */
-export function applyAppearance(input: { theme: unknown; themeRef: string }): AppliedAppearance {
+export function applyAppearance(input: { theme: unknown; themeRef: string; customization?: unknown }): AppliedAppearance {
   let compiled: CompiledAppearance | undefined;
   let problem: string | undefined;
   let refused: ThemeDrawProblem | undefined;
   let orbDefault: ThemeOrb | undefined;
-  if (input.theme === null) {
-    compiled = clarkStylesheet();
+  const customization = appearanceCustomizationSchema.safeParse(input.customization ?? {});
+  if (!customization.success) problem = "the appearance customization is invalid";
+  else if (input.theme === null) {
+    try { compiled = compileThemeStylesheet(undefined, BUILTIN_CLARK_THEME_REF, customization.data); }
+    catch (error) { problem = error instanceof Error ? error.message : "the customization does not compile"; }
   } else {
     const checked = checkThemeDocument(input.theme);
     if (!checked.ok) {
       problem = checked.problems.join("; ");
     } else {
       try {
-        compiled = compileThemeStylesheet(checked.document, input.themeRef);
+        compiled = compileThemeStylesheet(checked.document, input.themeRef, customization.data);
         orbDefault = checked.document.orb;
       } catch (error) {
         problem = error instanceof Error ? error.message : "the theme does not compile";
@@ -189,7 +194,9 @@ export function applyAppearance(input: { theme: unknown; themeRef: string }): Ap
   const drawn = compiled ?? clarkStylesheet();
   writeTokens(drawn);
   writeThemeOrb(orbDefault);
-  cacheAppearance(problem === undefined && input.theme !== null ? { theme: input.theme, themeRef: input.themeRef } : undefined);
+  const personal = customization.success && (customization.data.accent !== null || customization.data.density !== "comfortable") ? customization.data : undefined;
+  cacheAppearance(problem === undefined && (input.theme !== null || personal !== undefined)
+    ? { theme: input.theme, themeRef: input.themeRef, ...(personal === undefined ? {} : { customization: personal }) } : undefined);
   return problem === undefined && compiled !== undefined
     ? { ok: true, themeRef: input.theme === null ? BUILTIN_CLARK_THEME_REF : input.themeRef, revision: drawn.revision }
     : {
@@ -286,13 +293,13 @@ export function applyRelayedAppearance(raw: unknown): boolean {
   return true;
 }
 
-function readCachedAppearance(): { theme: unknown; themeRef: string } | undefined {
+function readCachedAppearance(): { theme: unknown; themeRef: string; customization?: unknown } | undefined {
   try {
     const raw = globalThis.localStorage?.getItem(APPEARANCE_STORAGE_KEY);
     if (raw === null || raw === undefined) return undefined;
-    const parsed = JSON.parse(raw) as { theme?: unknown; themeRef?: unknown };
+    const parsed = JSON.parse(raw) as { theme?: unknown; themeRef?: unknown; customization?: unknown };
     return typeof parsed.themeRef === "string" && parsed.theme !== undefined
-      ? { theme: parsed.theme, themeRef: parsed.themeRef }
+      ? { theme: parsed.theme, themeRef: parsed.themeRef, customization: parsed.customization }
       : undefined;
   } catch {
     // Storage blocked, or a value this build did not write: start on Clark Default and let the node answer.
@@ -300,7 +307,7 @@ function readCachedAppearance(): { theme: unknown; themeRef: string } | undefine
   }
 }
 
-function cacheAppearance(value: { theme: unknown; themeRef: string } | undefined): void {
+function cacheAppearance(value: { theme: unknown; themeRef: string; customization?: unknown } | undefined): void {
   try {
     if (value === undefined) globalThis.localStorage?.removeItem(APPEARANCE_STORAGE_KEY);
     else globalThis.localStorage?.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(value));

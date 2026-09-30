@@ -19,8 +19,9 @@ import { CARDS_CSS } from "./styles/cards.ts";
 import { COMPOSER_CSS } from "./styles/composer.ts";
 import { VOICE_CSS } from "./styles/voice.ts";
 import { PANELS_CSS } from "./styles/panels.ts";
+import { THEME_LAB_CSS } from "./styles/theme-lab.ts";
 
 export const APP_CSS = `
 @layer base, timeline, cards, composer, voice, panels;
-${BASE_CSS}${TIMELINE_CSS}${CARDS_CSS}${COMPOSER_CSS}${VOICE_CSS}${PANELS_CSS}
+${BASE_CSS}${TIMELINE_CSS}${CARDS_CSS}${COMPOSER_CSS}${VOICE_CSS}${PANELS_CSS}${THEME_LAB_CSS}
 `;

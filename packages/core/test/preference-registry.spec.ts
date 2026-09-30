@@ -36,6 +36,24 @@ beforeEach(() => {
   deps = makeDeps();
 });
 
+it("records recent theme choices through the registered writer, deduplicated and bounded", () => {
+  for (let index = 0; index < 8; index += 1) writeRegisteredPreference(deps, {
+    principalId: PRINCIPAL, key: "experience.themeRef", value: `package:com.example.theme-${String(index)}#main`,
+  });
+  writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.themeRef", value: "package:com.example.theme-4#main" });
+  const recent = readRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.recentThemes" })?.value;
+  expect(recent).toEqual([4, 7, 6, 5, 3, 2].map((index) => `package:com.example.theme-${String(index)}#main`));
+  expect(writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.themeRef", value: "not a reference" }).ok).toBe(false);
+  expect(readRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.recentThemes" })?.value).toEqual(recent);
+});
+
+it("rolls back the theme choice when its recent-history write fails", () => {
+  deps.db.exec("CREATE TEMP TRIGGER refuse_recent BEFORE INSERT ON preferences WHEN NEW.key = 'experience.recentThemes' BEGIN SELECT RAISE(ABORT, 'history write failed'); END");
+  expect(() => writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.themeRef", value: "package:com.example.theme#main" })).toThrow(/history write failed/);
+  expect(readRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.themeRef" })?.isDefault).toBe(true);
+  expect(readRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.recentThemes" })?.isDefault).toBe(true);
+});
+
 function storedKeys(): string[] {
   return listPreferences(deps, PRINCIPAL).map((record) => record.key);
 }

@@ -755,4 +755,18 @@ export interface AppearanceResponse {
   theme: ThemeDocument | null;
   provider: ThemeProviderView;
   fallback: AppearanceFallbackView | null;
+  /** Personal spacing and accent, applied by the same snapshot compiler. Absent means defaults. */
+  customization?: AppearanceCustomization;
+  /** An installed update made the saved accent unreadable; the theme's own accent is retained. */
+  customizationFallback?: AppearanceFallbackView;
 }
+
+export const accentPreferenceSchema = z.strictObject({
+  dark: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  light: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+}).nullable();
+export const appearanceCustomizationSchema = z.strictObject({
+  accent: accentPreferenceSchema.default(null),
+  density: z.enum(["comfortable", "compact"]).default("comfortable"),
+});
+export type AppearanceCustomization = z.infer<typeof appearanceCustomizationSchema>;

@@ -196,6 +196,30 @@ chạm tới nút Phê duyệt và Từ chối của một yêu cầu, các câu
 từ hệ thống hay từ Cài đặt, luôn do host quyết định, dù theme nói gì. Theme được chọn bằng
 `package:<package id>#<theme id>`, và một gói chỉ có theme là một lần làm mới UI, không bao giờ khởi động lại Pi. Theme đã
 cài xuất hiện ở Cài đặt → Trải nghiệm → Chủ đề.
+
+**Tạo chủ đề và Theme Lab.** CLI package hiện có nhận `clark theme init <dir>`, `dev [dir] [--port <port>]`,
+`test [dir]` và `pack [dir]`. Từ checkout, chạy `node packages/widget-cli/src/cli.ts theme <command>`.
+Init tạo manifest tổng quát và `themes/main.json`, từ chối thư mục không rỗng. Dev mặc định dùng cổng loopback 4319,
+phục vụ dữ liệu đã kiểm tra và preview sản phẩm chung, nạp lại bản sửa, giữ draft preview và đóng watcher khi Ctrl-C.
+Nó chỉ nhận origin của chính nó và không ghi preference runtime. Preview dùng component sản phẩm: transcript,
+composer, điều khiển, thẻ/widget, Cài đặt, modal, phê duyệt/lỗi/trạng thái và Orb, với ví dụ cục bộ được ghi rõ.
+Có thể xem chế độ màu, viewport thường/điện thoại/gọn, giảm chuyển động, token đã biên dịch, recipe và kết quả kiểm tra.
+
+Test dùng bộ đọc chủ đề đã cài, compiler và cả hai phép kiểm tra trên tài liệu bất kỳ: manifest, tệp thường trong gói,
+typography có giới hạn, thời lượng/easing giảm chuyển động và không có style thực thi hay tài nguyên từ xa. Symlink
+trong gói bị từ chối. Gói thuần chủ đề không cần quyền đặc biệt và không chứa script, CSS, HTML hay payload thực thi;
+facet khác giữ trust lane riêng. Bố cục/bàn phím browser ghi rõ `requires-dev-host`, không tự động đạt. Pack dùng cùng
+artifact bất biến và hash tệp như widget, thêm digest tài liệu chủ đề, ghi kiểm tra chưa làm. Thay đổi nội dung cùng
+phiên bản đã pack bị từ chối.
+
+Cài đặt → Trải nghiệm → Duyệt chủ đề mở cùng Lab, giữ hội thoại thật và focus. Preview chỉ đọc; Dùng chủ đề này ghi
+preference chuẩn. Bộ ghi đã đăng ký lưu sáu lựa chọn gần đây khác nhau. Màu nhấn và mật độ dùng compiler/snapshot
+chung, gồm widget và bề mặt detached. Màu nhấn là cặp hex tối/sáng đã kiểm tra hoặc `null` để dùng màu chủ đề; tương
+phản và trạng thái bảo vệ phải đạt trước khi lưu. Nếu bản cập nhật làm màu đã lưu không an toàn, màu của chủ đề được
+vẽ với fallback rõ ràng và lựa chọn cũ vẫn giữ. Mật độ gọn giữ typography, giới hạn bố cục và padding nhỏ. Đặt lại tùy
+chỉnh đặt lại màu nhấn, mật độ, chuyển động và Orb, giữ chủ đề, chế độ màu và ngôn ngữ; giảm chuyển động hệ điều hành
+luôn thắng.
+
 **Node chạy service facet như thế nào.** Node chạy một container cho mỗi facet `tools` của mọi package generation
 đang active, và dừng nó khi generation không còn active (`apps/runtime/src/service-host.ts`). Service là code bên thứ
 ba, còn một process riêng không phải sandbox, nên container mới là ranh giới. `serviceRunArgs` trong

@@ -4,6 +4,7 @@ import {
   BUILTIN_CLARK_THEME_REF,
   nowInstant,
   parseThemeRef,
+  appearanceCustomizationSchema,
   type AppearanceFallbackCode,
   type AppearanceFallbackView,
   type AppearanceResponse,
@@ -23,7 +24,7 @@ import {
   resolveLocalSource,
   type InstalledPackageView,
 } from "@clarkcant/core";
-import { themeDrawProblem, type ThemeDrawProblem } from "@clarkcant/design-tokens";
+import { CLARK_THEME, customizedTheme, themeDrawProblem, type ThemeDrawProblem } from "@clarkcant/design-tokens";
 import { type Database } from "@clarkcant/storage";
 
 /**
@@ -187,21 +188,37 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
   return { themes, problems, unchecked, documents, refused };
 }
 
-export function resolveAppearance(deps: ThemeRegistryDeps, registry: ThemeRegistry = readThemeRegistry(deps)): AppearanceResponse {
+export function readAppearanceCustomization(deps: ThemeRegistryDeps) {
+  const read = (key: string): unknown => readRegisteredPreference(
+    { db: deps.db, now: nowInstant }, { principalId: deps.ownerPrincipalId, key },
+  )?.value;
+  const parsed = appearanceCustomizationSchema.safeParse({ accent: read("experience.accent"), density: read("experience.density") });
+  return parsed.success ? parsed.data : appearanceCustomizationSchema.parse({});
+}
+
+export function resolveAppearance(deps: ThemeRegistryDeps, registry: ThemeRegistry = readThemeRegistry(deps), previewRef?: string): AppearanceResponse {
   const stored = readRegisteredPreference(
     { db: deps.db, now: nowInstant },
     { principalId: deps.ownerPrincipalId, key: "experience.themeRef" },
   )?.value;
-  const selectedRef = typeof stored === "string" ? stored : BUILTIN_CLARK_THEME_REF;
+  const selectedRef = previewRef ?? (typeof stored === "string" ? stored : BUILTIN_CLARK_THEME_REF);
   const resolved = resolveThemeRef(registry, selectedRef);
+  const customization = readAppearanceCustomization(deps);
+  const customProblem = customization.accent === null ? undefined
+    : themeDrawProblem(customizedTheme(resolved.ok ? resolved.theme ?? CLARK_THEME : CLARK_THEME, customization));
+  const personal = customization.accent === null && customization.density === "comfortable" ? {} : {
+    customization: customProblem === undefined ? customization : { ...customization, accent: null },
+    ...(customProblem === undefined ? {} : { customizationFallback: customProblem }),
+  };
   return resolved.ok
-    ? { selectedRef, appliedRef: resolved.themeRef, theme: resolved.theme, provider: resolved.provider, fallback: null }
+    ? { selectedRef, appliedRef: resolved.themeRef, theme: resolved.theme, provider: resolved.provider, fallback: null, ...personal }
     : {
         selectedRef,
         appliedRef: BUILTIN_CLARK_THEME_REF,
         theme: null,
         provider: { kind: "builtin" },
         fallback: resolved.fallback,
+        ...personal,
       };
 }
 

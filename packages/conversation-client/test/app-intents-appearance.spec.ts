@@ -114,7 +114,10 @@ describe("one write for every way of choosing a theme", () => {
   const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8");
 
   it("stores the picker's choice and the intent's choice under the same preference", () => {
-    expect(source("../src/settings/ThemeSettings.tsx")).toMatch(/prefs\.write\("experience\.themeRef", theme\.themeRef/);
+    const picker = source("../src/settings/ThemeSettings.tsx");
+    expect(picker).toMatch(/const choose = \(ref: string\): void =>\s*\{\s*prefs\.write\("experience\.themeRef", ref/);
+    expect(picker).toMatch(/onChoose=\{\(\) => choose\(theme\.themeRef\)\}/);
+    expect(picker).toMatch(/onClick=\{\(\) => choose\(previewRef\)\}/);
     const conversation = source("../src/Conversation.tsx");
     const writes = [...conversation.matchAll(/client\.writePreference\("experience\.themeRef", ref\)/g)];
     // `setTheme` and `resetAppearance`.

@@ -43,6 +43,32 @@ const PIXEL: ThemeDocument = {
 };
 const PIXEL_REF = "package:@community/pixel#pixel-arcade";
 
+describe("personal appearance", () => {
+  it("compiles audited accent and compact spacing into the same bounded snapshot in both schemes", () => {
+    const customization = { accent: { dark: "#7AA2F7", light: "#2453A8" }, density: "compact" as const };
+    for (const scheme of ["dark", "light"] as const) {
+      const base = compileAppearance({ scheme });
+      const personal = compileAppearance({ scheme, customization });
+      expect(personal.tokens.color.accent).toBe(customization.accent[scheme]);
+      expect(auditAppearance(personal).failures).toEqual([]);
+      expect(personal.tokens.space.md).toBe("0.5625rem");
+      expect(personal.tokens.space.sm).toBe(base.tokens.space.sm);
+      expect(personal.tokens.type).toEqual(base.tokens.type);
+      expect(personal.tokens.layout).toEqual(base.tokens.layout);
+      expect(personal.revision).not.toBe(base.revision);
+      const reduced = compileAppearance({ scheme, customization, reducedMotion: true });
+      expect(reduced.tokens.motion.micro).toBe("0ms");
+      expect(reduced.tokens.color).toEqual(personal.tokens.color);
+      expect(appearanceSnapshotSchema.safeParse(reduced).success).toBe(true);
+    }
+  });
+  it("refuses personal colors that hide text or protected states", () => {
+    expect(() => compileAppearance({ scheme: "dark", customization: {
+      accent: { dark: "#111114", light: "#FFFFFF" }, density: "comfortable",
+    } })).toThrow(/colours|protected/);
+  });
+});
+
 describe("Clark Default", () => {
   it("compiles to the stylesheet it always had, byte for byte", () => {
     expect(themeStylesheet()).toBe(GOLDEN.trimEnd());

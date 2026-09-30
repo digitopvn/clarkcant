@@ -1,5 +1,6 @@
 import { readThemeRegistry, resolveAppearance, themeRegistryDeps, type ThemeServices } from "../application/themes.ts";
-import { type GatewayRequest, type GatewayResponse, json } from "./http.ts";
+import { type GatewayRequest, type GatewayResponse, fail, json } from "./http.ts";
+import { themeRefSchema } from "@clarkcant/contracts";
 
 /**
  * The theme family: the themes this node can draw, and the appearance the person's choice resolves to.
@@ -38,5 +39,9 @@ export function handleThemeRoutes(deps: ThemeRouteDeps): GatewayResponse | undef
    * The document is the validated one; the client compiles it into token values with the same compiler the host's
    * own stylesheet comes from, so nothing a package wrote reaches the page except values the contract accepts.
    */
-  return json(200, resolveAppearance(registryDeps, registry));
+  const previewRef = request.query["themeRef"];
+  if (previewRef !== undefined && !themeRefSchema.safeParse(previewRef).success) {
+    return fail(400, "INVALID_SCHEMA", "themeRef must be a bounded theme reference");
+  }
+  return json(200, resolveAppearance(registryDeps, registry, previewRef));
 }

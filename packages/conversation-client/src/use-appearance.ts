@@ -76,7 +76,7 @@ export function useAppearance(client: GatewayClient): AppearanceState {
       return undefined;
     }
     if (ticket !== latest.current) return undefined;
-    const applied = applyAppearance({ theme: next.theme, themeRef: next.appliedRef });
+    const applied = applyAppearance({ theme: next.theme, themeRef: next.appliedRef, customization: next.customization });
     const problem: LocalAppearanceProblem | undefined = applied.ok
       ? undefined
       : {
