@@ -45,6 +45,7 @@ export * from "./attachments.ts";
 export * from "./artifacts.ts";
 export * from "./composer-references.ts";
 export * from "./app-intents.ts";
+export * from "./conversation-deletion.ts";
 export * from "./surfaces.ts";
 export * from "./machine-surfaces.ts";
 export * from "./sse.ts";

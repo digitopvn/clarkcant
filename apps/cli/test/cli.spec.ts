@@ -146,8 +146,8 @@ describe("commands", () => {
     expect(run.err.join("")).toContain("decided by the person");
   });
 
-  it("does not install a package or decide an install through api, under any spelling", async () => {
-    for (const path of ["/packages/install", "//packages//install/", "/packages/install?x=1", "/packages/approvals/appr_y/decision"]) {
+  it("does not install packages, decide installs or delete conversations through api, under any spelling", async () => {
+    for (const path of ["/packages/install", "//packages//install/", "/packages/install?x=1", "/packages/approvals/appr_y/decision", "/conversations/conv_x/delete", "//conversations//conv_x//delete/?x=1"]) {
       const run = io();
       expect(await runCli(["api", "POST", path, '{"packageId":"com.example.x","version":"1.0.0"}'], run), path).toBe(1);
       expect(run.err.join(""), path).toContain("installing packages");

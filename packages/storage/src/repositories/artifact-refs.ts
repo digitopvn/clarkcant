@@ -1,6 +1,6 @@
 import type { ArtifactGrantView, ArtifactKind, ArtifactState, Instant } from "@clarkcant/contracts";
 
-import { type Database, allRows, oneRow, transaction } from "../db.ts";
+import { type Database, allRows, oneRow, transaction, inTransaction } from "../db.ts";
 
 /*
  * Artifacts a widget holds by reference, and the grants that let it use them.
@@ -262,7 +262,7 @@ export function deleteArtifactsForConversation(
   db: Database,
   conversationId: string,
 ): { removed: number; blobPaths: string[]; stagingRefs: string[] } {
-  return transaction(db, () => {
+  const remove = () => {
     const rows = listArtifactsForConversation(db, conversationId);
     if (rows.length === 0) return { removed: 0, blobPaths: [], stagingRefs: [] };
     db.prepare(
@@ -274,7 +274,8 @@ export function deleteArtifactsForConversation(
       blobPaths: rows.flatMap((row) => (row.blobPath === undefined ? [] : [row.blobPath])),
       stagingRefs: rows.flatMap((row) => (row.stagingRef === undefined ? [] : [row.stagingRef])),
     };
-  });
+  };
+  return inTransaction(db) ? remove() : transaction(db, remove);
 }
 
 /**

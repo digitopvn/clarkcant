@@ -133,6 +133,15 @@ export function openApiDocument(): Record<string, unknown> {
           responses: { "201": ok("Created: { conversationId, homeNodeId }"), ...refusals },
         },
       },
+      "/conversations/{conversationId}/delete": {
+        post: {
+          summary: "Delete a local conversation and release its attachments and widget files",
+          description: "Person-only. Execution policy chooses execute, ask or deny. A 202 question uses /app-intents/confirm; its scoped deletionPermit is sent back here. No Undo. Unsettled work refuses deletion; saved memory, shared resources, session logs and audit history remain.",
+          parameters: [conversationId],
+          requestBody: {required: true, content: {"application/json": {schema: {type: "object", additionalProperties: false, properties: {deletionPermit: {type: "string", format: "uuid"}}}}}},
+          responses: {"200": ok("Deleted: { deleted: true, conversationId, attachments, artifacts, pendingFiles, readBack }"), "202": ok("Policy asks: { deleted: false, decision }"), "409": ok("Kept: { deleted: false, decision }"), ...refusals},
+        },
+      },
       "/conversations/{conversationId}/messages": {
         post: {
           summary: "Send a message and wait for Clark's answer",

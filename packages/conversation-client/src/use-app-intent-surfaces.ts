@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 
 import type { GatewayClient } from "./api.ts";
@@ -71,6 +71,9 @@ export interface AppIntentSurfacesState {
   inboxTarget: string | undefined;
   clearInboxTarget: () => void;
   intentNotice: string | undefined;
+  deletionQuestion: Extract<AppIntentDecision, {kind: "needs-confirmation"}> | undefined;
+  answeringDeletion: boolean;
+  answerDeletion: (granted: boolean) => void;
   /** The Undo the latest typed or spoken dismissal left in the conversation, drawn under Clark's reply about it. */
   noticeUndo: NoticeUndo | undefined;
   /** Brings the dismissed notice back through the node's own restore, and says how that went on the same line. */
@@ -186,6 +189,11 @@ export function useAppIntentSurfaces({
   const [intentNotice, setIntentNotice] = useState<string | undefined>(undefined);
   const [noticeUndo, setNoticeUndo] = useState<NoticeUndo | undefined>(undefined);
   const [pendingIntent, setPendingIntent] = useState<AppIntentDecision | undefined>(undefined);
+  const [deletionQuestion, setDeletionQuestion] = useState<Extract<AppIntentDecision, {kind: "needs-confirmation"}> | undefined>(undefined);
+  const [answeringDeletion, setAnsweringDeletion] = useState(false);
+  const answeringDeletionRef = useRef(false);
+  const currentConversation = useRef(conversationId);
+  currentConversation.current = conversationId;
   const [liveRefresh, setLiveRefresh] = useState(0);
   const bumpLiveRefresh = useCallback(() => setLiveRefresh((count) => count + 1), []);
 
@@ -218,6 +226,24 @@ export function useAppIntentSurfaces({
     const windowControls = hasWindowControls();
     return {
       openSettings,
+      deleteConversation: async (id, permit) => {
+        if (client === undefined || currentConversation.current !== id) throw new Error(t("intents.deleteUnconfirmed"));
+        let result;
+        try { result = await client.deleteConversation(id, permit); }
+        catch { throw new Error(t("intents.deleteUnconfirmed")); }
+        if (!result.deleted) {
+          if (result.decision.kind === "needs-confirmation") {
+            setDeletionQuestion(result.decision);
+            return result.decision.readBack;
+          }
+          throw new Error(result.decision.kind === "refused" ? result.decision.say : t("intents.deleteUnconfirmed"));
+        }
+        if (currentConversation.current === id) {
+          setVoiceOpen(false);
+          restartSession();
+        }
+        return result.readBack;
+      },
       openInbox: (target?: string) => {
         setUiCheckOpen(false);
         setWidgetLibrary(CLOSED_LIBRARY);
@@ -324,11 +350,18 @@ export function useAppIntentSurfaces({
 
   const runIntent = useCallback(
     (decision: AppIntentDecision): void => {
+      if (decision.kind === "needs-confirmation" && decision.intent.kind === "conversation.delete") {
+        if (decision.intent.conversationId === currentConversation.current) setDeletionQuestion(decision);
+        return;
+      }
+      if (decision.kind === "intent" && decision.intent.kind === "conversation.delete") setDeletionQuestion(undefined);
       void runAppIntent(decision, intentHost).then((run) => {
         // Only a failure is announced: a command that worked is already visible as the panel that
         // just opened, or read back out loud by the voice surface. A model switch that failed already
         // says why in the note beside the model label - near the thing it is about - so it is not said twice.
         if (!run.ran && !(decision.kind === "intent" && MODEL_SWITCH_KINDS.has(decision.intent.kind))) {
+          setIntentNotice(run.say);
+        } else if (run.ran && decision.kind === "intent" && decision.intent.kind === "conversation.delete") {
           setIntentNotice(run.say);
         } else if (run.ran && decision.kind === "intent" && decision.intent.kind === "notice.act") {
           // A notice action leaves nothing on screen that says it happened — the inbox may not even be open — so what
@@ -358,6 +391,28 @@ export function useAppIntentSurfaces({
     },
     [client, intentHost, actOnNotice, latestMessageId, t],
   );
+
+  const answerDeletion = useCallback((granted: boolean): void => {
+    const question = deletionQuestion;
+    if (client === undefined || question === undefined || answeringDeletionRef.current || question.intent.conversationId !== currentConversation.current) return;
+    answeringDeletionRef.current = true;
+    setAnsweringDeletion(true);
+    void client.confirmAppIntent({confirmationToken: question.confirmationToken, decision: granted ? "granted" : "denied"})
+      .then((decision) => {
+        setDeletionQuestion(undefined);
+        runIntent(decision);
+      })
+      .catch(() => {
+        setDeletionQuestion(undefined);
+        setIntentNotice(t("intents.confirmFailed"));
+      })
+      .finally(() => {
+        answeringDeletionRef.current = false;
+        setAnsweringDeletion(false);
+      });
+  }, [client, deletionQuestion, runIntent, t]);
+
+  useEffect(() => { setDeletionQuestion(undefined); }, [conversationId]);
 
   const undoNoticeDismissal = useCallback((): void => {
     const current = noticeUndo;
@@ -448,6 +503,9 @@ export function useAppIntentSurfaces({
     inboxTarget,
     clearInboxTarget,
     intentNotice,
+    deletionQuestion,
+    answeringDeletion,
+    answerDeletion,
     noticeUndo,
     undoNoticeDismissal,
     setIntentNotice,

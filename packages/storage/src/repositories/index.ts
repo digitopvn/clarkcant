@@ -30,3 +30,4 @@ export * from "./widget-semantic.ts";
 export * from "./signals.ts";
 export * from "./peer-allowances.ts";
 export * from "./task-artifacts.ts";
+export * from "./conversation-deletion.ts";

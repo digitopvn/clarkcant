@@ -38,6 +38,11 @@ function mint() {
  */
 const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[]; english: string }[] = [
   {
+    kind: "conversation.delete",
+    vietnamese: ["xoá hội thoại này", "xoá cuộc trò chuyện này"],
+    english: "delete this conversation",
+  },
+  {
     kind: "voice.end",
     vietnamese: ["kết thúc phiên thoại", "dừng phiên thoại lại giúp tôi", "kết thúc phiên"],
     english: "end the voice session",

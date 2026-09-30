@@ -39,6 +39,7 @@ The stable surface is the one `/openapi.json` describes:
 |---|---|---|
 | GET | `/node` | – |
 | GET / POST | `/conversations` | `{ title? }` |
+| POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — person-owned deletion; policy may ask or refuse |
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — waits for the answer |
 | POST | `/conversations/{id}/messages/stream` | same, answered as SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `error`, `done` |
 | POST | `/conversations/{id}/stop` | `{ source? }` — stops the reply being written; keeps what was written, labelled as stopped; answers `{ stopped }` |
@@ -73,6 +74,29 @@ stores that as the message's `surface`; a spoken message is stored with `surface
 message posted without the header (MCP, the WebSocket relay, `clarkcant api`, a script) is stored without a surface.
 Only a message with a surface counts as the person's own words where that matters, such as which sites a browser task
 may act on; any other value of the header is ignored.
+
+### Conversation deletion
+
+The person's text command “delete this conversation” and spoken equivalent resolve to the same `conversation.delete`
+intent as the REST capability. `POST /conversations/{id}/delete` accepts `{}`. Current execution policy decides whether
+to execute, ask or deny: autonomous mode honours the person's explicit instruction; guarded/ask mode or an ask rule
+may return `202` with `{ deleted: false, decision: { kind: "needs-confirmation", intent, readBack, confirmationToken } }`.
+Answer through person-owned `POST /app-intents/confirm` with the token and `decision: "granted" | "denied"`. A granted
+decision carries `intent.deletionPermit`; send it to the original delete route. It is principal/target bound, expires
+after two minutes and is spent once in the deletion transaction. A denial consumes the question without deleting.
+Policy is checked again; a new refusal still wins over an earlier approval.
+
+`200` reports `{ deleted: true, conversationId, attachments, artifacts, pendingFiles, readBack }`. `409` with
+`{ deleted: false, decision: { kind: "refused", say } }` explains what was kept and what to do next. Unfinished,
+paused or uncertain tasks, running turns, background work and widget actions still settling refuse deletion. Foreign
+keys stay enabled; conversation-owned rows, attachments, all widget artifacts (including never-attached finalized
+files), grants and cleanup jobs commit together. Physical files are removed only after commit; shared bytes stay.
+Locked files remain queued for startup/periodic cleanup, and `pendingFiles` says how many are still waiting.
+
+There is no Undo copy: deletion releases retained files and quota. Saved memory, independent resources, session logs
+and append-only audit/replication history remain. The client starts a fresh conversation only after success. A lost
+network reply means the result is unknown, so reload before retrying. MCP, the WebSocket relay and `clarkcant api`
+refuse the delete route and confirmation with `403 PERSON_ONLY`; agent app intents cannot delete either.
 
 A signal is how anything outside the conversation tells the node that something happened: a CI run, a script, a
 service of your own. It is recorded before anything is matched, then answered against the standing requests the person

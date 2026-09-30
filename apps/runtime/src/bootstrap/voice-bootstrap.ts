@@ -8,6 +8,7 @@ import type { VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { catalogFamilies, libraryEntries } from "@clarkcant/widget-catalog";
 import type { WidgetTarget } from "@clarkcant/core";
 
+import { grantConversationDeletion } from "../application/conversation-delete.ts";
 import {
   type AppIntentDeps,
   consumeConfirmation,
@@ -90,6 +91,7 @@ function appIntentDepsFor(services: NodeServices): AppIntentDeps {
     now: () => new Date().toISOString() as never,
     newId: services.conductor.newId,
     widgetTargets: widgetTargetsFromCatalog(),
+    runningConversations: () => services.turnControl?.running() ?? [],
     themes: () => readThemeRegistry(themeRegistryDeps(services)),
   };
 }
@@ -357,6 +359,10 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         return { kind: "refused", say };
       }
       if (decision === "denied") return { kind: "refused", say: "Tôi đã bỏ qua câu lệnh đó." };
+      if (outcome.intent.kind === "conversation.delete") {
+        const principalId = deps.services.runtime.identity.ownerPrincipalId;
+        return grantConversationDeletion({...intentDeps, principalId}, outcome.intent, preferredAppIntentLocale(intentDeps, principalId));
+      }
       recordAppIntentEvent(intentDeps, { intent: outcome.intent, source: outcome.source, confirmed: true });
       return {
         kind: "intent",

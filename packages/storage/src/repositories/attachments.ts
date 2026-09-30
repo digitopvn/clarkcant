@@ -2,7 +2,7 @@ import {
   type Instant,
 } from "@clarkcant/contracts";
 
-import { type Database, allRows, oneRow, transaction } from "../db.ts";
+import { type Database, allRows, oneRow, transaction, inTransaction } from "../db.ts";
 
 /* ------------------------------------------------------------------ *
  * Attachments
@@ -117,12 +117,13 @@ export function deleteAttachmentsForConversation(
   db: Database,
   conversationId: string,
 ): { removed: number; blobPaths: string[] } {
-  return transaction(db, () => {
+  const remove = () => {
     const rows = listAttachmentsForConversation(db, conversationId);
     if (rows.length === 0) return { removed: 0, blobPaths: [] };
     const result = db.prepare("DELETE FROM attachments WHERE conversation_id = ?").run(conversationId);
     return { removed: Number(result.changes), blobPaths: rows.map((row) => row.blobPath) };
-  });
+  };
+  return inTransaction(db) ? remove() : transaction(db, remove);
 }
 
 /** Total stored bytes for one principal. The single source the quota is read from. */

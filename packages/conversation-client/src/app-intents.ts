@@ -56,6 +56,7 @@ export type HostEffect = void | string | Promise<void | string>;
 export interface AppIntentHost {
   openSettings(tab?: SettingsTab): HostEffect;
   goHome(): HostEffect;
+  deleteConversation?(conversationId: string, deletionPermit?: string): HostEffect;
   openFilePicker(): HostEffect;
   endVoice(): HostEffect;
   /**
@@ -182,6 +183,8 @@ function missingCapabilitySay(intent: AppIntent): string {
     case "model.cycle":
     case "model.select":
       return catalog["shell.intent.notModelPool"];
+    case "conversation.delete":
+      return catalog["shell.intent.notDelete"];
     case "nav.conversation":
       return catalog["shell.intent.notConversation"];
     case "inbox.open":
@@ -263,6 +266,9 @@ export async function runAppIntent(decision: AppIntentDecision, host: AppIntentH
 
 function carryOut(intent: AppIntent, host: AppIntentHost): HostEffect {
   switch (intent.kind) {
+    case "conversation.delete":
+      if (intent.conversationId === undefined) throw new Error(missingCapabilitySay(intent));
+      return host.deleteConversation?.(intent.conversationId, intent.deletionPermit);
     case "settings.open":
       return host.openSettings();
     case "settings.tab":
@@ -345,6 +351,8 @@ function carryOut(intent: AppIntent, host: AppIntentHost): HostEffect {
 
 function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
   switch (intent.kind) {
+    case "conversation.delete":
+      return host.deleteConversation !== undefined;
     case "window.expand":
       return host.expandWindow !== undefined;
     case "window.minimise":

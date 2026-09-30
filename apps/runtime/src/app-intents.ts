@@ -50,7 +50,6 @@ import {
   askToConfirmNoticeUpdate,
   describeAppIntent,
   describeNoticeAction,
-  isPersonOnlyAppIntent,
   isPersonOnlyNoticeOperation,
   pointToNoticeUpdate,
 } from "@clarkcant/contracts";
@@ -75,6 +74,7 @@ import {
 import { noticeActionsFor } from "./notice-actions.ts";
 
 import { checkThemeChoice, themeTargets } from "./application/appearance-intents.ts";
+import { decideConversationDeletion, deletionRefusal } from "./application/conversation-delete.ts";
 import type { ThemeRegistry } from "./application/themes.ts";
 
 export interface AppIntentDeps {
@@ -82,6 +82,7 @@ export interface AppIntentDeps {
   nodeId: string;
   now: () => Instant;
   newId: (prefix: string) => string;
+  runningConversations?: () => readonly string[];
   /**
    * The widgets a spoken or typed sentence may name.
    *
@@ -110,6 +111,7 @@ const TOKEN_TTL_MS = 120_000;
 /** What a pending token holds. `usedAt` is what makes a replay distinguishable from a forgery. */
 interface PendingValue {
   kind: string;
+  conversationId?: string;
   tab?: SettingsTab;
   /** The effect an answer names, so the yes that confirms it answers that one effect and no other. */
   effectId?: string;
@@ -163,6 +165,7 @@ export function mintConfirmation(
   const token = randomUUID();
   const value: PendingValue = {
     kind: input.intent.kind,
+    ...(input.intent.conversationId === undefined ? {} : { conversationId: input.intent.conversationId }),
     ...(input.intent.tab === undefined ? {} : { tab: input.intent.tab }),
     ...(input.intent.effectId === undefined ? {} : { effectId: input.intent.effectId }),
     ...(input.intent.noticeId === undefined ? {} : { noticeId: input.intent.noticeId }),
@@ -216,6 +219,7 @@ export function consumeConfirmation(
 
   const parsed = appIntentSchema.safeParse({
     kind: value.kind,
+    ...(value.conversationId === undefined ? {} : { conversationId: value.conversationId }),
     ...(value.tab === undefined ? {} : { tab: value.tab }),
     ...(value.effectId === undefined ? {} : { effectId: value.effectId }),
     ...(value.noticeId === undefined ? {} : { noticeId: value.noticeId }),
@@ -325,6 +329,20 @@ export function decideAppIntent(
   const answered = resolveNoticeTarget(deps, input, effectAnswer, locale);
   if (answered.kind === "refused") return answered;
   const intent = answered.intent;
+  if (intent.kind === "conversation.delete") {
+    if (input.request.source === "agent" || input.request.source === "voice-agent") {
+      return {kind: "refused", say: locale === "vi" ? "Chỉ người dùng có thể yêu cầu xoá hội thoại; mọi dữ liệu được giữ lại." : "Only the person may ask to delete a conversation; all data is kept."};
+    }
+    const id = input.conversationId;
+    if (id === undefined) return {kind: "refused", say: deletionRefusal(locale, "missing")};
+    const bound: AppIntent = {kind: "conversation.delete", conversationId: id};
+    const policy = decideConversationDeletion({...deps, principalId: input.principalId}, id, locale);
+    if (policy.kind === "refused") return policy;
+    const readBack = describeAppIntent(bound, locale);
+    if (policy.kind === "ask") return {kind: "needs-confirmation", intent: bound, confirmationToken: mint(bound), readBack};
+    recordAppIntentEvent(deps, {intent: bound, source: input.request.source, confirmed: false, conversationId: id});
+    return {kind: "intent", intent: bound, requiresConfirmation: false, readBack};
+  }
   if (answered.kind === "needs-confirmation") {
     // The minted token is replaced here by one that is actually stored: the decision function is pure
     // and cannot write, so the write happens in this layer.
@@ -378,7 +396,7 @@ function answerAboutEffect(
   locale: AppIntentLocale,
 ): Exclude<AppIntentResolution, { kind: "none" }> {
   const kind = resolution.intent.kind;
-  if (!isPersonOnlyAppIntent(kind)) return resolution;
+  if (kind !== "effect.confirmed" && kind !== "effect.failed") return resolution;
   const en = locale === "en";
   if (input.request.source === "agent" || input.request.source === "voice-agent") {
     return {

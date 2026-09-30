@@ -639,6 +639,19 @@ export function Conversation({
         </p>
       )}
 
+      {appIntents.deletionQuestion !== undefined && (
+        <section className="cc-intent-notice cc-delete-question" data-owner="host" data-host-card="approval" data-decision="pending" aria-label={localeState.t("intents.deletionQuestion")} aria-busy={appIntents.answeringDeletion}>
+          <strong>{localeState.t("intents.deletionQuestion")}</strong>
+          <p>{appIntents.deletionQuestion.readBack}</p>
+          <button type="button" disabled={appIntents.answeringDeletion} onClick={() => appIntents.answerDeletion(false)}>
+            {localeState.t("intents.cancel")}
+          </button>{" "}
+          <button type="button" disabled={appIntents.answeringDeletion} onClick={() => appIntents.answerDeletion(true)}>
+            {appIntents.answeringDeletion ? localeState.t("intents.deleting") : localeState.t("intents.delete")}
+          </button>
+        </section>
+      )}
+
       <SettingsPanel
         open={appIntents.uiCheckOpen}
         {...(appIntents.settingsTab === undefined ? {} : { openAt: appIntents.settingsTab })}
@@ -719,4 +732,3 @@ export function Conversation({
     </LocaleProvider>
   );
 }
-

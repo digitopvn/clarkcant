@@ -398,11 +398,18 @@ describe("a ref is a pointer, not a permission", () => {
 
   it("keeps a finalized file readable by the widget that made it, and ends every other widget's grant on time", async () => {
     const artifactId = await create("text/plain", "da-luu.txt");
+    const writeStarted = Date.now();
     await write(artifactId, 0, "xin chao");
+    const writeEnded = Date.now();
+    const writtenGrant = getArtifactGrant(services.runtime.db, artifactId, instanceId);
+    expect(writtenGrant).toBeDefined();
+    const expiry = Date.parse(writtenGrant?.expiresAt ?? "");
+    expect(expiry).toBeGreaterThanOrEqual(writeStarted + ARTIFACT_LIMITS.grantTtlMs);
+    expect(expiry).toBeLessThanOrEqual(writeEnded + ARTIFACT_LIMITS.grantTtlMs);
     expect((await call("POST", widget(`/${artifactId}/finalize`))).status).toBe(200);
-    // The maker's grant is as old as its last write; a day later it would have run out.
+    // Finalization does not extend the maker's last-write grant; saved bytes remain readable after that grant expires.
     const makerGrant = getArtifactGrant(services.runtime.db, artifactId, instanceId);
-    expect(Date.parse(makerGrant?.expiresAt ?? AT)).toBeLessThan(Date.parse(AT) + ARTIFACT_LIMITS.grantTtlMs + 1000 * 60 * 60);
+    expect(makerGrant?.expiresAt).toBe(writtenGrant?.expiresAt);
     // Another widget the file was shared with holds an ordinary grant, which runs out.
     const other = instance();
     putArtifactGrant(services.runtime.db, {

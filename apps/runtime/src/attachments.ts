@@ -11,6 +11,7 @@ import {
   blobStillReferenced,
   deleteAttachmentsForConversation,
   getAttachment,
+  inTransaction,
   messagesSince,
 } from "@clarkcant/storage";
 
@@ -64,10 +65,8 @@ function blobRefOf(blobPath: string): string {
 /**
  * Delete a conversation's attachment rows and their bytes.
  *
- * Deliberately not wired to a conversation-delete route: this node has none, and four tables
- * reference `conversations` without `ON DELETE CASCADE` while `foreign_keys` is ON, so deleting a
- * conversation needs a policy of its own (what happens to a running task?) rather than a side effect
- * of an attachments change. This function is what that policy will call, and it has its own test.
+ * When the caller owns a transaction, it must collect file cleanup until that transaction commits.
+ * Otherwise rollback could restore a row whose bytes this helper had already erased.
  *
  * Rows go first, bytes second. A row whose bytes are gone is a missing file the interface can
  * explain; bytes whose row is gone are garbage nobody can find.
@@ -76,8 +75,14 @@ export function releaseConversationAttachments(deps: {
   db: Database;
   dataDir: string;
   conversationId: string;
+  deferFiles?: (blobPaths: readonly string[], stagingRefs: readonly string[]) => void;
 }): { removed: number } {
+  if (inTransaction(deps.db) && deps.deferFiles === undefined) throw new Error("file cleanup must wait for commit");
   const deleted = deleteAttachmentsForConversation(deps.db, deps.conversationId);
+  if (deps.deferFiles !== undefined) {
+    deps.deferFiles(deleted.blobPaths, []);
+    return { removed: deleted.removed };
+  }
   // The store is content-addressed, so the same bytes may still be a widget's artifact, another conversation's
   // attachment or an imported image: only a file no row points at any more is removed.
   for (const blobPath of new Set(deleted.blobPaths)) {
