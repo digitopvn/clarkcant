@@ -334,8 +334,8 @@ instant, for `snooze` only and required there) and `source` (`click`, `chat` or 
 with the action; a label, not provenance). Apart from `mark-read` and `mark-unread`, the node checks the action against
 the notice's `actions` as they are now, and refuses anything else without changing anything: `400 UNKNOWN_ACTION` for
 a name that is not a notice action, `403 PERSON_ONLY` for `reconcile-confirmed` and `reconcile-failed` (the person's
-answer, on its own route below), `409 SURFACE_ACTION` for `open`, `ask-clark`, `add-to-context` and `review-update`
-(they change what the person's screen shows, so only that screen does them), `404 RESOURCE_NOT_FOUND` for a notice
+answer, on its own route below), `409 SURFACE_ACTION` for `open`, `ask-clark`, `add-to-context`, `review-update`
+and `copy-details` (they change what the person's screen shows or holds, so only that screen does them), `404 RESOURCE_NOT_FOUND` for a notice
 that is gone, dismissed or another principal's, `409 ACTION_NOT_OFFERED` when the notice does not offer it now, and
 `409 ACTION_UNAVAILABLE` with a `reason` code (`conversation-gone`, `work-gone`, `package-gone`, `already-current`)
 when it is listed but cannot be taken now; a client words that reason for its reader, and the English `message` is

@@ -39,7 +39,7 @@ describe("the node's notice operations", () => {
         "update",
       ].sort(),
     );
-    for (const notOperation of ["open", "ask-clark", "add-to-context", "review-update", "reconcile-confirmed", "reconcile-failed", "approve", ""]) {
+    for (const notOperation of ["open", "ask-clark", "add-to-context", "review-update", "copy-details", "reconcile-confirmed", "reconcile-failed", "approve", ""]) {
       expect(isNoticeOperation(notOperation), notOperation).toBe(false);
     }
   });

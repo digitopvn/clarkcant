@@ -231,7 +231,7 @@ async function carryOutNoticeOperation(
         message: "whether an effect took effect is recorded only by the person, through POST /effects/:effectId/reconcile",
       };
     }
-    // `open`, `ask-clark`, `add-to-context`, `review-update`: every other action a notice offers.
+    // `open`, `ask-clark`, `add-to-context`, `review-update`, `copy-details`: every other action a notice offers.
     return {
       ok: false,
       status: 409,

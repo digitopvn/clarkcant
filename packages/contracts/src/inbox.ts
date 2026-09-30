@@ -110,6 +110,9 @@ export type NoticeSubject = z.infer<typeof noticeSubjectSchema>;
  *   - `ask-clark`: send Clark a message carrying the notice as a typed reference, so the turn reads what the notice
  *     is about rather than a pasted copy of its text.
  *   - `add-to-context`: put the same reference in the composer without sending.
+ *   - `copy-details`: put a plain-text summary of the notice on the clipboard, written by the screen from the notice's
+ *     own fields (title, body, source and category, severity, time, and what it is about by kind and id), with every
+ *     hidden or bidi character written as a visible marker. Nothing else: no token, no path the notice does not show.
  *   - `mark-read` / `mark-unread`: attention state only; neither hides the notice.
  *   - `dismiss`: take it out of the list, undoable for a short while.
  *   - `snooze` / `unsnooze`: take this one notice out of the list and the unread count until a chosen time, when it
@@ -139,6 +142,7 @@ export const noticeActionIdSchema = z.enum([
   "open",
   "ask-clark",
   "add-to-context",
+  "copy-details",
   "mark-read",
   "mark-unread",
   "dismiss",
@@ -471,8 +475,8 @@ export const NOTICE_DISMISS_UNDO_WINDOW_MS = 5 * 60_000;
  * The notice actions the node carries out itself, by name (`POST /inbox/notices/:id/actions/:action`): the inbox panel,
  * a typed or spoken command, the main and voice agent's `act_on_notice`, MCP and the CLI.
  *
- * The rest of `noticeActionIdSchema` is not here, for one of two reasons. `open`, `ask-clark`, `add-to-context` and
- * `review-update` change what the person's own screen shows, so only that screen can do them. `reconcile-confirmed` and
+ * The rest of `noticeActionIdSchema` is not here, for one of two reasons. `open`, `ask-clark`, `add-to-context`,
+ * `review-update` and `copy-details` change what the person's own screen shows or holds, so only that screen can do them. `reconcile-confirmed` and
  * `reconcile-failed` are the person's answer about an effect, and have their own person-only route.
  *
  * `restore` is here without being a button on a notice: it is the Undo of `dismiss`, for a notice already out of the
