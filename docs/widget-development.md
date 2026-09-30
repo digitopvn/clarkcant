@@ -397,9 +397,15 @@ held in memory for the bindings pressed in the last minute, at most 1000 of them
 means now, from the same semantic document `inspect_ui` reads), `selection` / `selection:<instanceId>`, and
 `state:<key>` / `state:<instanceId>/<key>` (one value of a composed view's state). A reference without an instance id
 means the button's own widget. Anything else is refused when the binding is compiled, as is a widget this node does not
-hold or one another person owns. `artifact:<id>` is refused until the node has the artifact broker (#313). At the press
-the host reads each reference again for the person who pressed and bounds each to 4000 characters, cut at a character
-boundary. What it reads can be text a widget wrote, so it is data, never guidance: it is not placed in the turn's
+hold or one another person owns. `artifact:<id>` names a file held through the artifact broker (§10.1); when the
+binding is compiled it is refused for a file this node does not hold or one another person owns. At the press the host
+reads each reference again for the person who pressed and bounds each to 4000 characters, cut at a character boundary.
+A file is read as the pressed widget, under the same decision as that widget's own reads: its grant, the principal, and
+the conversation the press happened in, which must be the file's. What the model gets is the file's name, type and
+size and, for a text type (plain text, Markdown, CSV, JSON), the start of its contents — at most 3000 bytes, said to be
+partial when it is. A picture or a PDF is described and never quoted. An unknown, expired or missing file refuses the
+press with `CONTEXT_REF_UNKNOWN`; another principal's file, one the widget was never granted, or a grant that has
+expired or been revoked refuses it with `CONTEXT_REF_FORBIDDEN`. What it reads can be text a widget wrote, so it is data, never guidance: it is not placed in the turn's
 guidance note, nor in a background worker's request text. It goes in a separate section after the person's words and
 the guidance, under a heading that marks it as data, not instructions. The host also makes it inert there: square
 brackets become full-width ones, line and paragraph separators become plain line breaks, and every line is indented
@@ -1062,6 +1068,7 @@ Author-facing target:
     artifacts.finalize(ref)
     artifacts.export(ref, { suggestedName })
     artifacts.attachToConversation(ref)
+    artifacts.discard(ref)
 
     lifecycle.onMount()
     lifecycle.onSuspend()
@@ -1123,10 +1130,13 @@ it, and every call rejects locally when it did not. The host offers it to every 
 What each call does:
 
 - `pick({ accept })` asks the person to choose a file. The widget does not open a dialog; the host draws its own
-  prompt outside the frame. It names the widget, says the widget learns only the chosen file and never its location,
-  and lists the accepted types. Escape or Cancel resolves `undefined`. On the desktop the prompt opens the operating
+  prompt outside the frame. It names the widget by its title, says the widget learns only the chosen file and never
+  its location, and lists the accepted types in words ("text files", "PNG image"). The prompt takes the keyboard at its
+  title, not at a button, so a key the person pressed for the widget cannot answer it. Escape or Cancel resolves
+  `undefined`. On the desktop the prompt opens the operating
   system's file dialog; on the web it opens the browser's file input. The node decides the type from the bytes, checks
   it against `accept`, and applies the attachment rules: allowlisted types, 25 MiB a file, and the principal's quota.
+  A file the browser gives no type, such as a `.md` on some systems, is sent without one and the node sniffs it.
 - `read(ref, { offset, length })` reads one range of at most 256 KiB and says whether it reached the end. A larger
   file takes several reads.
 - `create({ mimeType, name? })` starts a working artifact of a type the attachment pipeline accepts.
@@ -1135,26 +1145,45 @@ What each call does:
   the writer's grant.
 - `finalize(ref)` fixes the bytes. The node sniffs them against the declared type. If they disagree it refuses with
   `ARTIFACT_TYPE_MISMATCH` and leaves the artifact writable, so the widget can correct it.
-- `export(ref, { suggestedName })` asks the person to save a copy, in the host's own Save As prompt, and resolves
-  whether they saved it. The desktop uses the operating system's save dialog. When the widget exports a file this
-  frame picked on the desktop, it also offers to replace the original; the path behind it stays in the desktop's main
-  process. The web downloads a copy and says that replacing the original is a desktop feature.
+- `export(ref, { suggestedName })` asks the person to save a copy, in the host's own Save As prompt, which names the
+  widget. It resolves `true` when the file was saved or, on the web, when the download started, and `false` when the
+  person declined. The saved name keeps the suggestion but takes the extension of the bytes' type, so a `text/plain`
+  file suggested as `invoice.bat` is saved as `invoice.txt`. The desktop uses the operating system's save dialog,
+  offering only that type's extensions. When the widget exports a file this frame picked on the desktop, it also offers
+  to replace the original, only with bytes of the original's type; the path behind it stays in the desktop's main
+  process, the operating system asks before overwriting, and the new bytes are written beside the original and renamed
+  over it, so a failed write leaves the original as it was. The web hands the file to the browser's download and says
+  "Download started", because the browser, not the page, decides where it goes; it also says that replacing the
+  original is a desktop feature.
 - `attachToConversation(ref)` hands a finalized artifact to the attachment pipeline. The bytes are sniffed again and
   the allowlist, size and quota are checked. The result is a ready chip in the composer, which the person sends with
   their next message like any file they attached. The model then reads it the same way.
+- `discard(ref)` lets go of a file this instance made, working or finalized: its record and grants go, and its bytes
+  go too unless an attachment or another record still points at them. It waits for the ref's pending writes first. A
+  file the person picked, or one another widget made, is refused with `ARTIFACT_NOT_CREATOR`.
 
 Refusals reject with the host's code first (`ARTIFACT_GRANT_EXPIRED: …`). The codes are listed in
-`ARTIFACT_REFUSAL_CODES`. Picking and saving are the person's acts: the node refuses them on machine surfaces
-([open-interfaces.md](open-interfaces.md)), and a widget cannot perform either without the host's prompt.
+`ARTIFACT_REFUSAL_CODES`. The host tells the person why a pick or a save did not happen in their language, chosen by
+the refusal's code; the widget gets the code and a fixed sentence, and nothing from the desktop's file system beyond
+its own error code (`EBUSY`), never a path. Picking and saving are the person's acts: the node refuses them on machine
+surfaces ([open-interfaces.md](open-interfaces.md)), and a widget cannot perform either without the host's prompt.
+
+A frame's file requests are rate-limited: a burst of 300, then 10 a second, counted before a request is checked, and at
+most 4 wait for an answer at once. The SDK queues the rest, so a widget that reads a large file in a loop is paced
+rather than refused. A request over the rate is answered with `ARTIFACT_RATE_LIMITED`, and the frame keeps working.
 
 What the node keeps:
 
 - **One store and one quota.** An artifact's bytes are stored in the node's blob store, the same one attachments use.
   They count against the principal's attachment quota (1 GiB). An attached artifact counts once as an artifact and
-  once as an attachment.
-- **Grants belong to one instance.** A grant lasts 24 hours, and a write renews it. It can be revoked with
-  `DELETE …/artifacts/{artifactId}/grant`.
+  once as an attachment. Inside that quota one widget instance may hold at most 128 MiB, in files it made or was
+  handed (`ARTIFACT_INSTANCE_QUOTA_EXCEEDED`); `discard` gives the room back.
+- **Grants belong to one instance.** A grant lasts 24 hours from the pick or from the instance's last write, and a
+  write renews it. A widget keeps reading a file it wrote and finalized for as long as that file is there; a file the
+  person picked must be picked again after 24 hours. A grant can be revoked with
+  `DELETE …/artifacts/{artifactId}/grant`. Grants are checked on every use; nothing sweeps them.
 - **Retention.** Working artifacts that time out are removed every 10 minutes, and before a new artifact is stored.
+  When the node starts, it removes staged bytes a previous process left behind that no working artifact still writes.
   Finalized artifacts last as long as their conversation. When a conversation is released, its artifacts go too,
   along with any bytes no attachment still shares. Nothing deletes a conversation yet
   ([#343](https://github.com/digitopvn/clarkcant/issues/343)), so today a finalized artifact stays, and keeps
@@ -1163,6 +1192,8 @@ What the node keeps:
 Tests: [artifacts.spec.ts](../packages/contracts/test/artifacts.spec.ts) for the rules,
 [artifact-refs.spec.ts](../packages/storage/test/artifact-refs.spec.ts) for storage,
 [artifact-broker.spec.ts](../apps/runtime/test/artifact-broker.spec.ts) for the node and its routes,
+[artifact-server.spec.ts](../apps/runtime/test/artifact-server.spec.ts) for Vietnamese file names over a real socket,
+[action-widget.spec.ts](../apps/runtime/test/action-widget.spec.ts) for `artifact:<id>` context references,
 [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) and
 [session.spec.ts](../packages/widget-host/test/session.spec.ts) for the bridge,
 [widget-artifacts.spec.ts](../packages/conversation-client/test/widget-artifacts.spec.ts) for the page,

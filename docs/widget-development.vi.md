@@ -398,8 +398,15 @@ gì chạy. Bộ đếm được giữ trong bộ nhớ cho các binding đượ
 nghĩa gì lúc này, lấy từ chính semantic document mà `inspect_ui` đọc), `selection` / `selection:<instanceId>`, và
 `state:<key>` / `state:<instanceId>/<key>` (một giá trị trong state của một view ghép). Tham chiếu không có instance id
 nghĩa là widget của chính nút. Mọi thứ khác bị từ chối khi biên dịch binding, cũng như một widget mà node này không giữ
-hoặc thuộc về người khác. `artifact:<id>` bị từ chối cho tới khi node có artifact broker (#313). Khi bấm, host đọc lại
-từng tham chiếu cho người đã bấm và giới hạn mỗi cái ở 4000 ký tự, cắt đúng ranh giới ký tự. Những gì host đọc có thể là
+hoặc thuộc về người khác. `artifact:<id>` chỉ một tệp được giữ qua artifact broker (§10.1); khi biên dịch binding, nó bị
+từ chối nếu node này không giữ tệp đó hoặc tệp thuộc về người khác. Khi bấm, host đọc lại từng tham chiếu cho người đã
+bấm và giới hạn mỗi cái ở 4000 ký tự, cắt đúng ranh giới ký tự. Một tệp được đọc với tư cách widget vừa được bấm, theo
+đúng quyết định áp dụng cho những lần đọc của chính widget đó: grant của nó, principal, và cuộc trò chuyện nơi nút được
+bấm, vốn phải là cuộc trò chuyện của tệp. Model nhận được tên, kiểu và kích thước của tệp, và với kiểu văn bản (văn bản
+thuần, Markdown, CSV, JSON) thì thêm phần đầu nội dung — tối đa 3000 byte, có ghi rõ là chưa đủ khi đúng như vậy. Ảnh
+hoặc PDF chỉ được mô tả, không bao giờ được trích. Một tệp không rõ, đã hết hạn hoặc mất byte làm lượt bấm bị từ chối với
+`CONTEXT_REF_UNKNOWN`; tệp của principal khác, tệp widget chưa từng được cấp, hoặc grant đã hết hạn hay bị thu hồi làm
+lượt bấm bị từ chối với `CONTEXT_REF_FORBIDDEN`. Những gì host đọc có thể là
 chữ do widget viết, nên đó là dữ liệu, không bao giờ là chỉ dẫn: nó không được đặt vào ghi chú hướng dẫn của lượt, cũng
 không vào văn bản yêu cầu của worker chạy nền. Nó nằm trong một phần riêng sau lời của người dùng và phần hướng dẫn, dưới
 một tiêu đề đánh dấu đó là dữ liệu, không phải chỉ dẫn. Ở đó host còn làm nó trơ: dấu ngoặc vuông được đổi thành ngoặc
@@ -1061,6 +1068,7 @@ Author-facing target:
     artifacts.finalize(ref)
     artifacts.export(ref, { suggestedName })
     artifacts.attachToConversation(ref)
+    artifacts.discard(ref)
 
     lifecycle.onMount()
     lifecycle.onSuspend()
@@ -1124,11 +1132,13 @@ cuộc trò chuyện.
 Mỗi lời gọi làm gì:
 
 - `pick({ accept })` xin người dùng chọn một tệp. Widget không tự mở hộp thoại; host vẽ lời nhắc của riêng nó, bên
-  ngoài frame. Lời nhắc nêu tên widget, nói rằng widget chỉ nhận được tệp đã chọn chứ không bao giờ biết tệp nằm ở
-  đâu, và liệt kê các kiểu được nhận. Esc hoặc Huỷ trả về `undefined`. Trên desktop, lời nhắc mở hộp thoại chọn tệp
+  ngoài frame. Lời nhắc nêu tên widget theo tiêu đề của nó, nói rằng widget chỉ nhận được tệp đã chọn chứ không bao giờ
+  biết tệp nằm ở đâu, và liệt kê các kiểu được nhận bằng lời ("tệp văn bản", "ảnh PNG"). Lời nhắc nhận bàn phím ở tiêu
+  đề chứ không ở một nút, nên một phím người dùng bấm cho widget không thể trả lời nó. Esc hoặc Huỷ trả về `undefined`. Trên desktop, lời nhắc mở hộp thoại chọn tệp
   của hệ điều hành; trên web, nó mở ô chọn tệp của trình duyệt. Node xác định kiểu từ chính các byte, đối chiếu với
   `accept`, và áp dụng các quy tắc đính kèm: kiểu nằm trong danh sách cho phép, tối đa 25 MiB một tệp, và hạn mức
-  của principal.
+  của principal. Một tệp mà trình duyệt không gán kiểu, như tệp `.md` trên một số hệ thống, được gửi đi không kèm kiểu
+  và node tự dò.
 - `read(ref, { offset, length })` đọc một đoạn tối đa 256 KiB và cho biết đã tới cuối tệp chưa. Tệp lớn hơn thì phải
   đọc nhiều lần.
 - `create({ mimeType, name? })` bắt đầu một artifact `working` thuộc kiểu mà luồng đính kèm chấp nhận.
@@ -1137,27 +1147,46 @@ Mỗi lời gọi làm gì:
   kéo dài thời hạn của artifact và grant của instance đang ghi.
 - `finalize(ref)` cố định các byte. Node dò các byte đối chiếu với kiểu đã khai báo. Nếu không khớp, node từ chối với
   `ARTIFACT_TYPE_MISMATCH` và để artifact vẫn ghi được, để widget sửa lại.
-- `export(ref, { suggestedName })` xin người dùng lưu một bản sao, bằng lời nhắc Lưu thành… của chính host, và trả về
-  việc họ có lưu hay không. Desktop dùng hộp thoại lưu của hệ điều hành. Khi widget lưu ra một tệp mà frame này đã
-  chọn trên desktop, lời nhắc còn cho phép ghi đè lên tệp gốc; đường dẫn đứng sau vẫn nằm trong main process của
-  desktop. Web tải xuống một bản sao và nói rằng ghi đè tệp gốc là tính năng của desktop.
+- `export(ref, { suggestedName })` xin người dùng lưu một bản sao, bằng lời nhắc Lưu thành… của chính host, có nêu tên
+  widget. Nó trả về `true` khi tệp đã được lưu hoặc, trên web, khi việc tải xuống đã bắt đầu, và `false` khi người dùng
+  từ chối. Tên được lưu giữ theo gợi ý nhưng mang phần mở rộng của kiểu byte, nên một tệp `text/plain` được gợi ý là
+  `invoice.bat` sẽ được lưu thành `invoice.txt`. Desktop dùng hộp thoại lưu của hệ điều hành, chỉ đưa ra các phần mở
+  rộng của kiểu đó. Khi widget lưu ra một tệp mà frame này đã chọn trên desktop, lời nhắc còn cho phép ghi đè lên tệp
+  gốc, chỉ bằng byte cùng kiểu với tệp gốc; đường dẫn đứng sau vẫn nằm trong main process của desktop, hệ điều hành hỏi
+  trước khi ghi đè, và byte mới được ghi cạnh tệp gốc rồi đổi tên đè lên nó, nên một lần ghi hỏng để nguyên tệp gốc.
+  Web giao tệp cho luồng tải xuống của trình duyệt và nói "Đã bắt đầu tải xuống", vì trình duyệt, không phải trang,
+  quyết định tệp nằm ở đâu; web cũng nói rằng ghi đè tệp gốc là tính năng của desktop.
 - `attachToConversation(ref)` đưa một artifact đã cố định vào luồng đính kèm. Các byte được dò kiểu lại, danh sách
   cho phép, kích thước và hạn mức được kiểm tra lại. Kết quả là một chip sẵn sàng trong ô soạn tin, người dùng gửi nó
   cùng tin nhắn kế tiếp như mọi tệp họ tự đính kèm. Model sau đó đọc nó theo đúng cách đó.
+- `discard(ref)` bỏ một tệp mà instance này đã tạo, dù đang ghi hay đã cố định: bản ghi và các grant của nó bị xoá, và
+  byte cũng bị xoá trừ khi một tệp đính kèm hoặc bản ghi khác vẫn trỏ tới chúng. Nó chờ các lần ghi đang dở của ref
+  xong trước. Tệp người dùng đã chọn, hoặc tệp do widget khác tạo, bị từ chối với `ARTIFACT_NOT_CREATOR`.
 
 Lời từ chối reject kèm mã của host đứng trước (`ARTIFACT_GRANT_EXPIRED: …`). Danh sách mã nằm trong
-`ARTIFACT_REFUSAL_CODES`. Chọn tệp và lưu tệp là hành động của người dùng: node từ chối chúng trên các bề mặt máy
-([open-interfaces.vi.md](open-interfaces.vi.md)), và widget không làm được việc nào trong hai việc đó nếu không có lời nhắc
-của host.
+`ARTIFACT_REFUSAL_CODES`. Host cho người dùng biết vì sao một lần chọn hay lưu không thành, bằng ngôn ngữ của họ, chọn
+theo mã từ chối; widget nhận mã và một câu cố định, và không nhận gì từ hệ thống tệp của desktop ngoài mã lỗi của chính
+nó (`EBUSY`), không bao giờ là đường dẫn. Chọn tệp và lưu tệp là hành động của người dùng: node từ chối chúng trên các
+bề mặt máy ([open-interfaces.vi.md](open-interfaces.vi.md)), và widget không làm được việc nào trong hai việc đó nếu
+không có lời nhắc của host.
+
+Các yêu cầu tệp của một frame bị giới hạn tốc độ: một đợt 300 yêu cầu, sau đó 10 yêu cầu mỗi giây, được đếm trước khi
+yêu cầu được kiểm tra, và tối đa 4 yêu cầu chờ trả lời cùng lúc. SDK xếp hàng phần còn lại, nên một widget đọc tệp lớn
+trong vòng lặp được điều nhịp chứ không bị từ chối. Yêu cầu vượt tốc độ được trả lời bằng `ARTIFACT_RATE_LIMITED`, và
+frame vẫn hoạt động.
 
 Node giữ những gì:
 
 - **Một kho và một hạn mức.** Các byte của artifact nằm trong kho blob của node, cũng là kho mà tệp đính kèm dùng.
   Chúng được tính vào hạn mức đính kèm của principal (1 GiB). Một artifact đã đính kèm được tính một lần là artifact
-  và một lần là tệp đính kèm.
-- **Grant thuộc về một instance.** Grant kéo dài 24 giờ, và mỗi lần ghi làm mới nó. Có thể thu hồi grant bằng
-  `DELETE …/artifacts/{artifactId}/grant`.
-- **Lưu giữ.** Các artifact `working` hết hạn bị xoá mỗi 10 phút, và trước khi lưu một artifact mới. Artifact đã cố
+  và một lần là tệp đính kèm. Trong hạn mức đó, một instance widget giữ tối đa 128 MiB, gồm các tệp nó tạo hoặc được
+  giao (`ARTIFACT_INSTANCE_QUOTA_EXCEEDED`); `discard` trả lại chỗ.
+- **Grant thuộc về một instance.** Grant kéo dài 24 giờ kể từ lúc chọn tệp hoặc lần ghi cuối của instance, và mỗi lần
+  ghi làm mới nó. Widget vẫn đọc được một tệp nó đã ghi và cố định chừng nào tệp đó còn; tệp người dùng đã chọn thì
+  phải được chọn lại sau 24 giờ. Có thể thu hồi grant bằng `DELETE …/artifacts/{artifactId}/grant`. Grant được kiểm tra
+  ở mỗi lần dùng; không có gì quét dọn chúng.
+- **Lưu giữ.** Các artifact `working` hết hạn bị xoá mỗi 10 phút, và trước khi lưu một artifact mới. Khi node khởi
+  động, nó xoá các byte tạm mà một tiến trình trước để lại và không còn artifact `working` nào đang ghi. Artifact đã cố
   định tồn tại lâu bằng cuộc trò chuyện của nó. Khi một cuộc trò chuyện được giải phóng, các artifact của nó cũng bị
   xoá, cùng với những byte không còn tệp đính kèm nào dùng chung. Hiện chưa có gì xoá một cuộc trò chuyện
   ([#343](https://github.com/digitopvn/clarkcant/issues/343)), nên hôm nay một artifact đã cố định vẫn còn đó, và vẫn
@@ -1166,6 +1195,8 @@ Node giữ những gì:
 Kiểm thử: [artifacts.spec.ts](../packages/contracts/test/artifacts.spec.ts) cho các quy tắc,
 [artifact-refs.spec.ts](../packages/storage/test/artifact-refs.spec.ts) cho phần lưu trữ,
 [artifact-broker.spec.ts](../apps/runtime/test/artifact-broker.spec.ts) cho node và các route,
+[artifact-server.spec.ts](../apps/runtime/test/artifact-server.spec.ts) cho tên tệp tiếng Việt qua một socket thật,
+[action-widget.spec.ts](../apps/runtime/test/action-widget.spec.ts) cho tham chiếu ngữ cảnh `artifact:<id>`,
 [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) và
 [session.spec.ts](../packages/widget-host/test/session.spec.ts) cho bridge,
 [widget-artifacts.spec.ts](../packages/conversation-client/test/widget-artifacts.spec.ts) cho trang,

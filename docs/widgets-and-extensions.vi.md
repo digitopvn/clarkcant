@@ -179,7 +179,7 @@ Ghi rõ phần nào của §4 đã có trong repo và phần nào còn là thi�
 **Chưa có (deferred, không được claim là đã xong):**
 
 - `isolated-app` và `mcp-app`: sandbox policy/registry có code và test, nhưng **renderer runtime cho app cách ly chưa được chứng minh**. Không có app runtime trong repo.
-- Google Calendar connector và custom iframe mini-app nằm ngoài M1. Nút agent chưa thể dùng tham chiếu ngữ cảnh `artifact:` (#313), và phê duyệt một bước của workflow chỉ chạy riêng bước đó chứ không tiếp tục workflow.
+- Google Calendar connector và custom iframe mini-app nằm ngoài M1. Phê duyệt một bước của workflow chỉ chạy riêng bước đó chứ không tiếp tục workflow.
 - Bảng family coverage trong §4 vẫn là đích đến của release gate: repo hiện có test cho các family mà composed surface cần (`metrics`, `filter`, `trend`, `calendar`, `media`, `cta`, `tables`, `layout`), không phải cho toàn bộ danh sách.
 
 - **Nội dung tệp tới agent**: tệp văn bản đi vào prompt của lượt (`attachmentBrief` chèn nội dung, `read_attachment` đọc lại theo id), **PDF được trích văn bản** bằng `apps/runtime/src/pdf-text.ts` (không thêm dependency), và hai journey chứng minh câu trả lời **dùng** nội dung đó — một cho tệp văn bản, một cho PDF ([attachments](../apps/web/e2e/attachments.spec.ts)). **Ảnh được giao như một ảnh**: `read_attachment` trả `{ type: "image", data, mimeType }` và `toSdkTool` chuyển nguyên block đó cho SDK, nên model nhận chính bức ảnh thay vì một câu mô tả nó. Hai test giữ điều đó: một ở seam adapter (`packages/pi-adapter/test/pi-adapter.spec.ts`, "hands the image to the SDK as an image block, not as a sentence about one") và một ở tool (`apps/runtime/test/read-attachment-tool.spec.ts`, "hands a picture over as a picture rather than describing it").
@@ -293,6 +293,7 @@ host.openExternal(approvedUrl)
 semantic.publish(summary, selectedIds, values?)  # chỉ là đề xuất; action lấy từ binding của instance
 artifacts.pick / read / create / write / finalize  # tệp theo tham chiếu (artifacts@1), kiểm tra lại mỗi lần dùng
 artifacts.export / attachToConversation  # Lưu thành… của host và ô soạn tin; người dùng quyết định
+artifacts.discard  # bỏ một tệp do chính instance này tạo
 lifecycle.onMount / onSuspend / onResume / onDispose
 ```
 
@@ -320,7 +321,7 @@ Host-owned frame chrome hiển thị app/source/account, permission controls và
 
 Unsafe HTML/SVG/Markdown sanitize; Mermaid strict wrapper và worker timeout; no script callbacks from agent props. Dataset/attachments qua opaque refs, no arbitrary paths, executable URLs, SQL hay CSS property injection.
 
-Tệp cũng theo đúng quy tắc đó (`artifacts@1`, [widget-development.vi.md §10.1](widget-development.vi.md#101-tệp-theo-tham-chiếu-artifacts1)). Một widget cách ly giữ một `ArtifactRef`, không bao giờ giữ đường dẫn. Ref là con trỏ, không phải quyền: node kiểm tra lại mỗi lần đọc, ghi, lưu ra và đính kèm, đối chiếu với chủ sở hữu, grant của instance (có hạn và thu hồi được) và trạng thái của artifact. Chọn tệp và lưu bản sao là giao diện của host, nằm ngoài frame. Trên desktop, chúng dùng hộp thoại gốc của hệ điều hành; trên web, chúng dùng ô chọn tệp và một lượt tải xuống. Ghi đè tệp gốc chỉ có trên desktop. Các byte đi qua các bước dò kiểu, danh sách cho phép, giới hạn kích thước và hạn mức của luồng đính kèm, và mỗi đoạn tối đa 256 KiB. Một widget có thể tự vẽ nút "chọn tệp" trong frame, nhưng vẫn không nhận được gì cho tới khi người dùng trả lời lời nhắc của host.
+Tệp cũng theo đúng quy tắc đó (`artifacts@1`, [widget-development.vi.md §10.1](widget-development.vi.md#101-tệp-theo-tham-chiếu-artifacts1)). Một widget cách ly giữ một `ArtifactRef`, không bao giờ giữ đường dẫn. Ref là con trỏ, không phải quyền: node kiểm tra lại mỗi lần đọc, ghi, lưu ra và đính kèm, đối chiếu với chủ sở hữu, grant của instance (có hạn và thu hồi được) và trạng thái của artifact. Chọn tệp và lưu bản sao là giao diện của host, nằm ngoài frame. Trên desktop, chúng dùng hộp thoại gốc của hệ điều hành; trên web, chúng dùng ô chọn tệp và một lượt tải xuống. Ghi đè tệp gốc chỉ có trên desktop. Các byte đi qua các bước dò kiểu, danh sách cho phép, giới hạn kích thước và hạn mức của luồng đính kèm, và mỗi đoạn tối đa 256 KiB. Một instance giữ tối đa 128 MiB trong 1 GiB của người dùng, các yêu cầu tệp của một frame bị giới hạn tốc độ, và widget chỉ bỏ được tệp do chính nó tạo. Tham chiếu ngữ cảnh `artifact:` của một nút agent được đọc theo cùng quyết định như widget được bấm và tới model dưới dạng tên, kiểu và kích thước của tệp, cùng một đoạn trích ngắn được đánh dấu là dữ liệu nếu là văn bản. Một widget có thể tự vẽ nút "chọn tệp" trong frame, nhưng vẫn không nhận được gì cho tới khi người dùng trả lời lời nhắc của host.
 
 ## 9. Frontend credentials: ngoại lệ phải thiết kế đúng
 

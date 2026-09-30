@@ -355,12 +355,15 @@ câu trả lời nào mang đường dẫn.
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/chunks` | `{ offset, contentBase64 }` — tối đa 262.144 byte, bắt đầu đúng chỗ artifact đang kết thúc |
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/finalize` | – cố định các byte sau khi đối chiếu chúng với kiểu đã khai báo |
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | – `201 { artifactRef, attachmentRef }` qua luồng đính kèm; người dùng gửi nó cùng tin nhắn kế tiếp |
+| DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – bỏ một tệp instance này đã tạo, cùng byte của nó trừ khi một tệp đính kèm hoặc bản ghi khác vẫn trỏ tới; tệp của instance khác là `403 ARTIFACT_NOT_CREATOR` |
 | DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/grant` | – thu hồi quyền của instance này |
 
 Mọi route của instance đều được kiểm tra lại theo grant của instance đó. Ref là con trỏ, không phải quyền, nên một
 grant đã hết hạn (`403 ARTIFACT_GRANT_EXPIRED`) hoặc bị thu hồi (`403 ARTIFACT_GRANT_REVOKED`) sẽ chặn ngay lời gọi
 kế tiếp. Kích thước, kiểu và hạn mức theo quy tắc đính kèm (`413 ARTIFACT_TOO_LARGE`, `415 ARTIFACT_TYPE_MISMATCH`,
-`409 ARTIFACT_QUOTA_EXCEEDED`).
+`409 ARTIFACT_QUOTA_EXCEEDED`), và một instance giữ tối đa 128 MiB trong hạn mức đó
+(`409 ARTIFACT_INSTANCE_QUOTA_EXCEEDED`). Tên tệp trong `Content-Disposition` được gửi theo RFC 6266: một `filename`
+ASCII và tên thật dưới dạng UTF-8 mã hoá phần trăm trong `filename*`.
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
@@ -396,8 +399,10 @@ báo là đã xong). Xuất một bảng ra file CSV
 (`POST /conversations/{id}/widgets/{instanceId}/export`) cũng bị các relay đó từ chối: file được viết cho người đang
 xem bảng, không trao cho một client máy. Lưu artifact của một widget ra tệp
 (`POST /artifacts/{artifactId}/export`) và giao cho widget một tệp người dùng đã chọn
-(`POST /conversations/{id}/widgets/{instanceId}/artifacts/pick`) cũng bị từ chối như vậy. Việc đầu ghi lên máy của
-người dùng; việc sau cấp cho widget những byte mà chỉ lựa chọn của người dùng mới được trao. Dừng, trả lời câu hỏi và đọc vẫn dùng được, và `act_on_notice` cũng vậy:
+(`POST /conversations/{id}/widgets/{instanceId}/artifacts/pick`) cũng bị từ chối như vậy. Điều bị giữ lại là hành động,
+không phải dữ liệu: lưu là người dùng chọn giữ một tệp, và một client máy vẫn đọc được byte của artifact đã cố định qua
+`GET /artifacts/{artifactId}/content`. Việc chọn tệp cấp cho widget những byte mà chỉ lựa chọn của người dùng mới được
+trao. Dừng, trả lời câu hỏi và đọc vẫn dùng được, và `act_on_notice` cũng vậy:
 nó không bao giờ đưa ra câu trả lời của người dùng về một thao tác chưa rõ kết quả hay việc cài bản cập nhật của một
 thông báo (`403 PERSON_ONLY` cho cả hai, route cập nhật bị từ chối như trên). `read_inbox` đánh dấu tiêu đề và nội
 dung của mọi thông báo là dữ liệu do việc khác báo lại, không bao giờ là chỉ dẫn, và giữ mỗi thông báo trên một dòng.

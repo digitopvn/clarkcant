@@ -351,12 +351,15 @@ carries a path.
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/chunks` | `{ offset, contentBase64 }` — at most 262,144 bytes, starting where the artifact ends |
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/finalize` | – fixes the bytes after checking them against the declared type |
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | – `201 { artifactRef, attachmentRef }` through the attachment pipeline; the person sends it with their next message |
+| DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – discards a file this instance made, with its bytes unless an attachment or another record still points at them; another's is `403 ARTIFACT_NOT_CREATOR` |
 | DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/grant` | – revokes this instance's access |
 
 Every instance route is checked again against that instance's grant. A ref is a pointer, not a permission, so an
 expired (`403 ARTIFACT_GRANT_EXPIRED`) or revoked (`403 ARTIFACT_GRANT_REVOKED`) grant stops the next call. Sizes,
 types and quota follow the attachment rules (`413 ARTIFACT_TOO_LARGE`, `415 ARTIFACT_TYPE_MISMATCH`, `409
-ARTIFACT_QUOTA_EXCEEDED`).
+ARTIFACT_QUOTA_EXCEEDED`), and one instance holds at most 128 MiB of the quota (`409 ARTIFACT_INSTANCE_QUOTA_EXCEEDED`).
+A file name in `Content-Disposition` is sent as RFC 6266 describes: an ASCII `filename` and the real name as
+percent-encoded UTF-8 in `filename*`.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.
@@ -392,8 +395,10 @@ uncertainty and then report its own success). Exporting a table as a CSV file
 (`POST /conversations/{id}/widgets/{instanceId}/export`) is refused on the same relays too: the file is written for
 the person who is looking at the table, not handed to a machine client. Saving a widget's artifact
 (`POST /artifacts/{artifactId}/export`) and handing a widget a file the person picked
-(`POST /conversations/{id}/widgets/{instanceId}/artifacts/pick`) are refused the same way. The first writes onto the
-person's machine; the second grants a widget bytes only the person's choice may give it. Stop, answering a question and reading stay
+(`POST /conversations/{id}/widgets/{instanceId}/artifacts/pick`) are refused the same way. What is held back is the
+act, not the data: saving is the person choosing to keep a file, and a machine client can still read a finalized
+artifact's bytes through `GET /artifacts/{artifactId}/content`. Picking grants a widget bytes only the person's choice
+may give it. Stop, answering a question and reading stay
 available, and so does `act_on_notice`: it never offers the person's answer about an unknown outcome or installing a
 notice's update (`403 PERSON_ONLY` for both, the update route refused as above). `read_inbox` marks every notice's
 title and body as data reported by other work, never instructions, and keeps each on one line. The discovery document
