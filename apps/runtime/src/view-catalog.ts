@@ -55,6 +55,18 @@ import {
   readCalendarEvents,
   XY_CHART_KIND,
   XY_CHART_VIEW_OPERATION,
+  MAX_TIMELINE_ACTOR,
+  MAX_TIMELINE_DESCRIPTION,
+  MAX_TIMELINE_ENTRIES,
+  MAX_TIMELINE_TITLE,
+  TIMELINE_ORDERS,
+  TIMELINE_PAGE_SIZES,
+  TIMELINE_SELECT_OPERATION,
+  TIMELINE_TIMEZONE_PATTERN,
+  MAX_TIMELINE_TIMEZONE,
+  readTimeline,
+  timelineProblems,
+  timelineText,
   compileActionBinding,
   readXyChart,
   xyChartData,
@@ -84,6 +96,7 @@ import {
   SEARCH,
   STATUS,
   STATUS_CARD_KIND,
+  TIMELINE,
   WIDGETS as CATALOG_WIDGETS,
   primitivePropsProblems,
 } from "@clarkcant/data-canvas";
@@ -146,6 +159,7 @@ export function buildViewCatalog(
     AREA_CHART.id,
     SCATTER_CHART.id,
     CALENDAR.id,
+    TIMELINE.id,
   ]);
   const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
@@ -188,7 +202,14 @@ export function buildViewCatalog(
   );
 
   if (actions !== undefined) simple.push(actionView(deps, actions), formView(deps, actions));
-  simple.push(listView(deps, actions), ...statusCardViews(deps), ...artifactViews(deps), ...xyChartViews(deps), calendarView(deps));
+  simple.push(
+    listView(deps, actions),
+    ...statusCardViews(deps),
+    ...artifactViews(deps),
+    ...xyChartViews(deps),
+    calendarView(deps),
+    timelineView(deps, () => compose?.timezone() ?? nodeTimeZone()),
+  );
   if (compose === undefined) return simple;
 
   const overview = OVERVIEW;
@@ -209,7 +230,7 @@ export function buildViewCatalog(
         `To connect widgets, declare props.state as {"<key>":{"type":"string"|"number"|"boolean"|"string-list","initial":...}} ` +
         `(at most ${String(MAX_GRAPH_KEYS)} keys) and give leaves "on" and "feed" lists. "on" entries are {"event":"...","steps":[...]}: ` +
         `canvas.search@1 emits query.change {query}, canvas.choice@1 choice.change {value}, canvas.input@1 input.change {value}, ` +
-        `canvas.list@1 selection.change {selected}, canvas.table@1 row.select {rowIds}, canvas.calendar@1 date.select {date}. ` +
+        `canvas.list@1 selection.change {selected}, canvas.table@1 row.select {rowIds}, canvas.calendar@1 date.select {date}, canvas.timeline@1 timeline.select {selectedId}. ` +
         `Steps: {"op":"select-field","key","field"}, {"op":"set","key","value"}, {"op":"toggle","key","field"?}, {"op":"copy","key","from"}, ` +
         `{"op":"append"|"remove","key","field"}, {"op":"map-field","key","field","map":{...},"fallback"?}, {"op":"take","key","field","count"}, {"op":"count","key","field"}. ` +
         `"feed" entries are {"op":"query","key"} for a table or list, or {"op":"filter-equals","field","key"} for a table column, ` +
@@ -713,6 +734,99 @@ function calendarView(deps: WidgetDeps): ViewDescriptor {
             definitionRef: { id: definition.id, version: definition.version, packageDigest },
             datasetRef,
           }),
+        messageId: request.messageId,
+        textAlternative,
+        presentationRef: `catalog:${definition.id}`,
+      });
+      return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
+    },
+  };
+}
+/** The node's own display timezone, or UTC when the platform names none. */
+function nodeTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+/**
+ * The timezone a timeline without one is placed in: the node's own, when it is a name the timeline's schema accepts
+ * and this node can place instants in, and UTC otherwise.
+ *
+ * Written into the stored props rather than left for each reader to guess, so the node's semantic document, its text
+ * alternative and the page all group entries into the same days.
+ */
+function timelineTimeZone(zone: string): string {
+  return zone.length <= MAX_TIMELINE_TIMEZONE && new RegExp(TIMELINE_TIMEZONE_PATTERN).test(zone) && isKnownTimeZone(zone) ? zone : "UTC";
+}
+
+/**
+ * The activity timeline.
+ *
+ * Everything it shows is in its props, so the props are held to the timeline's whole rule set here, before an instance
+ * exists: a time that is not a real ISO 8601 instant with an offset or a date, an id used twice, an unknown tone, too many
+ * entries or too much text, or a hidden character is refused in the same turn with the reason, and nothing is left
+ * behind. It is placed with the one view binding a selection writes through; the binding is a view operation, so it
+ * re-renders and never changes an entry.
+ */
+function timelineView(deps: WidgetDeps, timezone: () => string): ViewDescriptor {
+  const definition = TIMELINE;
+  return {
+    id: definition.id,
+    label: definition.semanticDescription,
+    notes:
+      `props.entries is a list of at most ${String(MAX_TIMELINE_ENTRIES)} entries {"id","at","title","description"?,"actor"?,"tone"?}: ` +
+      `each id is unique; "at" is an ISO 8601 instant with an offset (2026-09-30T09:15:00+07:00 or ...Z) or a date (2026-09-30) ` +
+      `for an all-day entry; title is one line of at most ${String(MAX_TIMELINE_TITLE)} characters; description is plain text of at ` +
+      `most ${String(MAX_TIMELINE_DESCRIPTION)}; actor names who did it in at most ${String(MAX_TIMELINE_ACTOR)}; tone is one of ` +
+      `${STATUS_TONES.join(", ")} (default neutral). Optional props.order (${TIMELINE_ORDERS.join(", ")}, default newest), ` +
+      `props.pageSize (${String(TIMELINE_PAGE_SIZES.min)}-${String(TIMELINE_PAGE_SIZES.max)}, default ${String(TIMELINE_PAGE_SIZES.default)}), ` +
+      `props.timezone (an IANA name the entries are grouped into days in; default this node's), props.title, and ` +
+      `props.truncated: true when you left entries out. Text is plain: no HTML, links or hidden characters.`,
+    shownText:
+      `Shown: ${definition.id}, from the entries you gave. A person can page through it and select an entry; ` +
+      `what they selected is in the timeline's widget state.`,
+    build: (request) => {
+      const full = validateProps(definition, request.props);
+      if (!full.ok) throw new Error(`${definition.id} has props that do not fit its schema: ${full.problems.join(", ")}`);
+      const problems = timelineProblems(request.props);
+      if (problems.length > 0) throw new Error(`${definition.id} cannot be shown: ${problems.join("; ")}`);
+      const props = request.props.timezone === undefined ? { ...request.props, timezone: timelineTimeZone(timezone()) } : request.props;
+      const timeline = readTimeline(props);
+      if (timeline === undefined) throw new Error(`${definition.id} cannot be shown: its props do not describe a timeline`);
+
+      const packageDigest = definitionDigest(definition);
+      // The timeline's own words are its text alternative: every day and entry it shows, written by the node.
+      const textAlternative = keptText(definition.id, "", timelineText(timeline, SNAPSHOT_TEXT_LIMIT));
+      const { snapshot } = placeInstance(deps, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: request.principal.principalId,
+        props,
+        bind: (instanceId) => {
+          const compiled = compileActionBinding({
+            bindingId: deps.newId("act"),
+            instance: {
+              instanceId,
+              ownerNodeId: deps.nodeId,
+              definitionRef: { id: definition.id, version: definition.version, packageDigest },
+              actionBindingRevision: 1,
+            },
+            packageGeneration: packageDigest,
+            label: "Timeline selection",
+            proposal: { kind: "view", operation: TIMELINE_SELECT_OPERATION, args: {} },
+            inputSchema: { type: "object" },
+            // Everything the timeline shows is in its props; a selection reads no dataset.
+            allowedDataRefs: [],
+            fixedConstraints: {},
+            effectCategory: "read",
+            requiresApproval: false,
+            limits: {},
+            bindingDigest: `sha256:${TIMELINE_SELECT_OPERATION}:${instanceId}`,
+            at: deps.now(),
+            knownCapabilities: new Set(),
+          });
+          if (!compiled.ok) throw new Error(compiled.message);
+          return compiled.binding;
+        },
         messageId: request.messageId,
         textAlternative,
         presentationRef: `catalog:${definition.id}`,

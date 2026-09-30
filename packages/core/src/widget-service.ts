@@ -36,6 +36,11 @@ import {
   isKnownTimeZone,
   readCalendarEvents,
   readCalendarState,
+  TIMELINE_ID,
+  TIMELINE_SELECT_OPERATION,
+  readTimeline,
+  readTimelineSelection,
+  timelineSelectionProblems,
   XY_CHART_KIND,
   nowInstant,
   readXyChart,
@@ -1142,7 +1147,15 @@ export function listPinsForConversation(deps: WidgetDeps, conversationId: string
  * `invoke`, an `agent` intent, a workflow — goes through the approval path instead, and a binding
  * that proposes one is refused here rather than quietly executed.
  */
-export const M1_VIEW_OPERATIONS = ["period.change", "date.select", "view.save", "state.event", "chart.view", "calendar.view"] as const;
+export const M1_VIEW_OPERATIONS = [
+  "period.change",
+  "date.select",
+  "view.save",
+  "state.event",
+  "chart.view",
+  "calendar.view",
+  "timeline.select",
+] as const;
 
 /** Bumped when a filter changes the range, because the underlying rows are re-read. */
 const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
@@ -1155,6 +1168,8 @@ const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
   "chart.view": "presentation",
   // Switching view or selecting a day or an event changes what the calendar shows, not the events it reads.
   "calendar.view": "presentation",
+  // Selecting an entry changes what the timeline shows, not the entries it holds.
+  "timeline.select": "presentation",
 };
 
 export interface MiniAppActionRequest extends ActionInvocation {
@@ -1336,7 +1351,9 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
       ? chartViewPatch(deps, instance, request.input)
       : operation === CALENDAR_VIEW_OPERATION
         ? calendarViewPatch(deps, instance, request.input)
-        : validateViewInput(operation, request.input);
+        : operation === TIMELINE_SELECT_OPERATION
+          ? timelineSelectPatch(instance, request.input)
+          : validateViewInput(operation, request.input);
   if (!validation.ok) return { ok: false, code: "INVALID_INPUT", message: validation.message };
 
   const precheck = precheckInvocation(deps, request);
@@ -1370,9 +1387,9 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
       if (!applied.ok) return { ok: false, code: "INVALID_INPUT", message: applied.problem };
       patch = { graph: applied.values };
     }
-    // A chart or calendar view is the widget's whole state, so it replaces what was stored: a selection cleared is a key
-    // removed.
-    const replaces = operation === "chart.view" || operation === CALENDAR_VIEW_OPERATION;
+    // A chart or calendar view and a timeline's selection are the widget's whole state, so each replaces what was stored:
+    // a selection cleared is a key removed.
+    const replaces = operation === "chart.view" || operation === CALENDAR_VIEW_OPERATION || operation === TIMELINE_SELECT_OPERATION;
     const body: Record<string, unknown> = replaces ? patch : { ...(current?.body ?? {}), ...patch };
     const stateRevision = (current?.revision ?? 0) + 1;
     // A calendar view is written in the calendar's current state shape, so the row says so; a row written in an older
@@ -1878,6 +1895,23 @@ function calendarViewPatch(deps: WidgetDeps, instance: WidgetInstance, input: Re
       ...(view.selectedEventId === undefined ? {} : { selectedEventId: view.selectedEventId }),
     },
   };
+}
+
+/**
+ * The selection a timeline holds, checked against the entries it was placed with.
+ *
+ * Read from the instance, not the request: the entry must be one of the timeline's own entries now. An empty id clears
+ * the selection, which is stored as no key at all, so the state row never holds a key the timeline's state schema does
+ * not.
+ */
+function timelineSelectPatch(instance: WidgetInstance, input: Record<string, unknown>): InputValidation {
+  if (instance.definitionRef.id !== TIMELINE_ID) return { ok: false, message: "only a timeline holds a timeline selection" };
+  const timeline = readTimeline(instance.props);
+  if (timeline === undefined) return { ok: false, message: "the timeline selection was refused: the timeline's props do not describe a timeline" };
+  const problems = timelineSelectionProblems(timeline, input);
+  if (problems.length > 0) return { ok: false, message: `the timeline selection was refused: ${problems.join("; ")}` };
+  const selection = readTimelineSelection(input, timeline);
+  return { ok: true, patch: selection.selectedId === undefined ? {} : { selectedId: selection.selectedId } };
 }
 
 /**

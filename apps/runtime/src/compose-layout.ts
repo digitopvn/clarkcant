@@ -19,7 +19,9 @@ import {
   clipWithMarker,
   describeLayout,
   readStatusCard,
+  readTimeline,
   statusCardText,
+  timelineText,
 } from "@clarkcant/contracts";
 import { STATUS_CARD_KIND, primitivePropsProblems } from "@clarkcant/data-canvas";
 import { type CatalogRegistry, definitionDigest, validateProps } from "@clarkcant/widget-host";
@@ -81,6 +83,8 @@ const SLOT_BY_FAMILY: Readonly<Record<string, CompositionSlot>> = {
   list: "list",
   // A status, progress or details card shows what the model wrote in its props; it reads nothing from the node.
   status: "status",
+  // So does a timeline: its entries are its props.
+  timeline: "timeline",
 };
 
 /** The widgets a layout leaf may name, for the model's instructions and for a refusal that lists them. */
@@ -389,13 +393,17 @@ function graphOf(
   return problems.length > 0 ? { ok: false, problems } : { ok: true, graph: graph as CompositionGraph };
 }
 
-/** A leaf's text alternative: a status card says what its props say, any other region what its rows hold. */
+/** A leaf's text alternative: a status card or a timeline says what its props say, any other region what its rows hold. */
 function sectionText(
   definition: Parameters<typeof describeSection>[0],
   slot: CompositionSlot,
   props: Record<string, unknown>,
   rows: Record<string, unknown>[] | undefined,
 ): string {
+  if (slot === "timeline") {
+    const timeline = readTimeline(props);
+    if (timeline !== undefined) return timelineText(timeline, SECTION_TEXT_LIMIT);
+  }
   const kind = STATUS_CARD_KIND[definition.id];
   const card = kind === undefined ? undefined : readStatusCard(kind, props);
   return card === undefined ? describeSection(definition, slot, rows) : statusCardText(card, SECTION_TEXT_LIMIT);

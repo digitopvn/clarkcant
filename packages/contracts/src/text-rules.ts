@@ -25,6 +25,11 @@ export const HIDDEN_CHARACTER_CLASS =
   "\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u115f\\u1160\\u180e\\u200b\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e" +
   "\\u2060-\\u2064\\u2066-\\u2069\\u3164\\ufeff\\uffa0\\ufff9-\\ufffb";
 
+/** The same characters with `\t` (U+0009) and `\n` (U+000A) left out: what text that is many lines by nature refuses. */
+const MULTI_LINE_HIDDEN_CLASS =
+  "\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u115f\\u1160\\u180e\\u200b\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e" +
+  "\\u2060-\\u2064\\u2066-\\u2069\\u3164\\ufeff\\uffa0\\ufff9-\\ufffb";
+
 /** The white space `\s` matches that is not refused: what a required line may start with before its first letter. */
 const ALLOWED_SPACE = " \\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000";
 
@@ -50,6 +55,13 @@ export const ONE_LINE_PATTERN = `^${ALLOWED}*$`;
  * every split of a long refused line and takes time quadratic in it.
  */
 export const ONE_LINE_REQUIRED_PATTERN = `^[${ALLOWED_SPACE}]*${ALLOWED_NOT_SPACE}${ALLOWED}*$`;
+
+/**
+ * Text of many lines with no hidden character but `\n` and `\t`: the JSON Schema `pattern` for what
+ * `hiddenCharacterProblem(value, { lineBreaks: true })` accepts. `\r`, the line and paragraph separators and every other
+ * refused character stay refused, because a page draws them as a new line that nothing counts, or not at all.
+ */
+export const MULTI_LINE_PATTERN = `^(?:[^${MULTI_LINE_HIDDEN_CLASS}\\udb40]|\\udb40[\\udc80-\\udfff])*$`;
 
 /** Every refused character as code points, the tag characters included: compiled with the `u` flag. */
 const HIDDEN_SOURCE = `[${HIDDEN_CHARACTER_CLASS}\\u{e0000}-\\u{e007f}]`;
