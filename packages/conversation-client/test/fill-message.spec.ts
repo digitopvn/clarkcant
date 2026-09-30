@@ -33,9 +33,28 @@ describe("filling a message", () => {
     }
   });
 
-  it("is what the chart renderers use, with no chain of single replacements left in them", () => {
+  it("keeps an event titled with a placeholder as it was titled, in both languages", () => {
+    for (const messages of [MESSAGES_EN, MESSAGES_VI]) {
+      const said = fillMessage(messages["widgets.calendar.eventAria"], { title: "Review {when} and {title}", when: "10:00–11:00" });
+      expect(said).toContain("Review {when} and {title}");
+      expect(said).toContain("10:00–11:00");
+    }
+  });
+
+  it("is what the chart and calendar renderers use, with no chain of single replacements left in them", () => {
     const source = readFileSync(join(import.meta.dirname, "..", "src", "renderers.tsx"), "utf8");
-    for (const name of ["SeriesNote", "LineChart", "BarChart", "Donut", "XyTable", "XyChartRenderer"]) {
+    for (const name of [
+      "SeriesNote",
+      "LineChart",
+      "BarChart",
+      "Donut",
+      "XyTable",
+      "XyChartRenderer",
+      "calendarWhen",
+      "calendarDuration",
+      "calendarDayTime",
+      "Calendar",
+    ]) {
       const start = source.indexOf(`function ${name}(`);
       if (start < 0) throw new Error(`${name} is not in renderers.tsx`);
       const rest = source.slice(start);

@@ -1589,8 +1589,8 @@ const CALENDAR_VIEW_LABEL: Record<CalendarViewKind, MessageKey> = {
 function calendarWhen(t: Translate, event: CalendarEvent, timeZone: string): string {
   if (event.allDay) {
     return event.startDate === event.lastDate
-      ? t("widgets.calendar.when.allDay").replace("{date}", event.startDate)
-      : t("widgets.calendar.when.allDayRange").replace("{start}", event.startDate).replace("{end}", event.lastDate);
+      ? fillMessage(t("widgets.calendar.when.allDay"), { date: event.startDate })
+      : fillMessage(t("widgets.calendar.when.allDayRange"), { start: event.startDate, end: event.lastDate });
   }
   if (event.startsAt === undefined || event.endsAt === undefined) return event.startDate;
   const start = new Date(event.startsAt);
@@ -1606,12 +1606,12 @@ function calendarWhen(t: Translate, event: CalendarEvent, timeZone: string): str
 function calendarDuration(t: Translate, duration: { days: number; hours: number; minutes: number }): string {
   const parts: string[] = [];
   const unit = (count: number, one: MessageKey, many: MessageKey): void => {
-    if (count > 0) parts.push(t(count === 1 ? one : many).replace("{count}", String(count)));
+    if (count > 0) parts.push(fillMessage(t(count === 1 ? one : many), { count: String(count) }));
   };
   unit(duration.days, "widgets.calendar.duration.day", "widgets.calendar.duration.days");
   unit(duration.hours, "widgets.calendar.duration.hour", "widgets.calendar.duration.hours");
   unit(duration.minutes, "widgets.calendar.duration.minute", "widgets.calendar.duration.minutes");
-  return parts.length === 0 ? t("widgets.calendar.duration.minutes").replace("{count}", "0") : parts.join(" ");
+  return parts.length === 0 ? fillMessage(t("widgets.calendar.duration.minutes"), { count: "0" }) : parts.join(" ");
 }
 
 /** What an event shows on one of its days: its hours that day, or that it is all day or runs through the day. */
@@ -1623,8 +1623,8 @@ function calendarDayTime(t: Translate, event: CalendarEvent, date: string, timeZ
   const first = date === event.startDate;
   const last = date === event.lastDate;
   if (first && last) return `${start}–${end}`;
-  if (first) return t("widgets.calendar.from").replace("{time}", start);
-  if (last) return t("widgets.calendar.until").replace("{time}", end);
+  if (first) return fillMessage(t("widgets.calendar.from"), { time: start });
+  if (last) return fillMessage(t("widgets.calendar.until"), { time: end });
   return t("widgets.calendar.continues");
 }
 
@@ -1725,11 +1725,11 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
   const showsLocal = read.events.some((event) => event.source === "local");
   const nowText = timeInZone(now, timezone);
   const shownNotes: string[] = [];
-  if (!zoneKnown) shownNotes.push(t("widgets.calendar.timeZoneUnknown").replace("{timezone}", namedZone));
+  if (!zoneKnown) shownNotes.push(fillMessage(t("widgets.calendar.timeZoneUnknown"), { timezone: namedZone }));
   if (read.total > MAX_CALENDAR_EVENTS) {
-    shownNotes.push(t("widgets.calendar.truncated").replace("{shown}", String(MAX_CALENDAR_EVENTS)).replace("{total}", String(read.total)));
+    shownNotes.push(fillMessage(t("widgets.calendar.truncated"), { shown: String(MAX_CALENDAR_EVENTS), total: String(read.total) }));
   }
-  if (read.unreadable > 0) shownNotes.push(t("widgets.calendar.unreadable").replace("{count}", String(read.unreadable)));
+  if (read.unreadable > 0) shownNotes.push(fillMessage(t("widgets.calendar.unreadable"), { count: String(read.unreadable) }));
 
   const moveFocusToDay = (container: HTMLElement | null, key: string, from: string, days: readonly string[]): boolean => {
     const next = moveDay(key, from, days);
@@ -1751,16 +1751,17 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
         data-all-day={event.allDay ? "true" : "false"}
         data-segment={segment.position}
         aria-pressed={selected}
-        aria-label={t("widgets.calendar.eventAria")
-          .replace("{title}", event.title)
-          .replace("{when}", segment.days > 1 ? `${time}, ${t("widgets.calendar.dayN").replace("{day}", String(segment.day)).replace("{days}", String(segment.days))}` : time)}
+        aria-label={fillMessage(t("widgets.calendar.eventAria"), {
+          title: event.title,
+          when: segment.days > 1 ? `${time}, ${fillMessage(t("widgets.calendar.dayN"), { day: segment.day, days: segment.days })}` : time,
+        })}
         onClick={() => selectEvent(event, date)}
       >
         <span className="cc-calendar-event-time">{time}</span>
         <span className="cc-calendar-event-title">{event.title}</span>
         {segment.days > 1 && (
           <span className="cc-calendar-event-span">
-            {t("widgets.calendar.dayN").replace("{day}", String(segment.day)).replace("{days}", String(segment.days))}
+            {fillMessage(t("widgets.calendar.dayN"), { day: String(segment.day), days: String(segment.days) })}
           </span>
         )}
       </button>
@@ -1774,15 +1775,15 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
       className="cc-calendar-now"
       data-calendar-now="true"
       // A week's narrow day shows only the time beside the line; a pointer can still read the whole label.
-      title={compact ? t("widgets.calendar.now").replace("{time}", nowText) : undefined}
+      title={compact ? fillMessage(t("widgets.calendar.now"), { time: nowText }) : undefined}
     >
       {compact ? (
         <>
-          <span className="cc-sr-only">{t("widgets.calendar.now").replace("{time}", nowText)}</span>
+          <span className="cc-sr-only">{fillMessage(t("widgets.calendar.now"), { time: nowText })}</span>
           <span aria-hidden="true">{nowText}</span>
         </>
       ) : (
-        <span>{t("widgets.calendar.now").replace("{time}", nowText)}</span>
+        <span>{fillMessage(t("widgets.calendar.now"), { time: nowText })}</span>
       )}
     </li>
   );
@@ -1823,7 +1824,7 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
         if (moveFocusToDay(keyEvent.currentTarget, keyEvent.key, from, grid)) keyEvent.preventDefault();
       }}
     >
-      <caption className="cc-sr-only">{t("widgets.calendar.caption").replace("{month}", month).replace("{timezone}", timezone)}</caption>
+      <caption className="cc-sr-only">{fillMessage(t("widgets.calendar.caption"), { month, timezone })}</caption>
       <thead>
         <tr>
           {CALENDAR_WEEKDAYS.map((dayKey) => (
@@ -1848,7 +1849,7 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
                     tabIndex={date === rovingDay ? 0 : -1}
                     aria-pressed={view.selectedDate === date}
                     aria-current={isToday ? "date" : undefined}
-                    aria-label={`${t("widgets.calendar.dayAriaEvents").replace("{date}", date).replace("{count}", String(count))}${isToday ? `, ${t("widgets.calendar.today")}` : ""}`}
+                    aria-label={`${fillMessage(t("widgets.calendar.dayAriaEvents"), { date, count: String(count) })}${isToday ? `, ${t("widgets.calendar.today")}` : ""}`}
                     onFocus={() => setFocusDay(date)}
                     onClick={() => selectDay(date)}
                   >
@@ -1896,7 +1897,7 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
         <ol
           className="cc-calendar-week"
           data-calendar-week-of={first}
-          aria-label={t("widgets.calendar.weekCaption").replace("{start}", first).replace("{end}", last).replace("{timezone}", timezone)}
+          aria-label={fillMessage(t("widgets.calendar.weekCaption"), { start: first, end: last, timezone })}
           aria-describedby={hintId}
           onKeyDown={(keyEvent) => {
             const target = keyEvent.target as HTMLElement;
@@ -1957,13 +1958,13 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
     if (!nowPlaced) groups.push(nowMarker("now"));
     return days.length === 0 ? (
       <p className="cc-freshness" data-calendar-agenda-empty="true" style={{ margin: 0 }}>
-        {t("widgets.calendar.agendaEmpty").replace("{month}", month)}
+        {fillMessage(t("widgets.calendar.agendaEmpty"), { month })}
       </p>
     ) : (
       <ol
         className="cc-calendar-agenda"
         data-calendar-agenda={month}
-        aria-label={t("widgets.calendar.agendaCaption").replace("{month}", month).replace("{timezone}", timezone)}
+        aria-label={fillMessage(t("widgets.calendar.agendaCaption"), { month, timezone })}
         aria-describedby={hintId}
       >
         {groups}
@@ -1978,10 +1979,10 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
     const lasts =
       duration !== undefined
         ? days > 1
-          ? t("widgets.calendar.detail.duration").replace("{duration}", calendarDuration(t, duration))
+          ? fillMessage(t("widgets.calendar.detail.duration"), { duration: calendarDuration(t, duration) })
           : undefined
         : event.allDay && days > 1
-          ? t("widgets.calendar.detail.span").replace("{days}", String(days))
+          ? fillMessage(t("widgets.calendar.detail.span"), { days: String(days) })
           : undefined;
     const ownZone = event.timezone !== undefined && event.timezone !== timezone && isKnownTimeZone(event.timezone) ? event.timezone : undefined;
     return (
@@ -1989,7 +1990,7 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
         <strong>{event.title}</strong>
         <span>{calendarWhen(t, event, timezone)}</span>
         {!event.allDay && event.startsAt !== undefined && (
-          <span className="cc-freshness">{t("widgets.calendar.detail.shownIn").replace("{timezone}", timezone)}</span>
+          <span className="cc-freshness">{fillMessage(t("widgets.calendar.detail.shownIn"), { timezone })}</span>
         )}
         {lasts !== undefined && (
           <span className="cc-freshness" data-calendar-lasts="true">
@@ -1998,7 +1999,7 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
         )}
         {ownZone !== undefined && (
           <span className="cc-freshness" data-calendar-source-zone={ownZone}>
-            {t("widgets.calendar.detail.sourceZone").replace("{timezone}", ownZone).replace("{when}", calendarWhen(t, event, ownZone))}
+            {fillMessage(t("widgets.calendar.detail.sourceZone"), { timezone: ownZone, when: calendarWhen(t, event, ownZone) })}
           </span>
         )}
         <button type="button" className="cc-calendar-clear" data-calendar-clear="true" onClick={clearEvent}>
@@ -2051,7 +2052,7 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
         )}
         {todayShown && (
           <p className="cc-freshness cc-calendar-now-text" data-calendar-now-text="true" style={{ margin: 0 }}>
-            {t("widgets.calendar.nowLine").replace("{date}", today).replace("{time}", nowText).replace("{timezone}", timezone)}
+            {fillMessage(t("widgets.calendar.nowLine"), { date: today, time: nowText, timezone })}
           </p>
         )}
         {view.view === "month" ? monthView() : view.view === "week" ? weekView() : agendaView()}
