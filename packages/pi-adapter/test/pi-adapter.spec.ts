@@ -368,6 +368,68 @@ describe("the model catalogue", () => {
       for (const model of provider.models) expect(model.provider).toBe(provider.id);
     }
   });
+
+  it("states tool calling only for a model pi ships unchanged, and leaves every other model unknown", async () => {
+    const shipped = { api: "openai-responses", baseUrl: "https://api.example.test/v1" };
+    // What pi's own catalogue lists: a runtime that ignores models.json and never refreshes.
+    const builtin = {
+      acme: [
+        { id: "shipped", ...shipped },
+        { id: "moved", ...shipped },
+      ],
+    };
+    // What this installation runs: the shipped model, a built-in id a models.json moved to another endpoint, and a
+    // model somebody added by hand.
+    const configured = {
+      acme: [
+        { id: "shipped", ...shipped, contextWindow: 1000 },
+        { id: "moved", api: shipped.api, baseUrl: "http://localhost:11434/v1" },
+        { id: "hand-added", ...shipped },
+      ],
+    };
+    const runtimeOver = (models: Record<string, readonly { id: string }[]>) => ({
+      getProviders: () => Object.keys(models).map((id) => ({ id })),
+      getModels: (provider: string) => models[provider] ?? [],
+    });
+    const created: unknown[] = [];
+    const module_ = {
+      ModelRuntime: {
+        create: async (options: { modelsPath?: string | null; refreshOnCreate?: boolean }) => {
+          created.push(options);
+          return runtimeOver(options.modelsPath === null ? builtin : configured);
+        },
+      },
+    };
+    // SAFETY: the stand-in implements only `ModelRuntime.create`, the one SDK surface `catalogue()` touches.
+    const adapter = new RealPiAdapter({ cwd: process.cwd(), sdk: module_ as unknown as NonNullable<RealPiAdapterOptions["sdk"]> });
+
+    const models = (await adapter.catalogue()).flatMap((provider) => provider.models);
+    const toolCalls = Object.fromEntries(models.map((model) => [model.id, model.toolCalls]));
+    expect(toolCalls).toEqual({ shipped: true, moved: undefined, "hand-added": undefined });
+    // Unknown is never written down as "no".
+    expect(models.some((model) => model.toolCalls === false)).toBe(false);
+    // The built-in list is read without the agent directory's models.json and without a refresh.
+    expect(created).toContainEqual({ modelsPath: null, refreshOnCreate: false });
+  });
+
+  it("leaves every model unknown when pi's built-in catalogue cannot be read", async () => {
+    const module_ = {
+      ModelRuntime: {
+        create: async (options: { modelsPath?: string | null }) => {
+          if (options.modelsPath === null) throw new Error("no built-in catalogue");
+          return {
+            getProviders: () => [{ id: "acme" }],
+            getModels: () => [{ id: "shipped", api: "openai-responses", baseUrl: "https://api.example.test/v1" }],
+          };
+        },
+      },
+    };
+    // SAFETY: as above, only `ModelRuntime.create` is touched.
+    const adapter = new RealPiAdapter({ cwd: process.cwd(), sdk: module_ as unknown as NonNullable<RealPiAdapterOptions["sdk"]> });
+    const [model] = (await adapter.catalogue()).flatMap((provider) => provider.models);
+    expect(model?.id).toBe("shipped");
+    expect(model?.toolCalls).toBeUndefined();
+  });
 });
 
   it("resolves the model a brief carries, not only the one the adapter was built with", async () => {

@@ -206,6 +206,26 @@ describe("settling is not succeeding", () => {
     expect(result.record.evidence[0]?.verdict).toBe("not-verified");
   });
 
+  it("says plainly that the model answered without using its tools, when it had tools and called none", async () => {
+    // A model that cannot call tools, handed a task only a tool can do, ends like this: words, and no call. The report
+    // names what it did not use, rather than a generic "no evidence" a person cannot act on.
+    const adapter = new FakePiAdapter({ script: ["Done, I submitted the form."] });
+    const result = await runWorker(brief(), deps(adapter, [stubTool()]));
+
+    const summary = result.record.evidence[0]?.summary ?? "";
+    expect(summary).toContain("the model answered without using any of its tools (read_report)");
+    expect(summary).toContain("nothing was done");
+    expect(result.record.evidence[0]?.verdict).toBe("not-verified");
+  });
+
+  it("keeps the general report for a run that was given no tools at all", async () => {
+    const adapter = new FakePiAdapter({ script: ["Here is my answer."] });
+    const result = await runWorker(brief({ allowedCapabilityRefs: [] }), deps(adapter, [stubTool()]));
+    expect(result.record.evidence[0]?.summary).toBe(
+      "the session settled without producing any verifiable evidence; this is not a result",
+    );
+  });
+
   it("reports contradicted when a tool fails", async () => {
     const adapter = new FakePiAdapter();
     const failing = stubTool({

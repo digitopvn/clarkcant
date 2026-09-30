@@ -172,6 +172,11 @@ export interface RealPiAdapterOptions {
 type SdkModelRuntime = Awaited<ReturnType<SdkModule["ModelRuntime"]["create"]>>;
 type SdkModel = ReturnType<SdkModelRuntime["getModels"]>[number];
 
+/** One key per provider and model id; the separator cannot appear in either. */
+function modelKey(provider: string, id: string): string {
+  return `${provider}\u0000${id}`;
+}
+
 /**
  * Recorded evidence of which SDK lifecycle behaviour was actually verified.
  *
@@ -236,6 +241,7 @@ export class RealPiAdapter implements PiAdapter {
 
   #sdk: SdkModule | undefined;
   #modelRuntime: SdkModelRuntime | undefined;
+  #builtins: ReadonlyMap<string, { api: string; baseUrl: string }> | undefined;
   #loader:
     | (SdkModule["DefaultResourceLoader"] extends new (options: infer _O) => infer R ? R : never)
     | undefined;
@@ -295,6 +301,31 @@ export class RealPiAdapter implements PiAdapter {
     return runtime;
   }
 
+  /**
+   * The models pi ships with, as it ships them, keyed by provider and id.
+   *
+   * Read from a second runtime that ignores the agent directory's `models.json` and never refreshes, so a model
+   * found here is one pi's own built-in catalogue lists, not one somebody configured. pi's model library lists only
+   * models that can call tools, so this is the one place a catalogue states tool support; anything else is left
+   * unknown. A runtime that cannot be created leaves every model unknown rather than failing the catalogue.
+   */
+  async #builtinModels(sdk: SdkModule): Promise<ReadonlyMap<string, { api: string; baseUrl: string }>> {
+    if (this.#builtins !== undefined) return this.#builtins;
+    const builtins = new Map<string, { api: string; baseUrl: string }>();
+    try {
+      const pristine = await sdk.ModelRuntime.create({ modelsPath: null, refreshOnCreate: false });
+      for (const provider of pristine.getProviders()) {
+        for (const model of pristine.getModels(provider.id)) {
+          builtins.set(modelKey(provider.id, model.id), { api: String(model.api), baseUrl: model.baseUrl });
+        }
+      }
+    } catch {
+      // Unknown, not "no": a catalogue that cannot say leaves the question open.
+    }
+    this.#builtins = builtins;
+    return builtins;
+  }
+
   readonly #options: RealPiAdapterOptions;
 
   constructor(options: RealPiAdapterOptions) {
@@ -332,16 +363,24 @@ export class RealPiAdapter implements PiAdapter {
   async catalogue(): Promise<ModelCatalogue> {
     const sdk = await this.#load();
     const runtime = await this.#runtime(sdk);
+    const builtins = await this.#builtinModels(sdk);
     const current = this.#options.model;
 
     return runtime.getProviders().map((provider) => ({
       id: provider.id,
-      models: runtime.getModels(provider.id).map((model) => ({
-        provider: provider.id,
-        id: model.id,
-        current: current?.provider === provider.id && current.id === model.id,
-        ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
-      })),
+      models: runtime.getModels(provider.id).map((model) => {
+        // Built in only while it still points where pi's own entry does: a models.json override that moves a
+        // built-in id to another endpoint or API is somebody else's model under the same name.
+        const builtin = builtins.get(modelKey(provider.id, model.id));
+        const unchanged = builtin !== undefined && builtin.api === String(model.api) && builtin.baseUrl === model.baseUrl;
+        return {
+          provider: provider.id,
+          id: model.id,
+          current: current?.provider === provider.id && current.id === model.id,
+          ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+          ...(unchanged ? { toolCalls: true } : {}),
+        };
+      }),
     }));
   }
 

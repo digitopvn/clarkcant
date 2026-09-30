@@ -128,6 +128,20 @@ function filterByCapability(
   return { eligible, rejected };
 }
 
+/**
+ * Whether a catalogue states that a model can call tools: `true`, `false`, or `undefined` when it says nothing.
+ *
+ * Only what the catalogue states is passed on. A model the catalogue does not list, or lists without saying, is
+ * unknown, and `filterBackgroundCandidates` lets an unknown model through.
+ */
+export function toolCallsIn(
+  catalogue: readonly { id: string; models: readonly { id: string; toolCalls?: boolean }[] }[],
+  provider: string,
+  modelId: string,
+): boolean | undefined {
+  return catalogue.find((entry) => entry.id === provider)?.models.find((model) => model.id === modelId)?.toolCalls;
+}
+
 /** A short description per candidate, which is all the policy layer is shown. */
 export function describeCandidate(candidate: ModelCandidate): string {
   return `${candidate.alias} (${candidate.provider}/${candidate.modelId})`;

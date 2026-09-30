@@ -145,6 +145,11 @@ export interface WorkerModelLaunch {
   maxTokens?: number;
   /** The wall-clock ceiling for a task that set none of its own, from the same worker budget. */
   maxWallClockMs?: number;
+  /**
+   * Whether the model's catalogue states it can call tools. Absent when it states nothing, which is not "no": only a
+   * stated `false` keeps a task that is done through a tool from starting.
+   */
+  toolCalls?: boolean;
 }
 
 /**
@@ -157,6 +162,12 @@ export interface WorkerModelLaunch {
 export interface WorkerModelSource {
   available(): boolean;
   launch(): Promise<WorkerModelLaunch | undefined>;
+  /**
+   * Whether the models a worker could be started on can call tools, as their catalogue states it: `false` only when
+   * every one of them is stated not to, `true` only when every one is stated to, and `undefined` otherwise. Asked
+   * before a task that is done through a tool is created, so a node that could only refuse it says so first.
+   */
+  toolCalls?(): Promise<boolean | undefined>;
 }
 
 export interface TaskDispatcherDeps {
@@ -297,6 +308,11 @@ export interface TaskDispatcher {
    * a tool whose whole point is a dispatched worker doing real work is offered only when this is true.
    */
   workersRunAModel(): boolean;
+  /**
+   * Whether the models this dispatcher's workers could run on can call tools (see `WorkerModelSource.toolCalls`).
+   * `undefined` when nothing states it, including when the answer could not be read: unknown never refuses anything.
+   */
+  workersCallTools(): Promise<boolean | undefined>;
   /** Refuse every dispatch from now on. Called once, when the node starts to close. */
   close(): void;
   /** SIGKILL every worker's group now, without the grace: for a node that exits before the grace runs out. */
@@ -590,6 +606,19 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         await refuse(
           job,
           `refused: ${reason ?? "this node has no model configured to do the work"}; the worker was never started and nothing was done`,
+        );
+        return;
+      }
+      /*
+       * A browser task is done only through `use_browser`, so a model its catalogue states cannot call tools could only
+       * answer in words. Refused here, before the policy is asked or a worker exists. Unknown is let through: the worker
+       * then reports plainly if the model answered without using the browser.
+       */
+      if (browsing && launch.toolCalls === false) {
+        releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        await refuse(
+          job,
+          `refused: the model this task would run on (${launch.model.provider}/${launch.model.id}) cannot call tools, so it could not use the browser; choose one that can in Settings → AI & Routing; the worker was never started and nothing was done`,
         );
         return;
       }
@@ -1153,6 +1182,10 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     runningCount: () => running,
     queuedCount: () => queue.length,
     workersRunAModel: () => deps.workerModel?.available() === true,
+    workersCallTools: async () => {
+      if (deps.workerModel?.available() !== true || deps.workerModel.toolCalls === undefined) return undefined;
+      return await deps.workerModel.toolCalls().catch(() => undefined);
+    },
     close() {
       closing = true;
     },

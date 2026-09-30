@@ -6,6 +6,7 @@ import {
   type CandidateFilterInput,
   filterBackgroundCandidates,
   routeBackgroundModel,
+  toolCallsIn,
 } from "../src/model-router.ts";
 
 /**
@@ -242,5 +243,75 @@ describe("choosing among the survivors", () => {
 
   it("returns nothing when no profile survived the filters, so the caller can report why", async () => {
     expect(await routeBackgroundModel({ eligible: [], verify })).toBeUndefined();
+  });
+});
+
+describe("routing work that needs tools, by what the catalogue states", () => {
+  // One provider whose catalogue states yes for one model, no for another, and nothing for a third.
+  const catalogue = [
+    {
+      id: "acme",
+      models: [
+        { id: "can-call", toolCalls: true },
+        { id: "cannot-call", toolCalls: false },
+        { id: "never-said" },
+      ],
+    },
+  ];
+  const mixedPool = pool(
+    profile({ alias: "no", provider: "acme", modelId: "cannot-call", priority: 1 }),
+    profile({ alias: "yes", provider: "acme", modelId: "can-call", priority: 2 }),
+    profile({ alias: "unknown", provider: "acme", modelId: "never-said", priority: 3 }),
+    profile({ alias: "unlisted", provider: "elsewhere", modelId: "anything", priority: 4 }),
+  );
+  const toolWork = filterInput({
+    pool: mixedPool,
+    supportsTools: (provider, modelId) => toolCallsIn(catalogue, provider, modelId),
+    needsTools: true,
+  });
+
+  it("reads only what the catalogue states, and nothing for a model it does not list", () => {
+    expect(toolCallsIn(catalogue, "acme", "can-call")).toBe(true);
+    expect(toolCallsIn(catalogue, "acme", "cannot-call")).toBe(false);
+    expect(toolCallsIn(catalogue, "acme", "never-said")).toBeUndefined();
+    expect(toolCallsIn(catalogue, "acme", "missing")).toBeUndefined();
+    expect(toolCallsIn(catalogue, "elsewhere", "anything")).toBeUndefined();
+  });
+
+  it("excludes the model known to lack tool calling and keeps the known and unknown ones", () => {
+    const outcome = filterBackgroundCandidates(toolWork);
+    expect(outcome.eligible.map((entry) => entry.alias)).toEqual(["yes", "unknown", "unlisted"]);
+    expect(outcome.rejected).toEqual([{ alias: "no", reason: "model không gọi được tool" }]);
+  });
+
+  it("never routes tool work to a known no, even when it is the background default or what foreground runs", async () => {
+    const { eligible } = filterBackgroundCandidates(toolWork);
+    const verify = (alias: string) => mixedPool.profiles.some((entry) => entry.alias === alias);
+    const asDefault = await routeBackgroundModel({ eligible, backgroundDefaultAlias: "no", verify });
+    const asForeground = await routeBackgroundModel({ eligible, foregroundAlias: "no", verify });
+    // Priority put the known no first; with it gone, the first eligible is the known yes.
+    expect(asDefault).toMatchObject({ via: "first-eligible", alias: "yes" });
+    expect(asForeground).toMatchObject({ via: "first-eligible", alias: "yes" });
+  });
+
+  it("routes to an unknown model when it is the only one left, because unknown is not no", async () => {
+    const outcome = filterBackgroundCandidates({
+      ...toolWork,
+      pool: pool(
+        profile({ alias: "no", provider: "acme", modelId: "cannot-call", priority: 1 }),
+        profile({ alias: "unknown", provider: "acme", modelId: "never-said", priority: 2 }),
+      ),
+    });
+    const routed = await routeBackgroundModel({ eligible: outcome.eligible, verify: () => true });
+    expect(routed?.alias).toBe("unknown");
+  });
+
+  it("routes nowhere when every model is known to lack tool calling", async () => {
+    const outcome = filterBackgroundCandidates({
+      ...toolWork,
+      pool: pool(profile({ alias: "no", provider: "acme", modelId: "cannot-call" })),
+    });
+    expect(outcome.eligible).toEqual([]);
+    expect(await routeBackgroundModel({ eligible: outcome.eligible, verify: () => true })).toBeUndefined();
   });
 });

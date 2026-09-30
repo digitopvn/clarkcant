@@ -156,6 +156,9 @@ export interface ModelTurn {
    */
   workerModel: () => Promise<ModelSelection & { via: "routed" | "configured" }>;
 
+  /** The model this node runs now, the person's pick else the environment's: what a worker falls back to when routing chooses nothing. */
+  configuredModel: () => ModelSelection;
+
   /** How long the conversation's current turn has been running, or undefined when none is. */
   runningMs: (conversationId: string) => number | undefined;
 
@@ -1035,6 +1038,8 @@ export async function createModelTurn(options: {
       const current = options.model?.() ?? selection;
       return { ...current, via: "configured" };
     },
+
+    configuredModel: (): ModelSelection => options.model?.() ?? selection,
 
     runInBackground: async (input: BackgroundRunInput): Promise<string> => {
       const signal = input.signal;

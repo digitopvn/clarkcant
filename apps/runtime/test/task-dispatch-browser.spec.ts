@@ -591,4 +591,40 @@ describe("a task dispatched to the browser, on the node's model", () => {
     expect(settled[0]?.message).toContain("this node has no model configured to do the work");
     expect(getTask(services.runtime.db, taskId)?.state).toBe("failed");
   });
+
+  it("refuses a task whose model the catalogue states cannot call tools before any worker starts", async () => {
+    const { taskId } = dispatchedTask("Nộp đơn ở https://shop.example/form");
+    const { settled, workerStarted, opened } = await refusedBeforeWorker(taskId, {
+      workerModel: nodeWorkerModel({
+        modelTurn: {
+          workerModel: async () => ({ provider: "acme", id: "words-only", via: "configured" }),
+          catalogue: async () => [{ id: "acme", models: [{ provider: "acme", id: "words-only", current: true, toolCalls: false }] }],
+        },
+        env: {},
+        storedCredential: () => undefined,
+      }),
+    });
+
+    expect(workerStarted).toBe(false);
+    expect(opened).toBe(0);
+    expect(settled[0]?.outcome).toBe("failed");
+    expect(settled[0]?.message).toContain("the model this task would run on (acme/words-only) cannot call tools");
+    expect(settled[0]?.message).toContain("Settings → AI & Routing");
+    expect(settled[0]?.message).toContain("the worker was never started");
+    expect(getTask(services.runtime.db, taskId)?.state).toBe("failed");
+  });
+
+  it("says the model answered without using the browser when it replied in words and called nothing", async () => {
+    // The stub's model is one the catalogue says nothing about, so the task is let through; the model then answers
+    // without a single call, which is what a model that cannot call tools does.
+    const run = await runOnStub(() => ({ kind: "text", text: "Done, I submitted the form for you." }));
+
+    expect(run.stub.requests.length).toBeGreaterThanOrEqual(1);
+    expect(run.stub.requests[0]?.tools).toEqual(["use_browser"]);
+    expect(run.page.clicks).toHaveLength(0);
+    expect(run.settled[0]?.outcome).toBe("failed");
+    expect(run.settled[0]?.message).toContain("the model answered without using any of its tools (use_browser)");
+    expect(run.settled[0]?.message).toContain("nothing was done");
+    expect(run.settled[0]?.message).not.toContain("without producing any verifiable evidence");
+  }, 90_000);
 });

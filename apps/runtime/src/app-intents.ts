@@ -113,7 +113,7 @@ interface PendingValue {
   usedAt?: Instant;
 }
 
-function preferenceDeps(deps: AppIntentDeps) {
+function preferenceDeps(deps: Pick<AppIntentDeps, "db" | "now">) {
   return { db: deps.db, now: deps.now };
 }
 
@@ -129,7 +129,7 @@ function preferenceDeps(deps: AppIntentDeps) {
  * Falls back to `"vi"` when nothing was ever written, matching the preference's own registry default
  * and `describeAppIntent`'s own default parameter.
  */
-export function preferredAppIntentLocale(deps: AppIntentDeps, principalId: string): AppIntentLocale {
+export function preferredAppIntentLocale(deps: Pick<AppIntentDeps, "db" | "now">, principalId: string): AppIntentLocale {
   const record = getPreference(preferenceDeps(deps), {
     principalId,
     key: "experience.language",
