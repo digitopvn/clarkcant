@@ -26,6 +26,7 @@ import {
 } from "@clarkcant/core";
 import { appendAuditEvent } from "@clarkcant/storage";
 
+import { readArtifactForContext } from "../artifact-broker.ts";
 import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
@@ -605,6 +606,18 @@ async function invokeAgentAction(
     principalId: request.principalId,
     instanceId: checked.instance.instanceId,
     refs: proposal.contextRefs,
+    // A file reference is read as the pressed widget, in this conversation: the broker's decision, not a second one.
+    readArtifact: (artifactId) =>
+      readArtifactForContext(
+        {
+          db: services.runtime.db,
+          dataDir: services.runtime.dataDir,
+          nodeId: services.runtime.identity.nodeId,
+          newId: (prefix) => services.conductor.newId(prefix),
+          now: () => new Date(),
+        },
+        { principalId: request.principalId, instanceId: checked.instance.instanceId, conversationId: request.conversationId, artifactId },
+      ),
   });
   if (!context.ok) return refusal(context.code, `${context.message}; nothing was sent to the model`);
 

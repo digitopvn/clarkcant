@@ -256,8 +256,9 @@ export function buildViewCatalog(
 /** The context-reference grammar, as the model is told it (`application/action-context.ts`). */
 const CONTEXT_REFS_NOTE =
   `"widget" or "widget:<instanceId>" for what a widget shows, "selection" or "selection:<instanceId>" for what is ` +
-  `selected in it, "state:<key>" or "state:<instanceId>/<key>" for a composed view's state value; only widgets the same ` +
-  `person owns`;
+  `selected in it, "state:<key>" or "state:<instanceId>/<key>" for a composed view's state value, "artifact:<artifactId>" ` +
+  `for a file the button's widget holds (its name, type, size, and the start of a text file); only widgets and files ` +
+  `the same person owns`;
 
 /** The workflow step vocabulary, as the model is told it (`application/workflow-executor.ts`). */
 const WORKFLOW_NOTE =
