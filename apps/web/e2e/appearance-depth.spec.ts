@@ -421,6 +421,8 @@ test("the person's own Reduced setting stills the theme's motion and backdrop li
 });
 
 test("a typed sentence and the keyboard alone choose a theme through the same write as a click", async ({ page, request }) => {
+  // Theme Lab contains an entire interactive sample; checking each native Tab stop is deliberately slower on CI.
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ colorScheme: "dark" });
   await open(page);
@@ -458,14 +460,19 @@ test("a typed sentence and the keyboard alone choose a theme through the same wr
   await expect.poll(() => rootVar(page, "--cc-accent")).toBe(DEPTH_DARK_ACCENT);
   const apply = page.locator("[data-theme-apply]");
   await expect(apply).toBeEnabled();
-  for (let step = 0; step < 60 && !(await apply.evaluate((element) => element === document.activeElement)); step += 1) {
+  for (let step = 0; step < 60; step += 1) {
     await page.keyboard.press("Tab");
+    if (await apply.evaluate((element) => element === document.activeElement)) break;
   }
   await expect(apply).toBeFocused();
   await page.keyboard.press("Enter");
   await expect.poll(() => rootVar(page, "--cc-accent"), { timeout: 15_000 }).toBe(clarkAccent);
   await recordOverflow(page, "298-keyboard-gallery-390-dark");
+  await expect(page.locator('[data-modal="true"]')).toHaveCount(2);
   await page.keyboard.press("Escape");
+  await expect(page.locator('[data-modal="true"]')).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-modal="true"]')).toHaveCount(0);
   await expect(composer).toBeVisible();
 
   // Light and dark, typed, through the same call as the Settings control.
