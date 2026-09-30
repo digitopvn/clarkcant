@@ -559,7 +559,7 @@ export function decideControlApp(deps: ControlAppDeps, params: Record<string, un
   let intent = parsed.data;
   // Said in the language the person reads the app in: the read-back and a theme refusal are shown and spoken to them.
   const locale = preferredAppIntentLocale(
-    { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.newId },
+    { db: deps.db, now: deps.now },
     deps.principalId,
   );
   let readBack = describeAppIntent(intent, locale);
