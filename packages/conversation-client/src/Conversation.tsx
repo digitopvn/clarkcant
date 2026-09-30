@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactElement, useRef, useState } from "react";
+import { type CSSProperties, Fragment, type ReactElement, useRef, useState } from "react";
 
 import type { NoticeOperationId, NoticeOperationSource, OrbProfileName } from "@clarkcant/contracts";
 
@@ -27,6 +27,7 @@ import { ConversationComposerBar } from "./ConversationComposerBar.tsx";
 import { ConversationPinSurfaces } from "./ConversationPinSurfaces.tsx";
 import { ConversationLiveReplyRow } from "./ConversationLiveReplyRow.tsx";
 import { TimelineMessageRow } from "./TimelineMessageRow.tsx";
+import { NoticeUndoRow } from "./NoticeUndoRow.tsx";
 import { useAppearance } from "./use-appearance.ts";
 import { useTheme } from "./use-theme.ts";
 import { useLocale } from "./i18n/use-locale.ts";
@@ -199,6 +200,9 @@ export function Conversation({
   const actOnNotice = useRef<((noticeId: string, action: NoticeOperationId, source?: NoticeOperationSource) => Promise<string>) | undefined>(
     undefined,
   );
+  /** The newest message on screen, kept for the moment a dismissal runs (see `latestMessageId` below). */
+  const latestMessageId = useRef<string | undefined>(undefined);
+  latestMessageId.current = blocks.at(-1)?.messageId;
   /** The hidden file input the `+` button opens, so the button itself is a real `<button>`. */
   const attachmentInput = useRef<HTMLInputElement>(null);
 
@@ -318,6 +322,8 @@ export function Conversation({
       if (actOnNotice.current === undefined) throw new Error(localeState.t("shell.intent.notInbox"));
       return actOnNotice.current(noticeId, action, source);
     },
+    // Read when a dismissal runs: by then Clark's reply about it is the newest message, and its Undo goes under it.
+    latestMessageId: () => latestMessageId.current,
     // The hotkey's own switches, so the alias and note on screen follow an agent's switch too.
     cycleModel,
     selectModel,
@@ -434,6 +440,13 @@ export function Conversation({
   const placeholderPhrases = PLACEHOLDER_PHRASE_KEYS.map((key) => localeState.t(key));
   const placeholder = useTypewriterPlaceholder(placeholderPhrases, heroPhase === "shown" && draft === "");
   const showTimeline = blocks.length > 0 || pendingUser !== undefined || busy;
+  // The Undo a dismissal by a sentence left, under the reply that said so: the last row with that message's id.
+  const noticeUndo = appIntents.noticeUndo;
+  const undoIndex = noticeUndo === undefined ? -1 : blocks.findLastIndex((message) => message.messageId === noticeUndo.afterMessageId);
+  const noticeUndoRow =
+    noticeUndo === undefined ? null : (
+      <NoticeUndoRow key={`${noticeUndo.noticeId}-${String(noticeUndo.offeredAt)}`} undo={noticeUndo} onUndo={appIntents.undoNoticeDismissal} />
+    );
 
   return (
     <LocaleProvider value={localeState}>
@@ -481,16 +494,20 @@ export function Conversation({
           {showTimeline && (
             <div className="cc-timeline" aria-live="polite" aria-relevant="additions">
               {blocks.map((message, index) => (
-                <TimelineMessageRow
-                  key={`${message.messageId}-${index}`}
-                  message={message}
-                  index={index}
-                  renderSurface={renderSurface}
-                  blockActions={blockActions}
-                  client={client}
-                  settled
-                />
+                <Fragment key={`${message.messageId}-${index}`}>
+                  <TimelineMessageRow
+                    message={message}
+                    index={index}
+                    renderSurface={renderSurface}
+                    blockActions={blockActions}
+                    client={client}
+                    settled
+                  />
+                  {index === undoIndex && noticeUndoRow}
+                </Fragment>
               ))}
+              {/* Its reply is not on screen (a dismissal said while a reply was being written): it goes after the rest. */}
+              {undoIndex === -1 && noticeUndoRow}
 
               {pendingUser !== undefined && (
                 <article className="cc-row" data-role="user" data-pending="true" style={{ "--cc-enter-delay": "0ms" } as CSSProperties}>
@@ -587,23 +604,9 @@ export function Conversation({
         a window command failing in a browser is still visible when no panel is open.
       */}
       {appIntents.intentNotice !== undefined && (
-        <div className="cc-intent-notice" data-intent-notice="true">
-          <p className="cc-intent-notice-text" role="status">
-            {appIntents.intentNotice}
-          </p>
-          {/* A real undo: the node keeps a dismissed notice restorable for this long, and the line stays exactly as long. */}
-          {appIntents.intentUndo && (
-            <button
-              type="button"
-              className="cc-action"
-              data-intent-undo="true"
-              aria-label={localeState.t("inbox.act.undoAria")}
-              onClick={appIntents.undoIntent}
-            >
-              {localeState.t("inbox.act.undo")}
-            </button>
-          )}
-        </div>
+        <p className="cc-intent-notice" data-intent-notice="true" role="status">
+          {appIntents.intentNotice}
+        </p>
       )}
 
       <SettingsPanel

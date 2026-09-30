@@ -569,11 +569,14 @@ Shipped:
   back, and the newest one that can take the action now for retry, update, skip and ask again. The read-back names that
   notification by its title, so a person who hears the wrong one knows; when none fits, Clark says so and does nothing.
   Read, unread, dismiss, undo, snooze, bring back and quieting a kind can be taken back, so they are carried out without
-  asking back; the short status line at the top of the conversation then says what the node did, in the panel's own
-  words. A dismissal's read-back says how long it can be undone ("Tôi bỏ thông báo “…” khỏi hộp thư nhé. Bạn có thể
-  hoàn tác trong 5 phút."), and the status line keeps a real **Undo** button for exactly those five minutes, the time
-  the node keeps the notification restorable; pressing it, or saying "undo dismissing the notification", brings it
-  back through the same route. Retry, update, skip and ask again start or change something and are not called
+  asking back; a short status line then says what the node did, in the panel's own words. A dismissal's read-back
+  says how long it can be undone ("Tôi bỏ thông báo “…” khỏi hộp thư nhé. Bạn có thể hoàn tác trong 5 phút."). What
+  the node did is then said in the conversation itself, directly under that reply — never in a card over the page —
+  with a real inline **Undo** for exactly those five minutes, the time the node keeps the notification restorable. It
+  appears without taking focus, is reached with Tab like any control, and afterwards says quietly "Hết thời gian hoàn
+  tác" / "Undo window has passed". Pressing it, or saying "undo dismissing the notification", brings the notification
+  back through the same route, and the line then says "Đã đưa thông báo trở lại hộp thư" / "The notice is back in your
+  inbox". Retry, update, skip and ask again start or change something and are not called
   reversible: retry, skip and ask again are carried out as asked, because each is the notification's own offer and
   runs with the checks the panel's button has. **Installing an update is the person's own decision**: it adds code to
   the machine and grants what the package asks for. Only the panel's Update button installs, or a spoken request that

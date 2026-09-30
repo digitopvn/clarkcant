@@ -559,11 +559,13 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   sớm nhất cho đưa trở lại, và thông báo mới nhất đang làm được thao tác đó cho chạy lại, cập nhật, bỏ qua phiên bản
   và hỏi lại. Câu đọc lại nêu tên thông báo đó bằng tiêu đề, nên người nghe thấy sai thông báo sẽ biết; khi không có
   thông báo nào phù hợp, Clark nói rõ và không làm gì. Đã đọc, chưa đọc, bỏ, hoàn tác, hoãn, đưa trở lại và tắt báo
-  một loại đều lấy lại được, nên được làm luôn mà không hỏi lại; dòng trạng thái ngắn ở đầu cuộc trò chuyện sau đó nói
-  node đã làm gì, bằng đúng lời của hộp thư. Câu đọc lại khi bỏ thông báo nói rõ hoàn tác được trong bao lâu ("Tôi bỏ
-  thông báo “…” khỏi hộp thư nhé. Bạn có thể hoàn tác trong 5 phút."), và dòng trạng thái giữ một nút **Hoàn tác** thật
-  trong đúng năm phút đó, là khoảng thời gian node còn khôi phục được thông báo; bấm nút, hoặc nói "hoàn tác bỏ thông
-  báo", sẽ đưa nó trở lại qua cùng route đó. Chạy lại, cập nhật, bỏ qua phiên bản và hỏi lại thì bắt đầu hoặc thay đổi
+  một loại đều lấy lại được, nên được làm luôn mà không hỏi lại; sau đó một dòng trạng thái ngắn nói node đã làm gì,
+  bằng đúng lời của hộp thư. Câu đọc lại khi bỏ thông báo nói rõ hoàn tác được trong bao lâu ("Tôi bỏ thông báo “…”
+  khỏi hộp thư nhé. Bạn có thể hoàn tác trong 5 phút."). Việc node đã làm được nói ngay trong cuộc trò chuyện, ngay dưới
+  câu trả lời đó — không bao giờ trong một thẻ nổi trên trang — kèm một nút **Hoàn tác** thật nằm trong dòng, trong đúng
+  năm phút đó, là khoảng thời gian node còn khôi phục được thông báo. Nút xuất hiện mà không lấy focus, tới được bằng Tab
+  như mọi nút khác, và hết thời gian thì nói nhẹ nhàng "Hết thời gian hoàn tác". Bấm nút, hoặc nói "hoàn tác bỏ thông
+  báo", sẽ đưa thông báo trở lại qua cùng route đó, và dòng đó nói "Đã đưa thông báo trở lại hộp thư". Chạy lại, cập nhật, bỏ qua phiên bản và hỏi lại thì bắt đầu hoặc thay đổi
   một việc, nên không được gọi là có thể hoàn tác: chạy lại, bỏ qua phiên bản và hỏi lại được làm theo yêu cầu, vì mỗi
   thao tác là lựa chọn chính thông báo đưa ra và chạy với đúng các bước kiểm tra như nút trong hộp thư. **Cài bản cập
   nhật là quyết định của chính người dùng**: nó thêm mã vào máy và cấp những quyền gói yêu cầu. Chỉ nút Cập nhật trong
