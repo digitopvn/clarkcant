@@ -399,6 +399,31 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       mode: "read-only",
     },
   ],
+  "canvas.tree@1": [
+    {
+      id: "tree.normal",
+      label: "Cây phân cấp có lựa chọn",
+      props: {
+        title: "Dự án",
+        initiallyExpanded: ["project", "client"],
+        nodes: [
+          { id: "project", label: "ClarkCant", icon: "project", children: [
+            { id: "client", label: "Ứng dụng", icon: "folder", children: [
+              { id: "composer", label: "Trình soạn thảo", secondary: "Đang hoạt động", icon: "document" },
+              { id: "library", label: "Thư viện widget", icon: "folder" },
+            ] },
+            { id: "runtime", label: "Runtime", icon: "branch", children: [
+              { id: "worker", label: "Worker", icon: "task" },
+            ] },
+          ] },
+          { id: "people", label: "Cộng tác viên", icon: "group", children: [{ id: "owner", label: "Chủ dự án", icon: "person" }] },
+        ],
+      },
+      state: { selectedId: "composer", expandedIds: ["project", "client"] },
+      mode: "interactive",
+    },
+    { id: "tree.empty", label: "Cây trống", props: { title: "Không có mục", nodes: [] }, mode: "read-only" },
+  ],
   "canvas.image@1": [
     {
       id: "image.normal",

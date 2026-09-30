@@ -65,6 +65,10 @@ export const GRAPH_EVENTS: Readonly<Record<string, Readonly<Record<string, Graph
   "canvas.table@1": { "row.select": { fields: { rowIds: "string-list" } } },
   "canvas.calendar@1": { "date.select": { fields: { date: "string" } } },
   "canvas.timeline@1": { "timeline.select": { fields: { selectedId: "string" } } },
+  "canvas.tree@1": {
+    "tree.select": { fields: { selectedId: "string" } },
+    "tree.toggle": { fields: { nodeId: "string", expanded: "value" } },
+  },
 };
 
 interface GraphFeedSpec {

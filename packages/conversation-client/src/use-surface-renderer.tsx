@@ -1,7 +1,17 @@
 import type { MessageKey } from "./i18n/messages.ts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
 
-import { CALENDAR_ID, CALENDAR_VIEW_OPERATION, TIMELINE_ID, TIMELINE_SELECT_OPERATION, XY_CHART_KIND, XY_CHART_VIEW_OPERATION } from "@clarkcant/contracts";
+import {
+  CALENDAR_ID,
+  CALENDAR_VIEW_OPERATION,
+  TIMELINE_ID,
+  TIMELINE_SELECT_OPERATION,
+  TREE_ID,
+  TREE_SELECT_OPERATION,
+  TREE_TOGGLE_OPERATION,
+  XY_CHART_KIND,
+  XY_CHART_VIEW_OPERATION,
+} from "@clarkcant/contracts";
 
 import {
   GatewayError,
@@ -89,6 +99,8 @@ const VIEW_REFUSED: Record<string, MessageKey> = {
   [XY_CHART_VIEW_OPERATION]: "widgets.xyChart.viewRefused",
   [CALENDAR_VIEW_OPERATION]: "widgets.calendar.viewRefused",
   [TIMELINE_SELECT_OPERATION]: "widgets.timeline.selectRefused",
+  [TREE_SELECT_OPERATION]: "widgets.tree.actionRefused",
+  [TREE_TOGGLE_OPERATION]: "widgets.tree.actionRefused",
 };
 /** The argument an agent-bound list item is sent under when the binding names none. */
 const DEFAULT_ITEM_KEY = "itemId";
@@ -400,12 +412,13 @@ export function useSurfaceRenderer({
           ? XY_CHART_VIEW_OPERATION
           : definitionId === CALENDAR_ID
             ? CALENDAR_VIEW_OPERATION
-            : definitionId === TIMELINE_ID
-              ? TIMELINE_SELECT_OPERATION
-              : undefined;
+              : definitionId === TIMELINE_ID
+                ? TIMELINE_SELECT_OPERATION
+                : undefined;
+      const viewOperations = definitionId === TREE_ID ? [TREE_SELECT_OPERATION, TREE_TOGGLE_OPERATION] : viewOperation === undefined ? [] : [viewOperation];
       const viewRefusal = viewRefusals[instance.instanceId];
       const widgetState: Record<string, unknown> | undefined =
-        viewOperation !== undefined
+        viewOperations.length > 0
         ? {
             // The view the node holds; the widget draws a change at once and adopts this when it moves.
             ...(instance.state ?? {}),
@@ -476,10 +489,11 @@ export function useSurfaceRenderer({
                       }
                       // A chart's, a calendar's or a timeline's view goes through its own binding, without a "done" line: the widget itself
                       // shows it.
-                      if (viewOperation !== undefined && action === viewOperation) {
-                        if (boundAction !== undefined && boundAction.available && conversationId !== undefined) {
+                      if (viewOperations.includes(action)) {
+                        const matchingAction = instance.actions?.find((candidate) => candidate.viewOperation === action) ?? boundAction;
+                        if (matchingAction !== undefined && matchingAction.available && conversationId !== undefined) {
                           const datasetRef = instance.props.datasetRef;
-                          sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, boundAction, instance.revision, payload, VIEW_REFUSED[viewOperation] ?? "widgets.xyChart.viewRefused");
+                          sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, matchingAction, instance.revision, payload, VIEW_REFUSED[action] ?? "widgets.xyChart.viewRefused");
                         }
                         return;
                       }

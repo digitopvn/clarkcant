@@ -718,6 +718,7 @@ export interface TimelineActionView {
   label: string;
   effectCategory: string;
   bindingDigest: string;
+  viewOperation?: string;
   available: boolean;
   /** Why it cannot run now, when it cannot: the reason a click would be refused with. */
   unavailableCode?: string;
@@ -839,6 +840,7 @@ export function buildTimeline(
           label: binding.label,
           effectCategory: binding.effectCategory,
           bindingDigest: binding.bindingDigest,
+          ...(binding.proposal.kind === "view" ? { viewOperation: binding.proposal.operation } : {}),
           available: availability.available,
           ...(availability.available ? {} : { unavailableCode: availability.code, unavailableReason: availability.reason }),
           ...(inputKeys.length === 0 ? {} : { inputKeys }),

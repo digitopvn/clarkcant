@@ -314,6 +314,8 @@ export interface TimelineAction {
   label: string;
   effectCategory: string;
   bindingDigest: string;
+  /** A host-checked, effect-free view operation, when this binding is one of several on a widget. */
+  viewOperation?: string;
   available: boolean;
   unavailableCode?: string;
   unavailableReason?: string;

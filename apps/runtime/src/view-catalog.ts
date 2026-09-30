@@ -67,6 +67,15 @@ import {
   readTimeline,
   timelineProblems,
   timelineText,
+  TREE_ID,
+  TREE_SELECT_OPERATION,
+  TREE_TOGGLE_OPERATION,
+  MAX_TREE_DEPTH,
+  MAX_TREE_NODES,
+  TREE_ICONS,
+  readTree,
+  treeProblems,
+  treeText,
   compileActionBinding,
   readXyChart,
   xyChartData,
@@ -97,6 +106,7 @@ import {
   STATUS,
   STATUS_CARD_KIND,
   TIMELINE,
+  TREE,
   WIDGETS as CATALOG_WIDGETS,
   primitivePropsProblems,
 } from "@clarkcant/data-canvas";
@@ -160,6 +170,7 @@ export function buildViewCatalog(
     SCATTER_CHART.id,
     CALENDAR.id,
     TIMELINE.id,
+    TREE.id,
   ]);
   const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
@@ -209,6 +220,7 @@ export function buildViewCatalog(
     ...xyChartViews(deps),
     calendarView(deps),
     timelineView(deps, () => compose?.timezone() ?? nodeTimeZone()),
+    treeView(deps),
   );
   if (compose === undefined) return simple;
 
@@ -230,7 +242,7 @@ export function buildViewCatalog(
         `To connect widgets, declare props.state as {"<key>":{"type":"string"|"number"|"boolean"|"string-list","initial":...}} ` +
         `(at most ${String(MAX_GRAPH_KEYS)} keys) and give leaves "on" and "feed" lists. "on" entries are {"event":"...","steps":[...]}: ` +
         `canvas.search@1 emits query.change {query}, canvas.choice@1 choice.change {value}, canvas.input@1 input.change {value}, ` +
-        `canvas.list@1 selection.change {selected}, canvas.table@1 row.select {rowIds}, canvas.calendar@1 date.select {date}, canvas.timeline@1 timeline.select {selectedId}. ` +
+        `canvas.list@1 selection.change {selected}, canvas.table@1 row.select {rowIds}, canvas.calendar@1 date.select {date}, canvas.timeline@1 timeline.select {selectedId}, canvas.tree@1 tree.select {selectedId} and tree.toggle {nodeId, expanded}. ` +
         `Steps: {"op":"select-field","key","field"}, {"op":"set","key","value"}, {"op":"toggle","key","field"?}, {"op":"copy","key","from"}, ` +
         `{"op":"append"|"remove","key","field"}, {"op":"map-field","key","field","map":{...},"fallback"?}, {"op":"take","key","field","count"}, {"op":"count","key","field"}. ` +
         `"feed" entries are {"op":"query","key"} for a table or list, or {"op":"filter-equals","field","key"} for a table column, ` +
@@ -830,6 +842,67 @@ function timelineView(deps: WidgetDeps, timezone: () => string): ViewDescriptor 
         messageId: request.messageId,
         textAlternative,
         presentationRef: `catalog:${definition.id}`,
+      });
+      return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
+    },
+  };
+}
+
+function treeView(deps: WidgetDeps): ViewDescriptor {
+  const definition = TREE;
+  return {
+    id: definition.id,
+    label: definition.semanticDescription,
+    notes:
+      `props.nodes is a hierarchy of at most ${String(MAX_TREE_NODES)} nodes and ${String(MAX_TREE_DEPTH)} levels; ` +
+      `each node has a unique id, a one-line label, optional secondary text, an icon from ${TREE_ICONS.join(", ")}, and children. ` +
+      `Optional props.title and props.initiallyExpanded name branches to open. A person can select one node and expand or collapse branches; ` +
+      `the selection and open branches are kept in widget state. It reads no files and changes no data.`,
+    shownText: `Shown: ${TREE_ID}, a bounded hierarchy from the nodes you gave. Selection and expansion are view state.`,
+    build: (request) => {
+      const schema = validateProps(definition, request.props);
+      if (!schema.ok) throw new Error(`${definition.id} has props that do not fit its schema: ${schema.problems.join(", ")}`);
+      const problems = treeProblems(request.props);
+      if (problems.length > 0) throw new Error(`${definition.id} cannot be shown: ${problems.join("; ")}`);
+      const tree = readTree(request.props);
+      if (tree === undefined) throw new Error(`${definition.id} cannot be shown: its props do not describe a hierarchy`);
+      const packageDigest = definitionDigest(definition);
+      const { snapshot } = placeInstance(deps, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: request.principal.principalId,
+        props: request.props,
+        messageId: request.messageId,
+        textAlternative: keptText(definition.id, "", treeText(tree, SNAPSHOT_TEXT_LIMIT)),
+        presentationRef: `catalog:${definition.id}`,
+        bind: (instanceId) => {
+          const compile = (operation: string, label: string) => compileActionBinding({
+            bindingId: deps.newId("act"),
+            instance: {
+              instanceId,
+              ownerNodeId: deps.nodeId,
+              definitionRef: { id: definition.id, version: definition.version, packageDigest },
+              actionBindingRevision: 1,
+            },
+            packageGeneration: packageDigest,
+            label,
+            proposal: { kind: "view", operation, args: {} },
+            inputSchema: { type: "object" },
+            allowedDataRefs: [],
+            fixedConstraints: {},
+            effectCategory: "read",
+            requiresApproval: false,
+            limits: {},
+            bindingDigest: `sha256:${operation}:${instanceId}`,
+            at: deps.now(),
+            knownCapabilities: new Set(),
+          });
+          const select = compile(TREE_SELECT_OPERATION, "Tree selection");
+          const toggle = compile(TREE_TOGGLE_OPERATION, "Tree expansion");
+          if (!select.ok) throw new Error(select.message);
+          if (!toggle.ok) throw new Error(toggle.message);
+          return [select.binding, toggle.binding];
+        },
       });
       return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
     },

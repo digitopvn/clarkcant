@@ -26,8 +26,12 @@ import {
   readTimeline,
   readTimelineSelection,
   timelineSemantic,
+  TREE_ID,
+  readTree,
+  readTreeState,
+  treeSemantic,
 } from "@clarkcant/contracts";
-import { ARTIFACT_VIEWER_KIND, CALENDAR, STATUS_CARD_KIND, TIMELINE } from "@clarkcant/data-canvas";
+import { ARTIFACT_VIEWER_KIND, CALENDAR, STATUS_CARD_KIND, TIMELINE, TREE } from "@clarkcant/data-canvas";
 import { type WidgetDeps, getActionBinding, getInstance, liveStateOf, semanticViewOf } from "@clarkcant/core";
 import {
   findCompositionByInstance,
@@ -179,6 +183,12 @@ export function buildWidgetSemantic(
   if (timeline !== undefined) {
     const selection = readTimelineSelection(liveStateOf(deps, instanceId, TIMELINE)?.body, timeline);
     return normalizeSemanticDoc({ instanceId, definitionId, ...timelineSemantic(timeline, selection), availableActions, freshness: "unknown" });
+  }
+
+  const tree = definitionId === TREE_ID ? readTree(instance.props) : undefined;
+  if (tree !== undefined) {
+    const state = readTreeState(liveStateOf(deps, instanceId, TREE)?.body, tree);
+    return normalizeSemanticDoc({ instanceId, definitionId, ...treeSemantic(tree, state), availableActions, freshness: "unknown" });
   }
   return normalizeSemanticDoc({ instanceId, definitionId, summary: `${definitionId} (${instance.lifecycle})`, availableActions });
 }

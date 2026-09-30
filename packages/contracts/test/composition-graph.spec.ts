@@ -30,6 +30,7 @@ const SECTIONS = [
   { sectionId: "line-1", definitionId: "canvas.line@1" },
   { sectionId: "metrics-1", definitionId: "canvas.metrics@1" },
   { sectionId: "calendar-1", definitionId: "canvas.calendar@1" },
+  { sectionId: "tree-1", definitionId: "canvas.tree@1" },
 ];
 
 const GRAPH: CompositionGraph = {
@@ -42,6 +43,9 @@ const GRAPH: CompositionGraph = {
     tone: { type: "string", initial: "neutral" },
     open: { type: "boolean", initial: false },
     day: { type: "string", initial: "" },
+    selectedNode: { type: "string", initial: "" },
+    toggledNode: { type: "string", initial: "" },
+    branchOpen: { type: "boolean", initial: false },
   },
   on: [
     { sectionId: "search-1", event: "query.change", steps: [{ op: "select-field", key: "query", field: "query" }] },
@@ -70,6 +74,15 @@ const GRAPH: CompositionGraph = {
         { op: "set", key: "day", value: "picked" },
         { op: "copy", key: "day", from: "metric" },
         { op: "append", key: "picked", field: "date" },
+      ],
+    },
+    { sectionId: "tree-1", event: "tree.select", steps: [{ op: "select-field", key: "selectedNode", field: "selectedId" }] },
+    {
+      sectionId: "tree-1",
+      event: "tree.toggle",
+      steps: [
+        { op: "select-field", key: "toggledNode", field: "nodeId" },
+        { op: "select-field", key: "branchOpen", field: "expanded" },
       ],
     },
   ],
@@ -247,6 +260,14 @@ describe("applying an event", () => {
     const many = run("table-1", "row.select", { rowIds: Array.from({ length: MAX_GRAPH_LIST + 1 }, (_, index) => `r${String(index)}`) });
     // The table may carry many rows, but "picked" holds at most MAX_GRAPH_LIST of them.
     expect(many.ok).toBe(false);
+  });
+
+  it("accepts tree selection and expansion events and carries their checked values", () => {
+    expect(checkCompositionGraph(GRAPH, SECTIONS)).toEqual([]);
+    const selected = run("tree-1", "tree.select", { selectedId: "node-1" });
+    expect(selected).toMatchObject({ ok: true, values: { selectedNode: "node-1" } });
+    const toggled = run("tree-1", "tree.toggle", { nodeId: "node-1", expanded: true }, selected.ok ? selected.values : undefined);
+    expect(toggled).toMatchObject({ ok: true, values: { toggledNode: "node-1", branchOpen: true } });
   });
 });
 

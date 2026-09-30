@@ -125,6 +125,12 @@ const META: Record<string, CatalogMeta> = {
     aliases: ["timeline", "activity", "history", "log", "dòng thời gian", "hoạt động", "lịch sử", "nhật ký"],
     status: "stable",
   },
+  "canvas.tree@1": {
+    displayName: "Cây phân cấp",
+    tags: ["tree", "hierarchy", "structure"],
+    aliases: ["tree", "hierarchy", "outline", "cây", "phân cấp", "cấu trúc"],
+    status: "stable",
+  },
   "canvas.image@1": {
     displayName: "Ảnh",
     tags: ["media", "image"],
