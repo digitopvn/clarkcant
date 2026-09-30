@@ -241,6 +241,18 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 [data-slice-tone="3"] { --cc-slice: color-mix(in oklab, var(--cc-accent) 38%, var(--cc-text)); }
 [data-slice-tone="4"] { --cc-slice: color-mix(in oklab, var(--cc-accent) 30%, var(--cc-card)); }
 [data-slice-tone="5"] { --cc-slice: color-mix(in oklab, var(--cc-accent) 18%, var(--cc-text)); }
+/*
+ * Series sit side by side as lines, so the donut's lightness steps of one hue are too close to tell apart. Where the
+ * browser can, each series turns the accent round the hue wheel instead, keeping its lightness so it stays readable on
+ * the card in either theme; a grey accent is given enough chroma for the turn to show.
+ */
+@supports (color: oklch(from red l c h)) {
+  .cc-chart [data-slice-tone="1"], .cc-xy-key[data-slice-tone="1"] { --cc-slice: oklch(from var(--cc-accent) l max(c, 0.12) calc(h + 240)); }
+  .cc-chart [data-slice-tone="2"], .cc-xy-key[data-slice-tone="2"] { --cc-slice: oklch(from var(--cc-accent) l max(c, 0.12) calc(h + 75)); }
+  .cc-chart [data-slice-tone="3"], .cc-xy-key[data-slice-tone="3"] { --cc-slice: oklch(from var(--cc-accent) l max(c, 0.12) calc(h + 150)); }
+  .cc-chart [data-slice-tone="4"], .cc-xy-key[data-slice-tone="4"] { --cc-slice: oklch(from var(--cc-accent) l max(c, 0.12) calc(h + 300)); }
+  .cc-chart [data-slice-tone="5"], .cc-xy-key[data-slice-tone="5"] { --cc-slice: oklch(from var(--cc-accent) l max(c, 0.12) calc(h + 35)); }
+}
 .cc-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); font-size: var(--cc-text-label); flex: 1; min-width: 160px; }
 .cc-legend li { display: flex; gap: var(--cc-space-sm); justify-content: space-between; align-items: center; }
 .cc-legend li > span:last-child { font-variant-numeric: tabular-nums; color: var(--cc-text-muted); }

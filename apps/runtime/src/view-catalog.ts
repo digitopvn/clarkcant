@@ -45,11 +45,22 @@ import {
   readStatusCard,
   statusCardText,
   readArtifactViewer,
+  MAX_CHART_POINTS,
+  MAX_CHART_SERIES,
+  XY_CHART_KIND,
+  XY_CHART_VIEW_OPERATION,
+  compileActionBinding,
+  readXyChart,
+  xyChartData,
+  xyChartProblems,
+  xyChartText,
 } from "@clarkcant/contracts";
+import { getDatasetForPrincipal } from "@clarkcant/storage";
 import { type WidgetDeps, placeInstance } from "@clarkcant/core";
 import {
   ACTION,
   ACTION_ICONS,
+  AREA_CHART,
   ARTIFACT_VIEWER_KIND,
   CHOICE,
   CODE,
@@ -62,6 +73,7 @@ import {
   LIST,
   OVERVIEW,
   PROGRESS,
+  SCATTER_CHART,
   SEARCH,
   STATUS,
   STATUS_CARD_KIND,
@@ -106,7 +118,8 @@ export function buildViewCatalog(
   //
   // The status cards are registered below too: what they show is all in their props, so their text alternative is
   // written from those props rather than from the definition's generic sentence. So are the code, diff and file
-  // viewers: their text alternative is the content itself, written by the node rather than the model.
+  // viewers: their text alternative is the content itself, written by the node rather than the model. So are the area and
+  // scatter charts, whose rows are read and checked before an instance exists.
   const placed = new Set([
     OVERVIEW.id,
     CTA.id,
@@ -122,6 +135,8 @@ export function buildViewCatalog(
     CODE.id,
     DIFF.id,
     FILE.id,
+    AREA_CHART.id,
+    SCATTER_CHART.id,
   ]);
   const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
@@ -164,7 +179,7 @@ export function buildViewCatalog(
   );
 
   if (actions !== undefined) simple.push(actionView(deps, actions), formView(deps, actions));
-  simple.push(listView(deps, actions), ...statusCardViews(deps), ...artifactViews(deps));
+  simple.push(listView(deps, actions), ...statusCardViews(deps), ...artifactViews(deps), ...xyChartViews(deps));
   if (compose === undefined) return simple;
 
   const overview = OVERVIEW;
@@ -530,6 +545,100 @@ function artifactViews(deps: WidgetDeps): ViewDescriptor[] {
       const text = content === undefined ? definition.textFallback : artifactViewerText(content);
       // The card's own content is its text alternative: a caption would say less than the code or diff it stands for.
       return placeSending(deps, undefined, definition, { ...request, caption: "" }, undefined, text);
+    },
+  }));
+}
+
+/** What the model is told about each chart's props. */
+const XY_CHART_NOTES: Readonly<Record<string, string>> = {
+  [AREA_CHART.id]:
+    `props.datasetRef names a dataset on this node; props.x is the field on the x axis (text categories in row order, or ` +
+    `numbers that rise row by row) and props.y is 1-${String(MAX_CHART_SERIES)} numeric fields, each drawn as a series. ` +
+    `Name every field exactly as the rows spell it: nothing is guessed. Optional props.labels ({"<field>":"<what to call it>"}), ` +
+    `props.unit, props.title, and props.stacked:true to stack the series (no negative values then). ` +
+    `A chart draws the first ${String(MAX_CHART_POINTS)} rows and says how many it left out.`,
+  [SCATTER_CHART.id]:
+    `props.datasetRef names a dataset on this node; props.x is a numeric field and props.y is 1-${String(MAX_CHART_SERIES)} numeric ` +
+    `fields, each drawn as its own series of points against x. Name every field exactly as the rows spell it: nothing is guessed. ` +
+    `Optional props.pointLabel (a field other than x and y that names each point), props.labels ({"<field>":"<what to call it>"}), props.unit (y), ` +
+    `props.xUnit and props.title. A chart draws the first ${String(MAX_CHART_POINTS)} rows and says how many it left out.`,
+};
+
+/**
+ * The area and scatter charts.
+ *
+ * The rows are read here, before an instance exists, so a field the model named that the rows do not have, or a value
+ * that is not a number, is refused in the same turn with the host's reason rather than drawn as an empty or zeroed
+ * chart. Each chart is placed with the one view binding its legend and points write through; the binding is a view
+ * operation, so it reads and re-renders and never acts outside the node's own state.
+ */
+function xyChartViews(deps: WidgetDeps): ViewDescriptor[] {
+  return [AREA_CHART, SCATTER_CHART].map((definition) => ({
+    id: definition.id,
+    label: definition.semanticDescription,
+    notes: XY_CHART_NOTES[definition.id] ?? "",
+    shownText:
+      `Shown: ${definition.id}, drawn from the dataset as it is now. A person can hide series and select a point; ` +
+      `what they chose is in the chart's widget state.`,
+    build: (request) => {
+      const kind = XY_CHART_KIND[definition.id];
+      if (kind === undefined) throw new Error(`${definition.id} is not an area or scatter chart`);
+      const full = validateProps(definition, request.props);
+      if (!full.ok) throw new Error(`${definition.id} has props that do not fit its schema: ${full.problems.join(", ")}`);
+      const own = xyChartProblems(kind, request.props);
+      if (own.length > 0) throw new Error(`${definition.id} cannot be shown: ${own.join("; ")}`);
+      const chart = readXyChart(kind, request.props);
+      if (chart === undefined) throw new Error(`${definition.id} cannot be shown: its props do not describe a chart`);
+
+      const dataset = getDatasetForPrincipal(deps.db, chart.datasetRef, request.principal.principalId);
+      if (dataset === undefined) {
+        throw new Error(`${definition.id} cannot be shown: dataset "${chart.datasetRef}" is not on this node, or is not yours to read`);
+      }
+      const document = typeof dataset.document === "object" && dataset.document !== null ? (dataset.document as Record<string, unknown>) : {};
+      const rows = Array.isArray(document.rows) ? (document.rows as unknown[]) : [];
+      const columns = Array.isArray(document.columns) ? (document.columns as unknown[]) : undefined;
+      const problems = xyChartProblems(kind, request.props, rows, columns);
+      if (problems.length > 0) throw new Error(`${definition.id} cannot be shown: ${problems.join("; ")}`);
+
+      const packageDigest = definitionDigest(definition);
+      // The chart's own words are its text alternative: series, ranges and how many rows it drew, from the rows it read.
+      const textAlternative = keptText(definition.id, "", xyChartText(chart, xyChartData(chart, rows)));
+      const { snapshot } = placeInstance(deps, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: request.principal.principalId,
+        props: request.props,
+        bind: (instanceId) => {
+          const compiled = compileActionBinding({
+            bindingId: deps.newId("act"),
+            instance: {
+              instanceId,
+              ownerNodeId: deps.nodeId,
+              definitionRef: { id: definition.id, version: definition.version, packageDigest },
+              actionBindingRevision: 1,
+            },
+            packageGeneration: packageDigest,
+            label: "Chart view",
+            proposal: { kind: "view", operation: XY_CHART_VIEW_OPERATION, args: {} },
+            inputSchema: { type: "object" },
+            allowedDataRefs: [chart.datasetRef],
+            fixedConstraints: {},
+            // A view operation reads and re-renders; it writes nothing outside the node's own state.
+            effectCategory: "read",
+            requiresApproval: false,
+            limits: {},
+            bindingDigest: `sha256:${XY_CHART_VIEW_OPERATION}:${instanceId}`,
+            at: deps.now(),
+            knownCapabilities: new Set(),
+          });
+          if (!compiled.ok) throw new Error(compiled.message);
+          return compiled.binding;
+        },
+        messageId: request.messageId,
+        textAlternative,
+        presentationRef: `catalog:${definition.id}`,
+      });
+      return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
     },
   }));
 }

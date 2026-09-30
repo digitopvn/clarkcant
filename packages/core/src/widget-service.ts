@@ -28,10 +28,15 @@ import {
   checkSurfaceCompositionSpec,
   compileActionBinding,
   graphValues,
+  MAX_CHART_POINTS,
+  XY_CHART_KIND,
   nowInstant,
+  readXyChart,
+  readXyChartView,
   toCompositionSection,
   widgetInstanceSchema,
   widgetSnapshotSchema,
+  xyChartViewProblems,
 } from "@clarkcant/contracts";
 
 import {
@@ -39,6 +44,7 @@ import {
   asJsonValue,
   insertPresentationBundle,
   findCompositionByInstance,
+  getDatasetForPrincipal,
   insertSurfaceComposition,
   oneRow,
   parseJson,
@@ -1128,7 +1134,7 @@ export function listPinsForConversation(deps: WidgetDeps, conversationId: string
  * `invoke`, an `agent` intent, a workflow — goes through the approval path instead, and a binding
  * that proposes one is refused here rather than quietly executed.
  */
-export const M1_VIEW_OPERATIONS = ["period.change", "date.select", "view.save", "state.event"] as const;
+export const M1_VIEW_OPERATIONS = ["period.change", "date.select", "view.save", "state.event", "chart.view"] as const;
 
 /** Bumped when a filter changes the range, because the underlying rows are re-read. */
 const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
@@ -1137,6 +1143,8 @@ const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
   "view.save": "presentation",
   // A leaf wired into the surface's graph changes what the surface shows, not the rows it reads.
   "state.event": "presentation",
+  // Hiding a series or selecting a point changes what the chart shows, not the rows it reads.
+  "chart.view": "presentation",
 };
 
 export interface MiniAppActionRequest extends ActionInvocation {
@@ -1313,7 +1321,7 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
     };
   }
 
-  const validation = validateViewInput(operation, request.input);
+  const validation = operation === "chart.view" ? chartViewPatch(deps, instance, request.input) : validateViewInput(operation, request.input);
   if (!validation.ok) return { ok: false, code: "INVALID_INPUT", message: validation.message };
 
   const precheck = precheckInvocation(deps, request);
@@ -1347,7 +1355,8 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
       if (!applied.ok) return { ok: false, code: "INVALID_INPUT", message: applied.problem };
       patch = { graph: applied.values };
     }
-    const body: Record<string, unknown> = { ...(current?.body ?? {}), ...patch };
+    // A chart view is the chart's whole state, so it replaces what was stored: a selection cleared is a key removed.
+    const body: Record<string, unknown> = operation === "chart.view" ? patch : { ...(current?.body ?? {}), ...patch };
     const stateRevision = (current?.revision ?? 0) + 1;
 
     if (current === undefined) {
@@ -1782,6 +1791,28 @@ function applyStateEvent(
     payload: input.input.payload,
   });
   return applied.ok ? { ok: true, values: applied.values } : { ok: false, problem: applied.problem };
+}
+
+/**
+ * The state a chart view sets, checked against the chart it is set on.
+ *
+ * Read from the instance, not the request: the series are the ones the chart was placed with, and a point is one the
+ * chart draws from the rows this node holds now. What is stored is the view read back from what passed, so the state
+ * row never holds a key the chart's state schema does not.
+ */
+function chartViewPatch(deps: WidgetDeps, instance: WidgetInstance, input: Record<string, unknown>): InputValidation {
+  const kind = XY_CHART_KIND[instance.definitionRef.id];
+  const chart = kind === undefined ? undefined : readXyChart(kind, instance.props);
+  if (chart === undefined) return { ok: false, message: "only an area or a scatter chart holds a chart view" };
+  const document = getDatasetForPrincipal(deps.db, chart.datasetRef, instance.ownerPrincipalId)?.document;
+  const rows = typeof document === "object" && document !== null && Array.isArray((document as { rows?: unknown }).rows)
+    ? ((document as { rows: unknown[] }).rows)
+    : [];
+  const shown = Math.min(rows.length, MAX_CHART_POINTS);
+  const problems = xyChartViewProblems(chart, input, shown);
+  if (problems.length > 0) return { ok: false, message: `the chart view was refused: ${problems.join("; ")}` };
+  const view = readXyChartView(chart, input, shown);
+  return { ok: true, patch: { hiddenSeries: view.hiddenSeries, ...(view.selected === undefined ? {} : { selected: view.selected }) } };
 }
 
 /**

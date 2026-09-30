@@ -25,6 +25,14 @@ import {
   STEP_STATUSES,
   type StatusCardKind,
   type WidgetDefinition,
+  AREA_CHART_ID,
+  MAX_CHART_POINTS,
+  MAX_CHART_SERIES,
+  MAX_FIELD_NAME,
+  MAX_SERIES_LABEL,
+  SCATTER_CHART_ID,
+  XY_CHART_KIND,
+  XY_CHART_VIEW_OPERATION,
   artifactViewerProblems,
   checkField,
   checkFieldValue,
@@ -34,6 +42,7 @@ import {
   parseFields,
   parseListItems,
   statusCardProblems,
+  xyChartProblems,
 } from "@clarkcant/contracts";
 
 /**
@@ -1017,6 +1026,100 @@ export const ARTIFACT_VIEWER_KIND: Readonly<Record<string, ArtifactViewerKind>> 
   [FILE.id]: "file",
 };
 
+/*
+ * Area and scatter charts: the fields they plot are named, never inferred.
+ *
+ * Both read an opaque dataset reference like the other charts, and both are refused at placement when a named field is
+ * not in the rows or a value is not a number (`xyChartProblems`). What a person changes — the series hidden, the point
+ * selected — is widget state the node holds, written through the one view binding each is placed with.
+ */
+
+const fieldNameProp = { ...oneLineProp(MAX_FIELD_NAME, 1), description: "A field of the dataset's rows, spelled exactly" };
+
+function xyChartProps(extra: Record<string, unknown>): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: oneLineProp(200),
+      datasetRef: { ...datasetProp, minLength: 1, maxLength: 200 },
+      x: { ...fieldNameProp, description: "The field on the x axis" },
+      y: { type: "array", minItems: 1, maxItems: MAX_CHART_SERIES, items: fieldNameProp, description: "The fields plotted as series" },
+      labels: {
+        type: "object",
+        maxProperties: MAX_CHART_SERIES + 2,
+        additionalProperties: oneLineProp(MAX_SERIES_LABEL, 1),
+        description: "What to call a field on the axes and the legend, by field name",
+      },
+      unit: oneLineProp(20),
+      ...extra,
+    },
+    required: ["datasetRef", "x", "y"],
+  };
+}
+
+/** The state both charts hold: the series a person hid and the point they selected. */
+const xyChartState = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    hiddenSeries: { type: "array", maxItems: MAX_CHART_SERIES, items: { type: "string", maxLength: MAX_FIELD_NAME } },
+    selected: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        series: { type: "string", maxLength: MAX_FIELD_NAME },
+        index: { type: "integer", minimum: 0, maximum: MAX_CHART_POINTS - 1 },
+      },
+      required: ["series", "index"],
+    },
+  },
+};
+
+const xyChartEvents = {
+  [XY_CHART_VIEW_OPERATION]: {
+    type: "object",
+    properties: {
+      hiddenSeries: { type: "array", items: { type: "string" } },
+      selected: { type: ["object", "null"] },
+    },
+  },
+};
+
+/** An area chart of one or more named series over a named x field, optionally stacked. */
+export const AREA_CHART: WidgetDefinition = {
+  id: AREA_CHART_ID,
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: xyChartProps({ stacked: { type: "boolean" } }),
+  eventSchemas: xyChartEvents,
+  stateSchema: xyChartState,
+  stateVersion: 1,
+  sizing: { compact: true, expanded: true, minHeight: 180 },
+  semanticDescription: "Area chart of named numeric fields (y) over a named x field of a dataset, optionally stacked",
+  requestedCapabilities: [],
+  textFallback: "An area chart appears as text: each series with its lowest and highest value, and a table of the rows.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/** A scatter plot of one or more named numeric series against a named numeric x field. */
+export const SCATTER_CHART: WidgetDefinition = {
+  id: SCATTER_CHART_ID,
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: xyChartProps({ xUnit: oneLineProp(20), pointLabel: { ...fieldNameProp, description: "The field that names each point" } }),
+  eventSchemas: xyChartEvents,
+  stateSchema: xyChartState,
+  stateVersion: 1,
+  sizing: { compact: true, expanded: true, minHeight: 180 },
+  semanticDescription: "Scatter plot of named numeric fields (y) against a named numeric x field of a dataset",
+  requestedCapabilities: [],
+  textFallback: "A scatter plot appears as text: the range of x and of each series, and a table of the points.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
 /**
  * A personal note.
  *
@@ -1060,6 +1163,8 @@ export const WIDGETS = [
   LINE_CHART,
   BAR_CHART,
   DONUT_CHART,
+  AREA_CHART,
+  SCATTER_CHART,
   TABLE,
   OVERVIEW,
   METRICS,
@@ -1127,6 +1232,10 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   "canvas.code@1": "artifact",
   "canvas.diff@1": "artifact",
   "canvas.file@1": "artifact",
+  // Their own family rather than `trend`: a layout's trend region fills a chart with the surface's own rows and no named
+  // fields, which these two refuse. No layout region reads this family, so each is placed on its own.
+  "canvas.area@1": "chart",
+  "canvas.scatter@1": "chart",
 };
 
 /**
@@ -1157,6 +1266,9 @@ export function primitivePropsProblems(definitionId: string, props: Readonly<Rec
   if (card !== undefined) return statusCardProblems(card, props);
   const viewer = ARTIFACT_VIEWER_KIND[definitionId];
   if (viewer !== undefined) return artifactViewerProblems(viewer, props);
+  // The props alone; the rows are checked where they are read, by the chart's own view.
+  const chart = XY_CHART_KIND[definitionId];
+  if (chart !== undefined) return xyChartProblems(chart, props);
   return [];
 }
 export function familyOf(definitionId: string): string {

@@ -766,6 +766,102 @@ reduced motion, at 390 px with touch, and in the library. It also covers hidden 
 their warning, a line separator in code that keeps the numbers beside their lines, a line break inside a diff line
 that is refused, a copy the browser refuses, and a focus ring that must be painted inside the scroll.
 
+### 8.6 Area and scatter charts
+
+Two definitions draw numbers from a dataset over named fields: an area chart of one or more series along an x axis,
+optionally stacked, and a scatter plot of points by two numbers. They reuse the line and bar charts' axes, number
+formatting, tones and table fallback. One set of functions, in [xy-charts.ts](../packages/contracts/src/xy-charts.ts),
+reads the props and the rows, checks a view, and writes the text. The node and the page both use it, so the page never
+draws a chart the node would refuse.
+
+| Definition | What it is | Props |
+| --- | --- | --- |
+| `canvas.area@1` | An area chart: each series filled down to zero, or stacked. | `datasetRef`, `x` (a field name), `y` (1–8 field names), optional `labels` (a name for each plotted field, up to 60), `unit` (up to 20), `title` (up to 200) and `stacked`. |
+| `canvas.scatter@1` | A scatter plot: one point per row and series, at its x and y. | `datasetRef`, `x`, `y` (1–8), optional `labels`, `unit`, `xUnit` (up to 20), `title` and `pointLabel` (a field that names each point). |
+
+A field name is 1–64 characters on one line, not only spaces, with none of the hidden characters of §8.4. The fields
+are named, never guessed: a chart with no `x` or no `y` is refused, and so is a field named twice, `x` repeated in `y`,
+a label for a field the chart does not plot, or a `pointLabel` that is `x` or one of the series (a point is named by a
+field it is not placed by, so the table under the chart never has the same column twice). `stacked` belongs to an area
+chart and `pointLabel` to a scatter plot.
+
+A model places each one with `show_view`. They are in the `chart` family, which no layout region reads, so a model
+places each on its own.
+
+What the node guarantees:
+
+- **The rows are read before anything is stored.** The node reads the dataset the chart names, as the person placing
+  it, and refuses in the same turn, with the reason, when the dataset is not on this node or is not theirs, when a
+  named field is not in it (the reason lists the fields it has), or when a row does not fit: a missing value, a value
+  that is not a number (a numeric string such as `"12"` is not one), an x that is not a number on a scatter plot, an
+  area chart's x that mixes numbers and text or whose numbers do not rise row by row, a negative value in a stacked
+  area, or a stacked row whose series add up to more than a number can hold (each value fits, but the stack drawn is
+  their sum). Up to five problems are named, then `and N more problem(s) in the same rows`. No instance is left behind.
+- **The points are bounded.** A chart draws the first 500 rows. Only those rows are checked, and the chart, its text
+  and its semantic document say how many of how many it draws.
+- **What a person changes is a view the node keeps.** Hiding a series and selecting a point are the chart's view,
+  `{ hiddenSeries, selected? }`, sent through the chart's own `chart.view` binding, which reads and changes nothing
+  else. The node checks each view against the chart and against the rows it holds now: at least one series stays
+  shown, a selected point is on a shown series, and its index is one of the points drawn. A view that does not fit is
+  refused with `the chart view was refused: …`, and the state is left as it was. A view replaces the last one whole.
+- **The text alternative is the chart's own words.** It names the series, the x span, the number of points and each
+  series' range. A scatter plot also names what each axis measures, from the field's label (or its name) and unit,
+  for example `(x axis: Load (%); y axis: Latency (ms))`. An area chart's text reads, for example `Runs by week: Area chart of Runs, Failures by week, 5 point(s); W36 to W40. Runs: 128 to
+  164 runs; Failures: 3 to 9 runs.`
+- **Voice and `inspect_ui` read the chart as it is now.** The semantic document (§9) gives the series shown and
+  hidden, whether the area is stacked, the number of points and any truncation, each shown series' range, the x range
+  and the selected point, with the point in `selectedIds` as `field#index`. A scatter plot adds `xAxis` and `yAxis`,
+  the same axis titles the page draws. It is built from the state and the rows the
+  node holds now. A selected point that is no longer in the rows is said to be gone rather than described, and a
+  dataset that is gone is said to be not available. Its freshness is the dataset's own.
+
+What the page does:
+
+- Each series has its own tone, line pattern and point shape, shown together in the legend, so a colour is never the
+  only signal. There are six tones, so from the seventh series the colours repeat; each of the eight series still has a
+  line pattern and a point shape no other series has, and those tell them apart. The legend is a row of buttons with `aria-pressed`; a hidden series says "(hidden)" in words. The last
+  shown series cannot be hidden, and the chart says why.
+- Every point is a button with a name that says its series, x and value, and its name when `pointLabel` gives one.
+  One point is in the tab order. The arrow keys move along x, in the order of x for a scatter plot, and up and down
+  change series; Home and End go to the first and last point; Enter or Space selects, and Escape clears. The selected
+  point is described beside the chart in a live region, with a button that clears it.
+- A change is drawn at once and sent to the node, one request at a time per chart; a change made meanwhile is sent
+  after it, and only the latest one. When the node refuses a view, the chart says so in the person's language, draws the view
+  the node holds, and reads the dataset again, since the rows the node checked against may not be the ones the page
+  was given.
+- A scatter plot titles its axes: the y axis above the plot and the x axis under it, each with its label and unit.
+- A table of the rows drawn, with the chart's names for its fields, is under the chart. A field is read only from the
+  row itself, so a field named `constructor` or `toString` is plotted and named like any other.
+- A hidden character of §8.4 in the rows' text, such as a bidi control in an x category or a point's name, is shown as a
+  marker such as `⟨U+202E⟩` wherever the chart says that text: on the axis, in a point's name, in the selected point,
+  the text alternative and the semantic document. In the table it is the same marker the code viewer draws, with a
+  title that says what the character is. It never reorders the text around it.
+- Everything the chart says is in the person's language. Rows that no longer fit are described from the row, field
+  and value the shared checks found, not from the node's English sentence, and a refused view is said as a sentence
+  of the page's own. The node's English reasons are for the model and the logs.
+- The axes never do unbounded work. Ticks are counted before they are made, at most 50, and each is its index times a
+  round step. Values so close that no round step separates them, such as `0.3` and `0.1 + 0.2`, are drawn as one
+  value with room either side. Labels use `k`, `M`, `B` and `T` up to a thousand trillion, and past that, or when the
+  step is finer than a millionth of the unit, an exponent and as many significant digits as the step needs, so a
+  `1e-12` scale is not labelled `0` throughout. The plot starts far enough right for the widest label to be drawn
+  whole, up to two fifths of the chart's width.
+- Above 60 points an area chart draws only the point that has focus and the one selected, so the line stays readable;
+  every point can still be reached with the keyboard.
+- The chart adds no motion of its own, fits its width down to 390 px, and follows the light and dark themes. In the
+  Widget Library the fixtures are usable without a node: the view is held on the page.
+
+Tests: [xy-charts.spec.ts](../packages/contracts/test/xy-charts.spec.ts) for the rules,
+[xy-charts.spec.ts](../apps/runtime/test/xy-charts.spec.ts) for the node,
+[chart-layout.spec.ts](../packages/conversation-client/test/chart-layout.spec.ts) for the scales (including values one
+float apart, `1e17` next to `1e17 + 16`, a single point, all-equal values and a `1e-12` scale), point shapes and
+keyboard order, [xy-chart-schemas.spec.ts](../packages/widget-catalog/test/xy-chart-schemas.spec.ts), which checks that
+the JSON Schema and the chart's own checks accept and refuse the same props and that every library fixture is one the
+node would place, and the browser journey [xy-charts.spec.ts](../apps/web/e2e/xy-charts.spec.ts). It covers the legend,
+keyboard selection, the view kept after a reload, a stacked area, 640 rows drawn as 500 with the label that says so,
+the scatter plot's axis titles, refusals for a missing field and a value that is not a number, the refusal of a point
+the node no longer holds said in Vietnamese, reduced
+motion, 390 px with touch in the light theme, and the library.
+
 ---
 
 ## 9. Semantic contract for voice and the next turn

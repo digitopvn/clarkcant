@@ -1,6 +1,8 @@
 import type { MessageKey } from "./i18n/messages.ts";
 import { useCallback, useEffect, useRef, useState, type ReactElement, type RefObject } from "react";
 
+import { XY_CHART_KIND, XY_CHART_VIEW_OPERATION } from "@clarkcant/contracts";
+
 import {
   GatewayError,
   type GatewayClient,
@@ -9,7 +11,7 @@ import {
   type Timeline,
   type TimelineAction,
 } from "./api.ts";
-import { actionRefusalMessage, actionResultMessage } from "./action-messages.ts";
+import { actionRefusalMessage, actionResultMessage, bindingUnavailableMessage } from "./action-messages.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { tableExportRequestFrom } from "./table-model.ts";
@@ -120,6 +122,7 @@ export interface SurfaceRendererDeps {
   instanceById: Map<string, Timeline["instances"][number]>;
   snapshots: Record<string, SnapshotPresentationResponse>;
   datasets: Record<string, ResolvedDataset>;
+  refreshDataset: (datasetId: string) => void;
   imageUrl: (imageRef: string) => string | undefined;
   applyTimeline: (next: Timeline) => void;
   setError: (message: string | undefined) => void;
@@ -144,6 +147,7 @@ export function useSurfaceRenderer({
   instanceById,
   snapshots,
   datasets,
+  refreshDataset,
   imageUrl,
   applyTimeline,
   setError,
@@ -185,6 +189,64 @@ export function useSurfaceRenderer({
    * one effect without making a later, deliberate press a duplicate. `input` is what a form or a list item sends: the
    * node checks it against what the binding accepts before anything runs.
    */
+  /*
+   * A chart's view (the series hidden, the point selected) is drawn by the chart at once and kept by the node through the
+   * chart's own view binding. One request per chart is in flight; a change made meanwhile waits and is sent with the
+   * revision the first one returned, and only the latest waiting change is sent, so a burst of clicks is one write per
+   * round trip and ends at what the person last chose. A refusal drops the waiting change and says why beside the chart,
+   * which then draws the view the node holds.
+   */
+  const chartQueues = useRef(new Map<string, { inFlight: boolean; queued?: Record<string, unknown> }>());
+  /** A refusal said beside a chart, and how many there have been: each one sets the chart back to the node's view. */
+  const [chartRefusals, setChartRefusals] = useState<Record<string, { message: string; count: number }>>({});
+  const sendChartView = useCallback(
+    (conversation: string, instanceId: string, datasetRef: string | undefined, action: TimelineAction, revision: number, view: Record<string, unknown>): void => {
+      const queue = chartQueues.current.get(instanceId) ?? { inFlight: false };
+      if (queue.inFlight) {
+        chartQueues.current.set(instanceId, { inFlight: true, queued: view });
+        return;
+      }
+      chartQueues.current.set(instanceId, { inFlight: true });
+      setChartRefusals((current) => {
+        const refusal = current[instanceId];
+        return refusal === undefined || refusal.message === "" ? current : { ...current, [instanceId]: { message: "", count: refusal.count } };
+      });
+      void client
+        .invokeAction(conversation, instanceId, {
+          actionBindingId: action.actionBindingId,
+          expectedRevision: revision,
+          expectedBindingDigest: action.bindingDigest,
+          input: view,
+          invocationId: newInvocationId(),
+        })
+        .then((result) => {
+          const queued = chartQueues.current.get(instanceId)?.queued;
+          chartQueues.current.set(instanceId, { inFlight: false });
+          if (queued !== undefined) sendChartView(conversation, instanceId, datasetRef, action, result.revision, queued);
+          else applyTimeline(result.timeline);
+        })
+        .catch((cause: unknown) => {
+          chartQueues.current.set(instanceId, { inFlight: false });
+          const code = cause instanceof GatewayError ? cause.code : undefined;
+          // Said in the person's language: the node's own sentence is English, written for the model and the logs.
+          const message =
+            code === "REVISION_MISMATCH"
+              ? t("widgets.action.revisionMismatch")
+              : (bindingUnavailableMessage(t, code) ?? t("widgets.xyChart.viewRefused"));
+          setChartRefusals((current) => ({ ...current, [instanceId]: { message, count: (current[instanceId]?.count ?? 0) + 1 } }));
+          // The node's view is what the chart draws again. A change that went through while a later one waited was not
+          // applied yet, so the timeline is read back rather than trusted; and the node checked the view against the rows it
+          // holds now, which may not be the rows this page was given, so those are read again too.
+          if (datasetRef !== undefined) refreshDataset(datasetRef);
+          void client
+            .timeline(conversation)
+            .then(applyTimeline)
+            .catch(() => undefined);
+        });
+    },
+    [applyTimeline, client, refreshDataset, t],
+  );
+
   const [actionRuns, setActionRuns] = useState<Record<string, ActionRun>>({});
   // Whether a press is still waiting on the node, told to the conversation so its Stop is offered while one is: a
   // button's call is stopped by the same Stop as a reply.
@@ -221,7 +283,7 @@ export function useSurfaceRenderer({
           setActionRuns((current) => ({ ...current, [id]: { pending: false, tone: "refused", message } }));
         });
     },
-    [applyTimeline, client, t],
+    [applyTimeline, client, refreshDataset, t],
   );
 
   return useCallback(
@@ -322,8 +384,15 @@ export function useSurfaceRenderer({
       // A widget with no binding, or no conversation to run it in, is drawn view-only instead of as a live control.
       const actionReady = boundAction !== undefined && conversationId !== undefined;
       const keepsView = LOCAL_VIEW_DEFINITION_IDS.has(definitionId);
-      const widgetState: Record<string, unknown> | undefined =
-        !keepsView && !sends
+      const isChart = XY_CHART_KIND[definitionId] !== undefined;
+      const chartRefusal = chartRefusals[instance.instanceId];
+      const widgetState: Record<string, unknown> | undefined = isChart
+        ? {
+            // The view the node holds; the chart draws a change at once and adopts this when it moves.
+            ...(instance.state ?? {}),
+            ...(chartRefusal === undefined ? {} : { message: chartRefusal.message, viewReset: chartRefusal.count }),
+          }
+        : !keepsView && !sends
           ? undefined
           : {
               ...(keepsView ? localViews.current.get(instance.instanceId) : {}),
@@ -385,6 +454,14 @@ export function useSurfaceRenderer({
                         if (exportStatus !== "pending") exportTable(conversationId, instance.instanceId, payload);
                         return;
                       }
+                      // A chart's view goes through the chart's own binding, without a "done" line: the chart itself shows it.
+                      if (isChart && action === XY_CHART_VIEW_OPERATION) {
+                        if (boundAction !== undefined && boundAction.available && conversationId !== undefined) {
+                          const datasetRef = instance.props.datasetRef;
+                          sendChartView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, boundAction, instance.revision, payload);
+                        }
+                        return;
+                      }
                       if (boundAction === undefined || conversationId === undefined || actionRun?.pending === true) return;
                       if (needsBinding && !isForm && action === "activate") {
                         runAction(conversationId, instance, boundAction, {});
@@ -442,6 +519,7 @@ export function useSurfaceRenderer({
     [
       actionRuns,
       applyTimeline,
+      chartRefusals,
       client,
       conversationId,
       datasets,
@@ -451,6 +529,7 @@ export function useSurfaceRenderer({
       instanceById,
       liveTrigger,
       runAction,
+      sendChartView,
       setError,
       snapshots,
       t,

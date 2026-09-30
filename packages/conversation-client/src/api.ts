@@ -294,6 +294,9 @@ export interface TimelineInstance {
   props: Record<string, unknown>;
   /** The actions the instance holds, when it holds any. What pressing one does is the node's to decide. */
   actions?: TimelineAction[];
+  /** The view the node holds for the instance, when it holds one: a chart's hidden series and selected point. */
+  state?: Record<string, unknown>;
+  stateRevision?: number;
 }
 
 /** One bound action: what to show, what to send back, and whether it can run now. */

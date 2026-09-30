@@ -49,6 +49,19 @@ import {
   stepCounts,
   tableView,
   type TableTotalFn,
+  XY_CHART_KIND,
+  XY_CHART_VIEW_OPERATION,
+  type XyChart,
+  type XyChartData,
+  type XyChartView as XyChartViewState,
+  type XyDataIssue,
+  readXyChart,
+  readXyChartView,
+  xyChartData,
+  ownField,
+  xyAxisTitles,
+  xyChartDataIssues,
+  xyFieldLabel,
 } from "@clarkcant/contracts";
 
 import type { ResolvedDataset } from "./api.ts";
@@ -62,10 +75,22 @@ import {
   chartPoints,
   formatTicks,
   labelStride,
+  linearScale,
+  markerPath,
+  markerShape,
+  movePointCursor,
+  niceRange,
+  niceSpan,
+  type PointCursor,
+  pointOrder,
+  seriesDash,
+  TICK_GAP,
+  stackBands,
   valueLabelShown,
 } from "./chart-layout.ts";
 import { highlightedCode } from "./markdown.tsx";
 import { vendorEmbedUrl } from "./media-embed.ts";
+import { fillMessage } from "./i18n/fill-message.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import {
   formatTableTotal,
@@ -269,18 +294,17 @@ function useMeasuredWidth(fallback: number): [(element: HTMLElement | null) => v
 }
 
 function ChartGrid({ geometry }: { geometry: ChartGeometry }): ReactElement {
-  const labels = formatTicks(geometry.ticks);
   return (
     <g aria-hidden="true">
       {geometry.ticks.map((tick, index) => (
         <g key={tick}>
-          <line className="grid" x1={CHART_PAD.left} x2={geometry.width - CHART_PAD.right} y1={geometry.scaleY(tick)} y2={geometry.scaleY(tick)} />
-          <text className="label" x={CHART_PAD.left - 6} y={geometry.scaleY(tick)} textAnchor="end" dominantBaseline="middle">
-            {labels[index]}
+          <line className="grid" x1={geometry.left} x2={geometry.width - CHART_PAD.right} y1={geometry.scaleY(tick)} y2={geometry.scaleY(tick)} />
+          <text className="label" x={geometry.left - TICK_GAP} y={geometry.scaleY(tick)} textAnchor="end" dominantBaseline="middle">
+            {geometry.labels[index]}
           </text>
         </g>
       ))}
-      <line className="axis" x1={CHART_PAD.left} y1={geometry.zero} x2={geometry.width - CHART_PAD.right} y2={geometry.zero} />
+      <line className="axis" x1={geometry.left} y1={geometry.zero} x2={geometry.width - CHART_PAD.right} y2={geometry.zero} />
     </g>
   );
 }
@@ -317,8 +341,8 @@ function SeriesNote({ choice }: { choice: { requested?: string; series?: string;
   return (
     <p className="cc-freshness" data-chart-series={choice.series ?? ""} style={{ margin: 0 }}>
       {choice.series === undefined
-        ? t("widgets.chart.seriesMissing").replace("{series}", named)
-        : t("widgets.chart.showingSeries").replace("{series}", named)}
+        ? fillMessage(t("widgets.chart.seriesMissing"), { series: named })
+        : fillMessage(t("widgets.chart.showingSeries"), { series: named })}
     </p>
   );
 }
@@ -348,7 +372,7 @@ function LineChart({ props, dataset, state }: RendererProps): ReactElement {
   // Inset from both edges, so the first value label clears the value axis and the last one the card edge.
   const inset = Math.min(18, geometry.plotWidth / 4);
   const step = values.length > 1 ? (geometry.plotWidth - inset * 2) / (values.length - 1) : 0;
-  const x = (index: number): number => CHART_PAD.left + (values.length > 1 ? inset + index * step : geometry.plotWidth / 2);
+  const x = (index: number): number => geometry.left + (values.length > 1 ? inset + index * step : geometry.plotWidth / 2);
   const stride = labelStride(values.length, geometry.plotWidth);
   const line = values.map((value, index) => `${index === 0 ? "M" : "L"} ${x(index)} ${geometry.scaleY(value)}`).join(" ");
   const area = values.length > 1 ? `${line} L ${x(values.length - 1)} ${geometry.zero} L ${x(0)} ${geometry.zero} Z` : "";
@@ -426,7 +450,7 @@ function BarChart({ props, dataset, state }: RendererProps): ReactElement {
             <ChartGrid geometry={geometry} />
             {points.map(({ label: rowLabel, value }, index) => {
               const y = geometry.scaleY(value);
-              const center = CHART_PAD.left + index * slot + slot / 2;
+              const center = geometry.left + index * slot + slot / 2;
               return (
                 <g key={index} className="datum">
                   <rect
@@ -933,7 +957,7 @@ function Donut({ props, dataset, state }: RendererProps): ReactElement {
   if (!result.ok) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
-        <Unavailable reason={t("widgets.donut.cannotDraw").replace("{reason}", result.reason)} />
+        <Unavailable reason={fillMessage(t("widgets.donut.cannotDraw"), { reason: result.reason })} />
       </Frame>
     );
   }
@@ -960,7 +984,7 @@ function Donut({ props, dataset, state }: RendererProps): ReactElement {
             className="cc-donut"
             viewBox="0 0 160 160"
             role="img"
-            aria-label={t("widgets.donut.ariaSlices").replace("{title}", title).replace("{count}", String(result.slices.length))}
+            aria-label={fillMessage(t("widgets.donut.ariaSlices"), { title, count: result.slices.length })}
           >
             {result.slices.map((slice, index) => {
               const length = slice.share * circumference;
@@ -1042,6 +1066,393 @@ function TextAlternative({ rows }: { rows: Record<string, unknown>[] }): ReactEl
       </table>
       </div>
     </details>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Area and scatter charts
+ * ------------------------------------------------------------------ */
+
+/** Above this many rows an area chart draws its points only where a person is: the one focused, the one selected. */
+const DENSE_POINTS = 60;
+const MARKER_RADIUS = 4;
+
+function withUnit(value: number | string | undefined, unit: string | undefined): string {
+  return unit === undefined ? String(value ?? "") : `${String(value ?? "")} ${unit}`;
+}
+
+
+/** A row problem in the person's language, from the row, field and value the contract found, never the node's English. */
+function xyIssueText(t: (key: MessageKey) => string, issue: XyDataIssue): string {
+  const { code, ...values } = issue;
+  return fillMessage(t(`widgets.xyChart.issue.${code}`), Object.fromEntries(Object.entries(values).filter((entry): entry is [string, string | number] => typeof entry[1] !== "object")));
+}
+
+/** One point in the page's words: the series, where it is on x, and its value. */
+function xyPointLabel(chart: XyChart, data: XyChartData, seriesIndex: number, index: number): string {
+  const series = data.series[seriesIndex];
+  const x = data.xs[index];
+  const at = chart.kind === "scatter" ? `${xyFieldLabel(chart, chart.x)} ${withUnit(x, chart.xUnit)}` : String(x ?? "");
+  const name = data.names[index];
+  return `${series?.label ?? ""} · ${at}: ${withUnit(series?.values[index], chart.unit)}${name === undefined ? "" : ` (${name})`}`;
+}
+
+function xyViewPayload(view: XyChartViewState): Record<string, unknown> {
+  return { hiddenSeries: view.hiddenSeries, ...(view.selected === undefined ? {} : { selected: view.selected }) };
+}
+
+/** A series' key: its line pattern and its point shape, in its tone, so the legend names what the plot draws. */
+function SeriesKey({ index }: { index: number }): ReactElement {
+  const dash = seriesDash(index);
+  return (
+    <svg className="cc-xy-key" viewBox="0 0 26 12" aria-hidden="true" data-slice-tone={index % DONUT_TONES}>
+      <line x1={1} y1={6} x2={25} y2={6} {...(dash === "" ? {} : { strokeDasharray: dash })} />
+      <path className="marker" d={markerPath(markerShape(index), 13, 6, 3.5)} />
+    </svg>
+  );
+}
+
+/** The chart's fields as a table: the rows it drew, with the columns it plots and names them as the chart does. */
+function XyTable({ chart, rows }: { chart: XyChart; rows: readonly Record<string, unknown>[] }): ReactElement {
+  const t = useT();
+  const columns = [chart.x, ...chart.y, ...(chart.pointLabel === undefined ? [] : [chart.pointLabel])];
+  // A cell is the dataset's own text: a hidden character in it is drawn as a marker that says what it is, never applied.
+  const describe = (hidden: HiddenCharacter): string => fillMessage(t(HIDDEN_TITLE[hidden.kind]), { codePoint: hidden.codePoint });
+  return (
+    <details className="cc-text-alt">
+      <summary>{t("widgets.textAlternative.summary")}</summary>
+      <div className="cc-table-scroll" role="region" aria-label={t("widgets.textAlternative.summary")} tabIndex={0}>
+        <table className="cc-table" data-xy-table="true">
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column} scope="col">
+                  {xyFieldLabel(chart, column)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={index}>
+                {columns.map((column) => (
+                  <td key={column}>{withHiddenMarkers(String(ownField(row, column) ?? ""), describe)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
+/**
+ * An area chart or a scatter plot over named fields of a dataset.
+ *
+ * The fields are the ones the props name, read by the same rules the node placed the chart by, and rows that no longer
+ * fit are said in words rather than drawn as zeros. Each series has its own tone, line pattern and point shape, and the
+ * legend is a row of buttons that hide and show it. Every point is a button reached with the arrow keys; selecting one
+ * says what it is beside the chart. What a person hides and selects is the chart's view: it is drawn at once and sent to
+ * the node as `chart.view`, which keeps it and refuses a view that does not fit, and a view the node holds is adopted
+ * when it changes.
+ */
+function XyChartRenderer({ definitionId, props, dataset, state, onAction }: RendererProps): ReactElement {
+  const t = useT();
+  const kind = XY_CHART_KIND[definitionId] ?? "area";
+  const chart = useMemo(() => readXyChart(kind, props), [kind, props]);
+  const rows = dataset?.rows ?? NO_ROWS;
+  const data = useMemo(() => (chart === undefined ? undefined : xyChartData(chart, rows)), [chart, rows]);
+  const title = chart?.title ?? t(kind === "area" ? "widgets.xyChart.areaTitle" : "widgets.xyChart.scatterTitle");
+  const [measure, width] = useMeasuredWidth(640);
+  const hintId = useId();
+  const pointRefs = useRef(new Map<string, SVGPathElement>());
+
+  // The view the node holds, adopted whenever it changes; between those, what the person just did is drawn at once.
+  const stored: XyChartViewState = chart === undefined || data === undefined ? { hiddenSeries: [] } : readXyChartView(chart, state, data.shown);
+  // A refusal counts up `viewReset`, so a change the node refused is undrawn even when the view it holds did not move.
+  const storedKey = `${JSON.stringify(stored)}#${String(state?.viewReset ?? 0)}`;
+  const [view, setView] = useState(stored);
+  const [syncedKey, setSyncedKey] = useState(storedKey);
+  if (syncedKey !== storedKey) {
+    setSyncedKey(storedKey);
+    setView(stored);
+  }
+  const [cursor, setCursor] = useState<PointCursor | undefined>(undefined);
+  const [lastSeriesNote, setLastSeriesNote] = useState(false);
+
+  if (chart === undefined) {
+    return (
+      <Frame title={title} dataset={dataset} role="chart">
+        <Unavailable reason={t("widgets.xyChart.propsInvalid")} />
+      </Frame>
+    );
+  }
+  if (dataset === undefined || data === undefined) {
+    return (
+      <Frame title={title} dataset={dataset} role="chart">
+        <Unavailable reason={t("widgets.xyChart.datasetMissing")} />
+      </Frame>
+    );
+  }
+  const issues = xyChartDataIssues(chart, rows);
+  if (issues.length > 0) {
+    return (
+      <Frame title={title} dataset={dataset} role="chart">
+        <Unavailable reason={fillMessage(t("widgets.xyChart.cannotDraw"), { reason: issues.map((issue) => xyIssueText(t, issue)).join("; ") })} />
+      </Frame>
+    );
+  }
+  if (data.shown === 0) {
+    return (
+      <Frame title={title} dataset={dataset} role="chart">
+        <Unavailable reason={t("widgets.xyChart.noData")} />
+      </Frame>
+    );
+  }
+
+  const commit = (next: XyChartViewState): void => {
+    setView(next);
+    onAction?.(XY_CHART_VIEW_OPERATION, xyViewPayload(next));
+  };
+  const shownSeries = data.series.flatMap((series, index) => (view.hiddenSeries.includes(series.field) ? [] : [index]));
+  const order = pointOrder(data.xs);
+  const stacked = chart.kind === "area" && chart.stacked;
+  const bands = stacked ? stackBands(shownSeries.map((index) => data.series[index]?.values ?? [])) : [];
+  const yOf = (seriesIndex: number, index: number): number => {
+    if (stacked) return bands[shownSeries.indexOf(seriesIndex)]?.upper[index] ?? 0;
+    return data.series[seriesIndex]?.values[index] ?? 0;
+  };
+  const yValues = stacked ? bands.flatMap((band) => band.upper) : shownSeries.flatMap((index) => data.series[index]?.values ?? []);
+  const yMin = Math.min(...yValues);
+  const yMax = Math.max(...yValues);
+  // An area is measured from zero, since its fill is the amount; a scatter plot is measured over the values it has.
+  const geometry = chartGeometry(width, yValues, chart.kind === "scatter" ? niceSpan(yMin, yMax) : niceRange(Math.min(yMin, 0), Math.max(yMax, 0)));
+  const left = geometry.left;
+  const right = width - CHART_PAD.right;
+  const inset = Math.min(18, geometry.plotWidth / 4);
+
+  const numericXs = data.numericX ? data.xs.map((x) => (typeof x === "number" ? x : 0)) : [];
+  const xTicks = data.numericX ? niceSpan(Math.min(...numericXs), Math.max(...numericXs)) : [];
+  const scaleX = linearScale([xTicks[0] ?? 0, xTicks.at(-1) ?? 1], [left + inset, right - inset]);
+  const step = data.shown > 1 ? (geometry.plotWidth - inset * 2) / (data.shown - 1) : 0;
+  const xAt = (index: number): number =>
+    data.numericX ? scaleX(numericXs[index] ?? 0) : data.shown > 1 ? left + inset + index * step : left + geometry.plotWidth / 2;
+  const xTickLabels = formatTicks(xTicks);
+  const xStride = labelStride(data.numericX ? xTicks.length : data.shown, geometry.plotWidth);
+
+  const tabStop: PointCursor =
+    cursor !== undefined && shownSeries.includes(cursor.series) && cursor.index < data.shown
+      ? cursor
+      : view.selected !== undefined
+        ? { series: data.series.findIndex((series) => series.field === view.selected?.series), index: view.selected.index }
+        : { series: shownSeries[0] ?? 0, index: order[0] ?? 0 };
+  const dense = chart.kind === "area" && data.shown > DENSE_POINTS;
+
+  const toggleSeries = (field: string): void => {
+    const hidden = view.hiddenSeries.includes(field);
+    if (!hidden && shownSeries.length <= 1) {
+      setLastSeriesNote(true);
+      return;
+    }
+    setLastSeriesNote(false);
+    const hiddenSeries = hidden ? view.hiddenSeries.filter((entry) => entry !== field) : [...view.hiddenSeries, field];
+    const keepSelection = view.selected !== undefined && view.selected.series !== field;
+    commit({ hiddenSeries, ...(keepSelection && view.selected !== undefined ? { selected: view.selected } : {}) });
+  };
+  const togglePoint = (seriesIndex: number, index: number): void => {
+    const field = data.series[seriesIndex]?.field ?? "";
+    const same = view.selected?.series === field && view.selected.index === index;
+    commit({ hiddenSeries: view.hiddenSeries, ...(same ? {} : { selected: { series: field, index } }) });
+  };
+  const selectedIndex = view.selected === undefined ? -1 : data.series.findIndex((series) => series.field === view.selected?.series);
+  const selectedText = view.selected === undefined || selectedIndex < 0 ? undefined : xyPointLabel(chart, data, selectedIndex, view.selected.index);
+  const pathOf = (points: [number, number][]): string =>
+    points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${Number(x.toFixed(2))} ${Number(y.toFixed(2))}`).join(" ");
+  const indices = Array.from({ length: data.shown }, (_, index) => index);
+  // A scatter's tick numbers do not say what they measure; its axes are titled with the field and unit they plot.
+  const axes = chart.kind === "scatter" ? xyAxisTitles(chart) : undefined;
+
+  return (
+    <Frame title={title} dataset={dataset} role="chart">
+      <>
+        <ul className="cc-xy-legend" aria-label={fillMessage(t("widgets.xyChart.legend"), { title })} data-xy-legend="true">
+          {data.series.map((series, index) => {
+            const hidden = view.hiddenSeries.includes(series.field);
+            return (
+              <li key={series.field}>
+                <button
+                  type="button"
+                  aria-pressed={!hidden}
+                  title={fillMessage(t("widgets.xyChart.toggleSeries"), { series: series.label })}
+                  data-series={series.field}
+                  onClick={() => toggleSeries(series.field)}
+                >
+                  <SeriesKey index={index} />
+                  <span className="cc-xy-legend-name">{series.label}</span>
+                  {hidden && <span className="cc-xy-legend-state">({t("widgets.xyChart.hidden")})</span>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        {lastSeriesNote && (
+          <p className="cc-freshness" role="status" data-xy-last-series="true" style={{ margin: 0 }}>
+            {t("widgets.xyChart.lastSeries")}
+          </p>
+        )}
+        {typeof state?.message === "string" && state.message !== "" && (
+          <p className="cc-freshness" role="status" data-xy-message="true" style={{ margin: 0 }}>
+            {state.message}
+          </p>
+        )}
+        {axes !== undefined && (
+          <p className="cc-xy-axis cc-xy-axis-y" data-xy-axis="y">
+            {fillMessage(t("widgets.xyChart.yAxis"), { title: axes.y })}
+          </p>
+        )}
+        <div ref={measure} className="cc-chart-box">
+          <svg
+            className="cc-chart"
+            viewBox={`0 0 ${width} ${CHART_HEIGHT}`}
+            role="group"
+            aria-label={fillMessage(t("widgets.xyChart.points"), {
+              title: stacked ? `${title} (${t("widgets.xyChart.stacked")})` : title,
+              count: data.shown,
+            })}
+            aria-describedby={hintId}
+            data-xy-chart={chart.kind}
+            data-stacked={stacked ? "true" : "false"}
+            data-dense={dense ? "true" : "false"}
+          >
+            <ChartGrid geometry={geometry} />
+            <g aria-hidden="true">
+              {data.numericX
+                ? xTicks.map((tick, index) =>
+                    index % xStride === 0 ? (
+                      <text key={tick} className="label" x={scaleX(tick)} y={CHART_HEIGHT - 6} textAnchor="middle">
+                        {xTickLabels[index]}
+                      </text>
+                    ) : null,
+                  )
+                : data.xs.map((x, index) =>
+                    index % xStride === 0 ? (
+                      <text key={index} className="label" x={xAt(index)} y={CHART_HEIGHT - 6} textAnchor="middle">
+                        {String(x)}
+                      </text>
+                    ) : null,
+                  )}
+            </g>
+            {chart.kind === "area" && (
+              <g aria-hidden="true">
+                {shownSeries.map((seriesIndex, position) => {
+                  const upper = indices.map((index): [number, number] => [xAt(index), geometry.scaleY(yOf(seriesIndex, index))]);
+                  const lower = stacked
+                    ? indices.map((index): [number, number] => [xAt(index), geometry.scaleY(bands[position]?.lower[index] ?? 0)]).reverse()
+                    : [
+                        [xAt(data.shown - 1), geometry.zero] as [number, number],
+                        [xAt(0), geometry.zero] as [number, number],
+                      ];
+                  const dash = seriesDash(seriesIndex);
+                  return (
+                    <g key={seriesIndex} data-slice-tone={seriesIndex % DONUT_TONES}>
+                      {data.shown > 1 && <path className="xy-area" d={`${pathOf([...upper, ...lower])} Z`} />}
+                      <path className="xy-line" d={pathOf(upper)} {...(dash === "" ? {} : { strokeDasharray: dash })} />
+                    </g>
+                  );
+                })}
+              </g>
+            )}
+            {shownSeries.map((seriesIndex) => {
+              const series = data.series[seriesIndex];
+              if (series === undefined) return null;
+              const shape = markerShape(seriesIndex);
+              return (
+                <g
+                  key={series.field}
+                  role="group"
+                  aria-label={fillMessage(t("widgets.xyChart.seriesPoints"), { series: series.label })}
+                  data-slice-tone={seriesIndex % DONUT_TONES}
+                  data-series-points={series.field}
+                >
+                  {indices.map((index) => {
+                    const selected = view.selected?.series === series.field && view.selected.index === index;
+                    const key = `${String(seriesIndex)}:${String(index)}`;
+                    const label = xyPointLabel(chart, data, seriesIndex, index);
+                    return (
+                      <path
+                        key={index}
+                        ref={(element) => {
+                          if (element === null) pointRefs.current.delete(key);
+                          else pointRefs.current.set(key, element);
+                        }}
+                        className="marker"
+                        d={markerPath(shape, xAt(index), geometry.scaleY(yOf(seriesIndex, index)), selected ? MARKER_RADIUS + 2 : MARKER_RADIUS)}
+                        role="button"
+                        tabIndex={tabStop.series === seriesIndex && tabStop.index === index ? 0 : -1}
+                        aria-label={label}
+                        aria-pressed={selected}
+                        data-point={`${series.field}#${String(index)}`}
+                        onFocus={() => setCursor({ series: seriesIndex, index })}
+                        onClick={() => {
+                          setCursor({ series: seriesIndex, index });
+                          togglePoint(seriesIndex, index);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            togglePoint(seriesIndex, index);
+                            return;
+                          }
+                          if (event.key === "Escape") {
+                            if (view.selected !== undefined) {
+                              event.preventDefault();
+                              commit({ hiddenSeries: view.hiddenSeries });
+                            }
+                            return;
+                          }
+                          const next = movePointCursor(event.key, { series: seriesIndex, index }, shownSeries, order);
+                          if (next === undefined) return;
+                          event.preventDefault();
+                          setCursor(next);
+                          pointRefs.current.get(`${String(next.series)}:${String(next.index)}`)?.focus();
+                        }}
+                      >
+                        <title>{label}</title>
+                      </path>
+                    );
+                  })}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+        {axes !== undefined && (
+          <p className="cc-xy-axis cc-xy-axis-x" data-xy-axis="x">
+            {fillMessage(t("widgets.xyChart.xAxis"), { title: axes.x })}
+          </p>
+        )}
+        <span id={hintId} className="cc-sr-only">
+          {t("widgets.xyChart.keyboardHint")}
+        </span>
+        <div className="cc-xy-selected" aria-live="polite" data-selected-point={view.selected === undefined ? "" : `${view.selected.series}#${String(view.selected.index)}`}>
+          {selectedText !== undefined && (
+            <>
+              <span>{fillMessage(t("widgets.xyChart.selected"), { point: selectedText })}</span>
+              <button type="button" className="cc-xy-clear" onClick={() => commit({ hiddenSeries: view.hiddenSeries })}>
+                {t("widgets.xyChart.clearSelection")}
+              </button>
+            </>
+          )}
+        </div>
+        {data.total > data.shown && (
+          <p className="cc-freshness" data-xy-truncated="true" style={{ margin: 0 }}>
+            {fillMessage(t("widgets.xyChart.truncated"), { shown: data.shown, total: data.total })}
+          </p>
+        )}
+        <XyTable chart={chart} rows={rows.slice(0, data.shown)} />
+      </>
+    </Frame>
   );
 }
 
@@ -3042,6 +3453,8 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.line@1": LineChart,
   "canvas.bar@1": BarChart,
   "canvas.donut@1": Donut,
+  "canvas.area@1": XyChartRenderer,
+  "canvas.scatter@1": XyChartRenderer,
   "canvas.table@1": DataTable,
   "canvas.note@1": Note,
   "canvas.metrics@1": Metrics,

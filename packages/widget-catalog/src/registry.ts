@@ -77,6 +77,18 @@ const META: Record<string, CatalogMeta> = {
     aliases: ["donut", "pie", "biểu đồ tròn", "tỷ lệ"],
     status: "stable",
   },
+  "canvas.area@1": {
+    displayName: "Biểu đồ vùng",
+    tags: ["chart", "series"],
+    aliases: ["area", "stacked", "chart", "biểu đồ vùng", "xếp chồng", "chuỗi"],
+    status: "stable",
+  },
+  "canvas.scatter@1": {
+    displayName: "Biểu đồ phân tán",
+    tags: ["chart", "series"],
+    aliases: ["scatter", "points", "correlation", "biểu đồ phân tán", "điểm", "tương quan"],
+    status: "stable",
+  },
   "canvas.table@1": {
     displayName: "Bảng dữ liệu",
     tags: ["table", "data"],

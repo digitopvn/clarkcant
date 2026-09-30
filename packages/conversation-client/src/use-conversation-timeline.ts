@@ -19,6 +19,8 @@ export interface ConversationTimelineState {
   setTimeline: (timeline: Timeline | undefined) => void;
   datasets: Record<string, ResolvedDataset>;
   setDatasets: (datasets: Record<string, ResolvedDataset>) => void;
+  /** Read a dataset again: the node refused something because its rows changed, so the rows held here are old. */
+  refreshDataset: (datasetId: string) => void;
   snapshots: Record<string, SnapshotPresentationResponse>;
   setSnapshots: (snapshots: Record<string, SnapshotPresentationResponse>) => void;
   applyTimeline: (next: Timeline) => void;
@@ -126,6 +128,19 @@ export function useConversationTimeline(
     };
   }, [client, datasetRefs, datasets]);
 
+  const refreshDataset = useCallback(
+    (datasetId: string) => {
+      client
+        .dataset(datasetId)
+        .then((resolved) => setDatasets((current) => ({ ...current, [datasetId]: resolved })))
+        .catch(() => {
+          // Gone now: dropping the old rows is what lets the renderer say so instead of drawing them.
+          setDatasets((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== datasetId)));
+        });
+    },
+    [client],
+  );
+
   const instanceById = useMemo(() => {
     const map = new Map<string, Timeline["instances"][number]>();
     for (const instance of timeline?.instances ?? []) map.set(instance.instanceId, instance);
@@ -215,6 +230,7 @@ export function useConversationTimeline(
     setTimeline,
     datasets,
     setDatasets,
+    refreshDataset,
     snapshots,
     setSnapshots,
     applyTimeline,

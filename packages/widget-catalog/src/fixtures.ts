@@ -117,10 +117,120 @@ function chartFixtures(prefix: string): readonly WidgetFixture[] {
   return base.map((fixture) => ({ ...fixture, id: `${prefix}.${fixture.id}` }));
 }
 
+/**
+ * Six hundred readings of load against latency, more than an area or scatter chart draws, so the preview shows the
+ * truncation label. Deterministic: the values come from the row index, never from a clock or a random source.
+ */
+const LOAD_ROWS: Record<string, unknown>[] = Array.from({ length: 600 }, (_, index) => {
+  const load = 10 + ((index * 37) % 90);
+  const spread = (index * 53) % 23;
+  return { load, latencyMs: 40 + Math.round(load * 1.6) + spread, p95Ms: 90 + Math.round(load * 2.9) + spread * 2 };
+});
+
+function loadDataset(): FixtureDataset {
+  return { datasetId: "fixture_load", source: "sample", columns: ["load", "latencyMs", "p95Ms"], rows: LOAD_ROWS };
+}
+
+const USAGE_LABELS = { runs: "Số lần chạy", failures: "Lần thất bại", medianMinutes: "Thời gian trung vị" };
+
 export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
   "canvas.line@1": chartFixtures("line"),
   "canvas.bar@1": chartFixtures("bar"),
   "canvas.donut@1": chartFixtures("donut"),
+  "canvas.area@1": [
+    {
+      id: "area.normal",
+      label: "Hai chuỗi theo tuần",
+      props: {
+        title: "Lần chạy và lần thất bại",
+        datasetRef: "fixture_usage",
+        x: "week",
+        y: ["runs", "failures"],
+        labels: { runs: USAGE_LABELS.runs, failures: USAGE_LABELS.failures },
+        unit: "lần",
+      },
+      dataset: usageDataset(),
+      mode: "interactive",
+    },
+    {
+      id: "area.stacked",
+      label: "Xếp chồng",
+      props: {
+        title: "Tổng lần chạy, xếp chồng",
+        datasetRef: "fixture_usage",
+        x: "week",
+        y: ["runs", "failures"],
+        labels: { runs: USAGE_LABELS.runs, failures: USAGE_LABELS.failures },
+        unit: "lần",
+        stacked: true,
+      },
+      dataset: usageDataset(),
+      mode: "interactive",
+    },
+    {
+      // A view a person left: one series hidden and a point selected, as the node would hand it back.
+      id: "area.selected",
+      label: "Đã ẩn một chuỗi và chọn một điểm",
+      props: {
+        title: "Lần chạy và lần thất bại",
+        datasetRef: "fixture_usage",
+        x: "week",
+        y: ["runs", "failures"],
+        labels: { runs: USAGE_LABELS.runs, failures: USAGE_LABELS.failures },
+        unit: "lần",
+      },
+      state: { hiddenSeries: ["failures"], selected: { series: "runs", index: 3 } },
+      dataset: usageDataset(),
+      mode: "interactive",
+    },
+    {
+      id: "area.empty",
+      label: "Chưa có dữ liệu",
+      props: { title: "Lần chạy theo tuần", datasetRef: "fixture_usage_empty", x: "week", y: ["runs"], unit: "lần" },
+      dataset: emptyUsageDataset(),
+      mode: "read-only",
+    },
+  ],
+  "canvas.scatter@1": [
+    {
+      id: "scatter.normal",
+      label: "Thời gian và số lần chạy",
+      props: {
+        title: "Thời gian trung vị so với số lần chạy",
+        datasetRef: "fixture_usage",
+        x: "medianMinutes",
+        y: ["runs"],
+        pointLabel: "week",
+        labels: { medianMinutes: USAGE_LABELS.medianMinutes, runs: USAGE_LABELS.runs },
+        xUnit: "phút",
+        unit: "lần",
+      },
+      dataset: usageDataset(),
+      mode: "interactive",
+    },
+    {
+      id: "scatter.truncated",
+      label: "Nhiều điểm, đã giới hạn",
+      props: {
+        title: "Tải và độ trễ",
+        datasetRef: "fixture_load",
+        x: "load",
+        y: ["latencyMs", "p95Ms"],
+        labels: { load: "Tải", latencyMs: "Độ trễ trung vị", p95Ms: "Độ trễ p95" },
+        xUnit: "%",
+        unit: "ms",
+      },
+      dataset: loadDataset(),
+      mode: "interactive",
+    },
+    {
+      id: "scatter.empty",
+      label: "Chưa có dữ liệu",
+      props: { title: "Thời gian so với số lần chạy", datasetRef: "fixture_usage_empty", x: "medianMinutes", y: ["runs"] },
+      dataset: emptyUsageDataset(),
+      mode: "read-only",
+    },
+  ],
   "canvas.table@1": [
     {
       id: "table.normal",

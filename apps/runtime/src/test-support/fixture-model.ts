@@ -130,6 +130,8 @@ const FIXTURE_REVENUE_PLACES = [
   "Khánh Hòa",
   "Bình Dương",
 ];
+/** The weeks the sample area chart draws; rising and distinct, as an area chart's x must be. */
+const FIXTURE_RUN_WEEKS = ["W35", "W36", "W37", "W38", "W39", "W40"];
 const FIXTURE_REVENUE_ROWS: Record<string, unknown>[] = Array.from({ length: 60 }, (_, index) => ({
   code: `P${String(index + 1).padStart(2, "0")}`,
   province: `${FIXTURE_REVENUE_PLACES[index % FIXTURE_REVENUE_PLACES.length] ?? ""} ${String(Math.floor(index / 12) + 1)}`,
@@ -1040,6 +1042,103 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         `Đây là việc trên trình duyệt do fixture tạo, không phải model thật — ${outcome} ` +
         `Hộp thư có một thông báo để bạn ghi nhận nếu kết quả chưa rõ.`;
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    /*
+     * An area or scatter chart over rows written to a dataset the person owns, placed through the same views
+     * `show_view` uses. The rows are labelled `sample`, which is what they are. "lớn" draws more rows than a chart
+     * holds, so the truncation label is seen; "thiếu trường" names a field the rows lack and "không phải số" plots a
+     * column holding text, so the refusal a model would read is the host's own sentence.
+     */
+    const chart = /^(?:đặt|place)\s+biểu đồ\s+(vùng|vùng chồng|vùng co lại|phân tán|phân tán lớn|thiếu trường|không phải số)$/iu.exec(
+      input.text.trim(),
+    );
+    /*
+     * "rút gọn dữ liệu biểu đồ" keeps only the first three rows of the dataset "vùng co lại" draws, the way a provider
+     * that replaces its rows would. A page still drawing the six rows it was given then asks for a point the node no
+     * longer holds, and the node's refusal is what that page shows.
+     */
+    if (/^(?:rút gọn|shrink)\s+dữ liệu biểu đồ$/iu.test(input.text.trim())) {
+      const { runtime } = deps.services();
+      const rows = FIXTURE_RUN_WEEKS.slice(0, 3).map((week, index) => ({ week, runs: 120 + index * 9, failures: 3 + (index % 4) }));
+      upsertDataset(runtime.db, {
+        datasetId: "dataset_fixture_runs_shrinking",
+        originNodeId: runtime.identity.nodeId,
+        rowCount: rows.length,
+        freshness: "sample",
+        updatedAt: instantSchema.parse(new Date().toISOString()),
+        document: { rows },
+        ownerPrincipalId: input.principal.principalId,
+      });
+      const reply = "Fixture: dữ liệu mẫu của biểu đồ co lại còn 3 hàng (không phải model thật).";
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+    if (chart !== null) {
+      const which = (chart[1] ?? "").toLowerCase();
+      const { runtime } = deps.services();
+      const scatter = which.startsWith("phân tán");
+      // A dataset per shape of rows, so writing the one with a bad row never changes what an earlier chart draws.
+      const datasetId = scatter
+        ? `dataset_fixture_load_${which === "phân tán lớn" ? "big" : "small"}`
+        : `dataset_fixture_runs${which === "không phải số" ? "_text" : which === "vùng co lại" ? "_shrinking" : ""}`;
+      const rows: Record<string, unknown>[] = scatter
+        ? Array.from({ length: which === "phân tán lớn" ? 640 : 24 }, (_, index) => ({
+            host: `node-${String(index + 1)}`,
+            load: (index * 37) % 100,
+            latency: 40 + ((index * 53) % 90),
+          }))
+        : FIXTURE_RUN_WEEKS.map((week, index) => ({
+            week,
+            runs: 120 + index * 9,
+            failures: which === "không phải số" && index === 2 ? "n/a" : 3 + (index % 4),
+          }));
+      upsertDataset(runtime.db, {
+        datasetId,
+        originNodeId: runtime.identity.nodeId,
+        rowCount: rows.length,
+        freshness: "sample",
+        updatedAt: instantSchema.parse(new Date().toISOString()),
+        document: { rows },
+        ownerPrincipalId: input.principal.principalId,
+      });
+      const definitionId = scatter ? "canvas.scatter@1" : "canvas.area@1";
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === definitionId);
+      if (view === undefined) return undefined;
+      const props: Record<string, unknown> = scatter
+        ? {
+            title: "Tải và độ trễ (mẫu)",
+            datasetRef: datasetId,
+            x: "load",
+            y: ["latency"],
+            labels: { load: "Tải", latency: "Độ trễ" },
+            xUnit: "%",
+            unit: "ms",
+            pointLabel: "host",
+          }
+        : {
+            title: "Lượt chạy theo tuần (mẫu)",
+            datasetRef: datasetId,
+            x: "week",
+            ...(which === "thiếu trường"
+              ? { y: ["runs", "retries"], labels: { runs: "Lượt chạy", retries: "Lượt chạy lại" } }
+              : { y: ["runs", "failures"], labels: { runs: "Lượt chạy", failures: "Lượt lỗi" } }),
+            unit: "lượt",
+            ...(which === "vùng chồng" ? { stacked: true } : {}),
+          };
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt biểu đồ ${which} trên dữ liệu mẫu (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
     }
 
     /*

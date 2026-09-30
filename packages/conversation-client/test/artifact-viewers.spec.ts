@@ -156,6 +156,15 @@ describe("artifact viewers", () => {
     expect(diff).toContain("<code>{withHiddenMarkers(line.text, describe)}</code>");
   });
 
+  it("draws a hidden character in an area or scatter chart's table as the same marker, named in the person's language", () => {
+    const table = functionBody("renderers.tsx", "XyTable");
+    expect(table).toContain("<td key={column}>{withHiddenMarkers(String(ownField(row, column) ?? \"\"), describe)}</td>");
+    expect(table).toContain("fillMessage(t(HIDDEN_TITLE[hidden.kind]), { codePoint: hidden.codePoint })");
+    const { text, markers } = walk(withHiddenMarkers(`W36${BIDI}evil`, (hidden) => hidden.codePoint));
+    expect(text).toBe("W36⟨U+202E⟩evil");
+    expect(markers.map((marker) => marker.codePoint)).toEqual(["U+202E"]);
+  });
+
   it("says every line kind, limit and fact in both languages", () => {
     const keys: MessageKey[] = [
       ...DIFF_LINE_KINDS.map((kind) => `widgets.diff.line.${kind}` as MessageKey),
