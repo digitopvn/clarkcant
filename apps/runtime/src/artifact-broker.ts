@@ -1,3 +1,4 @@
+import { sweepConversationFileCleanup } from "./conversation-file-cleanup.ts";
 import {
   ARTIFACT_EXTENSIONS,
   ARTIFACT_LIMITS,
@@ -42,6 +43,7 @@ import {
   revokeArtifactGrant,
   sealWorkingArtifact,
   transaction,
+  inTransaction,
 } from "@clarkcant/storage";
 
 import { readdirSync } from "node:fs";
@@ -729,9 +731,12 @@ export function releaseConversationArtifacts(deps: {
   db: Database;
   dataDir: string;
   conversationId: string;
+  deferFiles?: (blobPaths: readonly string[], stagingRefs: readonly string[]) => void;
 }): { removed: number } {
+  if (inTransaction(deps.db) && deps.deferFiles === undefined) throw new Error("file cleanup must wait for commit");
   const deleted = deleteArtifactsForConversation(deps.db, deps.conversationId);
-  releaseBytes(deps, deleted.blobPaths, deleted.stagingRefs);
+  if (deps.deferFiles !== undefined) deps.deferFiles(deleted.blobPaths, deleted.stagingRefs);
+  else releaseBytes(deps, deleted.blobPaths, deleted.stagingRefs);
   return { removed: deleted.removed };
 }
 
@@ -749,6 +754,7 @@ export function startArtifactSweep(
   const now = options.now ?? ((): Date => new Date());
   try {
     sweepOrphanedStaging(deps);
+    sweepConversationFileCleanup(deps);
   } catch (cause) {
     process.stderr.write(
       `artifact sweep: could not clear leftover staged files (${cause instanceof Error ? cause.message : String(cause)}); they stay on disk until the next start\n`,
@@ -757,6 +763,7 @@ export function startArtifactSweep(
   const timer = setInterval(() => {
     try {
       sweepExpiredArtifacts({ ...deps, now });
+      sweepConversationFileCleanup(deps);
     } catch (cause) {
       process.stderr.write(
         `artifact sweep: could not run (${cause instanceof Error ? cause.message : String(cause)})\n`,

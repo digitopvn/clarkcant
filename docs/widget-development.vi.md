@@ -1308,14 +1308,17 @@ Node giữ những gì:
 - **Grant thuộc về một instance.** Grant kéo dài 24 giờ kể từ lúc chọn tệp hoặc lần ghi cuối của instance, và mỗi lần
   ghi làm mới nó. Widget vẫn đọc được một tệp nó đã ghi và cố định chừng nào tệp đó còn; tệp người dùng đã chọn thì
   phải được chọn lại sau 24 giờ. Grant được kiểm tra ở mỗi lần dùng; không có gì quét dọn chúng. Một grant đã bị thu
-  hồi sẽ chặn lời gọi kế tiếp, nhưng hiện chưa có bề mặt nào cho người dùng thu hồi grant
-  ([#343](https://github.com/digitopvn/clarkcant/issues/343)).
+  hồi sẽ chặn lời gọi kế tiếp, nhưng hiện chưa có bề mặt nào cho người dùng thu hồi grant. Xoá hội thoại sẽ giải phóng
+  artifact cùng grant của nó; việc này không thêm nút ngừng chia sẻ riêng.
 - **Lưu giữ.** Các artifact `working` hết hạn bị xoá mỗi 10 phút, và trước khi lưu một artifact mới. Khi node khởi
   động, nó xoá các byte tạm mà một tiến trình trước để lại và không còn artifact `working` nào đang ghi. Artifact đã cố
-  định tồn tại lâu bằng cuộc trò chuyện của nó. Khi một cuộc trò chuyện được giải phóng, các artifact của nó cũng bị
-  xoá, cùng với những byte không còn tệp đính kèm nào dùng chung. Hiện chưa có gì xoá một cuộc trò chuyện
-  ([#343](https://github.com/digitopvn/clarkcant/issues/343)), nên hôm nay một artifact đã cố định vẫn còn đó, và vẫn
-  được tính vào hạn mức.
+  định tồn tại lâu bằng hội thoại của nó, kể cả tệp đã cố định nhưng chưa đính kèm. Khi người dùng
+  [xoá hội thoại](open-interfaces.vi.md#xoá-hội-thoại), artifact, grant và tệp đính kèm được giải phóng trong cùng một
+  transaction. Sau commit, chỉ byte không còn tệp đính kèm, artifact, ảnh, bằng chứng task hay tin nhắn nào dùng chung
+  mới bị xoá. Tệp không xoá được nằm trong hàng đợi bền vững, được dọn lại lúc khởi động và mỗi 10 phút; kết quả báo số
+  tệp đang chờ. Không giữ bản sao để Hoàn tác nên hạn mức được trả ngay. Bộ nhớ đã lưu, tài nguyên độc lập, nhật ký phiên
+  và lịch sử kiểm toán vẫn còn; đây không phải thao tác xoá mọi dữ liệu. Công việc chưa kết thúc hoặc chưa rõ kết quả
+  phải được xử lý trước.
 
 Kiểm thử: [artifacts.spec.ts](../packages/contracts/test/artifacts.spec.ts) cho các quy tắc,
 [artifact-refs.spec.ts](../packages/storage/test/artifact-refs.spec.ts) cho phần lưu trữ,

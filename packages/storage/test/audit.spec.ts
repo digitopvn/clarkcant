@@ -55,7 +55,7 @@ describe("what is written down", () => {
     // the work a person started again from its notice and the versions they skipped; 36 carries the stored theme choice
     // into the colour-scheme preference; 37 records the files a task handed to a paired node brought back. The schema
     // version is the count of migrations that have run.
-    expect(currentSchemaVersion(db)).toBe(38);
+    expect(currentSchemaVersion(db)).toBe(39);
   });
 
   it("reads back newest first, with the fields it was given", () => {

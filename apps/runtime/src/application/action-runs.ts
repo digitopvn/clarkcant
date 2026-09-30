@@ -32,6 +32,11 @@ export function actionRunning(invocationId: string): boolean {
   return runs.has(invocationId);
 }
 
+/** Aborted actions remain busy until their finally block finishes; they may still be settling an effect. */
+export function conversationActionRunning(conversationId: string): boolean {
+  return [...runs.values()].some((run) => run.conversationId === conversationId);
+}
+
 /**
  * Start tracking a run, answering its controller, or `undefined` when one with this id is already running.
  *
@@ -74,4 +79,3 @@ export function cancelAllActionRuns(): number {
   }
   return stopped;
 }
-

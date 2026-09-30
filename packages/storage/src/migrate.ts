@@ -1579,6 +1579,29 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 39,
+    name: "conversation_deletion_permissions_and_cleanup",
+    reversible: false,
+    up(db) {
+      db.exec(`
+        CREATE TABLE conversation_delete_permissions (
+          permit_id TEXT PRIMARY KEY,
+          principal_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          consumed_at TEXT
+        );
+        CREATE TABLE conversation_file_cleanup (
+          kind TEXT NOT NULL CHECK (kind IN ('blob', 'staging')),
+          path TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          PRIMARY KEY (kind, path)
+        );
+        CREATE INDEX idx_tasks_conversation_deletion ON tasks(conversation_id, state);
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

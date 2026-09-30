@@ -63,6 +63,7 @@ export const APP_INTENT_KINDS = [
   "inbox.open",
   "inbox.ask",
   "turn.stop",
+  "conversation.delete",
   "orb.select",
   "effect.confirmed",
   "effect.failed",
@@ -77,14 +78,14 @@ export const appIntentKindSchema = z.enum(APP_INTENT_KINDS);
 export type AppIntentKind = z.infer<typeof appIntentKindSchema>;
 
 /**
- * The kinds only the person may ask for: saying whether an effect whose outcome nobody observed took effect.
+ * The kinds only the person may ask for: deleting a conversation or resolving an unobserved effect.
  *
  * "It took effect" decides what a task may report about itself, so it is the person's the way an approval is. The node
  * refuses these from the agent's own sources (`agent`, `voice-agent`), `control_app` does not offer them, the page's
  * executor refuses one that carries an agent's `controlId`, and the route it finally calls is person-only
  * (`isPersonOnlyRoute`). Four checks rather than one, because each surface is reachable on its own.
  */
-export const PERSON_ONLY_APP_INTENT_KINDS: readonly AppIntentKind[] = ["effect.confirmed", "effect.failed"];
+export const PERSON_ONLY_APP_INTENT_KINDS: readonly AppIntentKind[] = ["effect.confirmed", "effect.failed", "conversation.delete"];
 
 export function isPersonOnlyAppIntent(kind: AppIntentKind): boolean {
   return PERSON_ONLY_APP_INTENT_KINDS.includes(kind);
@@ -149,6 +150,10 @@ export const appIntentThemeNameSchema = z.string().trim().min(1).max(80);
 export const appIntentSchema = z
   .strictObject({
     kind: appIntentKindSchema,
+    /** The node binds deletion to the conversation in which the person asked, never a name parsed from prose. */
+    conversationId: z.string().min(1).max(128).optional(),
+    /** Minted only after the person answers a policy question; the deletion capability spends it once. */
+    deletionPermit: z.uuid().optional(),
     tab: settingsTabSchema.optional(),
     definitionId: capabilityRefSchema.optional(),
     family: widgetFamilySchema.optional(),
@@ -191,6 +196,10 @@ export const appIntentSchema = z
     themeName: appIntentThemeNameSchema.optional(),
     /** Carried only by `appearance.set-color-scheme`: System, Light or Dark. */
     colorScheme: colorSchemeSchema.optional(),
+  })
+  .refine((intent) => intent.kind === "conversation.delete" || (intent.conversationId === undefined && intent.deletionPermit === undefined), {
+    message: "only conversation.delete may carry a conversation or deletion permit",
+    path: ["conversationId"],
   })
   .refine((intent) => intent.kind !== "appearance.set-theme" || intent.themeRef !== undefined, {
     message: "appearance.set-theme must name the theme to switch to",
@@ -236,11 +245,11 @@ export const appIntentSchema = z
     message: "only orb.select may name an orb profile",
     path: ["orbProfile"],
   })
-  .refine((intent) => !isPersonOnlyAppIntent(intent.kind) || intent.effectId !== undefined, {
+  .refine((intent) => (intent.kind !== "effect.confirmed" && intent.kind !== "effect.failed") || intent.effectId !== undefined, {
     message: "an answer about an effect must name the effect it answers",
     path: ["effectId"],
   })
-  .refine((intent) => isPersonOnlyAppIntent(intent.kind) || intent.effectId === undefined, {
+  .refine((intent) => intent.kind === "effect.confirmed" || intent.kind === "effect.failed" || intent.effectId === undefined, {
     message: "only an answer about an effect may name one",
     path: ["effectId"],
   })
@@ -420,6 +429,8 @@ const COLOR_SCHEME_READ_BACK_EN: Record<ColorScheme, string> = {
  */
 function describeAppIntentVi(intent: AppIntent): string {
   switch (intent.kind) {
+    case "conversation.delete":
+      return "Xoá hội thoại này cùng tệp đính kèm và tệp widget. Không thể Hoàn tác. Bộ nhớ đã lưu và tài nguyên dùng chung được giữ lại.";
     case "voice.end":
       return "Tôi kết thúc phiên thoại nhé.";
     case "voice.open":
@@ -496,6 +507,8 @@ function describeAppIntentVi(intent: AppIntent): string {
 /** The English translation of `describeAppIntentVi`, kind for kind, same structure. */
 function describeAppIntentEn(intent: AppIntent): string {
   switch (intent.kind) {
+    case "conversation.delete":
+      return "Delete this conversation, its attachments and widget files. There is no Undo. Saved memory and shared resources are kept.";
     case "voice.end":
       return "Ending the voice session.";
     case "voice.open":

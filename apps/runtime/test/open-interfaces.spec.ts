@@ -376,6 +376,8 @@ describe("WebSocket gateway", () => {
       "/packages/install",
       "//packages//install/",
       "/packages/install?packageId=com.example.x",
+      "/conversations/conv_x/delete",
+      "//conversations//conv_x//delete/?ignored=1",
     ];
     for (const [index, path] of decisions.entries()) {
       client.send({ type: "request", id: index, method: "POST", path, body: {} });

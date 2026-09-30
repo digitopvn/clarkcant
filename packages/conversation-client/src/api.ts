@@ -24,6 +24,7 @@ import type {
 import {
   COMPOSER_SURFACE_HEADER,
   appIntentDecisionSchema,
+  conversationDeleteResultSchema,
   artifactRefSchema,
   attachmentRefSchema,
   type ArtifactRef,
@@ -1947,6 +1948,18 @@ export class GatewayClient {
    * decision of its own. A denial is a complete answer and comes back as a refusal, so the caller has something to
    * say rather than a silence to explain.
    */
+  async deleteConversation(conversationId: string, deletionPermit?: string): Promise<import("@clarkcant/contracts").ConversationDeletionResult> {
+    const response = await this.#fetch(`${this.#baseUrl}/conversations/${encodeURIComponent(conversationId)}/delete`, {
+      method: "POST",
+      headers: {authorization: `Bearer ${this.#token}`, "content-type": "application/json"},
+      body: JSON.stringify(deletionPermit === undefined ? {} : {deletionPermit}),
+    });
+    const body = await response.json();
+    const parsed = conversationDeleteResultSchema.safeParse(body);
+    if (!parsed.success) throw new GatewayError(response.status, "DELETE_UNCONFIRMED", "The deletion result could not be confirmed. Reload the conversation before trying again.");
+    return parsed.data;
+  }
+
   async confirmAppIntent(input: {
     confirmationToken: string;
     decision: ConfirmationDecision;

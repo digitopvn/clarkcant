@@ -38,6 +38,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
       // POST /effects/:effectId/reconcile: what the person saw of an effect whose outcome nobody observed. An AI client
       // that could say "that push landed" could clear its own task's uncertainty and then report its own success.
       return (
+        (first === "conversations" && third === "delete") ||
         (first === "peers" && third === "confirm") ||
         (first === "app-intents" && second === "host-control") ||
         (first === "effects" && third === "reconcile") ||
@@ -70,5 +71,5 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, installing packages and updates, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, deleting conversations, installing packages and updates, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });

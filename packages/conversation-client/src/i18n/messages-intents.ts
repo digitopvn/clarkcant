@@ -8,6 +8,12 @@
  */
 
 export const MESSAGES_INTENTS_VI = {
+  "intents.deletionQuestion": "Policy yêu cầu xác nhận xoá",
+  "intents.delete": "Xoá hội thoại",
+  "intents.cancel": "Giữ hội thoại",
+  "intents.deleting": "Đang xử lý…",
+  "intents.confirmFailed": "Không xác nhận được lệnh. Hội thoại đang được giữ; hãy yêu cầu lại.",
+  "intents.deleteUnconfirmed": "Chưa xác định được kết quả xoá. Hãy tải lại hội thoại trước khi thử lại.",
   "intents.modelSwitchFailed": "Không chuyển được model.",
   "intents.commandLookupFailed": "Không hỏi được node về lệnh đó.",
 } as const;
@@ -15,6 +21,12 @@ export const MESSAGES_INTENTS_VI = {
 export type MessageIntentsKey = keyof typeof MESSAGES_INTENTS_VI;
 
 export const MESSAGES_INTENTS_EN = {
+  "intents.deletionQuestion": "Policy asks to confirm deletion",
+  "intents.delete": "Delete conversation",
+  "intents.cancel": "Keep conversation",
+  "intents.deleting": "Processing…",
+  "intents.confirmFailed": "The command could not be confirmed. The conversation is kept; ask again.",
+  "intents.deleteUnconfirmed": "The deletion result is unknown. Reload the conversation before trying again.",
   "intents.modelSwitchFailed": "Could not switch the model.",
   "intents.commandLookupFailed": "Could not ask the node about that command.",
 } as const satisfies Record<MessageIntentsKey, string>;

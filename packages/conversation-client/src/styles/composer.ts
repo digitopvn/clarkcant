@@ -256,6 +256,15 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
   box-shadow: var(--cc-shadow-soft, 0 12px 32px rgb(0 0 0 / 35%));
   color: var(--cc-text); font-size: var(--cc-text-label); line-height: 1.45; overflow-wrap: anywhere;
 }
+.cc-delete-question { width: min(560px, calc(100vw - 32px)); padding: var(--cc-space-md); }
+.cc-delete-question p { margin: 0 0 var(--cc-space-sm); }
+.cc-delete-question button {
+  min-height: 44px; padding: var(--cc-space-xs) var(--cc-space-sm);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-button);
+  background: var(--cc-elevated); color: var(--cc-text); font: inherit; cursor: pointer;
+}
+.cc-delete-question button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-delete-question button:disabled { opacity: .6; cursor: wait; }
 
 /*
  * Task cards.

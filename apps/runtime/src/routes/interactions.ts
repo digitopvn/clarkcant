@@ -19,6 +19,7 @@ import {
   requestedIntent,
 } from "../app-intents.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
+import { grantConversationDeletion } from "../application/conversation-delete.ts";
 import type { HostControlAcks } from "../host-control-acks.ts";
 import { buildSuggestions } from "../suggestions.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -36,6 +37,7 @@ export interface InteractionRouteDeps {
     runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string }; dataDir?: string };
     conductor: { newId: (prefix: string) => string };
     hostControl: Pick<HostControlAcks, "settle">;
+    turnControl?: {running(): string[]};
   };
   request: GatewayRequest;
   segments: string[];
@@ -123,6 +125,7 @@ async function handleAppIntentRoutes(
     nodeId: runtime.identity.nodeId,
     now: () => at() as never,
     newId: services.conductor.newId,
+    runningConversations: () => services.turnControl?.running() ?? [],
     ...(dataDir === undefined
       ? {}
       : { themes: () => readThemeRegistry(themeRegistryDeps({ runtime: { ...runtime, dataDir }, conductor: services.conductor })) }),
@@ -187,6 +190,10 @@ async function handleAppIntentRoutes(
     }
     if (body.data.decision === "denied") {
       return json(200, { granted: false, decision: { kind: "refused", say: DECLINED_SAY } });
+    }
+    if (outcome.intent.kind === "conversation.delete") {
+      const decision = grantConversationDeletion({...intentDeps, principalId}, outcome.intent, preferredAppIntentLocale(intentDeps, principalId));
+      return json(200, {granted: decision.kind === "intent", decision});
     }
     recordAppIntentEvent(intentDeps, {
       intent: outcome.intent,

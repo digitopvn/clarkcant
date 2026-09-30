@@ -1304,14 +1304,16 @@ What the node keeps:
 - **Grants belong to one instance.** A grant lasts 24 hours from the pick or from the instance's last write, and a
   write renews it. A widget keeps reading a file it wrote and finalized for as long as that file is there; a file the
   person picked must be picked again after 24 hours. Grants are checked on every use; nothing sweeps them. A revoked
-  grant stops the next call, but no surface lets the person revoke one yet
-  ([#343](https://github.com/digitopvn/clarkcant/issues/343)).
+  grant stops the next call, but no surface lets the person revoke one yet. Deleting its conversation releases the
+  artifact and its grants together; this does not add a separate stop-sharing control.
 - **Retention.** Working artifacts that time out are removed every 10 minutes, and before a new artifact is stored.
   When the node starts, it removes staged bytes a previous process left behind that no working artifact still writes.
-  Finalized artifacts last as long as their conversation. When a conversation is released, its artifacts go too,
-  along with any bytes no attachment still shares. Nothing deletes a conversation yet
-  ([#343](https://github.com/digitopvn/clarkcant/issues/343)), so today a finalized artifact stays, and keeps
-  counting against the quota.
+  Finalized artifacts last as long as their conversation, including files finalized but never attached. The person's
+  [conversation deletion](open-interfaces.md#conversation-deletion) releases them, their grants and attachments in one
+  transaction. After commit, bytes no retained attachment, artifact, image, task evidence or message shares are removed.
+  Failed file removals stay in a durable queue, retried at startup and on the 10-minute sweep; the result reports pending
+  cleanup. There is no Undo copy, so the quota is released immediately. Saved memory, independent resources, session logs
+  and audit history remain; this is not an erase-everything operation. Unfinished or uncertain work must be settled first.
 
 Tests: [artifacts.spec.ts](../packages/contracts/test/artifacts.spec.ts) for the rules,
 [artifact-refs.spec.ts](../packages/storage/test/artifact-refs.spec.ts) for storage,

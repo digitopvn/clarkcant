@@ -40,6 +40,7 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 |---|---|---|
 | GET | `/node` | – |
 | GET / POST | `/conversations` | `{ title? }` |
+| POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — xoá trên bề mặt của người dùng; policy có thể hỏi hoặc từ chối |
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — chờ câu trả lời |
 | POST | `/conversations/{id}/messages/stream` | như trên, trả về dạng SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `error`, `done` |
 | POST | `/conversations/{id}/stop` | `{ source? }` — dừng câu trả lời đang viết; giữ phần đã viết, gắn nhãn đã dừng; trả về `{ stopped }` |
@@ -74,6 +75,29 @@ này thành `surface` của tin nhắn; một tin nhắn nói bằng giọng đ�
 gửi không kèm header (MCP, relay WebSocket, `clarkcant api`, một script) được lưu mà không có surface. Chỉ tin nhắn có
 surface mới được tính là lời của chính người dùng ở những chỗ điều đó quan trọng, chẳng hạn các trang mà một việc trên
 trình duyệt được phép thao tác; mọi giá trị khác của header đều bị bỏ qua.
+
+### Xoá hội thoại
+
+Lệnh gõ “xoá hội thoại này” và lệnh nói tương ứng cùng đi qua intent `conversation.delete` như capability REST.
+`POST /conversations/{id}/delete` nhận `{}`. Policy thực thi hiện tại quyết định chạy, hỏi hay từ chối: chế độ tự trị
+làm theo yêu cầu rõ ràng của người dùng; chế độ guarded/ask hoặc rule yêu cầu hỏi có thể trả `202` cùng
+`{ deleted: false, decision: { kind: "needs-confirmation", intent, readBack, confirmationToken } }`. Trả lời bằng
+`POST /app-intents/confirm` trên bề mặt của người dùng, gửi token và `decision: "granted" | "denied"`. Khi được duyệt,
+decision có `intent.deletionPermit`; gửi nó về route xoá ban đầu. Quyền này ràng buộc với principal và đúng hội thoại,
+hết hạn sau hai phút và chỉ được dùng một lần trong transaction xoá. Từ chối làm token xác nhận hết hiệu lực nhưng
+không xoá dữ liệu. Policy được kiểm tra lại; rule từ chối mới luôn thắng quyền đã duyệt trước đó.
+
+`200` báo `{ deleted: true, conversationId, attachments, artifacts, pendingFiles, readBack }`. `409` cùng
+`{ deleted: false, decision: { kind: "refused", say } }` giải thích cái gì được giữ và bước tiếp theo. Task chưa kết
+thúc, đang tạm dừng hoặc chưa rõ kết quả, lượt trả lời, công việc nền và thao tác widget còn đang xử lý kết quả đều
+chặn việc xoá. Foreign key vẫn bật; các row của hội thoại, tệp đính kèm, mọi artifact widget (kể cả tệp đã cố định
+nhưng chưa đính kèm), grant và hàng đợi dọn tệp commit cùng nhau. Tệp vật lý chỉ bị xoá sau commit; byte dùng chung
+được giữ lại. Tệp đang khoá nằm trong hàng đợi dọn lúc khởi động/định kỳ; `pendingFiles` báo số tệp còn chờ.
+
+Không giữ bản sao để Hoàn tác vì mục tiêu là giải phóng tệp và hạn mức. Bộ nhớ đã lưu, tài nguyên độc lập, nhật ký phiên
+và lịch sử kiểm toán/đồng bộ chỉ ghi thêm vẫn còn. Client chỉ chuyển sang hội thoại mới khi xoá thành công. Mất phản hồi
+mạng nghĩa là chưa rõ kết quả, nên tải lại trước khi thử lại. MCP, relay WebSocket và `clarkcant api` từ chối route xoá
+cùng route xác nhận bằng `403 PERSON_ONLY`; app intent do agent yêu cầu cũng không được xoá.
 
 Signal là cách mọi thứ bên ngoài hội thoại báo cho node biết một việc vừa xảy ra: một lần chạy CI, một script, một
 dịch vụ của riêng bạn. Signal được ghi lại trước khi đối chiếu bất cứ thứ gì, rồi mới đối chiếu với những yêu cầu lâu

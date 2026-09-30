@@ -15,6 +15,7 @@ import {
   type ReferenceBlock,
   COMPOSER_SURFACE_HEADER,
   capabilityRefSchema,
+  conversationDeleteRequestSchema,
   commandEnvelopeSchema,
   graphSemanticState,
   nowInstant,
@@ -67,7 +68,8 @@ import {
   touchWidgetSemantic,
 } from "@clarkcant/storage";
 
-import { type AppIntentDeps, decideAppIntent, mintConfirmation } from "../app-intents.ts";
+import { type AppIntentDeps, decideAppIntent, mintConfirmation, preferredAppIntentLocale } from "../app-intents.ts";
+import { deleteConversation } from "../application/conversation-delete.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
 import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../application/stop-turn.ts";
@@ -862,7 +864,7 @@ export function appendHostReply(
  * keeps the next route from being the one that forgot to record the audit event.
  */
 function typedAppIntent(
-  services: Pick<NodeServices, "runtime" | "conductor">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "turnControl">,
   conversationId: string,
   text: string,
   at: () => string,
@@ -873,6 +875,7 @@ function typedAppIntent(
     now: () => at() as never,
     newId: services.conductor.newId,
     // Read only for a sentence about the look, so an ordinary message does not read the package directory.
+    runningConversations: () => services.turnControl?.running() ?? [],
     themes: () => readThemeRegistry(themeRegistryDeps(services)),
   };
   const principalId = services.runtime.identity.ownerPrincipalId;
@@ -942,6 +945,29 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
   if (conversationId === undefined) {
     return fail(400, "INVALID_SCHEMA", "a conversation route must name a conversation");
   }
+  if (segments.length === 3 && segments[2] === "delete" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const body = conversationDeleteRequestSchema.safeParse(parsed.value);
+    if (!body.success) return fail(400, "INVALID_SCHEMA", "conversation deletion accepts only a scoped deletion permit");
+    const intentDeps = {
+      db: runtime.db,
+      nodeId: runtime.identity.nodeId,
+      now: () => at() as Instant,
+      newId: services.conductor.newId,
+      runningConversations: () => services.turnControl?.running() ?? [],
+    };
+    const principalId = runtime.identity.ownerPrincipalId;
+    const result = deleteConversation({...intentDeps, principalId, dataDir: runtime.dataDir}, {
+      conversationId,
+      ...(body.data.deletionPermit === undefined ? {} : {deletionPermit: body.data.deletionPermit}),
+      locale: preferredAppIntentLocale(intentDeps, principalId),
+      mint: (intent) => mintConfirmation(intentDeps, {principalId, intent, source: "click"}),
+    });
+    const status = result.deleted ? 200 : result.decision.kind === "needs-confirmation" ? 202 : 409;
+    return json(status, result);
+  }
+
   const conversation = getConversation(runtime.db, conversationId);
   if (!conversation) {
     return fail(404, "RESOURCE_NOT_FOUND", `conversation ${conversationId} does not exist`);

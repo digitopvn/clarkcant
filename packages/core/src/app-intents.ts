@@ -320,6 +320,10 @@ const PHRASES: readonly {
   // and a noun would make those command-shaped and then refused. Said on its own, it means this conversation's turn.
   // Never the bare word: without tone marks "dừng" is also "đúng", the most common one-word answer there is.
   { phrase: "dung lai", kind: "turn.stop", wholeSentence: true },
+  { phrase: "xoa hoi thoai nay", kind: "conversation.delete", wholeSentence: true },
+  { phrase: "xoa cuoc tro chuyen nay", kind: "conversation.delete", wholeSentence: true },
+  { phrase: "delete this conversation", kind: "conversation.delete", wholeSentence: true },
+  { phrase: "delete the conversation", kind: "conversation.delete", wholeSentence: true },
   { phrase: "ngung lai", kind: "turn.stop", wholeSentence: true },
   { phrase: "dung tra loi", kind: "turn.stop", wholeSentence: true },
   { phrase: "dung viet", kind: "turn.stop", wholeSentence: true },
