@@ -1133,16 +1133,23 @@ Dùng segmented controls, toggles và swatches:
   quét, hạt, giấy) và một lớp hoàn thiện bề mặt (kính, phát sáng nhẹ, giấy, hạt). Theme chọn từng thứ bằng tên hoặc số
   có giới hạn; host tự viết mọi giá trị, nên không theme nào đưa vào được selector hay quy tắc CSS. Những thứ luôn là
   của host dù theme nói gì: vòng tiêu điểm (luôn là màu tiêu điểm, không bao giờ theo recipe), điều khiển bị vô hiệu,
-  các thẻ của chính host (thẻ phê duyệt, thông tin đăng nhập, kết nối vẫn giữ đường viền khi thẻ widget được vẽ phẳng),
-  và giảm chuyển động (mọi thời lượng bằng không, ánh sáng theo con trỏ trên nền tắt, Orb đứng yên). Một bài kiểm tra
-  thứ hai từ chối theme làm một trạng thái được bảo vệ khó phân biệt — nguy hiểm với cảnh báo hoặc thành công, một trạng
-  thái với chữ, tiêu điểm với các đường viền khác, bị vô hiệu với bình thường, đường viền với thẻ hoặc nền trang, chữ
-  trên bề mặt có hiệu ứng — và liệt kê những gì nó che, mỗi mục kiểm tra một dòng, như bài kiểm tra tương phản. Trạng
-  thái không bao giờ chỉ được thể hiện bằng màu: recipe hay hiệu ứng chỉ đổi bề mặt và đường viền, không bao giờ đổi biểu
-  tượng hay chữ đi kèm một trạng thái.
-- Orb mặc định của theme: theme có thể gợi ý một trong các preset Orb có sẵn, kèm màu riêng. Gợi ý chỉ áp dụng khi
-  người dùng chưa từng chọn Orb; khi họ đã chọn, kể cả Orb của chính Clark, lựa chọn của họ thắng, và giảm chuyển động
-  thắng cả hai.
+  các thẻ của chính host (thẻ phê duyệt, thông tin đăng nhập, kết nối vẫn giữ đường viền và bề mặt thẻ trơn — không
+  kính, không vân, không phát sáng, không bóng — dù thẻ widget được vẽ khác đi), và giảm chuyển động (mọi thời lượng
+  bằng không, ánh sáng theo con trỏ trên nền tắt, Orb đứng yên), dù yêu cầu đến từ hệ điều hành hay từ lựa chọn Giảm
+  trong Cài đặt → Trải nghiệm → Chuyển động. Kính phủ thẻ widget và ô soạn tin bằng một lớp màu mờ đục, nên Orb nằm sau
+  ô soạn tin không bao giờ lộ ra; chỉ hộp thoại là trong suốt và làm mờ nền, mỗi lúc một hộp. Ánh sáng theo con trỏ
+  trên nền chỉ mạnh bằng lớp nền của theme, không bao giờ hơn. Một bài kiểm tra thứ hai từ chối theme làm một trạng thái
+  được bảo vệ khó phân biệt — nguy hiểm với cảnh báo hoặc thành công, một trạng thái với chữ, tiêu điểm với các đường
+  viền khác, bị vô hiệu với bình thường, đường viền với thẻ hoặc nền trang, mọi chữ, màu trạng thái, màu nhấn hay vòng
+  tiêu điểm trên bề mặt có hiệu ứng hoặc trên nền trang dưới lớp nền và ánh sáng theo con trỏ (hộp thoại được đo trên
+  nền trang sáng nhất và tối nhất mà lớp phủ của nó có thể che), và một Orb có ánh sáng chìm vào nền trang — và liệt kê
+  những gì nó che, mỗi mục kiểm tra một dòng, như bài kiểm tra tương phản. Trạng thái không bao giờ chỉ được thể hiện
+  bằng màu: recipe hay hiệu ứng chỉ đổi bề mặt và đường viền, không bao giờ đổi biểu tượng hay chữ đi kèm một trạng
+  thái.
+- Orb mặc định của theme: theme có thể gợi ý một trong các preset Orb có sẵn, kèm màu riêng trên mọi kênh trừ màu nền
+  trang mà Orb nằm trên, vì trang luôn tự cung cấp màu đó. Gợi ý chỉ áp dụng khi người dùng chưa từng chọn Orb; khi họ
+  đã chọn, kể cả Orb của chính Clark, lựa chọn của họ thắng, và giảm chuyển động thắng cả hai. Một bảng màu đủ tối để
+  biến mất vào nền trang tối bị bài kiểm tra ở trên từ chối.
 - Đổi diện mạo bằng một câu: "đổi giao diện sang Neo", "chuyển giao diện sang tối", "đặt lại giao diện", "mở danh sách
   giao diện" (và các câu tiếng Anh tương ứng), gõ hay nói, cùng `control_app` của agent, đều đi đến đúng lệnh ghi
   preference và đúng lệnh đổi chế độ màu mà các điều khiển ở trên dùng. Một câu chỉ gọi được theme mà node này vẽ được;

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { type AppearanceFallbackCode, type AppearanceResponse, BUILTIN_CLARK_THEME_REF } from "@clarkcant/contracts";
 
 import { GatewayError } from "../src/api.ts";
-import { chooseThemeShown, resetAppearanceShown, type ThemeSelection } from "../src/appearance-actions.ts";
+import { appearanceFallbackKey, chooseThemeShown, resetAppearanceShown, type ThemeSelection } from "../src/appearance-actions.ts";
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 import type { AppearanceRead } from "../src/use-appearance.ts";
 
@@ -73,6 +73,32 @@ describe("choosing a theme", () => {
     const message = await refusal(chooseThemeShown(NEO, "Neo", actions));
     expect(message).toContain("the node is restarting");
     expect(message).not.toContain("NODE_BUSY");
+  });
+
+  it("says a theme the node would not store in the reader's language, not in the node's English", async () => {
+    for (const code of ["THEME_NOT_INSTALLED", "THEME_INVALID", "THEME_UNAVAILABLE", "THEME_UNKNOWN"]) {
+      const english = `that theme cannot be drawn here, so it was not chosen: no installed package provides ${NEO}`;
+      const actions = selection({ t: vn, write: vi.fn(async () => Promise.reject(new GatewayError(409, code, english))) });
+      const message = await refusal(chooseThemeShown(NEO, "Neo", actions));
+      expect(message, code).toContain("Neo");
+      expect(message, code).not.toContain("cannot be drawn");
+      expect(message, code).not.toContain(NEO);
+      expect(message, code).not.toContain(code);
+      expect(message, code).not.toContain("{");
+    }
+  });
+
+  it("says a fallback this build does not know in a generic sentence, not a missing message", async () => {
+    // A newer node's code, which this page's contract does not list.
+    const unknown: AppearanceRead = {
+      appearance: { ...drawn(BUILTIN_CLARK_THEME_REF).appearance, fallback: { code: "THEME_FROM_THE_FUTURE" as AppearanceFallbackCode, message: "for logs" } },
+      localProblem: undefined,
+    };
+    const message = await refusal(chooseThemeShown(NEO, "Neo", selection({ t: vn, refresh: vi.fn(async () => unknown) })));
+    expect(message).toContain(MESSAGES_VI["settings.experience.themePicker.fallback.other"]);
+    expect(appearanceFallbackKey("THEME_FROM_THE_FUTURE")).toBe("settings.experience.themePicker.fallback.other");
+    expect(appearanceFallbackKey("toString")).toBe("settings.experience.themePicker.fallback.other");
+    expect(appearanceFallbackKey("THEME_PROTECTED")).toBe("settings.experience.themePicker.fallback.protected");
   });
 
   it("says a theme that was stored but could not be redrawn is stored, not shown", async () => {

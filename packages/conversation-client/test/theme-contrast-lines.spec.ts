@@ -87,6 +87,14 @@ describe("a theme's hidden protected states, in the reader's language", () => {
     for (const line of enLines) expect(line).not.toMatch(/ trên |cần/);
   });
 
+  it("names the Orb as itself when a theme's Orb palette vanishes into the page", () => {
+    const failure = { scheme: "dark", check: "orb-visible", first: "orb", second: "canvas", value: 0, minimum: 15 } as const;
+    expect(protectedLines([failure], vi, "vi")).toEqual(["Orb chìm vào nền trang: ánh sáng của Orb và nền trang (tối) cách nhau 0,00, cần ít nhất 15"]);
+    expect(protectedLines([failure], en, "en")).toEqual([
+      "The Orb disappears into the page: the Orb's light and the page (dark) are 0.00 apart, need at least 15",
+    ]);
+  });
+
   it("gives every protected check a sentence of its own", () => {
     for (const check of PROTECTED_CHECKS) {
       const failure = { scheme: "dark", check, first: "danger", second: "warning", value: 3.2, minimum: 6 } as const;

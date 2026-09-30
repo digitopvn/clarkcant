@@ -5,7 +5,7 @@
   },
   "id": "depth",
   "displayName": "Depth",
-  "description": "Raised buttons, framed composer, scanlines behind and paper on every card.",
+  "description": "Raised buttons, framed composer, a faint grid behind and paper on every card.",
   "colors": {
     "dark": {
       "accent": "#7DB4F0"
@@ -46,9 +46,9 @@
   },
   "effects": {
     "backdrop": {
-      "kind": "scanlines",
-      "intensity": 0.6,
-      "scale": 12
+      "kind": "hard-grid",
+      "intensity": 0.3,
+      "scale": 24
     },
     "surface": {
       "kind": "paper",

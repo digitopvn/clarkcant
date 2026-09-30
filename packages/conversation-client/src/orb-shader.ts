@@ -26,6 +26,8 @@
  * and never what the orb is.
  */
 
+import { ORB_BASE_PALETTE } from "@clarkcant/design-tokens";
+
 export const ORB_VERTEX_SHADER = `
 attribute vec2 a_position;
 varying vec2 v_uv;
@@ -368,21 +370,11 @@ void main() {
  * The palette the reference URL specified, as linear-ish RGB triples.
  *
  * Kept as data so a test can check the shader's uniforms against what the design asked for, and
- * so nothing has to be re-derived from the URL by hand.
+ * so nothing has to be re-derived from the URL by hand. It lives in the design tokens, beside each
+ * preset's palette, because the theme audit measures the light these colours add to the page: one
+ * copy, so the audit measures the Orb that is drawn.
  */
-export const ORB_PALETTE = {
-  canvas: [0.012, 0.016, 0.035],
-  glowColor: [0.584, 0.424, 1.0],
-  highlight: [1.0, 1.0, 1.0],
-  shellInner: [1.0, 1.0, 1.0],
-  shellMid: [0.608, 0.957, 1.0],
-  shellEdge: [0.773, 0.663, 1.0],
-  sheenColor: [0.918, 0.957, 1.0],
-  colorA: [1.0, 0.847, 0.42],
-  colorB: [0.51, 0.957, 1.0],
-  colorC: [1.0, 0.482, 1.0],
-  colorD: [0.557, 0.424, 1.0],
-} as const;
+export const ORB_PALETTE = ORB_BASE_PALETTE;
 
 export const ORB_SHAPE = {
   radius: 0.72,

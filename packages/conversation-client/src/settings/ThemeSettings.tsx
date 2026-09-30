@@ -12,7 +12,7 @@ import {
 } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
-import { APPEARANCE_FALLBACK_KEYS } from "../appearance-actions.ts";
+import { appearanceFallbackKey } from "../appearance-actions.ts";
 import { useLocale, useT } from "../i18n/locale-context.tsx";
 import type { LocaleChoice } from "../i18n/locale.ts";
 import type { MessageKey } from "../i18n/messages.ts";
@@ -284,7 +284,7 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
 
       {fallback === null ? null : (
         <div className="cc-theme-notice" role="status" data-theme-fallback={fallback.code}>
-          <p>{t(APPEARANCE_FALLBACK_KEYS[fallback.code])}</p>
+          <p>{t(appearanceFallbackKey(fallback.code))}</p>
           <details>
             <summary>{t("settings.experience.themePicker.details")}</summary>
             <FallbackDetail fallback={fallback} selectedRef={appearance.appearance?.selectedRef ?? selectedRef} t={t} locale={locale} />

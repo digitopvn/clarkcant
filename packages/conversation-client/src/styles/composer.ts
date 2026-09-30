@@ -195,11 +195,10 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
    */
   align-items: center;
   gap: var(--cc-space-sm);
+  /* Opaque under every effect: the Orb sits behind the composer, and typed text is never drawn over it. */
   background: var(--cc-surface-fill, var(--cc-card));
   background-image: var(--cc-surface-image, none);
   background-size: var(--cc-surface-size, auto);
-  -webkit-backdrop-filter: var(--cc-surface-filter, none);
-  backdrop-filter: var(--cc-surface-filter, none);
   border: var(--cc-composer-line, var(--cc-line, 1px solid)) var(--cc-composer-edge, var(--cc-border));
   border-radius: var(--cc-composer-radius, var(--cc-radius-pill));
   /* A heavier padding than the composer's own inline spacing, because a pill that floats needs a

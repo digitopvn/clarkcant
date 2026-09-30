@@ -27,7 +27,9 @@ import { resolveOrbProfile, type ResolvedOrbProfile } from "./orb-profile.ts";
  *   - **`refresh` answers with what is now drawn, or fails.** A caller that says "the orb is now Plasma" has to be
  *     able to know that it is; a read that failed keeps the previous profile and rejects, so the caller can say so.
  *   - **Reduced motion is read from both places, live.** The platform's setting and the stored preference are each
- *     enough on their own, and the platform's is followed as it is switched on and off again.
+ *     enough on their own, and the platform's is followed as it is switched on and off again. The stored one also
+ *     marks the page (see `markReducedMotion`), so it stills the theme's durations and the pointer light too, not
+ *     only the Orb.
  */
 
 export interface OrbProfileHandle {
@@ -56,6 +58,19 @@ function resolveStored(stored: StoredOrb, theme: ThemeOrb | undefined, platformR
     theme,
     reducedMotion: stored.motion === "reduced" || platformReducedMotion,
   });
+}
+
+/**
+ * Mark the page with the person's own Reduced motion setting, so it stops what the operating system's setting stops.
+ *
+ * The body rather than the root element: a theme's scheme block sits on `:root[data-cc-theme]`, which outranks a
+ * bare attribute rule on the same element, so a mark on the root would leave the theme's durations in force. On the
+ * body the token sheet's `[data-cc-reduced-motion="true"]` block declares the reduced durations for everything
+ * inside it, whatever the root inherits from the theme, and the page's own reduced-motion rules match the same mark.
+ */
+export function markReducedMotion(target: HTMLElement, reduced: boolean): void {
+  if (reduced) target.dataset.ccReducedMotion = "true";
+  else delete target.dataset.ccReducedMotion;
 }
 
 export function useOrbProfile(client: GatewayClient): OrbProfileHandle {
@@ -95,6 +110,13 @@ export function useOrbProfile(client: GatewayClient): OrbProfileHandle {
     () => (stored === undefined ? undefined : resolveStored(stored, themeOrb, platformReducedMotion)),
     [stored, themeOrb, platformReducedMotion],
   );
+
+  const settingReduced = stored?.motion === "reduced";
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    markReducedMotion(document.body, settingReduced);
+    return () => markReducedMotion(document.body, false);
+  }, [settingReduced]);
 
   const refresh = useCallback(async (): Promise<ResolvedOrbProfile> => {
     const next = await read();

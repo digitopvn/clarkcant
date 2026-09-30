@@ -421,11 +421,14 @@ export const themeOrbSchema = z.strictObject({
   /** The Orb this theme is drawn with when the person has not chosen one. The person's own choice always wins. */
   profile: z.enum(THEME_ORB_PROFILE_NAMES),
   /**
-   * Colours laid over that profile's own, in the same closed channels and 0–1 linear-RGB bounds the Orb preference
-   * accepts: a colour per named channel, never shader code. Dropped with the rest of the suggestion once the person
-   * chooses an Orb.
+   * Colours laid over that profile's own, in the same closed channels and 0–1 bounds the Orb preference accepts: a
+   * colour per named channel, never shader code. Dropped with the rest of the suggestion once the person chooses an Orb.
+   *
+   * Every channel but `canvas`, which is the page the Orb sits on: the page supplies it, and a theme that could set it
+   * could paint the Orb in the page's own colour. The protected audit also measures the light the palette adds, so a
+   * palette dark enough to vanish into the page is refused (`orb-visible`).
    */
-  palette: orbPalettePreferenceSchema.optional(),
+  palette: orbPalettePreferenceSchema.omit({ canvas: true }).optional(),
 });
 export type ThemeOrb = z.infer<typeof themeOrbSchema>;
 
@@ -651,7 +654,10 @@ export interface ThemeContrastFailureView {
  *   - `disabled-distinct`: the disabled tier is told apart from enabled text;
  *   - `edge-visible`: the edge the host's own cards — approval, credential, connection — are drawn with is seen
  *     against the card and the page;
- *   - `surface-readable`: text stays readable on a surface an effect finished (glass, paper, grain).
+ *   - `surface-readable`: text, the accent, the status colours and the focus ring stay readable on a surface an effect
+ *     finished (the page under a backdrop and its pointer light; a card, the composer or the modal under glass, soft
+ *     glow, paper or grain), held to the contrast audit's own minimums;
+ *   - `orb-visible`: the Orb the theme draws by default adds light the eye can see against the page.
  *
  * Colour is never the only signal for any of these — every state also has a glyph, a word, an underline or a shape the
  * host draws — and these checks keep the colour a real second signal rather than a claim.
@@ -663,6 +669,7 @@ export const PROTECTED_CHECKS = [
   "disabled-distinct",
   "edge-visible",
   "surface-readable",
+  "orb-visible",
 ] as const;
 export type ProtectedCheck = (typeof PROTECTED_CHECKS)[number];
 
@@ -670,7 +677,8 @@ export type ProtectedCheck = (typeof PROTECTED_CHECKS)[number];
 export interface ThemeProtectedFailureView {
   scheme: ResolvedColorScheme;
   check: ProtectedCheck;
-  first: ColorTokenName;
+  /** A colour token, or `orb` for `orb-visible`, which measures the Orb's light rather than a token. */
+  first: ColorTokenName | "orb";
   second: ColorTokenName;
   /**
    * What the pair measures, rounded to two decimals: a perceptual distance (OKLab ΔE × 100) for every check but

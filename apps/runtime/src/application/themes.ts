@@ -152,6 +152,12 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
       // A theme is held to the contrast Clark Default is held to, and may not blur Stop, approval, focus, status or
       // disabled state. One that fails is named rather than offered: drawing it would make the conversation hard to
       // read, or a protected state hard to see, which is not a look anybody chose.
+      //
+      // Audited on every registry read, which includes every theme write, rather than cached: both audits are pure
+      // arithmetic over a few dozen colours (well under a millisecond a theme), and the registry read around them
+      // re-reads each package's files from disk, which costs far more. A cache keyed by package digest would save the
+      // cheap half and add a second answer that could go stale when the audit itself changes with an upgrade. Worth
+      // revisiting if a caller starts writing themes in a loop (the Theme Lab, #300), and then for the file reads first.
       const audit = themeDrawProblem(theme.document);
       if (audit !== undefined) {
         const problem: ThemeDrawProblem = { ...audit, message: `theme ${theme.facetId}: ${audit.message}` };

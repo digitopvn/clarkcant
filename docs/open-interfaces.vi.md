@@ -298,12 +298,15 @@ mà node này không đọc được tệp. Theme có màu không qua được b
 các cặp màu không đạt, và không được liệt kê để chọn. Mỗi cặp là `{ scheme, foreground, background, ratio, minimum }`:
 chế độ màu, tên hai token màu, tỉ lệ đo được làm tròn hai chữ số thập phân và tỉ lệ cần đạt. Theme đọc được nhưng làm
 một trạng thái được bảo vệ khó phân biệt (nguy hiểm với cảnh báo hoặc thành công, một trạng thái với chữ thường, vòng
-tiêu điểm với các đường viền khác, chữ bị vô hiệu với chữ bình thường, đường viền với thẻ hoặc nền trang, hay chữ trên
-thẻ có hiệu ứng bề mặt) cũng là một `problems` theo cùng cách, nhưng kèm danh sách `protected`: mỗi mục là
-`{ scheme, check, first, second, value, minimum }`, trong đó `check` là một trong `status-distinct`, `status-vs-text`,
-`focus-vs-border`, `disabled-distinct`, `edge-visible` hoặc `surface-readable`, còn `value` là khoảng cách cảm nhận
-(OKLab ΔE × 100), hoặc tỉ lệ tương phản với `surface-readable`. Các trường `message` là tiếng Anh, dành cho log; client
-diễn đạt lỗi cho người đọc từ `code`, `contrast` và `protected`. `GET /appearance` trả về thứ trang
+tiêu điểm với các đường viền khác, chữ bị vô hiệu với chữ bình thường, đường viền với thẻ hoặc nền trang, chữ, màu
+trạng thái, màu nhấn hay vòng tiêu điểm trên bề mặt có hiệu ứng hoặc trên nền trang dưới lớp nền và ánh sáng theo con
+trỏ, hay một Orb mặc định có ánh sáng chìm vào nền trang) cũng là một `problems` theo cùng cách, nhưng kèm danh sách
+`protected`: mỗi mục là `{ scheme, check, first, second, value, minimum }`, trong đó `check` là một trong
+`status-distinct`, `status-vs-text`, `focus-vs-border`, `disabled-distinct`, `edge-visible`, `surface-readable` hoặc
+`orb-visible`, còn `value` là khoảng cách cảm nhận (OKLab ΔE × 100), hoặc tỉ lệ tương phản với `surface-readable`.
+`first` là tên một token màu, hoặc `"orb"` với `orb-visible`, mục đo ánh sáng sáng nhất mà Orb của theme thêm vào so
+với `canvas`. Các trường `message` là tiếng Anh, dành cho log; client diễn đạt lỗi cho người đọc từ `code`, `contrast`
+và `protected`, và diễn đạt một `code` nó không biết bằng một câu chung. `GET /appearance` trả về thứ trang
 cần vẽ: `selectedRef` (preference `experience.themeRef`, được chọn bằng `PUT /preferences/experience.themeRef`
 `{ "value": "<themeRef>" }`), `appliedRef`, tài liệu `theme` đã kiểm tra (`null` với Clark Default), `provider` của
 nó, và `fallback` `{ code, message, contrast?, protected? }` khi lựa chọn không vẽ được — `THEME_NOT_INSTALLED`,

@@ -28,7 +28,7 @@
     },
     "surface": {
       "kind": "glass",
-      "intensity": 1
+      "intensity": 0.3
     }
   }
 }

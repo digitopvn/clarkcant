@@ -174,8 +174,86 @@ describe("the look a theme's identity reaches", () => {
     expect(protectedRules.length).toBeGreaterThan(20);
     expect(protectedRules.filter(({ selector }) => selector.includes("provenance")).length).toBeGreaterThan(5);
     for (const { selector, body } of protectedRules) {
-      for (const name of styling) expect(body, `${selector} reads ${name}`).not.toContain(name);
+      // Reading a variable is what lets a theme in; a host rule may reset one to Clark's own value.
+      for (const name of styling) expect(body, `${selector} reads ${name}`).not.toContain(`var(${name}`);
     }
+  });
+
+  it("draws the host's own cards with no theme surface, texture, blur or shadow", () => {
+    /*
+     * A host card is drawn by every rule for `.cc-card` and then by its own; the generic rule is where a theme's surface
+     * reaches a card, so the two are resolved together, the host's variable resets substituted in, and what is left is
+     * what the host card actually reads.
+     */
+    const declarations = (body: string): [string, string][] =>
+      body
+        .split(";")
+        .map((line) => line.trim())
+        .filter((line) => line.includes(":"))
+        .map((line) => [line.slice(0, line.indexOf(":")).trim(), line.slice(line.indexOf(":") + 1).trim()]);
+    const matching = (target: string) =>
+      rules(APP_CSS).filter(({ selector }) => selector.split(",").map((part) => part.trim()).includes(target));
+    const generic = matching(".cc-card");
+    const own = matching('.cc-card[data-owner="host"]');
+    expect(generic.length).toBeGreaterThan(0);
+    expect(own.length).toBeGreaterThan(0);
+    const effective = new Map<string, string>([...generic, ...own].flatMap(({ body }) => declarations(body)));
+    // `var()` references, with nesting, replaced by the value the host card sets for them.
+    const resolve = (value: string, depth = 0): string => {
+      let out = "";
+      let at = 0;
+      while (at < value.length) {
+        const start = value.indexOf("var(", at);
+        if (start < 0) return out + value.slice(at);
+        out += value.slice(at, start);
+        let end = start + 3;
+        for (let open = 0; end < value.length; end += 1) {
+          if (value[end] === "(") open += 1;
+          else if (value[end] === ")" && (open -= 1) === 0) break;
+        }
+        const inner = value.slice(start + 4, end);
+        const comma = inner.indexOf(",");
+        const name = (comma < 0 ? inner : inner.slice(0, comma)).trim();
+        const reset = effective.get(name);
+        if (reset !== undefined && depth < 4) out += resolve(reset, depth + 1);
+        else out += comma < 0 ? `var(${name})` : `var(${name}, ${resolve(inner.slice(comma + 1).trim(), depth + 1)})`;
+        at = end + 1;
+      }
+      return out;
+    };
+    const theme = /var\(--cc-(?:surface|card-shadow|card-edge|modal|backdrop)[a-z0-9-]*/;
+    for (const [property, value] of effective) {
+      if (property.startsWith("--")) continue;
+      expect(resolve(value), `${property} on a host card`).not.toMatch(theme);
+      expect(property, "a host card is never blurred").not.toMatch(/backdrop-filter/);
+    }
+    expect(resolve(effective.get("background") ?? "")).toBe("var(--cc-card)");
+    expect(resolve(effective.get("background-image") ?? "")).toBe("none");
+    expect(resolve(effective.get("box-shadow") ?? "")).toBe("none");
+  });
+
+  it("blurs only the modal under glass, never a card or the composer", () => {
+    const blurred = rules(APP_CSS).filter(({ body }) => /(?:^|[;\s])backdrop-filter\s*:/.test(body));
+    // The modal is one element on screen at a time; a blur per transcript card would grow with the conversation.
+    expect(blurred.map(({ selector }) => selector)).toEqual([".cc-modal"]);
+  });
+
+  it("draws the backdrop and its pointer light at the strengths the protected audit measures", () => {
+    // The audit composites text over the pattern at `--cc-backdrop-alpha` and the lit accent at `--cc-backdrop-lit`.
+    const body = (target: string) => rules(APP_CSS).find(({ selector }) => selector === target)?.body ?? "";
+    expect(body(".cc-dot-grid")).toMatch(/--cc-grid-dot:\s*color-mix\(in srgb, var\(--cc-text-tertiary\) var\(--cc-backdrop-alpha, 14%\), transparent\)/);
+    expect(body(".cc-dot-grid::after")).toMatch(/--cc-grid-dot:\s*color-mix\(in srgb, var\(--cc-accent\) var\(--cc-backdrop-lit, 55%\), transparent\)/);
+  });
+
+  it("stops the theme's motion and the pointer light under the person's own Reduced setting, as under the system's", () => {
+    const scoped = rules(APP_CSS).filter(({ selector }) => selector.startsWith('[data-cc-reduced-motion="true"]'));
+    const system = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/.exec(APP_CSS.replace(/\/\*[\s\S]*?\*\//g, ""));
+    expect(system).not.toBeNull();
+    // Every rule the system setting applies has its twin under the person's setting.
+    for (const { selector } of rules(system?.[1] ?? "")) {
+      expect(scoped.map((rule) => rule.selector), selector).toContain(`[data-cc-reduced-motion="true"] ${selector}`);
+    }
+    expect(scoped.find(({ selector }) => selector.endsWith(".cc-dot-grid::after"))?.body).toMatch(/display:\s*none/);
   });
 
   it("draws every focus ring in the protected focus colour", () => {

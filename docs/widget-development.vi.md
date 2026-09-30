@@ -174,8 +174,10 @@ hoặc `accent`), `motion` (`speed` từ 0,5 đến 2, `easing` là `standard`, 
 `quiet`/`filled`/`outlined`/`underlined`, `modal` `floating`/`framed`, `badge` `pill`/`rounded`/`square`, `composer`
 `floating`/`integrated`/`framed`), `effects` (`backdrop.kind` là `dot-grid`, `hard-grid`, `scanlines`, `grain` hoặc
 `paper` với `intensity` từ 0 đến 1 và `scale` từ 8 đến 48 px; `surface.kind` là `glass`, `soft-glow`, `paper` hoặc
-`grain` với `intensity` từ 0 đến 1) và `orb` (`profile` là một trong các kiểu Orb có sẵn, kèm `palette` tuỳ chọn gồm
-các bộ ba màu từ 0 đến 1; nó chỉ có tác dụng khi người dùng chưa từng tự chọn Orb). Các giới hạn là các hằng số trong
+`grain` với `intensity` từ 0 đến 1; kính phủ thẻ widget và ô soạn tin bằng lớp màu mờ đục và chỉ trong suốt, làm mờ
+nền trên hộp thoại, còn ánh sáng theo con trỏ trên nền chỉ mạnh bằng lớp nền) và `orb` (`profile` là một trong các
+kiểu Orb có sẵn, kèm `palette` tuỳ chọn gồm các bộ ba màu từ 0 đến 1 cho mọi kênh của Orb trừ `canvas`, kênh do trang
+cung cấp; nó chỉ có tác dụng khi người dùng chưa từng tự chọn Orb). Các giới hạn là các hằng số trong
 `packages/contracts/src/themes.ts`. Tài liệu dùng bất kỳ trường nào trong số này mà `appearanceApi.min` là 1 sẽ bị từ
 chối, vì bản dựng chỉ biết phiên bản 1 không vẽ được nó. Ngoài ra không có gì khác: không CSS, không selector, không tệp
 font, không ảnh. Node đọc nó từ các byte đã cài qua cùng cơ chế giới hạn như tệp của
@@ -184,10 +186,13 @@ kiểm tra sẽ được liệt kê kèm lý do, và các theme khác của gói
 phản mà Clark Default phải qua, ở cả hai chế độ màu (`requiredPairs` trong `packages/design-tokens/src/contrast.ts`),
 và bài kiểm tra trạng thái được bảo vệ (`packages/design-tokens/src/protected.ts`): màu nguy hiểm, cảnh báo, thành công
 và màu nhấn phải khác nhau, màu trạng thái phải khác màu chữ, vòng focus phải khác màu viền, chữ bị vô hiệu hoá phải
-khác chữ thường, viền phải thấy được trên thẻ và trên nền trang, và chữ phải đọc được trên bề mặt đã hoàn thiện. Theme
-không đạt một trong hai bài kiểm tra sẽ được liệt kê kèm những gì không đạt và không chọn được, nên hãy kiểm tra cả hai
-chế độ màu trước khi phát hành. Vòng focus, điều khiển bị vô hiệu hoá, các thẻ của chính host và chế độ giảm chuyển
-động luôn do host quyết định, dù theme nói gì. Theme được chọn bằng
+khác chữ thường, viền phải thấy được trên thẻ và trên nền trang, chữ, màu trạng thái, màu nhấn và vòng focus phải đọc
+được trên bề mặt có hiệu ứng và trên nền trang dưới lớp nền cùng ánh sáng theo con trỏ (hộp thoại được đo trên nền
+trang sáng nhất và tối nhất mà lớp phủ của nó có thể che, nên kính quá mạnh hay hoa văn dày được chiếu sáng sẽ bị từ
+chối), và ánh sáng của Orb phải thấy được trên nền trang. Theme không đạt một trong hai bài kiểm tra sẽ được liệt kê
+kèm những gì không đạt và không chọn được, nên hãy kiểm tra cả hai chế độ màu trước khi phát hành. Vòng focus, điều
+khiển bị vô hiệu hoá, các thẻ của chính host (đường viền và bề mặt trơn của chúng) và chế độ giảm chuyển động, dù đến
+từ hệ thống hay từ Cài đặt, luôn do host quyết định, dù theme nói gì. Theme được chọn bằng
 `package:<package id>#<theme id>`, và một gói chỉ có theme là một lần làm mới UI, không bao giờ khởi động lại Pi. Theme đã
 cài xuất hiện ở Cài đặt → Trải nghiệm → Chủ đề.
 **Node chạy service facet như thế nào.** Node chạy một container cho mỗi facet `tools` của mọi package generation

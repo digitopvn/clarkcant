@@ -295,11 +295,14 @@ list of the pairs that fail, and is not listed as selectable. Each pair is `{ sc
 minimum }`: the colour scheme, the two colour token names, the measured ratio rounded to two decimals and the ratio
 required. A readable theme that would make a protected state hard to tell apart (danger from warning or success, a
 status from body text, the focus ring from other edges, disabled text from enabled text, an edge from the card or the
-page, or text on a card finished with a surface effect) is a problem in the same way, with a `protected` list instead:
-each entry is `{ scheme, check, first, second, value, minimum }`, where `check` is one of `status-distinct`,
-`status-vs-text`, `focus-vs-border`, `disabled-distinct`, `edge-visible` or `surface-readable`, and `value` is a
-perceptual distance (OKLab ΔE × 100), or a contrast ratio for `surface-readable`. `message` fields are English, for
-logs; a client words a failure for its reader from `code`, `contrast` and `protected`.
+page, text, a status colour, the accent or the focus ring on a surface finished by an effect or on the page under the
+backdrop and its pointer light, or an Orb default whose light vanishes into the page) is a problem in the same way,
+with a `protected` list instead: each entry is `{ scheme, check, first, second, value, minimum }`, where `check` is one
+of `status-distinct`, `status-vs-text`, `focus-vs-border`, `disabled-distinct`, `edge-visible`, `surface-readable` or
+`orb-visible`, and `value` is a perceptual distance (OKLab ΔE × 100), or a contrast ratio for `surface-readable`.
+`first` is a colour token name, or `"orb"` for `orb-visible`, which measures the brightest light the theme's Orb adds
+against `canvas`. `message` fields are English, for logs; a client words a failure for its reader from `code`,
+`contrast` and `protected`, and words a `code` it does not know in a generic sentence.
 `GET /appearance` answers what the page should
 draw: `selectedRef` (the `experience.themeRef` preference, chosen with `PUT /preferences/experience.themeRef`
 `{ "value": "<themeRef>" }`), `appliedRef`, the validated `theme` document (`null` for Clark Default), its `provider`,

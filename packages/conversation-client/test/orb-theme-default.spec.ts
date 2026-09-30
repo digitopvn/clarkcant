@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { ORB_BASE_PALETTE, ORB_LIGHT_CHANNELS, themeOrbPalette } from "@clarkcant/design-tokens";
+
 import { orbProfileName, resolveOrbProfile } from "../src/orb-profile.ts";
+import { markReducedMotion } from "../src/use-orb-profile.ts";
 
 /**
  * A theme's Orb suggestion, and the order it loses in.
@@ -62,6 +65,23 @@ describe("the theme's Orb default", () => {
     expect(drawn.palette.colorA).toEqual(resolveOrbProfile({ profile: "calm" }).palette.colorA);
     expect(drawn.palette.colorB).toEqual(resolveOrbProfile({ profile: "calm" }).palette.colorB);
   });
+
+  it("never takes the page colour from a theme, so a theme cannot paint the Orb in the page's own colour", () => {
+    const drawn = resolveOrbProfile({ theme: { profile: "clark", palette: { canvas: [1, 1, 1], glowColor: [0, 0.5, 1] } } });
+    expect(drawn.palette.canvas).toEqual(resolveOrbProfile({}).palette.canvas);
+    expect(drawn.palette.glowColor).toEqual([0, 0.5, 1]);
+  });
+
+  it("draws each preset with the colours the protected audit measures", () => {
+    for (const profile of ["clark", "calm", "jelly", "glass", "pearl", "plasma"] as const) {
+      const drawn = resolveOrbProfile({ profile });
+      const measured = themeOrbPalette({ profile });
+      // A resolved palette names only the channels it changes; the rest are the shipped palette's.
+      for (const channel of ORB_LIGHT_CHANNELS) {
+        expect(drawn.palette[channel] ?? ORB_BASE_PALETTE[channel], `${profile} ${channel}`).toEqual(measured[channel]);
+      }
+    }
+  });
 });
 
 describe("reduced motion", () => {
@@ -78,5 +98,14 @@ describe("reduced motion", () => {
       expect(drawn.physics.pointerResponse).toBe(0);
       expect(drawn.palette).toEqual(resolveOrbProfile(input).palette);
     }
+  });
+
+  it("marks the page when the person chose Reduced, and clears the mark when they did not", () => {
+    // The mark is what the token sheet's and the page's reduced-motion rules match; see styles.spec for those rules.
+    const body = { dataset: {} as DOMStringMap } as HTMLElement;
+    markReducedMotion(body, true);
+    expect(body.dataset.ccReducedMotion).toBe("true");
+    markReducedMotion(body, false);
+    expect("ccReducedMotion" in body.dataset).toBe(false);
   });
 });

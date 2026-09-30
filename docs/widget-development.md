@@ -171,8 +171,10 @@ look, each by a name or a bounded number the host turns into CSS itself: `typogr
 `card` `flat`/`outlined`/`raised`, `input` `quiet`/`filled`/`outlined`/`underlined`, `modal` `floating`/`framed`, `badge`
 `pill`/`rounded`/`square`, `composer` `floating`/`integrated`/`framed`), `effects` (`backdrop.kind` `dot-grid`,
 `hard-grid`, `scanlines`, `grain` or `paper` with `intensity` 0–1 and `scale` 8–48 px; `surface.kind` `glass`,
-`soft-glow`, `paper` or `grain` with `intensity` 0–1) and `orb` (`profile`, one of the shipped Orb presets, and an
-optional `palette` of 0–1 colour triples; it applies only while the person has never chosen an Orb). The bounds are
+`soft-glow`, `paper` or `grain` with `intensity` 0–1; glass tints widget cards and the composer opaquely and is
+translucent and blurred only on the modal, and the backdrop's pointer light is as strong as the backdrop) and `orb`
+(`profile`, one of the shipped Orb presets, and an optional `palette` of 0–1 colour triples for every Orb channel but
+`canvas`, which the page supplies; it applies only while the person has never chosen an Orb). The bounds are
 the constants in `packages/contracts/src/themes.ts`. A document using any of these with `appearanceApi.min` 1 is
 refused, since a version 1 build could not draw it. Nothing else: no CSS, no selectors, no font files, no images. The node reads it from the installed bytes through the same containment as a widget's files, refuses
 one over 64 KiB, and validates it (`packages/core/src/installed-themes.ts`); a theme that fails is listed with its
@@ -180,9 +182,12 @@ reason, and the package's other themes still load. A valid theme is also held to
 held to, in both schemes (`requiredPairs` in `packages/design-tokens/src/contrast.ts`), and to the protected-state
 audit (`packages/design-tokens/src/protected.ts`): danger, warning, success and the accent must stay apart, a status
 apart from text, the focus ring apart from edges, disabled text apart from enabled text, an edge visible on its card
-and the page, and text readable on a finished surface. One that fails either audit is listed with what fails and
-cannot be chosen, so check both schemes before publishing. The focus ring, disabled controls, the host's own cards
-and reduced motion are the host's whatever a theme says. It is selected as `package:<package id>#<theme id>`, and a
+and the page, text, status colours, the accent and the focus ring readable on a surface an effect finishes and on the
+page under the backdrop and its pointer light (the modal over the brightest and darkest page its scrim can cover, so
+strong glass or a dense lit pattern is refused), and the Orb's light visible against the page. One that fails either
+audit is listed with what fails and cannot be chosen, so check both schemes before publishing. The focus ring,
+disabled controls, the host's own cards (their edge and plain surface) and reduced motion, from the system or from
+Settings, are the host's whatever a theme says. It is selected as `package:<package id>#<theme id>`, and a
 theme-only package is a UI refresh, never a Pi restart. Installed themes appear under Settings → Experience → Theme.
 **How the node runs a service facet.** The node runs one container for each `tools` facet of every active package
 generation, and stops it when the generation stops being active (`apps/runtime/src/service-host.ts`). A service is

@@ -35,17 +35,18 @@ export const CLARK_IDENTITY: AppearanceIdentity = {
   },
 };
 
+const MONO_STACKS: Readonly<Record<ThemeMonoProfile, string>> = {
+  // The stack every stylesheet falls back to beside `var(--cc-font-mono, …)`; one monospace stack everywhere.
+  clark: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  typewriter: `"Courier New", Courier, ui-monospace, monospace`,
+};
+
 const FONT_STACKS: Readonly<Record<ThemeFontProfile, string>> = {
   clark: `"Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif`,
   system: `system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif`,
   serif: `ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif`,
   rounded: `ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif`,
-  mono: `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`,
-};
-
-const MONO_STACKS: Readonly<Record<ThemeMonoProfile, string>> = {
-  clark: "ui-monospace, SFMono-Regular, Menlo, monospace",
-  typewriter: `"Courier New", Courier, ui-monospace, monospace`,
+  mono: MONO_STACKS.clark,
 };
 
 /** A font profile's stack, for a surface that sets a font outside CSS (the terminal's canvas). */
@@ -74,10 +75,12 @@ export const IDENTITY_VARIABLES = [
   "--cc-shadow-drawer",
   "--cc-backdrop-size",
   "--cc-backdrop-alpha",
+  "--cc-backdrop-lit",
   "--cc-surface-fill",
   "--cc-surface-image",
   "--cc-surface-size",
-  "--cc-surface-filter",
+  "--cc-modal-fill",
+  "--cc-modal-filter",
   "--cc-button-bg",
   "--cc-button-edge",
   "--cc-button-shadow",
@@ -136,11 +139,9 @@ export function backdropPattern(identity: AppearanceIdentity): { image: string; 
         size: `${px(scale)} ${px(scale)}`,
       };
     case "scanlines":
-      return { image: `linear-gradient(${dot} 1px, transparent 1px)`, size: `100% ${px(Math.max(2, Math.round(scale / 6)))}` };
+      return { image: `linear-gradient(${dot} 1px, transparent 1px)`, size: `100% ${px(scanlinePeriod(scale))}` };
     case "grain": {
-      const a = Math.max(3, Math.round(scale / 3));
-      const b = Math.max(5, Math.round(scale / 2));
-      const c = Math.max(7, Math.round((scale * 2) / 3));
+      const [a, b, c] = grainCells(scale);
       return {
         image:
           `radial-gradient(circle at 30% 40%, ${dot} 0.6px, transparent 1px), ` +
@@ -151,10 +152,70 @@ export function backdropPattern(identity: AppearanceIdentity): { image: string; 
     }
     case "paper":
       return {
-        image: `repeating-linear-gradient(135deg, ${dot} 0 1px, transparent 1px ${px(Math.max(4, Math.round(scale / 4)))})`,
+        image: `repeating-linear-gradient(135deg, ${dot} 0 1px, transparent 1px ${px(paperPeriod(scale))})`,
         size: "auto",
       };
   }
+}
+
+/** The distance between two scanlines, in px. */
+function scanlinePeriod(scale: number): number {
+  return Math.max(2, Math.round(scale / 6));
+}
+
+/** The distance between two paper fibres, in px. */
+function paperPeriod(scale: number): number {
+  return Math.max(4, Math.round(scale / 4));
+}
+
+/** The three cells grain repeats in, in px. */
+function grainCells(scale: number): [number, number, number] {
+  return [Math.max(3, Math.round(scale / 3)), Math.max(5, Math.round(scale / 2)), Math.max(7, Math.round((scale * 2) / 3))];
+}
+
+/** A dot's painted area in px²: solid to 1px and fading out by 1.6px, counted as solid to 1.3px. */
+const DOT_AREA = Math.PI * 1.3 * 1.3;
+/** The same for a grain speck (solid to about 0.6px, gone by 1px). */
+const SPECK_AREA = Math.PI * 0.8 * 0.8;
+
+/**
+ * The share of the page a backdrop pattern paints, from the same geometry `backdropPattern` draws.
+ *
+ * The protected audit measures text on the page against the page finished by the pattern. A glyph sits across many
+ * pattern cells, so what it is read against is the page's colour averaged over them: the pattern's colour at its alpha,
+ * weighted by the share of the page it covers. A sparse dot grid barely moves that average; dense scanlines move it a
+ * lot, which is the case this exists to catch.
+ */
+export function backdropCoverage(identity: AppearanceIdentity): number {
+  const { kind, scale } = identity.effects.backdrop;
+  switch (kind) {
+    case "none":
+      return 0;
+    case "dot-grid":
+      return Math.min(1, DOT_AREA / (scale * scale));
+    case "hard-grid":
+      return 1 - (1 - 1 / scale) ** 2;
+    case "scanlines":
+      return 1 / scanlinePeriod(scale);
+    case "grain":
+      return Math.min(1, grainCells(scale).reduce((sum, cell) => sum + SPECK_AREA / (cell * cell), 0));
+    case "paper":
+      // A 1px line at 135° crosses a horizontal row √2 px wide.
+      return Math.min(1, Math.SQRT2 / paperPeriod(scale));
+  }
+}
+
+/**
+ * The backdrop's two layers: the pattern everywhere, in the tertiary text colour at `alpha × intensity`, and the lit
+ * copy under the pointer, in the accent at `lit × intensity` up to `litMax`. Clark's own backdrop (intensity 0.5) draws
+ * 14% and 55%, the values it always had; a fainter backdrop has a fainter light, so a pattern a theme asked to keep
+ * quiet is never drawn as a bright hatch under the pointer.
+ */
+export const BACKDROP_STRENGTH = { alpha: 0.28, lit: 1.1, litMax: 0.55 } as const;
+
+/** The lit layer's alpha for an identity. */
+export function backdropLitAlpha(identity: AppearanceIdentity): number {
+  return Math.min(BACKDROP_STRENGTH.litMax, identity.effects.backdrop.intensity * BACKDROP_STRENGTH.lit);
 }
 
 /**
@@ -162,6 +223,11 @@ export function backdropPattern(identity: AppearanceIdentity): { image: string; 
  *
  * Shared by the declarations and by the protected audit, so the colour the audit measures text against is the colour
  * the stylesheet draws.
+ *
+ * Glass is drawn two ways. Cards and the composer take it as a frosted tint: the card mixed toward the page, opaque, so
+ * what is behind them never shows through — the composer sits over the Orb, and the host's own cards take no effect at
+ * all. The modal, one fixed surface over its scrim, is the one place glass is translucent and blurred; the audit
+ * measures it over the brightest and the darkest page the scrim can cover.
  */
 export const SURFACE_EFFECT_OVERLAY = {
   glass: { token: "canvas", alpha: 0.35 },
@@ -170,16 +236,27 @@ export const SURFACE_EFFECT_OVERLAY = {
   grain: { token: "text", alpha: 0.1 },
 } as const;
 
+/** The modal scrim: the code colour at this alpha over the page (`.cc-modal-scrim`). */
+export const MODAL_SCRIM_ALPHA = 0.78;
+
+/** The modal's glass blur at an intensity: bounded, and drawn on one element only. */
+export function modalGlassBlur(intensity: number): string {
+  return `blur(${px(4 + 8 * intensity)})`;
+}
+
 function surfaceDeclarations(identity: AppearanceIdentity): Partial<Record<IdentityVariable, string>> {
   const { kind, intensity } = identity.effects.surface;
   switch (kind) {
     case "none":
       return {};
-    case "glass":
+    case "glass": {
+      const kept = percent(1 - SURFACE_EFFECT_OVERLAY.glass.alpha * intensity);
       return {
-        "--cc-surface-fill": `color-mix(in oklab, var(--cc-card) ${percent(1 - SURFACE_EFFECT_OVERLAY.glass.alpha * intensity)}, transparent)`,
-        "--cc-surface-filter": `blur(${px(4 + 12 * intensity)}) saturate(1.2)`,
+        "--cc-surface-fill": `color-mix(in srgb, var(--cc-card) ${kept}, var(--cc-canvas))`,
+        "--cc-modal-fill": `color-mix(in srgb, var(--cc-elevated) ${kept}, transparent)`,
+        "--cc-modal-filter": modalGlassBlur(intensity),
       };
+    }
     case "soft-glow":
       return {
         "--cc-surface-image": `radial-gradient(120% 90% at 50% 0%, color-mix(in oklab, var(--cc-accent) ${percent(SURFACE_EFFECT_OVERLAY["soft-glow"].alpha * intensity)}, transparent), transparent 70%)`,
@@ -338,7 +415,8 @@ export function identityDeclarations(identity: AppearanceIdentity): IdentityDecl
     "--cc-radius-field": identity.fieldRadius,
     "--cc-icon-stroke": String(identity.iconStroke),
     ...shadowDeclarations(identity),
-    "--cc-backdrop-alpha": percent(identity.effects.backdrop.intensity * 0.28),
+    "--cc-backdrop-alpha": percent(identity.effects.backdrop.intensity * BACKDROP_STRENGTH.alpha),
+    "--cc-backdrop-lit": percent(backdropLitAlpha(identity)),
     "--cc-button-bg": "var(--cc-elevated)",
     "--cc-button-edge": "var(--cc-border)",
     "--cc-button-shadow": "none",

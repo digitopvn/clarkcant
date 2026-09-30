@@ -315,13 +315,13 @@
     "permissionsSummary": [],
     "riskTier": "declarative",
     "sizeBytes": 2048,
-    "digest": "sha256:0fc26c73d2a10e2d24fc037fbc278cae5d09e14c2280269b7040a6abe52f32f1"
+    "digest": "sha256:14dc35f5d507f28c9fa0c516274e0a61ba4e857fe35a987443621dd16a416b69"
   },
   {
     "packageId": "com.example.theme-hostile",
     "version": "1.0.0",
     "displayName": "Hostile themes",
-    "description": "Two themes that push against what Clark keeps visible: one as flat as the contract allows, one that camouflages status.",
+    "description": "Three themes that push against what Clark keeps visible: one as flat as the contract allows, one that camouflages status, one that blacks out the Orb.",
     "source": {
       "kind": "local",
       "path": "apps/web/e2e/fixtures/theme-hostile"
@@ -354,6 +354,6 @@
     "permissionsSummary": [],
     "riskTier": "declarative",
     "sizeBytes": 2048,
-    "digest": "sha256:488d748b65afd1859b0a2c5e893317166818508f4816e3ce7c404f2345371742"
+    "digest": "sha256:b0419222128148974e5160c6d7f34aeabeb9d0191b64d47c656f23131a96dbf1"
   }
 ]

@@ -47,9 +47,12 @@ describe("the browser suite's theme packages", () => {
     return checked.document;
   };
 
-  it("has a depth theme and a flat one that are drawn, and a camouflaged one the protected audit refuses", () => {
+  it("has a depth theme and a flat one that are drawn, and a camouflaged one and a blacked-out Orb the protected audit refuses", () => {
     expect(themeDrawProblem(theme("theme-depth/themes/depth.json"))).toBeUndefined();
     expect(themeDrawProblem(theme("theme-hostile/themes/flatline.json"))).toBeUndefined();
     expect(themeDrawProblem(theme("theme-hostile/themes/camouflage.json"))?.code).toBe("THEME_PROTECTED");
+    const blackout = themeDrawProblem(theme("theme-hostile/themes/blackout.json"));
+    expect(blackout?.code).toBe("THEME_PROTECTED");
+    if (blackout?.code === "THEME_PROTECTED") expect(blackout.protected.map((failure) => failure.check)).toEqual(["orb-visible"]);
   });
 });

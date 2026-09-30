@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import type { FitAddon } from "@xterm/addon-fit";
 import type { ITheme, Terminal } from "@xterm/xterm";
 
+import { monoFontStack } from "@clarkcant/design-tokens";
+
 import type { GatewayClient } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import { subscribeToDocumentTheme } from "./theme.ts";
@@ -53,8 +55,8 @@ function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
-/** The monospace stack Clark Default draws, used when the page has no `--cc-font-mono`. */
-const MONO_FALLBACK = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+/** The monospace stack Clark Default draws, used when the page has no `--cc-font-mono`: the one stack every surface uses. */
+const MONO_FALLBACK = monoFontStack("clark");
 
 /**
  * A colour at a third of its strength, for the selection.

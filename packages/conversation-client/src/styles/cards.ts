@@ -15,18 +15,24 @@ export const CARDS_CSS = `
   background: var(--cc-surface-fill, var(--cc-card));
   background-image: var(--cc-surface-image, none);
   background-size: var(--cc-surface-size, auto);
-  -webkit-backdrop-filter: var(--cc-surface-filter, none);
-  backdrop-filter: var(--cc-surface-filter, none);
   box-shadow: var(--cc-card-shadow, none);
   border-radius: var(--cc-radius-card);
   overflow: hidden;
 }
 /*
- * The host's own cards — an approval, a credential, a connection, a task the host runs — keep their edge whatever a
- * card recipe says. A theme may draw widget cards flat; it may not make the card that asks for consent look like one
- * of them, or disappear into the page. The width follows the theme's line, which is never less than a pixel.
+ * The host's own cards — an approval, a credential, a connection, a task the host runs — keep their edge and their
+ * plain card surface whatever a recipe or an effect says. A theme may draw widget cards flat, frosted, textured or with
+ * a hard shadow; it may not make the card that asks for consent look like one of them, or disappear into the page. The
+ * surface variables are reset here rather than the properties overridden, so every other rule a host card has still
+ * draws it exactly as Clark does. The width follows the theme's line, which is never less than a pixel.
  */
-.cc-card[data-owner="host"] { border-color: var(--cc-border); }
+.cc-card[data-owner="host"] {
+  border-color: var(--cc-border);
+  --cc-surface-fill: var(--cc-card);
+  --cc-surface-image: none;
+  --cc-surface-size: auto;
+  --cc-card-shadow: none;
+}
 .cc-card-head {
   display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-sm);
   padding: var(--cc-space-sm) var(--cc-space-md);

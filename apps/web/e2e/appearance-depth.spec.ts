@@ -27,9 +27,10 @@ const HOSTILE_PACKAGE = "com.example.theme-hostile";
 const DEPTH_REF = `package:${DEPTH_PACKAGE}#depth`;
 const FLATLINE_REF = `package:${HOSTILE_PACKAGE}#flatline`;
 const CAMOUFLAGE_REF = `package:${HOSTILE_PACKAGE}#camouflage`;
+const BLACKOUT_REF = `package:${HOSTILE_PACKAGE}#blackout`;
 /** The digests of the fixtures' bytes, as `fixtures/directory.json` lists them (a unit test keeps the two in step). */
-const DEPTH_DIGEST = "sha256:0fc26c73d2a10e2d24fc037fbc278cae5d09e14c2280269b7040a6abe52f32f1";
-const HOSTILE_DIGEST = "sha256:488d748b65afd1859b0a2c5e893317166818508f4816e3ce7c404f2345371742";
+const DEPTH_DIGEST = "sha256:14dc35f5d507f28c9fa0c516274e0a61ba4e857fe35a987443621dd16a416b69";
+const HOSTILE_DIGEST = "sha256:b0419222128148974e5160c6d7f34aeabeb9d0191b64d47c656f23131a96dbf1";
 const DEPTH_DARK_ACCENT = "#7DB4F0";
 
 const overflowLog: { shot: string; scrollWidth: number; clientWidth: number; overflow: number }[] = [];
@@ -121,13 +122,33 @@ async function still(page: Page): Promise<void> {
     .toBe(0);
 }
 
+const frames = (page: Page): Promise<void> =>
+  page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+
+/** Where the conversation's Orb is drawn, or "" when there is none. */
+const orbBox = (page: Page): Promise<string> =>
+  page.evaluate(() => {
+    const box = document.querySelector(".cc-stage-orb")?.getBoundingClientRect();
+    return box === undefined ? "" : [box.x, box.y, box.width, box.height].join(",");
+  });
+
 /** Screenshots at both widths and both schemes, each with its overflow logged. */
 async function shoot(page: Page, name: string): Promise<void> {
   for (const scheme of ["dark", "light"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: width === 1280 ? 900 : 844 });
+      /*
+       * The Orb is re-placed for the new width a frame after the resize and then glides there, so the transitions
+       * are waited for only once they have started; two more frames let its canvas draw at rest.
+       */
+      await frames(page);
       await still(page);
+      await expect.poll(async () => {
+        const before = await orbBox(page);
+        await frames(page);
+        return before === (await orbBox(page));
+      }).toBe(true);
       const shot = `298-${name}-${String(width)}-${scheme}`;
       await page.screenshot({ path: join(EVIDENCE, `${shot}.png`) });
       await recordOverflow(page, shot);
@@ -183,6 +204,12 @@ test("a hostile theme cannot hide Stop, the approval card, or a focus ring, and 
   const refused = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers: headers(), data: { value: CAMOUFLAGE_REF } });
   expect(refused.ok()).toBe(false);
   expect(await refused.text()).toContain("THEME_PROTECTED");
+  // Blackout is readable too, but its Orb palette would draw the Orb as the page itself: refused the same way.
+  const blackout = await request.put(`${GATEWAY}/preferences/experience.themeRef`, { headers: headers(), data: { value: BLACKOUT_REF } });
+  expect(blackout.status()).toBe(409);
+  const blackoutBody = await blackout.text();
+  expect(blackoutBody).toContain("THEME_PROTECTED");
+  expect(blackoutBody).toContain("orb-visible");
 
   await setTheme(request, FLATLINE_REF);
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -195,12 +222,26 @@ test("a hostile theme cannot hide Stop, the approval card, or a focus ring, and 
   await page.locator("[data-send]").click();
   const card = page.locator('[data-host-card="approval"][data-decision="pending"]').last();
   await expect(card).toBeVisible({ timeout: 20_000 });
-  const edge = await card.evaluate((element) => {
+  const edges = await card.evaluate((element) => {
     const style = getComputedStyle(element);
-    return { color: style.borderTopColor, width: Number.parseFloat(style.borderTopWidth) };
+    return (["Top", "Right", "Bottom", "Left"] as const).map((side) => ({
+      side,
+      color: style.getPropertyValue(`border-${side.toLowerCase()}-color`),
+      width: Number.parseFloat(style.getPropertyValue(`border-${side.toLowerCase()}-width`)),
+    }));
   });
-  expect(edge.width).toBeGreaterThanOrEqual(1);
-  expect(edge.color).toBe(await drawnColor(page, "--cc-border"));
+  const hostEdge = await drawnColor(page, "--cc-border");
+  for (const edge of edges) {
+    expect(edge.width, `${edge.side} edge`).toBeGreaterThanOrEqual(1);
+    expect(edge.color, `${edge.side} edge`).toBe(hostEdge);
+  }
+  // And its plain card surface: the theme's glass tints widget cards, never the card that asks for consent.
+  const surface = await card.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { fill: style.backgroundColor, image: style.backgroundImage, blur: style.backdropFilter, shadow: style.boxShadow };
+  });
+  expect(surface).toEqual({ fill: await drawnColor(page, "--cc-card"), image: "none", blur: "none", shadow: "none" });
+  await card.screenshot({ path: join(EVIDENCE, "298-flatline-approval-card-dark.png") });
   await expect(card.locator("[data-approve]")).toBeVisible();
   await expect(card.locator("[data-deny]")).toBeVisible();
 
@@ -231,13 +272,8 @@ test("a hostile theme cannot hide Stop, the approval card, or a focus ring, and 
   await stop.click();
   await expect(stop).toHaveCount(0, { timeout: 15_000 });
 
-  // Nothing on either width is wider than the window under the flattest theme.
-  for (const width of [1280, 390]) {
-    await page.setViewportSize({ width, height: width === 1280 ? 900 : 844 });
-    await still(page);
-    await recordOverflow(page, `298-flatline-${String(width)}-dark`);
-  }
-  await page.setViewportSize({ width: 1280, height: 900 });
+  // Nothing on either width and in either scheme is wider than the window under the flattest theme; each is shot.
+  await shoot(page, "flatline");
 
   // Settings lists Camouflage as refused, each hidden state on its own line in the reader's language.
   await page.locator("[data-settings='true']").click();
@@ -249,9 +285,18 @@ test("a hostile theme cannot hide Stop, the approval card, or a focus ring, and 
   expect(await lines.count()).toBeGreaterThanOrEqual(2);
   // Sentences, not the audit's check codes or token names.
   for (const line of await lines.allInnerTexts()) {
-    expect(line).not.toMatch(/status-distinct|status-vs-text|focus-vs-border|disabled-distinct|edge-visible|surface-readable|textTertiary|THEME_|\{/);
+    expect(line).not.toMatch(/status-distinct|status-vs-text|focus-vs-border|disabled-distinct|edge-visible|surface-readable|orb-visible|textTertiary|THEME_|\{/);
   }
   await expect(page.locator(`[data-theme-ref='${CAMOUFLAGE_REF}']`)).toHaveCount(0);
+  // Blackout is listed as refused too, with the Orb named in a sentence rather than as a check code.
+  const orbLines = page.locator(`[data-theme-problem='${BLACKOUT_REF}'] [data-theme-protected] li`);
+  await expect(orbLines.first()).toBeVisible();
+  for (const line of await orbLines.allInnerTexts()) {
+    expect(line).toMatch(/Orb/);
+    expect(line).not.toMatch(/orb-visible|THEME_|\{/);
+  }
+  await expect(page.locator(`[data-theme-ref='${BLACKOUT_REF}']`)).toHaveCount(0);
+  await page.screenshot({ path: join(EVIDENCE, "298-hostile-refused-1280-dark.png") });
   await page.keyboard.press("Escape");
 });
 
@@ -277,6 +322,36 @@ test("reduced motion stills the theme's motion, its backdrop light and its Orb",
     () => document.getAnimations().filter((animation) => animation.playState === "running" && animation.effect?.getTiming().iterations === Infinity).length,
   );
   expect(looping).toBe(0);
+});
+
+test("the person's own Reduced setting stills the theme's motion and backdrop light as the system's does", async ({ page, request }) => {
+  await setTheme(request, DEPTH_REF);
+  const reduced = await request.put(`${GATEWAY}/preferences/experience.motion`, { headers: headers(), data: { value: "reduced" } });
+  expect(reduced.ok(), await reduced.text()).toBe(true);
+  try {
+    // The operating system asks for full motion; only the in-app setting says Reduced.
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "no-preference" });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await open(page);
+    await expect.poll(() => rootVar(page, "--cc-accent"), { timeout: 15_000 }).toBe(DEPTH_DARK_ACCENT);
+    await expect(page.locator("body")).toHaveAttribute("data-cc-reduced-motion", "true", { timeout: 15_000 });
+
+    // The theme asked for slower motion; everything under the page reads none.
+    const bodyVar = (name: string): Promise<string> =>
+      page.evaluate((variable) => getComputedStyle(document.body).getPropertyValue(variable).trim(), name);
+    expect(await bodyVar("--cc-motion-micro")).toBe("0ms");
+    expect(await bodyVar("--cc-motion-normal")).toBe("0ms");
+    await expect(conversationOrb(page)).toHaveAttribute("data-orb-motion", "reduced", { timeout: 15_000 });
+    await page.mouse.move(640, 450);
+    expect(await page.locator(".cc-dot-grid").evaluate((element) => getComputedStyle(element, "::after").display)).toBe("none");
+    const looping = await page.evaluate(
+      () => document.getAnimations().filter((animation) => animation.playState === "running" && animation.effect?.getTiming().iterations === Infinity).length,
+    );
+    expect(looping).toBe(0);
+  } finally {
+    const restored = await request.put(`${GATEWAY}/preferences/experience.motion`, { headers: headers(), data: { value: "system" } });
+    expect(restored.ok()).toBe(true);
+  }
 });
 
 test("a typed sentence and the keyboard alone choose a theme through the same write as a click", async ({ page, request }) => {

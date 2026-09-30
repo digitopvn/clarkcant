@@ -191,12 +191,13 @@ export type ThemeDrawProblem =
 /**
  * Why a theme would hide a protected state, or `undefined` when it would not. See `protected.ts`.
  *
- * Audited on the palettes and the identity `compileAppearance` draws, from the same merges.
+ * Audited on the palettes, the identity and the Orb default the page draws, from the same merges.
  */
 export function themeProtectedProblem(theme: ThemeDocument): { failures: ThemeProtectedFailureView[]; message: string } | undefined {
   const failures = auditProtectedSchemes(
     { dark: themeColors("dark", theme), light: themeColors("light", theme) },
     resolveIdentity(theme),
+    theme.orb,
   );
   if (failures.length === 0) return undefined;
   const parts = failures.map(

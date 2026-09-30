@@ -38,7 +38,8 @@ body {
  * where they are; only which of them are bright changes, so nothing on screen moves with the mouse.
  *
  * A theme's backdrop effect replaces the pattern (the appearance stylesheet writes that rule) and sets its repeat and
- * strength here; the lit layer follows whichever pattern is drawn.
+ * strength here; the lit layer follows whichever pattern is drawn, at a strength that follows the theme's (a faint
+ * backdrop has a faint light), and the protected audit measures text over both layers.
  */
 .cc-dot-grid, .cc-dot-grid::after {
   position: absolute; inset: 0; pointer-events: none;
@@ -49,7 +50,7 @@ body {
 .cc-dot-grid { z-index: -1; --cc-grid-dot: color-mix(in srgb, var(--cc-text-tertiary) var(--cc-backdrop-alpha, 14%), transparent); }
 .cc-dot-grid::after {
   content: "";
-  --cc-grid-dot: color-mix(in srgb, var(--cc-accent) 55%, transparent);
+  --cc-grid-dot: color-mix(in srgb, var(--cc-accent) var(--cc-backdrop-lit, 55%), transparent);
   mask-image: radial-gradient(circle 190px at var(--cc-grid-x, -999px) var(--cc-grid-y, -999px), #000 0%, rgba(0, 0, 0, 0.45) 45%, transparent 100%);
   -webkit-mask-image: radial-gradient(circle 190px at var(--cc-grid-x, -999px) var(--cc-grid-y, -999px), #000 0%, rgba(0, 0, 0, 0.45) 45%, transparent 100%);
   opacity: 0;

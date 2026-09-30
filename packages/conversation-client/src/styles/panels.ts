@@ -627,6 +627,18 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
      itself, whichever one a theme draws, stays; only the light that tracks the cursor goes. */
   .cc-dot-grid::after { display: none; }
 }
+/*
+ * The same, for the person's own Reduced motion setting. The page marks the body with it, and the token sheet's
+ * reduced-motion block already matches the mark, so every duration is none under it; these are the rules the tokens
+ * cannot express. The setting means what the operating system's does, whatever the theme asked for.
+ */
+[data-cc-reduced-motion="true"] .cc-scroll { scroll-behavior: auto; }
+[data-cc-reduced-motion="true"] * { transition-duration: var(--cc-motion-micro) !important; animation-duration: var(--cc-motion-micro) !important; }
+[data-cc-reduced-motion="true"] .cc-composer-glow::before { animation: none !important; }
+[data-cc-reduced-motion="true"] .cc-thinking-dot { animation: none !important; opacity: 0.7; }
+[data-cc-reduced-motion="true"] .cc-caret { animation: none !important; }
+[data-cc-reduced-motion="true"] .cc-tool-mark[data-status="running"] { animation: none !important; }
+[data-cc-reduced-motion="true"] .cc-dot-grid::after { display: none; }
 
   /*
    * The desktop window's own chrome.

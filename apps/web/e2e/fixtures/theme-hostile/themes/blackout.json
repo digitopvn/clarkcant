@@ -1,0 +1,24 @@
+{
+  "appearanceApi": {
+    "min": 2,
+    "max": 2
+  },
+  "id": "blackout",
+  "displayName": "Blackout",
+  "description": "An Orb palette of black, which would draw the Orb as the page itself on a dark page.",
+  "orb": {
+    "profile": "clark",
+    "palette": {
+      "glowColor": [0, 0, 0],
+      "highlight": [0, 0, 0],
+      "shellInner": [0, 0, 0],
+      "shellMid": [0, 0, 0],
+      "shellEdge": [0, 0, 0],
+      "sheenColor": [0, 0, 0],
+      "colorA": [0, 0, 0],
+      "colorB": [0, 0, 0],
+      "colorC": [0, 0, 0],
+      "colorD": [0, 0, 0]
+    }
+  }
+}

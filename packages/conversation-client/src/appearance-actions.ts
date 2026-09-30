@@ -24,8 +24,32 @@ export const APPEARANCE_FALLBACK_KEYS: Readonly<Record<AppearanceFallbackCode, M
   THEME_UNKNOWN: "settings.experience.themePicker.fallback.unknown",
 };
 
+/**
+ * The sentence for a fallback code, or a generic one for a code this build does not know.
+ *
+ * The code comes from the node, which can be newer than the page; an unknown one must still read as a sentence in the
+ * person's language, not as a missing message key.
+ */
+export function appearanceFallbackKey(code: string): MessageKey {
+  return Object.hasOwn(APPEARANCE_FALLBACK_KEYS, code)
+    ? APPEARANCE_FALLBACK_KEYS[code as AppearanceFallbackCode]
+    : "settings.experience.themePicker.fallback.other";
+}
+
 /** The refusals of a theme write that mean the theme cannot be drawn safely, rather than that the node failed. */
 const AUDIT_REFUSALS: ReadonlySet<string> = new Set(["THEME_LOW_CONTRAST", "THEME_PROTECTED"]);
+
+/**
+ * The other refusals a theme write can carry, said in the reader's language. The node's own sentence beside the code
+ * is English and names internals, so it is for logs; a refusal without a code here (a busy node, a lost connection)
+ * keeps the node's sentence, which is the most specific thing known about it.
+ */
+const WRITE_REFUSAL_KEYS: Readonly<Record<string, MessageKey>> = {
+  THEME_NOT_INSTALLED: "shell.intent.themeWriteReason.notInstalled",
+  THEME_INVALID: "shell.intent.themeWriteReason.invalid",
+  THEME_UNAVAILABLE: "shell.intent.themeWriteReason.unavailable",
+  THEME_UNKNOWN: "shell.intent.themeWriteReason.unknown",
+};
 
 export interface ThemeSelection {
   /** Store the theme: the same preference write the theme picker makes. */
@@ -55,7 +79,15 @@ export async function chooseThemeShown(themeRef: string, name: string | undefine
     if (cause instanceof GatewayError && AUDIT_REFUSALS.has(cause.code)) {
       throw new Error(fill(t("shell.intent.themeRefused"), { name: label }), { cause });
     }
-    const reason = cause instanceof GatewayError ? cause.reason : cause instanceof Error ? cause.message : String(cause);
+    const known = cause instanceof GatewayError && Object.hasOwn(WRITE_REFUSAL_KEYS, cause.code) ? WRITE_REFUSAL_KEYS[cause.code] : undefined;
+    const reason =
+      known !== undefined
+        ? t(known)
+        : cause instanceof GatewayError
+          ? cause.reason
+          : cause instanceof Error
+            ? cause.message
+            : String(cause);
     throw new Error(fill(t("shell.intent.themeWriteFailed"), { name: label, reason }), { cause });
   }
   const read = await selection.refresh();
@@ -65,7 +97,7 @@ export async function chooseThemeShown(themeRef: string, name: string | undefine
   }
   if (read.appearance.appliedRef !== themeRef) {
     const code = read.appearance.fallback?.code;
-    const reason = code === undefined ? t("shell.intent.themeLocalRefused") : t(APPEARANCE_FALLBACK_KEYS[code]);
+    const reason = code === undefined ? t("shell.intent.themeLocalRefused") : t(appearanceFallbackKey(code));
     throw new Error(fill(t("shell.intent.themeShowsDefault"), { name: label, reason }));
   }
   return fill(t("shell.intent.themeChanged"), { name: label });

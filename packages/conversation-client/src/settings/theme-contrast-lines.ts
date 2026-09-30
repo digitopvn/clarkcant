@@ -71,7 +71,8 @@ export function protectedLines(
   return failures.map((failure) =>
     t(failure.check === "surface-readable" ? "settings.experience.themePicker.protected.lineRatio" : "settings.experience.themePicker.protected.line")
       .replace("{check}", t(`settings.experience.themePicker.protected.check.${failure.check}`))
-      .replace("{first}", t(TOKEN_KEYS[failure.first]))
+      // The Orb is not a colour token: its light is measured against the page, and it is named as itself.
+      .replace("{first}", t(failure.first === "orb" ? "settings.experience.themePicker.protected.orb" : TOKEN_KEYS[failure.first]))
       .replace("{second}", t(failure.check === "surface-readable" ? backgroundKey(failure.second) : TOKEN_KEYS[failure.second]))
       .replace("{scheme}", t(`settings.experience.themePicker.contrast.scheme.${failure.scheme}`))
       .replace("{value}", measured.format(failure.value))

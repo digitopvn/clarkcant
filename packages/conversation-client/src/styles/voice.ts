@@ -169,9 +169,12 @@ export const VOICE_CSS = `
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 71;
   width: min(var(--cc-modal-width), calc(100vw - 32px)); max-height: calc(100vh - 64px);
   display: flex; flex-direction: column;
-  background: var(--cc-elevated);
+  /* Glass is translucent and blurred here and nowhere else: one fixed surface over its scrim, so the blur is paid once. */
+  background: var(--cc-modal-fill, var(--cc-elevated));
   background-image: var(--cc-surface-image, none);
   background-size: var(--cc-surface-size, auto);
+  -webkit-backdrop-filter: var(--cc-modal-filter, none);
+  backdrop-filter: var(--cc-modal-filter, none);
   border: var(--cc-modal-line, var(--cc-line, 1px solid)) var(--cc-modal-edge, var(--cc-border));
   border-radius: var(--cc-radius-modal);
   box-shadow: var(--cc-modal-shadow, var(--cc-shadow-modal, 0 24px 64px color-mix(in oklab, var(--cc-code) 70%, transparent)));
