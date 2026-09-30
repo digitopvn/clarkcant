@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactElement, useRef, useState } from "react";
 
-import type { NoticeOperationId, OrbProfileName } from "@clarkcant/contracts";
+import type { NoticeOperationId, NoticeOperationSource, OrbProfileName } from "@clarkcant/contracts";
 
 import type { GatewayClient, Timeline } from "./api.ts";
 import { agentStateFrom, windowModeFrom } from "./input-modality.ts";
@@ -196,7 +196,9 @@ export function Conversation({
   const recordEffectOutcome = useRef<((effectId: string, outcome: "confirmed" | "failed") => Promise<void>) | undefined>(
     undefined,
   );
-  const actOnNotice = useRef<((noticeId: string, action: NoticeOperationId) => Promise<string>) | undefined>(undefined);
+  const actOnNotice = useRef<((noticeId: string, action: NoticeOperationId, source?: NoticeOperationSource) => Promise<string>) | undefined>(
+    undefined,
+  );
   /** The hidden file input the `+` button opens, so the button itself is a real `<button>`. */
   const attachmentInput = useRef<HTMLInputElement>(null);
 
@@ -312,9 +314,9 @@ export function Conversation({
       await recordEffectOutcome.current?.(effectId, outcome);
     },
     // "Dismiss the latest notification", typed or said: the notice's own action, through the route the panel uses.
-    actOnNotice: async (noticeId, action) => {
+    actOnNotice: async (noticeId, action, source) => {
       if (actOnNotice.current === undefined) throw new Error(localeState.t("shell.intent.notInbox"));
-      return actOnNotice.current(noticeId, action);
+      return actOnNotice.current(noticeId, action, source);
     },
     // The hotkey's own switches, so the alias and note on screen follow an agent's switch too.
     cycleModel,
@@ -360,9 +362,10 @@ export function Conversation({
     locale: localeState.locale,
   });
   askAboutLatestNotice.current = noticeActions.askAboutLatestNotice;
-  actOnNotice.current = noticeActions.actOnNotice;
   // A typed command arrives while the voice screen is closed, a spoken one while it is open: that is the surface the
-  // person answered from, and the node records it beside the answer.
+  // person answered from, and the node records it beside the answer. A press says so itself.
+  actOnNotice.current = (noticeId, action, source) => noticeActions.actOnNotice(noticeId, action, source ?? (voiceOpen ? "voice" : "chat"));
+  // The same rule for "it took effect", typed or said.
   recordEffectOutcome.current = async (effectId, outcome) => {
     try {
       await noticeActions.reconcile(effectId, outcome, voiceOpen ? "voice" : "chat");
@@ -584,9 +587,23 @@ export function Conversation({
         a window command failing in a browser is still visible when no panel is open.
       */}
       {appIntents.intentNotice !== undefined && (
-        <p className="cc-intent-notice" data-intent-notice="true" role="status">
-          {appIntents.intentNotice}
-        </p>
+        <div className="cc-intent-notice">
+          <p className="cc-intent-notice-text" data-intent-notice="true" role="status">
+            {appIntents.intentNotice}
+          </p>
+          {/* A real undo: the node keeps a dismissed notice restorable for this long, and the line stays exactly as long. */}
+          {appIntents.intentUndo && (
+            <button
+              type="button"
+              className="cc-action"
+              data-intent-undo="true"
+              aria-label={localeState.t("inbox.act.undoAria")}
+              onClick={appIntents.undoIntent}
+            >
+              {localeState.t("inbox.act.undo")}
+            </button>
+          )}
+        </div>
       )}
 
       <SettingsPanel

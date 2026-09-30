@@ -310,21 +310,33 @@ nhìn lại. Hình dạng dữ liệu ở `packages/contracts/src/themes.ts`.
 
 `POST /inbox/notices/:id/actions/:action` là route duy nhất cho các thao tác của chính một thông báo, dù ai yêu cầu:
 hộp thư, một câu gõ hoặc nói, agent chính và voice agent, `act_on_notice` của MCP và `clarkcant api`. Thao tác là
-một trong `mark-read`, `mark-unread`, `dismiss`, `snooze`, `unsnooze`, `suppress`, `unsuppress`, `retry`, `update`,
-`skip-version` hoặc `ask-again` (`NOTICE_OPERATION_IDS`); body là `{}` hoặc, riêng `snooze` và bắt buộc ở đó,
-`{ "until": "<ISO instant>" }`. Trừ `mark-read` và `mark-unread`, node đối chiếu thao tác với `actions` của thông báo
-ngay lúc đó và từ chối mọi thứ khác mà không đổi gì: `400 UNKNOWN_ACTION` với tên không phải thao tác của thông báo,
-`403 PERSON_ONLY` với `reconcile-confirmed` và `reconcile-failed` (câu trả lời của người dùng, có route riêng bên
-dưới), `409 SURFACE_ACTION` với `open`, `ask-clark`, `add-to-context` và `review-update` (chúng đổi thứ đang hiện
-trên màn hình của người dùng, nên chỉ màn hình đó làm được), `404 RESOURCE_NOT_FOUND` với thông báo đã mất, đã bị bỏ
-hoặc thuộc principal khác, `409 ACTION_NOT_OFFERED` khi thông báo lúc này không đưa ra thao tác đó, và
-`409 ACTION_UNAVAILABLE` kèm lý do (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) khi thao tác
-được liệt kê nhưng lúc này không làm được. `update` trả nguyên các lời từ chối của route cài đặt, và `202` với
+một trong `mark-read`, `mark-unread`, `dismiss`, `restore`, `snooze`, `unsnooze`, `suppress`, `unsuppress`, `retry`,
+`update`, `skip-version` hoặc `ask-again` (`NOTICE_OPERATION_IDS`), so khớp đúng như được gửi: đoạn đường dẫn này không
+bao giờ được giải mã phần trăm, nên một tên đã mã hoá như `%75pdate` nhận `400 UNKNOWN_ACTION`, không thành `update`.
+Body là `{}`, hoặc mang `until` (một ISO instant, chỉ cho `snooze` và bắt buộc ở đó) và `source` (`click`, `chat`
+hoặc `voice`: người dùng đã yêu cầu bằng cách nào, được ghi lại cùng thao tác; đây là nhãn, không phải nguồn gốc đã
+xác minh). Trừ `mark-read` và `mark-unread`, node đối chiếu thao tác với `actions` của thông báo ngay lúc đó và từ chối
+mọi thứ khác mà không đổi gì: `400 UNKNOWN_ACTION` với tên không phải thao tác của thông báo, `403 PERSON_ONLY` với
+`reconcile-confirmed` và `reconcile-failed` (câu trả lời của người dùng, có route riêng bên dưới), `409 SURFACE_ACTION`
+với `open`, `ask-clark`, `add-to-context` và `review-update` (chúng đổi thứ đang hiện trên màn hình của người dùng, nên
+chỉ màn hình đó làm được), `404 RESOURCE_NOT_FOUND` với thông báo đã mất, đã bị bỏ hoặc thuộc principal khác,
+`409 ACTION_NOT_OFFERED` khi thông báo lúc này không đưa ra thao tác đó, và `409 ACTION_UNAVAILABLE` kèm mã `reason`
+(`conversation-gone`, `work-gone`, `package-gone`, `already-current`) khi thao tác được liệt kê nhưng lúc này không làm
+được; client diễn đạt lý do đó cho người đọc, còn `message` tiếng Anh là để ghi log. `restore` là hoàn tác của
+`dismiss`: nó đưa trở lại một thông báo bị bỏ trong năm phút vừa qua (`NOTICE_DISMISS_UNDO_WINDOW_MS`), trả `done` với
+thông báo chưa bị bỏ, và `409 UNDO_EXPIRED` khi đã quá thời hạn đó. **`update` chỉ dành cho người dùng**: nó cài mã và
+cấp những gì gói yêu cầu, nên relay WebSocket, `clarkcant api` và MCP từ chối route này với `403 PERSON_ONLY`
+(`isPersonOnlyRoute`), `act_on_notice` của MCP không đưa ra nó, và node từ chối bằng cùng mã đó khi `act_on_notice` của
+một agent nêu tên nó. Trang của chính người dùng đi tới nó từ nút Cập nhật của thông báo, hoặc từ một yêu cầu bằng giọng
+nói mà người dùng đã xác nhận. Một `update` thứ hai cho cùng thông báo trong lúc bản trước đang cài nhận
+`409 ACTION_IN_PROGRESS`. `update` trả nguyên các lời từ chối của route cài đặt, và `202` với
 `{ "outcome": "approval-required", "approvalId", "version" }` khi chế độ thực thi của người dùng yêu cầu hỏi trước khi
-cài; khi đó không có gì được cài, và approval đó là của người dùng. Còn lại là `200` với
-`{ noticeId, action, outcome: "done" }` cùng những gì thao tác tạo ra (`snoozedUntil`, `workId` kèm `state` và
-`position`, `version`, `questionId`); `retry` và `ask-again` gỡ thông báo cũ, nên yêu cầu lần thứ hai nhận `404`.
-Các route theo từng thao tác ở trên vẫn trả lời như trước.
+cài; khi đó không có gì được cài, và yêu cầu lần nữa trong lúc approval đó còn chờ nhận lại đúng `approvalId` đó. Hiện
+chưa bề mặt nào quyết định được approval đó (#341). Còn lại là `200` với `{ noticeId, action, outcome: "done" }` cùng
+những gì thao tác tạo ra (`snoozedUntil`, `workId` kèm `state` và `position`, `version` kèm `pendingCapabilities` và
+`deniedCapabilities` cho một bản cập nhật đã cài, `questionId`); `retry` và `ask-again` gỡ thông báo cũ, nên yêu cầu
+lần thứ hai nhận `404`. Mọi thao tác, bị từ chối hay không, đều được ghi thành một sự kiện `inbox.notice-action` kèm
+bề mặt đã yêu cầu nó và kết quả. Các route theo từng thao tác ở trên vẫn trả lời như trước.
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
@@ -359,9 +371,10 @@ một client AI nói được "lần push đó đã thành công" thì có thể
 báo là đã xong). Xuất một bảng ra file CSV
 (`POST /conversations/{id}/widgets/{instanceId}/export`) cũng bị các relay đó từ chối: file được viết cho người đang
 xem bảng, không trao cho một client máy. Dừng, trả lời câu hỏi và đọc vẫn dùng được, và `act_on_notice` cũng vậy:
-nó không bao giờ đưa ra câu trả lời của người dùng về một thao tác chưa rõ kết quả (`403 PERSON_ONLY`), và bản cập
-nhật mà nó yêu cầu dưới chế độ thực thi hỏi trước sẽ không cài gì (`approval-required`). Discovery document ghi điều
-này ở mục `personDecisions`.
+nó không bao giờ đưa ra câu trả lời của người dùng về một thao tác chưa rõ kết quả hay việc cài bản cập nhật của một
+thông báo (`403 PERSON_ONLY` cho cả hai, route cập nhật bị từ chối như trên). `read_inbox` đánh dấu tiêu đề và nội
+dung của mọi thông báo là dữ liệu do việc khác báo lại, không bao giờ là chỉ dẫn, và giữ mỗi thông báo trên một dòng.
+Discovery document ghi điều này ở mục `personDecisions`.
 
 WebMCP (trang web đưa tool cho agent của chính trình duyệt) đã được cân nhắc cho cùng các thao tác thông báo và chưa
 được đưa ra: đề xuất này vẫn là bản nháp, chưa có API trình duyệt nào ship, và trang của ClarkCant không có bề mặt

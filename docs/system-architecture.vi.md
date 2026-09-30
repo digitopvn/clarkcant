@@ -596,21 +596,32 @@ chưa làm được, kèm lý do.
 
 **Một lớp thao tác cho các thao tác của chính thông báo.** `performNoticeOperation`
 (`apps/runtime/src/notice-operations.ts`) thực hiện các thao tác trong `NOTICE_OPERATION_IDS` (đã đọc, chưa đọc, bỏ,
-hoãn, đưa trở lại, tắt báo, báo lại, chạy lại, cập nhật, bỏ qua phiên bản, hỏi lại), và mọi bề mặt đều đi tới nó:
-`POST /inbox/notices/:id/actions/:action` (hộp thư, `act_on_notice` của MCP, `clarkcant api`), tool `act_on_notice`
-của agent chính và voice agent (`act-on-notice-tool.ts`, ghi nhật ký là `agent` hoặc `voice-agent`), và intent
-`notice.act` từ một câu gõ hoặc nói. Nó từ chối theo một thứ tự cố định và không đổi gì khi từ chối: tên lạ, câu trả
-lời của người dùng về một thao tác chưa rõ kết quả (`403 PERSON_ONLY`), thao tác đổi thứ đang hiện trên màn hình của
-người dùng (`409 SURFACE_ACTION`), thông báo không phải thông báo còn sống của principal này (`404`), và, với mọi thao
-tác trừ đã đọc và chưa đọc, thao tác mà thông báo lúc này không đưa ra (`409 ACTION_NOT_OFFERED`) hoặc đưa ra nhưng
-chưa làm được (`409 ACTION_UNAVAILABLE`), được đọc lại từ kho ngay lúc yêu cầu chứ không theo những gì bên gọi thấy
-lần trước. `update` đi qua `installPackage` thông thường với đủ các bước kiểm tra; dưới chế độ thực thi hỏi trước, nó
-trả `202 approval-required` và không cài gì. Bộ so khớp ở core chỉ biết câu nói nêu thao tác nào; `resolveNoticeTarget`
-trong `app-intents.ts` của runtime chọn thông báo (mới nhất cho đã đọc, chưa đọc, bỏ, hoãn và tắt báo; thông báo đã
-hoãn sắp quay lại sớm nhất cho đưa trở lại; thông báo mới nhất trong 50 thông báo gần nhất đang đưa ra thao tác đó và
-làm được cho chạy lại, cập nhật, bỏ qua phiên bản và hỏi lại) và đưa tiêu đề của nó vào câu đọc lại, hoặc trả lời
-rằng không có thông báo nào phù hợp. Trang thực hiện quyết định qua `host.actOnNotice`, gửi tới cùng route đó, và nói
-câu trả lời của node bằng lời của hộp thư.
+hoàn tác bỏ, hoãn, đưa trở lại, tắt báo, báo lại, chạy lại, cập nhật, bỏ qua phiên bản, hỏi lại), và mọi bề mặt đều
+đi tới nó: `POST /inbox/notices/:id/actions/:action` (hộp thư, `act_on_notice` của MCP, `clarkcant api`), tool
+`act_on_notice` của agent chính và voice agent (`act-on-notice-tool.ts`), và intent `notice.act` từ một câu gõ hoặc
+nói. Route so khớp nguyên văn đoạn tên thao tác trong đường dẫn, nên một tên được mã hoá phần trăm không bị giải mã
+thành thao tác khác. Mỗi lần gọi được ghi nhật ký thành một sự kiện `inbox.notice-action` kèm bề mặt nó đến từ đó
+(click, chat, voice, agent, voice-agent, mcp, relay, api) và kết quả; máy chủ MCP và relay WebSocket tự đặt bề mặt, dấu
+của chúng thắng mọi nhãn trong body, và nhãn chỉ mô tả lần gọi cho nhật ký — nó không bao giờ cho phép điều gì. Nó từ
+chối theo một thứ tự cố định và không đổi gì khi từ chối: tên lạ, câu trả lời của người dùng về một thao tác chưa rõ
+kết quả và một yêu cầu cập nhật đến từ agent, MCP hoặc relay (`403 PERSON_ONLY`), thao tác đổi thứ đang hiện trên màn
+hình của người dùng (`409 SURFACE_ACTION`), thông báo không phải thông báo còn sống của principal này (`404`), và, với
+mọi thao tác trừ đã đọc, chưa đọc và hoàn tác bỏ, thao tác mà thông báo lúc này không đưa ra (`409 ACTION_NOT_OFFERED`)
+hoặc đưa ra nhưng chưa làm được (`409 ACTION_UNAVAILABLE`), được đọc lại từ kho ngay lúc yêu cầu chứ không theo những
+gì bên gọi thấy lần trước. `update` là quyết định của riêng người dùng: `isPersonOnlyRoute` liệt kê route của nó, nên
+relay, `clarkcant api` và `call` của MCP từ chối nó, còn tool của agent không bao giờ đưa ra nó. Nó đi qua
+`installPackage` thông thường với đủ các bước kiểm tra, trả `409 ACTION_IN_PROGRESS` khi chính thông báo đó đang được
+cài, và cho biết bao nhiêu quyền đã yêu cầu đang chờ duyệt hoặc bị từ chối; dưới chế độ thực thi hỏi trước, nó trả
+`202 approval-required`, dùng lại yêu cầu duyệt cài đặt đang chờ cho cùng phiên bản và không cài gì. `restore` hoàn tác
+việc bỏ trong năm phút (sau đó là `409 UNDO_EXPIRED`). Bộ so khớp ở core chỉ biết câu nói nêu thao tác nào;
+`resolveNoticeTarget` trong `app-intents.ts` của runtime chọn thông báo (mới nhất cho đã đọc, chưa đọc, bỏ, hoãn và tắt
+báo; lần bỏ gần nhất còn trong thời hạn hoàn tác cho hoàn tác bỏ; thông báo đã hoãn sắp quay lại sớm nhất cho đưa trở
+lại; thông báo mới nhất trong 50 thông báo gần nhất đang đưa ra thao tác đó và làm được cho chạy lại, cập nhật, bỏ qua
+phiên bản và hỏi lại) và đưa tiêu đề của nó vào câu đọc lại, hoặc trả lời rằng không có thông báo nào phù hợp. Câu gõ
+"cài bản cập nhật mới nhất" mở hộp thư tại thông báo đó thay vì cài, còn câu nói thì hỏi lại trước. Trang thực hiện
+quyết định qua `host.actOnNotice`, gửi tới cùng route đó, và nói câu trả lời của node bằng lời của hộp thư.
+`read_inbox` đánh dấu nội dung thông báo là dữ liệu chứ không phải chỉ dẫn, bỏ ký tự điều khiển và xuống dòng, và cắt
+ngắn tiêu đề, để một thông báo không thể giả một dòng của danh sách.
 
 **Thông báo ngoài ứng dụng** là việc của client, không phải node. `use-inbox-notifications.ts` poll `GET /inbox`
 và preference `inbox.notifications` (`packages/contracts/src/preferences.ts`; giá trị lưu thiếu trường được trộn

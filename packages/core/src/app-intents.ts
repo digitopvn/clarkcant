@@ -283,6 +283,11 @@ const PHRASES: readonly {
   { phrase: "an thong bao moi nhat", kind: "notice.act", noticeAction: "dismiss", wholeSentence: true },
   { phrase: "dismiss the latest notification", kind: "notice.act", noticeAction: "dismiss", wholeSentence: true },
   { phrase: "dismiss the latest notice", kind: "notice.act", noticeAction: "dismiss", wholeSentence: true },
+  // The Undo a dismissal's read-back promises, said or typed: the notice most recently dismissed, while it still can be.
+  { phrase: "hoan tac bo thong bao", kind: "notice.act", noticeAction: "restore", wholeSentence: true },
+  { phrase: "hoan tac viec bo thong bao", kind: "notice.act", noticeAction: "restore", wholeSentence: true },
+  { phrase: "undo dismissing the notification", kind: "notice.act", noticeAction: "restore", wholeSentence: true },
+  { phrase: "undo dismissing the notice", kind: "notice.act", noticeAction: "restore", wholeSentence: true },
   { phrase: "hoan thong bao moi nhat", kind: "notice.act", noticeAction: "snooze", wholeSentence: true },
   { phrase: "hoan thong bao moi nhat mot tieng", kind: "notice.act", noticeAction: "snooze", wholeSentence: true },
   { phrase: "snooze the latest notification", kind: "notice.act", noticeAction: "snooze", wholeSentence: true },

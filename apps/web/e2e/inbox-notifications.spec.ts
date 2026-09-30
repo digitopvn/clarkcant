@@ -442,10 +442,14 @@ test("clicking a desktop notification opens the inbox on the item it was about, 
   const dialog = page.getByRole("dialog");
   const row = dialog.locator(`[data-inbox-waiting-key="${target}"]`);
   await expect(row).toHaveAttribute("data-inbox-target", "true", { timeout: 10_000 });
-  // Keyboard and screen-reader users land on the item, not at the top of the list.
+  // Keyboard and screen-reader users land on the item, not at the top of the list — on the row itself, named for what
+  // it is, and never on its Approve button, which would leave one keypress between a glance and a decision.
   await expect
-    .poll(() => page.evaluate(() => document.activeElement?.closest("[data-inbox-waiting-key]")?.getAttribute("data-inbox-waiting-key") ?? ""))
+    .poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-inbox-waiting-key") ?? document.activeElement?.tagName ?? ""))
     .toBe(target);
+  await expect(row).toBeFocused();
+  await expect(row).toHaveAttribute("aria-label", /^Đang chờ bạn: /u);
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("LI");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 

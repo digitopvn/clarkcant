@@ -248,7 +248,10 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
   background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
   box-shadow: var(--cc-shadow-soft, 0 12px 32px rgb(0 0 0 / 35%));
   color: var(--cc-text); font-size: var(--cc-text-label); line-height: 1.45;
+  display: flex; align-items: center; gap: var(--cc-space-sm);
 }
+.cc-intent-notice-text { margin: 0; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.cc-intent-notice .cc-action { flex: 0 0 auto; }
 
 /*
  * Task cards.

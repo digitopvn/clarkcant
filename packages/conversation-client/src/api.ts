@@ -44,6 +44,7 @@ import {
   type InboxSummary,
   type NoticeOperationId,
   type NoticeOperationResponse,
+  type NoticeOperationSource,
   type NoticeSuppression,
   type SkippedVersion,
   type MemoryRecord,
@@ -1981,12 +1982,21 @@ export class GatewayClient {
    * Carry out one of a notice's own actions on the node (`POST /inbox/notices/:id/actions/:action`): the same function
    * MCP, `clarkcant api` and both agents reach, which checks the action against what the notice offers now. `outcome`
    * is `approval-required` when an update's install waits for the person's approval; nothing is installed then.
+   * `source` says where on this page it was asked for — a press, a typed or a spoken command — for the node's audit.
    */
-  async actOnNotice(noticeId: string, action: NoticeOperationId, until?: string): Promise<NoticeOperationResponse> {
+  async actOnNotice(
+    noticeId: string,
+    action: NoticeOperationId,
+    options: { until?: string; source?: NoticeOperationSource } = {},
+  ): Promise<NoticeOperationResponse> {
     const body = await this.#call<unknown>(
       "POST",
-      `/inbox/notices/${encodeURIComponent(noticeId)}/actions/${encodeURIComponent(action)}`,
-      until === undefined ? {} : { until },
+      // The action is sent as it is: the node reads that segment raw and refuses an encoded one.
+      `/inbox/notices/${encodeURIComponent(noticeId)}/actions/${action}`,
+      {
+        ...(options.until === undefined ? {} : { until: options.until }),
+        ...(options.source === undefined ? {} : { source: options.source }),
+      },
     );
     return noticeOperationResponseSchema.parse(body);
   }

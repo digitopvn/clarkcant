@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { type AppIntentDecision, type NoticeOperationId, type NoticeOperationResponse } from "@clarkcant/contracts";
 
+import { GatewayError } from "../src/api.ts";
 import { runAppIntent, type AppIntentHost } from "../src/app-intents.ts";
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
+import { noticeRefusalReason } from "../src/inbox/inbox-model.ts";
 import { noticeOperationSay } from "../src/inbox/use-inbox-notice-actions.ts";
 import { inboxTargetOf } from "../src/inbox/use-inbox-notifications.ts";
 
@@ -120,5 +122,51 @@ describe("what the page says after a notice action", () => {
       CATALOGS.en["inbox.updateNeedsApproval"],
     );
     expect(noticeOperationSay(answer({ action: "update", version: "1.1.0" }), t, "en")).toBe("Installed version 1.1.0; the notice is out of the inbox.");
+  });
+
+  it("says what an installed update runs without, instead of a bare 'installed'", () => {
+    expect(noticeOperationSay(answer({ action: "update", version: "1.1.0", pendingCapabilities: 2, deniedCapabilities: 1 }), t, "en")).toBe(
+      "Installed version 1.1.0; the notice is out of the inbox. 2 of the permissions it asked for wait for your approval in the inbox; " +
+        "until then it runs without them. 1 of the permissions it asked for were refused by your execution mode, so it runs without them.",
+    );
+    expect(noticeOperationSay(answer({ action: "update", version: "1.1.0", pendingCapabilities: 0, deniedCapabilities: 0 }), t, "en")).toBe(
+      "Installed version 1.1.0; the notice is out of the inbox.",
+    );
+  });
+
+  it("says a dismissal was undone in the panel's own words", () => {
+    expect(noticeOperationSay(answer({ action: "restore" }), t, "en")).toBe(CATALOGS.en["inbox.restored"]);
+  });
+});
+
+describe("why a notice action did not happen", () => {
+  const vi = (key: MessageKey) => CATALOGS.vi[key];
+  const en = (key: MessageKey) => CATALOGS.en[key];
+
+  it("words a reason code in the reader's language and never shows the code", () => {
+    const refusal = new GatewayError(409, "ACTION_UNAVAILABLE", "update cannot be taken on this notice now", { reason: "already-current" });
+    expect(noticeRefusalReason(refusal, en)).toBe(CATALOGS.en["inbox.action.alreadyCurrent"]);
+    expect(noticeRefusalReason(refusal, vi)).toBe(CATALOGS.vi["inbox.action.alreadyCurrent"]);
+    expect(noticeRefusalReason(refusal, vi)).not.toContain("already-current");
+  });
+
+  it("words the node's codes, whatever language the node's own sentence was in", () => {
+    expect(noticeRefusalReason(new GatewayError(409, "UNDO_EXPIRED", "that notice was dismissed too long ago to undo"), vi)).toBe(
+      "Đã quá 5 phút kể từ khi bỏ thông báo, nên không hoàn tác được nữa.",
+    );
+    expect(noticeRefusalReason(new GatewayError(409, "ALREADY_RETRIED", "Việc này đã được chạy lại rồi."), en)).toBe(
+      "This work has already been run again.",
+    );
+    expect(noticeRefusalReason(new GatewayError(409, "ACTION_IN_PROGRESS", "this update is already being installed"), vi)).toBe(
+      "Bản cập nhật này đang được cài.",
+    );
+  });
+
+  it("falls back to the node's sentence for a code it does not know, never to the code itself", () => {
+    const refusal = new GatewayError(409, "SOMETHING_NEW", "the node said why");
+    expect(noticeRefusalReason(refusal, en)).toBe("the node said why.");
+    // A reason code it has no words for is not shown either: the action's own refusal sentence stands in.
+    const unknownReason = new GatewayError(409, "ACTION_UNAVAILABLE", "x cannot be taken on this notice now", { reason: "brand-new" });
+    expect(noticeRefusalReason(unknownReason, en)).toBe(CATALOGS.en["inbox.refused.notOffered"]);
   });
 });

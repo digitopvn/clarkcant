@@ -8,6 +8,7 @@ import {
   type NoticeSuppression,
   type NoticeSuppressionKey,
   NOTICE_BODY_MAX,
+  NOTICE_DISMISS_UNDO_WINDOW_MS,
   NOTICE_TITLE_MAX,
   noticeKindQuietable,
   noticeSubjectSchema,
@@ -49,12 +50,31 @@ export const MAX_NOTIFICATIONS_PER_ORIGIN = 20;
 export const DISMISSED_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
 /**
- * How long after a dismissal it can still be undone.
- *
- * The surface offers Undo for a few seconds; the node accepts it for longer, so a slow round trip or a person who
- * pressed it at the last moment is not refused. Past this, the dismissal is a decision, and the notice stays gone.
+ * How long after a dismissal it can still be undone: the contract's `NOTICE_DISMISS_UNDO_WINDOW_MS`, so what a surface
+ * promises and what the node accepts are one number. Past this, the dismissal is a decision, and the notice stays gone.
  */
-export const DISMISS_UNDO_WINDOW_MS = 5 * 60_000;
+export const DISMISS_UNDO_WINDOW_MS = NOTICE_DISMISS_UNDO_WINDOW_MS;
+
+/**
+ * The newest notice this principal dismissed within the undo window, or nothing: what "undo dismissing the
+ * notification" means when the sentence names no notice. Any dismissal counts, the person's own or a producer's that
+ * took its notice out because what it said stopped being true; the read-back names the notice, so a wrong one can be
+ * dismissed again.
+ */
+export function latestRestorableNotification(db: Database, principalId: string, now: Instant): Notice | undefined {
+  const since = new Date(Date.parse(now) - DISMISS_UNDO_WINDOW_MS).toISOString();
+  const row = oneRow<NotificationRow>(
+    db,
+    `SELECT ${NOTIFICATION_COLUMNS}
+       FROM notifications
+      WHERE principal_id = ? AND dismissed_at IS NOT NULL AND dismissed_at >= ?
+      ORDER BY dismissed_at DESC, rowid DESC
+      LIMIT 1`,
+    principalId,
+    since,
+  );
+  return row === undefined ? undefined : noticeFromRow(row, now);
+}
 
 export interface RecordNotificationInput {
   notificationId: string;

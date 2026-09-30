@@ -667,20 +667,27 @@ async function listedNotices(page: Page): Promise<Array<{ noticeId: string; titl
 test("dismissing the latest notification, typed, is done by the node on the notice it names, and says so", async ({ page }) => {
   await openApp(page);
   const { noticeId, title } = await backgroundNotice(page, "thông báo để bỏ bằng một câu");
-  const actions: string[] = [];
+  const actions: Array<{ path: string; source?: string }> = [];
   page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().includes("/inbox/notices/")) actions.push(new URL(request.url()).pathname);
+    if (request.method() === "POST" && request.url().includes("/inbox/notices/")) {
+      const source = (request.postDataJSON() as { source?: string } | null)?.source;
+      actions.push({ path: new URL(request.url()).pathname, ...(source === undefined ? {} : { source }) });
+    }
   });
 
   const composer = page.locator("[data-composer]");
   await composer.fill("bỏ thông báo mới nhất");
   await composer.press("Enter");
 
-  // The read-back names the notice the node chose, so a person who hears the wrong one knows it.
-  await expect(page.locator('[data-role="assistant"]').last()).toContainText(`Tôi bỏ thông báo “${title}” khỏi hộp thư nhé.`, { timeout: 20_000 });
+  // The read-back names the notice the node chose, so a person who hears the wrong one knows it, and says how long the
+  // undo it promises lasts.
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(
+    `Tôi bỏ thông báo “${title}” khỏi hộp thư nhé. Bạn có thể hoàn tác trong 5 phút.`,
+    { timeout: 20_000 },
+  );
   // What the node answered, not the read-back again: it was done.
   await expect(page.locator("[data-intent-notice]")).toContainText("Đã bỏ thông báo.", { timeout: 20_000 });
-  expect(actions).toEqual([`/inbox/notices/${noticeId}/actions/dismiss`]);
+  expect(actions).toEqual([{ path: `/inbox/notices/${noticeId}/actions/dismiss`, source: "chat" }]);
   await expect.poll(async () => (await listedNotices(page)).map((notice) => notice.noticeId)).not.toContain(noticeId);
 
   // The inbox shows the same state a press would have left: the notice is gone from the list.
@@ -691,6 +698,31 @@ test("dismissing the latest notification, typed, is done by the node on the noti
   await expect(dialog.locator(`[data-inbox-notice="${noticeId}"]`)).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
+
+  // The undo the read-back promised is a real control beside the answer, and it brings the notice back.
+  const undo = page.locator('[data-intent-undo="true"]');
+  await expect(undo).toBeVisible();
+  await expect(undo).toHaveAccessibleName("Hoàn tác bỏ thông báo");
+  await undo.click();
+  await expect(page.locator("[data-intent-notice]")).toContainText("Đã đưa thông báo trở lại.", { timeout: 20_000 });
+  await expect(undo).toHaveCount(0);
+  expect(actions.at(-1)).toEqual({ path: `/inbox/notices/${noticeId}/actions/restore`, source: "click" });
+  await expect.poll(async () => (await listedNotices(page)).map((notice) => notice.noticeId)).toContain(noticeId);
+});
+
+test("undoing a dismissal, said in words, brings back the notice most recently dismissed", async ({ page }) => {
+  await openApp(page);
+  const { noticeId, title } = await backgroundNotice(page, "thông báo để hoàn tác bằng một câu");
+  const composer = page.locator("[data-composer]");
+  await composer.fill("bỏ thông báo mới nhất");
+  await composer.press("Enter");
+  await expect(page.locator("[data-intent-notice]")).toContainText("Đã bỏ thông báo.", { timeout: 20_000 });
+
+  await composer.fill("hoàn tác bỏ thông báo");
+  await composer.press("Enter");
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(`Tôi hoàn tác việc bỏ thông báo “${title}” nhé.`, { timeout: 20_000 });
+  await expect(page.locator("[data-intent-notice]")).toContainText("Đã đưa thông báo trở lại.", { timeout: 20_000 });
+  await expect.poll(async () => (await listedNotices(page)).map((notice) => notice.noticeId)).toContain(noticeId);
 });
 
 test("background work that failed is run again from its notice, and the new run reports for itself", async ({ page }) => {

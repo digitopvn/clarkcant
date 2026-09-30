@@ -265,6 +265,23 @@ describe("MCP endpoint", () => {
     expect(JSON.stringify(answer.body)).toContain("PERSON_ONLY");
 
     expect((await tool(5, "act_on_notice", { action: "dismiss" })).body).toMatchObject({ result: { isError: true } });
+
+    // Installing an update is the person's: not offered, and refused with the reason when named anyway.
+    const listedTools = await mcp({ jsonrpc: "2.0", id: 6, method: "tools/list" });
+    const actTool = (listedTools.body as { result: { tools: { name: string; inputSchema: { properties: { action?: { enum?: string[] } } } }[] } }).result.tools.find(
+      (entry) => entry.name === "act_on_notice",
+    );
+    expect(actTool?.inputSchema.properties.action?.enum).toContain("restore");
+    expect(actTool?.inputSchema.properties.action?.enum).not.toContain("update");
+    const update = await tool(7, "act_on_notice", { noticeId: notificationId, action: "update" });
+    expect(update.body).toMatchObject({ result: { isError: true } });
+    expect(JSON.stringify(update.body)).toContain("PERSON_ONLY");
+    expect(JSON.stringify(update.body)).toContain("press Update");
+
+    // The dismissal above can be undone from here too, within its window.
+    const restored = await tool(8, "act_on_notice", { noticeId: notificationId, action: "restore" });
+    expect(restored.body).toMatchObject({ result: { structuredContent: { noticeId: notificationId, action: "restore", outcome: "done" } } });
+    expect(getNotification(services.runtime.db, services.runtime.identity.ownerPrincipalId, notificationId)?.dismissed).toBe(false);
   });
 
   it("does not accept GET, because the server never speaks first", async () => {

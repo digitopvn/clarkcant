@@ -1,5 +1,6 @@
 import {
   type Instant,
+  type NoticeOperationSource,
   inboxReadRequestSchema,
   inboxSnoozeRequestSchema,
   inboxUnreadRequestSchema,
@@ -21,6 +22,7 @@ import {
 import { inboxSummary, readInbox } from "../inbox.ts";
 import {
   type NoticeOperationServices,
+  type NoticeOperationSurface,
   SUPPRESSION_TOO_BROAD_MESSAGE,
   performNoticeOperation,
   skipNoticeVersion,
@@ -28,7 +30,7 @@ import {
   snoozeEndWithinRange,
   unsuppressNoticeKindOf,
 } from "../notice-operations.ts";
-import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
+import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
 
 /**
  * The inbox family.
@@ -48,12 +50,14 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *   DELETE /inbox/suppressions/:id           the same, from the list of quieted kinds
  *   DELETE /inbox/skipped-versions/:kind/:name/:version
  *                                            take a skip back from the list of skipped versions, which outlasts its notice
- *   POST /inbox/notices/:id/actions/:action { until? }
+ *   POST /inbox/notices/:id/actions/:action { until?, source? }
  *                                            any action the node carries out on a notice, by the name the resolver gives
- *                                            it (`NOTICE_OPERATION_IDS`), checked against what the notice offers now
+ *                                            it (`NOTICE_OPERATION_IDS`), checked against what the notice offers now;
+ *                                            `restore` undoes a recent dismissal; `update` is person-only
  *
- * The last route is the one a machine surface uses — MCP, `clarkcant api`, the agents' `act_on_notice` reach the same
- * function (`performNoticeOperation`) — and the routes above it stay for the panel, which also has Undo for them.
+ * The last route is the one every surface shares — the page's commands and Undo, MCP, `clarkcant api` and the agents'
+ * `act_on_notice` reach the same function (`performNoticeOperation`), which records who asked — and the routes above it
+ * stay for the panel, which also has Undo for them. Its action segment is read raw, like `isPersonOnlyRoute` reads it.
  *
  * There is no route that decides anything. Approving a command, granting a capability and answering a question
  * each already have a route, and the inbox calls those: a second way to approve would be a second set of checks,
@@ -213,13 +217,24 @@ export async function handleInboxRoutes(deps: InboxRouteDeps): Promise<GatewayRe
     const parsed = noticeOperationRequestSchema.safeParse(body.value);
     if (!parsed.success) return fail(400, "INVALID_SCHEMA", "the body may only carry until, a UTC instant such as 2026-09-29T18:00:00.000Z");
     const noticeId = decodeSegment(segments[2] ?? "");
-    const action = decodeSegment(segments[4] ?? "");
-    if (noticeId === undefined || noticeId === "" || action === undefined || action === "") {
+    if (noticeId === undefined || noticeId === "") {
       return fail(400, "INVALID_SCHEMA", "a notice action is named by the notice id and the action");
+    }
+    // Taken as sent, never decoded: `isPersonOnlyRoute` matches the raw segment, so `%75pdate` must not become `update`
+    // here after the relays let it through. Every action id is lower-case letters and hyphens, so anything else —
+    // an escape included — is not one.
+    const action = segments[4] ?? "";
+    if (!ACTION_SEGMENT.test(action)) {
+      return fail(400, "UNKNOWN_ACTION", "a notice action is named in lower-case letters and hyphens, not encoded");
     }
     const outcome = await performNoticeOperation(
       services,
-      { noticeId, action, ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }) },
+      {
+        noticeId,
+        action,
+        ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }),
+        surface: surfaceOf(request, parsed.data.source),
+      },
       at,
     );
     if (!outcome.ok) return fail(outcome.status, outcome.code, outcome.message, outcome.reason === undefined ? undefined : { reason: outcome.reason });
@@ -247,6 +262,19 @@ export async function handleInboxRoutes(deps: InboxRouteDeps): Promise<GatewayRe
   }
 
   return fail(404, "NOT_FOUND", `no inbox handler for ${request.method} ${request.path}`);
+}
+
+/** What a notice action's name looks like on the path: `NOTICE_OPERATION_IDS` and the other action ids all fit. */
+const ACTION_SEGMENT = /^[a-z][a-z-]{0,39}$/;
+
+/**
+ * Which surface a call came through, for the audit: the relay or MCP when the node's own surface said so, the page's
+ * label when it gave one, `api` otherwise. A machine surface's own marker wins over any label in the body.
+ */
+function surfaceOf(request: GatewayRequest, source: NoticeOperationSource | undefined): NoticeOperationSurface {
+  const marker = request.headers[SURFACE_HEADER];
+  if (marker === "mcp" || marker === "relay") return marker;
+  return source ?? "api";
 }
 
 /** A path segment as the client encoded it (a package id may hold `@` and `/`), or nothing when it is not valid. */

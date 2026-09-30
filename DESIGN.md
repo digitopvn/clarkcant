@@ -559,21 +559,37 @@ Shipped:
 - **A notification's actions are the same action wherever they are asked for** (#196). The panel's buttons, a typed or
   spoken sentence, the main agent and the voice agent, MCP and `clarkcant api` all reach one route on the node, which
   checks the action against what the notification offers now and refuses anything else with the reason, changing
-  nothing. The sentences are whole requests ("mark the latest notification as read", "dismiss the latest
-  notification", "snooze the latest notification", "bring back the snoozed notification", "retry the failed
-  background work", "install the latest update", "skip this version", "ask the expired question again", and their
-  Vietnamese forms such as "bỏ thông báo mới nhất" or "chạy lại việc nền bị lỗi"). A sentence names the action, never
-  the notification: the node picks the newest one for read, unread, dismiss and snooze (one hour), the soonest snoozed
-  one to bring back, and the newest one that can take the action now for retry, update, skip and ask again. The
-  read-back names that notification by its title, so a person who hears the wrong one knows; when none fits, Clark says
-  so and does nothing. These are carried out without asking back, like the other reversible app intents (dismiss keeps
-  its Undo in the inbox), and the short status line at the top of the conversation then says what the node did, in the
-  panel's own words. The
-  agents first read the inbox, which lists each notification's id with the actions it can take now and the ones it
-  cannot and why, then call `act_on_notice`; the audit records these as the agent's or the voice agent's, not the
-  person's. Opening a conversation, Ask Clark, Add to context and Review in Settings change what the person's screen
-  shows and stay buttons on that screen; the answers about an action whose outcome nobody saw stay the person's (below).
-  An update whose install the execution mode asks about says so and installs nothing.
+  nothing. Every action is recorded with the surface it came from (a press, a typed or spoken sentence, an agent, MCP,
+  the relay) and what came of it. The sentences are whole requests ("mark the latest notification as read", "dismiss
+  the latest notification", "undo dismissing the notification", "snooze the latest notification", "bring back the
+  snoozed notification", "retry the failed background work", "install the latest update", "skip this version", "ask
+  the expired question again", and their Vietnamese forms such as "bỏ thông báo mới nhất", "hoàn tác bỏ thông báo" or
+  "chạy lại việc nền bị lỗi"). A sentence names the action, never the notification: the node picks the newest one for
+  read, unread, dismiss and snooze (one hour), the most recently dismissed one to undo, the soonest snoozed one to bring
+  back, and the newest one that can take the action now for retry, update, skip and ask again. The read-back names that
+  notification by its title, so a person who hears the wrong one knows; when none fits, Clark says so and does nothing.
+  Read, unread, dismiss, undo, snooze, bring back and quieting a kind can be taken back, so they are carried out without
+  asking back; the short status line at the top of the conversation then says what the node did, in the panel's own
+  words. A dismissal's read-back says how long it can be undone ("Tôi bỏ thông báo “…” khỏi hộp thư nhé. Bạn có thể
+  hoàn tác trong 5 phút."), and the status line keeps a real **Undo** button for exactly those five minutes, the time
+  the node keeps the notification restorable; pressing it, or saying "undo dismissing the notification", brings it
+  back through the same route. Retry, update, skip and ask again start or change something and are not called
+  reversible: retry, skip and ask again are carried out as asked, because each is the notification's own offer and
+  runs with the checks the panel's button has. **Installing an update is the person's own decision**: it adds code to
+  the machine and grants what the package asks for. Only the panel's Update button installs, or a spoken request that
+  Clark asks back ("Install the update in …? It adds new code and the permissions it asks for. Do you confirm?") and a
+  spoken yes confirms. Typed, Clark opens the inbox on that notification and says to press Update, installing nothing
+  until the person does. The agents, MCP, the WebSocket relay and `clarkcant api` cannot install it: the route is
+  person-only for them, `act_on_notice` does not offer it, and a request that names it anyway is refused. After an
+  update installs, the status line says which permissions it asked for still wait for approval or were refused, since
+  the package runs without them. The agents first read the inbox, which lists each notification's id with the actions
+  they can take now, the ones they cannot and why, and the ones only the person can take; it marks the notifications'
+  own words as data reported by other work, never instructions. Then they call `act_on_notice`, and the audit records
+  these as the agent's or the voice agent's, not the person's. Opening a conversation, Ask Clark, Add to context and
+  Review in Settings change what the person's screen shows and stay buttons on that screen; the answers about an action
+  whose outcome nobody saw stay the person's (below). An update whose install the execution mode asks about says so and
+  installs nothing; the node has no screen yet where that approval can be given (#341). A refusal is said in the
+  reader's language, from the node's reason code, never as the code itself.
 - **An action whose outcome nobody saw asks the person** (#273). When a command that reaches outside the node (a push, a
   deploy) timed out or was stopped before it reported, the task waits as uncertain and the inbox has one notice about
   it, pointing at the task and its conversation. A consequential browser action (a form submit) is written to the same
@@ -602,7 +618,9 @@ Shipped:
   notification via Electron `Notification`, host-owned, with only redacted title/body — never a command line or a
   secret; clicking restores the window from orb/compact to normal size, focuses it and opens the inbox via the same
   `inbox.open` intent, on the item the notification was about: that row is marked with an accent edge, scrolled into
-  view (without smooth scrolling under reduced motion) and focused on its first button. When the item was decided,
+  view (without smooth scrolling under reduced motion) and focused as a row, which is named for what it is ("Notice: …",
+  "Waiting for you: …"). Focus never lands on one of its buttons, so an Approve or Update is always a deliberate press
+  after the person has read the item. When the item was decided,
   answered or dismissed elsewhere meanwhile, the inbox opens at the top and says so. A notification carries only the
   item's id (`notice:…`, `question:…`, `command-approval:…`, `capability-approval:…`, `task-approval:…`), checked
   against the same grammar by the desktop shell and by the page; anything else opens the inbox at the top. The web

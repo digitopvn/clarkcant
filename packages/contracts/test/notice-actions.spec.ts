@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import { appIntentSchema, describeAppIntent, describeNoticeAction } from "../src/app-intents.ts";
 import {
+  MACHINE_NOTICE_OPERATION_IDS,
   NOTICE_OPERATION_IDS,
+  PERSON_ONLY_NOTICE_OPERATIONS,
   inboxTargetSchema,
   isNoticeOperation,
+  isPersonOnlyNoticeOperation,
   noticeOperationRequestSchema,
   noticeOperationResponseSchema,
 } from "../src/inbox.ts";
+import { isPersonOnlyRoute } from "../src/machine-surfaces.ts";
 
 /**
  * The wire shapes every surface shares for acting on a notice and for a notification's deep link.
@@ -20,17 +24,51 @@ import {
 describe("the node's notice operations", () => {
   it("are exactly the actions the node carries out, never a screen's or the person's own", () => {
     expect([...NOTICE_OPERATION_IDS].sort()).toEqual(
-      ["ask-again", "dismiss", "mark-read", "mark-unread", "retry", "skip-version", "snooze", "suppress", "unsnooze", "unsuppress", "update"].sort(),
+      [
+        "ask-again",
+        "dismiss",
+        "mark-read",
+        "mark-unread",
+        "restore",
+        "retry",
+        "skip-version",
+        "snooze",
+        "suppress",
+        "unsnooze",
+        "unsuppress",
+        "update",
+      ].sort(),
     );
     for (const notOperation of ["open", "ask-clark", "add-to-context", "review-update", "reconcile-confirmed", "reconcile-failed", "approve", ""]) {
       expect(isNoticeOperation(notOperation), notOperation).toBe(false);
     }
   });
 
-  it("take an optional snooze end and nothing else", () => {
+  it("keep installing an update the person's own: never offered to a machine surface, and person-only on the route", () => {
+    expect(PERSON_ONLY_NOTICE_OPERATIONS).toEqual(["update"]);
+    expect(isPersonOnlyNoticeOperation("update")).toBe(true);
+    expect(isPersonOnlyNoticeOperation("dismiss")).toBe(false);
+    expect(MACHINE_NOTICE_OPERATION_IDS).not.toContain("update");
+    expect([...MACHINE_NOTICE_OPERATION_IDS, ...PERSON_ONLY_NOTICE_OPERATIONS].sort()).toEqual([...NOTICE_OPERATION_IDS].sort());
+    expect(isPersonOnlyRoute("POST", "/inbox/notices/ntf_1/actions/update")).toBe(true);
+    for (const action of MACHINE_NOTICE_OPERATION_IDS) {
+      expect(isPersonOnlyRoute("POST", `/inbox/notices/ntf_1/actions/${action}`), action).toBe(false);
+    }
+  });
+
+  it("take an optional snooze end and the surface the person used, and nothing else", () => {
     expect(noticeOperationRequestSchema.safeParse({}).success).toBe(true);
     expect(noticeOperationRequestSchema.safeParse({ until: "2026-09-30T10:00:00.000Z" }).success).toBe(true);
     expect(noticeOperationRequestSchema.safeParse({ until: 5 }).success).toBe(false);
+    for (const source of ["click", "chat", "voice"]) expect(noticeOperationRequestSchema.safeParse({ source }).success, source).toBe(true);
+    for (const source of ["agent", "mcp", "relay", "api", ""]) expect(noticeOperationRequestSchema.safeParse({ source }).success, source).toBe(false);
+  });
+
+  it("say how many of an installed update's permissions wait or were refused, as counts", () => {
+    const installed = { noticeId: "ntf_1", action: "update", outcome: "done", version: "1.1.0" };
+    expect(noticeOperationResponseSchema.safeParse({ ...installed, pendingCapabilities: 2, deniedCapabilities: 0 }).success).toBe(true);
+    expect(noticeOperationResponseSchema.safeParse({ ...installed, pendingCapabilities: -1 }).success).toBe(false);
+    expect(noticeOperationResponseSchema.safeParse({ ...installed, deniedCapabilities: 1.5 }).success).toBe(false);
   });
 
   it("answer done or approval-required, and nothing that reads as installed when it was not", () => {

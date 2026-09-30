@@ -589,21 +589,32 @@ newest notice. The agent reads the same data through the read-only tool `read_in
 with the reason.
 
 **One action layer for a notice's own actions.** `performNoticeOperation` (`apps/runtime/src/notice-operations.ts`)
-carries out the actions in `NOTICE_OPERATION_IDS` (read, unread, dismiss, snooze, unsnooze, suppress, unsuppress,
-retry, update, skip-version, ask-again), and every surface reaches it: `POST /inbox/notices/:id/actions/:action`
+carries out the actions in `NOTICE_OPERATION_IDS` (read, unread, dismiss, restore, snooze, unsnooze, suppress,
+unsuppress, retry, update, skip-version, ask-again), and every surface reaches it: `POST /inbox/notices/:id/actions/:action`
 (the inbox panel, MCP's `act_on_notice`, `clarkcant api`), the main and voice agent's `act_on_notice` tool
-(`act-on-notice-tool.ts`, audited as `agent` or `voice-agent`), and the `notice.act` intent from a typed or spoken
-sentence. It refuses in a fixed order and changes nothing when it does: an unknown name, the person's answer about an
-unknown outcome (`403 PERSON_ONLY`), an action that changes what the person's screen shows (`409 SURFACE_ACTION`), a
-notice that is not this principal's live one (`404`), and, for all but read and unread, an action the notice does not
-offer now (`409 ACTION_NOT_OFFERED`) or offers as unavailable (`409 ACTION_UNAVAILABLE`), re-read from the store at the
-moment of asking rather than from what the caller last saw. `update` goes through the ordinary `installPackage` with
-its checks; under an ask-first execution mode it answers `202 approval-required` and installs nothing. The core
-matcher knows only which action a sentence names; `resolveNoticeTarget` in the runtime's `app-intents.ts` picks the
-notice (newest for read, unread, dismiss, snooze and suppress; the soonest-due snoozed notice for unsnooze; the newest
-notice among the latest 50 that offers the action as available for retry, update, skip-version and ask-again) and
-puts its title in the read-back, or answers that none fits. The page runs the decision through `host.actOnNotice`,
-which posts to the same route, and says the node's answer in the panel's words.
+(`act-on-notice-tool.ts`), and the `notice.act` intent from a typed or spoken sentence. The route matches the raw
+action segment, so a percent-encoded name is not decoded into another action. Each call is audited as an
+`inbox.notice-action` event with the surface it came from (click, chat, voice, agent, voice-agent, mcp, relay, api)
+and its result; the MCP server and the WebSocket relay set the surface themselves and their marker wins over any label
+in the body, and the label only describes the call for the audit — it never allows anything. It refuses in a fixed order and changes nothing when it does: an unknown name, the person's answer
+about an unknown outcome and an update asked for by an agent, MCP or the relay (`403 PERSON_ONLY`), an action that
+changes what the person's screen shows (`409 SURFACE_ACTION`), a notice that is not this principal's live one
+(`404`), and, for all but read, unread and restore, an action the notice does not offer now (`409 ACTION_NOT_OFFERED`)
+or offers as unavailable (`409 ACTION_UNAVAILABLE`), re-read from the store at the moment of asking rather than from
+what the caller last saw. `update` is the person's own decision: `isPersonOnlyRoute` lists its route, so the relay,
+`clarkcant api` and MCP `call` refuse it, and the agents' tool never offers it. It goes through the ordinary
+`installPackage` with its checks, answers `409 ACTION_IN_PROGRESS` while the same notice is already installing, and
+reports how many requested capabilities wait for approval or were denied; under an ask-first execution mode it answers
+`202 approval-required`, reuses a pending install approval for the same version and installs nothing. `restore` undoes
+a dismissal for five minutes (`409 UNDO_EXPIRED` after that). The core matcher knows only which action a sentence
+names; `resolveNoticeTarget` in the runtime's `app-intents.ts` picks the notice (newest for read, unread, dismiss,
+snooze and suppress; the latest dismissal still inside its undo window for restore; the soonest-due snoozed notice for
+unsnooze; the newest notice among the latest 50 that offers the action as available for retry, update, skip-version
+and ask-again) and puts its title in the read-back, or answers that none fits. A typed "install the latest update"
+opens the inbox at that notice rather than installing, and a spoken one asks first. The page runs the decision through
+`host.actOnNotice`, which posts to the same route, and says the node's answer in the panel's words. `read_inbox`
+marks notice text as data rather than instructions, strips control characters and newlines, and clips titles, so a
+notice cannot forge a line of the listing.
 
 **Out-of-app notifications** are the client's job, not the node's. `use-inbox-notifications.ts` polls `GET /inbox`
 and the `inbox.notifications` preference (`packages/contracts/src/preferences.ts`; a stored value missing a field is

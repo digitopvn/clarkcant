@@ -224,6 +224,10 @@ describe("a notice action said as a sentence", () => {
       ["cài bản cập nhật mới nhất", "update"],
       ["skip this version", "skip-version"],
       ["ask the expired question again", "ask-again"],
+      ["hoàn tác bỏ thông báo", "restore"],
+      ["Hoàn tác việc bỏ thông báo.", "restore"],
+      ["undo dismissing the notification", "restore"],
+      ["undo dismissing the notice", "restore"],
     ];
     for (const [sentence, action] of expected) {
       expect(actionOf(sentence), sentence).toEqual({ kind: "notice.act", noticeAction: action });

@@ -14,9 +14,10 @@ import type {
 import type { GatewayClient, Timeline } from "../api.ts";
 import { Modal } from "../Modal.tsx";
 import { useLocaleState, useT } from "../i18n/locale-context.tsx";
-import type { MessageKey } from "../i18n/messages.ts";
 import {
+  UNAVAILABLE_KEYS,
   canOpenOtherConversation,
+  capabilitiesSay,
   decideFailureCategory,
   decideFailureMessageKey,
   effectCategoryLabels,
@@ -93,7 +94,7 @@ export interface InboxPanelProps {
   refreshKey?: number;
   /**
    * The notice or waiting item a clicked notification was about (`notice:<id>`, or the waiting item's own key). Once the
-   * list is read, the panel scrolls to it, marks it and moves focus into it; when it is no longer there, the status line
+   * list is read, the panel scrolls to it, marks it and moves focus onto the row; when it is no longer there, the status line
    * says so. A new target while the panel is open reads the list again first, since a notification is usually about
    * something newer than the last read.
    */
@@ -101,14 +102,6 @@ export interface InboxPanelProps {
   /** The target was shown, or said to be gone; the host clears it so a later opening starts at the top. */
   onTargetShown?: () => void;
 }
-
-/** The words for each reason an action cannot be taken now (`noticeActionSchema.unavailable`). */
-const UNAVAILABLE_KEYS = {
-  "conversation-gone": "inbox.action.conversationGone",
-  "work-gone": "inbox.action.workGone",
-  "package-gone": "inbox.action.packageGone",
-  "already-current": "inbox.action.alreadyCurrent",
-} as const satisfies Record<NoticeActionUnavailable, MessageKey>;
 
 type Load = { state: "loading" } | { state: "failed"; reason: string } | { state: "ready"; inbox: InboxResponse };
 
@@ -281,8 +274,9 @@ export function InboxPanel({
     if (row === undefined) return;
     const reduceMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     row.scrollIntoView({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
-    // Into the item's first action, which is what the person came to do; the row itself when it has none enabled.
-    (row.querySelector<HTMLElement>("button:not(:disabled)") ?? row).focus();
+    // Onto the row itself, which is named for what it is, never onto one of its buttons: landing on "Approve" or
+    // "Update" from a notification would leave one keypress between a glance and a decision the person has not read.
+    row.focus();
   }, [pendingTarget, load.state, onTargetShown, t]);
 
   /** The ref callback that keeps `targetRows` in step with the rows on screen. */
@@ -611,9 +605,10 @@ export function InboxPanel({
   /**
    * "Update": the notice's own action on the node, which installs the version the notice names through the same install
    * as any other — so its checks and any approval it needs are the same — and takes the notice out once it is installed.
-   * The same action a typed or spoken "install the latest update" and the agents reach. When the execution mode asks
-   * first, the line says so and nothing is installed; a refusal says the node's reason and leaves the installed version
-   * as it was.
+   * The same action a spoken, confirmed "install the latest update" reaches; installing is the person's own decision, so
+   * no agent or machine surface can. When the execution mode asks first, the line says so and nothing is installed; a
+   * refusal says why and leaves the installed version as it was. A permission the update asked for and did not get yet
+   * is said after "updated", since the package runs without it.
    */
   const update = (notice: Notice) => {
     const subject = notice.subject;
@@ -622,14 +617,17 @@ export function InboxPanel({
     if (!lock(`notice:${notice.noticeId}`)) return;
     const before = noticeIdsNow();
     void client
-      .actOnNotice(notice.noticeId, "update")
+      .actOnNotice(notice.noticeId, "update", { source: "click" })
       .then((answer) => {
         if (answer.outcome === "approval-required") {
           finish({ tone: "done", text: t("inbox.updateNeedsApproval") }, { kind: "status" });
           return;
         }
         finish(
-          { tone: "done", text: t("inbox.updated").replace("{package}", packageId).replace("{version}", answer.version ?? version) },
+          {
+            tone: "done",
+            text: `${t("inbox.updated").replace("{package}", packageId).replace("{version}", answer.version ?? version)}${capabilitiesSay(answer, t)}`,
+          },
           afterLeaving(before, notice.noticeId),
         );
       })
@@ -1064,6 +1062,7 @@ export function InboxPanel({
                         key={key}
                         ref={targetRow(key)}
                         tabIndex={-1}
+                        aria-label={t("inbox.row.waitingAria").replace("{title}", item.kind === "question" ? item.prompt : item.description)}
                         className="cc-card cc-inbox-item"
                         data-inbox-waiting-item={item.kind}
                         data-inbox-waiting-key={key}
@@ -1232,6 +1231,7 @@ export function InboxPanel({
                           targetRow(`notice:${notice.noticeId}`)(el);
                         }}
                         tabIndex={-1}
+                        aria-label={t("inbox.row.noticeAria").replace("{title}", notice.title)}
                         className="cc-inbox-notice"
                         data-inbox-notice={notice.noticeId}
                         data-unread={unread ? "true" : "false"}

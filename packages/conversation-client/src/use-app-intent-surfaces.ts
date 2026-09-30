@@ -10,7 +10,15 @@ import {
   requestWindowMode,
 } from "./desktop-compact.ts";
 import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
-import type { AppIntentDecision, AppIntentKind, NoticeOperationId, OrbProfileName, SettingsTab } from "@clarkcant/contracts";
+import {
+  type AppIntentDecision,
+  type AppIntentKind,
+  NOTICE_DISMISS_UNDO_WINDOW_MS,
+  type NoticeOperationId,
+  type NoticeOperationSource,
+  type OrbProfileName,
+  type SettingsTab,
+} from "@clarkcant/contracts";
 import { CLOSED_LIBRARY, applyLibraryAction, type WidgetLibraryState } from "./widget-library/widget-library-state.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 
@@ -41,6 +49,13 @@ export interface AppIntentSurfacesState {
   inboxTarget: string | undefined;
   clearInboxTarget: () => void;
   intentNotice: string | undefined;
+  /**
+   * Whether the line offers "Undo": after a typed or spoken dismissal, for as long as the node keeps the notice
+   * restorable (`NOTICE_DISMISS_UNDO_WINDOW_MS`), which is also how long the line stays.
+   */
+  intentUndo: boolean;
+  /** Brings the dismissed notice back through the node's own restore, and says how that went on the same line. */
+  undoIntent: () => void;
   /** Shows a notice outside the click/voice/typed-command path, e.g. a voice session that failed to open. */
   setIntentNotice: (message: string) => void;
   /** Carry out a decision, whichever way it arrived (click, voice, or a typed command). */
@@ -86,8 +101,11 @@ export interface AppIntentSurfacesDeps {
   askAboutLatestNotice?: () => Promise<void>;
   /** The inbox's "It took effect" / "It did not take effect" for the effect the node named; rejects with the reason. */
   recordEffectOutcome?: (effectId: string, outcome: "confirmed" | "failed") => Promise<void>;
-  /** One of a notice's own actions, on the notice the node named; resolves to what the node did, rejects with why not. */
-  actOnNotice?: (noticeId: string, action: NoticeOperationId) => Promise<string>;
+  /**
+   * One of a notice's own actions, on the notice the node named; resolves to what the node did, rejects with why not.
+   * `source` is given only for a press (the line's own "Undo"); otherwise the host says whether it was typed or spoken.
+   */
+  actOnNotice?: (noticeId: string, action: NoticeOperationId, source?: NoticeOperationSource) => Promise<string>;
   /**
    * The model switches the hotkey makes (`useModelAlias`), so an intent that switches the model updates
    * the alias and note on screen exactly as the hotkey does.
@@ -132,7 +150,14 @@ export function useAppIntentSurfaces({
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxTarget, setInboxTarget] = useState<string | undefined>(undefined);
   const clearInboxTarget = useCallback(() => setInboxTarget(undefined), []);
-  const [intentNotice, setIntentNotice] = useState<string | undefined>(undefined);
+  const [intentNotice, setIntentNoticeState] = useState<string | undefined>(undefined);
+  /** The notice the line's "Undo" brings back; set only beside the sentence that says it was dismissed. */
+  const [undoNoticeId, setUndoNoticeId] = useState<string | undefined>(undefined);
+  // Any other sentence replaces the line, and with it the "Undo" that belonged to the one before.
+  const setIntentNotice = useCallback((message: string | undefined) => {
+    setUndoNoticeId(undefined);
+    setIntentNoticeState(message);
+  }, []);
   const [pendingIntent, setPendingIntent] = useState<AppIntentDecision | undefined>(undefined);
   const [liveRefresh, setLiveRefresh] = useState(0);
   const bumpLiveRefresh = useCallback(() => setLiveRefresh((count) => count + 1), []);
@@ -268,8 +293,11 @@ export function useAppIntentSurfaces({
           setIntentNotice(run.say);
         } else if (run.ran && decision.kind === "intent" && decision.intent.kind === "notice.act") {
           // A notice action leaves nothing on screen that says it happened — the inbox may not even be open — so what
-          // the node did is said, in the same words the panel uses for the same press.
+          // the node did is said, in the same words the panel uses for the same press. A dismissal keeps "Undo" beside
+          // it for as long as the node can still bring the notice back, as the panel's own line does.
           setIntentNotice(run.say);
+          const { noticeId, noticeAction } = decision.intent;
+          if (noticeAction === "dismiss" && noticeId !== undefined && actOnNotice !== undefined) setUndoNoticeId(noticeId);
         }
         // An action the agent asked for is reported back, run or not: the agent's tool is waiting to
         // tell the model whether the screen changed, and "sent" is not an answer it may give as "done".
@@ -278,8 +306,24 @@ export function useAppIntentSurfaces({
         }
       });
     },
-    [client, intentHost],
+    [client, intentHost, actOnNotice, setIntentNotice],
   );
+
+  const undoIntent = useCallback((): void => {
+    const noticeId = undoNoticeId;
+    if (noticeId === undefined || actOnNotice === undefined) return;
+    // Taken away at once, so a second press cannot send a second restore while the first is on its way.
+    setUndoNoticeId(undefined);
+    actOnNotice(noticeId, "restore", "click").then(
+      (say) => setIntentNotice(say),
+      (cause: unknown) =>
+        setIntentNotice(
+          cause instanceof Error && cause.message !== ""
+            ? cause.message
+            : t("inbox.act.undoFailed").replace("{reason}", `${t("inbox.reason.unavailable")}.`),
+        ),
+    );
+  }, [undoNoticeId, actOnNotice, setIntentNotice, t]);
 
   const clickIntent = useCallback(
     (kind: AppIntentKind, extra?: { inboxTarget?: string }): void => {
@@ -296,15 +340,16 @@ export function useAppIntentSurfaces({
         })
         .catch(() => setIntentNotice(t("intents.commandLookupFailed")));
     },
-    [client, conversationId, runIntent, t],
+    [client, conversationId, runIntent, setIntentNotice, t],
   );
 
-  // A notice is a remark about something that just happened, not a permanent line of text.
+  // A notice is a remark about something that just happened, not a permanent line of text. One that offers "Undo"
+  // stays as long as the undo is real, and goes with it.
   useEffect(() => {
     if (intentNotice === undefined) return;
-    const timer = setTimeout(() => setIntentNotice(undefined), 6000);
+    const timer = setTimeout(() => setIntentNotice(undefined), undoNoticeId === undefined ? 6000 : NOTICE_DISMISS_UNDO_WINDOW_MS);
     return () => clearTimeout(timer);
-  }, [intentNotice]);
+  }, [intentNotice, undoNoticeId, setIntentNotice]);
 
   // A command that was typed and recognised is answered by the host, so the node sends the
   // decision with the timeline and it is carried out here — the same executor a spoken command
@@ -328,6 +373,8 @@ export function useAppIntentSurfaces({
     inboxTarget,
     clearInboxTarget,
     intentNotice,
+    intentUndo: undoNoticeId !== undefined,
+    undoIntent,
     setIntentNotice,
     runIntent,
     clickIntent,

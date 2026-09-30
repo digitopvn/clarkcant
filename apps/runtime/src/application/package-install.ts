@@ -393,14 +393,27 @@ export async function installPackage(
   };
 
   if (decision.kind === "ask") {
-    const approval = requestApproval(coordination, {
-      operationDigest: entry.digest,
-      operationDescription: `cài ${entry.displayName} ${entry.version} (${entry.riskTier})`,
-      effectCategory: "local-write",
-      ttlMs: INSTALL_APPROVAL_TTL_MS,
-    });
+    /*
+     * Asking to install the same artifact again while its approval still waits is the same question, not a new one:
+     * reuse the pending row for this digest, as the capability approvals below do, so a second press or a repeated
+     * request does not pile up approvals nobody can tell apart. Only a live one — an expired row is not a question
+     * anybody can still answer.
+     */
+    const pending = runtime.db
+      .prepare(
+        "SELECT approval_id FROM approvals WHERE operation_digest = ? AND decision = 'pending' AND task_id IS NULL AND expires_at > ? LIMIT 1",
+      )
+      .get(entry.digest, nowInstant()) as { approval_id: string } | undefined;
+    const approvalId =
+      pending?.approval_id ??
+      requestApproval(coordination, {
+        operationDigest: entry.digest,
+        operationDescription: `cài ${entry.displayName} ${entry.version} (${entry.riskTier})`,
+        effectCategory: "local-write",
+        ttlMs: INSTALL_APPROVAL_TTL_MS,
+      }).approvalId;
     // 202 rather than an error: nothing failed, and the approval is the next step rather than a refusal.
-    return { kind: "approval-required", message: decision.reason, approvalId: approval.approvalId };
+    return { kind: "approval-required", message: decision.reason, approvalId };
   }
 
   /*

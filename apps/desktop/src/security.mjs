@@ -271,13 +271,6 @@ export function reviewIpcCall(event, channel, rendererUrl, detachedUrl) {
 }
 
 /**
- * A credential request as the host will accept it.
- *
- * The purpose is required because a prompt with no stated reason cannot be consented to
- * meaningfully; an empty purpose would render as a dialog asking for a secret and explaining
- * nothing.
- */
-/**
  * The grammar of an inbox target: one notice (`notice:<id>`) or one waiting item keyed the way the inbox keys it. The same
  * pattern as `inboxTargetSchema` in `@clarkcant/contracts`; this file stays free of workspace imports, so a test holds
  * the two to each other (`security.spec.ts`).
@@ -294,6 +287,13 @@ export function reviewNotificationTarget(raw) {
   return raw;
 }
 
+/**
+ * A credential request as the host will accept it.
+ *
+ * The purpose is required because a prompt with no stated reason cannot be consented to
+ * meaningfully; an empty purpose would render as a dialog asking for a secret and explaining
+ * nothing.
+ */
 export function reviewCredentialRequest(input) {
   if (input === null || typeof input !== "object") {
     return { allowed: false, reason: "the credential request must be an object" };

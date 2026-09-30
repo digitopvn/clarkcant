@@ -88,10 +88,11 @@ export interface AppIntentHost {
    */
   openInbox?(target?: string): HostEffect;
   /**
-   * Carries out one of a notice's own actions — mark read, dismiss, snooze, retry, update, skip a version, ask again —
-   * through the node's notice-action route, the one the panel's buttons, MCP and both agents reach; the node checks it
-   * against what the notice offers now. Resolves to the sentence saying what the node did; throws the node's reason when
-   * it did not. Optional for the reason `openInbox` is.
+   * Carries out one of a notice's own actions — mark read, dismiss or undo a dismissal, snooze, retry, update, skip a
+   * version, ask again — through the node's notice-action route, the one the panel's buttons, MCP and both agents reach;
+   * the node checks it against what the notice offers now. Installing an update reaches here only from the person: a
+   * spoken request they confirmed (a typed one opens the inbox on the notice instead), never an agent's. Resolves to the
+   * sentence saying what the node did; throws the reason when it did not. Optional for the reason `openInbox` is.
    */
   actOnNotice?(noticeId: string, action: NoticeOperationId): HostEffect;
   /**

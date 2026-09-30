@@ -26,7 +26,7 @@
 import { z } from "zod";
 
 import { capabilityRefSchema } from "./grants.ts";
-import { type NoticeOperationId, inboxTargetSchema, noticeOperationIdSchema } from "./inbox.ts";
+import { NOTICE_DISMISS_UNDO_WINDOW_MS, type NoticeOperationId, inboxTargetSchema, noticeOperationIdSchema } from "./inbox.ts";
 import { ORB_PROFILE_LABELS, orbProfileSchema } from "./preferences.ts";
 
 /**
@@ -279,14 +279,22 @@ const TAB_LABELS: Record<SettingsTab, string> = {
  */
 export function describeNoticeAction(action: NoticeOperationId, locale: AppIntentLocale = "vi", title?: string): string {
   const en = locale === "en";
-  const notice = title === undefined ? (en ? "that notice" : "thông báo đó") : en ? `the notice “${title}”` : `thông báo “${title}”`;
+  const notice = noticeNamed(locale, title);
   switch (action) {
     case "mark-read":
       return en ? `Marking ${notice} as read.` : `Tôi đánh dấu ${notice} là đã đọc nhé.`;
     case "mark-unread":
       return en ? `Marking ${notice} as unread.` : `Tôi đánh dấu ${notice} là chưa đọc nhé.`;
-    case "dismiss":
-      return en ? `Dismissing ${notice}. You can undo it from the inbox for a few minutes.` : `Tôi bỏ ${notice} khỏi hộp thư nhé. Bạn có thể hoàn tác trong hộp thư trong vài phút.`;
+    case "dismiss": {
+      // True because the page keeps an Undo beside this sentence for the whole window, and "undo dismissing the
+      // notification" restores it too; the node accepts the undo for exactly as long.
+      const minutes = String(NOTICE_DISMISS_UNDO_WINDOW_MS / 60_000);
+      return en
+        ? `Dismissing ${notice}. You can undo this within ${minutes} minutes.`
+        : `Tôi bỏ ${notice} khỏi hộp thư nhé. Bạn có thể hoàn tác trong ${minutes} phút.`;
+    }
+    case "restore":
+      return en ? `Undoing the dismissal of ${notice}.` : `Tôi hoàn tác việc bỏ ${notice} nhé.`;
     case "snooze":
       return en ? `Snoozing ${notice} for an hour.` : `Tôi hoãn ${notice} một tiếng nhé.`;
     case "unsnooze":
@@ -308,6 +316,36 @@ export function describeNoticeAction(action: NoticeOperationId, locale: AppInten
       throw new Error(`no read-back sentence for notice action ${String(unreachable)}`);
     }
   }
+}
+
+/** A notice as a read-back names it: by its title when the node resolved one, as "that notice" when it did not. */
+function noticeNamed(locale: AppIntentLocale, title: string | undefined): string {
+  const en = locale === "en";
+  if (title === undefined) return en ? "that notice" : "thông báo đó";
+  return en ? `the notice “${title}”` : `thông báo “${title}”`;
+}
+
+/**
+ * The question a spoken "install the latest update" is answered with. Installing puts new code on the machine and grants
+ * it what its manifest asks for, so a sentence alone never installs: a spoken yes spends a single-use token, as it does
+ * for quitting.
+ */
+export function askToConfirmNoticeUpdate(locale: AppIntentLocale = "vi", title?: string): string {
+  const notice = noticeNamed(locale, title);
+  return locale === "en"
+    ? `Install the update in ${notice}? It adds new code and the permissions it asks for. Do you confirm?`
+    : `Cài bản cập nhật trong ${notice}? Bản này thêm mã mới và các quyền nó yêu cầu. Bạn xác nhận chứ?`;
+}
+
+/**
+ * What a typed "install the latest update" is answered with: the inbox opens on the notice, and its Update button is the
+ * confirmation — the same place and the same press as installing it without a sentence.
+ */
+export function pointToNoticeUpdate(locale: AppIntentLocale = "vi", title?: string): string {
+  const notice = noticeNamed(locale, title);
+  return locale === "en"
+    ? `To install the update in ${notice}, press “Update” on the notice in the inbox. Nothing is installed until you do.`
+    : `Để cài bản cập nhật trong ${notice}, bạn bấm “Cập nhật” ở thông báo trong hộp thư. Chưa có gì được cài cho đến khi bạn bấm.`;
 }
 
 /** The on-screen name of the profile an `orb.select` names; the refinements above guarantee there is one. */

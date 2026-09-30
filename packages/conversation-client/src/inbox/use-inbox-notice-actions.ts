@@ -6,12 +6,13 @@ import type {
   Notice,
   NoticeOperationId,
   NoticeOperationResponse,
+  NoticeOperationSource,
 } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
 import type { MessageKey } from "../i18n/messages.ts";
 import type { SendOptions } from "../use-turn-send.ts";
-import { noticeReference, sanitizeReason, snoozeUntil } from "./inbox-model.ts";
+import { capabilitiesSay, noticeRefusalReason, noticeReference, snoozeUntil } from "./inbox-model.ts";
 
 export interface InboxNoticeActionsDeps {
   client: GatewayClient;
@@ -46,10 +47,11 @@ export interface InboxNoticeActions {
   /**
    * The `notice.act` intent: one of a notice's own actions, carried out by the node's notice-action route — the one MCP,
    * `clarkcant api` and both agents reach — after the node named the notice. Resolves to the sentence saying what the node
-   * did, and rejects with the node's reason when it did not. A snooze from a sentence lasts an hour, the menu's first
-   * choice.
+   * did, and rejects with the reason, in the reader's language, when it did not. A snooze from a sentence lasts an hour,
+   * the menu's first choice. `source` says how the person asked: a press, a typed sentence or a spoken one; the node
+   * records it with the action.
    */
-  actOnNotice: (noticeId: string, action: NoticeOperationId) => Promise<string>;
+  actOnNotice: (noticeId: string, action: NoticeOperationId, source: NoticeOperationSource) => Promise<string>;
 }
 
 /**
@@ -125,7 +127,7 @@ export function useInboxNoticeActions({
   );
 
   const actOnNotice = useCallback(
-    async (noticeId: string, action: NoticeOperationId): Promise<string> => {
+    async (noticeId: string, action: NoticeOperationId, source: NoticeOperationSource): Promise<string> => {
       let until: string | undefined;
       if (action === "snooze") {
         // "In 1 hour" always has a time; the check is the preset's own contract.
@@ -135,11 +137,11 @@ export function useInboxNoticeActions({
       }
       let answer: NoticeOperationResponse;
       try {
-        answer = await client.actOnNotice(noticeId, action, until);
+        answer = await client.actOnNotice(noticeId, action, { ...(until === undefined ? {} : { until }), source });
       } catch (cause) {
-        // Ended as a sentence, so the one after it reads as its own.
-        const reason = (sanitizeReason(cause) ?? t("inbox.reason.unavailable")).trimEnd();
-        throw new Error(t("inbox.act.failed").replace("{reason}", /[.!?…]$/u.test(reason) ? reason : `${reason}.`), { cause });
+        // Worded from the node's code in the reader's language; a restore that fails leaves the notice dismissed.
+        const reason = noticeRefusalReason(cause, t);
+        throw new Error(t(action === "restore" ? "inbox.act.undoFailed" : "inbox.act.failed").replace("{reason}", reason), { cause });
       } finally {
         // Whatever happened, the list and the count are read again: a refusal can mean the notice changed elsewhere.
         onInboxChanged();
@@ -164,6 +166,8 @@ export function noticeOperationSay(answer: NoticeOperationResponse, t: (key: Mes
       return t("inbox.markedUnread");
     case "dismiss":
       return t("inbox.dismissed");
+    case "restore":
+      return t("inbox.restored");
     case "snooze": {
       const time =
         answer.snoozedUntil === undefined
@@ -184,7 +188,7 @@ export function noticeOperationSay(answer: NoticeOperationResponse, t: (key: Mes
     case "update":
       return answer.outcome === "approval-required"
         ? t("inbox.updateNeedsApproval")
-        : t("inbox.act.updated").replace("{version}", answer.version ?? "");
+        : `${t("inbox.act.updated").replace("{version}", answer.version ?? "")}${capabilitiesSay(answer, t)}`;
     case "skip-version":
       return t("inbox.skipped").replace("{version}", answer.version ?? "");
     case "ask-again":

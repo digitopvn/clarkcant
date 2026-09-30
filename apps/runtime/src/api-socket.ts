@@ -6,7 +6,7 @@ import { isPersonOnlyRoute, PERSON_ONLY_REFUSAL, parseSseChunk } from "@clarkcan
 
 import { handleRequest, type GatewayRequest } from "./gateway.ts";
 import { API_SOCKET_PATH, API_SOCKET_PROTOCOL } from "./open-interfaces.ts";
-import { tokenMatches } from "./routes/http.ts";
+import { SURFACE_HEADER, tokenMatches } from "./routes/http.ts";
 import type { NodeServices } from "./services.ts";
 
 /**
@@ -131,8 +131,9 @@ export function attachApiSocket(options: { server: Server; services: NodeService
         method,
         path: requestPath,
         query,
-        // The token this socket proved, so the gateway makes the same decision it makes for HTTP.
-        headers: { authorization: `Bearer ${token}` },
+        // The token this socket proved, so the gateway makes the same decision it makes for HTTP, and the surface, so a
+        // route that records who asked can say it came through the relay.
+        headers: { authorization: `Bearer ${token}`, [SURFACE_HEADER]: "relay" },
         body: frame.body === undefined ? "" : typeof frame.body === "string" ? frame.body : JSON.stringify(frame.body),
       };
 
