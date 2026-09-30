@@ -1,0 +1,26 @@
+{
+  "appearanceApi": {
+    "min": 2,
+    "max": 2
+  },
+  "id": "lookalike",
+  "displayName": "Lookalike",
+  "description": "Solid buttons the colour of the card they sit on, a heavy dashed line and a hard accent shadow.",
+  "border": {
+    "width": 3,
+    "style": "dashed"
+  },
+  "shadow": {
+    "style": "hard",
+    "offset": 8,
+    "color": "accent"
+  },
+  "recipes": {
+    "button": "solid",
+    "card": "raised",
+    "input": "underlined",
+    "modal": "framed",
+    "badge": "pill",
+    "composer": "framed"
+  }
+}

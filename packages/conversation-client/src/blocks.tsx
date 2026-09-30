@@ -812,9 +812,14 @@ export function ApprovalCardBlock({
         </p>
         {decision === "pending" && !decided ? (
           <div className="cc-card-actions">
+            {/*
+              Approve is the card's one primary action, filled, and Deny the plain one beside it, so the two answers
+              never look alike. Inside a host card both are drawn with Clark's own button, whatever a theme's recipe.
+            */}
             <button
               type="button"
               className="cc-action"
+              data-emphasis="primary"
               data-approve={approvalId}
               disabled={!canDecide || deciding}
               onClick={() => actions?.onApprovalDecide?.({ approvalId, digest, decision: "granted" })}

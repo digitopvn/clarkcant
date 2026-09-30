@@ -28,9 +28,10 @@ const DEPTH_REF = `package:${DEPTH_PACKAGE}#depth`;
 const FLATLINE_REF = `package:${HOSTILE_PACKAGE}#flatline`;
 const CAMOUFLAGE_REF = `package:${HOSTILE_PACKAGE}#camouflage`;
 const BLACKOUT_REF = `package:${HOSTILE_PACKAGE}#blackout`;
+const LOOKALIKE_REF = `package:${HOSTILE_PACKAGE}#lookalike`;
 /** The digests of the fixtures' bytes, as `fixtures/directory.json` lists them (a unit test keeps the two in step). */
 const DEPTH_DIGEST = "sha256:14dc35f5d507f28c9fa0c516274e0a61ba4e857fe35a987443621dd16a416b69";
-const HOSTILE_DIGEST = "sha256:b0419222128148974e5160c6d7f34aeabeb9d0191b64d47c656f23131a96dbf1";
+const HOSTILE_DIGEST = "sha256:4258b1eff61513c85652b3b2847411e2fd48721d377784f04750deb1094ba0b9";
 const DEPTH_DARK_ACCENT = "#7DB4F0";
 
 const overflowLog: { shot: string; scrollWidth: number; clientWidth: number; overflow: number }[] = [];
@@ -241,7 +242,6 @@ test("a hostile theme cannot hide Stop, the approval card, or a focus ring, and 
     return { fill: style.backgroundColor, image: style.backgroundImage, blur: style.backdropFilter, shadow: style.boxShadow };
   });
   expect(surface).toEqual({ fill: await drawnColor(page, "--cc-card"), image: "none", blur: "none", shadow: "none" });
-  await card.screenshot({ path: join(EVIDENCE, "298-flatline-approval-card-dark.png") });
   await expect(card.locator("[data-approve]")).toBeVisible();
   await expect(card.locator("[data-deny]")).toBeVisible();
 
@@ -298,6 +298,72 @@ test("a hostile theme cannot hide Stop, the approval card, or a focus ring, and 
   await expect(page.locator(`[data-theme-ref='${BLACKOUT_REF}']`)).toHaveCount(0);
   await page.screenshot({ path: join(EVIDENCE, "298-hostile-refused-1280-dark.png") });
   await page.keyboard.press("Escape");
+});
+
+/** What a button is drawn with: its fill, its edge and its shadow, as the browser computed them. */
+const buttonLook = (button: Locator): Promise<{ fill: string; edge: string; shadow: string }> =>
+  button.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { fill: style.backgroundColor, edge: style.borderTopColor, shadow: style.boxShadow };
+  });
+
+test("a theme's button recipe never reaches the host's answers or Stop", async ({ page, request }) => {
+  // Flatline draws every button quiet; Lookalike draws them solid in the card's own colour, with a hard accent shadow.
+  const themes = [
+    { name: "flatline", ref: FLATLINE_REF, buttonFill: "transparent" },
+    // The browser reports a custom property with its `var()` resolved, so a token is compared as the value it resolves to.
+    { name: "lookalike", ref: LOOKALIKE_REF, buttonFill: "--cc-card" },
+  ] as const;
+  for (const { name, ref, buttonFill } of themes) {
+    await setTheme(request, ref);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await open(page);
+    // The theme's recipe is in force on the page; only the host's own buttons are drawn without it.
+    const expectedFill = buttonFill.startsWith("--") ? await rootVar(page, buttonFill) : buttonFill;
+    await expect.poll(() => rootVar(page, "--cc-button-bg"), { timeout: 15_000 }).toBe(expectedFill);
+
+    await page.locator("[data-composer]").fill("chạy lệnh thử");
+    await page.locator("[data-send]").click();
+    const card = page.locator('[data-host-card="approval"][data-decision="pending"]').last();
+    await expect(card).toBeVisible({ timeout: 20_000 });
+    await page.mouse.move(0, 0);
+    for (const scheme of ["dark", "light"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      // The page switches scheme after the media change reaches it; its colour transitions start a frame later.
+      await expect(page.locator("html")).toHaveAttribute("data-cc-theme", scheme, { timeout: 15_000 });
+      await frames(page);
+      await still(page);
+      const approve = await buttonLook(card.locator("[data-approve]"));
+      const deny = await buttonLook(card.locator("[data-deny]"));
+      // Approve is filled with the accent and Deny is Clark's plain button: the two answers never look alike.
+      const accent = await drawnColor(page, "--cc-accent");
+      expect(approve, `${name} ${scheme} Approve`).toEqual({ fill: accent, edge: accent, shadow: "none" });
+      expect(deny, `${name} ${scheme} Deny`).toEqual({
+        fill: await drawnColor(page, "--cc-elevated"),
+        edge: await drawnColor(page, "--cc-border"),
+        shadow: "none",
+      });
+      expect(approve.fill).not.toBe(deny.fill);
+      await card.screenshot({ path: join(EVIDENCE, `298-${name}-approval-card-${scheme}.png`) });
+    }
+    await page.emulateMedia({ colorScheme: "dark" });
+    await card.locator("[data-deny]").click();
+    await expect(card.locator("[data-approve]")).toHaveCount(0, { timeout: 15_000 });
+
+    // Stop, while a reply is being written, keeps the host's own button.
+    await page.locator("[data-composer]").fill("viết một câu trả lời thật dài");
+    await page.locator("[data-composer]").press("Enter");
+    const stop = page.locator("[data-stop]");
+    await expect(stop).toBeVisible({ timeout: 15_000 });
+    expect(await buttonLook(stop), `${name} Stop`).toEqual({
+      fill: await drawnColor(page, "--cc-elevated"),
+      edge: await drawnColor(page, "--cc-border"),
+      shadow: "none",
+    });
+    await stop.click();
+    await expect(stop).toHaveCount(0, { timeout: 15_000 });
+  }
 });
 
 test("reduced motion stills the theme's motion, its backdrop light and its Orb", async ({ page, request }) => {

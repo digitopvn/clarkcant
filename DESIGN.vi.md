@@ -1134,7 +1134,9 @@ Dùng segmented controls, toggles và swatches:
   có giới hạn; host tự viết mọi giá trị, nên không theme nào đưa vào được selector hay quy tắc CSS. Những thứ luôn là
   của host dù theme nói gì: vòng tiêu điểm (luôn là màu tiêu điểm, không bao giờ theo recipe), điều khiển bị vô hiệu,
   các thẻ của chính host (thẻ phê duyệt, thông tin đăng nhập, kết nối vẫn giữ đường viền và bề mặt thẻ trơn — không
-  kính, không vân, không phát sáng, không bóng — dù thẻ widget được vẽ khác đi), và giảm chuyển động (mọi thời lượng
+  kính, không vân, không phát sáng, không bóng — dù thẻ widget được vẽ khác đi), các nút trong những thẻ ấy và trong
+  hộp thư, cùng nút Dừng (là nút của chính Clark mang màu của theme, không bao giờ theo recipe nút của theme, nên nút
+  Phê duyệt của một yêu cầu luôn được tô màu nhấn còn nút Từ chối bên cạnh vẫn trơn), và giảm chuyển động (mọi thời lượng
   bằng không, ánh sáng theo con trỏ trên nền tắt, Orb đứng yên), dù yêu cầu đến từ hệ điều hành hay từ lựa chọn Giảm
   trong Cài đặt → Trải nghiệm → Chuyển động. Kính phủ thẻ widget và ô soạn tin bằng một lớp màu mờ đục, nên Orb nằm sau
   ô soạn tin không bao giờ lộ ra; chỉ hộp thoại là trong suốt và làm mờ nền, mỗi lúc một hộp. Ánh sáng theo con trỏ

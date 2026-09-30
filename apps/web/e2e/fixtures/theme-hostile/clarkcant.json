@@ -3,7 +3,7 @@
   "id": "com.example.theme-hostile",
   "version": "1.0.0",
   "displayName": "Hostile themes",
-  "description": "Three themes that push against what Clark keeps visible: one as flat as the contract allows, one that camouflages status, one that blacks out the Orb.",
+  "description": "Four themes that push against what Clark keeps visible: one as flat as the contract allows, one whose buttons take the card's colour, one that camouflages status, one that blacks out the Orb.",
   "hostApi": {
     "min": 1,
     "max": 1
@@ -13,6 +13,12 @@
       "kind": "themes",
       "id": "flatline",
       "entry": "themes/flatline.json",
+      "isolation": "declarative"
+    },
+    {
+      "kind": "themes",
+      "id": "lookalike",
+      "entry": "themes/lookalike.json",
       "isolation": "declarative"
     },
     {

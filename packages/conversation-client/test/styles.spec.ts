@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   CLARK_IDENTITY_DECLARATIONS,
+  DARK,
   IDENTITY_VARIABLES,
+  LIGHT,
   type IdentityVariable,
+  requiredPairs,
   themeStylesheet,
 } from "@clarkcant/design-tokens";
 
@@ -230,6 +233,54 @@ describe("the look a theme's identity reaches", () => {
     expect(resolve(effective.get("background") ?? "")).toBe("var(--cc-card)");
     expect(resolve(effective.get("background-image") ?? "")).toBe("none");
     expect(resolve(effective.get("box-shadow") ?? "")).toBe("none");
+  });
+
+  it("draws the buttons in the host's own cards and panels as Clark's, whatever the theme's button recipe", () => {
+    // A theme's recipe reaches a button only through these variables; inside a host surface each is Clark's own value.
+    const buttonVariables = IDENTITY_VARIABLES.filter((name) => name.startsWith("--cc-button-"));
+    expect(buttonVariables.length).toBeGreaterThan(0);
+    const host = rules(APP_CSS).filter(({ selector }) => selector === '[data-owner="host"] .cc-action');
+    expect(host).toHaveLength(1);
+    const declared = new Map(
+      (host[0]?.body ?? "")
+        .split(";")
+        .filter((line) => line.includes(":"))
+        .map((line) => [line.slice(0, line.indexOf(":")).trim(), line.slice(line.indexOf(":") + 1).trim()] as const),
+    );
+    for (const name of buttonVariables) {
+      const clark = CLARK_IDENTITY_DECLARATIONS[name];
+      expect(clark, `${name} has a Clark value`).toBeDefined();
+      expect(declared.get(name), `${name} inside a host surface`).toBe(clark?.replace(/\s+/g, " "));
+    }
+
+    // The primary action is filled with the accent directly, so no recipe reaches it, and the plain one beside it is
+    // the elevated surface: the two differ in fill.
+    const primary = rules(APP_CSS).find(({ selector }) => selector === '.cc-action[data-emphasis="primary"]:not(:disabled)')?.body ?? "";
+    expect(primary).toMatch(/background:\s*var\(--cc-accent\)/);
+    expect(primary).toMatch(/border-color:\s*var\(--cc-accent\)/);
+    expect(primary).not.toMatch(/var\(--cc-button-/);
+    expect(declared.get("--cc-button-bg")).toBe("var(--cc-elevated)");
+    // And the contrast audit holds the accent to text contrast on the elevated surface, so for every theme that can be
+    // drawn the filled answer stands apart from the plain one.
+    for (const palette of [DARK, LIGHT]) {
+      const pair = requiredPairs(palette).find((candidate) => candidate.foregroundToken === "accent" && candidate.backgroundToken === "elevated");
+      expect(pair?.minimum).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("draws Stop with the host's own look, which no recipe or effect reaches", () => {
+    const stop = rules(APP_CSS).filter(({ selector }) =>
+      selector.split(",").some((part) => /^\.cc-icon-btn(?:$|[:[])/.test(part.trim())),
+    );
+    expect(stop.length).toBeGreaterThan(0);
+    const styling = IDENTITY_VARIABLES.filter((name) => /^--cc-(?:button|card|input|modal|badge|composer|surface|backdrop)-/.test(name));
+    for (const { selector, body } of stop) {
+      for (const name of styling) expect(body, `${selector} reads ${name}`).not.toContain(`var(${name}`);
+      expect(body, selector).not.toMatch(/box-shadow|backdrop-filter|background-image/);
+    }
+    const base = stop.find(({ selector }) => selector === ".cc-icon-btn")?.body ?? "";
+    expect(base).toMatch(/background:\s*var\(--cc-elevated\)/);
+    expect(base).toMatch(/var\(--cc-border\)/);
   });
 
   it("blurs only the modal under glass, never a card or the composer", () => {

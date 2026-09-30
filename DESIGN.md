@@ -1152,7 +1152,9 @@ Use segmented controls, toggles and swatches:
   (glass, soft glow, paper, grain). It picks each by name or bounded number; the host writes every value, so no theme
   supplies a selector or a rule. What stays the host's whatever the theme says: the focus ring (always the focus
   colour, never a recipe), disabled controls, the host's own cards (an approval, a credential, a connection keep their
-  edge and their plain card surface — no glass, texture, glow or shadow — when widget cards are drawn otherwise), and
+  edge and their plain card surface — no glass, texture, glow or shadow — when widget cards are drawn otherwise), the
+  buttons in those cards and in the inbox, and Stop (Clark's own button in the theme's colours, never the theme's button
+  recipe, so an approval's Approve stays filled with the accent and its Deny plain beside it), and
   reduced motion (every duration none, the backdrop's pointer light off, the Orb still), whether it comes from the
   operating system or from the Reduced choice under Settings → Experience → Motion. Glass frosts widget cards and the
   composer as an opaque tint, so the Orb behind the composer never shows through; only the modal is translucent and

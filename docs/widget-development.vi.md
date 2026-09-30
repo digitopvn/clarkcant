@@ -191,7 +191,8 @@ khác chữ thường, viền phải thấy được trên thẻ và trên nền
 trang sáng nhất và tối nhất mà lớp phủ của nó có thể che, nên kính quá mạnh hay hoa văn dày được chiếu sáng sẽ bị từ
 chối), và ánh sáng của Orb phải thấy được trên nền trang. Theme không đạt một trong hai bài kiểm tra sẽ được liệt kê
 kèm những gì không đạt và không chọn được, nên hãy kiểm tra cả hai chế độ màu trước khi phát hành. Vòng focus, điều
-khiển bị vô hiệu hoá, các thẻ của chính host (đường viền và bề mặt trơn của chúng) và chế độ giảm chuyển động, dù đến
+khiển bị vô hiệu hoá, các thẻ của chính host (đường viền, bề mặt trơn và các nút của chúng: recipe nút không bao giờ
+chạm tới nút Phê duyệt và Từ chối của một yêu cầu, các câu trả lời trong hộp thư hay nút Dừng) và chế độ giảm chuyển động, dù đến
 từ hệ thống hay từ Cài đặt, luôn do host quyết định, dù theme nói gì. Theme được chọn bằng
 `package:<package id>#<theme id>`, và một gói chỉ có theme là một lần làm mới UI, không bao giờ khởi động lại Pi. Theme đã
 cài xuất hiện ở Cài đặt → Trải nghiệm → Chủ đề.

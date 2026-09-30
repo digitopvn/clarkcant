@@ -270,6 +270,20 @@ export const VOICE_CSS = `
   min-height: 32px;
   transition-property: transform; transition-duration: var(--cc-motion-micro); transition-timing-function: var(--cc-motion-bounce);
 }
+/*
+ * Inside the host's own cards and panels — an approval, a credential, a connection, the inbox's approvals and
+ * reconcile answers — a button is Clark's own, whatever the theme's button recipe says. A recipe may draw a widget's
+ * buttons quiet, solid or raised; it may not make the two answers to a consent look alike or the primary one as plain
+ * as the other. The recipe variables are reset to Clark's values rather than the properties overridden, so every other
+ * rule still draws the button exactly as Clark does, and its colours still follow the audited tokens.
+ */
+[data-owner="host"] .cc-action {
+  --cc-button-bg: var(--cc-elevated);
+  --cc-button-edge: var(--cc-border);
+  --cc-button-shadow: none;
+  --cc-button-press: scale(0.97);
+  --cc-button-press-shadow: none;
+}
 .cc-action:hover:not(:disabled, [aria-disabled="true"]) { border-color: var(--cc-accent); }
 .cc-action:active:not(:disabled, [aria-disabled="true"]) { transform: var(--cc-button-press, scale(0.97)); box-shadow: var(--cc-button-press-shadow, none); }
 .cc-action:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }

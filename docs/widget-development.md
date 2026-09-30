@@ -186,7 +186,8 @@ and the page, text, status colours, the accent and the focus ring readable on a 
 page under the backdrop and its pointer light (the modal over the brightest and darkest page its scrim can cover, so
 strong glass or a dense lit pattern is refused), and the Orb's light visible against the page. One that fails either
 audit is listed with what fails and cannot be chosen, so check both schemes before publishing. The focus ring,
-disabled controls, the host's own cards (their edge and plain surface) and reduced motion, from the system or from
+disabled controls, the host's own cards (their edge, plain surface and buttons: a button recipe never reaches an
+approval's Approve and Deny, the inbox's answers or Stop) and reduced motion, from the system or from
 Settings, are the host's whatever a theme says. It is selected as `package:<package id>#<theme id>`, and a
 theme-only package is a UI refresh, never a Pi restart. Installed themes appear under Settings → Experience → Theme.
 **How the node runs a service facet.** The node runs one container for each `tools` facet of every active package

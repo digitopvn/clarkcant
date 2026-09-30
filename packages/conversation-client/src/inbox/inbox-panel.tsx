@@ -993,7 +993,8 @@ export function InboxPanel({
 
   return (
     <Modal open={open} onClose={onClose} title={t("inbox.title")} description={t("inbox.description")} width="560px">
-      <div className="cc-inbox" data-inbox-panel={load.state}>
+      {/* Host-owned, so its approve, deny and reconcile buttons are drawn as Clark's, whatever a theme's recipe says. */}
+      <div className="cc-inbox" data-owner="host" data-inbox-panel={load.state}>
         {status !== undefined && (
           <div className="cc-inbox-status">
             <p

@@ -321,7 +321,7 @@
     "packageId": "com.example.theme-hostile",
     "version": "1.0.0",
     "displayName": "Hostile themes",
-    "description": "Three themes that push against what Clark keeps visible: one as flat as the contract allows, one that camouflages status, one that blacks out the Orb.",
+    "description": "Four themes that push against what Clark keeps visible: one as flat as the contract allows, one whose buttons take the card's colour, one that camouflages status, one that blacks out the Orb.",
     "source": {
       "kind": "local",
       "path": "apps/web/e2e/fixtures/theme-hostile"
@@ -354,6 +354,6 @@
     "permissionsSummary": [],
     "riskTier": "declarative",
     "sizeBytes": 2048,
-    "digest": "sha256:b0419222128148974e5160c6d7f34aeabeb9d0191b64d47c656f23131a96dbf1"
+    "digest": "sha256:4258b1eff61513c85652b3b2847411e2fd48721d377784f04750deb1094ba0b9"
   }
 ]
