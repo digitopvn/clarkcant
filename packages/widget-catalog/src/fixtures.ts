@@ -49,17 +49,23 @@ function quarterDataset(): FixtureDataset {
   };
 }
 
+/**
+ * A month with each kind of event a calendar places: single all-day days, dated rows with no time, a three-day all-day
+ * run, and a timed event that crosses midnight in Berlin, so the week and agenda views show every case.
+ */
 const CALENDAR_ROWS: Record<string, unknown>[] = [
-  { date: "2026-09-08", title: "Kiểm thử hồi quy", allDay: true },
-  { date: "2026-09-11", title: "Rà soát catalog", allDay: false },
-  { date: "2026-09-18", title: "Chạy E2E", allDay: false },
+  { eventId: "cal-regression", date: "2026-09-08", title: "Kiểm thử hồi quy", allDay: true },
+  { eventId: "cal-catalog", date: "2026-09-11", title: "Rà soát catalog", allDay: false },
+  { eventId: "cal-offsite", title: "Offsite nhóm", allDay: true, startDate: "2026-09-15", endDate: "2026-09-18" },
+  { eventId: "cal-release", title: "Phát hành đêm", startsAt: "2026-09-16T20:30:00Z", endsAt: "2026-09-16T23:30:00Z", timezone: "UTC" },
+  { eventId: "cal-e2e", date: "2026-09-18", title: "Chạy E2E", allDay: false },
 ];
 
 function calendarDataset(): FixtureDataset {
   return {
     datasetId: "fixture_calendar",
     source: "sample",
-    columns: ["date", "title", "allDay"],
+    columns: ["eventId", "date", "title", "allDay", "startDate", "endDate", "startsAt", "endsAt", "timezone"],
     rows: CALENDAR_ROWS,
   };
 }
@@ -310,6 +316,22 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       id: "calendar.normal",
       label: "Tháng có sự kiện",
       props: { datasetRef: "fixture_calendar", month: "2026-09", timezone: "Europe/Berlin" },
+      dataset: calendarDataset(),
+      mode: "read-only",
+    },
+    {
+      id: "calendar.week",
+      label: "Một tuần, có sự kiện nhiều ngày và qua đêm",
+      props: { datasetRef: "fixture_calendar", month: "2026-09", timezone: "Europe/Berlin", view: "week" },
+      state: { view: "week", selectedDate: "2026-09-16", selectedEventId: "cal-release@2026-09-16T20:30:00.000Z" },
+      dataset: calendarDataset(),
+      mode: "read-only",
+    },
+    {
+      id: "calendar.agenda",
+      label: "Lịch trình của tháng",
+      props: { datasetRef: "fixture_calendar", month: "2026-09", timezone: "Europe/Berlin", view: "agenda" },
+      state: { view: "agenda" },
       dataset: calendarDataset(),
       mode: "read-only",
     },

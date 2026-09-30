@@ -254,6 +254,99 @@ describe("local calendar", () => {
     expect(isKnownTimezone("")).toBe(false);
   });
 
+  it("keeps an all-day event on its own dates, with the end the day after its last day", () => {
+    const created = createLocalEvent(deps(), {
+      principalId: PRINCIPAL,
+      title: "Nghỉ lễ",
+      startsAt: undefined,
+      endsAt: undefined,
+      timezone: TZ,
+      allDay: true,
+      startDate: "2026-09-16",
+      endDate: "2026-09-18",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.event).toMatchObject({ allDay: true, startDate: "2026-09-16", endDate: "2026-09-18", localDate: "2026-09-16" });
+    // Its instants are midnight in its own timezone, so a range query finds it: Saigon is UTC+7.
+    expect(created.event.startsAt).toBe("2026-09-15T17:00:00.000Z");
+    expect(created.event.endsAt).toBe("2026-09-17T17:00:00.000Z");
+
+    const rows = calendarRowsForRange(deps(), { principalId: PRINCIPAL, range: periodRange("week", new Date(AT), TZ) });
+    expect(rows[0]).toMatchObject({ allDay: true, startDate: "2026-09-16", endDate: "2026-09-18", source: "local" });
+
+    // Made timed again, it loses its dates rather than keeping stale ones.
+    const timed = updateLocalEvent(deps(), {
+      principalId: PRINCIPAL,
+      eventId: created.event.eventId,
+      title: "Nghỉ lễ",
+      startsAt: "2026-09-16T02:00:00.000Z",
+      endsAt: "2026-09-16T03:00:00.000Z",
+      timezone: TZ,
+      allDay: false,
+    });
+    expect(timed.ok).toBe(true);
+    if (!timed.ok) return;
+    expect(timed.event.allDay).toBeUndefined();
+    expect(timed.event.startDate).toBeUndefined();
+    expect(timed.event.endDate).toBeUndefined();
+    const again = calendarRowsForRange(deps(), { principalId: PRINCIPAL, range: periodRange("week", new Date(AT), TZ) });
+    expect(again[0]?.allDay).toBeUndefined();
+  });
+
+  it("makes an all-day event with no end a one-day event, and refuses dates that are not dates or run backwards", () => {
+    const oneDay = validateLocalEvent({ title: "Một ngày", startsAt: undefined, endsAt: undefined, timezone: TZ, allDay: true, startDate: "2026-09-20" });
+    expect(oneDay).toMatchObject({ ok: true, allDay: { startDate: "2026-09-20", endDate: "2026-09-21" } });
+
+    const noStart = validateLocalEvent({ title: "Thiếu ngày", startsAt: undefined, endsAt: undefined, timezone: TZ, allDay: true });
+    expect(noStart).toMatchObject({ ok: false, code: "INVALID_DATE" });
+    const notADate = validateLocalEvent({ title: "Sai", startsAt: undefined, endsAt: undefined, timezone: TZ, allDay: true, startDate: "2026-02-30" });
+    expect(notADate).toMatchObject({ ok: false, code: "INVALID_DATE" });
+    const backwards = validateLocalEvent({
+      title: "Ngược",
+      startsAt: undefined,
+      endsAt: undefined,
+      timezone: TZ,
+      allDay: true,
+      startDate: "2026-09-20",
+      endDate: "2026-09-20",
+    });
+    expect(backwards).toMatchObject({ ok: false, code: "INVALID_RANGE" });
+    const notABoolean = validateLocalEvent({ title: "Sai", startsAt: undefined, endsAt: undefined, timezone: TZ, allDay: "yes" });
+    expect(notABoolean).toMatchObject({ ok: false, code: "INVALID_DATE" });
+  });
+
+  it("finds an all-day event on its dates even when it was written a day's worth of timezones away", () => {
+    const allDay = (title: string, timezone: string, startDate: string): void => {
+      const created = createLocalEvent(deps(), { principalId: PRINCIPAL, title, startsAt: undefined, endsAt: undefined, timezone, allDay: true, startDate });
+      expect(created.ok).toBe(true);
+    };
+    // UTC+14: 1 October there is 30 September 10:00 to 1 October 10:00 UTC.
+    allDay("First, from Kiritimati", "Pacific/Kiritimati", "2026-10-01");
+    // UTC-11: 31 October there is 31 October 11:00 to 1 November 11:00 UTC.
+    allDay("Last, from Pago Pago", "Pacific/Pago_Pago", "2026-10-31");
+    // The day before the month, from UTC+14: fetched by the wider query, and left out by its dates.
+    allDay("Before, from Kiritimati", "Pacific/Kiritimati", "2026-09-30");
+    // A timed event on the evening of 30 September in Pago Pago, which is 1 October in Kiritimati: in the wider window, and
+    // kept or left out by its instants.
+    createLocalEvent(deps(), {
+      principalId: PRINCIPAL,
+      title: "Timed, 30 September in Pago Pago",
+      startsAt: "2026-10-01T07:00:00.000Z",
+      endsAt: "2026-10-01T08:00:00.000Z",
+      timezone: "Pacific/Pago_Pago",
+    });
+
+    // October in UTC-11 starts at 1 October 11:00 UTC, after the Kiritimati event's instants end; in UTC+14 it ends at
+    // 31 October 10:00 UTC, before the Pago Pago event's begin. Both are October events wherever they are looked at.
+    const titles = (timezone: string): unknown[] =>
+      calendarRowsForRange(deps(), { principalId: PRINCIPAL, range: periodRange("month", new Date("2026-10-15T00:00:00.000Z"), timezone) }).map(
+        (row) => row.title,
+      );
+    expect(titles("Pacific/Pago_Pago")).toEqual(["First, from Kiritimati", "Last, from Pago Pago"]);
+    expect(titles("Pacific/Kiritimati")).toEqual(["First, from Kiritimati", "Timed, 30 September in Pago Pago", "Last, from Pago Pago"]);
+  });
+
   it("does not show one principal another principal's events", () => {
     createLocalEvent(deps(), {
       principalId: PRINCIPAL,
@@ -472,6 +565,33 @@ describe("gateway routes", () => {
     expect(removed.status).toBe(200);
     const missing = await call("DELETE", `/calendar/events/${event.eventId}`);
     expect(missing.status).toBe(404);
+  });
+
+  it("creates an all-day event from dates, and keeps it all-day through an edit that does not say otherwise", async () => {
+    const created = await call("POST", "/calendar/events", {
+      body: { title: "Offsite", allDay: true, startDate: "2026-09-16", endDate: "2026-09-18", timezone: TZ },
+    });
+    expect(created.status).toBe(201);
+    const event = (created.body as { event: Record<string, unknown> }).event;
+    expect(event).toMatchObject({ allDay: true, startDate: "2026-09-16", endDate: "2026-09-18", date: "2026-09-16" });
+
+    const renamed = await call("PATCH", `/calendar/events/${String(event.eventId)}`, { body: { title: "Offsite (dời)" } });
+    expect(renamed.status).toBe(200);
+    expect((renamed.body as { event: Record<string, unknown> }).event).toMatchObject({
+      title: "Offsite (dời)",
+      allDay: true,
+      startDate: "2026-09-16",
+      endDate: "2026-09-18",
+    });
+
+    // A new first day with no end is a one-day event on that day.
+    const moved = await call("PATCH", `/calendar/events/${String(event.eventId)}`, { body: { startDate: "2026-09-20" } });
+    expect(moved.status).toBe(200);
+    expect((moved.body as { event: Record<string, unknown> }).event).toMatchObject({ startDate: "2026-09-20", endDate: "2026-09-21" });
+
+    const invalid = await call("POST", "/calendar/events", { body: { title: "Sai", allDay: true, startDate: "20-09-2026", timezone: TZ } });
+    expect(invalid.status).toBe(400);
+    expect((invalid.body as { code: string }).code).toBe("INVALID_DATE");
   });
 
   it("imports an image, serves its bytes under the verified type, and refuses a renamed file", async () => {

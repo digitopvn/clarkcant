@@ -15,12 +15,16 @@ import {
   readStatusCard,
   statusCardSemantic,
   XY_CHART_KIND,
+  calendarSemantic,
+  isKnownTimeZone,
+  readCalendarEvents,
+  readCalendarState,
   readXyChart,
   readXyChartView,
   xyChartData,
   xyChartSemantic,
 } from "@clarkcant/contracts";
-import { ARTIFACT_VIEWER_KIND, STATUS_CARD_KIND } from "@clarkcant/data-canvas";
+import { ARTIFACT_VIEWER_KIND, CALENDAR, STATUS_CARD_KIND } from "@clarkcant/data-canvas";
 import { type WidgetDeps, getActionBinding, getInstance, liveStateOf, semanticViewOf } from "@clarkcant/core";
 import {
   findCompositionByInstance,
@@ -138,6 +142,29 @@ export function buildWidgetSemantic(
       instanceId,
       definitionId,
       ...xyChartSemantic(chart, data, view),
+      availableActions,
+      freshness: dataset?.freshness ?? "unknown",
+    });
+  }
+
+  // A calendar says its view, the day and event selected and what is on that day, from the state row — read in its
+  // current shape, so a calendar saved before it had views reads as a month view — and the events this node holds now.
+  if (definitionId === CALENDAR.id && typeof instance.props.month === "string" && typeof instance.props.datasetRef === "string") {
+    const timeZone = isKnownTimeZone(instance.props.timezone) ? instance.props.timezone : "UTC";
+    const dataset = getDatasetForPrincipal(deps.db, instance.props.datasetRef, instance.ownerPrincipalId);
+    const document = dataset?.document;
+    const rows =
+      typeof document === "object" && document !== null && Array.isArray((document as { rows?: unknown }).rows)
+        ? (document as { rows: unknown[] }).rows
+        : [];
+    const read = dataset === undefined ? undefined : readCalendarEvents(rows, timeZone);
+    const month = instance.props.month;
+    const view = readCalendarState(liveStateOf(deps, instanceId, CALENDAR)?.body, month, instance.props.view, read?.events);
+    const title = typeof instance.props.title === "string" && instance.props.title.trim() !== "" ? instance.props.title : undefined;
+    return normalizeSemanticDoc({
+      instanceId,
+      definitionId,
+      ...calendarSemantic({ month, timeZone, ...(title === undefined ? {} : { title }) }, read, view),
       availableActions,
       freshness: dataset?.freshness ?? "unknown",
     });

@@ -19,6 +19,14 @@ export interface CalendarEventRecord {
   timezone: string;
   /** The local calendar day the event starts on, so a day query is an index hit. */
   localDate: string;
+  /**
+   * An all-day event: a run of dates rather than a span of time, the same dates wherever it is seen. `endDate` is the day
+   * after the last one, as iCalendar writes it. Its instants are midnight in `timezone`, kept so a range query finds it.
+   * Absent on a timed event, and on every event written before all-day events existed.
+   */
+  allDay?: true;
+  startDate?: string;
+  endDate?: string;
   createdAt: string;
   updatedAt: string;
 }

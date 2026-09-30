@@ -36,6 +36,7 @@ import {
 } from "@clarkcant/widget-host";
 
 import { bindingAvailability } from "./application/action-bindings.ts";
+import { withCalendarViewBinding } from "./calendar-binding.ts";
 import { loadLocalEmbedder } from "./embeddings-local.ts";
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 import type { SkillCatalog } from "./composer-references.ts";
@@ -812,9 +813,14 @@ export function buildTimeline(
 
   const instances: TimelineInstanceView[] = [];
   for (const instanceId of instanceIds) {
-    const instance = getInstance(deps, instanceId);
-    if (!instance) continue;
-    const state = liveStateOf(deps, instance.instanceId);
+    const placed = getInstance(deps, instanceId);
+    if (!placed) continue;
+    // A calendar placed before it had views gets the view binding a new one is placed with, so what a person switches
+    // to is saved and described like on any other calendar.
+    const instance = withCalendarViewBinding(deps, placed);
+    // A built-in widget's state saved by an older version of it is read in the shape its renderer draws today.
+    const definition = CATALOG_WIDGETS.find((candidate) => candidate.id === instance.definitionRef.id);
+    const state = liveStateOf(deps, instance.instanceId, definition);
     const owner = liveOwnerOf(deps, instance.instanceId);
     const composition = findCompositionByInstance(db, instance.instanceId, instance.ownerPrincipalId);
     const actions = instance.actionBindingIds.flatMap((bindingId): TimelineActionView[] => {
