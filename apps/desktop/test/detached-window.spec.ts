@@ -37,6 +37,22 @@ describe("the detached appearance boundary", () => {
     });
   });
 
+  it("keeps every reference-package smoke snapshot equal to the installed theme compiler", () => {
+    const fixture = JSON.parse(readFileSync(new URL("./fixtures/reference-appearance.json", import.meta.url), "utf8"));
+    const expected = [];
+    for (const name of ["pixel-arcade", "neo-brutalism"]) {
+      const theme = JSON.parse(readFileSync(new URL(`../../../examples/themes/${name}/themes/${name}.json`, import.meta.url), "utf8"));
+      for (const scheme of ["dark", "light"] as const) {
+        for (const reducedMotion of [false, true]) {
+          const appearance = compileAppearance({ scheme, reducedMotion, theme, themeRef: `package:org.clarkcant.${name}#${name}` });
+          expect(reviewDetachedAppearance(appearance)).toEqual({ ok: true, appearance });
+          expected.push({ name, scheme, reducedMotion, appearance });
+        }
+      }
+    }
+    expect(fixture).toEqual(expected);
+  });
+
   it("uses the current canonical schema, accepts a snapshot and refuses raw/privileged styling", () => {
     const generated = JSON.parse(readFileSync(new URL("../src/appearance-schema.json", import.meta.url), "utf8"));
     expect(generated).toEqual(appearanceSnapshotSchema.toJSONSchema());

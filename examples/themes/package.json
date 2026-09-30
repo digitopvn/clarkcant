@@ -1,0 +1,16 @@
+{
+  "name": "@clarkcant/reference-themes",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Data-only Pixel Arcade and Neo Brutalism reference packages for the canonical appearance contract.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "clarkcant": {
+    "phase": "P6",
+    "status": "implemented",
+    "blueprint": "docs/widgets-and-extensions.md"
+  },
+  "scripts": {
+    "test": "node ../../packages/widget-cli/src/cli.ts theme test pixel-arcade && node ../../packages/widget-cli/src/cli.ts theme test neo-brutalism"
+  }
+}

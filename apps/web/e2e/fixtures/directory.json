@@ -355,5 +355,89 @@
     "riskTier": "declarative",
     "sizeBytes": 2048,
     "digest": "sha256:4258b1eff61513c85652b3b2847411e2fd48721d377784f04750deb1094ba0b9"
+  },
+  {
+    "packageId": "org.clarkcant.pixel-arcade",
+    "version": "1.0.0",
+    "displayName": "Pixel Arcade",
+    "description": "Crisp geometry, stepped motion and a bounded arcade backdrop. Data only.",
+    "source": {
+      "kind": "local",
+      "path": "examples/themes/pixel-arcade"
+    },
+    "publisher": {
+      "id": "clarkcant",
+      "sourceUrl": "https://github.com/digitopvn/clarkcant/tree/main/examples/themes/pixel-arcade",
+      "license": "Apache-2.0"
+    },
+    "preview": {},
+    "facets": [
+      "themes"
+    ],
+    "isolations": [
+      {
+        "facetKind": "themes",
+        "isolation": "declarative"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "darwin-x64",
+      "linux-x64",
+      "linux-arm64",
+      "win32-x64",
+      "win32-arm64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "declarative",
+    "sizeBytes": 5392,
+    "digest": "sha256:100e25a3dbfc5c3533795d5fd33ebb34b7dbfbf4c221c4f931538122b4103fda"
+  },
+  {
+    "packageId": "org.clarkcant.neo-brutalism",
+    "version": "1.0.0",
+    "displayName": "Neo Brutalism",
+    "description": "Heavy edges, hard offset shadows and raised controls. Data only.",
+    "source": {
+      "kind": "local",
+      "path": "examples/themes/neo-brutalism"
+    },
+    "publisher": {
+      "id": "clarkcant",
+      "sourceUrl": "https://github.com/digitopvn/clarkcant/tree/main/examples/themes/neo-brutalism",
+      "license": "Apache-2.0"
+    },
+    "preview": {},
+    "facets": [
+      "themes"
+    ],
+    "isolations": [
+      {
+        "facetKind": "themes",
+        "isolation": "declarative"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "darwin-x64",
+      "linux-x64",
+      "linux-arm64",
+      "win32-x64",
+      "win32-arm64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "declarative",
+    "sizeBytes": 5408,
+    "digest": "sha256:9beb9218366130fb4a1fc15f05720812179068b6630e550032eaf81aa97958af"
   }
 ]

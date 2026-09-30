@@ -166,6 +166,16 @@ jobs:
           path: probe.json
           if-no-files-found: warn
 
+      - name: Upload reference theme visual evidence
+        if: >-
+          always() && (steps.scope.outcome != 'success' ||
+          steps.scope.outputs.full != 'false')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: reference-themes-${{ matrix.os }}-node-${{ matrix.node }}
+          path: plans/reports/evidence/reference-themes/
+          if-no-files-found: warn
+
   secret-scan:
     name: secret scan
     runs-on: ubuntu-latest

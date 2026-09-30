@@ -1,0 +1,1298 @@
+[
+  {
+    "name": "pixel-arcade",
+    "scheme": "dark",
+    "reducedMotion": false,
+    "appearance": {
+      "appearanceApi": 2,
+      "tokenContractVersion": 2,
+      "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade",
+      "scheme": "dark",
+      "revision": "5bfa0159b25bd160",
+      "tokens": {
+        "color": {
+          "canvas": "#111317",
+          "window": "#14161A",
+          "card": "#17191D",
+          "elevated": "#1B1D22",
+          "code": "#101318",
+          "border": "#27292D",
+          "text": "#E7E7EA",
+          "textMuted": "#A0A2AB",
+          "textTertiary": "#858994",
+          "accent": "#79E8BC",
+          "onAccent": "#000000",
+          "success": "#8EBCA3",
+          "warning": "#D1AC68",
+          "danger": "#C8757C",
+          "focus": "#D8D2F0"
+        },
+        "type": {
+          "displayXl": {
+            "size": "3.25rem",
+            "lineHeight": "3.75rem"
+          },
+          "displayLg": {
+            "size": "2.125rem",
+            "lineHeight": "2.625rem"
+          },
+          "headingLg": {
+            "size": "1.5rem",
+            "lineHeight": "2rem"
+          },
+          "headingMd": {
+            "size": "1.125rem",
+            "lineHeight": "1.625rem"
+          },
+          "bodyLg": {
+            "size": "1rem",
+            "lineHeight": "1.5rem"
+          },
+          "bodyMd": {
+            "size": "0.875rem",
+            "lineHeight": "1.375rem"
+          },
+          "bodySm": {
+            "size": "0.8125rem",
+            "lineHeight": "1.25rem"
+          },
+          "label": {
+            "size": "0.75rem",
+            "lineHeight": "1rem"
+          },
+          "monoSm": {
+            "size": "0.75rem",
+            "lineHeight": "1.25rem"
+          },
+          "meta": {
+            "size": "0.6875rem",
+            "lineHeight": "1rem"
+          }
+        },
+        "space": {
+          "xxs": "0.125rem",
+          "xs": "0.25rem",
+          "sm": "0.5rem",
+          "md": "0.75rem",
+          "lg": "1rem",
+          "xl": "1.5rem",
+          "xxl": "2rem",
+          "s20": "1.25rem",
+          "s40": "2.5rem",
+          "s48": "3rem",
+          "s64": "4rem",
+          "s80": "5rem"
+        },
+        "radius": {
+          "badge": "0rem",
+          "button": "0rem",
+          "card": "0rem",
+          "response": "0.125rem",
+          "modal": "0rem",
+          "pill": "999px"
+        },
+        "motion": {
+          "micro": "160ms",
+          "normal": "240ms",
+          "panel": "373ms",
+          "orb": "800ms",
+          "enter": "747ms",
+          "exit": "427ms",
+          "glow": "9600ms",
+          "easing": "steps(4)",
+          "bounce": "steps(4)"
+        },
+        "motionReduced": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "layout": {
+          "conversationMaxWidth": "800px",
+          "composerMaxWidth": "840px",
+          "composerMinHeight": "70px",
+          "topBarHeight": "62px",
+          "modalWidth": "700px"
+        },
+        "identity": {
+          "typography": {
+            "body": "system",
+            "display": "mono",
+            "mono": "typewriter",
+            "headingWeight": 700
+          },
+          "border": {
+            "width": 2,
+            "style": "solid"
+          },
+          "shadow": {
+            "style": "hard",
+            "offset": 3,
+            "color": "text"
+          },
+          "fieldRadius": "0rem",
+          "iconStroke": 2,
+          "recipes": {
+            "button": "beveled",
+            "card": "raised",
+            "input": "outlined",
+            "modal": "framed",
+            "badge": "square",
+            "composer": "framed"
+          },
+          "effects": {
+            "backdrop": {
+              "kind": "scanlines",
+              "intensity": 0.06,
+              "scale": 16
+            },
+            "surface": {
+              "kind": "none",
+              "intensity": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "pixel-arcade",
+    "scheme": "dark",
+    "reducedMotion": true,
+    "appearance": {
+      "appearanceApi": 2,
+      "tokenContractVersion": 2,
+      "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade",
+      "scheme": "dark",
+      "revision": "1299519515c33e3c",
+      "tokens": {
+        "color": {
+          "canvas": "#111317",
+          "window": "#14161A",
+          "card": "#17191D",
+          "elevated": "#1B1D22",
+          "code": "#101318",
+          "border": "#27292D",
+          "text": "#E7E7EA",
+          "textMuted": "#A0A2AB",
+          "textTertiary": "#858994",
+          "accent": "#79E8BC",
+          "onAccent": "#000000",
+          "success": "#8EBCA3",
+          "warning": "#D1AC68",
+          "danger": "#C8757C",
+          "focus": "#D8D2F0"
+        },
+        "type": {
+          "displayXl": {
+            "size": "3.25rem",
+            "lineHeight": "3.75rem"
+          },
+          "displayLg": {
+            "size": "2.125rem",
+            "lineHeight": "2.625rem"
+          },
+          "headingLg": {
+            "size": "1.5rem",
+            "lineHeight": "2rem"
+          },
+          "headingMd": {
+            "size": "1.125rem",
+            "lineHeight": "1.625rem"
+          },
+          "bodyLg": {
+            "size": "1rem",
+            "lineHeight": "1.5rem"
+          },
+          "bodyMd": {
+            "size": "0.875rem",
+            "lineHeight": "1.375rem"
+          },
+          "bodySm": {
+            "size": "0.8125rem",
+            "lineHeight": "1.25rem"
+          },
+          "label": {
+            "size": "0.75rem",
+            "lineHeight": "1rem"
+          },
+          "monoSm": {
+            "size": "0.75rem",
+            "lineHeight": "1.25rem"
+          },
+          "meta": {
+            "size": "0.6875rem",
+            "lineHeight": "1rem"
+          }
+        },
+        "space": {
+          "xxs": "0.125rem",
+          "xs": "0.25rem",
+          "sm": "0.5rem",
+          "md": "0.75rem",
+          "lg": "1rem",
+          "xl": "1.5rem",
+          "xxl": "2rem",
+          "s20": "1.25rem",
+          "s40": "2.5rem",
+          "s48": "3rem",
+          "s64": "4rem",
+          "s80": "5rem"
+        },
+        "radius": {
+          "badge": "0rem",
+          "button": "0rem",
+          "card": "0rem",
+          "response": "0.125rem",
+          "modal": "0rem",
+          "pill": "999px"
+        },
+        "motion": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "motionReduced": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "layout": {
+          "conversationMaxWidth": "800px",
+          "composerMaxWidth": "840px",
+          "composerMinHeight": "70px",
+          "topBarHeight": "62px",
+          "modalWidth": "700px"
+        },
+        "identity": {
+          "typography": {
+            "body": "system",
+            "display": "mono",
+            "mono": "typewriter",
+            "headingWeight": 700
+          },
+          "border": {
+            "width": 2,
+            "style": "solid"
+          },
+          "shadow": {
+            "style": "hard",
+            "offset": 3,
+            "color": "text"
+          },
+          "fieldRadius": "0rem",
+          "iconStroke": 2,
+          "recipes": {
+            "button": "beveled",
+            "card": "raised",
+            "input": "outlined",
+            "modal": "framed",
+            "badge": "square",
+            "composer": "framed"
+          },
+          "effects": {
+            "backdrop": {
+              "kind": "scanlines",
+              "intensity": 0.06,
+              "scale": 16
+            },
+            "surface": {
+              "kind": "none",
+              "intensity": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "pixel-arcade",
+    "scheme": "light",
+    "reducedMotion": false,
+    "appearance": {
+      "appearanceApi": 2,
+      "tokenContractVersion": 2,
+      "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade",
+      "scheme": "light",
+      "revision": "fa40bedcbb29c895",
+      "tokens": {
+        "color": {
+          "canvas": "#F7F7F5",
+          "window": "#FFFFFF",
+          "card": "#FFFFFF",
+          "elevated": "#FFFFFF",
+          "code": "#F2F2EF",
+          "border": "#E5E5E1",
+          "text": "#1A1A1C",
+          "textMuted": "#5C5E66",
+          "textTertiary": "#696C74",
+          "accent": "#6B5FA8",
+          "onAccent": "#FFFFFF",
+          "success": "#3F6B52",
+          "warning": "#7A5B1E",
+          "danger": "#A33B45",
+          "focus": "#5B4FA0"
+        },
+        "type": {
+          "displayXl": {
+            "size": "3.25rem",
+            "lineHeight": "3.75rem"
+          },
+          "displayLg": {
+            "size": "2.125rem",
+            "lineHeight": "2.625rem"
+          },
+          "headingLg": {
+            "size": "1.5rem",
+            "lineHeight": "2rem"
+          },
+          "headingMd": {
+            "size": "1.125rem",
+            "lineHeight": "1.625rem"
+          },
+          "bodyLg": {
+            "size": "1rem",
+            "lineHeight": "1.5rem"
+          },
+          "bodyMd": {
+            "size": "0.875rem",
+            "lineHeight": "1.375rem"
+          },
+          "bodySm": {
+            "size": "0.8125rem",
+            "lineHeight": "1.25rem"
+          },
+          "label": {
+            "size": "0.75rem",
+            "lineHeight": "1rem"
+          },
+          "monoSm": {
+            "size": "0.75rem",
+            "lineHeight": "1.25rem"
+          },
+          "meta": {
+            "size": "0.6875rem",
+            "lineHeight": "1rem"
+          }
+        },
+        "space": {
+          "xxs": "0.125rem",
+          "xs": "0.25rem",
+          "sm": "0.5rem",
+          "md": "0.75rem",
+          "lg": "1rem",
+          "xl": "1.5rem",
+          "xxl": "2rem",
+          "s20": "1.25rem",
+          "s40": "2.5rem",
+          "s48": "3rem",
+          "s64": "4rem",
+          "s80": "5rem"
+        },
+        "radius": {
+          "badge": "0rem",
+          "button": "0rem",
+          "card": "0rem",
+          "response": "0.125rem",
+          "modal": "0rem",
+          "pill": "999px"
+        },
+        "motion": {
+          "micro": "160ms",
+          "normal": "240ms",
+          "panel": "373ms",
+          "orb": "800ms",
+          "enter": "747ms",
+          "exit": "427ms",
+          "glow": "9600ms",
+          "easing": "steps(4)",
+          "bounce": "steps(4)"
+        },
+        "motionReduced": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "layout": {
+          "conversationMaxWidth": "800px",
+          "composerMaxWidth": "840px",
+          "composerMinHeight": "70px",
+          "topBarHeight": "62px",
+          "modalWidth": "700px"
+        },
+        "identity": {
+          "typography": {
+            "body": "system",
+            "display": "mono",
+            "mono": "typewriter",
+            "headingWeight": 700
+          },
+          "border": {
+            "width": 2,
+            "style": "solid"
+          },
+          "shadow": {
+            "style": "hard",
+            "offset": 3,
+            "color": "text"
+          },
+          "fieldRadius": "0rem",
+          "iconStroke": 2,
+          "recipes": {
+            "button": "beveled",
+            "card": "raised",
+            "input": "outlined",
+            "modal": "framed",
+            "badge": "square",
+            "composer": "framed"
+          },
+          "effects": {
+            "backdrop": {
+              "kind": "scanlines",
+              "intensity": 0.06,
+              "scale": 16
+            },
+            "surface": {
+              "kind": "none",
+              "intensity": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "pixel-arcade",
+    "scheme": "light",
+    "reducedMotion": true,
+    "appearance": {
+      "appearanceApi": 2,
+      "tokenContractVersion": 2,
+      "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade",
+      "scheme": "light",
+      "revision": "5a1639fab2e32c0c",
+      "tokens": {
+        "color": {
+          "canvas": "#F7F7F5",
+          "window": "#FFFFFF",
+          "card": "#FFFFFF",
+          "elevated": "#FFFFFF",
+          "code": "#F2F2EF",
+          "border": "#E5E5E1",
+          "text": "#1A1A1C",
+          "textMuted": "#5C5E66",
+          "textTertiary": "#696C74",
+          "accent": "#6B5FA8",
+          "onAccent": "#FFFFFF",
+          "success": "#3F6B52",
+          "warning": "#7A5B1E",
+          "danger": "#A33B45",
+          "focus": "#5B4FA0"
+        },
+        "type": {
+          "displayXl": {
+            "size": "3.25rem",
+            "lineHeight": "3.75rem"
+          },
+          "displayLg": {
+            "size": "2.125rem",
+            "lineHeight": "2.625rem"
+          },
+          "headingLg": {
+            "size": "1.5rem",
+            "lineHeight": "2rem"
+          },
+          "headingMd": {
+            "size": "1.125rem",
+            "lineHeight": "1.625rem"
+          },
+          "bodyLg": {
+            "size": "1rem",
+            "lineHeight": "1.5rem"
+          },
+          "bodyMd": {
+            "size": "0.875rem",
+            "lineHeight": "1.375rem"
+          },
+          "bodySm": {
+            "size": "0.8125rem",
+            "lineHeight": "1.25rem"
+          },
+          "label": {
+            "size": "0.75rem",
+            "lineHeight": "1rem"
+          },
+          "monoSm": {
+            "size": "0.75rem",
+            "lineHeight": "1.25rem"
+          },
+          "meta": {
+            "size": "0.6875rem",
+            "lineHeight": "1rem"
+          }
+        },
+        "space": {
+          "xxs": "0.125rem",
+          "xs": "0.25rem",
+          "sm": "0.5rem",
+          "md": "0.75rem",
+          "lg": "1rem",
+          "xl": "1.5rem",
+          "xxl": "2rem",
+          "s20": "1.25rem",
+          "s40": "2.5rem",
+          "s48": "3rem",
+          "s64": "4rem",
+          "s80": "5rem"
+        },
+        "radius": {
+          "badge": "0rem",
+          "button": "0rem",
+          "card": "0rem",
+          "response": "0.125rem",
+          "modal": "0rem",
+          "pill": "999px"
+        },
+        "motion": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "motionReduced": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "layout": {
+          "conversationMaxWidth": "800px",
+          "composerMaxWidth": "840px",
+          "composerMinHeight": "70px",
+          "topBarHeight": "62px",
+          "modalWidth": "700px"
+        },
+        "identity": {
+          "typography": {
+            "body": "system",
+            "display": "mono",
+            "mono": "typewriter",
+            "headingWeight": 700
+          },
+          "border": {
+            "width": 2,
+            "style": "solid"
+          },
+          "shadow": {
+            "style": "hard",
+            "offset": 3,
+            "color": "text"
+          },
+          "fieldRadius": "0rem",
+          "iconStroke": 2,
+          "recipes": {
+            "button": "beveled",
+            "card": "raised",
+            "input": "outlined",
+            "modal": "framed",
+            "badge": "square",
+            "composer": "framed"
+          },
+          "effects": {
+            "backdrop": {
+              "kind": "scanlines",
+              "intensity": 0.06,
+              "scale": 16
+            },
+            "surface": {
+              "kind": "none",
+              "intensity": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "neo-brutalism",
+    "scheme": "dark",
+    "reducedMotion": false,
+    "appearance": {
+      "appearanceApi": 2,
+      "tokenContractVersion": 2,
+      "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism",
+      "scheme": "dark",
+      "revision": "9006c4c90d9c4db9",
+      "tokens": {
+        "color": {
+          "canvas": "#111317",
+          "window": "#14161A",
+          "card": "#17191D",
+          "elevated": "#1B1D22",
+          "code": "#101318",
+          "border": "#27292D",
+          "text": "#E7E7EA",
+          "textMuted": "#A0A2AB",
+          "textTertiary": "#858994",
+          "accent": "#7DB4F0",
+          "onAccent": "#000000",
+          "success": "#8EBCA3",
+          "warning": "#D1AC68",
+          "danger": "#C8757C",
+          "focus": "#D8D2F0"
+        },
+        "type": {
+          "displayXl": {
+            "size": "3.25rem",
+            "lineHeight": "3.75rem"
+          },
+          "displayLg": {
+            "size": "2.125rem",
+            "lineHeight": "2.625rem"
+          },
+          "headingLg": {
+            "size": "1.5rem",
+            "lineHeight": "2rem"
+          },
+          "headingMd": {
+            "size": "1.125rem",
+            "lineHeight": "1.625rem"
+          },
+          "bodyLg": {
+            "size": "1rem",
+            "lineHeight": "1.5rem"
+          },
+          "bodyMd": {
+            "size": "0.875rem",
+            "lineHeight": "1.375rem"
+          },
+          "bodySm": {
+            "size": "0.8125rem",
+            "lineHeight": "1.25rem"
+          },
+          "label": {
+            "size": "0.75rem",
+            "lineHeight": "1rem"
+          },
+          "monoSm": {
+            "size": "0.75rem",
+            "lineHeight": "1.25rem"
+          },
+          "meta": {
+            "size": "0.6875rem",
+            "lineHeight": "1rem"
+          }
+        },
+        "space": {
+          "xxs": "0.125rem",
+          "xs": "0.25rem",
+          "sm": "0.5rem",
+          "md": "0.75rem",
+          "lg": "1rem",
+          "xl": "1.5rem",
+          "xxl": "2rem",
+          "s20": "1.25rem",
+          "s40": "2.5rem",
+          "s48": "3rem",
+          "s64": "4rem",
+          "s80": "5rem"
+        },
+        "radius": {
+          "badge": "0rem",
+          "button": "0.125rem",
+          "card": "0.125rem",
+          "response": "0.125rem",
+          "modal": "0.125rem",
+          "pill": "999px"
+        },
+        "motion": {
+          "micro": "160ms",
+          "normal": "240ms",
+          "panel": "373ms",
+          "orb": "800ms",
+          "enter": "747ms",
+          "exit": "427ms",
+          "glow": "9600ms",
+          "easing": "cubic-bezier(0.2, 0, 0, 1)",
+          "bounce": "cubic-bezier(0.3, 1.4, 0.5, 1)"
+        },
+        "motionReduced": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "layout": {
+          "conversationMaxWidth": "800px",
+          "composerMaxWidth": "840px",
+          "composerMinHeight": "70px",
+          "topBarHeight": "62px",
+          "modalWidth": "700px"
+        },
+        "identity": {
+          "typography": {
+            "body": "system",
+            "display": "system",
+            "mono": "clark",
+            "headingWeight": 800
+          },
+          "border": {
+            "width": 3,
+            "style": "solid"
+          },
+          "shadow": {
+            "style": "hard",
+            "offset": 6,
+            "color": "text"
+          },
+          "fieldRadius": "0.125rem",
+          "iconStroke": 2.5,
+          "recipes": {
+            "button": "raised",
+            "card": "raised",
+            "input": "underlined",
+            "modal": "framed",
+            "badge": "square",
+            "composer": "integrated"
+          },
+          "effects": {
+            "backdrop": {
+              "kind": "none",
+              "intensity": 0,
+              "scale": 22
+            },
+            "surface": {
+              "kind": "none",
+              "intensity": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "neo-brutalism",
+    "scheme": "dark",
+    "reducedMotion": true,
+    "appearance": {
+      "appearanceApi": 2,
+      "tokenContractVersion": 2,
+      "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism",
+      "scheme": "dark",
+      "revision": "b7606006cb21f7ed",
+      "tokens": {
+        "color": {
+          "canvas": "#111317",
+          "window": "#14161A",
+          "card": "#17191D",
+          "elevated": "#1B1D22",
+          "code": "#101318",
+          "border": "#27292D",
+          "text": "#E7E7EA",
+          "textMuted": "#A0A2AB",
+          "textTertiary": "#858994",
+          "accent": "#7DB4F0",
+          "onAccent": "#000000",
+          "success": "#8EBCA3",
+          "warning": "#D1AC68",
+          "danger": "#C8757C",
+          "focus": "#D8D2F0"
+        },
+        "type": {
+          "displayXl": {
+            "size": "3.25rem",
+            "lineHeight": "3.75rem"
+          },
+          "displayLg": {
+            "size": "2.125rem",
+            "lineHeight": "2.625rem"
+          },
+          "headingLg": {
+            "size": "1.5rem",
+            "lineHeight": "2rem"
+          },
+          "headingMd": {
+            "size": "1.125rem",
+            "lineHeight": "1.625rem"
+          },
+          "bodyLg": {
+            "size": "1rem",
+            "lineHeight": "1.5rem"
+          },
+          "bodyMd": {
+            "size": "0.875rem",
+            "lineHeight": "1.375rem"
+          },
+          "bodySm": {
+            "size": "0.8125rem",
+            "lineHeight": "1.25rem"
+          },
+          "label": {
+            "size": "0.75rem",
+            "lineHeight": "1rem"
+          },
+          "monoSm": {
+            "size": "0.75rem",
+            "lineHeight": "1.25rem"
+          },
+          "meta": {
+            "size": "0.6875rem",
+            "lineHeight": "1rem"
+          }
+        },
+        "space": {
+          "xxs": "0.125rem",
+          "xs": "0.25rem",
+          "sm": "0.5rem",
+          "md": "0.75rem",
+          "lg": "1rem",
+          "xl": "1.5rem",
+          "xxl": "2rem",
+          "s20": "1.25rem",
+          "s40": "2.5rem",
+          "s48": "3rem",
+          "s64": "4rem",
+          "s80": "5rem"
+        },
+        "radius": {
+          "badge": "0rem",
+          "button": "0.125rem",
+          "card": "0.125rem",
+          "response": "0.125rem",
+          "modal": "0.125rem",
+          "pill": "999px"
+        },
+        "motion": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "motionReduced": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "layout": {
+          "conversationMaxWidth": "800px",
+          "composerMaxWidth": "840px",
+          "composerMinHeight": "70px",
+          "topBarHeight": "62px",
+          "modalWidth": "700px"
+        },
+        "identity": {
+          "typography": {
+            "body": "system",
+            "display": "system",
+            "mono": "clark",
+            "headingWeight": 800
+          },
+          "border": {
+            "width": 3,
+            "style": "solid"
+          },
+          "shadow": {
+            "style": "hard",
+            "offset": 6,
+            "color": "text"
+          },
+          "fieldRadius": "0.125rem",
+          "iconStroke": 2.5,
+          "recipes": {
+            "button": "raised",
+            "card": "raised",
+            "input": "underlined",
+            "modal": "framed",
+            "badge": "square",
+            "composer": "integrated"
+          },
+          "effects": {
+            "backdrop": {
+              "kind": "none",
+              "intensity": 0,
+              "scale": 22
+            },
+            "surface": {
+              "kind": "none",
+              "intensity": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "neo-brutalism",
+    "scheme": "light",
+    "reducedMotion": false,
+    "appearance": {
+      "appearanceApi": 2,
+      "tokenContractVersion": 2,
+      "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism",
+      "scheme": "light",
+      "revision": "8668db9e9b188eb9",
+      "tokens": {
+        "color": {
+          "canvas": "#F7F7F5",
+          "window": "#FFFFFF",
+          "card": "#FFFFFF",
+          "elevated": "#FFFFFF",
+          "code": "#F2F2EF",
+          "border": "#E5E5E1",
+          "text": "#1A1A1C",
+          "textMuted": "#5C5E66",
+          "textTertiary": "#696C74",
+          "accent": "#1F5FA8",
+          "onAccent": "#FFFFFF",
+          "success": "#3F6B52",
+          "warning": "#7A5B1E",
+          "danger": "#A33B45",
+          "focus": "#5B4FA0"
+        },
+        "type": {
+          "displayXl": {
+            "size": "3.25rem",
+            "lineHeight": "3.75rem"
+          },
+          "displayLg": {
+            "size": "2.125rem",
+            "lineHeight": "2.625rem"
+          },
+          "headingLg": {
+            "size": "1.5rem",
+            "lineHeight": "2rem"
+          },
+          "headingMd": {
+            "size": "1.125rem",
+            "lineHeight": "1.625rem"
+          },
+          "bodyLg": {
+            "size": "1rem",
+            "lineHeight": "1.5rem"
+          },
+          "bodyMd": {
+            "size": "0.875rem",
+            "lineHeight": "1.375rem"
+          },
+          "bodySm": {
+            "size": "0.8125rem",
+            "lineHeight": "1.25rem"
+          },
+          "label": {
+            "size": "0.75rem",
+            "lineHeight": "1rem"
+          },
+          "monoSm": {
+            "size": "0.75rem",
+            "lineHeight": "1.25rem"
+          },
+          "meta": {
+            "size": "0.6875rem",
+            "lineHeight": "1rem"
+          }
+        },
+        "space": {
+          "xxs": "0.125rem",
+          "xs": "0.25rem",
+          "sm": "0.5rem",
+          "md": "0.75rem",
+          "lg": "1rem",
+          "xl": "1.5rem",
+          "xxl": "2rem",
+          "s20": "1.25rem",
+          "s40": "2.5rem",
+          "s48": "3rem",
+          "s64": "4rem",
+          "s80": "5rem"
+        },
+        "radius": {
+          "badge": "0rem",
+          "button": "0.125rem",
+          "card": "0.125rem",
+          "response": "0.125rem",
+          "modal": "0.125rem",
+          "pill": "999px"
+        },
+        "motion": {
+          "micro": "160ms",
+          "normal": "240ms",
+          "panel": "373ms",
+          "orb": "800ms",
+          "enter": "747ms",
+          "exit": "427ms",
+          "glow": "9600ms",
+          "easing": "cubic-bezier(0.2, 0, 0, 1)",
+          "bounce": "cubic-bezier(0.3, 1.4, 0.5, 1)"
+        },
+        "motionReduced": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "layout": {
+          "conversationMaxWidth": "800px",
+          "composerMaxWidth": "840px",
+          "composerMinHeight": "70px",
+          "topBarHeight": "62px",
+          "modalWidth": "700px"
+        },
+        "identity": {
+          "typography": {
+            "body": "system",
+            "display": "system",
+            "mono": "clark",
+            "headingWeight": 800
+          },
+          "border": {
+            "width": 3,
+            "style": "solid"
+          },
+          "shadow": {
+            "style": "hard",
+            "offset": 6,
+            "color": "text"
+          },
+          "fieldRadius": "0.125rem",
+          "iconStroke": 2.5,
+          "recipes": {
+            "button": "raised",
+            "card": "raised",
+            "input": "underlined",
+            "modal": "framed",
+            "badge": "square",
+            "composer": "integrated"
+          },
+          "effects": {
+            "backdrop": {
+              "kind": "none",
+              "intensity": 0,
+              "scale": 22
+            },
+            "surface": {
+              "kind": "none",
+              "intensity": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "neo-brutalism",
+    "scheme": "light",
+    "reducedMotion": true,
+    "appearance": {
+      "appearanceApi": 2,
+      "tokenContractVersion": 2,
+      "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism",
+      "scheme": "light",
+      "revision": "57f1066bea3c5158",
+      "tokens": {
+        "color": {
+          "canvas": "#F7F7F5",
+          "window": "#FFFFFF",
+          "card": "#FFFFFF",
+          "elevated": "#FFFFFF",
+          "code": "#F2F2EF",
+          "border": "#E5E5E1",
+          "text": "#1A1A1C",
+          "textMuted": "#5C5E66",
+          "textTertiary": "#696C74",
+          "accent": "#1F5FA8",
+          "onAccent": "#FFFFFF",
+          "success": "#3F6B52",
+          "warning": "#7A5B1E",
+          "danger": "#A33B45",
+          "focus": "#5B4FA0"
+        },
+        "type": {
+          "displayXl": {
+            "size": "3.25rem",
+            "lineHeight": "3.75rem"
+          },
+          "displayLg": {
+            "size": "2.125rem",
+            "lineHeight": "2.625rem"
+          },
+          "headingLg": {
+            "size": "1.5rem",
+            "lineHeight": "2rem"
+          },
+          "headingMd": {
+            "size": "1.125rem",
+            "lineHeight": "1.625rem"
+          },
+          "bodyLg": {
+            "size": "1rem",
+            "lineHeight": "1.5rem"
+          },
+          "bodyMd": {
+            "size": "0.875rem",
+            "lineHeight": "1.375rem"
+          },
+          "bodySm": {
+            "size": "0.8125rem",
+            "lineHeight": "1.25rem"
+          },
+          "label": {
+            "size": "0.75rem",
+            "lineHeight": "1rem"
+          },
+          "monoSm": {
+            "size": "0.75rem",
+            "lineHeight": "1.25rem"
+          },
+          "meta": {
+            "size": "0.6875rem",
+            "lineHeight": "1rem"
+          }
+        },
+        "space": {
+          "xxs": "0.125rem",
+          "xs": "0.25rem",
+          "sm": "0.5rem",
+          "md": "0.75rem",
+          "lg": "1rem",
+          "xl": "1.5rem",
+          "xxl": "2rem",
+          "s20": "1.25rem",
+          "s40": "2.5rem",
+          "s48": "3rem",
+          "s64": "4rem",
+          "s80": "5rem"
+        },
+        "radius": {
+          "badge": "0rem",
+          "button": "0.125rem",
+          "card": "0.125rem",
+          "response": "0.125rem",
+          "modal": "0.125rem",
+          "pill": "999px"
+        },
+        "motion": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "motionReduced": {
+          "micro": "0ms",
+          "normal": "0ms",
+          "panel": "0ms",
+          "orb": "0ms",
+          "enter": "0ms",
+          "exit": "0ms",
+          "glow": "0ms",
+          "easing": "linear",
+          "bounce": "linear"
+        },
+        "layout": {
+          "conversationMaxWidth": "800px",
+          "composerMaxWidth": "840px",
+          "composerMinHeight": "70px",
+          "topBarHeight": "62px",
+          "modalWidth": "700px"
+        },
+        "identity": {
+          "typography": {
+            "body": "system",
+            "display": "system",
+            "mono": "clark",
+            "headingWeight": 800
+          },
+          "border": {
+            "width": 3,
+            "style": "solid"
+          },
+          "shadow": {
+            "style": "hard",
+            "offset": 6,
+            "color": "text"
+          },
+          "fieldRadius": "0.125rem",
+          "iconStroke": 2.5,
+          "recipes": {
+            "button": "raised",
+            "card": "raised",
+            "input": "underlined",
+            "modal": "framed",
+            "badge": "square",
+            "composer": "integrated"
+          },
+          "effects": {
+            "backdrop": {
+              "kind": "none",
+              "intensity": 0,
+              "scale": 22
+            },
+            "surface": {
+              "kind": "none",
+              "intensity": 0
+            }
+          }
+        }
+      }
+    }
+  }
+]

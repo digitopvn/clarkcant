@@ -1,0 +1,19 @@
+{
+  "appearanceApi": { "min": 2, "max": 2 },
+  "id": "pixel-arcade",
+  "displayName": "Pixel Arcade",
+  "description": "A crisp arcade frame with readable system body text and mono display type.",
+  "colors": {
+    "dark": { "accent": "#79E8BC", "onAccent": "#000000" },
+    "light": { "accent": "#6B5FA8", "onAccent": "#FFFFFF" }
+  },
+  "typography": { "body": "system", "display": "mono", "mono": "typewriter", "headingWeight": 700 },
+  "radius": { "badge": 0, "button": 0, "card": 0, "response": 0.125, "modal": 0, "field": 0 },
+  "border": { "width": 2, "style": "solid" },
+  "shadow": { "style": "hard", "offset": 3, "color": "text" },
+  "motion": { "speed": 0.75, "easing": "stepped" },
+  "icons": { "stroke": 2 },
+  "recipes": { "button": "beveled", "card": "raised", "input": "outlined", "modal": "framed", "badge": "square", "composer": "framed" },
+  "effects": { "backdrop": { "kind": "scanlines", "intensity": 0.06, "scale": 16 }, "surface": { "kind": "none", "intensity": 0 } },
+  "orb": { "profile": "plasma" }
+}

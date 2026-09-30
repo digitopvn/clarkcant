@@ -197,6 +197,15 @@ từ hệ thống hay từ Cài đặt, luôn do host quyết định, dù theme
 `package:<package id>#<theme id>`, và một gói chỉ có theme là một lần làm mới UI, không bao giờ khởi động lại Pi. Theme đã
 cài xuất hiện ở Cài đặt → Trải nghiệm → Chủ đề.
 
+**Gói tham chiếu.** [Pixel Arcade](../examples/themes/pixel-arcade/README.md) và
+[Neo Brutalism](../examples/themes/neo-brutalism/README.md) là gói tổng quát chỉ chứa dữ liệu, cài qua vòng đời
+package hiện có rồi chọn trong Cài đặt → Trải nghiệm. Pixel Arcade có khung vuông, nút vát cạnh, nền đường quét
+có giới hạn, chuyển động theo bước và Orb Plasma mặc định; Neo Brutalism có viền dày, bóng cứng lệch, tiêu đề đậm,
+nút nổi và Orb Glass mặc định. Cả hai dùng profile phông do host sở hữu với fallback hệ thống, không đóng gói tệp
+phông hay tài nguyên kiểu bên ngoài. Manifest mỗi gói ghi nguồn và giấy phép; dữ liệu theme nguyên gốc dùng
+Apache-2.0. Lựa chọn Orb riêng và giảm chuyển động vẫn có ưu tiên cao hơn. Clark Default giữ nguyên. Ví dụ trong
+checkout này không phải tuyên bố đã xuất bản trên marketplace.
+
 **Tạo chủ đề và Theme Lab.** CLI package hiện có nhận `clark theme init <dir>`, `dev [dir] [--port <port>]`,
 `test [dir]` và `pack [dir]`. Từ checkout, chạy `node packages/widget-cli/src/cli.ts theme <command>`.
 Init tạo manifest tổng quát và `themes/main.json`, từ chối thư mục không rỗng. Dev mặc định dùng cổng loopback 4319,
