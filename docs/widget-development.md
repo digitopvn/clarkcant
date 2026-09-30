@@ -1004,6 +1004,93 @@ calendar in Ho Chi Minh City. It covers each view, the keyboard, a selected even
 by the calendar's timezone, all-day and overnight events, a time without an offset read in the calendar's timezone by
 a browser in Los Angeles, the refusal of an event the node no longer holds, a month that does not exist, reduced motion, 390 px with touch in the light theme, and the library.
 
+### 8.8 Activity timeline
+
+`canvas.timeline@1` shows what happened and when: dated entries the model states, sorted by time and grouped by day.
+Everything it shows is in its props. It reads no feed and never says it is live; newer entries arrive as new props.
+The entry selected is the timeline's widget state. One set of functions, in
+[activity-timeline.ts](../packages/contracts/src/activity-timeline.ts), checks the props, places each entry on its day,
+checks a selection and writes the text. The node and the page both use it.
+
+| Prop | What it is |
+| --- | --- |
+| `entries` | Required, at most 200. Each is `{ id, at, title, description?, actor?, tone? }`. |
+| `title` | Optional, up to 200 characters. |
+| `order` | Optional: `newest` (the default) or `oldest` first. |
+| `pageSize` | Optional: entries on a page, 5 to 50; 10 when it is left out. |
+| `timezone` | Optional: the IANA timezone the days are read in. |
+| `truncated` | Optional: `true` when the model left entries out, and the timeline says so. |
+
+An entry's `id` is up to 120 characters and unique on the timeline. `title` is one line of up to 200 characters,
+`actor` one line of up to 80, and `description` up to 1,000 characters and may hold line breaks. `tone` is one of
+`neutral` (the default), `info`, `success`, `warning` and `danger`. `at` is one of two things:
+
+- **An instant with its offset**: `2026-09-30T21:05:00+07:00` or `2026-09-30T14:05:00Z`. A time with no offset is
+  refused, because it names a different moment in every timezone.
+- **A date** (`2026-09-30`) for an all-day entry. It is on that date wherever it is read, never midnight in some
+  timezone.
+
+Text is plain: no HTML, no links and no callbacks, and no key other than those above. A model places the timeline with
+`show_view`. Before an instance exists, the node refuses, with the reason: a time that is missing, has no offset or does
+not exist (`2026-02-30`, an hour past 23), an id used twice, a tone it does not have, too many entries, text that is too
+long, a hidden or bidirectional control character (named by its code point, such as `U+202E`), and a timezone it does
+not know. A refused timeline leaves nothing behind.
+
+What the node guarantees:
+
+- **The node and the page read the same days.** When the props name no timezone, the node writes one into them as it
+  places the timeline: the node's display timezone, or `UTC` when it cannot name a known one. An entry is on its
+  day in that timezone, for example 17:40 UTC on the 29th is on the 30th in `Asia/Saigon`. Daylight saving time is
+  followed, including the hour that repeats and the hour that is skipped. Within a day an all-day entry comes first, then
+  the timed entries in the timeline's order.
+- **What a person selects is state the node keeps.** The entries write through the timeline's one `timeline.select`
+  binding: `{ selectedId }`, where an empty `selectedId` clears the selection. It is a view operation: it reads and
+  changes nothing else. The node checks each selection against the entries it holds. An id that is not one of them, a
+  key other than `selectedId`, or another shape is refused with the reason, such as
+  `"gone" is not an entry on this timeline now`, and the state is left as it was.
+- **The text alternative is the timeline's own words**: each day once, then its entries with their time, tone and actor,
+  for example `2026-09-30: all day Release freeze [info]; 23:30 Deploy started [info] by Lan`. It is shortened with a
+  marker to fit the snapshot.
+- **Voice and `inspect_ui` read the timeline as it is now.** The semantic document (§9) gives the number of entries, the
+  order, the timezone, the first and last day, whether entries were left out, how many entries have each tone, and the
+  selected entry with when it is and its tone. The entry is also given in `selectedIds`. The document is kept within the
+  semantic limits for the largest timeline.
+- **In a composed surface** the timeline is a `timeline` leaf, and `timeline.select` `{ selectedId }` can feed the layout
+  (§8.3). When it is not wired, the selection is held on the surface.
+
+What the page does:
+
+- Each day is a heading with the full date in the person's language, and its entries are a list. An entry shows its
+  time, or "All day" with a double edge, its tone as a symbol and a word beside the colour, its title and its actor. A
+  long description opens folded, with a button to show the rest.
+- Entries are buttons with `aria-pressed`. One entry on the page is in the tab order. The arrow keys move between the
+  entries of the page, Home and End go to the first and the last, Enter or Space selects or clears an entry, and Escape
+  clears the selection. Focus is always drawn. A live region says what was selected or that the selection was cleared.
+- The selected entry is described under the list, with a button that clears it. A longer timeline has pages, with
+  previous and next buttons, and opens on the page of its selected entry.
+- A text list of every entry is one click away, and the timeline says when entries were left out.
+- When the node refuses a selection, the timeline says so in the person's language and draws the selection the node
+  holds. A timezone the page does not know is read as UTC, and the timeline says so.
+- Text is drawn as text. A hidden character in a timeline stored before the rules tightened is shown as a marker, and
+  the timeline says how many there are.
+- The timeline adds no motion of its own. When the timeline is narrower than 480 px, an entry's title and actor wrap under its time, so it is usable
+  at 390 px. It follows the light and dark themes. In the Widget Library the fixtures are usable without a node, and a
+  selection works there too.
+
+Not part of the timeline: durations, a Gantt view and a live feed.
+
+Tests: [activity-timeline.spec.ts](../packages/contracts/test/activity-timeline.spec.ts) for the rules, days across
+timezones and daylight saving time, the text and the semantic document;
+[activity-timeline.spec.ts](../apps/runtime/test/activity-timeline.spec.ts) for placement, refusals, the timezone the
+node writes down, the selection and the layout leaf;
+[activity-timeline.spec.ts](../packages/conversation-client/test/activity-timeline.spec.ts) for the keyboard, paging
+and folding; [timeline-schemas.spec.ts](../packages/widget-catalog/test/timeline-schemas.spec.ts), which checks that
+the JSON Schema and the rules accept and refuse the same props and that every library fixture is one the node would
+place; and the browser journey [activity-timeline.spec.ts](../apps/web/e2e/activity-timeline.spec.ts). The journey
+runs in a browser in New York over a timeline in Saigon. It covers the days, the keyboard, a selection kept after a
+reload and cleared with Escape, a selection the node refuses, a repeated id and a hidden character refused at
+placement, paging, reduced motion, the library, and 390 px with touch in the light and dark themes.
+
 ---
 
 ## 9. Semantic contract for voice and the next turn
