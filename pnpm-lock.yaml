@@ -373,6 +373,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/storage
 
+  examples/themes:
+    devDependencies:
+      '@clarkcant/widget-cli':
+        specifier: workspace:*
+        version: link:../../packages/widget-cli
+
   packages/capability-host:
     dependencies:
       '@clarkcant/contracts':

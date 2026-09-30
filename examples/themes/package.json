@@ -11,6 +11,9 @@
     "blueprint": "docs/widgets-and-extensions.md"
   },
   "scripts": {
-    "test": "node ../../packages/widget-cli/src/cli.ts theme test pixel-arcade && node ../../packages/widget-cli/src/cli.ts theme test neo-brutalism"
+    "test": "clark theme test pixel-arcade && clark theme test neo-brutalism"
+  },
+  "devDependencies": {
+    "@clarkcant/widget-cli": "workspace:*"
   }
 }
