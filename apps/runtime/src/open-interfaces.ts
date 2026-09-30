@@ -417,13 +417,6 @@ export function openApiDocument(): Record<string, unknown> {
           responses: { "201": ok("{ artifactRef, attachmentRef }"), "409": ok("ARTIFACT_NOT_FINALIZED"), ...refusals },
         },
       },
-      "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/grant": {
-        delete: {
-          summary: "Revoke this instance's access to an artifact",
-          parameters: [conversationId, instanceId, artifactId],
-          responses: { "200": ok("{ revoked }"), ...refusals },
-        },
-      },
       "/stop": {
         post: {
           summary: "Emergency stop",

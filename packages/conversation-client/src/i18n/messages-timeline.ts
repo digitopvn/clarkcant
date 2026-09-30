@@ -526,7 +526,7 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.artifacts.webOriginalNote":
     "Ghi đè lên tệp gốc chỉ làm được trong ứng dụng máy tính. Ở đây, “Lưu thành…” tải về một bản sao.",
   "widgets.artifacts.saveAs": "Lưu thành…",
-  "widgets.artifacts.replaceOriginal": "Ghi đè “{name}”",
+  "widgets.artifacts.replaceOriginal": "Ghi đè “{original}” bằng “{name}”",
   "widgets.artifacts.saving": "Đang lưu…",
   "widgets.artifacts.saved": "Đã lưu “{name}”.",
   "widgets.artifacts.saveFailed": "Chưa lưu được tệp. {reason} Tệp vẫn còn trên node này; hãy thử lưu lại.",
@@ -1300,7 +1300,7 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.artifacts.webOriginalNote":
     "Saving over the original file only works in the desktop app. Here, Save as downloads a copy.",
   "widgets.artifacts.saveAs": "Save as…",
-  "widgets.artifacts.replaceOriginal": "Replace “{name}”",
+  "widgets.artifacts.replaceOriginal": "Replace “{original}” with “{name}”",
   "widgets.artifacts.saving": "Saving…",
   "widgets.artifacts.saved": "Saved “{name}”.",
   "widgets.artifacts.saveFailed": "The file was not saved. {reason} It is still on this node; try saving again.",

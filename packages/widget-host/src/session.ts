@@ -182,6 +182,11 @@ export interface FrameSessionInput {
   maxArtifactInFlight?: number;
   /** Refusals kept for `refused()`, newest last. Older ones are dropped, so a frame that keeps failing cannot grow it. */
   maxRecordedRefusals?: number;
+  /**
+   * Entries kept for `transcript()`, newest last. Older ones are dropped: a widget that autosaves for hours sends
+   * thousands of file requests, and each is an entry.
+   */
+  maxTranscriptEntries?: number;
   /** The clock the rate is measured on, in milliseconds. */
   now?: () => number;
 }
@@ -201,17 +206,18 @@ export interface FrameSession {
   announceActions(actions: readonly FrameActionAvailability[]): void;
   dispose(): void;
   status(): "awaiting-init" | "ready" | "suspended" | "disposed";
-  /** What the frame said, in order. What a session records is what it is willing to be held to. */
+  /** What the frame said, in order — the latest `maxTranscriptEntries` of it. What a session records is what it is willing to be held to. */
   transcript(): readonly { kind: string; detail: string }[];
   refused(): readonly FrameRefusal[];
 }
 
 /**
- * The request id to answer a rate-limited artifact request under, read without parsing the rest of it: only from this
- * frame's own window, under its own nonce, and in the id's own bounds. Anything else is refused without an answer.
+ * The request id to answer a rate-limited artifact request under, read without parsing the rest of it: only under this
+ * frame's own nonce, and in the id's own bounds. Anything else is refused without an answer. (A message from another
+ * window never gets this far: it is turned away before anything is counted.)
  */
-function answerableRequestId(raw: unknown, nonce: string, sourceMatches: boolean): string | undefined {
-  if (!sourceMatches || typeof raw !== "object" || raw === null) return undefined;
+function answerableRequestId(raw: unknown, nonce: string): string | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
   const { nonce: said, requestId } = raw as { nonce?: unknown; requestId?: unknown };
   if (said !== nonce || typeof requestId !== "string" || requestId.length === 0 || requestId.length > 128) return undefined;
   return requestId;
@@ -229,6 +235,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const artifactRefillPerSecond = input.artifactRefillPerSecond ?? 10;
   const maxArtifactInFlight = input.maxArtifactInFlight ?? 4;
   const maxRecordedRefusals = input.maxRecordedRefusals ?? 64;
+  const maxTranscriptEntries = input.maxTranscriptEntries ?? 500;
   const clock = input.now ?? ((): number => Date.now());
   let artifactTokens = artifactBurst;
   let artifactRefilledAt = clock();
@@ -243,6 +250,11 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   };
   const artifactsInFlight = new Set<string>();
   const transcript: { kind: string; detail: string }[] = [];
+  /** Record what the frame said, dropping the oldest entries past the bound. */
+  const record = (entry: { kind: string; detail: string }): void => {
+    transcript.push(entry);
+    if (transcript.length > maxTranscriptEntries) transcript.splice(0, transcript.length - maxTranscriptEntries);
+  };
   const refusals: FrameRefusal[] = [];
   /**
    * Invocations seen, whether or not they have answered yet.
@@ -350,7 +362,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const dispatch = (message: WidgetToHostMessage): FrameAcceptance => {
     switch (message.kind) {
       case "ready":
-        transcript.push({ kind: "ready", detail: message.nonce });
+        record({ kind: "ready", detail: message.nonce });
         return { ok: true, kind: "ready" };
 
       case "state.update": {
@@ -377,7 +389,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
           state = { ...state, ...message.patch };
           stateRevision += 1;
           input.post({ kind: "state", nonce: input.nonce, state, revision: stateRevision });
-          transcript.push({ kind: "state.update", detail: String(stateRevision) });
+          record({ kind: "state.update", detail: String(stateRevision) });
           return { ok: true, kind: "state.update", detail: String(stateRevision) };
         }
 
@@ -389,7 +401,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
            */
           state = { ...state, ...message.patch };
           input.post({ kind: "state", nonce: input.nonce, state, revision: stateRevision });
-          transcript.push({ kind: "state.update", detail: "view-only" });
+          record({ kind: "state.update", detail: "view-only" });
           return { ok: true, kind: "state.update", detail: "view-only" };
         }
 
@@ -402,7 +414,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
             state = { ...outcome.state, ...viewState(), ...pickEphemeral(message.patch, ephemeral) };
             stateRevision = outcome.stateRevision;
             input.post({ kind: "state", nonce: input.nonce, state, revision: stateRevision });
-            transcript.push({ kind: "state.update", detail: String(stateRevision) });
+            record({ kind: "state.update", detail: String(stateRevision) });
             return;
           }
           if (outcome.state !== undefined) state = { ...outcome.state, ...viewState() };
@@ -414,7 +426,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
             revision: stateRevision,
             refused: { code: outcome.code.slice(0, 60), message: outcome.message.slice(0, 600) },
           });
-          transcript.push({ kind: "state.refused", detail: outcome.code });
+          record({ kind: "state.refused", detail: outcome.code });
         };
         void input
           .persistState({ expectedRevision: message.expectedRevision, patch: message.patch })
@@ -430,7 +442,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       }
 
       case "event":
-        transcript.push({ kind: "event", detail: message.name });
+        record({ kind: "event", detail: message.name });
         return { ok: true, kind: "event", detail: message.name };
 
       case "action.invoke": {
@@ -471,7 +483,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
             invocations.set(message.invocationId, outcome);
             postResult(message.actionBindingId, message.invocationId, outcome);
           });
-        transcript.push({ kind: "action.invoke", detail: message.actionBindingId });
+        record({ kind: "action.invoke", detail: message.actionBindingId });
         return { ok: true, kind: "action.invoke", detail: message.actionBindingId };
       }
 
@@ -483,7 +495,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
            */
           return refuse("CAPABILITY_NOT_BROKERED", `capability ${message.capabilityRef} was not brokered to this frame`);
         }
-        transcript.push({ kind: "capability.request", detail: message.capabilityRef });
+        record({ kind: "capability.request", detail: message.capabilityRef });
         return { ok: true, kind: "capability.request", detail: message.capabilityRef };
 
       case "host.request": {
@@ -493,7 +505,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         else if (message.request === "resize") input.chrome.resize(Number(message.argument ?? "0"));
         else if (message.request === "request-pin") input.chrome.requestPin();
         else input.chrome.openExternal(message.argument ?? "");
-        transcript.push({ kind: "host.request", detail: message.request });
+        record({ kind: "host.request", detail: message.request });
         return { ok: true, kind: "host.request", detail: message.request };
       }
 
@@ -519,7 +531,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         artifactsInFlight.add(requestId);
         // What is recorded is the operation and the artifact id: never a name, a type the person chose, or bytes.
         const detail = "artifactId" in request ? `${request.op} ${request.artifactId}` : request.op;
-        transcript.push({ kind: "artifact.request", detail });
+        record({ kind: "artifact.request", detail });
         void input
           .artifacts(request)
           .then((outcome) => postArtifactResult(requestId, outcome))
@@ -538,7 +550,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       case "semantic.publish":
         // Published for a reader who cannot see the widget, and for the next model turn and voice to know what it shows.
         // Handed on as a proposal: the node bounds and cleans it, and adds the actions from its own bindings.
-        transcript.push({ kind: "semantic.publish", detail: message.summary });
+        record({ kind: "semantic.publish", detail: message.summary });
         input.publishSemantic?.({
           summary: message.summary,
           selectedIds: message.selectedIds,
@@ -553,6 +565,14 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
 
     accept(event) {
       if (status === "disposed") return refuse("DISPOSED", "the frame has been disposed");
+      /*
+       * A message from another window is not this frame's, whatever it says: turned away before it is measured, counted
+       * or read, so another widget on the page cannot spend this frame's file rate or message budget — which would leave
+       * this widget refused for what someone else sent.
+       */
+      if (!event.sourceMatchesExpectedWindow) {
+        return refuse("SOURCE_MISMATCH", "the message did not come from the window the host registered for this instance");
+      }
 
       /*
        * Bounded before parsed. A frame that can send an arbitrarily large object can spend the host's memory on
@@ -573,13 +593,13 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         typeof event.data === "object" && event.data !== null && (event.data as { kind?: unknown }).kind === "artifact.request";
       const ceiling = claimsArtifact ? maxArtifactMessageBytes : maxMessageBytes;
       /*
-       * Counted before anything else is looked at, so every message that says it is an artifact request spends from the
-       * rate — including one that is too large, malformed or from the wrong window. Checking first and counting after
+       * Counted before anything else is looked at, so every message from this frame's window that says it is an artifact
+       * request spends from the rate — including one that is too large or malformed. Checking first and counting after
        * would let a frame spend the host's validation for free by sending requests that always fail.
        */
       if (claimsArtifact && !takeArtifactToken()) {
         const reason = `at most ${String(artifactRefillPerSecond)} file requests a second, after a burst of ${String(artifactBurst)}`;
-        const requestId = answerableRequestId(event.data, input.nonce, event.sourceMatchesExpectedWindow);
+        const requestId = answerableRequestId(event.data, input.nonce);
         if (requestId === undefined || artifactsInFlight.has(requestId)) return refuse("ARTIFACT_RATE_LIMITED", reason);
         postArtifactResult(requestId, { status: "refused", code: "ARTIFACT_RATE_LIMITED", message: reason });
         return refuseAnswered("ARTIFACT_RATE_LIMITED", reason);
@@ -609,7 +629,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       if (status === "disposed") return;
       status = "suspended";
       input.post({ kind: "suspend", nonce: input.nonce, reason });
-      transcript.push({ kind: "suspend", detail: reason });
+      record({ kind: "suspend", detail: reason });
     },
 
     announceActions(actions) {
@@ -623,7 +643,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       if (status === "disposed") return;
       status = "disposed";
       input.post({ kind: "dispose", nonce: input.nonce });
-      transcript.push({ kind: "dispose", detail: "" });
+      record({ kind: "dispose", detail: "" });
     },
 
     status: () => status,

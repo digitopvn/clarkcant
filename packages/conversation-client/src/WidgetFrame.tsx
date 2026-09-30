@@ -313,6 +313,12 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
 
     const onMessage = (event: MessageEvent): void => {
       const matches = frame.contentWindow !== null && event.source === frame.contentWindow;
+      /*
+       * Every frame on the page hears every message posted to this window. One from another window is that window's —
+       * another widget's, or the page's own — and says nothing about this widget, so it is not this frame's to refuse:
+       * showing it as this widget's failure would let any other widget make this one look broken.
+       */
+      if (!matches) return;
       const accepted = live.accept({ data: event.data, sourceMatchesExpectedWindow: matches });
       if (accepted.ok) {
         // `ready` is the frame saying it has the init message, which is later than the element's `load` and is the

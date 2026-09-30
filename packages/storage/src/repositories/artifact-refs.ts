@@ -198,15 +198,17 @@ export function artifactUsageForPrincipal(db: Database, principalId: string): nu
 }
 
 /**
- * Bytes one widget instance holds in broker artifacts: the ones it created and the ones the person handed it.
+ * Bytes one widget instance holds in the files it created.
  *
  * Read against `ARTIFACT_LIMITS.instanceQuotaBytes`, inside the principal's quota, so one widget cannot fill the quota
- * the composer's attachments share.
+ * the composer's attachments share. A file the person picked for the widget (`external`) is not counted: choosing it
+ * was the person's act, the widget cannot discard it, and counting it would let the person's own choices lock the widget
+ * out. It still counts in the principal's quota.
  */
 export function artifactUsageForInstance(db: Database, instanceId: string): number {
   const row = oneRow<{ used: number | null }>(
     db,
-    "SELECT COALESCE(SUM(size_bytes), 0) AS used FROM artifacts WHERE instance_id = ? AND kind IS NOT NULL",
+    "SELECT COALESCE(SUM(size_bytes), 0) AS used FROM artifacts WHERE instance_id = ? AND kind IN ('working', 'finalized')",
     instanceId,
   );
   return Number(row?.used ?? 0);
@@ -291,8 +293,23 @@ export function deleteArtifactsForConversation(
  *
  * The digest match is deliberately generous: the same bytes stored under another extension keep this file too. Keeping
  * bytes nobody needs costs space; removing bytes somebody needs loses a file.
+ *
+ * `messages.document` is the one place that is not a column of digests but whole transcripts, so it is read only when
+ * it can matter, and as narrowly as it can be:
+ *
+ * - only for a **picture** — a captured frame is only ever stored as one (`storeSessionPreview` refuses anything else,
+ *   and a blob's extension is the one its sniffed bytes have);
+ * - with `messagesOf`, only that **conversation's** messages, through its index. A widget discarding its own file
+ *   passes its conversation: the widget can only have bytes it made or was handed, and a file it was handed is still
+ *   an `external` row the path match finds. Releasing a whole conversation — the person's act, and rare — reads every
+ *   conversation.
  */
-export function blobStillReferenced(db: Database, blobPath: string): boolean {
+export const BLOB_IN_CONVERSATION_MESSAGES_SQL =
+  "SELECT 1 AS present FROM messages WHERE conversation_id = ? AND instr(document, ?) > 0 LIMIT 1";
+
+const FRAME_EXTENSIONS: ReadonlySet<string> = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
+
+export function blobStillReferenced(db: Database, blobPath: string, scope: { messagesOf?: string } = {}): boolean {
   const name = blobPath.split(/[/\\]/).at(-1) ?? "";
   if (name === "") return false;
   const suffixMatch = (table: string): boolean =>
@@ -306,8 +323,10 @@ export function blobStillReferenced(db: Database, blobPath: string): boolean {
     ) !== undefined;
   if (suffixMatch("attachments") || suffixMatch("artifacts") || suffixMatch("local_images")) return true;
 
-  const address = /^([0-9a-f]{32})\./u.exec(name)?.[1];
+  const matched = /^([0-9a-f]{32})\.([a-z0-9]+)$/u.exec(name);
+  const address = matched?.[1];
   if (address === undefined) return false;
+  const couldBeFrame = FRAME_EXTENSIONS.has(matched?.[2] ?? "");
   const digestMatch = (table: string, column: string): boolean =>
     oneRow<{ present: number }>(
       db,
@@ -321,6 +340,9 @@ export function blobStillReferenced(db: Database, blobPath: string): boolean {
     digestMatch("local_images", "digest") ||
     digestMatch("task_artifacts", "digest") ||
     digestMatch("evidence", "digest") ||
-    digestMatch("messages", "document")
+    (couldBeFrame &&
+      (scope.messagesOf === undefined
+        ? digestMatch("messages", "document")
+        : oneRow<{ present: number }>(db, BLOB_IN_CONVERSATION_MESSAGES_SQL, scope.messagesOf, address) !== undefined))
   );
 }

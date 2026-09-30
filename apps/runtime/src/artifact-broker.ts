@@ -4,6 +4,7 @@ import {
   ARTIFACT_REF_VERSION,
   type ArtifactRef,
   type ArtifactRefusal,
+  ARTIFACT_NOT_ON_NODE,
   type ArtifactRefusalCode,
   type AttachmentRef,
   type Instant,
@@ -12,7 +13,9 @@ import {
   classifyAttachment,
   decideArtifactAccess,
   defaultArtifactName,
+  normalizePickedType,
   redactSecrets,
+  stripBidiControls,
   validateAttachmentCandidate,
 } from "@clarkcant/contracts";
 import {
@@ -20,12 +23,14 @@ import {
   type Database,
   artifactUsageForInstance,
   artifactUsageForPrincipal,
+  attachmentUsageForInstance,
   attachmentUsageForPrincipal,
   blobStillReferenced,
   deleteArtifactsForConversation,
   deleteBrokerArtifact,
   extendArtifactGrant,
   getArtifactGrant,
+  getAttachmentFromArtifact,
   getBrokerArtifact,
   instanceIsInConversation,
   insertAttachment,
@@ -113,13 +118,21 @@ export function storedBytesForPrincipal(db: Database, principalId: string): numb
 }
 
 /**
+ * Bytes one widget instance holds against its share: the files it made, and what it attached to a conversation from
+ * them for as long as the conversation keeps the attachment. A file the person picked for it is not counted.
+ */
+export function storedBytesForInstance(db: Database, instanceId: string): number {
+  return artifactUsageForInstance(db, instanceId) + attachmentUsageForInstance(db, instanceId);
+}
+
+/**
  * Refuse bytes that would take one widget instance past its share of the quota.
  *
  * Checked after the principal's quota, so a person whose whole quota is full is told that first: freeing space there is
  * theirs to do, whereas a widget over its own share is the widget's to fix, by discarding files it no longer needs.
  */
 function checkInstanceQuota(db: Database, instanceId: string, addedBytes: number): ArtifactRefusal | undefined {
-  const used = artifactUsageForInstance(db, instanceId);
+  const used = storedBytesForInstance(db, instanceId);
   if (used + addedBytes <= ARTIFACT_LIMITS.instanceQuotaBytes && (addedBytes > 0 || used < ARTIFACT_LIMITS.instanceQuotaBytes)) {
     return undefined;
   }
@@ -127,6 +140,23 @@ function checkInstanceQuota(db: Database, instanceId: string, addedBytes: number
     "ARTIFACT_INSTANCE_QUOTA_EXCEEDED",
     `this widget already holds ${used} of the ${ARTIFACT_LIMITS.instanceQuotaBytes} bytes one widget may keep; discard files it no longer needs with artifacts.discard`,
   );
+}
+
+/**
+ * An attachment-pipeline refusal, as the widget hears it.
+ *
+ * The same code, and the same words except for a full quota: the pipeline's message names how many bytes the person
+ * stores, which is the person's to know and not a widget's, so the widget is told only that the quota is full.
+ */
+function refuseAsAttachment(refusal: { code: string; message: string }): ArtifactRefusal {
+  const code = fromAttachmentCode(refusal.code);
+  if (code === "ARTIFACT_QUOTA_EXCEEDED") {
+    return refuse(
+      code,
+      "the person's storage on this node is full, so these bytes were not stored and the widget's files are unchanged; the person can free space, and the widget can discard files it no longer needs with artifacts.discard",
+    );
+  }
+  return refuse(code, refusal.message);
 }
 
 /** Map an attachment-pipeline refusal to the artifact refusal with the same meaning. */
@@ -201,20 +231,21 @@ export function storePickedArtifact(
   if (input.bytes.byteLength > ARTIFACT_LIMITS.maxBytes) {
     return refuse("ARTIFACT_TOO_LARGE", `a file must be at most ${ARTIFACT_LIMITS.maxBytes} bytes`);
   }
-  const sniffed = sniffContentType(input.bytes, input.mimeType);
-  if (!sniffed.ok) return refuse(fromAttachmentCode(sniffed.code), sniffed.message);
+  // What the person's system called the file, under the name this node uses for it; a generic type is left to the bytes.
+  const sniffed = sniffContentType(input.bytes, normalizePickedType(input.mimeType, input.name));
+  if (!sniffed.ok) return refuseAsAttachment(sniffed);
   if (!artifactAcceptMatches(input.accept, sniffed.mime)) {
     return refuse("ARTIFACT_TYPE_NOT_ACCEPTED", `the file is ${sniffed.mime}; the widget asked for ${input.accept.join(", ")}`);
   }
   const checked = validateAttachmentCandidate({
-    filename: input.name,
+    // Without the characters that reverse how a name reads, so what is shown is what the file is called.
+    filename: stripBidiControls(input.name),
     mime: sniffed.mime,
     sizeBytes: input.bytes.byteLength,
     usedBytes: storedBytesForPrincipal(deps.db, input.principalId),
   });
-  if (!checked.ok) return refuse(fromAttachmentCode(checked.code), checked.message);
-  const overShare = checkInstanceQuota(deps.db, input.instanceId, input.bytes.byteLength);
-  if (overShare !== undefined) return overShare;
+  // Not checked against the widget's share: the person chose this file, and the widget cannot discard it.
+  if (!checked.ok) return refuseAsAttachment(checked);
 
   const written = writeBlob({ dataDir: deps.dataDir, bytes: input.bytes, extension: sniffed.extension });
   const now = deps.now();
@@ -258,14 +289,15 @@ export function createWorkingArtifact(
   if (classifyAttachment({ mime: mimeType }) === undefined) {
     return refuse("ARTIFACT_TYPE_UNSUPPORTED", `${mimeType === "" ? "an empty content type" : mimeType} is not a type a widget may create`);
   }
-  const name = input.name === undefined || input.name.trim() === "" ? defaultArtifactName(mimeType) : input.name;
+  const suggested = stripBidiControls(input.name ?? "");
+  const name = suggested.trim() === "" ? defaultArtifactName(mimeType) : suggested;
   const checked = validateAttachmentCandidate({
     filename: name,
     mime: mimeType,
     sizeBytes: 0,
     usedBytes: storedBytesForPrincipal(deps.db, input.principalId),
   });
-  if (!checked.ok) return refuse(fromAttachmentCode(checked.code), checked.message);
+  if (!checked.ok) return refuseAsAttachment(checked);
   // An empty artifact costs nothing, but one the widget could not write a byte to would only fail later.
   const overShare = checkInstanceQuota(deps.db, input.instanceId, 0);
   if (overShare !== undefined) return overShare;
@@ -421,7 +453,7 @@ export function appendArtifactChunk(
     sizeBytes: input.bytes.byteLength,
     usedBytes: storedBytesForPrincipal(deps.db, input.principalId),
   });
-  if (!quota.ok) return refuse(fromAttachmentCode(quota.code), quota.message);
+  if (!quota.ok) return refuseAsAttachment(quota);
   const overShare = checkInstanceQuota(deps.db, input.instanceId, input.bytes.byteLength);
   if (overShare !== undefined) return overShare;
   if (record.stagingRef === undefined) return refuse("ARTIFACT_BYTES_MISSING", "that artifact has no staged bytes");
@@ -477,7 +509,7 @@ export function finalizeArtifact(
   const sniffed = emptyText
     ? { ok: true as const, mime: record.mimeType, extension: ARTIFACT_EXTENSIONS[record.mimeType]?.[0] ?? "txt" }
     : sniffContentType(staged.bytes, record.mimeType);
-  if (!sniffed.ok) return refuse(fromAttachmentCode(sniffed.code), sniffed.message);
+  if (!sniffed.ok) return refuseAsAttachment(sniffed);
   if (sniffed.mime !== record.mimeType) {
     return refuse("ARTIFACT_TYPE_MISMATCH", `the bytes are ${sniffed.mime} but the artifact was created as ${record.mimeType}`);
   }
@@ -491,7 +523,7 @@ export function finalizeArtifact(
     mimeType: sniffed.mime,
   });
   const finalized = getBrokerArtifact(deps.db, record.artifactId);
-  if (finalized === undefined) return refuse("ARTIFACT_NOT_FOUND", "that artifact is not on this node");
+  if (finalized === undefined) return refuse("ARTIFACT_NOT_FOUND", ARTIFACT_NOT_ON_NODE);
   return { ok: true, ref: artifactRefFromRecord(finalized) };
 }
 
@@ -507,7 +539,7 @@ export function exportArtifactBytes(
   input: { principalId: string; artifactId: string },
 ): BrokerResult<{ ref: ArtifactRef; bytes: Uint8Array }> {
   const record = getBrokerArtifact(deps.db, input.artifactId);
-  if (record === undefined) return refuse("ARTIFACT_NOT_FOUND", "that artifact is not on this node");
+  if (record === undefined) return refuse("ARTIFACT_NOT_FOUND", ARTIFACT_NOT_ON_NODE);
   if (record.ownerPrincipalId !== input.principalId) {
     return refuse("ARTIFACT_CROSS_PRINCIPAL", "that artifact belongs to another principal");
   }
@@ -526,6 +558,11 @@ export function exportArtifactBytes(
  * quota are `validateAttachmentCandidate`'s, and the row is an ordinary attachment, so the model reads it exactly as
  * it reads a file the person attached — the attachment brief, or `read_attachment`. The blob is shared, since the
  * store is content-addressed; retention removes it only once no row points at it.
+ *
+ * A file is attached once: asking again returns the attachment already made, since a finalized file's bytes cannot
+ * change. The attachment counts against the widget's share as well as the person's quota, and keeps counting after the
+ * widget discards the file, because the conversation still keeps the bytes. Without both, one finalized file attached
+ * over and over would fill the person's quota with copies of itself.
  */
 export function attachArtifact(
   deps: ArtifactBrokerDeps,
@@ -537,17 +574,23 @@ export function attachArtifact(
   if (record.state !== "sealed" || record.blobPath === undefined || record.digest === undefined) {
     return refuse("ARTIFACT_NOT_FINALIZED", "finalize the artifact before attaching it to the conversation");
   }
+  const existing = getAttachmentFromArtifact(deps.db, record.artifactId, input.principalId);
+  if (existing !== undefined) {
+    return { ok: true, ref: artifactRefFromRecord(record), attachmentRef: attachmentRefFromRecord(existing) };
+  }
   const blob = readBlob({ dataDir: deps.dataDir, blobPath: record.blobPath });
   if (!blob.ok) return refuse("ARTIFACT_BYTES_MISSING", blob.message);
   const sniffed = sniffContentType(blob.bytes, record.mimeType);
-  if (!sniffed.ok) return refuse(fromAttachmentCode(sniffed.code), sniffed.message);
+  if (!sniffed.ok) return refuseAsAttachment(sniffed);
   const checked = validateAttachmentCandidate({
     filename: record.name,
     mime: sniffed.mime,
     sizeBytes: blob.bytes.byteLength,
     usedBytes: storedBytesForPrincipal(deps.db, input.principalId),
   });
-  if (!checked.ok) return refuse(fromAttachmentCode(checked.code), checked.message);
+  if (!checked.ok) return refuseAsAttachment(checked);
+  const overShare = checkInstanceQuota(deps.db, input.instanceId, blob.bytes.byteLength);
+  if (overShare !== undefined) return overShare;
   const attachment = {
     attachmentId: deps.newId("att"),
     principalId: input.principalId,
@@ -559,6 +602,8 @@ export function attachArtifact(
     sha256: record.digest,
     blobPath: record.blobPath,
     createdAt: iso(deps.now()),
+    sourceArtifactId: record.artifactId,
+    sourceInstanceId: input.instanceId,
   };
   insertAttachment(deps.db, attachment);
   return { ok: true, ref: artifactRefFromRecord(record), attachmentRef: attachmentRefFromRecord(attachment) };
@@ -570,7 +615,7 @@ export function revokeArtifactAccess(
   input: { principalId: string; instanceId: string; artifactId: string },
 ): BrokerResult<{ revoked: boolean }> {
   const record = getBrokerArtifact(deps.db, input.artifactId);
-  if (record === undefined) return refuse("ARTIFACT_NOT_FOUND", "that artifact is not on this node");
+  if (record === undefined) return refuse("ARTIFACT_NOT_FOUND", ARTIFACT_NOT_ON_NODE);
   if (record.ownerPrincipalId !== input.principalId) {
     return refuse("ARTIFACT_CROSS_PRINCIPAL", "that artifact belongs to another principal");
   }
@@ -593,7 +638,7 @@ export function discardArtifact(
   input: { principalId: string; instanceId: string; artifactId: string },
 ): BrokerResult<object> {
   const record = getBrokerArtifact(deps.db, input.artifactId);
-  if (record === undefined) return refuse("ARTIFACT_NOT_FOUND", "that artifact is not on this node");
+  if (record === undefined) return refuse("ARTIFACT_NOT_FOUND", ARTIFACT_NOT_ON_NODE);
   if (record.ownerPrincipalId !== input.principalId) {
     return refuse("ARTIFACT_CROSS_PRINCIPAL", "that artifact belongs to another principal");
   }
@@ -610,15 +655,28 @@ export function discardArtifact(
     return refuse("ARTIFACT_GRANT_REVOKED", "this widget's access to that artifact was revoked");
   }
   deleteBrokerArtifact(deps.db, record.artifactId);
-  releaseBytes(deps, record.blobPath === undefined ? [] : [record.blobPath], record.stagingRef === undefined ? [] : [record.stagingRef]);
+  // The widget's own file: only its conversation's transcript can hold a frame of the same bytes (`blobStillReferenced`).
+  releaseBytes(
+    deps,
+    record.blobPath === undefined ? [] : [record.blobPath],
+    record.stagingRef === undefined ? [] : [record.stagingRef],
+    record.conversationId,
+  );
   return { ok: true };
 }
 
 /** Remove bytes nobody points at any more. A blob another row shares is left where it is. */
-function releaseBytes(deps: Pick<ArtifactBrokerDeps, "db" | "dataDir">, blobPaths: readonly string[], stagingRefs: readonly string[]): void {
+function releaseBytes(
+  deps: Pick<ArtifactBrokerDeps, "db" | "dataDir">,
+  blobPaths: readonly string[],
+  stagingRefs: readonly string[],
+  messagesOf?: string,
+): void {
   for (const stagingRef of stagingRefs) removeStagedBlob({ dataDir: deps.dataDir, stagingRef });
   for (const blobPath of new Set(blobPaths)) {
-    if (!blobStillReferenced(deps.db, blobPath)) removeBlob({ dataDir: deps.dataDir, blobPath });
+    if (!blobStillReferenced(deps.db, blobPath, messagesOf === undefined ? {} : { messagesOf })) {
+      removeBlob({ dataDir: deps.dataDir, blobPath });
+    }
   }
 }
 

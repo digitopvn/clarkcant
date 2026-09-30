@@ -1553,6 +1553,15 @@ export const MIGRATIONS: readonly Migration[] = [
         CREATE INDEX idx_artifacts_instance ON artifacts(instance_id);
         CREATE INDEX idx_snapshots_instance ON widget_snapshots(instance_id);
 
+        -- An attachment a widget made from one of its files names that file and that widget. The file is attached once
+        -- however often the widget asks (the lookup by source_artifact_id), and the attachment's bytes count against
+        -- the widget's share of the quota for as long as the conversation keeps them (the sum by source_instance_id),
+        -- even after the widget discards the file itself. NULL for an attachment the person made.
+        ALTER TABLE attachments ADD COLUMN source_artifact_id TEXT;
+        ALTER TABLE attachments ADD COLUMN source_instance_id TEXT;
+        CREATE INDEX idx_attachments_source_artifact ON attachments(source_artifact_id);
+        CREATE INDEX idx_attachments_source_instance ON attachments(source_instance_id);
+
         -- One widget instance's permission to use one artifact. A ref is a pointer; this row is the permission, and
         -- the host re-reads it on every use. access is read | write. revoked_at is kept rather than the row deleted,
         -- so a revoked widget is told "revoked" and not "never granted".

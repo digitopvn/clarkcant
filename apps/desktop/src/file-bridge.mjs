@@ -13,7 +13,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 /**
@@ -70,11 +70,14 @@ export const MAX_FILE_HANDLES = 64;
 
 const MIME_PATTERN = /^[a-z][a-z0-9.+-]*\/(\*|[a-z0-9][a-z0-9.+-]*)$/;
 
-/** The type a file name says it is, or `application/octet-stream`, which the node will refuse with its reason. */
+/**
+ * The type a file name says it is, or nothing: the node then reads what the file is from its bytes, and refuses one it
+ * cannot hold with its reason. Never a generic binary type, which the node would take as a claim the bytes contradict.
+ */
 export function mimeForFileName(name) {
   const dot = name.lastIndexOf(".");
   const extension = dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
-  return PICKABLE_TYPES.find((entry) => entry.extensions.includes(extension))?.mime ?? "application/octet-stream";
+  return PICKABLE_TYPES.find((entry) => entry.extensions.includes(extension))?.mime ?? "";
 }
 
 /**
@@ -197,18 +200,58 @@ export function replaceKeepsType(targetName, mimeType) {
   return extensionsForType(mimeType) !== undefined && mimeForFileName(targetName) === mimeType;
 }
 
+/** Errors Windows gives a rename while another program — an indexer, an antivirus, a sync client — briefly holds the file. */
+const TRANSIENT_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+/** How many times a rename is tried on Windows before the write is given up, and the pause before the first retry. */
+const RENAME_ATTEMPTS = 6;
+const RENAME_RETRY_DELAY_MS = 40;
+
 /**
  * Write a file whole or not at all.
  *
  * The bytes go to a temporary file beside the target, and that file is renamed over it: a rename within one folder
  * replaces the old file in one step, so a failure part-way — a full disk, a locked file, a crash — leaves the original
  * as it was instead of truncated. The temporary file is removed when the write does not finish.
+ *
+ * What the person had is kept as well as the bytes allow:
+ *
+ * - a **link** is followed, and the file it points at is written, so the link stays a link instead of being replaced by
+ *   a copy that no longer follows the file it named;
+ * - the original's **permissions** are given to the new file on macOS and Linux, so a file only its owner could read
+ *   does not become readable by everyone because it was saved again;
+ * - on **Windows**, a rename refused because another program holds the file for a moment is tried again a few times
+ *   before the write is given up.
+ *
+ * The temporary name is short and does not repeat the target's, so a long file name never makes it too long to create.
+ * `options` is for tests: the platform, the rename and the pause between tries.
  */
-export async function writeFileWhole(target, bytes) {
-  const temporary = join(dirname(target), `.${basename(target)}.${randomBytes(6).toString("hex")}.tmp`);
+export async function writeFileWhole(target, bytes, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const renameFile = options.rename ?? rename;
+  const retryDelayMs = options.retryDelayMs ?? RENAME_RETRY_DELAY_MS;
+  // A save to a new file has nothing to follow or keep; any other failure here is the write's to report.
+  const existing = await realpath(target).catch((cause) => {
+    if (cause?.code === "ENOENT") return undefined;
+    throw cause;
+  });
+  const destination = existing ?? target;
+  const mode = existing === undefined || platform === "win32" ? undefined : (await stat(existing)).mode & 0o7777;
+  const temporary = join(dirname(destination), `.cc-${randomBytes(6).toString("hex")}.tmp`);
   try {
-    await writeFile(temporary, bytes, { flag: "wx" });
-    await rename(temporary, target);
+    await writeFile(temporary, bytes, { flag: "wx", ...(mode === undefined ? {} : { mode }) });
+    // The mode given to writeFile is narrowed by the process's umask; this sets it exactly.
+    if (mode !== undefined) await chmod(temporary, mode);
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await renameFile(temporary, destination);
+        break;
+      } catch (cause) {
+        const transient = platform === "win32" && TRANSIENT_RENAME_CODES.has(cause?.code);
+        if (!transient || attempt >= RENAME_ATTEMPTS) throw cause;
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+      }
+    }
   } catch (cause) {
     await unlink(temporary).catch(() => undefined);
     throw cause;

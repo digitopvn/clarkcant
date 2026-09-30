@@ -352,14 +352,16 @@ carries a path.
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/finalize` | – fixes the bytes after checking them against the declared type |
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | – `201 { artifactRef, attachmentRef }` through the attachment pipeline; the person sends it with their next message |
 | DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – discards a file this instance made, with its bytes unless an attachment or another record still points at them; another's is `403 ARTIFACT_NOT_CREATOR` |
-| DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/grant` | – revokes this instance's access |
 
 Every instance route is checked again against that instance's grant. A ref is a pointer, not a permission, so an
 expired (`403 ARTIFACT_GRANT_EXPIRED`) or revoked (`403 ARTIFACT_GRANT_REVOKED`) grant stops the next call. Sizes,
 types and quota follow the attachment rules (`413 ARTIFACT_TOO_LARGE`, `415 ARTIFACT_TYPE_MISMATCH`, `409
-ARTIFACT_QUOTA_EXCEEDED`), and one instance holds at most 128 MiB of the quota (`409 ARTIFACT_INSTANCE_QUOTA_EXCEEDED`).
+ARTIFACT_QUOTA_EXCEEDED`), and one instance holds at most 128 MiB of the quota (`409 ARTIFACT_INSTANCE_QUOTA_EXCEEDED`),
+counting the files it made and the attachments it made from them but not the files the person picked for it. An attach
+of a file already attached answers with the same attachment.
 A file name in `Content-Disposition` is sent as RFC 6266 describes: an ASCII `filename` and the real name as
-percent-encoded UTF-8 in `filename*`.
+percent-encoded UTF-8 in `filename*`. Bidi controls are dropped from both, a percent sign becomes `_` in the ASCII
+name, and a name longer than 120 characters is shortened before its extension, which is always kept.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.

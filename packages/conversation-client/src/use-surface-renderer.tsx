@@ -159,7 +159,9 @@ export function useSurfaceRenderer({
       open: (ref) => client.artifactContent(ref.artifactId),
       saveAs: async (ref, name) => {
         const exported = await client.exportArtifact(ref.artifactId, name);
-        return saveForPerson(exported.blob, exported.filename, { mimeType: ref.mimeType, labels: desktopDialogLabels(t) });
+        // Named by the type the node sent the bytes as, not the one the card's ref claims.
+        const mimeType = exported.mimeType === "" ? ref.mimeType : exported.mimeType;
+        return saveForPerson(exported.blob, exported.filename, { mimeType, labels: desktopDialogLabels(t) });
       },
     }),
     [client, t],

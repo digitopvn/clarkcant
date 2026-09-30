@@ -97,6 +97,16 @@ test("a widget picks through host chrome, reads in chunks, and saves and attache
   await page.emulateMedia({ colorScheme: "dark" });
   const frame = await openFileWidget(page);
 
+  // A message from another window — the page's own here, another widget's in general — is not this widget's failure.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        window.postMessage({ type: "clarkcant.widget", kind: "artifact.request", requestId: "not-this-frame" }, "*");
+        window.setTimeout(resolve, 100);
+      }),
+  );
+  await expect(page.locator("[data-pin-live] [data-widget-frame]")).toHaveAttribute("data-frame-status", "ready");
+
   // The host offered the extension in its init, which the widget can only know from that message.
   await expect(frame.locator("[data-artifact-available='true']")).toHaveCount(1);
 
@@ -127,6 +137,20 @@ test("a widget picks through host chrome, reads in chunks, and saves and attache
   await expect(frame.locator("[data-artifact-status='cancelled']")).toHaveCount(1);
   // Escape answered the question and did not also close the surface around it.
   await expect(page.locator("[data-pin-live] [data-widget-frame]")).toBeVisible();
+
+  /*
+   * A widget that asks while the person is typing elsewhere does not take their keyboard: the question waits beside the
+   * frame and is read out, so a widget asking again after every answer cannot pull them out of the composer.
+   */
+  const composer = page.locator("[data-composer='true']");
+  await composer.focus();
+  await frame.locator("[data-artifact-pick]").evaluate((button) => (button as HTMLElement).click());
+  await expect(pickPrompt).toBeVisible();
+  await expect(composer).toBeFocused();
+  await expect(page.locator("[data-pin-live] [data-artifact-announce]")).toHaveText(/^“.+” xin một tệp$/u);
+  await pickPrompt.locator("[data-artifact-cancel]").click();
+  await expect(pickPrompt).toHaveCount(0);
+  await expect(page.locator("[data-pin-live] [data-artifact-announce]")).toHaveText("");
 
   await frame.locator("[data-artifact-pick]").click();
   const chooser = page.waitForEvent("filechooser");

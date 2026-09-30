@@ -1,4 +1,4 @@
-import { describeSemanticDoc, type WidgetSemanticDoc } from "@clarkcant/contracts";
+import { ARTIFACT_NOT_ON_NODE, describeSemanticDoc, type WidgetSemanticDoc } from "@clarkcant/contracts";
 import { type WidgetDeps, getInstance } from "@clarkcant/core";
 import { findCompositionByInstance, getBrokerArtifact, getWidgetSemantic } from "@clarkcant/storage";
 
@@ -103,12 +103,11 @@ export function contextRefsProblem(
       /*
        * Checked as far as it can be before the button exists: the file is on this node and is the placing person's.
        * Whether the button's widget holds a grant to it is decided when it is pressed, like every other use of a ref.
+       * Another person's file gets the same answer as a missing one, so a proposal cannot learn which ids exist.
        */
       const artifact = getBrokerArtifact(deps.db, ref.artifactId);
-      if (artifact === undefined) return `${raw}: this node holds no file ${ref.artifactId}`;
-      if (ownerPrincipalId !== undefined && artifact.ownerPrincipalId !== ownerPrincipalId) {
-        return `${raw}: that file belongs to someone else`;
-      }
+      const foreign = artifact !== undefined && ownerPrincipalId !== undefined && artifact.ownerPrincipalId !== ownerPrincipalId;
+      if (artifact === undefined || foreign) return `${raw}: this node holds no file ${ref.artifactId}`;
       continue;
     }
     if (ref.instanceId === undefined || ownerPrincipalId === undefined) continue;
@@ -177,7 +176,14 @@ export function resolveActionContext(
       }
       const read = input.readArtifact(ref.artifactId);
       if (!read.ok) {
-        // Gone, or out of time, is "no longer there"; anything else is "not this widget's to read".
+        /*
+         * Gone, or out of time, is "no longer there"; a grant that ran out or was never given is "not this widget's to
+         * read". Another person's file is answered exactly as a missing one, code and words, so a button cannot be used
+         * to ask which files exist on this node.
+         */
+        if (read.code === "ARTIFACT_CROSS_PRINCIPAL") {
+          return { ok: false, code: "CONTEXT_REF_UNKNOWN", message: `${raw}: ${ARTIFACT_NOT_ON_NODE}` };
+        }
         const unknown = read.code === "ARTIFACT_NOT_FOUND" || read.code === "ARTIFACT_EXPIRED" || read.code === "ARTIFACT_BYTES_MISSING";
         return {
           ok: false,
@@ -251,14 +257,17 @@ const SOURCE_LABEL: Record<ResolvedContext["source"], string> = {
  * Text that came from a widget or a page, made unable to act as structure in the prompt.
  *
  * Square brackets become their full-width forms, so the text can neither close the section it sits in nor open
- * something that looks like the host's guidance marker; every line break (including the Unicode separators) becomes a
- * plain one, and every line is indented, so no line of the text can start a new entry or a new heading.
+ * something that looks like the host's guidance marker; every line break becomes a plain one, and every line is
+ * indented, so no line of the text can start a new entry or a new heading. A line break is anything a tokenizer or a
+ * renderer may take as one: CR, the Unicode separators, and the vertical tab, form feed and file/group/record
+ * separators, which the control characters in the pattern are there to match.
  */
 export function inertContextText(text: string): string {
   return text
     .replace(/\[/gu, "［")
     .replace(/\]/gu, "］")
-    .replace(/\r\n?|[\u2028\u2029\u0085]/gu, "\n")
+    // eslint-disable-next-line no-control-regex
+    .replace(/\r\n?|[\v\f\x1c-\x1e\u2028\u2029\u0085]/gu, "\n")
     .split("\n")
     .map((line) => `    ${line}`)
     .join("\n");

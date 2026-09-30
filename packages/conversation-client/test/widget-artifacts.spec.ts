@@ -4,7 +4,7 @@ import { GatewayClient, GatewayError } from "../src/api.ts";
 import { artifactReason, artifactTypesLabel, DesktopFileError, desktopDialogLabels } from "../src/artifact-messages.ts";
 import { saveForPerson } from "../src/download.ts";
 import { MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
-import { artifactRefusal, pickedFileType } from "../src/widget-artifacts.tsx";
+import { artifactRefusal, exportTitle, pickedFileType, pickTitle, replaceOriginalLabel } from "../src/widget-artifacts.tsx";
 
 const vi_t = (key: MessageKey): string => MESSAGES_VI[key];
 const en_t = (key: MessageKey): string => MESSAGES_EN[key];
@@ -106,8 +106,23 @@ describe("the artifact calls a frame's host makes", () => {
     const exported = await client.exportArtifact("art_one", "bao-cao.txt");
 
     expect(exported.filename).toBe("bao-cao.txt");
+    expect(exported.mimeType).toBe("text/plain");
     expect(await exported.blob.text()).toBe("abc");
     expect(calls[0]).toMatchObject({ method: "POST", url: "http://127.0.0.1:8765/artifacts/art_one/export", body: { suggestedName: "bao-cao.txt" } });
+  });
+
+  it("reports the type the node sent the bytes as, not the one the card claimed", async () => {
+    const { client } = clientAnswering(
+      () =>
+        new Response("%PDF-1.7", {
+          status: 200,
+          headers: { "content-type": "Application/PDF; charset=binary", "content-disposition": 'attachment; filename="bao-cao.pdf"' },
+        }),
+    );
+
+    const exported = await client.exportArtifact("art_one", "bao-cao.txt");
+
+    expect(exported).toMatchObject({ filename: "bao-cao.pdf", mimeType: "application/pdf" });
   });
 
   it("carries the node's refusal of an export with its own code", async () => {
@@ -180,6 +195,26 @@ describe("what the person reads about a widget's files", () => {
     expect(shaped.message).not.toContain("Users");
   });
 
+  it("drops the characters that reverse how a name reads from the question's first line", () => {
+    // Shown as `“Ghi chú” muốn lưu “hoa-donexe.txt”`, while the file is `hoa-don‮txt.exe`.
+    expect(exportTitle(vi_t, "Ghi chú\u202e", "hoa-don\u202etxt.exe")).toBe("“Ghi chú” muốn lưu “hoa-dontxt.exe”");
+    expect(exportTitle(en_t, " \u2067 ", "a\u200fb.txt")).toBe(MESSAGES_EN["widgets.artifacts.saveTitle"].replace("{name}", "ab.txt"));
+    expect(pickTitle(vi_t, "Bảng\u202e tính")).toBe(MESSAGES_VI["widgets.artifacts.pickTitleNamed"].replace("{widget}", "Bảng tính"));
+    // A name that looks like a placeholder, or a replacement pattern, is shown as it is.
+    expect(exportTitle(en_t, "{name}", "$&.txt")).toBe("“{name}” wants to save “$&.txt”");
+  });
+
+  it("offers to write over the picked file only with a file of its type, and names both", () => {
+    const original = { name: "so-lieu.csv", handle: "h_1", mimeType: "text/csv" };
+    const csv = { ...REF, kind: "finalized", mimeType: "text/csv", name: "ban-sua.csv" } as never;
+    expect(replaceOriginalLabel(en_t, original, csv, "ban-sua.csv")).toBe("Replace “so-lieu.csv” with “ban-sua.csv”");
+    expect(replaceOriginalLabel(vi_t, original, csv, "ban-sua.csv")).toBe("Ghi đè “so-lieu.csv” bằng “ban-sua.csv”");
+    // A file of another type has nothing to do with the one picked, and the desktop would refuse to write it there.
+    expect(replaceOriginalLabel(en_t, original, { ...REF, kind: "finalized" } as never, "ghi-chu.txt")).toBeUndefined();
+    expect(replaceOriginalLabel(en_t, undefined, csv, "ban-sua.csv")).toBeUndefined();
+    expect(replaceOriginalLabel(en_t, { ...original, name: "a\u202e.csv" }, csv, "b\u2066.csv")).toBe("Replace “a.csv” with “b.csv”");
+  });
+
   it("passes the dialogs' words in the person's language", () => {
     expect(desktopDialogLabels(vi_t)).toEqual({
       filterName: "Tệp",
@@ -199,6 +234,14 @@ describe("what a browser pick sends as the file's type", () => {
     // Empty, so the node reads the bytes: a .log file is text, not application/octet-stream.
     expect(pickedFileType({ name: "nhat-ky.log", type: "" })).toBe("");
     expect(pickedFileType({ name: "README", type: "" })).toBe("");
+  });
+
+  it("calls a type by the name the node knows it by, and leaves a generic type for the node to read from the bytes", () => {
+    expect(pickedFileType({ name: "so-lieu.csv", type: "application/vnd.ms-excel" })).toBe("text/csv");
+    expect(pickedFileType({ name: "ghi-chu.md", type: "text/x-markdown" })).toBe("text/markdown");
+    expect(pickedFileType({ name: "anh.jpg", type: "image/jpg" })).toBe("image/jpeg");
+    expect(pickedFileType({ name: "ghi-chu.md", type: "application/octet-stream" })).toBe("text/markdown");
+    expect(pickedFileType({ name: "nhat-ky.log", type: "application/octet-stream" })).toBe("");
   });
 });
 

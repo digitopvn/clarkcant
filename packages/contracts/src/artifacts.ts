@@ -204,6 +204,9 @@ export interface ArtifactGrantView {
  * whose it is first, then whether it still exists, then whether this instance was ever granted it, then whether that
  * grant still stands — because the sentence a person or an author reads has to name the first thing that was wrong.
  */
+/** The answer for a file that is not here, and for one that is not the asker's: the two must read the same. */
+export const ARTIFACT_NOT_ON_NODE = "that artifact is not on this node";
+
 export function decideArtifactAccess(input: {
   principalId: string;
   instanceId: string;
@@ -214,7 +217,7 @@ export function decideArtifactAccess(input: {
 }): { ok: true } | ArtifactRefusal {
   const { artifact, grant } = input;
   if (artifact === undefined) {
-    return { ok: false, code: "ARTIFACT_NOT_FOUND", message: "that artifact is not on this node" };
+    return { ok: false, code: "ARTIFACT_NOT_FOUND", message: ARTIFACT_NOT_ON_NODE };
   }
   if (artifact.ownerPrincipalId !== input.principalId) {
     return { ok: false, code: "ARTIFACT_CROSS_PRINCIPAL", message: "that artifact belongs to another principal" };
@@ -322,6 +325,62 @@ export const ARTIFACT_EXTENSIONS: Readonly<Record<string, readonly string[]>> = 
   "image/gif": ["gif"],
 });
 
+/**
+ * Characters that change the direction text is shown in (U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069).
+ *
+ * A file name has no use for them, and they are how a name is made to read as something it is not: `hoa-don\u202Egpj.exe`
+ * is shown as `hoa-donexe.jpg`. They are removed from every name a widget or a file brings, before it is stored, shown or
+ * put in a header.
+ */
+const BIDI_CONTROLS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu;
+
+export function stripBidiControls(text: string): string {
+  return text.replaceAll(BIDI_CONTROLS, "");
+}
+
+/** Other names systems give the allowed types, each to the one this node uses. */
+const TYPE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  // Windows with Office installed registers `.csv` as an Excel file.
+  "application/vnd.ms-excel": "text/csv",
+  "application/csv": "text/csv",
+  "text/x-csv": "text/csv",
+  "text/comma-separated-values": "text/csv",
+  "text/x-markdown": "text/markdown",
+  "text/json": "application/json",
+  "image/jpg": "image/jpeg",
+  "image/pjpeg": "image/jpeg",
+  "image/x-png": "image/png",
+});
+
+/** Types that only say "some bytes": a system that sends one does not know what the file is. */
+const GENERIC_TYPES: ReadonlySet<string> = new Set(["", "application/octet-stream", "binary/octet-stream", "application/unknown", "application/x-unknown"]);
+
+/** Text types whose bytes look like any other text, so only a name can tell them apart from `text/plain`. */
+const NAMED_TEXT_TYPES: Readonly<Record<string, string>> = Object.freeze({
+  md: "text/markdown",
+  markdown: "text/markdown",
+  csv: "text/csv",
+  json: "application/json",
+});
+
+/**
+ * The type a picked file is declared as, before the node reads its bytes.
+ *
+ * What a browser or an OS says a file is varies by machine: Windows with Office calls a `.csv` `application/vnd.ms-excel`,
+ * and a system with no idea says `application/octet-stream`. So another name for an allowed type becomes that type, and
+ * a generic type becomes the text type the extension names (text has no magic bytes to tell CSV from plain text) or
+ * nothing, which lets the node decide from the bytes. It is still only a claim: the bytes are sniffed and a file that is
+ * not what it says is refused.
+ */
+export function normalizePickedType(declared: string, name: string): string {
+  const type = declared.trim().toLowerCase().split(";")[0]?.trim() ?? "";
+  const known = TYPE_ALIASES[type] ?? type;
+  if (!GENERIC_TYPES.has(known)) return known;
+  const dot = name.lastIndexOf(".");
+  const extension = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  return NAMED_TEXT_TYPES[extension] ?? "";
+}
+
 /** A default display name for a working artifact created without one. */
 export function defaultArtifactName(mimeType: string): string {
   return `untitled.${ARTIFACT_EXTENSIONS[mimeType]?.[0] ?? "bin"}`;
@@ -336,7 +395,7 @@ export function defaultArtifactName(mimeType: string): string {
  */
 export function artifactFileName(suggestedName: string, mimeType: string): string {
   const extensions = ARTIFACT_EXTENSIONS[mimeType];
-  const trimmed = suggestedName.trim().replace(/[. ]+$/u, "");
+  const trimmed = stripBidiControls(suggestedName).trim().replace(/[. ]+$/u, "");
   if (extensions === undefined) return trimmed === "" ? "file" : trimmed;
   const dot = trimmed.lastIndexOf(".");
   const hasExtension = dot > 0 && /^[\p{L}\p{N}_-]{1,16}$/u.test(trimmed.slice(dot + 1));

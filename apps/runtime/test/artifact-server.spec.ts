@@ -155,6 +155,31 @@ describe("a Vietnamese file name over the wire", () => {
     const clipped = contentDisposition("inline", "😀".repeat(200));
     expect(clipped).toContain(`filename*=UTF-8''${"%F0%9F%98%80".repeat(120)}`);
   });
+
+  it("keeps the extension the node decided when a long name is clipped for the header", async () => {
+    const base = await start();
+    const { artifactId } = await finalizedArtifact(base);
+    // 116 characters, then `.bat` and the type's `.md`: a clip at 120 characters used to leave `….bat`.
+    const saved = await send(base, "POST", `/artifacts/${artifactId}/export`, { suggestedName: `${"a".repeat(116)}.bat.md` });
+    expect(saved.status).toBe(200);
+    const header = saved.headers.get("content-disposition") ?? "";
+    expect(header).toMatch(/^attachment; filename="a+\.[^"]*\.md"; filename\*=UTF-8''a+\.\S*\.md$/u);
+    expect(header).not.toMatch(/\.bat(?:"|$)/u);
+    expect(header.length).toBeLessThan(400);
+    expect(contentDisposition("attachment", `${"b".repeat(300)}.txt`)).toMatch(/filename\*=UTF-8''b{116}\.txt$/u);
+    expect(warnings).toEqual([]);
+  });
+
+  it("drops the characters that reverse how a name reads, and keeps a percent sign out of the ASCII name", () => {
+    // `invoice‮txt.exe` reads as `invoiceexe.txt` on screen while it is an `.exe`.
+    const header = contentDisposition("attachment", "hoa-don‮gpj.txt");
+    expect(header).toBe(`attachment; filename="hoa-dongpj.txt"; filename*=UTF-8''hoa-dongpj.txt`);
+    for (const control of ["‎", "‏", "؜", "‪", "‫", "‬", "‭", "⁦", "⁧", "⁨", "⁩"]) {
+      expect(contentDisposition("inline", `a${control}b.txt`)).toBe(`inline; filename="ab.txt"; filename*=UTF-8''ab.txt`);
+    }
+    // An old reader percent-decodes the plain `filename` too, so `%2e` there could become a different name.
+    expect(contentDisposition("attachment", "100%2e.txt")).toBe(`attachment; filename="100_2e.txt"; filename*=UTF-8''100%252e.txt`);
+  });
 });
 
 describe("a widget letting go of a file, over the wire", () => {

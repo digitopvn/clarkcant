@@ -671,15 +671,43 @@ describe("the artifacts@1 extension", () => {
     });
     session.init();
 
-    // Too large, malformed, then from the wrong window: none is valid, and each still counts.
+    // Too large, then malformed: from this frame, neither is valid, and each still counts.
     const big = fromFrame({ kind: "artifact.request", requestId: "artreq-big", request: { op: "read", pad: "x".repeat(1_000) } });
     expect(session.accept(big)).toMatchObject({ ok: false });
     expect(session.accept(fromFrame({ kind: "artifact.request", requestId: "artreq-x", request: { op: "nope" } })).ok).toBe(false);
-    expect(session.accept({ ...read("artreq-y"), sourceMatchesExpectedWindow: false }).ok).toBe(false);
     const valid = session.accept(read("artreq-z"));
+    expect(valid.ok).toBe(true);
 
-    expect(valid).toMatchObject({ ok: false, code: "ARTIFACT_RATE_LIMITED" });
-    expect(seen).toBe(0);
+    expect(session.accept(read("artreq-after"))).toMatchObject({ ok: false, code: "ARTIFACT_RATE_LIMITED" });
+    expect(seen).toBe(1);
+  });
+
+  it("spends nothing on a message from another window, so another widget cannot use up this frame's rate or budget", async () => {
+    let seen = 0;
+    const { session, posted } = makeSession({
+      maxMessages: 1,
+      artifactBurst: 1,
+      artifactRefillPerSecond: 0,
+      now: () => 5_000,
+      artifacts: async () => {
+        seen += 1;
+        return { status: "ok", ref: REF };
+      },
+    });
+    session.init();
+    const before = posted.length;
+
+    // Another widget's window, even one that knows this frame's nonce, however many times it sends.
+    for (let index = 0; index < 50; index += 1) {
+      expect(session.accept({ ...read(`artreq-f${String(index)}`), sourceMatchesExpectedWindow: false })).toMatchObject({ ok: false, code: "SOURCE_MISMATCH" });
+      expect(session.accept({ ...fromFrame({ kind: "event", name: "x", payload: {} }), sourceMatchesExpectedWindow: false }).ok).toBe(false);
+    }
+    // Nothing was answered to it, and this frame still has its one file request and its one other message.
+    expect(posted.length).toBe(before);
+    expect(session.accept(read("artreq-own")).ok).toBe(true);
+    expect(session.accept(fromFrame({ kind: "event", name: "x", payload: {} })).ok).toBe(true);
+    await flush();
+    expect(seen).toBe(1);
   });
 
   it("does not answer a rate-limited message that is not this frame's to answer", () => {
@@ -690,10 +718,25 @@ describe("the artifacts@1 extension", () => {
     const foreign = session.accept({ ...read("artreq-f"), sourceMatchesExpectedWindow: false });
     const wrongNonce = session.accept({ data: { kind: "artifact.request", nonce: "x".repeat(20), requestId: "artreq-n" }, sourceMatchesExpectedWindow: true });
 
-    expect(foreign).toMatchObject({ ok: false, code: "ARTIFACT_RATE_LIMITED" });
+    expect(foreign).toMatchObject({ ok: false, code: "SOURCE_MISMATCH" });
     expect("answered" in foreign).toBe(false);
     expect(wrongNonce).toMatchObject({ ok: false, code: "ARTIFACT_RATE_LIMITED" });
+    expect("answered" in wrongNonce).toBe(false);
     expect(posted.length).toBe(before);
+  });
+
+  it("keeps only the latest entries of what the frame said, so a frame that keeps asking cannot grow the record", async () => {
+    const { session } = makeSession({ maxTranscriptEntries: 5, artifactBurst: 100, artifacts: async () => ({ status: "ok", ref: REF }) });
+    session.init();
+    session.accept(fromFrame({ kind: "ready" }));
+    for (let index = 0; index < 40; index += 1) {
+      expect(session.accept(read(`artreq-t${String(index)}`)).ok).toBe(true);
+      await flush();
+    }
+    const kept = session.transcript();
+    expect(kept).toHaveLength(5);
+    expect(kept.at(-1)).toEqual({ kind: "artifact.request", detail: "read art_one" });
+    expect(kept.some((entry) => entry.kind === "ready")).toBe(false);
   });
 
   it("keeps only the latest refusals, so a frame that keeps failing cannot grow the record", () => {

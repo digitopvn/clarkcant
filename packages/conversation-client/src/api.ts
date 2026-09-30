@@ -1810,7 +1810,7 @@ export class GatewayClient {
    *
    * The name the file is saved under is the one the node settled on, read from the response.
    */
-  async exportArtifact(artifactId: string, suggestedName?: string): Promise<{ blob: Blob; filename: string }> {
+  async exportArtifact(artifactId: string, suggestedName?: string): Promise<{ blob: Blob; filename: string; mimeType: string }> {
     const response = await this.#fetch(`${this.#baseUrl}/artifacts/${encodeURIComponent(artifactId)}/export`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
@@ -1820,6 +1820,8 @@ export class GatewayClient {
     return {
       blob: await response.blob(),
       filename: attachmentFilename(response.headers.get("content-disposition")) ?? suggestedName ?? "file",
+      // The type the node sent the bytes as, which a save names the file by; empty when it sent none.
+      mimeType: (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "",
     };
   }
 

@@ -8,6 +8,7 @@ import { ARTIFACT_LIMITS, ATTACHMENT_LIMITS, type Instant } from "@clarkcant/con
 import { createInstance, pinInstance } from "@clarkcant/core";
 import { TABLE } from "@clarkcant/data-canvas";
 import {
+  attachmentUsageForPrincipal,
   getArtifactGrant,
   getBrokerArtifact,
   insertAttachment,
@@ -21,8 +22,10 @@ import {
   readArtifactForContext,
   readArtifactRange,
   releaseConversationArtifacts,
+  revokeArtifactAccess,
   startArtifactSweep,
   sweepExpiredArtifacts,
+  storedBytesForPrincipal,
   sweepOrphanedStaging,
 } from "../src/artifact-broker.ts";
 import { attachmentBrief, releaseConversationAttachments } from "../src/attachments.ts";
@@ -297,6 +300,11 @@ describe("a working artifact, written in chunks", () => {
     const refused = await write(artifactId, 0, "abc");
     expect(refused.status).toBe(409);
     expect(refused.body).toMatchObject({ code: "ARTIFACT_QUOTA_EXCEEDED" });
+    // The widget is told the quota is full, not how much the person stores: that figure is the person's, not the widget's.
+    const told = (refused.body as { message: string }).message;
+    expect(told).not.toContain(String(ATTACHMENT_LIMITS.principalQuotaBytes - 2));
+    expect(told).not.toMatch(/\d{4,}/u);
+    expect(told).toContain("artifacts.discard");
     // And the other way round: an attachment upload sees the artifact's bytes too.
     expect((await write(artifactId, 0, "a")).status).toBe(200);
     const upload = await call("POST", "/attachments", { conversationId, filename: "b.txt", mime: "text/plain", contentBase64: Buffer.from("bb").toString("base64") });
@@ -372,8 +380,15 @@ describe("a ref is a pointer, not a permission", () => {
       code: expect.stringMatching(/^ARTIFACT_(GRANT_)?EXPIRED$/),
     });
 
-    const revoked = await call("DELETE", widget(`/${artifactId}/grant`));
-    expect(revoked.body).toEqual({ revoked: true });
+    /*
+     * Taking a widget's access away is the person's act, and no host chrome offers it yet, so no route reaches it: a
+     * relay or an MCP client cannot revoke on the person's behalf. The broker's call is what that chrome will use.
+     */
+    expect((await call("DELETE", widget(`/${artifactId}/grant`))).status).toBe(404);
+    expect(revokeArtifactAccess(brokerAt(new Date().toISOString()), { principalId: owner(), instanceId, artifactId })).toEqual({
+      ok: true,
+      revoked: true,
+    });
     const read = await call("GET", widget(`/${artifactId}/content`));
     expect(read.status).toBe(403);
     expect(read.body).toMatchObject({ code: "ARTIFACT_GRANT_REVOKED" });
@@ -466,8 +481,33 @@ describe("a file the person picked", () => {
     const described = await call("GET", `/artifacts/${artifactRef.artifactId}`);
     expect(described.body).toMatchObject({ artifactRef: { artifactId: artifactRef.artifactId, kind: "external" } });
     expectNoLocation(described);
+    // A name is stored without the characters that reverse how it reads, for a picked file and a made one alike.
+    const reversed = await pick({ name: "anh\u202Egpj.txt", mimeType: "text/plain", contentBase64: Buffer.from("x").toString("base64") });
+    expect((reversed.body as RefBody).artifactRef.name).toBe("anhgpj.txt");
+    const made = await call("POST", widget(), { mimeType: "text/plain", name: "ghi\u2067chu.txt" });
+    expect((made.body as RefBody).artifactRef.name).toBe("ghichu.txt");
     // Read only: a picked file is a snapshot the widget may not write over.
     expect((await write(artifactRef.artifactId, 0, "x")).body).toMatchObject({ code: "ARTIFACT_NOT_WRITABLE" });
+  });
+
+  it("takes a file whose system named its type by another name, or by none, and reads what it is from the bytes", async () => {
+    const csv = Buffer.from("ten,so\nan,1\n").toString("base64");
+    // Windows with Office installed calls a .csv `application/vnd.ms-excel`.
+    const excel = await pick({ name: "so-lieu.csv", mimeType: "application/vnd.ms-excel", contentBase64: csv, accept: ["text/csv"] });
+    expect(excel.status).toBe(201);
+    expect((excel.body as RefBody).artifactRef).toMatchObject({ mimeType: "text/csv", name: "so-lieu.csv" });
+    // A system with no idea sends a generic binary type; the extension names a text type the bytes cannot.
+    const generic = await pick({ name: "ghi-chu.md", mimeType: "application/octet-stream", contentBase64: Buffer.from("# Ghi chú\n").toString("base64") });
+    expect((generic.body as RefBody).artifactRef).toMatchObject({ mimeType: "text/markdown" });
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+    const picture = await pick({ name: "anh", mimeType: "application/octet-stream", contentBase64: png.toString("base64"), accept: ["image/*"] });
+    expect((picture.body as RefBody).artifactRef).toMatchObject({ mimeType: "image/png" });
+    // The name is not what decides: text under a picture's name, sent as generic bytes, is text, and a widget that asked
+    // for pictures is refused it. A specific claim the bytes contradict is still refused as a mismatch.
+    const named = await pick({ name: "anh.png", mimeType: "application/octet-stream", contentBase64: csv, accept: ["image/*"] });
+    expect(named.body).toMatchObject({ code: "ARTIFACT_TYPE_NOT_ACCEPTED" });
+    const disguised = await pick({ name: "anh.png", mimeType: "image/x-png", contentBase64: csv });
+    expect(disguised.body).toMatchObject({ code: "ARTIFACT_TYPE_MISMATCH" });
   });
 
   it("refuses bytes that are not what the widget asked for, or not what they claim to be", async () => {
@@ -509,6 +549,22 @@ describe("handing a finalized artifact to the conversation", () => {
     const brief = attachmentBrief({ refs: [attachmentRef as never], dataDir: dir });
     expect(brief).toContain("ba ý chính");
     expect(brief).not.toContain(dir);
+  });
+
+  it("attaches one file once, however often the widget asks", async () => {
+    const artifactId = await finalized("# Một lần\n");
+    const usage = (): number => attachmentUsageForPrincipal(services.runtime.db, owner());
+    const first = await call("POST", widget(`/${artifactId}/attach`));
+    expect(first.status).toBe(201);
+    const afterFirst = usage();
+    for (let again = 0; again < 3; again += 1) {
+      const repeated = await call("POST", widget(`/${artifactId}/attach`));
+      expect(repeated.status).toBe(201);
+      expect((repeated.body as { attachmentRef: { attachmentId: string } }).attachmentRef.attachmentId).toBe(
+        (first.body as { attachmentRef: { attachmentId: string } }).attachmentRef.attachmentId,
+      );
+    }
+    expect(usage()).toBe(afterFirst);
   });
 
   it("saves as a download on the person's route only once it is finalized, under a name and never a path", async () => {
@@ -597,7 +653,7 @@ describe("a widget lets go of a file it made", () => {
 
   it("refuses once the person revoked the widget's access", async () => {
     const artifactId = await create();
-    await call("DELETE", widget(`/${artifactId}/grant`));
+    revokeArtifactAccess(brokerAt(new Date().toISOString()), { principalId: owner(), instanceId, artifactId });
     expect((await discard(artifactId)).body).toMatchObject({ code: "ARTIFACT_GRANT_REVOKED" });
   });
 });
@@ -636,10 +692,10 @@ describe("one widget's share of the quota", () => {
     expect((over.body as { message: string }).message).toContain("artifacts.discard");
     expect((await write(artifactId, 0, "ab")).status).toBe(200);
 
-    // Full: a new file, or a picked one, is refused for this widget.
+    // Full: a new file is refused for this widget. A file the person picks is theirs, and is still taken.
     expect((await call("POST", widget(), { mimeType: "text/plain" })).body).toMatchObject({ code: "ARTIFACT_INSTANCE_QUOTA_EXCEEDED" });
     const picked = await call("POST", widget("/pick"), { name: "a.txt", mimeType: "text/plain", contentBase64: Buffer.from("x").toString("base64") });
-    expect(picked.body).toMatchObject({ code: "ARTIFACT_INSTANCE_QUOTA_EXCEEDED" });
+    expect(picked.status).toBe(201);
 
     // Another widget in the same conversation still has its own share.
     const other = instance();
@@ -649,6 +705,40 @@ describe("one widget's share of the quota", () => {
     expect((await call("DELETE", widget(`/${artifactId}`))).status).toBe(200);
     expect((await call("DELETE", widget(`/art_held_${instanceId}`))).status).toBe(200);
     expect((await call("POST", widget(), { mimeType: "text/plain" })).status).toBe(201);
+  });
+
+  it("counts what the widget attached to the conversation against its share, for as long as the attachment is kept", async () => {
+    const artifactId = await create("text/plain", "gui-kem.txt");
+    expect((await write(artifactId, 0, "x".repeat(20))).status).toBe(200);
+    expect((await call("POST", widget(`/${artifactId}/finalize`))).status).toBe(200);
+    alreadyHolds(ARTIFACT_LIMITS.instanceQuotaBytes - 30);
+
+    // The file (20 bytes) and the files already held leave 10 bytes: attaching 20 more is past the share.
+    const tooMuch = await call("POST", widget(`/${artifactId}/attach`));
+    expect(tooMuch.status).toBe(409);
+    expect(tooMuch.body).toMatchObject({ code: "ARTIFACT_INSTANCE_QUOTA_EXCEEDED" });
+    expect(attachmentUsageForPrincipal(services.runtime.db, owner())).toBe(0);
+
+    // With room for it, the attachment is made and counted; discarding the file does not take the attachment's bytes
+    // off the share, because the conversation still keeps them.
+    expect((await call("DELETE", widget(`/art_held_${instanceId}`))).status).toBe(200);
+    alreadyHolds(ARTIFACT_LIMITS.instanceQuotaBytes - 40);
+    expect((await call("POST", widget(`/${artifactId}/attach`))).status).toBe(201);
+    expect((await call("POST", widget(), { mimeType: "text/plain" })).body).toMatchObject({ code: "ARTIFACT_INSTANCE_QUOTA_EXCEEDED" });
+    expect((await call("DELETE", widget(`/${artifactId}`))).status).toBe(200);
+    const next = await create();
+    expect((await write(next, 0, "x".repeat(21))).body).toMatchObject({ code: "ARTIFACT_INSTANCE_QUOTA_EXCEEDED" });
+    expect((await write(next, 0, "x".repeat(20))).status).toBe(200);
+  });
+
+  it("does not count a file the person picked, so a widget that was handed files is never locked out by them", async () => {
+    alreadyHolds(ARTIFACT_LIMITS.instanceQuotaBytes - 2);
+    const picked = await call("POST", widget("/pick"), { name: "cua-toi.txt", mimeType: "text/plain", contentBase64: Buffer.from("cua toi chon").toString("base64") });
+    expect(picked.status).toBe(201);
+    const artifactId = await create();
+    expect((await write(artifactId, 0, "ab")).status).toBe(200);
+    // The person's quota still counts it: picking is not a way around the principal's one quota.
+    expect(storedBytesForPrincipal(services.runtime.db, owner())).toBe(ARTIFACT_LIMITS.instanceQuotaBytes + "cua toi chon".length);
   });
 });
 

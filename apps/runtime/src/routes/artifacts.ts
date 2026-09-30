@@ -20,7 +20,6 @@ import {
   exportArtifactBytes,
   finalizeArtifact,
   readArtifactRange,
-  revokeArtifactAccess,
   storePickedArtifact,
 } from "../artifact-broker.ts";
 import { readBlob } from "../blobs.ts";
@@ -39,7 +38,8 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  * - `/conversations/:cid/widgets/:iid/artifacts…` is a **widget instance's**, reached through its host. Every call
  *   names the instance, and every call is re-judged against that instance's grant by the broker; a ref is a pointer,
  *   never a permission. `POST …/pick` is person-only for the same reason as export: a grant to a picked file is the
- *   person's choice in host chrome, not something a machine surface can make.
+ *   person's choice in host chrome, not something a machine surface can make. Taking a widget's access away is the
+ *   person's act too, so it has no route until host chrome offers it (#343); `revokeArtifactAccess` is what that uses.
  *
  * No answer here carries a path, a staging name or where a picked file was read from: only an `ArtifactRef`, bytes,
  * or a refusal that names what was wrong.
@@ -284,11 +284,6 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
     return attached.ok
       ? json(201, { artifactRef: attached.ref, attachmentRef: attached.attachmentRef })
       : refused(attached);
-  }
-
-  if (segments.length === 7 && segments[6] === "grant" && request.method === "DELETE") {
-    const revoked = revokeArtifactAccess(broker, target);
-    return revoked.ok ? json(200, { revoked: revoked.revoked }) : refused(revoked);
   }
 
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);

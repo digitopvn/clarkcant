@@ -11,6 +11,7 @@ import { migrate } from "../src/migrate.ts";
 import {
   artifactUsageForInstance,
   artifactUsageForPrincipal,
+  BLOB_IN_CONVERSATION_MESSAGES_SQL,
   blobStillReferenced,
   deleteArtifactsForConversation,
   extendArtifactGrant,
@@ -282,6 +283,31 @@ describe("retention", () => {
          VALUES ('msg_1', 'conv_1', 'assistant', 'node_1', NULL, 'delivered', ?, 1, ?)`,
       ).run(JSON.stringify({ blocks: [{ type: "session", previewFrame: { digest: `sha256:${hex}` } }] }), T0);
       expect(blobStillReferenced(db, blobPath)).toBe(true);
+    });
+
+    it("reads messages only for a picture, the only kind of file a captured frame is stored as", () => {
+      db.prepare(
+        `INSERT INTO messages (message_id, conversation_id, role, author_node_id, task_id, delivery, document, sequence, created_at)
+         VALUES ('msg_1', 'conv_1', 'assistant', 'node_1', NULL, 'delivered', ?, 1, ?)`,
+      ).run(JSON.stringify({ blocks: [{ type: "session", previewFrame: { digest: `sha256:${hex}` } }] }), T0);
+      expect(blobStillReferenced(db, `/data/blobs/${hex.slice(0, 32)}.jpg`)).toBe(true);
+      // Text, a PDF: no frame is ever stored as one, so the transcript is not read for it.
+      expect(blobStillReferenced(db, `/data/blobs/${hex.slice(0, 32)}.txt`)).toBe(false);
+      expect(blobStillReferenced(db, `/data/blobs/${hex.slice(0, 32)}.pdf`)).toBe(false);
+    });
+
+    it("reads only the conversation it is told to, through its index, when a widget lets go of its own file", () => {
+      db.prepare("INSERT INTO conversations (conversation_id, title, home_node_id, created_at, updated_at) VALUES ('conv_2', 't', 'node_1', ?, ?)").run(T0, T0);
+      db.prepare(
+        `INSERT INTO messages (message_id, conversation_id, role, author_node_id, task_id, delivery, document, sequence, created_at)
+         VALUES ('msg_1', 'conv_1', 'assistant', 'node_1', NULL, 'delivered', ?, 1, ?)`,
+      ).run(JSON.stringify({ blocks: [{ type: "session", previewFrame: { digest: `sha256:${hex}` } }] }), T0);
+      expect(blobStillReferenced(db, blobPath, { messagesOf: "conv_1" })).toBe(true);
+      expect(blobStillReferenced(db, blobPath, { messagesOf: "conv_2" })).toBe(false);
+      const plan = db
+        .prepare(`EXPLAIN QUERY PLAN ${BLOB_IN_CONVERSATION_MESSAGES_SQL}`)
+        .all("conv_2", hex.slice(0, 32)) as { detail: string }[];
+      expect(plan.map((row) => row.detail).join(" ")).toMatch(/SEARCH messages USING (COVERING )?INDEX idx_messages_conversation/u);
     });
   });
 });

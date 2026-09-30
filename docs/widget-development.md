@@ -1132,11 +1132,16 @@ What each call does:
 - `pick({ accept })` asks the person to choose a file. The widget does not open a dialog; the host draws its own
   prompt outside the frame. It names the widget by its title, says the widget learns only the chosen file and never
   its location, and lists the accepted types in words ("text files", "PNG image"). The prompt takes the keyboard at its
-  title, not at a button, so a key the person pressed for the widget cannot answer it. Escape or Cancel resolves
+  title, not at a button, so a key the person pressed for the widget cannot answer it. It does so only when the
+  keyboard was in the frame or the host chrome around it; while the person is typing elsewhere, such as in the
+  composer, the prompt is announced and waits beside the frame. Escape or Cancel resolves
   `undefined`. On the desktop the prompt opens the operating
   system's file dialog; on the web it opens the browser's file input. The node decides the type from the bytes, checks
   it against `accept`, and applies the attachment rules: allowlisted types, 25 MiB a file, and the principal's quota.
-  A file the browser gives no type, such as a `.md` on some systems, is sent without one and the node sniffs it.
+  The type a system gives is only a claim, read under the name the node uses: `application/vnd.ms-excel` for a
+  `.csv` on Windows is CSV, and `image/jpg` is JPEG. A missing or generic type (`application/octet-stream`) is
+  taken from the extension for Markdown, CSV and JSON, and otherwise read from the bytes. Characters that reverse how
+  a name reads (bidi controls) are dropped from the file's name.
 - `read(ref, { offset, length })` reads one range of at most 256 KiB and says whether it reached the end. A larger
   file takes several reads.
 - `create({ mimeType, name? })` starts a working artifact of a type the attachment pipeline accepts.
@@ -1149,15 +1154,19 @@ What each call does:
   widget. It resolves `true` when the file was saved or, on the web, when the download started, and `false` when the
   person declined. The saved name keeps the suggestion but takes the extension of the bytes' type, so a `text/plain`
   file suggested as `invoice.bat` is saved as `invoice.txt`. The desktop uses the operating system's save dialog,
-  offering only that type's extensions. When the widget exports a file this frame picked on the desktop, it also offers
-  to replace the original, only with bytes of the original's type; the path behind it stays in the desktop's main
-  process, the operating system asks before overwriting, and the new bytes are written beside the original and renamed
-  over it, so a failed write leaves the original as it was. The web hands the file to the browser's download and says
+  offering only that type's extensions. When the person picked a file on the desktop in this frame and the widget exports
+  a file of the same type, the prompt also offers "Replace “original” with “new”". It names both files, because
+  nothing proves the widget's file was made from the one picked. The path behind it stays in the desktop's main
+  process, and the operating system asks before overwriting. The new bytes are written beside the original and renamed
+  over it, so a failed write leaves the original as it was. The original keeps its permissions, a link is followed to
+  the file it names, and on Windows the rename is retried briefly while another program, such as an indexer or
+  antivirus, holds the file. The web hands the file to the browser's download and says
   "Download started", because the browser, not the page, decides where it goes; it also says that replacing the
   original is a desktop feature.
 - `attachToConversation(ref)` hands a finalized artifact to the attachment pipeline. The bytes are sniffed again and
   the allowlist, size and quota are checked. The result is a ready chip in the composer, which the person sends with
-  their next message like any file they attached. The model then reads it the same way.
+  their next message like any file they attached. The model then reads it the same way. A file is attached once:
+  asking again returns the same attachment.
 - `discard(ref)` lets go of a file this instance made, working or finalized: its record and grants go, and its bytes
   go too unless an attachment or another record still points at them. It waits for the ref's pending writes first. A
   file the person picked, or one another widget made, is refused with `ARTIFACT_NOT_CREATOR`.
@@ -1169,19 +1178,25 @@ its own error code (`EBUSY`), never a path. Picking and saving are the person's 
 surfaces ([open-interfaces.md](open-interfaces.md)), and a widget cannot perform either without the host's prompt.
 
 A frame's file requests are rate-limited: a burst of 300, then 10 a second, counted before a request is checked, and at
-most 4 wait for an answer at once. The SDK queues the rest, so a widget that reads a large file in a loop is paced
+most 4 wait for an answer at once. A message from another window is refused before it is counted, so one widget
+cannot spend another's rate. The SDK queues the rest, so a widget that reads a large file in a loop is paced
 rather than refused. A request over the rate is answered with `ARTIFACT_RATE_LIMITED`, and the frame keeps working.
 
 What the node keeps:
 
 - **One store and one quota.** An artifact's bytes are stored in the node's blob store, the same one attachments use.
   They count against the principal's attachment quota (1 GiB). An attached artifact counts once as an artifact and
-  once as an attachment. Inside that quota one widget instance may hold at most 128 MiB, in files it made or was
-  handed (`ARTIFACT_INSTANCE_QUOTA_EXCEEDED`); `discard` gives the room back.
+  once as an attachment. Inside that quota one widget instance may hold at most 128 MiB
+  (`ARTIFACT_INSTANCE_QUOTA_EXCEEDED`). The share counts the files the widget made and the attachments it made from
+  them, for as long as those attachments are kept. It does not count files the person picked for it, since only the
+  person can add one and the widget cannot let go of it; those count against the person's quota alone. `discard`
+  gives a file's room back; an attachment made from it keeps its own until it goes. A widget refused because the
+  person's quota is full is told only that, never how much the person stores.
 - **Grants belong to one instance.** A grant lasts 24 hours from the pick or from the instance's last write, and a
   write renews it. A widget keeps reading a file it wrote and finalized for as long as that file is there; a file the
-  person picked must be picked again after 24 hours. A grant can be revoked with
-  `DELETE …/artifacts/{artifactId}/grant`. Grants are checked on every use; nothing sweeps them.
+  person picked must be picked again after 24 hours. Grants are checked on every use; nothing sweeps them. A revoked
+  grant stops the next call, but no surface lets the person revoke one yet
+  ([#343](https://github.com/digitopvn/clarkcant/issues/343)).
 - **Retention.** Working artifacts that time out are removed every 10 minutes, and before a new artifact is stored.
   When the node starts, it removes staged bytes a previous process left behind that no working artifact still writes.
   Finalized artifacts last as long as their conversation. When a conversation is released, its artifacts go too,

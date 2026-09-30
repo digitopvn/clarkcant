@@ -1,13 +1,15 @@
 import { type ReactElement, useCallback, useEffect, useId, useRef, useState } from "react";
 
-import type { ArtifactRef, AttachmentRef } from "@clarkcant/contracts";
+import { type ArtifactRef, type AttachmentRef, normalizePickedType, stripBidiControls } from "@clarkcant/contracts";
 import type { FrameArtifactBroker, FrameArtifactOutcome } from "@clarkcant/widget-host/session";
 
 import { type GatewayClient, GatewayError } from "./api.ts";
 import { artifactReason, artifactTypesLabel, DesktopFileError, desktopDialogLabels } from "./artifact-messages.ts";
 import { formatFileSize, toBase64 } from "./attachments.ts";
 import { desktopFileBridge, saveForPerson } from "./download.ts";
+import { fillMessage } from "./i18n/fill-message.ts";
 import { useT } from "./i18n/locale-context.tsx";
+import type { MessageKey } from "./i18n/messages.ts";
 
 /**
  * The host's side of a widget's `artifacts@1` requests: the broker the frame session hands them to, and the host
@@ -59,16 +61,13 @@ export function artifactRefusal(cause: unknown, during: "request" | "pick" | "sa
 const OUT_OF_ROOM = new Set(["ARTIFACT_QUOTA_EXCEEDED", "ARTIFACT_INSTANCE_QUOTA_EXCEEDED"]);
 
 /**
- * A browser's own guess at a file's type, or — when it has none, as for `.md` on some systems — the type its extension
- * names. Either is only a claim: the node reads the bytes and refuses a file that is not what it says.
+ * A browser's own guess at a file's type, under the name the node knows it by (`normalizePickedType`): another name for
+ * an allowed type becomes that type, and no guess or a generic one becomes the text type the extension names, or nothing
+ * for the node to read from the bytes. Either is only a claim: the node reads the bytes and refuses a file that is not
+ * what it says.
  */
 export function pickedFileType(file: { name: string; type: string }): string {
-  if (file.type !== "") return file.type;
-  const extension = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase() : "";
-  if (extension === "md" || extension === "markdown") return "text/markdown";
-  if (extension === "csv") return "text/csv";
-  if (extension === "json") return "application/json";
-  return "";
+  return normalizePickedType(file.type, file.name);
 }
 
 export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker: FrameArtifactBroker; chrome: ReactElement | null } {
@@ -79,14 +78,17 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
   const pending = useRef<Prompt | undefined>(undefined);
-  /** The last file this frame's person picked on the desktop: its name, and the handle the shell keeps its path under. */
-  const original = useRef<{ name: string; handle: string } | undefined>(undefined);
+  /** The last file this frame's person picked on the desktop, once the node holds it. */
+  const original = useRef<PickedOriginal | undefined>(undefined);
+  /** What the polite live region beside the frame says: a question asked while the keyboard was somewhere else. */
+  const [announcement, setAnnouncement] = useState("");
 
   const settle = useCallback((outcome: FrameArtifactOutcome) => {
     const current = pending.current;
     pending.current = undefined;
     setPrompt(undefined);
     setBusy(false);
+    setAnnouncement("");
     current?.settle(outcome);
   }, []);
 
@@ -176,17 +178,19 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
   /* ---------------- the person's answers ---------------- */
 
   const storePicked = useCallback(
-    async (file: { name: string; mimeType: string; contentBase64: string }) => {
+    async (file: { name: string; mimeType: string; contentBase64: string }): Promise<ArtifactRef | undefined> => {
       const current = pending.current;
-      if (current?.kind !== "pick") return;
+      if (current?.kind !== "pick") return undefined;
       const { client, conversationId, instanceId } = latest.current;
       setBusy(true);
       try {
         const ref = await client.pickArtifact({ conversationId, instanceId, accept: current.accept, ...file });
         settle({ status: "ok", ref });
+        return ref;
       } catch (cause) {
         setNotice({ tone: "error", text: t("widgets.artifacts.pickFailed").replace("{reason}", artifactReason(cause, t)) });
         settle(artifactRefusal(cause, "pick"));
+        return undefined;
       }
     },
     [settle, t],
@@ -227,8 +231,9 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
       settle(artifactRefusal(cause, "pick"));
       return;
     }
-    original.current = { name: answer.file.name, handle: answer.file.handle };
-    await storePicked({ name: answer.file.name, mimeType: answer.file.mimeType, contentBase64: answer.file.contentBase64 });
+    const stored = await storePicked({ name: answer.file.name, mimeType: answer.file.mimeType, contentBase64: answer.file.contentBase64 });
+    // Remembered as the node typed it, which is what decides whether a later file can be written over it.
+    if (stored !== undefined) original.current = { name: answer.file.name, handle: answer.file.handle, mimeType: stored.mimeType };
   }, [settle, storePicked, t]);
 
   const save = useCallback(
@@ -239,7 +244,8 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
       try {
         const exported = await latest.current.client.exportArtifact(current.ref.artifactId, current.suggestedName);
         const saved = await saveForPerson(exported.blob, exported.filename, {
-          mimeType: current.ref.mimeType,
+          // The type the node sent the bytes as, which is what the desktop names and checks the file by.
+          mimeType: exported.mimeType === "" ? current.ref.mimeType : exported.mimeType,
           replaceHandle: replace ? original.current?.handle : undefined,
           labels: desktopDialogLabels(t),
         });
@@ -259,29 +265,93 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
     [settle, t],
   );
 
-  const chrome =
-    prompt === undefined && notice === undefined ? null : (
-      <ArtifactChrome
-        prompt={prompt}
-        busy={busy}
-        notice={notice}
-        desktop={desktopFileBridge() !== undefined}
-        widgetTitle={input.widgetTitle}
-        originalName={original.current?.name}
-        onPickFile={(file) => void pickInBrowser(file)}
-        onPickDesktop={() => void pickOnDesktop()}
-        onSave={(replace) => void save(replace)}
-        onCancel={() => settle({ status: "cancelled" })}
-        onDismiss={() => setNotice(undefined)}
-      />
-    );
+  /*
+   * The live region is always there, so a question asked while the person is typing elsewhere is read out rather than
+   * taking their keyboard: a region that appears together with its words is not reliably announced.
+   */
+  const chrome = (
+    <>
+      <p className="cc-sr-only" role="status" data-artifact-announce="true">
+        {announcement}
+      </p>
+      {prompt === undefined && notice === undefined ? null : (
+        <ArtifactChrome
+          prompt={prompt}
+          busy={busy}
+          notice={notice}
+          desktop={desktopFileBridge() !== undefined}
+          widgetTitle={input.widgetTitle}
+          replaceLabel={prompt?.kind === "export" ? replaceOriginalLabel(t, original.current, prompt.ref, prompt.suggestedName) : undefined}
+          onPickFile={(file) => void pickInBrowser(file)}
+          onPickDesktop={() => void pickOnDesktop()}
+          onSave={(replace) => void save(replace)}
+          onCancel={() => settle({ status: "cancelled" })}
+          onDismiss={() => setNotice(undefined)}
+          onAnnounce={setAnnouncement}
+        />
+      )}
+    </>
+  );
   return { broker, chrome };
 }
 
+type Translate = (key: MessageKey) => string;
+
+/** The file a person picked on the desktop: its name, its type as the node stored it, and the handle the shell keeps its path under. */
+export interface PickedOriginal {
+  name: string;
+  handle: string;
+  mimeType: string;
+}
+
+/**
+ * A name as the person should read it: without the characters that reverse how the text around them reads, so
+ * `hoa-don‮txt.exe` cannot pass for `hoa-donexe.txt` in the question the host asks.
+ */
+function shown(text: string | undefined): string {
+  return stripBidiControls(text ?? "").trim();
+}
+
 /** Who is asking, in the prompt's first line: the widget by its title when it has one. */
-function pickTitle(t: (key: "widgets.artifacts.pickTitle" | "widgets.artifacts.pickTitleNamed") => string, widget: string | undefined): string {
-  const named = widget?.trim();
-  return named === undefined || named === "" ? t("widgets.artifacts.pickTitle") : t("widgets.artifacts.pickTitleNamed").replace("{widget}", named);
+export function pickTitle(t: Translate, widget: string | undefined): string {
+  const named = shown(widget);
+  return named === "" ? t("widgets.artifacts.pickTitle") : fillMessage(t("widgets.artifacts.pickTitleNamed"), { widget: named });
+}
+
+/** The save question's first line: who asks, and the name the file is offered under. */
+export function exportTitle(t: Translate, widget: string | undefined, suggestedName: string): string {
+  const named = shown(widget);
+  const name = shown(suggestedName);
+  return named === ""
+    ? fillMessage(t("widgets.artifacts.saveTitle"), { name })
+    : fillMessage(t("widgets.artifacts.saveTitleNamed"), { widget: named, name });
+}
+
+/**
+ * The words of "Replace original", or nothing when it is not offered.
+ *
+ * Nothing proves the widget's file was made from the one the person picked, so the button names both files, and it
+ * appears only for a file of the picked one's type: the desktop would refuse to write another type over it anyway.
+ */
+export function replaceOriginalLabel(
+  t: Translate,
+  original: PickedOriginal | undefined,
+  exported: ArtifactRef,
+  suggestedName: string,
+): string | undefined {
+  if (original === undefined || original.mimeType !== exported.mimeType) return undefined;
+  return fillMessage(t("widgets.artifacts.replaceOriginal"), { original: shown(original.name), name: shown(suggestedName) });
+}
+
+/**
+ * Whether a question may take the keyboard: only when it was already beside the frame — in the frame, in the host's
+ * chrome around it — or nowhere at all. A widget that asks again the moment it is answered must not pull the person
+ * out of the composer on every ask; the question is announced instead, and waits beside the frame.
+ */
+function keyboardIsBesideFrame(chrome: HTMLElement | null): boolean {
+  const active = document.activeElement;
+  if (active === null || active === document.body) return true;
+  return chrome?.parentElement?.contains(active) ?? false;
 }
 
 interface ArtifactChromeProps {
@@ -290,12 +360,14 @@ interface ArtifactChromeProps {
   notice: Notice | undefined;
   desktop: boolean;
   widgetTitle: string | undefined;
-  originalName: string | undefined;
+  /** "Replace original" on the desktop, when it is offered for this file. */
+  replaceLabel: string | undefined;
   onPickFile: (file: File) => void;
   onPickDesktop: () => void;
   onSave: (replace: boolean) => void;
   onCancel: () => void;
   onDismiss: () => void;
+  onAnnounce: (text: string) => void;
 }
 
 /**
@@ -310,43 +382,46 @@ function ArtifactChrome({
   notice,
   desktop,
   widgetTitle,
-  originalName,
+  replaceLabel,
   onPickFile,
   onPickDesktop,
   onSave,
   onCancel,
   onDismiss,
+  onAnnounce,
 }: ArtifactChromeProps): ReactElement {
   const t = useT();
   const titleId = useId();
   const input = useRef<HTMLInputElement>(null);
   const title = useRef<HTMLParagraphElement>(null);
   const noticeLine = useRef<HTMLParagraphElement>(null);
+  const section = useRef<HTMLElement>(null);
 
   /*
    * A new question takes the keyboard, so a person who did not click in the frame can still answer it — at its title,
    * never its button: the widget chose when to ask, and a key pressed for the widget a moment earlier must not land on
    * Save or Choose. Once answered, the keyboard goes to the line saying what happened, rather than to the page's start.
-   * A notice that follows no question (an attach) is announced and leaves the keyboard where it was.
+   * A notice that follows no question (an attach) is announced and leaves the keyboard where it was. Either move is made
+   * only while the keyboard is beside the frame (`keyboardIsBesideFrame`); otherwise the question is read out.
    */
   const promptKind = prompt?.kind;
   const askedBefore = useRef(false);
   useEffect(() => {
     if (promptKind !== undefined) {
       askedBefore.current = true;
-      title.current?.focus();
+      if (keyboardIsBesideFrame(section.current)) title.current?.focus();
+      else onAnnounce(title.current?.textContent ?? "");
       return;
     }
-    if (askedBefore.current && notice !== undefined) noticeLine.current?.focus();
+    if (askedBefore.current && notice !== undefined && keyboardIsBesideFrame(section.current)) noticeLine.current?.focus();
     askedBefore.current = false;
-  }, [promptKind, notice]);
+  }, [promptKind, notice, onAnnounce]);
 
   const types = artifactTypesLabel(prompt?.kind === "pick" ? prompt.accept : [], t);
-  const widget = widgetTitle?.trim();
-  const named = widget !== undefined && widget !== "";
 
   return (
     <section
+      ref={section}
       className="cc-artifact-prompt"
       data-artifact-prompt={prompt?.kind ?? "notice"}
       aria-labelledby={prompt === undefined ? undefined : titleId}
@@ -402,9 +477,7 @@ function ArtifactChrome({
       {prompt?.kind === "export" && (
         <>
           <p ref={title} tabIndex={-1} className="cc-artifact-prompt-title" id={titleId} data-artifact-title="true">
-            {named
-              ? t("widgets.artifacts.saveTitleNamed").replace("{widget}", widget).replace("{name}", prompt.suggestedName)
-              : t("widgets.artifacts.saveTitle").replace("{name}", prompt.suggestedName)}
+            {exportTitle(t, widgetTitle, prompt.suggestedName)}
           </p>
           <p className="cc-artifact-prompt-detail">
             {t("widgets.artifacts.saveBody").replace("{size}", formatFileSize(prompt.ref.sizeBytes))}
@@ -425,9 +498,9 @@ function ArtifactChrome({
             >
               {t("widgets.artifacts.saveAs")}
             </button>
-            {desktop && originalName !== undefined && (
+            {desktop && replaceLabel !== undefined && (
               <button type="button" className="cc-artifact-button" data-artifact-replace="true" disabled={busy} onClick={() => onSave(true)}>
-                {t("widgets.artifacts.replaceOriginal").replace("{name}", originalName)}
+                {replaceLabel}
               </button>
             )}
             <button type="button" className="cc-artifact-button" data-artifact-cancel="true" disabled={busy} onClick={onCancel}>

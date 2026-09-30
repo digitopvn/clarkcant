@@ -356,14 +356,16 @@ câu trả lời nào mang đường dẫn.
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/finalize` | – cố định các byte sau khi đối chiếu chúng với kiểu đã khai báo |
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | – `201 { artifactRef, attachmentRef }` qua luồng đính kèm; người dùng gửi nó cùng tin nhắn kế tiếp |
 | DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – bỏ một tệp instance này đã tạo, cùng byte của nó trừ khi một tệp đính kèm hoặc bản ghi khác vẫn trỏ tới; tệp của instance khác là `403 ARTIFACT_NOT_CREATOR` |
-| DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/grant` | – thu hồi quyền của instance này |
 
 Mọi route của instance đều được kiểm tra lại theo grant của instance đó. Ref là con trỏ, không phải quyền, nên một
 grant đã hết hạn (`403 ARTIFACT_GRANT_EXPIRED`) hoặc bị thu hồi (`403 ARTIFACT_GRANT_REVOKED`) sẽ chặn ngay lời gọi
 kế tiếp. Kích thước, kiểu và hạn mức theo quy tắc đính kèm (`413 ARTIFACT_TOO_LARGE`, `415 ARTIFACT_TYPE_MISMATCH`,
 `409 ARTIFACT_QUOTA_EXCEEDED`), và một instance giữ tối đa 128 MiB trong hạn mức đó
-(`409 ARTIFACT_INSTANCE_QUOTA_EXCEEDED`). Tên tệp trong `Content-Disposition` được gửi theo RFC 6266: một `filename`
-ASCII và tên thật dưới dạng UTF-8 mã hoá phần trăm trong `filename*`.
+(`409 ARTIFACT_INSTANCE_QUOTA_EXCEEDED`), tính các tệp nó đã tạo và các tệp đính kèm nó làm từ chúng nhưng không tính
+các tệp người dùng đã chọn cho nó. Đính kèm một tệp đã được đính kèm sẽ trả về đúng tệp đính kèm đó.
+Tên tệp trong `Content-Disposition` được gửi theo RFC 6266: một `filename` ASCII và tên thật dưới dạng UTF-8 mã hoá
+phần trăm trong `filename*`. Ký tự điều khiển bidi bị bỏ khỏi cả hai, dấu phần trăm thành `_` trong tên ASCII, và
+một tên dài hơn 120 ký tự được rút ngắn ở phần trước phần mở rộng, phần mở rộng luôn được giữ.
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
