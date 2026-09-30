@@ -1117,7 +1117,7 @@ Credential **không** có tab riêng: mỗi khoá nằm ở domain giải thích
 TypeSafe ở AI & Routing), theo mục 11.6.
 
 Một control chỉ xuất hiện khi behavior đứng sau nó đã tồn tại. Preference đã khai báo trong registry mà
-chưa có ai đọc (density, background routing, voice picker) thì **không** có control, và lý do được nói ở
+chưa có ai đọc (background routing, voice picker) thì **không** có control, và lý do được nói ở
 chỗ user sẽ tìm — im lặng bỏ qua còn tệ hơn, vì user sẽ tưởng app hỏng.
 
 ### 11.1 Experience
@@ -1186,9 +1186,21 @@ Dùng segmented controls, toggles và swatches:
   nói tiếng Việt sang ngôn ngữ khác. Chỉ chrome mặc định (composer, chrome của timeline, settings,
   thông báo lỗi, điều khiển giọng nói, tiêu đề marketplace) được dịch; output của agent không bao giờ
   bị dịch.
-- Accent.
+- Theme Lab: Duyệt chủ đề mở Gallery tạm thời phía trên Cài đặt. Lúc mở, tiêu điểm được đặt vào theme đang chọn một
+  lần; những cập nhật xem trước sau đó không lấy lại tiêu điểm. Chọn trong Gallery chỉ xem trước component sản phẩm
+  tại chỗ; Áp dụng dùng cùng lệnh ghi preference đã được xác nhận như danh sách theme chính. Sáu lựa chọn gần nhất
+  có trong mục theme gần đây. Hội thoại và bản nháp vẫn được giữ nguyên. Ví dụ được ghi rõ và không chạy lượt model
+  hay thao tác phê duyệt, tệp hoặc giọng nói thật. Các nút chế độ màu, khung thường/điện thoại/gọn và giảm chuyển động
+  chỉ thuộc bản xem trước; token, recipe và chi tiết kiểm tra nằm trong các mục mở rộng của tiện ích tác giả này.
+- Accent: màu hex sáu chữ số có giới hạn cho tối và sáng, được kiểm tra trước khi lưu bằng cùng bài kiểm tra tương
+  phản và trạng thái được bảo vệ của sản phẩm. Từ chối giữ nguyên diện mạo đã lưu. Nếu bản cập nhật gói làm màu nhấn
+  đã lưu không an toàn, vẽ màu nhấn của theme, nói rõ lý do dùng thay thế và giữ preference để khôi phục.
 - Motion: Full / Reduced / Follow system.
-- Density: Comfortable / Compact.
+- Density: Comfortable / Compact, biên dịch thành token khoảng cách dùng chung, giữ nguyên chữ và kích thước bố cục
+  tối thiểu.
+- Đặt lại tùy chỉnh theme xóa màu nhấn, mật độ, chuyển động và lựa chọn Orb riêng qua đường reset/Undo của preference
+  hiện có. Giữ nguyên theme, chế độ màu và ngôn ngữ đã chọn; mỗi thay đổi được xác nhận sẽ được vẽ lại, còn lỗi ghi sẽ
+  dừng phần đặt lại còn lại và báo lỗi.
 - Window behavior: remember size, start mode.
 - Wake phrase: on/off + local-listening status.
 - Keyboard shortcuts: mở subpanel.
