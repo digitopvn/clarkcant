@@ -297,7 +297,19 @@ test("the charts add no motion of their own when motion is reduced", async ({ pa
 
 test("the charts are usable at phone width without scrolling sideways, in the light theme", async ({ browser }) => {
   test.setTimeout(120_000);
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, colorScheme: "light" });
+  // Reduced motion, so the transcript scrolls instantly. The area chart is above the scatter plot placed after it, so the
+  // legend tap has to bring it back into view, and when a tap retries Playwright does that with `Element.scrollIntoView`,
+  // which follows the transcript's smooth scrolling: the call returns with the legend where it was and it glides away
+  // over the next frames, so the tap lands on the plot below it (49px off on CI) and the series stays shown. What this
+  // test proves (the charts fit a phone and a finger can use them, in the light theme) does not depend on the scroll
+  // being animated.
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+    colorScheme: "light",
+    reducedMotion: "reduce",
+  });
   const page = await context.newPage();
   try {
     await openApp(page);
