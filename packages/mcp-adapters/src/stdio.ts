@@ -37,7 +37,36 @@ export interface StdioMcpTransportOptions {
    * Not called for close(): a caller that closed the server already knows.
    */
   onExit?: (reason: Error) => void;
+  /**
+   * Requests the server may send to the host, and how they are answered.
+   *
+   * Absent, every server request is answered "method not found". Present, `experimental` is advertised in
+   * `initialize` so a server knows what it may ask, and `handle` answers each request; it rejects with
+   * `McpServerRequestError` to answer with a JSON-RPC error. Its signal aborts when the server goes away or is closed,
+   * so whatever the host is doing for it stops too.
+   */
+  serverRequests?: {
+    experimental: Record<string, unknown>;
+    handle: (request: { method: string; params: unknown; signal: AbortSignal }) => Promise<unknown>;
+  };
 }
+
+/** A JSON-RPC error the host answers a server's request with. */
+export class McpServerRequestError extends Error {
+  readonly code: number;
+  constructor(code: number, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/** JSON-RPC's own codes, for the answers the transport gives without asking the handler. */
+export const JSON_RPC_METHOD_NOT_FOUND = -32601;
+export const JSON_RPC_INVALID_PARAMS = -32602;
+export const JSON_RPC_SERVER_BUSY = -32000;
+
+/** How many requests one server may have the host working on at once; more are refused, not queued. */
+export const MAX_SERVER_REQUESTS = 8;
 
 export interface ServerHandshake {
   protocolVersion: string;
@@ -112,6 +141,8 @@ export class StdioMcpTransport implements McpTransport {
   #handshake: ServerHandshake | undefined;
   #closed = false;
   #exited = false;
+  /** What the host is doing for the server right now, so a close or an exit stops it. */
+  readonly #serving = new Map<string, AbortController>();
 
   constructor(options: StdioMcpTransportOptions) {
     this.#options = options;
@@ -162,7 +193,8 @@ export class StdioMcpTransport implements McpTransport {
 
     const result = (await this.#request("initialize", {
       protocolVersion: "2025-06-18",
-      capabilities: {},
+      capabilities:
+        this.#options.serverRequests === undefined ? {} : { experimental: this.#options.serverRequests.experimental },
       clientInfo: { name: "clarkcant", version: "0.2.0" },
     })) as Partial<ServerHandshake>;
 
@@ -285,6 +317,7 @@ export class StdioMcpTransport implements McpTransport {
   }
 
   #failAll(error: Error): void {
+    this.#stopServing(error);
     for (const [id, pending] of this.#pending) {
       clearTimeout(pending.timer);
       pending.release?.();
@@ -334,6 +367,14 @@ export class StdioMcpTransport implements McpTransport {
       return;
     }
 
+    // The server withdrew a request it sent: whatever the host is doing for it stops.
+    if (message.method === "notifications/cancelled") {
+      const requestId = (message.params as { requestId?: unknown } | null | undefined)?.requestId;
+      if (typeof requestId !== "number" && typeof requestId !== "string") return;
+      const key = `${typeof requestId}:${String(requestId)}`;
+      this.#serving.get(key)?.abort(new Error("the service withdrew its request"));
+      return;
+    }
     if (message.method === "notifications/progress") {
       if (message.params === null || typeof message.params !== "object") return;
       const params = message.params as Record<string, unknown>;
@@ -352,7 +393,13 @@ export class StdioMcpTransport implements McpTransport {
       });
       return;
     }
-    if (typeof message.id !== "number") return;
+    // A request from the server carries a method and an id; a response to one of ours carries neither a method nor
+    // both. Told apart by the method, so a server request whose id matches one of ours never settles ours.
+    if (typeof message.method === "string" && (typeof message.id === "number" || typeof message.id === "string")) {
+      this.#serve(message.id, message.method, message.params);
+      return;
+    }
+    if (typeof message.id !== "number" || typeof message.method === "string") return;
     const pending = this.#pending.get(message.id);
     if (!pending) return;
     clearTimeout(pending.timer);
@@ -368,6 +415,54 @@ export class StdioMcpTransport implements McpTransport {
       return;
     }
     pending.resolve(message.result);
+  }
+
+  /** Answer one request the server sent. Every request is answered, with a result or a JSON-RPC error. */
+  #serve(id: number | string, method: string, params: unknown): void {
+    const answer = (payload: { result: unknown } | { error: { code: number; message: string } }): void => {
+      try {
+        this.#write({ jsonrpc: "2.0", id, ...payload });
+      } catch {
+        // The server went away while the host worked on its request; there is nobody left to answer.
+      }
+    };
+    const handler = this.#options.serverRequests;
+    if (handler === undefined) {
+      answer({ error: { code: JSON_RPC_METHOD_NOT_FOUND, message: `the host does not answer ${method.slice(0, 80)}` } });
+      return;
+    }
+    const key = `${typeof id}:${String(id)}`;
+    if (this.#serving.has(key)) {
+      answer({ error: { code: JSON_RPC_INVALID_PARAMS, message: "a request with this id is already being answered" } });
+      return;
+    }
+    if (this.#serving.size >= MAX_SERVER_REQUESTS) {
+      answer({ error: { code: JSON_RPC_SERVER_BUSY, message: `the host is already working on ${String(MAX_SERVER_REQUESTS)} requests from this server` } });
+      return;
+    }
+    const controller = new AbortController();
+    this.#serving.set(key, controller);
+    void handler
+      .handle({ method, params, signal: controller.signal })
+      .then(
+        (result) => answer({ result: result ?? {} }),
+        (cause: unknown) =>
+          answer({
+            error:
+              cause instanceof McpServerRequestError
+                ? { code: cause.code, message: cause.message.slice(0, 500) }
+                : { code: JSON_RPC_SERVER_BUSY, message: "the host could not answer this request" },
+          }),
+      )
+      .finally(() => {
+        if (this.#serving.get(key) === controller) this.#serving.delete(key);
+      });
+  }
+
+  /** Stop everything the host is doing for this server. */
+  #stopServing(reason: Error): void {
+    for (const controller of this.#serving.values()) controller.abort(reason);
+    this.#serving.clear();
   }
 
   #write(payload: Record<string, unknown>): void {

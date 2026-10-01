@@ -15,6 +15,8 @@
  *   "malformed" returns a tool object that does not match the protocol shape
  *   "toolerror" makes the tool report failure through the protocol's isError
  *   "flood"   accepts initialize, then answers tools/list with output that never ends a line
+ *   "asks"    a call to the tool "ask" sends the host the requests named in its arguments, and returns what the
+ *             host answered, together with what the host advertised it would answer
  */
 
 const MODE = process.env.MCP_FIXTURE_MODE ?? "normal";
@@ -52,11 +54,45 @@ function textResult(text, isError = false) {
   return { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) };
 }
 
+/** The host's answers to requests this server sent, by request id. */
+const awaiting = new Map();
+let advertised = null;
+let sent = 0;
+
+/** Send the host the requests a call to "ask" names; answer the call with what came back. */
+function ask(callId, args) {
+  const requests = Array.isArray(args?.requests) ? args.requests : [];
+  const answers = requests.map((entry) => {
+    sent += 1;
+    const requestId = entry.sameIdAsCall === true ? callId : `srv-${String(sent)}`;
+    const answered = entry.cancel === true ? Promise.resolve({ cancelled: true }) : new Promise((resolve) => awaiting.set(requestId, resolve));
+    send({ jsonrpc: "2.0", id: requestId, method: entry.method, ...(entry.params === undefined ? {} : { params: entry.params }) });
+    if (entry.cancel === true) {
+      send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId, reason: "no longer needed" } });
+    }
+    return answered;
+  });
+  void Promise.all(answers).then((settled) => {
+    send({ jsonrpc: "2.0", id: callId, result: textResult(JSON.stringify({ advertised, answers: settled })) });
+  });
+}
+
 function handle(request) {
   const { id, method, params } = request;
   if (id === undefined) return;
 
+  // An answer to a request this server sent: it has an id and no method.
+  if (method === undefined) {
+    const resolve = awaiting.get(id);
+    if (resolve !== undefined) {
+      awaiting.delete(id);
+      resolve(request.error === undefined ? { result: request.result } : { error: request.error });
+    }
+    return;
+  }
+
   if (method === "initialize") {
+    advertised = params?.capabilities?.experimental ?? null;
     send({
       jsonrpc: "2.0",
       id,
@@ -102,6 +138,10 @@ function handle(request) {
       process.exit(3);
     }
     const name = params?.name;
+    if (name === "ask" && MODE === "asks") {
+      ask(id, params?.arguments);
+      return;
+    }
     if (name === "echo") {
       send({ jsonrpc: "2.0", id, result: textResult(String(params?.arguments?.text ?? "")) });
       return;
