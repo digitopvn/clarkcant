@@ -426,7 +426,9 @@ export async function invokeCapability(
       if (origin === undefined || packageJobs === undefined) {
         return refused(503, "JOB_HOST_UNAVAILABLE", "the node could not start this package job; nothing was sent");
       }
-      const job = packageJobs.start({
+      let job: JobRecord;
+      try {
+        job = packageJobs.start({
         job: {
           jobId: deps.newId("job") as JobRecord["jobId"],
           nodeId: deps.nodeId,
@@ -445,7 +447,15 @@ export async function invokeCapability(
         // job itself runs under the service host's job ceiling, and Stop, emergency Stop and shutdown still end it.
         run: (signal, onProgress) => host.call(ref, request.args, { signal, onProgress }),
         ...(request.onJobSettled === undefined ? {} : { onSettled: request.onJobSettled }),
-      });
+        });
+      } catch (cause) {
+        // The job host refuses before the service request is dispatched, so nothing reached the service.
+        return refused(
+          503,
+          "JOB_HOST_UNAVAILABLE",
+          `the node could not start this package job (${cause instanceof Error ? cause.message : String(cause)}); nothing was sent`,
+        );
+      }
       return { kind: "job", ref, effectCategory: descriptor.effectCategory, job, description };
     }
     const result = await host.call(ref, request.args, {
@@ -525,7 +535,15 @@ export async function runApprovedCapability(
     ledger?: (call: { ref: string; args: Record<string, unknown> }) => CapabilityLedgerHooks;
   },
 ): Promise<
-  | { ok: true; blocks: MessageBlock[]; description: string; succeeded: boolean; job?: { record: JobRecord; origin: JobOrigin } }
+  | {
+      ok: true;
+      blocks: MessageBlock[];
+      description: string;
+      succeeded: boolean;
+      /** What the call came back with, so the caller can settle the ledger entry its hooks opened. */
+      outcome: CapabilityInvokeOutcome;
+      job?: { record: JobRecord; origin: JobOrigin };
+    }
   | { ok: false; code: string; message: string }
 > {
   let parsed: {
@@ -623,6 +641,7 @@ export async function runApprovedCapability(
     blocks: [block],
     description: outcome.kind === "job" ? `started job ${outcome.job.jobId} for ${ref}` : succeeded ? `invoked ${ref}` : `could not invoke ${ref}: ${result}`,
     succeeded,
+    outcome,
     ...(outcome.kind === "job" && jobOrigin !== undefined ? { job: { record: outcome.job, origin: jobOrigin } } : {}),
   };
 }

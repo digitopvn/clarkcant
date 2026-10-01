@@ -13,7 +13,7 @@ import {
   writeRegisteredPreference,
 } from "@clarkcant/core";
 import { ACTION, DETAILS } from "@clarkcant/data-canvas";
-import { appendMessage, insertBrokerArtifact, putArtifactGrant, recordWidgetProposal } from "@clarkcant/storage";
+import { appendMessage, conversationHasUnsettledWork, insertBrokerArtifact, putArtifactGrant, recordWidgetProposal } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 
 import {
@@ -724,6 +724,35 @@ describe("an invoke button", () => {
     setPolicy({ rules: [] });
     expect(await press(button, "inv_policy")).toMatchObject({ ok: true, status: 200 });
     expect(calls).toHaveLength(1);
+  });
+
+  it("closes the ledger entry of a write a person approved once the service answers, leaving nothing running", async () => {
+    const button = await addButton();
+    setPolicy({ mode: "ask" });
+    const asked = await press(button, "inv_approved_write");
+    expect(asked).toMatchObject({ ok: true, status: 202, body: expect.objectContaining({ outcome: "approval-required" }) });
+    if (!asked.ok) throw new Error("unreachable");
+    const approvalId = (asked.body.approvalRequired as { approvalId: string }).approvalId;
+    const card = buildTimeline(services, { conversationId, afterSequence: 0 }).messages
+      .flatMap((message) => (message as { blocks: MessageBlock[] }).blocks)
+      .find((block) => block.type === "approval-card" && block.approvalId === approvalId) as
+      | Extract<MessageBlock, { type: "approval-card" }>
+      | undefined;
+    if (card === undefined) throw new Error("no approval card was shown");
+
+    const decided = await decideApprovalForNode(services, {
+      conversationId,
+      approvalId,
+      decision: "granted",
+      digest: card.operationDigest,
+      principal: { principalId: services.runtime.identity.ownerPrincipalId, kind: "user", nodeId: services.runtime.identity.nodeId },
+      at: AT,
+    });
+    expect(decided).toMatchObject({ ok: true });
+    expect(calls).toHaveLength(1);
+    expect(effectRows()).toEqual([expect.objectContaining({ capability_ref: ADD, state: "confirmed" })]);
+    // Nothing is left open, so the conversation can still be deleted.
+    expect(conversationHasUnsettledWork(services.runtime.db, conversationId)).toBe(false);
   });
 
   it("holds a service error as uncertain, because the service may have done part of it, and never sends that id again", async () => {
@@ -1599,6 +1628,22 @@ describe("a button whose capability runs as a durable job", () => {
     expect(calls[0]?.options?.timeoutMs).toBeUndefined();
     expect(calls[0]?.options?.signal).toBeInstanceOf(AbortSignal);
     await until(() => effectRows().some((row) => row.capability_ref === JOB && row.state === "confirmed"));
+  });
+
+  it("says nothing was sent when the job host cannot record a job, instead of holding the press as uncertain", async () => {
+    serveJob();
+    const jobs = services.packageJobs;
+    if (jobs === undefined) throw new Error("no job host");
+    services.packageJobs = { ...jobs, start: () => { throw new Error("the jobs table could not be written"); } };
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+
+    const refused = await press(button, "inv_job_unrecorded");
+    expect(refused).toMatchObject({ ok: false, code: "JOB_HOST_UNAVAILABLE" });
+    if (refused.ok) throw new Error("unreachable");
+    expect(refused.message).toContain("nothing was sent");
+    expect(detailOf(refused)).not.toMatchObject({ outcome: "uncertain" });
+    expect(calls).toHaveLength(0);
+    expect(effectRows().filter((row) => row.state === "unknown" || row.state === "submitted")).toEqual([]);
   });
 
   it("starts the approved job for the press that asked, and the same invocation reads that job afterwards", async () => {

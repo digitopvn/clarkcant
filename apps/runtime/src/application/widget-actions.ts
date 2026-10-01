@@ -343,23 +343,35 @@ async function callInLedger(
     throw cause;
   }
   const opened = ledger.opened();
-  if (opened === undefined) return { outcome, recorded: false };
+  const settled = settleCallOutcome(services, opened, outcome);
+  return { outcome, recorded: settled.recorded, ...(settled.recorded && opened !== undefined ? { taskId: opened.taskId } : {}) };
+}
+
+/**
+ * Settle the ledger entry a call's `beforeSend` opened, on what the call came back with: an answer closes it, a call
+ * that never left closes it as not sent, and a call sent without a trustworthy answer stays a question for the person.
+ * A job is left open here; its `onJobSettled` closes it when the job ends. Shared by a widget press and an approved
+ * card, so neither leaves an entry open after a plain answer.
+ */
+export function settleCallOutcome(
+  services: Pick<NodeServices, "runtime" | "conductor">,
+  opened: OpenedActionEffect | undefined,
+  outcome: CapabilityInvokeOutcome,
+): { recorded: boolean } {
+  if (opened === undefined || outcome.kind === "job" || outcome.kind === "approval-required") return { recorded: false };
   if (outcome.kind === "done") {
     settleActionEffect(services, opened, { kind: "answered", evidence: `the service answered: ${outcome.output.slice(0, 200)}` });
-    return { outcome, recorded: false };
+    return { recorded: false };
   }
-  if (outcome.kind === "job") return { outcome, recorded: false };
-  if (outcome.kind !== "refused") return { outcome, recorded: false };
   if (!outcome.sent) {
     settleActionEffect(services, opened, { kind: "not-sent", reason: outcome.message });
-    return { outcome, recorded: false };
+    return { recorded: false };
   }
-  const settled = settleActionEffect(services, opened, {
+  return settleActionEffect(services, opened, {
     kind: "no-answer",
     stopped: outcome.code === "SERVICE_CANCELLED",
     reason: `no answer that can be trusted came back: ${outcome.message}`,
   });
-  return { outcome, recorded: settled.recorded, ...(settled.recorded ? { taskId: opened.taskId } : {}) };
 }
 
 /** An outcome of a workflow run, as the response carries it: its report, and whether anything it ran is kept. */

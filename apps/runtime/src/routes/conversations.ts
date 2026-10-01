@@ -76,7 +76,8 @@ import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
 import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../application/stop-turn.ts";
 import { bindingAvailability } from "../application/action-bindings.ts";
-import { actionLedgerHooks, invokeWidgetAction } from "../application/widget-actions.ts";
+import { settleActionEffect } from "../application/action-effects.ts";
+import { actionLedgerHooks, invokeWidgetAction, settleCallOutcome } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
 import { resolveComposerReferences } from "../composer-references.ts";
 import { type InteractionDeps, answerQuestion, askQuestionAgain, cancelQuestion } from "../interactions.ts";
@@ -1841,22 +1842,36 @@ export async function decideApprovalForNode(
   if (capabilityCall) {
     // A package's service capability, approved on the same card a command is: the payload is hashed again against
     // the digest the decision covered, and the registry and the input are checked again before the service is called.
-    const invoked = await runApprovedCapability(capabilityInvokeDeps(services), {
+    let ledger: ReturnType<typeof actionLedgerHooks> | undefined;
+    let invoked: Awaited<ReturnType<typeof runApprovedCapability>>;
+    try {
+      invoked = await runApprovedCapability(capabilityInvokeDeps(services), {
       payload,
       expectedDigest: decided.approval.operationDigest,
       approvalId: input.approvalId,
       conversationId: input.conversationId,
       checkJobOrigin: (origin, ref) => checkApprovedJobOrigin(services, input.conversationId, origin, ref),
-      ledger: (call) =>
-        actionLedgerHooks(services, {
+      ledger: (call) => {
+        ledger = actionLedgerHooks(services, {
           conversationId: input.conversationId,
           principalId: input.principal.principalId,
           intent: `approved ${call.ref}`,
           ref: call.ref,
           args: call.args,
-        }).hooks,
-    });
+        });
+        return ledger.hooks;
+      },
+      });
+    } catch (cause) {
+      // Thrown on this node before the call was sent: a service's failure is an answer, not a throw.
+      const opened = ledger?.opened();
+      if (opened !== undefined) {
+        settleActionEffect(services, opened, { kind: "not-sent", reason: cause instanceof Error ? cause.message : String(cause) });
+      }
+      throw cause;
+    }
     if (!invoked.ok) return { ok: false, code: invoked.code, message: invoked.message };
+    settleCallOutcome(services, ledger?.opened(), invoked.outcome);
     if (invoked.job?.origin.invocationId !== undefined) {
       // The press that asked keeps one answer: the same invocation id arriving again reads this job, not a new one.
       settleApprovedInvokeJob(services.conductor, {
