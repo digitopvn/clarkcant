@@ -914,6 +914,49 @@ describe("tokens@1", () => {
     expect(persisted).toEqual([{ zoom: 4 }]);
   });
 
+  it("refuses a file write or a link that carries an issued token, and lets the others through", async () => {
+    const written: unknown[] = [];
+    const { session, posted, chrome } = withTokens({
+      artifacts: async (request) => {
+        written.push(request);
+        return { status: "ok" };
+      },
+    });
+    session.init();
+    session.accept(ask("tokreq-1"));
+    await flush();
+
+    // In a file's bytes, where it would be read back from and could be attached to the conversation.
+    const chunkBase64 = Buffer.from(`token=${VALUE}\n`).toString("base64");
+    expect(
+      session.accept(fromFrame({ kind: "artifact.request", requestId: "artreq-1", request: { op: "write", artifactId: "art_one", offset: 0, chunkBase64 } })),
+    ).toMatchObject({ ok: false, code: "TOKEN_NOT_ALLOWED" });
+    // Answered, so the widget's promise is not left waiting.
+    expect(posted.at(-1)).toMatchObject({ kind: "artifact-result", requestId: "artreq-1", status: "refused", code: "TOKEN_NOT_ALLOWED" });
+    // In a name the person would see on a file it saves.
+    expect(
+      session.accept(
+        fromFrame({ kind: "artifact.request", requestId: "artreq-2", request: { op: "export", artifactId: "art_one", suggestedName: `${VALUE}.txt` } }),
+      ),
+    ).toMatchObject({ ok: false, code: "TOKEN_NOT_ALLOWED" });
+    // In a link the host would open in the person's browser, handing the token to the site it names.
+    expect(
+      session.accept(fromFrame({ kind: "host.request", request: "open-external", argument: `https://example.test/?t=${VALUE}` })),
+    ).toMatchObject({ ok: false, code: "TOKEN_NOT_ALLOWED" });
+    await flush();
+    expect(written).toEqual([]);
+    expect(chrome.external).toEqual([]);
+
+    const plain = Buffer.from("just a map\n").toString("base64");
+    expect(
+      session.accept(fromFrame({ kind: "artifact.request", requestId: "artreq-3", request: { op: "write", artifactId: "art_one", offset: 0, chunkBase64: plain } })).ok,
+    ).toBe(true);
+    expect(session.accept(fromFrame({ kind: "host.request", request: "open-external", argument: "https://example.test/map" })).ok).toBe(true);
+    await flush();
+    expect(written).toHaveLength(1);
+    expect(chrome.external).toEqual(["https://example.test/map"]);
+  });
+
   it("releases the tokens of a disposed frame once", () => {
     const { session, released } = withTokens();
     session.init();

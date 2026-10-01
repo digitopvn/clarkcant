@@ -45,9 +45,11 @@ export const JOBS_EXTENSION = "jobs@1";
  * Short-lived provider tokens for a frame whose package declared them: `tokens@1`.
  *
  * The one exception to "a widget never holds a provider credential", and offered only to a frame whose package's UI
- * facet declares `browserTokens`. The token is the frame's alone: the host refuses to let it back out — into widget
- * state, a semantic publish or an action's input — so it reaches neither storage nor the model. The bounds repeat the
- * host's (`BROWSER_TOKEN_LIMITS` in `@clarkcant/contracts`), which re-checks every one.
+ * facet declares `browserTokens`. The token is for the frame's own use. The host never places it in props, state, logs
+ * or model context; a message carrying the issued value verbatim (into state, a semantic publish, an action's input, a
+ * file write or a link to open) is refused, as a guard against accidental leakage. A widget that transforms the value
+ * before sending it is not caught by that guard. The bounds repeat the host's (`BROWSER_TOKEN_LIMITS` in
+ * `@clarkcant/contracts`), which re-checks every one.
  */
 export const TOKENS_EXTENSION = "tokens@1";
 
@@ -536,7 +538,8 @@ export interface WidgetAuthorApi {
   /**
    * Short-lived provider tokens (`tokens@1`), only for a provider and scopes the package declared. Rejects locally when
    * the host did not offer the extension, and with the host's code first otherwise, such as `TOKEN_SCOPE_NOT_DECLARED`.
-   * A token is for this frame's own use: writing it into state, a semantic publish or an action's input is refused.
+   * A token is for this frame's own use: sending the value verbatim into state, a semantic publish, an action's input,
+   * a file write or a link to open is refused.
    */
   tokens: {
     available(): boolean;

@@ -168,7 +168,16 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     for (const token of heldTokens) if (text.includes(token)) return true;
     return false;
   };
-  const TOKEN_LEAK = "TOKEN_NOT_ALLOWED: a browser token stays in the frame; it cannot be saved in state, published or sent with an action";
+  const TOKEN_LEAK =
+    "TOKEN_NOT_ALLOWED: a browser token stays in the frame; it cannot be saved in state, published, sent with an action, written to a file or opened as a link";
+  /** Whether bytes about to be written to a file hold a token, read as the text they would be read back as. */
+  const chunkCarriesToken = (chunk: Uint8Array): boolean => {
+    if (heldTokens.size === 0) return false;
+    let text = "";
+    for (const byte of chunk) text += String.fromCharCode(byte);
+    for (const token of heldTokens) if (text.includes(token)) return true;
+    return false;
+  };
 
   const send = (message: unknown): void => {
     deps.endpoint.postMessage(message);
@@ -612,6 +621,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       },
       openExternal: (approvedUrl) => {
         requireReady("mở link");
+        if (carriesToken(approvedUrl)) throw new Error(TOKEN_LEAK);
         // A request, never an open: the host decides, and shows its own chrome when it does.
         send({ kind: "host.request", nonce: speakingNonce(), request: "open-external", argument: approvedUrl });
       },
@@ -651,6 +661,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
           }),
         ),
       write: (ref, chunk) => {
+        if (chunkCarriesToken(chunk)) return Promise.reject(new Error(TOKEN_LEAK));
         if (chunk.byteLength > ARTIFACT_BRIDGE_LIMITS.chunkBytes) {
           return Promise.reject(
             new Error(`widget runtime: một lần ghi tối đa ${String(ARTIFACT_BRIDGE_LIMITS.chunkBytes)} byte; hãy chia nhỏ`),

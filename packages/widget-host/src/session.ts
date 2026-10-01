@@ -314,9 +314,12 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const jobsInFlight = new Set<string>();
   const tokensInFlight = new Set<string>();
   /**
-   * Token values this frame was given. A message that carries one back out — into state the node stores, a publish the
-   * model reads, an action's input a service receives — is refused, so the token stays in the frame it was issued to.
-   * Bounded: a frame given more than this many tokens has its oldest forgotten, and those have long expired.
+   * Token values this frame was given. A message that carries one back out verbatim — into state the node stores, a
+   * publish the model reads, an action's input a service receives, a file it writes, a link it asks the host to open —
+   * is refused. This guards against a widget leaking a token by accident; a widget that transforms the value first
+   * (encodes, splits or reverses it) is not caught, so the guarantee is the host's own: it never places a token in
+   * props, state, logs or model context. Bounded: a frame given more than this many tokens has its oldest forgotten,
+   * and those have long expired.
    */
   const issuedTokens: string[] = [];
   const carriesToken = (value: unknown): boolean => {
@@ -329,7 +332,16 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
     }
     return issuedTokens.some((token) => text.includes(token));
   };
-  const TOKEN_LEAK = "a browser token stays in its frame; it may not be saved in state, published, or sent with an action";
+  const TOKEN_LEAK =
+    "a browser token stays in its frame; it may not be saved in state, published, sent with an action, written to a file or opened as a link";
+  /** A file chunk as text, so a token written into a file is found as it would be read back. */
+  const chunkText = (chunkBase64: string): string => {
+    try {
+      return atob(chunkBase64);
+    } catch {
+      return "";
+    }
+  };
   const transcript: { kind: string; detail: string }[] = [];
   /** Record what the frame said, dropping the oldest entries past the bound. */
   const record = (entry: { kind: string; detail: string }): void => {
@@ -641,6 +653,10 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       case "host.request": {
         // Routed to the host's chrome. The frame never performs the effect itself, and a link is opened by the host
         // deciding to open it rather than by the ask arriving.
+        if (message.request === "open-external" && carriesToken(message.argument ?? "")) {
+          // A link the host would open in the person's browser, carrying the token to whatever site it names.
+          return refuse("TOKEN_NOT_ALLOWED", TOKEN_LEAK);
+        }
         if (message.request === "focus") input.chrome.focus();
         else if (message.request === "resize") input.chrome.resize(Number(message.argument ?? "0"));
         else if (message.request === "request-pin") input.chrome.requestPin();
@@ -661,6 +677,10 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         };
         if (input.artifacts === undefined) {
           return turnAway("EXTENSION_NOT_OFFERED", `${ARTIFACTS_EXTENSION} is not offered to this frame`);
+        }
+        // A file outlives the frame and can be attached to the conversation: the token is looked for in its bytes too.
+        if (carriesToken(request.op === "write" ? { ...request, chunk: chunkText(request.chunkBase64) } : request)) {
+          return turnAway("TOKEN_NOT_ALLOWED", TOKEN_LEAK);
         }
         if (artifactsInFlight.has(requestId)) {
           return turnAway("ARTIFACT_BUSY", "a request with that id is still being answered");

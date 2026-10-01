@@ -809,6 +809,20 @@ describe("the tokens@1 extension", () => {
     expect(JSON.stringify(bus.sent)).not.toContain(VALUE);
   });
 
+  it("will not write a token it was given into a file, or ask the host to open a link carrying it", async () => {
+    const { bus, runtime, requests, answer } = ready(["tokens@1", "artifacts@1"]);
+    const asking = runtime.api().tokens.request({ provider: "example.maps", scopes: ["tiles:read"] });
+    answer(requests()[0]?.requestId ?? "", { status: "ok", token: TOKEN });
+    await asking;
+    const before = bus.sent.length;
+    const file = { v: 1 as const, artifactId: "art_one", kind: "working" as const, name: "map.txt", mimeType: "text/plain", sizeBytes: 0 };
+
+    await expect(runtime.api().artifacts.write(file, new TextEncoder().encode(`token=${VALUE}`))).rejects.toThrow(/TOKEN_NOT_ALLOWED/);
+    expect(() => runtime.api().host.openExternal(`https://example.test/?t=${VALUE}`)).toThrow(/TOKEN_NOT_ALLOWED/);
+    expect(bus.sent.length).toBe(before);
+    expect(JSON.stringify(bus.sent)).not.toContain(VALUE);
+  });
+
   it("rejects what is waiting when the frame is disposed", async () => {
     const { bus, runtime } = ready();
     const asking = runtime.api().tokens.request({ provider: "example.maps", scopes: ["tiles:read"] });
