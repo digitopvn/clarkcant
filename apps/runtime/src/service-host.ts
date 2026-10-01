@@ -203,6 +203,8 @@ export interface ServiceHostOptions {
     secretProblem: (packageId: string, name: string) => string | undefined;
     audit?: (event: EgressAuditEvent) => void;
     fetch?: typeof fetch;
+    /** Whether services may reach loopback, private and link-local origins: the node's setting, off by default. */
+    allowPrivateNetwork?: boolean;
   };
 }
 
@@ -224,6 +226,12 @@ export type ServiceCallFailure =
 export interface ServiceCallOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
+  /**
+   * The effect the execution policy decided this call as. It bounds the egress the service may make while the call is
+   * in flight: a call decided as `read` gets only `GET` and `HEAD`. Without it, the effect the capability's registry row
+   * says, and `read` when there is none.
+   */
+  effectCategory?: EffectCategory;
   onProgress?: (progress: { current: number; total?: number; message?: string }) => void;
 }
 
@@ -305,8 +313,15 @@ interface ServiceEntry {
   refused: Set<CapabilityRef>;
   /** Host calls in flight to this service; egress is answered only while there is one. */
   calls: number;
+  /**
+   * The effect each call in flight was decided as, one entry per call. An egress request cannot say which call it
+   * serves, so these together bound what it may do: a write only while one of them was decided as one.
+   */
+  callEffects: EffectCategory[];
   /** Aborted when the last call in flight ends, so egress made for those calls stops with them. */
   callScope: AbortController;
+  /** Writes the egress refusals still being gathered for the trail; set while the service runs. */
+  flushEgressAudit?: (() => void) | undefined;
   /** Why the facet's declared secrets cannot be used, as last written to its capabilities. */
   authReason?: string | undefined;
 }
@@ -489,20 +504,19 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     const deps = options.egress;
     if (egress === undefined || deps === undefined) return {};
     const packageId = entry.generation.packageId;
-    return {
-      serverRequests: {
-        experimental: EGRESS_EXPERIMENTAL,
-        handle: egressRequestHandler({
-          packageId,
-          egress,
-          secrets: deps.secrets,
-          secretProblem: (name) => deps.secretProblem(packageId, name),
-          inCall: () => (entry.calls > 0 ? entry.callScope.signal : undefined),
-          ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
-          ...(deps.audit === undefined ? {} : { audit: deps.audit }),
-        }),
-      },
-    };
+    const handle = egressRequestHandler({
+      packageId,
+      egress,
+      secrets: deps.secrets,
+      secretProblem: (name) => deps.secretProblem(packageId, name),
+      inCall: () => (entry.calls > 0 ? { signal: entry.callScope.signal, effects: [...entry.callEffects] } : undefined),
+      allowPrivateNetwork: deps.allowPrivateNetwork === true,
+      ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+      ...(deps.audit === undefined ? {} : { audit: deps.audit }),
+    });
+    entry.flushEgressAudit?.();
+    entry.flushEgressAudit = handle.flush;
+    return { serverRequests: { experimental: EGRESS_EXPERIMENTAL, handle } };
   }
 
   function providerIdOf(entry: Pick<ServiceEntry, "generation">): string {
@@ -722,6 +736,8 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     entry.listed = undefined;
     entry.callScope.abort(new Error(reason));
     entry.callScope = new AbortController();
+    entry.flushEgressAudit?.();
+    entry.flushEgressAudit = undefined;
     await connection?.close().catch(() => undefined);
     // Closing the engine's command line does not stop the container on every engine; removing it does.
     await removeContainer(runName);
@@ -963,6 +979,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         epoch: 0,
         refused: new Set(),
         calls: 0,
+        callEffects: [],
         callScope: new AbortController(),
       };
       entries.set(key, entry);
@@ -1002,7 +1019,10 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         const reason = entry?.reason ?? "no running service provides it on this node";
         throw new ServiceCallError("SERVICE_NOT_RUNNING", `${ref} cannot run now: ${reason}`);
       }
+      // The effect this call was decided as. A row that is gone counts as a read, the narrowest answer.
+      const effect: EffectCategory = options.effectCategory ?? getCapability(registry, ref, registry.nodeId)?.effectCategory ?? "read";
       entry.calls += 1;
+      entry.callEffects.push(effect);
       const scope = entry.callScope;
       try {
         // A caller may ask for less time than the granted profile allows, never for more.
@@ -1038,6 +1058,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         throw new ServiceCallError(code, message.slice(0, 500), true);
       } finally {
         entry.calls -= 1;
+        entry.callEffects.splice(entry.callEffects.indexOf(effect), 1);
         // The last call ended: whatever the service still has the host fetching for it stops now.
         if (entry.calls === 0 && entry.callScope === scope) {
           scope.abort(new Error("no call to the service is in flight"));

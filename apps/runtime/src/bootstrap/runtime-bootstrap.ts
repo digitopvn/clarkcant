@@ -30,7 +30,7 @@ import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
 import { detectServiceEngine, readEngineCapacity } from "../service-container.ts";
 import { createServiceHost, engineContainers, packageRootFrom, resourceProfilePolicy } from "../service-host.ts";
-import { type EgressAuditEvent, egressSecretProblem } from "../service-egress.ts";
+import { type EgressAuditEvent, egressAllowsPrivateNetwork, egressSecretProblem } from "../service-egress.ts";
 import { type BrowserTokenAuditEvent, createBrowserTokenBroker } from "../browser-token-broker.ts";
 import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
@@ -595,13 +595,15 @@ function serviceEgressDeps(services: NodeServices) {
         }),
     }),
     secretProblem: (packageId: string, name: string) => egressSecretProblem({ db, principalId }, packageId, name),
+    // Loopback, private and link-local origins only when the person started the node saying so.
+    allowPrivateNetwork: egressAllowsPrivateNetwork(process.env),
     audit: (event: EgressAuditEvent) =>
       appendAuditEvent(db, {
         auditId: services.conductor.newId("audit"),
         principalId,
         nodeId,
         kind: "egress",
-        summary: `${event.packageId} ${event.method} ${event.origin}${event.secret === undefined ? "" : ` with ${event.secret}`}${event.status === undefined ? "" : ` → ${String(event.status)}`}${event.reason === undefined ? "" : `: ${event.reason}`}`.slice(0, 500),
+        summary: `${event.packageId} ${event.method} ${event.origin}${event.secret === undefined ? "" : ` with ${event.secret}`}${event.status === undefined ? "" : ` → ${String(event.status)}`}${event.count === undefined ? "" : ` (×${String(event.count)})`}${event.reason === undefined ? "" : `: ${event.reason}`}`.slice(0, 500),
         outcome: event.outcome,
         ref: event.packageId,
         at: now(),

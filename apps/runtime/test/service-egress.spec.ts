@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { EGRESS_ERROR_CODES, type Instant, type ServiceEgress } from "@clarkcant/contracts";
+import { EGRESS_ERROR_CODES, type EffectCategory, type Instant, type ServiceEgress } from "@clarkcant/contracts";
 import { McpServerRequestError } from "@clarkcant/mcp-adapters";
 import { type Database, deleteCredential, migrate, openDatabase } from "@clarkcant/storage";
 
@@ -15,9 +15,13 @@ import { storeCredentialFields } from "../src/application/credential-vault.ts";
 import { createSecretBroker } from "../src/secret-broker.ts";
 import {
   type EgressAuditEvent,
+  type EgressHandlerDeps,
+  egressAllowsPrivateNetwork,
   egressRequestHandler,
   egressSecretProblem,
+  isPrivateNetworkHost,
   packageConsumer,
+  secretForms,
 } from "../src/service-egress.ts";
 
 /**
@@ -67,6 +71,20 @@ beforeEach(async () => {
       hold.push(() => response.end());
       return;
     }
+    if (path === "/echo-encoded") {
+      // A provider that echoes the credential encoded: JSON with `\/` escaping, URL-encoded, and inside base64.
+      const sent = String(request.headers.authorization ?? "");
+      const escaped = JSON.stringify(sent).replaceAll("/", "\\/");
+      const inspected = Buffer.from(JSON.stringify({ sub: "me", authorization: sent })).toString("base64");
+      const urlSafe = Buffer.from(`token=${sent}`).toString("base64url");
+      response.writeHead(200, { "content-type": "application/json", "x-echo-url": encodeURIComponent(sent) });
+      response.end(`{"escaped":${escaped},"url":"${encodeURIComponent(sent)}","inspected":"${inspected}","urlSafe":"${urlSafe}"}`);
+      return;
+    }
+    if (path === "/encoding") {
+      response.writeHead(200, { "content-type": "text/plain" }).end(String(request.headers["accept-encoding"] ?? ""));
+      return;
+    }
     // A careless provider: it repeats the credential it was sent, in a header and in the body.
     const echoed = String(request.headers.authorization ?? "");
     response.writeHead(200, { "content-type": "application/json", "x-echo": echoed, "set-cookie": "session=1" });
@@ -109,14 +127,24 @@ function storeSecret(consumer: string): void {
   expect(outcome.ok).toBe(true);
 }
 
-function handler(inCall: AbortController | null = new AbortController()) {
+/**
+ * The handler for one running service, during a call decided as `effects` (a read, unless a test says otherwise).
+ * The provider here is on loopback, so the node setting that allows those origins is on unless a test turns it off.
+ */
+function handler(
+  inCall: AbortController | null = new AbortController(),
+  options: Partial<Pick<EgressHandlerDeps, "allowPrivateNetwork" | "now" | "rate" | "refusalWindowMs">> & { effects?: EffectCategory[] } = {},
+) {
+  const { effects = ["read"], ...rest } = options;
   return egressRequestHandler({
     packageId: PACKAGE,
     egress: egress(),
     secrets: createSecretBroker({ db, principalId: OWNER, now: () => AT }),
     secretProblem: (name) => egressSecretProblem({ db, principalId: OWNER }, PACKAGE, name),
-    inCall: () => inCall?.signal,
+    inCall: () => (inCall === null ? undefined : { signal: inCall.signal, effects }),
     audit: (event) => audit.push(event),
+    allowPrivateNetwork: true,
+    ...rest,
   });
 }
 
@@ -241,7 +269,9 @@ describe("egress for a package service", () => {
     const large = await refusal(handler()(fetchParams(`http://127.0.0.1:${String(port)}/large`)));
     expect(large.code).toBe(EGRESS_ERROR_CODES.tooLarge);
     const body = { encoding: "base64", data: Buffer.alloc(1024 * 1024 + 1).toString("base64") };
-    const sent = await refusal(handler()(fetchParams(`http://127.0.0.1:${String(port)}/search`, { method: "POST", body })));
+    const sent = await refusal(
+      handler(undefined, { effects: ["external-write"] })(fetchParams(`http://127.0.0.1:${String(port)}/search`, { method: "POST", body })),
+    );
     expect(sent.code).toBe(EGRESS_ERROR_CODES.tooLarge);
     expect(seen.map((entry) => entry.url)).toEqual(["/large"]);
   });
@@ -260,5 +290,141 @@ describe("egress for a package service", () => {
   it("answers method-not-found for anything but the egress request", async () => {
     const error = await refusal(handler()({ method: "clarkcant/other", params: {}, signal: new AbortController().signal }));
     expect(error.code).toBe(-32601);
+  });
+});
+
+describe("what a call lets egress do", () => {
+  const url = () => `http://127.0.0.1:${String(port)}/items`;
+  const write = (method: string) => fetchParams(url(), { method, body: { encoding: "utf8", data: "{}" } });
+
+  it("answers only GET and HEAD during a call decided as a read, and says why the rest are refused", async () => {
+    storeSecret(packageConsumer(PACKAGE));
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      const error = await refusal(handler()(write(method)));
+      expect(error.code).toBe(EGRESS_ERROR_CODES.effectNotAllowed);
+      expect(error.message).toContain(`a ${method} egress request changes something at the provider`);
+      expect(error.message).toContain("decided as read");
+    }
+    // Nothing reached the provider, so the key was never sent for a write.
+    expect(seen).toEqual([]);
+    expect((await handler()(fetchParams(url()))).status).toBe(200);
+    expect((await handler()(fetchParams(url(), { method: "HEAD" }))).status).toBe(200);
+  });
+
+  it("refuses a write during a local-write call too: the risk gate never asked about one", async () => {
+    storeSecret(packageConsumer(PACKAGE));
+    const error = await refusal(handler(undefined, { effects: ["local-write"] })(write("POST")));
+    expect(error.code).toBe(EGRESS_ERROR_CODES.effectNotAllowed);
+    expect(seen).toEqual([]);
+  });
+
+  it("answers a write while a call decided as external-write or higher is in flight", async () => {
+    storeSecret(packageConsumer(PACKAGE));
+    for (const effects of [["external-write"], ["destructive"], ["read", "external-write"]] as EffectCategory[][]) {
+      expect((await handler(undefined, { effects })(write("POST"))).status).toBe(200);
+    }
+    expect(seen).toHaveLength(3);
+    expect(seen[0]?.headers.authorization).toBe(`Bearer ${secret}`);
+  });
+});
+
+describe("how much a service can ask and the trail it leaves", () => {
+  it("writes a bounded trail for ten thousand refused requests, with their count", async () => {
+    const answer = handler(null, { rate: { burst: 20_000, refillPerSecond: 1 } });
+    const refused: number[] = [];
+    for (let index = 0; index < 10_000; index += 1) {
+      refused.push((await refusal(answer(fetchParams(`http://127.0.0.1:${String(port)}/search`)))).code);
+    }
+    expect(new Set(refused)).toEqual(new Set([EGRESS_ERROR_CODES.notInCall]));
+    // The first as it happened; the rest are gathered until the window closes.
+    expect(audit).toHaveLength(1);
+    answer.flush();
+    expect(audit).toHaveLength(2);
+    expect(audit[1]).toMatchObject({ outcome: "refused", count: 9_999 });
+    expect(audit[1]?.reason).toContain("9999 more refused like this");
+    // A window that closed is followed by a new one: the next refusal is written as it happens.
+    await refusal(answer(fetchParams(`http://127.0.0.1:${String(port)}/search`)));
+    expect(audit).toHaveLength(3);
+    expect(seen).toEqual([]);
+  });
+
+  it("slows a service that sends too many requests to the refill, and lets it go on after", async () => {
+    storeSecret(packageConsumer(PACKAGE));
+    let now = 1_000;
+    const answer = handler(undefined, { rate: { burst: 3, refillPerSecond: 2 }, now: () => now });
+    for (let index = 0; index < 3; index += 1) expect((await answer(fetchParams(`http://127.0.0.1:${String(port)}/search`))).status).toBe(200);
+    const limited = await refusal(answer(fetchParams(`http://127.0.0.1:${String(port)}/search`)));
+    expect(limited.code).toBe(EGRESS_ERROR_CODES.rateLimited);
+    expect(seen).toHaveLength(3);
+    now += 500;
+    expect((await answer(fetchParams(`http://127.0.0.1:${String(port)}/search`))).status).toBe(200);
+    expect(seen).toHaveLength(4);
+  });
+});
+
+describe("what comes back to the service", () => {
+  it("removes the key when the provider echoes it JSON-escaped, URL-encoded or inside base64", async () => {
+    // A key with the characters each encoding changes, generated here.
+    secret = `fake/${randomBytes(12).toString("base64")}+=x`;
+    storeSecret(packageConsumer(PACKAGE));
+    const result = await handler()(fetchParams(`http://127.0.0.1:${String(port)}/echo-encoded`));
+    const body = decode(result.body.data);
+    for (const form of secretForms(secret)) expect(body).not.toContain(form);
+    for (const form of secretForms(`Bearer ${secret}`)) expect(body).not.toContain(form);
+    expect(result.headers["x-echo-url"]).toBe("[redacted]");
+    const parsed = JSON.parse(body) as Record<string, string>;
+    expect(parsed["escaped"]).toBe("[redacted]");
+    expect(parsed["url"]).toBe("[redacted]");
+    // The base64 the provider wrapped it in no longer decodes to the key.
+    expect(Buffer.from(parsed["inspected"] ?? "", "base64").toString("utf8")).not.toContain(secret);
+    expect(Buffer.from(parsed["urlSafe"] ?? "", "base64url").toString("utf8")).not.toContain(secret);
+  });
+
+  it("asks the provider for an uncompressed answer whatever the service asked for", async () => {
+    const result = await handler()(fetchParams(`http://localhost:${String(port)}/encoding`, { headers: { "accept-encoding": "zstd, br, gzip" } }));
+    expect(decode(result.body.data)).toBe("identity");
+    expect(seen[0]?.headers["accept-encoding"]).toBe("identity");
+  });
+});
+
+describe("loopback and private origins", () => {
+  it("are refused by default, before anything is sent, even when the package declared them", async () => {
+    storeSecret(packageConsumer(PACKAGE));
+    const error = await refusal(handler(undefined, { allowPrivateNetwork: false })(fetchParams(`http://127.0.0.1:${String(port)}/search`)));
+    expect(error.code).toBe(EGRESS_ERROR_CODES.originNotAllowed);
+    expect(error.message).toContain("CC_EGRESS_ALLOW_PRIVATE_NETWORK");
+    expect(seen).toEqual([]);
+  });
+
+  it("are allowed only by the node setting, never by anything a package says", () => {
+    expect(egressAllowsPrivateNetwork({})).toBe(false);
+    expect(egressAllowsPrivateNetwork({ CC_EGRESS_ALLOW_PRIVATE_NETWORK: "true" })).toBe(false);
+    expect(egressAllowsPrivateNetwork({ CC_EGRESS_ALLOW_PRIVATE_NETWORK: "1" })).toBe(true);
+  });
+
+  it("covers localhost, loopback, the private ranges and link-local, in IPv4 and IPv6", () => {
+    for (const origin of [
+      "http://localhost:8080",
+      "http://api.localhost",
+      "http://127.0.0.1:11434",
+      "http://127.1.2.3",
+      "http://0.0.0.0:2375",
+      "https://10.1.2.3",
+      "https://172.16.0.1",
+      "https://172.31.255.255",
+      "https://192.168.1.1",
+      "http://169.254.169.254",
+      "http://[::1]:8080",
+      "http://[::]",
+      "https://[fd12:3456::1]",
+      "https://[fe80::1]",
+      "http://[::ffff:127.0.0.1]",
+      "http://[::ffff:192.168.0.1]",
+    ]) {
+      expect(isPrivateNetworkHost(new URL(origin)), origin).toBe(true);
+    }
+    for (const origin of ["https://api.example.com", "https://8.8.8.8", "https://172.32.0.1", "https://[2001:db8::1]", "https://localhost.example.com"]) {
+      expect(isPrivateNetworkHost(new URL(origin)), origin).toBe(false);
+    }
   });
 });

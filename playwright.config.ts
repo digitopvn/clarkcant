@@ -148,6 +148,11 @@ export default defineConfig({
          */
         CC_DIRECTORY_INDEX: join(process.cwd(), "apps", "web", "e2e", "fixtures", "directory.json"),
         /*
+         * The fake provider the egress journey reaches listens on loopback (`127.0.0.1:8879`). A node refuses loopback,
+         * private and link-local egress origins unless it is started with this setting; a manifest cannot turn it on.
+         */
+        CC_EGRESS_ALLOW_PRIVATE_NETWORK: "1",
+        /*
          * Where the app — and therefore the widget runtime bundle — is served from. A widget document is served by
          * the node but its runtime comes from the app, and the two are different origins in this suite. Without
          * this the injected bootstrap points at the node, where nothing serves that file.

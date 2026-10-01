@@ -359,6 +359,8 @@ describe.skipIf(!engine.available)("a service's provider key on a real engine", 
       egress: {
         secrets: createSecretBroker({ db, principalId: "owner_1", now: () => new Date().toISOString() as Instant }),
         secretProblem: (packageId, name) => egressSecretProblem({ db, principalId: "owner_1" }, packageId, name),
+        // The fake provider is on loopback, which a node reaches for services only when it is started saying so.
+        allowPrivateNetwork: true,
       },
     });
     try {

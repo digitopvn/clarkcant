@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { networkOriginSchema } from "./network-origin.ts";
+import type { EffectCategory } from "./primitives.ts";
 
 /**
  * Service egress: how a package service reaches a provider without ever holding its secret.
@@ -42,9 +43,12 @@ export const egressSecretNameSchema = z
  * Headers a service may not set and a credential may not be written into.
  *
  * Framing and connection headers belong to the host's HTTP client; cookies and proxy credentials are ambient authority
- * nobody declared; forwarding headers would let a service lie about where a request came from.
+ * nobody declared; forwarding headers would let a service lie about where a request came from. `accept-encoding` is
+ * the host's: it asks for an uncompressed answer, so what comes back can be searched for the secret before the service
+ * sees it.
  */
 const FORBIDDEN_EGRESS_HEADERS: ReadonlySet<string> = new Set([
+  "accept-encoding",
   "connection",
   "content-length",
   "cookie",
@@ -150,6 +154,34 @@ export function serviceEgressProblems(egress: ServiceEgress): string[] {
  * ------------------------------------------------------------------ */
 
 export const EGRESS_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] as const;
+export type EgressMethod = (typeof EGRESS_METHODS)[number];
+
+/** Methods that only read: answered during any call. */
+export const EGRESS_SAFE_METHODS: ReadonlySet<EgressMethod> = new Set<EgressMethod>(["GET", "HEAD"]);
+
+/**
+ * The effects of a call during which a service may send a request that changes something at the provider (`POST`,
+ * `PUT`, `PATCH`, `DELETE`): the ones that reach past this machine, which the execution policy's risk gate asks about.
+ * A call decided as `read` or `local-write` is not one of them, so a capability declared that way cannot write to a
+ * provider with the person's key without the policy having seen a write.
+ */
+export const EGRESS_WRITE_EFFECTS: ReadonlySet<EffectCategory> = new Set<EffectCategory>([
+  "external-write",
+  "destructive",
+  "financial",
+  "communication",
+]);
+
+/**
+ * Why a request with this method is not answered while calls decided as these effects are in flight, or `undefined`
+ * when it is. A request cannot say which call it serves, so the effects of every call in flight are what bound it.
+ */
+export function egressMethodProblem(method: EgressMethod, effects: readonly EffectCategory[]): string | undefined {
+  if (EGRESS_SAFE_METHODS.has(method)) return undefined;
+  if (effects.some((effect) => EGRESS_WRITE_EFFECTS.has(effect))) return undefined;
+  const decided = [...new Set(effects)].sort().join(", ") || "nothing";
+  return `a ${method} egress request changes something at the provider, so it is answered only during a call decided as external-write or higher; the calls in flight are decided as ${decided}`;
+}
 
 export const egressFetchRequestSchema = z.strictObject({
   version: z.literal(SERVICE_EGRESS_VERSION),
@@ -176,8 +208,9 @@ export interface EgressFetchResult {
 
 /**
  * JSON-RPC error codes the host answers an egress request with, in the range JSON-RPC leaves to applications.
- * Each says what the service can do about it: nothing (not declared), wait for a call (not in a call), ask the person
- * (no credential), send less (too large), or try again later (upstream).
+ * Each says what the service can do about it: nothing (not declared, or an origin this node keeps services from),
+ * wait for a call (not in a call), ask the person (no credential), send less (too large), try again later (upstream,
+ * or too many requests), or declare the capability with the effect it has (a write during a read call).
  */
 export const EGRESS_ERROR_CODES = {
   invalid: -32602,
@@ -187,4 +220,10 @@ export const EGRESS_ERROR_CODES = {
   tooLarge: -32013,
   upstreamFailed: -32014,
   stopped: -32015,
+  effectNotAllowed: -32016,
+  rateLimited: -32017,
+  originNotAllowed: -32018,
 } as const;
+
+/** How many egress requests one running service may send: a burst, refilled at a steady rate. */
+export const SERVICE_EGRESS_RATE = { burst: 30, refillPerSecond: 10 } as const;

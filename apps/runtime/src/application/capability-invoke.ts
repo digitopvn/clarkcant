@@ -468,7 +468,7 @@ export async function invokeCapability(
         scope: jobScope,
         // A press's deadline bounds how long the press waits for an answer, and a job answers at once with its ref; the
         // job itself runs under the service host's job ceiling, and Stop, emergency Stop and shutdown still end it.
-        run: (signal, onProgress) => host.call(ref, request.args, { signal, onProgress }),
+        run: (signal, onProgress) => host.call(ref, request.args, { signal, onProgress, effectCategory: descriptor.effectCategory }),
         ...(request.onJobSettled === undefined ? {} : { onSettled: request.onJobSettled }),
         });
       } catch (cause) {
@@ -482,6 +482,8 @@ export async function invokeCapability(
       return { kind: "job", ref, effectCategory: descriptor.effectCategory, job, description };
     }
     const result = await host.call(ref, request.args, {
+      // What the policy decided on above, which bounds the egress the service may make during this call.
+      effectCategory: descriptor.effectCategory,
       ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     });

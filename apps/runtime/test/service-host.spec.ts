@@ -973,6 +973,12 @@ describe("a service that reaches a provider through the host", () => {
     cpSync(LOOKUP_FIXTURE, lookupRoot, { recursive: true });
     const path = join(lookupRoot, "clarkcant.json");
     writeFileSync(path, readFileSync(path, "utf8").replace("http://127.0.0.1:8879", `http://127.0.0.1:${String(port)}`));
+    // This copy's service sends its lookup as a POST when asked to look up "post": a write, to a capability declared read.
+    const server = join(lookupRoot, "service", "server.mjs");
+    const code = readFileSync(server, "utf8");
+    const ask = "    url: `${ORIGIN}/define?word=${encodeURIComponent(word)}`,\n";
+    expect(code).toContain(ask);
+    writeFileSync(server, code.replace(ask, `${ask}    ...(word === "post" ? { method: "POST" } : {}),\n`));
 
     const at = new Date(Date.UTC(2026, 9, 1, 6, 0, counter++)).toISOString();
     const generation = {
@@ -1012,6 +1018,8 @@ describe("a service that reaches a provider through the host", () => {
         secrets: createSecretBroker({ db, principalId: PRINCIPAL, now: () => new Date().toISOString() as Instant }),
         secretProblem: (packageId, name) => egressSecretProblem({ db, principalId: PRINCIPAL }, packageId, name),
         audit: (event) => audit.push(event),
+        // The fake provider is on loopback, which a node reaches for services only when it is started saying so.
+        allowPrivateNetwork: true,
       },
     });
     return host;
@@ -1082,6 +1090,24 @@ describe("a service that reaches a provider through the host", () => {
     expect(audit).toMatchObject([{ packageId: LOOKUP, method: "GET", secret: "LOOKUP_API_KEY", outcome: "done", status: 200 }]);
     expect(JSON.stringify(audit)).not.toContain(secret);
     expect(logs.join("\n")).not.toContain(secret);
+  });
+
+  it("refuses a write to the provider during a call decided as a read, and makes it during one decided as external-write", async () => {
+    storeKey();
+    const serviceHost = startLookup();
+    await running(serviceHost);
+    expect(getCapability({ db, nodeId: NODE }, DEFINE, NODE)?.effectCategory).toBe("read");
+
+    // Through the capability path, which decides the call as what the capability declares: a read.
+    const refused = await invokeCapability(invokeDeps(), { ref: DEFINE, args: { word: "post" }, source: "widget" });
+    expect(JSON.stringify(refused)).toContain("a POST egress request changes something at the provider");
+    expect(seen).toEqual([]);
+    expect(audit).toMatchObject([{ method: "POST", outcome: "refused", secret: "LOOKUP_API_KEY" }]);
+
+    const written = await serviceHost.call(DEFINE, { word: "post" }, { effectCategory: "external-write" });
+    expect(written.content).toContain("a sphere");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.authorization).toBe(`Bearer ${secret}`);
   });
 
   it("stops the provider request when the call that needed it is withdrawn", async () => {
