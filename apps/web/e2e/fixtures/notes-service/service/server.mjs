@@ -217,7 +217,8 @@ function handle(request) {
       return;
     }
     if (name === "list_notes") {
-      const notes = readNotes();
+      // Newest first: a reader that keeps only the start of a long answer, like a spoken one, still hears the latest note.
+      const notes = readNotes().reverse();
       send({ jsonrpc: "2.0", id, result: text(notes.length === 0 ? "No notes yet." : notes.join(" | ")) });
       return;
     }
