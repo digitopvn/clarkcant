@@ -1,0 +1,10 @@
+Scope: all 33 workspace projects
+✓ Lockfile passes supply-chain policies (verified 1h ago)
+[WARN] 1 deprecated subdependencies found: node-domexception@1.0.0
+Already up to date
+Progress: resolved 0, reused 116, downloaded 0, added 0, done
+.../node_modules/onnxruntime-node postinstall$ node ./script/install
+.../node_modules/onnxruntime-node postinstall: Done
+Ignored build scripts: @google/genai@1.52.0, protobufjs@7.6.6.
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+Done in 1.5s using pnpm v12.4.2

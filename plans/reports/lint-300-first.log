@@ -1,0 +1,9 @@
+$ eslint .
+
+D:\wt300\packages\core\src\preference-registry.ts
+  32:1  error  Imports "setPreference" are only used as type  @typescript-eslint/consistent-type-imports
+
+✖ 1 problem (1 error, 0 warnings)
+  1 error and 0 warnings potentially fixable with the `--fix` option.
+
+[ELIFECYCLE] Command failed with exit code 1.

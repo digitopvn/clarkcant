@@ -1,0 +1,48 @@
+
+ RUN  v5.0.0 D:/wt300
+
+ ❯ packages/conversation-client/test/styles.spec.ts (16 tests | 1 failed) 36ms
+   ✓ the stylesheet survives being embedded in TypeScript (5)
+     ✓ contains no backtick, which would end the template literal early 1ms
+     ✓ contains no interpolation sequence, which would be evaluated 0ms
+     ✓ closes every brace it opens 0ms
+     ✓ never transitions every property 0ms
+     ✓ turns off every animation that never ends, rather than shortening it 0ms
+   ✓ every variable the stylesheet reads exists (1)
+     ✓ reads no variable that nothing defines, unless it names a fallback 8ms
+   ❯ the look a theme's identity reaches (10)
+     × reads each identity variable with Clark Default's own value, so Clark draws exactly as it did 5ms
+     ✓ never lets a recipe or an effect reach a focus ring, a disabled control, provenance or the host's own cards 11ms
+     ✓ draws the host's own cards with no theme surface, texture, blur or shadow 2ms
+     ✓ draws the buttons in the host's own cards and panels as Clark's, whatever the theme's button recipe 2ms
+     ✓ draws Stop with the host's own look, which no recipe or effect reaches 1ms
+     ✓ blurs only the modal under glass, never a card or the composer 1ms
+     ✓ draws the backdrop and its pointer light at the strengths the protected audit measures 1ms
+     ✓ stops the theme's motion and the pointer light under the person's own Reduced setting, as under the system's 1ms
+     ✓ draws every focus ring in the protected focus colour 1ms
+     ✓ keeps the host's own cards edged whatever a card recipe says 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/conversation-client/test/styles.spec.ts > the look a theme's identity reaches > reads each identity variable with Clark Default's own value, so Clark draws exactly as it did
+AssertionError: --cc-font-body: expected 'inherit' to be '"Plus Jakarta Sans Variable", ui-sans…' // Object.is equality
+
+Expected: ""Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif"
+Received: "inherit"
+
+ ❯ packages/conversation-client/test/styles.spec.ts:163:30
+    161|         continue;
+    162|       }
+    163|       expect(fallback, name).toBe(clark.replace(/\s+/g, " "));
+       |                              ^
+    164|     }
+    165|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 15 passed (16)
+   Start at  20:50:31
+   Duration  1.34s (import 69%, transform 28%, tests 3%)
+

@@ -1,0 +1,998 @@
+e2e (browser suite)	UNKNOWN STEP	﻿2026-09-30T12:48:37.9893349Z Current runner version: '2.337.0'
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9918985Z ##[group]Runner Image Provisioner
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9919889Z Hosted Compute Agent
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9920476Z Version: 20260828.587
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9921212Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9921966Z Build Date: 2026-08-28T16:44:25Z
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9922691Z Worker ID: {19700859-8f7e-49fb-b7d5-ca78a0540765}
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9923777Z Azure Region: eastus
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9924478Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9926112Z ##[group]Operating System
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9926768Z Ubuntu
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9927350Z 24.04.5
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9927953Z LTS
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9928523Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9929134Z ##[group]Runner Image
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9929742Z Image: ubuntu-24.04
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9930295Z Version: 20260920.314.1
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9931623Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260920.314/images/ubuntu/Ubuntu2404-Readme.md
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9933253Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260920.314
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9934880Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9936140Z ##[group]GITHUB_TOKEN Permissions
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9938054Z Contents: read
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9938820Z Metadata: read
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9939392Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9941553Z Secret source: Actions
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9942557Z Cache mode: write
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:37.9943245Z Prepare workflow directory
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.0279862Z Prepare all required actions
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.0328832Z Getting action download info
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.2985961Z Download action repository 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.4128356Z Download action repository 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.5160439Z Download action repository 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.7245443Z Complete job name: e2e (browser suite)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8171119Z ##[group]Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8172195Z with:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8172646Z   persist-credentials: false
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8173262Z   repository: digitopvn/clarkcant
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8177559Z   token: ***
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8178000Z   ssh-strict: true
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8178433Z   ssh-user: git
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8178861Z   clean: true
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8179309Z   sparse-checkout-cone-mode: true
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8179831Z   fetch-depth: 1
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8180261Z   fetch-tags: false
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8180705Z   show-progress: true
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8181153Z   lfs: false
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8181572Z   submodules: false
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8182024Z   set-safe-directory: true
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8182535Z   allow-unsafe-pr-checkout: false
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.8183390Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9170118Z Syncing repository: digitopvn/clarkcant
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9172040Z ##[group]Getting Git version info
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9172806Z Working directory is '/home/runner/work/clarkcant/clarkcant'
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9174081Z [command]/usr/bin/git version
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9244255Z git version 2.55.0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9265140Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9279449Z Temporarily overriding HOME='/home/runner/work/_temp/469034dd-67e5-48a4-a1f0-497f6a5d6500' before making global git config changes
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9280895Z Adding repository directory to the temporary git global config as a safe directory
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9285248Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/clarkcant/clarkcant
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9355288Z Deleting the contents of '/home/runner/work/clarkcant/clarkcant'
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9361055Z ##[group]Initializing the repository
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9365229Z [command]/usr/bin/git init /home/runner/work/clarkcant/clarkcant
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9475348Z hint: Using 'master' as the name for the initial branch. This default branch name
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9477078Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9478842Z hint: to use in all of your new repositories, which will suppress this warning,
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9480357Z hint: call:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9480890Z hint:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9481647Z hint: 	git config --global init.defaultBranch <name>
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9482607Z hint:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9483231Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9485018Z hint: 'development'. The just-created branch can be renamed via this command:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9486178Z hint:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9486620Z hint: 	git branch -m <name>
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9487111Z hint:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9487730Z hint: Disable this message with "git config set advice.defaultBranchName false"
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9488750Z Initialized empty Git repository in /home/runner/work/clarkcant/clarkcant/.git/
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9503833Z [command]/usr/bin/git remote add origin https://github.com/digitopvn/clarkcant
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9548005Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9549483Z ##[group]Disabling automatic garbage collection
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9551403Z [command]/usr/bin/git config --local gc.auto 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9586506Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9587898Z ##[group]Setting up auth
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9594200Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9625842Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:38.9985517Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:39.0023833Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:39.0269815Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:39.0323809Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:39.0552085Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:39.0590314Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:39.0591719Z ##[group]Fetching the repository
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:39.0601179Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +1bbc0df53280ba55046f9d11334925877f3bee9b:refs/remotes/pull/368/merge
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.3216691Z From https://github.com/digitopvn/clarkcant
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.3218355Z  * [new ref]         1bbc0df53280ba55046f9d11334925877f3bee9b -> pull/368/merge
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.3225423Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.3226872Z ##[group]Determining the checkout info
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.3228357Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.3266953Z [command]/usr/bin/git sparse-checkout disable
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.3318002Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.3345769Z ##[group]Checking out the ref
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.3350269Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/368/merge
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5297779Z Note: switching to 'refs/remotes/pull/368/merge'.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5299586Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5301165Z You are in 'detached HEAD' state. You can look around, make experimental
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5304335Z changes and commit them, and you can discard any commits you make in this
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5307214Z state without impacting any branches by switching back to a branch.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5308912Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5309995Z If you want to create a new branch to retain commits you create, you may
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5312901Z do so (now or later) by using -c with the switch command. Example:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5314712Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5315332Z   git switch -c <new-branch-name>
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5316451Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5317247Z Or undo this operation with:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5318426Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5319191Z   git switch -
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5320085Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5321644Z Turn off this advice by setting config variable advice.detachedHead to false
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5324346Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5326635Z HEAD is now at 1bbc0df Merge 374e100a2c65a7c4ae6ce98595d6ba1be8d9abf9 into b589e906fe995f283417977966501417b90a5580
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5417496Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5421818Z [command]/usr/bin/git log -1 --format=%H
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5424388Z 1bbc0df53280ba55046f9d11334925877f3bee9b
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5429167Z ##[group]Removing auth
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5430965Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5437019Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5652056Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5675475Z http.https://github.com/.extraheader
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5685188Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5718477Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5934901Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.5963322Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.6182154Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.6438836Z ##[group]Run corepack enable
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.6440139Z [36;1mcorepack enable[0m
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.6707783Z shell: /usr/bin/bash -e {0}
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.6708939Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.9483096Z ##[group]Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.9483911Z with:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.9484180Z   node-version: 22.19
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.9484446Z   cache: pnpm
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.9484696Z   always-auth: false
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.9484967Z   check-latest: false
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.9487689Z   token: ***
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:40.9487958Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:41.0914725Z Attempting to download 22.19...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:41.1027081Z (node:2380) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:41.1028622Z (Use `node --trace-deprecation ...` to show where the warning was created)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:41.6850092Z Acquiring 22.19.0 - x64 from https://github.com/actions/node-versions/releases/download/22.19.0-17311483029/node-22.19.0-linux-x64.tar.gz
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:42.1220590Z Extracting ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:42.1345561Z [command]/usr/bin/tar xz --strip 1 --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/cf2a7142-7e33-484e-8733-89db7a3f35d5 -f /home/runner/work/_temp/d8b83c88-bc5f-4994-84d9-00b714e6a572
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:43.3454475Z Adding to the cache ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:45.3804753Z ##[group]Environment details
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:45.4549712Z [warning]This project is configured to use pnpm because /home/runner/work/clarkcant/clarkcant/package.json has a "packageManager" field
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:45.4550325Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:45.4827486Z node: v22.19.0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:45.4827925Z npm: 10.9.3
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:45.4828276Z yarn: 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:45.4829024Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:45.4852190Z [command]/usr/local/bin/pnpm store path --silent
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:45.5379715Z ! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-12.4.2.tgz
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:46.0211514Z Downloading the pnpm 12.4.2 binary for linux-x64...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:46.7132234Z /home/runner/.local/share/pnpm/store/v11
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:46.8118542Z Cache hit for: node-cache-Linux-x64-pnpm-d9fc77168d65e3af35407a48f03abeb3f842c8c73e3a7b071bdd9fd09c64bc63
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:46.8236673Z (node:2380) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:47.8661299Z Received 234881024 of 400569805 (58.6%), 223.8 MBs/sec
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:48.6097189Z Received 400569805 of 400569805 (100.0%), 218.8 MBs/sec
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:48.6097935Z Cache Size: ~382 MB (400569805 B)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:48.6225030Z [command]/usr/bin/tar -xf /home/runner/work/_temp/32c15654-8eec-4528-9462-dcf0ea5fe3ac/cache.tzst -P -C /home/runner/work/clarkcant/clarkcant --use-compress-program unzstd
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.6825726Z Cache restored successfully
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.7005942Z Cache restored from key: node-cache-Linux-x64-pnpm-d9fc77168d65e3af35407a48f03abeb3f842c8c73e3a7b071bdd9fd09c64bc63
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.7206165Z ##[group]Run pnpm install --frozen-lockfile
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.7206569Z [36;1mpnpm install --frozen-lockfile[0m
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.7276575Z shell: /usr/bin/bash -e {0}
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.7276855Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.8082881Z Scope: all 33 workspace projects
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.8290003Z ? Verifying lockfile against supply-chain policies (417 entries)...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.9520274Z Packages are hard linked from the content-addressable store to the virtual store.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.9538503Z   Content-addressable store is at: /home/runner/.local/share/pnpm/store/v11
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:50.9539767Z   Virtual store is at:             node_modules/.pnpm
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.0220213Z ✓ Lockfile passes supply-chain policies (417 entries in 2.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.0221398Z Lockfile is up to date, resolution step is skipped
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.0312378Z Packages: +304
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.0313383Z ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.0613266Z Progress: resolved 304, reused 304, downloaded 0, added 304, done
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.0687808Z .../node_modules/node-pty install$ node scripts/prebuild.js || node-gyp rebuild
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.1028377Z .../node_modules/node-pty install: [32m> Checking prebuilds...[0m
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.1050567Z .../node_modules/node-pty install: Done
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.1051356Z .../node_modules/node-pty postinstall$ node scripts/post-install.js
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.1381711Z .../node_modules/node-pty postinstall: [32m> Cleaning release folder...[0m
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.1383292Z .../node_modules/node-pty postinstall: [32m> Moving conpty.dll...[0m
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.1414374Z .../node_modules/node-pty postinstall:   SKIPPED (not Windows)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.1415200Z .../node_modules/node-pty postinstall: Done
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.2191329Z Ignored build scripts: @google/genai@1.52.0, protobufjs@7.6.6.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.2192625Z Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3630792Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3631731Z devDependencies:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3632417Z + @eslint/js 10.0.1
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3633033Z + @playwright/test 1.63.0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3633983Z + @types/node 24.13.4
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3634567Z + eslint 10.10.0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3635103Z + tsx 4.23.13
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3635802Z + typescript 5.9.3
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3636436Z + typescript-eslint 8.70.0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3656668Z + vitest 5.0.0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3657511Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.3658058Z Done in 2.6s using pnpm v12.4.2
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.4004392Z ##[group]Run pnpm exec playwright install --with-deps chromium
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.4005217Z [36;1mpnpm exec playwright install --with-deps chromium[0m
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.4087139Z shell: /usr/bin/bash -e {0}
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:53.4087560Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.0771744Z Installing dependencies...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.0834965Z Switching to root user to install dependencies...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.1556739Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.1818812Z Get:6 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease [3600 B]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.2556819Z Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.2569940Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.2622356Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.2642152Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.2662148Z Get:7 https://packages.microsoft.com/ubuntu/24.04/prod noble/main arm64 Packages [454 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.2840717Z Get:8 https://packages.microsoft.com/ubuntu/24.04/prod noble/main amd64 Packages [503 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.3757950Z Get:9 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1322 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.3834989Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble-updates/main Translation-en [299 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.3859339Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Components [181 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.3867619Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [1699 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.3966716Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe Translation-en [341 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4001556Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Components [388 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4029203Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1662 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4124175Z Get:16 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted Translation-en [379 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4162042Z Get:17 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Components [940 B]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4290356Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble-backports/main amd64 Packages [40.6 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4722096Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble-backports/main amd64 Components [5760 B]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4732559Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Packages [31.0 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4740820Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe Translation-en [18.6 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4815209Z Get:22 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Components [12.6 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4835089Z Get:23 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Packages [1066 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4892075Z Get:24 http://azure.archive.ubuntu.com/ubuntu noble-security/main Translation-en [220 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4910092Z Get:25 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Components [46.4 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4922265Z Get:26 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Packages [1216 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.4997595Z Get:27 http://azure.archive.ubuntu.com/ubuntu noble-security/universe Translation-en [244 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.5016942Z Get:28 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Components [76.3 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.5028721Z Get:29 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1566 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:54.5102427Z Get:30 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted Translation-en [361 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:48:59.3398133Z Fetched 12.5 MB in 1s (9267 kB/s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.1864882Z Reading package lists...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.2109431Z Reading package lists...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.4165891Z Building dependency tree...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.4173165Z Reading state information...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5826678Z libasound2t64 is already the newest version (1.2.11-1ubuntu0.3).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5828102Z libasound2t64 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5828749Z libatk-bridge2.0-0t64 is already the newest version (2.52.0-1build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5829536Z libatk-bridge2.0-0t64 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5830447Z libatk1.0-0t64 is already the newest version (2.52.0-1build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5830945Z libatk1.0-0t64 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5831464Z libatspi2.0-0t64 is already the newest version (2.52.0-1build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5831978Z libatspi2.0-0t64 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5832597Z libcairo2 is already the newest version (1.18.0-3build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5833322Z libcairo2 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5834214Z libcups2t64 is already the newest version (2.4.7-1.2ubuntu7.14).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5834744Z libcups2t64 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5835267Z libdbus-1-3 is already the newest version (1.14.10-4ubuntu4.1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5835773Z libdbus-1-3 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5836289Z libdrm2 is already the newest version (2.4.125-1ubuntu0.1~24.04.2).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5836794Z libdrm2 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5837276Z libnspr4 is already the newest version (2:4.35-1.1build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5837738Z libnspr4 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5838210Z libnss3 is already the newest version (2:3.98-1ubuntu0.2).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5838661Z libnss3 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5839155Z libpango-1.0-0 is already the newest version (1.52.1+ds-1build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5839828Z libpango-1.0-0 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5840538Z libx11-6 is already the newest version (2:1.8.7-1build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5841003Z libx11-6 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5841391Z libxcb1 is already the newest version (1.15-1ubuntu2).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5841768Z libxcb1 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5842205Z libxcomposite1 is already the newest version (1:0.4.5-1build3).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5842640Z libxcomposite1 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5843287Z libxdamage1 is already the newest version (1:1.1.6-1build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5843999Z libxdamage1 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5844846Z libxext6 is already the newest version (2:1.3.4-1build2).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5865907Z libxext6 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5866357Z libxfixes3 is already the newest version (1:6.0.0-2build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5866773Z libxfixes3 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5867214Z libxkbcommon0 is already the newest version (1.6.0-1build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5867631Z libxkbcommon0 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5868065Z libxrandr2 is already the newest version (2:1.5.2-2build1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5868467Z libxrandr2 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5868970Z fonts-noto-color-emoji is already the newest version (2.047-0ubuntu0.24.04.1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5869558Z libfontconfig1 is already the newest version (2.15.0-1.1ubuntu2).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5869998Z libfontconfig1 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5870453Z libfreetype6 is already the newest version (2.13.2+dfsg-1ubuntu0.1).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5870900Z libfreetype6 set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5871334Z fonts-liberation is already the newest version (1:2.1.5-3).
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5871761Z fonts-liberation set to manually installed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5872168Z The following additional packages will be installed:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5872699Z   gir1.2-glib-2.0 libgl1-mesa-dri libglib2.0-bin libglib2.0-data libglx-mesa0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5873258Z   libwayland-server0 mesa-libgallium xfonts-encodings xfonts-utils
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5874233Z   xserver-common
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5874488Z Suggested packages:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5874723Z   low-memory-monitor
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5874964Z Recommended packages:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.5875272Z   fonts-ipafont-mincho fonts-tlwg-loma xfonts-base
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6103973Z The following NEW packages will be installed:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6104739Z   fonts-freefont-ttf fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6111490Z   fonts-wqy-zenhei libwayland-server0 xfonts-cyrillic xfonts-encodings
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6112037Z   xfonts-scalable xfonts-utils
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6115275Z The following packages will be upgraded:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6116536Z   gir1.2-glib-2.0 libgbm1 libgl1-mesa-dri libglib2.0-0t64 libglib2.0-bin
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6121190Z   libglib2.0-data libglx-mesa0 mesa-libgallium xserver-common xvfb
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6289884Z 10 upgraded, 10 newly installed, 0 to remove and 36 not upgraded.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6290390Z Need to get 34.9 MB of archives.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6290883Z After this operation, 79.7 MB of additional disk space will be used.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6291393Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:00.6550619Z Get:2 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 fonts-ipafont-gothic all 00303-21ubuntu1 [3513 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:01.0891639Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libglib2.0-data all 2.80.0-6ubuntu3.9 [50.1 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:01.1036256Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libglib2.0-bin amd64 2.80.0-6ubuntu3.9 [97.9 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:01.1263006Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 gir1.2-glib-2.0 amd64 2.80.0-6ubuntu3.9 [183 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:01.1513996Z Get:6 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libglib2.0-0t64 amd64 2.80.0-6ubuntu3.9 [1547 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:01.3104107Z Get:7 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 fonts-freefont-ttf all 20211204+svn4273-2 [5641 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:01.8801603Z Get:8 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 fonts-tlwg-loma-otf all 1:0.7.3-1 [107 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:01.9033058Z Get:9 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 fonts-unifont all 1:15.1.01-1build1 [2993 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:02.1626811Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 fonts-wqy-zenhei all 0.9.45-8 [7472 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:02.7815528Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libgl1-mesa-dri amd64 25.2.8-0ubuntu0.24.04.3 [37.9 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:02.8458661Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libwayland-server0 amd64 1.22.0-2.1build1 [33.9 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:02.9000785Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libglx-mesa0 amd64 25.2.8-0ubuntu0.24.04.3 [110 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:02.9548976Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libgbm1 amd64 25.2.8-0ubuntu0.24.04.3 [34.3 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:02.9900324Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 mesa-libgallium amd64 25.2.8-0ubuntu0.24.04.3 [10.8 MB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:05.6626869Z Get:16 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 xfonts-encodings all 1:1.0.5-0ubuntu2 [578 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:05.7162676Z Get:17 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 xfonts-utils amd64 1:7.7+6build3 [94.4 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:05.7347445Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 xfonts-cyrillic all 1:1.0.5+nmu1 [384 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:05.7927993Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 xfonts-scalable all 1:1.0.3-1.3 [304 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:05.8854964Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 xserver-common all 2:21.1.12-1ubuntu1.8 [34.8 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:05.8974784Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 xvfb amd64 2:21.1.12-1ubuntu1.8 [877 kB]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2452035Z Fetched 34.9 MB in 5s (6494 kB/s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2668383Z Selecting previously unselected package fonts-ipafont-gothic.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2941067Z (Reading database ... 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2941889Z (Reading database ... 5%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2942337Z (Reading database ... 10%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2942796Z (Reading database ... 15%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2943168Z (Reading database ... 20%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2944230Z (Reading database ... 25%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2944639Z (Reading database ... 30%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2945097Z (Reading database ... 35%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2945493Z (Reading database ... 40%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2945869Z (Reading database ... 45%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2946258Z (Reading database ... 50%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.2984473Z (Reading database ... 55%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.3616497Z (Reading database ... 60%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.5463081Z (Reading database ... 65%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.7513833Z (Reading database ... 70%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:06.9186064Z (Reading database ... 75%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.0646986Z (Reading database ... 80%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.3046073Z (Reading database ... 85%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.5169598Z (Reading database ... 90%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.7090214Z (Reading database ... 95%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.7090702Z (Reading database ... 100%
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.7091281Z (Reading database ... 202190 files and directories currently installed.)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.7134069Z Preparing to unpack .../00-fonts-ipafont-gothic_00303-21ubuntu1_all.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.7224896Z Unpacking fonts-ipafont-gothic (00303-21ubuntu1) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.9619901Z Preparing to unpack .../01-libglib2.0-data_2.80.0-6ubuntu3.9_all.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.9637588Z Unpacking libglib2.0-data (2.80.0-6ubuntu3.9) over (2.80.0-6ubuntu3.8) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:07.9965641Z Preparing to unpack .../02-libglib2.0-bin_2.80.0-6ubuntu3.9_amd64.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.0006547Z Unpacking libglib2.0-bin (2.80.0-6ubuntu3.9) over (2.80.0-6ubuntu3.8) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.0520002Z Preparing to unpack .../03-gir1.2-glib-2.0_2.80.0-6ubuntu3.9_amd64.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.0538343Z Unpacking gir1.2-glib-2.0:amd64 (2.80.0-6ubuntu3.9) over (2.80.0-6ubuntu3.8) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.0930006Z Preparing to unpack .../04-libglib2.0-0t64_2.80.0-6ubuntu3.9_amd64.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.0991761Z Unpacking libglib2.0-0t64:amd64 (2.80.0-6ubuntu3.9) over (2.80.0-6ubuntu3.8) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.1421326Z Selecting previously unselected package fonts-freefont-ttf.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.1550100Z Preparing to unpack .../05-fonts-freefont-ttf_20211204+svn4273-2_all.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.1557348Z Unpacking fonts-freefont-ttf (20211204+svn4273-2) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.2374658Z Selecting previously unselected package fonts-tlwg-loma-otf.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.2500238Z Preparing to unpack .../06-fonts-tlwg-loma-otf_1%3a0.7.3-1_all.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.2507197Z Unpacking fonts-tlwg-loma-otf (1:0.7.3-1) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.2705147Z Selecting previously unselected package fonts-unifont.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.2829457Z Preparing to unpack .../07-fonts-unifont_1%3a15.1.01-1build1_all.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.2835543Z Unpacking fonts-unifont (1:15.1.01-1build1) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.3884376Z Selecting previously unselected package fonts-wqy-zenhei.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.4008698Z Preparing to unpack .../08-fonts-wqy-zenhei_0.9.45-8_all.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.4106856Z Unpacking fonts-wqy-zenhei (0.9.45-8) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.8855399Z Preparing to unpack .../09-libgl1-mesa-dri_25.2.8-0ubuntu0.24.04.3_amd64.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.9007515Z Unpacking libgl1-mesa-dri:amd64 (25.2.8-0ubuntu0.24.04.3) over (25.2.8-0ubuntu0.24.04.2) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.9362632Z Selecting previously unselected package libwayland-server0:amd64.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.9490799Z Preparing to unpack .../10-libwayland-server0_1.22.0-2.1build1_amd64.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.9498685Z Unpacking libwayland-server0:amd64 (1.22.0-2.1build1) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.9825788Z Preparing to unpack .../11-libglx-mesa0_25.2.8-0ubuntu0.24.04.3_amd64.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:08.9847068Z Unpacking libglx-mesa0:amd64 (25.2.8-0ubuntu0.24.04.3) over (25.2.8-0ubuntu0.24.04.2) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.0239761Z Preparing to unpack .../12-libgbm1_25.2.8-0ubuntu0.24.04.3_amd64.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.0265378Z Unpacking libgbm1:amd64 (25.2.8-0ubuntu0.24.04.3) over (25.2.8-0ubuntu0.24.04.2) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.0620892Z Preparing to unpack .../13-mesa-libgallium_25.2.8-0ubuntu0.24.04.3_amd64.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.0644773Z Unpacking mesa-libgallium:amd64 (25.2.8-0ubuntu0.24.04.3) over (25.2.8-0ubuntu0.24.04.2) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.2311958Z Selecting previously unselected package xfonts-encodings.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.2438986Z Preparing to unpack .../14-xfonts-encodings_1%3a1.0.5-0ubuntu2_all.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.2446548Z Unpacking xfonts-encodings (1:1.0.5-0ubuntu2) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.2731491Z Selecting previously unselected package xfonts-utils.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.2855708Z Preparing to unpack .../15-xfonts-utils_1%3a7.7+6build3_amd64.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.2863488Z Unpacking xfonts-utils (1:7.7+6build3) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.3173815Z Selecting previously unselected package xfonts-cyrillic.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.3299796Z Preparing to unpack .../16-xfonts-cyrillic_1%3a1.0.5+nmu1_all.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.3307896Z Unpacking xfonts-cyrillic (1:1.0.5+nmu1) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.3640602Z Selecting previously unselected package xfonts-scalable.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.3766139Z Preparing to unpack .../17-xfonts-scalable_1%3a1.0.3-1.3_all.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.3773784Z Unpacking xfonts-scalable (1:1.0.3-1.3) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.4122195Z Preparing to unpack .../18-xserver-common_2%3a21.1.12-1ubuntu1.8_all.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.4142165Z Unpacking xserver-common (2:21.1.12-1ubuntu1.8) over (2:21.1.12-1ubuntu1.6) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.4480661Z Preparing to unpack .../19-xvfb_2%3a21.1.12-1ubuntu1.8_amd64.deb ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.4499294Z Unpacking xvfb (2:21.1.12-1ubuntu1.8) over (2:21.1.12-1ubuntu1.6) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5058387Z Setting up libwayland-server0:amd64 (1.22.0-2.1build1) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5079231Z Setting up mesa-libgallium:amd64 (25.2.8-0ubuntu0.24.04.3) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5097248Z Setting up libgbm1:amd64 (25.2.8-0ubuntu0.24.04.3) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5114060Z Setting up libgl1-mesa-dri:amd64 (25.2.8-0ubuntu0.24.04.3) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5185216Z Setting up fonts-wqy-zenhei (0.9.45-8) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5294778Z Setting up fonts-freefont-ttf (20211204+svn4273-2) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5314564Z Setting up libglib2.0-0t64:amd64 (2.80.0-6ubuntu3.9) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5413227Z Setting up libglib2.0-data (2.80.0-6ubuntu3.9) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5429532Z Setting up fonts-tlwg-loma-otf (1:0.7.3-1) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5447112Z Setting up xfonts-encodings (1:1.0.5-0ubuntu2) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5464276Z Setting up gir1.2-glib-2.0:amd64 (2.80.0-6ubuntu3.9) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5510317Z Setting up fonts-ipafont-gothic (00303-21ubuntu1) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5574026Z update-alternatives: using /usr/share/fonts/opentype/ipafont-gothic/ipag.ttf to provide /usr/share/fonts/truetype/fonts-japanese-gothic.ttf (fonts-japanese-gothic.ttf) in auto mode
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5587988Z Setting up xserver-common (2:21.1.12-1ubuntu1.8) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5605983Z Setting up fonts-unifont (1:15.1.01-1build1) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5623263Z Setting up libglx-mesa0:amd64 (25.2.8-0ubuntu0.24.04.3) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5643396Z Setting up xvfb (2:21.1.12-1ubuntu1.8) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5661001Z Setting up libglib2.0-bin (2.80.0-6ubuntu3.9) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5677116Z Setting up xfonts-utils (1:7.7+6build3) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5715148Z Setting up xfonts-cyrillic (1:1.0.5+nmu1) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.5998746Z Setting up xfonts-scalable (1:1.0.3-1.3) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.6265760Z Processing triggers for libc-bin (2.39-0ubuntu8.9) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.6556182Z Processing triggers for man-db (2.12.0-4build2) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.6605428Z Not building database; man-db/auto-update is not 'true'.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:09.6617491Z Processing triggers for fontconfig (2.15.0-1.1ubuntu2) ...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.2783821Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.2784582Z Running kernel seems to be up-to-date.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.2785186Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.2785318Z Restarting services...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.3407629Z  systemctl restart packagekit.service php8.3-fpm.service polkit.service udisks2.service
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.4693087Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.4694061Z Service restarts being deferred:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.4696513Z  systemctl restart ModemManager.service
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.4696986Z  systemctl restart networkd-dispatcher.service
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.4697235Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.4697399Z No containers need to be restarted.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.4697589Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.4697777Z No user sessions are running outdated binaries.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.4698015Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:10.4698316Z No VM guests are running outdated hypervisor (qemu) binaries on this host.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:11.3911487Z Downloading Chrome for Testing 153.0.8010.12 (playwright chromium v1243) from https://cdn.playwright.dev/builds/cft/153.0.8010.12/linux64/chrome-linux64.zip
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:11.7989248Z |                                                                                |   0% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:12.0108860Z |■■■■■■■■                                                                        |  10% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:12.1149515Z |■■■■■■■■■■■■■■■■                                                                |  20% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:12.2015487Z |■■■■■■■■■■■■■■■■■■■■■■■■                                                        |  30% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:12.2941314Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                                |  40% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:12.3849948Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                        |  50% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:12.4571557Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                |  60% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:12.5355082Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                        |  70% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:12.6078017Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                |  80% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:12.6774791Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■        |  90% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:12.7594874Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■| 100% of 186.8 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:15.7618915Z Chrome for Testing 153.0.8010.12 (playwright chromium v1243) downloaded to /home/runner/.cache/ms-playwright/chromium-1243
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:15.7622662Z Downloading FFmpeg (playwright ffmpeg v1011) from https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1465950Z |                                                                                |   0% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1515629Z |■■■■■■■■                                                                        |  10% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1556566Z |■■■■■■■■■■■■■■■■                                                                |  20% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1580759Z |■■■■■■■■■■■■■■■■■■■■■■■■                                                        |  30% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1597126Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                                |  40% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1608996Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                        |  50% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1628951Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                |  60% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1642358Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                        |  70% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1663896Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                |  80% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1678940Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■        |  90% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.1687483Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■| 100% of 2.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.2433132Z FFmpeg (playwright ffmpeg v1011) downloaded to /home/runner/.cache/ms-playwright/ffmpeg-1011
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.2436918Z Downloading Chrome Headless Shell 153.0.8010.12 (playwright chromium-headless-shell v1243) from https://cdn.playwright.dev/builds/cft/153.0.8010.12/linux64/chrome-headless-shell-linux64.zip
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.6458314Z |                                                                                |   0% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.7764125Z |■■■■■■■■                                                                        |  10% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.8528231Z |■■■■■■■■■■■■■■■■                                                                |  20% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.9060091Z |■■■■■■■■■■■■■■■■■■■■■■■■                                                        |  30% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:16.9624456Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                                |  40% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:17.0088219Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                        |  50% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:17.0616984Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                |  60% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:17.1078481Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                        |  70% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:17.1529601Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                |  80% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:17.2054814Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■        |  90% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:17.2509382Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■| 100% of 114.3 MiB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:19.3973007Z Chrome Headless Shell 153.0.8010.12 (playwright chromium-headless-shell v1243) downloaded to /home/runner/.cache/ms-playwright/chromium_headless_shell-1243
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:19.4202198Z ##[group]Run pnpm test:e2e
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:19.4202687Z [36;1mpnpm test:e2e[0m
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:19.4266090Z shell: /usr/bin/bash -e {0}
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:19.4266367Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:19.5041963Z $ playwright test
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1402617Z [WebServer] no model configured; the node will answer with scripts and capabilities only
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1545229Z [WebServer] frame grants: fixture lifetime seam loaded (CC_FRAME_GRANT_FIXTURE=1)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1598087Z [WebServer] project sessions: FIXTURE starter loaded — a session is reported, and no worker is spawned
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1599985Z [WebServer] overview: FIXTURE composer loaded — overview requests are scripted, and no provider is called for them
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1610248Z [WebServer] filesystem search: read-only over / — no index is built; matches are sent to the model provider
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1626150Z [WebServer] views: 25 definition(s) the model may show — canvas.line@1, canvas.bar@1, canvas.donut@1, canvas.table@1, canvas.metrics@1, canvas.filter@1, canvas.image@1, canvas.carousel@1, canvas.gallery@1, canvas.youtube@1, canvas.video@1, canvas.action@1, canvas.form@1, canvas.list@1, canvas.status@1, canvas.progress@1, canvas.details@1, canvas.code@1, canvas.diff@1, canvas.file@1, canvas.area@1, canvas.scatter@1, canvas.calendar@1, canvas.timeline@1, canvas.overview@1
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1629738Z [WebServer] catalog: every family a composed surface needs is drawable
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1630700Z [WebServer] session transcripts: .data/e2e/sessions
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1631961Z [WebServer] selector: disabled (no credential or local-only); composed surfaces use the deterministic path
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1633912Z [WebServer] update check: FIXTURE — no periodic job started, no registry is called
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1670791Z [WebServer] voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1690018Z [WebServer] (node:3422) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1691436Z [WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1734818Z [WebServer] clarkcant node "e2e-node" listening on http://127.0.0.1:8876
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1735786Z [WebServer] node id: node_4250682c4b96497ab9b57484
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.1736457Z [WebServer] data dir: .data/e2e
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.2560003Z [WebServer] container engine: docker 28.0.4 — the OCI image can be built on this machine
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.2561283Z [WebServer] commands require the bearer token stored in the node's identity.json
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.2588070Z [WebServer] project index: 1 scanned, 1 kept, 1 removed
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.5426999Z [WebServer] npm fixture registry listening on http://127.0.0.1:8878
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.6354933Z [WebServer] $ vite build --outDir dist
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.8399337Z [WebServer] vite v8.3.0 building client environment for production...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:22.8504434Z [WebServer] transforming...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.0583679Z [WebServer] ✓ 370 modules transformed.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.1405632Z [WebServer] rendering chunks...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8604694Z [WebServer] computing gzip size...
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8806873Z [WebServer] dist/assets/plus-jakarta-sans-cyrillic-ext-wght-normal-lLTsRRxN.woff2      1.71 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8808408Z [WebServer] dist/assets/voice-capture-worklet-DsmQparT.js                              1.99 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8810182Z [WebServer] dist/index.html                                                            2.49 kB │ gzip:   1.19 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8811554Z [WebServer] dist/assets/plus-jakarta-sans-vietnamese-wght-normal-qRpaaN48.woff2        8.35 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8813065Z [WebServer] dist/assets/plus-jakarta-sans-latin-ext-wght-normal-DmpS2jIq.woff2        21.72 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8814845Z [WebServer] dist/assets/plus-jakarta-sans-latin-wght-normal-eXO_dkmS.woff2            27.34 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8817108Z [WebServer] dist/assets/main-DjYd3uYR.css                                              1.36 kB │ gzip:   0.51 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8819156Z [WebServer] dist/widget-runtime.js                                                     0.51 kB │ gzip:   0.35 kB │ map:     2.08 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8820958Z [WebServer] dist/assets/rolldown-runtime-hePW80VL.js                                   0.71 kB │ gzip:   0.42 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8822811Z [WebServer] dist/assets/addon-fit-DIOBYJe3.js                                          1.25 kB │ gzip:   0.53 kB │ map:     3.37 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8824735Z [WebServer] dist/assets/src-CIK1j5Ap.js                                              314.41 kB │ gzip:  94.72 kB │ map: 1,728.85 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8828138Z [WebServer] dist/assets/xterm-ScmBfeDI.js                                            331.22 kB │ gzip:  83.07 kB │ map:   675.33 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8829702Z [WebServer] dist/assets/main-Do8RvaPw.js                                           1,443.15 kB │ gzip: 393.70 kB │ map: 4,174.24 kB
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8830498Z [WebServer] 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8831012Z [WebServer] [plugin builtin:vite-reporter] 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8831906Z [WebServer] (!) Some chunks are larger than 500 kB after minification. Consider:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8832857Z [WebServer] - Using dynamic import() to code-split the application
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8834646Z [WebServer] - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8836142Z [WebServer] - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:23.8837061Z [WebServer] ✓ built in 1.04s
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:24.1715759Z [WebServer]   ➜  Local:   http://127.0.0.1:4273/
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:28.0520793Z (node:3382) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:28.0521898Z (Use `node --trace-warnings ...` to show where the warning was created)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:28.3773865Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:28.3774833Z Running 331 tests using 1 worker
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:28.3775316Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:31.1668154Z   ✓    1 [chromium] › apps/web/e2e/accessibility.spec.ts:52:1 › the main journey can be completed with the keyboard alone (2.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:32.4705525Z   ✓    2 [chromium] › apps/web/e2e/accessibility.spec.ts:66:1 › every control is at least the size the tokens set (1.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:34.2858495Z   ✓    3 [chromium] › apps/web/e2e/accessibility.spec.ts:84:1 › the live regions are bounded rather than re-reading the conversation (1.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:35.5107966Z   ✓    4 [chromium] › apps/web/e2e/accessibility.spec.ts:112:1 › the controls a screen reader lands on have names (1.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:37.2134067Z   ✓    5 [chromium] › apps/web/e2e/accessibility.spec.ts:129:1 › a host card offers a text alternative to its visual form (1.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:37.5190721Z [WebServer] services: docker 28.0.4 runs package services on this node
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:44.3833405Z   ✓    6 [chromium] › apps/web/e2e/action-widget.spec.ts:116:1 › an agent button starts a turn whose message is exactly its label (3.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:46.3589658Z   ✓    7 [chromium] › apps/web/e2e/action-widget.spec.ts:136:1 › a view button pins itself to the conversation (2.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:48.9272206Z   ✓    8 [chromium] › apps/web/e2e/action-widget.spec.ts:147:1 › an invoke button calls the package's service and shows what it answered (2.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:51.2790340Z   ✓    9 [chromium] › apps/web/e2e/action-widget.spec.ts:165:1 › a workflow button adds a note through the package's service and reads the list back (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:53.4181384Z   ✓   10 [chromium] › apps/web/e2e/action-widget.spec.ts:187:1 › an agent button with a context reference gives the model what the host read, not what the frame said (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:56.0014788Z   ✓   11 [chromium] › apps/web/e2e/action-widget.spec.ts:210:1 › Stop cancels an invoke still waiting on the service, and says whether it took effect is unknown (2.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:57.5704555Z [WebServer] services: com.example.notes@1.0.0:codegen_muo3qvxz2766b6m#com.example.notes.service stopped: mcp server com.example.notes@1.0.0:codegen_muo3qvxz2766b6m#com.example.notes.service exited with code 137
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:49:59.4748636Z   ✓   12 [chromium] › apps/web/e2e/action-widget.spec.ts:261:1 › a press the node refuses shows the reason, and an unknown or stale binding is refused (3.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:07.8125711Z   ✓   13 [chromium] › apps/web/e2e/action-widget.spec.ts:303:1 › the buttons read at phone width without horizontal scrolling (8.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:13.0127114Z   ✓   14 [chromium] › apps/web/e2e/activity-timeline.spec.ts:99:1 › the timeline groups entries by its own timezone, walks them from the keyboard, and keeps a selection across a reload (5.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:15.8846685Z   ✓   15 [chromium] › apps/web/e2e/activity-timeline.spec.ts:175:1 › a selection the node refuses is undrawn, the reason is said in the person's language, and the kept one stays (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:17.7366957Z   ✓   16 [chromium] › apps/web/e2e/activity-timeline.spec.ts:203:1 › a timeline with a repeated id or a hidden character is refused with the host's reason, and none is drawn (1.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:21.4218313Z   ✓   17 [chromium] › apps/web/e2e/activity-timeline.spec.ts:214:1 › the oldest-first timeline pages five entries at a time, and the keyboard stays on the page shown (3.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:22.5677993Z   ✓   18 [chromium] › apps/web/e2e/activity-timeline.spec.ts:241:1 › the timeline adds no motion of its own when motion is reduced (1.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:27.5186037Z   ✓   19 [chromium] › apps/web/e2e/activity-timeline.spec.ts:256:1 › the library previews the timeline fixtures through the production renderer, usable without a node (4.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:38.4326033Z   ✓   20 [chromium] › apps/web/e2e/activity-timeline.spec.ts:287:1 › the timeline is usable at phone width with touch, without scrolling sideways, in the light theme (10.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:42.2679442Z   ✓   21 [chromium] › apps/web/e2e/agent-app-control.spec.ts:71:1 › the agent opens Settings on a tab and is told it is done only because the page ran it (3.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:45.4827893Z   ✓   22 [chromium] › apps/web/e2e/agent-app-control.spec.ts:88:1 › a model switch the page could not make is reported to the agent as a failure, with the page's reason (3.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:48.4290891Z   ✓   23 [chromium] › apps/web/e2e/agent-app-control.spec.ts:106:1 › a model switch the page made is reported as done, and the label and note follow it (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:51.4457258Z   ✓   24 [chromium] › apps/web/e2e/agent-app-control.spec.ts:119:1 › a command the page cannot carry out says so in a readable notice, inside the page's gutter (3.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:54.9460344Z   ✓   25 [chromium] › apps/web/e2e/agent-app-control.spec.ts:140:1 › the agent opens voice mode and is told so only once the session is listening (3.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:50:57.8491243Z   ✓   26 [chromium] › apps/web/e2e/agent-app-control.spec.ts:149:1 › the agent returns to the conversation from Settings without leaving it, unlike going home (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:00.9665547Z   ✓   27 [chromium] › apps/web/e2e/agent-app-control.spec.ts:174:1 › the agent cycles the model the way the hotkey does, and the label says where it moved (3.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:08.4435996Z   ✓   28 [chromium] › apps/web/e2e/agent-app-control.spec.ts:192:1 › the agent changes the orb's style through the preference Settings writes, and the orb on screen follows (7.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:12.1233843Z   ✓   29 [chromium] › apps/web/e2e/agent-app-control.spec.ts:230:1 › an orb style the agent chooses while Settings is open becomes the selected style there (3.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:16.6591979Z   ✓   30 [chromium] › apps/web/e2e/agent-app-control.spec.ts:260:1 › the voice agent ends voice mode through the same contract, and the page confirms it (4.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:19.5845125Z [overflow] 298-clark-default-1280-dark: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:21.6536198Z [overflow] 298-clark-default-390-dark: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:23.6733119Z [overflow] 298-clark-default-1280-light: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:25.6605204Z [overflow] 298-clark-default-390-light: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:27.5042574Z [overflow] 298-depth-1280-dark: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:29.2999116Z [overflow] 298-depth-390-dark: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:31.0527306Z [overflow] 298-depth-1280-light: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:33.0312373Z [overflow] 298-depth-390-light: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:34.7884159Z   ✓   31 [chromium] › apps/web/e2e/appearance-depth.spec.ts:165:1 › a recipe-and-effect theme reaches the page, brings its Orb default, and loses the Orb to the person's choice (18.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:39.5193970Z [overflow] 298-flatline-1280-dark: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:42.7849406Z [overflow] 298-flatline-390-dark: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:45.6672596Z [overflow] 298-flatline-1280-light: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:50.2735054Z [overflow] 298-flatline-390-light: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:51:55.2765916Z   ✓   32 [chromium] › apps/web/e2e/appearance-depth.spec.ts:200:1 › a hostile theme cannot hide Stop, the approval card, or a focus ring, and a camouflaged one is refused (20.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:52:16.6264429Z   ✓   33 [chromium] › apps/web/e2e/appearance-depth.spec.ts:310:1 › a theme's button recipe never reaches the host's answers or Stop (21.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:52:17.9376947Z   ✓   34 [chromium] › apps/web/e2e/appearance-depth.spec.ts:369:1 › reduced motion stills the theme's motion, its backdrop light and its Orb (1.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:52:19.3350860Z   ✓   35 [chromium] › apps/web/e2e/appearance-depth.spec.ts:393:1 › the person's own Reduced setting stills the theme's motion and backdrop light as the system's does (1.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:52:22.2009733Z [overflow] 298-typed-depth-390-dark: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:53:26.8993141Z   ✘   36 [chromium] › apps/web/e2e/appearance-depth.spec.ts:423:1 › a typed sentence and the keyboard alone choose a theme through the same write as a click (1.1m)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:53:30.7514499Z [overflow] 298-typed-depth-390-dark: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:26.2961574Z [overflow] 298-keyboard-gallery-390-dark: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:33.4670946Z   ✘   37 [chromium] › apps/web/e2e/appearance-depth.spec.ts:423:1 › a typed sentence and the keyboard alone choose a theme through the same write as a click (retry #1) (1.1m)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:39.7288706Z   ✓   38 [chromium] › apps/web/e2e/appearance.spec.ts:46:1 › a theme choice changes the surface, follows the system, and survives a reload (5.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:43.3099798Z   ✓   39 [chromium] › apps/web/e2e/appearance.spec.ts:80:1 › settings is a modal whose tabs each show their own content, and Escape returns focus to the gear (3.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:45.7428128Z   ✓   40 [chromium] › apps/web/e2e/appearance.spec.ts:122:1 › the settings tabs are operable from the keyboard alone (2.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:48.0566201Z   ✓   41 [chromium] › apps/web/e2e/appearance.spec.ts:163:1 › the orb is centred on the screen it is drawn over (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:49.2486157Z   ✓   42 [chromium] › apps/web/e2e/appearance.spec.ts:193:1 › the header is a gradient rather than a bar above the page (1.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:51.4679812Z   ✓   43 [chromium] › apps/web/e2e/appearance.spec.ts:209:1 › the extensions tab tells the node's tools from the agent's (2.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:53.9739460Z   ✓   44 [chromium] › apps/web/e2e/appearance.spec.ts:230:1 › the settings panel lists what this node can run, or says plainly that it can run nothing (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:56.1386165Z   ✓   45 [chromium] › apps/web/e2e/appearance.spec.ts:265:1 › every key in settings can be taken back again, which is how a provider is logged out of (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:54:58.7309122Z   ✓   46 [chromium] › apps/web/e2e/appearance.spec.ts:287:1 › the model in use is what the fields show before anybody types (2.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:55:00.6814285Z   ✓   47 [chromium] › apps/web/e2e/appearance.spec.ts:320:1 › the extensions tab says which extensions pi loads on this machine (1.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:55:03.5297193Z   ✓   48 [chromium] › apps/web/e2e/appearance.spec.ts:335:1 › pi's own configuration is in the developer tab, behind a disclosure, as lines rather than as a file (2.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:55:08.1558621Z   ✓   49 [chromium] › apps/web/e2e/appearance.spec.ts:362:1 › personal instructions can be written, survive a reload, and are never sent as the user's message (4.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:55:10.2540497Z   ✓   50 [chromium] › apps/web/e2e/appearance.spec.ts:453:1 › the voice picker is drawn from what the provider says it can do (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:55:12.6838154Z   ✓   51 [chromium] › apps/web/e2e/approval.spec.ts:45:1 › a proposed command runs only after the user approves it (2.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:55:15.7092704Z   ✓   52 [chromium] › apps/web/e2e/approval.spec.ts:76:1 › refusing runs nothing and says so (3.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:55:17.6302360Z   ✓   53 [chromium] › apps/web/e2e/artifact-reopen.spec.ts:40:1 › reopening an artifact asks the node what it still holds (1.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:55:34.5325459Z   ✓   54 [chromium] › apps/web/e2e/artifact-viewers.spec.ts:126:1 › code, a diff and a file show what the model wrote, as text, and nothing claims to be live (16.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:55:36.1192578Z   ✓   55 [chromium] › apps/web/e2e/artifact-viewers.spec.ts:259:1 › a diff whose hunk cannot be numbered is refused with the host's reason, and no card is drawn (1.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:55:37.7845922Z   ✓   56 [chromium] › apps/web/e2e/artifact-viewers.spec.ts:268:1 › a line break inside one line of a diff is refused with the host's reason, and no card is drawn (1.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:02.7176630Z   ✓   57 [chromium] › apps/web/e2e/artifact-viewers.spec.ts:294:1 › hidden characters in code and a diff are drawn as markers with a warning, and a line separator counts as a line (24.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:05.3994477Z   ✓   58 [chromium] › apps/web/e2e/artifact-viewers.spec.ts:367:1 › a copy the browser refuses says so in words, and a second try is announced again (2.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:06.5027102Z   ✓   59 [chromium] › apps/web/e2e/artifact-viewers.spec.ts:395:1 › the cards add no motion of their own when motion is reduced (1.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:13.6066906Z   ✓   60 [chromium] › apps/web/e2e/artifact-viewers.spec.ts:413:1 › the cards read at phone width; a long line scrolls inside its card, not the page (7.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:22.0821313Z   ✓   61 [chromium] › apps/web/e2e/artifact-viewers.spec.ts:444:1 › the library previews each card through the production renderer (8.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:23.3330331Z   ✓   62 [chromium] › apps/web/e2e/attachments.spec.ts:105:1 › the attach button is enabled and offers a file input (1.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:25.2625889Z   ✓   63 [chromium] › apps/web/e2e/attachments.spec.ts:121:1 › two attached files show chips with name, size and state (1.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:27.1960226Z   ✓   64 [chromium] › apps/web/e2e/attachments.spec.ts:142:1 › sending stores one attachment block per file in the timeline (1.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:29.8923097Z   ✓   65 [chromium] › apps/web/e2e/attachments.spec.ts:163:1 › the agent answers using the content of an attached file (2.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:31.9588110Z   ✓   66 [chromium] › apps/web/e2e/attachments.spec.ts:187:1 › the agent answers using the content of an attached pdf (2.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:34.7782360Z   ✓   67 [chromium] › apps/web/e2e/attachments.spec.ts:200:1 › the attachments are still in the timeline after a reload (2.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:38.7049225Z   ✓   68 [chromium] › apps/web/e2e/attachments.spec.ts:214:1 › the image attachment renders as an image after reload (3.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:43.4328869Z   ✓   69 [chromium] › apps/web/e2e/attachments.spec.ts:235:1 › an oversized file is refused on the chip with a stated reason (4.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:44.8493144Z   ✓   70 [chromium] › apps/web/e2e/attachments.spec.ts:247:1 › a declined type is refused before any request is made (1.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:47.1841309Z   ✓   71 [chromium] › apps/web/e2e/attachments.spec.ts:269:1 › a chip can be removed before sending (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:48.5617739Z   ✓   72 [chromium] › apps/web/e2e/attachments.spec.ts:285:1 › a pasted image becomes a chip (1.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:56:54.0564665Z   ✓   73 [chromium] › apps/web/e2e/attachments.spec.ts:307:1 › a chip whose upload failed is not sent with the message (5.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:00.7179045Z   ✓   74 [chromium] › apps/web/e2e/automation.spec.ts:30:1 › a reminder set up in the conversation is said there, and left in the inbox, when its signal arrives (6.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:07.5589914Z   ✓   75 [chromium] › apps/web/e2e/automation.spec.ts:76:1 › an address in what the node says on its own opens as a link, the way a task's pull request is reported (6.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:09.5816239Z   ✓   76 [chromium] › apps/web/e2e/autonomy.spec.ts:39:1 › a command runs without an approval card under the default policy (2.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:12.9216496Z   ✓   77 [chromium] › apps/web/e2e/autonomy.spec.ts:55:1 › the Autonomy control lives in the Control tab, and saving it reaches the node (3.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:15.6356859Z   ✓   78 [chromium] › apps/web/e2e/background-work.spec.ts:44:1 › the background limit chosen in Settings is the one the node admits work under (2.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:26.5063831Z   ✓   79 [chromium] › apps/web/e2e/background-work.spec.ts:63:1 › a running background request is stopped from the process panel and reported as stopped (10.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:31.5896453Z   ✓   80 [chromium] › apps/web/e2e/browser-takeover.spec.ts:41:1 › a takeover changes who may act, and a stop ends the session (5.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:39.3891404Z   ✓   81 [chromium] › apps/web/e2e/browser-task-effect.spec.ts:57:1 › a submit the page never answers is held as unknown, heard in the inbox, and answered by the person once (7.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:44.5266139Z   ✓   82 [chromium] › apps/web/e2e/calendar-views.spec.ts:118:1 › the month view places events by the calendar's timezone, walks days from the keyboard, and keeps a selected event (5.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:48.8841790Z   ✓   83 [chromium] › apps/web/e2e/calendar-views.spec.ts:193:1 › the week view shows all-day and overnight events on each of their days, with now among today's events (4.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:53.2826943Z   ✓   84 [chromium] › apps/web/e2e/calendar-views.spec.ts:268:1 › the agenda lists the month's days with events, marks now, and switches views from the same calendar (4.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:56.1101508Z   ✓   85 [chromium] › apps/web/e2e/calendar-views.spec.ts:303:1 › a page that asks for an event the node no longer holds is told so in the person's language (2.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:57:59.8566212Z   ✓   86 [chromium] › apps/web/e2e/calendar-views.spec.ts:339:1 › an event written with no offset is at its time in the calendar's timezone, in the browser as on the node (3.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:01.3676529Z   ✓   87 [chromium] › apps/web/e2e/calendar-views.spec.ts:366:1 › a month that does not exist is refused with the host's reason, and no calendar is drawn (1.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:02.5858491Z   ✓   88 [chromium] › apps/web/e2e/calendar-views.spec.ts:375:1 › the calendar adds no motion of its own when motion is reduced (1.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:06.7576589Z   ✓   89 [chromium] › apps/web/e2e/calendar-views.spec.ts:391:1 › the library previews the week and agenda fixtures through the production renderer, usable without a node (4.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:10.2255304Z   ✓   90 [chromium] › apps/web/e2e/calendar-views.spec.ts:422:1 › the week view is usable at phone width without scrolling sideways, in the light theme (3.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:12.3663170Z   ✓   91 [chromium] › apps/web/e2e/capability-approvals.spec.ts:68:1 › nothing is shown when there is nothing to decide (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:14.7166689Z   ✓   92 [chromium] › apps/web/e2e/capability-approvals.spec.ts:74:1 › a question is answered with the digest it was shown under, and the outcome takes focus (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:17.2436262Z   ✓   93 [chromium] › apps/web/e2e/capability-approvals.spec.ts:98:1 › a refused answer says nothing was granted and keeps the question (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:18.9689527Z   ✓   94 [chromium] › apps/web/e2e/composer-draft.spec.ts:37:1 › a sent message leaves the composer empty (1.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:21.3122121Z   ✓   95 [chromium] › apps/web/e2e/composer-draft.spec.ts:53:1 › a refused send gives the typed text back (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:23.9804151Z   ✓   96 [chromium] › apps/web/e2e/composer-references.spec.ts:65:1 › a skill chosen after a slash with the keyboard is sent, shown and briefed to the turn (2.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:26.9046092Z   ✓   97 [chromium] › apps/web/e2e/composer-references.spec.ts:105:1 › a file inside a project is reached by opening folders with Tab and sent with Enter (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:28.9936414Z   ✓   98 [chromium] › apps/web/e2e/composer-references.spec.ts:144:1 › Escape closes the picker and leaves the draft as it was (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:31.9761853Z   ✓   99 [chromium] › apps/web/e2e/composer-references.spec.ts:162:1 › the pointer chooses a row and opens a folder, and removing a chip takes its token out (3.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:34.8887400Z   ✓  100 [chromium] › apps/web/e2e/composer-references.spec.ts:190:1 › a file deleted after it was chosen refuses the send by name and keeps the draft (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:37.2241903Z   ✓  101 [chromium] › apps/web/e2e/composer-references.spec.ts:217:1 › an input method's Enter finishes its word instead of choosing a row or sending, and Shift+Enter starts a line (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:39.6094631Z   ✓  102 [chromium] › apps/web/e2e/composer-references.spec.ts:259:1 › background work is pointed at with an at sign and briefed by what the node holds of it (2.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:41.9899841Z   ✓  103 [chromium] › apps/web/e2e/composer-references.spec.ts:301:1 › a package's service is pointed at by its name and offered with its state only (2.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:52.9466283Z   ✓  104 [chromium] › apps/web/e2e/composition-graph.spec.ts:64:1 › a choice switches the chart's series and a search narrows the table, and the live surface keeps both (10.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:56.2531571Z   ✓  105 [chromium] › apps/web/e2e/composition-graph.spec.ts:157:1 › the transcript's copy can be explored on the page, and nothing is sent (3.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:58:57.9959322Z   ✓  106 [chromium] › apps/web/e2e/composition-graph.spec.ts:177:1 › a graph the node cannot check is refused in the conversation, with the reason, and nothing is drawn (1.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:00.4557110Z   ✓  107 [chromium] › apps/web/e2e/computer-session.spec.ts:41:1 › a desktop session reports the permission it does not own, and still lets the user take it (2.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:03.0815787Z   ✓  108 [chromium] › apps/web/e2e/conversation-delete.spec.ts:43:3 › policy asks, keeps on decline and deletes once approved at 1280 light (2.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:05.6283749Z   ✓  109 [chromium] › apps/web/e2e/conversation-delete.spec.ts:43:3 › policy asks, keeps on decline and deletes once approved at 1280 dark (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:07.9161428Z   ✓  110 [chromium] › apps/web/e2e/conversation-delete.spec.ts:43:3 › policy asks, keeps on decline and deletes once approved at 390 light (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:10.1616509Z   ✓  111 [chromium] › apps/web/e2e/conversation-delete.spec.ts:43:3 › policy asks, keeps on decline and deletes once approved at 390 dark (2.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:13.0026182Z   ✓  112 [chromium] › apps/web/e2e/conversation-delete.spec.ts:81:1 › an explicit English request in autonomous mode deletes without adding a confirmation (2.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:16.0212035Z   ✓  113 [chromium] › apps/web/e2e/credentials.spec.ts:51:1 › lists every stored key by name, with connection status, and never shows the value that was typed (3.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:19.6608423Z   ✓  114 [chromium] › apps/web/e2e/credentials.spec.ts:91:1 › replace and remove both work, and removing drops the connected status (3.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:22.2186419Z   ✓  115 [chromium] › apps/web/e2e/credentials.spec.ts:117:1 › Devices & Voice no longer embeds a key form, and points at the Credentials section instead (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:23.3551633Z   ✓  116 [chromium] › apps/web/e2e/desktop-window-controls.spec.ts:98:1 › a plain browser draws no window chrome at all (1.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:24.6707397Z   ✓  117 [chromium] › apps/web/e2e/desktop-window-controls.spec.ts:103:1 › an older shell keeps its chrome but gets no minimize or full screen button (1.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:26.1994164Z   ✓  118 [chromium] › apps/web/e2e/desktop-window-controls.spec.ts:111:1 › full screen and back from the keyboard, showing what the window reported (1.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:27.4776431Z   ✓  119 [chromium] › apps/web/e2e/desktop-window-controls.spec.ts:134:1 › a change the OS made on its own is reflected without anybody clicking (1.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:28.9343274Z   ✓  120 [chromium] › apps/web/e2e/desktop-window-controls.spec.ts:147:1 › a shell that refuses full screen says so and the button does not pretend (1.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:34.4046127Z   ✓  121 [chromium] › apps/web/e2e/desktop-window-controls.spec.ts:165:1 › saying “phóng to toàn màn hình” reaches the same verb as the button (5.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:35.0236224Z   ✓  122 [chromium] › apps/web/e2e/detach.spec.ts:72:1 › the detached composition draws the host revision and follows a checked appearance relay in place (593ms)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:35.6096074Z   ✓  123 [chromium] › apps/web/e2e/detach.spec.ts:102:1 › the detached window draws the instance the host handed over, and asks it to hand back (573ms)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:36.1103157Z   ✓  124 [chromium] › apps/web/e2e/detach.spec.ts:118:1 › a window that was handed nothing says so instead of showing an empty frame (492ms)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:36.6069767Z   ✓  125 [chromium] › apps/web/e2e/detach.spec.ts:131:1 › a token in the address bar buys the detached window no conversation (484ms)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:39.0882163Z   ✓  126 [chromium] › apps/web/e2e/diff-keyboard.spec.ts:57:1 › a diff is reachable and visibly focused using only the keyboard (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:47.0774958Z   ✓  127 [chromium] › apps/web/e2e/inbox-copy-details.spec.ts:122:1 › Copy details puts the notice's own fields on the clipboard, hidden characters as markers, and says so where focus stays (8.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T12:59:55.6520551Z   ✓  128 [chromium] › apps/web/e2e/inbox-copy-details.spec.ts:175:1 › a clipboard the browser refuses is said in words, the inbox stays open, and only the latest press is said (8.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:00:01.9649501Z   ✓  129 [chromium] › apps/web/e2e/inbox-notifications.spec.ts:137:1 › disabling a group silences its notification, the other group's still shows, and neither carries a secret (6.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:00:08.6599493Z   ✓  130 [chromium] › apps/web/e2e/inbox-notifications.spec.ts:201:1 › a notification for a waiting item never carries its command or a secret-shaped token (6.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:00:23.5057154Z   ✓  131 [chromium] › apps/web/e2e/inbox-notifications.spec.ts:274:1 › no notification appears while the window is focused, since the in-app mark already covers it (14.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:00:35.5763003Z   ✓  132 [chromium] › apps/web/e2e/inbox-notifications.spec.ts:312:1 › a desktop notification the OS refused is reported beside the OS toggle, and clears once the OS accepts one again (12.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:00:42.8678899Z   ✓  133 [chromium] › apps/web/e2e/inbox-notifications.spec.ts:392:1 › clicking a desktop notification opens the inbox on the item it was about, and says so once that item is gone (7.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:00:45.7157191Z   ✓  134 [chromium] › apps/web/e2e/inbox.spec.ts:81:1 › a pending approval raises the mark, and denying it from the inbox answers in its conversation (2.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:00:48.4517926Z   ✓  135 [chromium] › apps/web/e2e/inbox.spec.ts:122:1 › approving from the inbox runs the command in its conversation (2.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:00:50.7496557Z   ✓  136 [chromium] › apps/web/e2e/inbox.spec.ts:142:1 › a typed command opens the same inbox, and Escape hands focus back (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:00:52.0519149Z   ✓  137 [chromium] › apps/web/e2e/inbox.spec.ts:174:1 › the inbox fits a narrow window and works with reduced motion (1.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:01:00.5070158Z   ✓  138 [chromium] › apps/web/e2e/inbox.spec.ts:204:1 › background work that finishes leaves a notice, and the notice leads back to its conversation (8.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:01:08.2710748Z   ✓  139 [chromium] › apps/web/e2e/inbox.spec.ts:295:1 › a notice can be marked unread, dismissed and brought back, added to a message and asked about (7.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:01:29.2773874Z   ✓  140 [chromium] › apps/web/e2e/inbox.spec.ts:386:1 › a snoozed notice leaves the inbox and the count, and comes back unread when its time passes (21.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:01:38.5297025Z   ✓  141 [chromium] › apps/web/e2e/inbox.spec.ts:438:1 › quieting a kind of notice keeps later ones out of the count, and notifying again is one press away (9.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:01:42.2291470Z   ✓  142 [chromium] › apps/web/e2e/inbox.spec.ts:496:1 › asking Clark about the latest notice, typed, sends the newest notice as a reference (3.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:01:46.8659838Z   ✓  143 [chromium] › apps/web/e2e/inbox.spec.ts:512:1 › an approval from another conversation is decided from the inbox without leaving the one on screen (4.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:01:48.9796071Z   ✓  144 [chromium] › apps/web/e2e/inbox.spec.ts:578:1 › answering an unknown outcome from the inbox resolves its notice and tells the conversation (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:01:51.6585391Z   ✓  145 [chromium] › apps/web/e2e/inbox.spec.ts:621:1 › saying it did not take effect, typed, opens the inbox on the answer instead of recording it unasked (2.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:01:56.3042494Z   ✓  146 [chromium] › apps/web/e2e/inbox.spec.ts:669:1 › dismissing the latest notification, typed, is done by the node on the notice it names, and says so (4.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:00.0098224Z   ✓  147 [chromium] › apps/web/e2e/inbox.spec.ts:744:1 › the Undo under a dismissal's reply says quietly when its five minutes have passed (3.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:03.7179170Z   ✓  148 [chromium] › apps/web/e2e/inbox.spec.ts:763:1 › undoing a dismissal, said in words, brings back the notice most recently dismissed (3.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:09.6252787Z   ✓  149 [chromium] › apps/web/e2e/inbox.spec.ts:782:1 › background work that failed is run again from its notice, and the new run reports for itself (5.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:12.3025117Z   ✓  150 [chromium] › apps/web/e2e/inbox.spec.ts:813:1 › a question nobody answered in time is asked again from its notice (2.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:17.4235228Z   ✓  151 [chromium] › apps/web/e2e/inbox.spec.ts:858:1 › an update notice updates through the install route, opens Settings to review, and skips a version undoably (5.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:22.5743176Z   ✓  152 [chromium] › apps/web/e2e/input-primitives.spec.ts:89:1 › a form shows what is wrong where it is, then sends what was filled in to Clark (5.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:24.2337058Z   ✓  153 [chromium] › apps/web/e2e/input-primitives.spec.ts:188:1 › a form asking for a secret is refused before it is drawn (1.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:29.5901594Z   ✓  154 [chromium] › apps/web/e2e/input-primitives.spec.ts:199:1 › a list pages, picks by id, and sends the item a person pressed (5.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:33.6346006Z   ✓  155 [chromium] › apps/web/e2e/input-primitives.spec.ts:263:1 › a search box in a composed surface narrows the table beside it, and nothing is sent (4.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:35.6827577Z   ✓  156 [chromium] › apps/web/e2e/input-primitives.spec.ts:317:1 › a form and a list read at phone width, and a finger can use them (2.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:39.1157216Z   ✓  157 [chromium] › apps/web/e2e/install-approval.spec.ts:106:1 › Deny leaves what is installed as it was (3.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:43.3679450Z   ✓  158 [chromium] › apps/web/e2e/install-approval.spec.ts:119:1 › Approve installs exactly the version that was asked about (4.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:46.1955060Z   ✓  159 [chromium] › apps/web/e2e/installed-packages.spec.ts:41:1 › the installed list says it is empty rather than showing a placeholder (2.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:48.3147621Z   ✓  160 [chromium] › apps/web/e2e/installed-packages.spec.ts:85:1 › the lane is carried on the row, so two very different trust levels cannot read the same (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:49.5853713Z   ✓  161 [chromium] › apps/web/e2e/interaction-state.spec.ts:52:1 › the shell publishes window mode, policy mode and input modality as root attributes (1.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:51.0869777Z   ✓  162 [chromium] › apps/web/e2e/interaction-state.spec.ts:62:1 › data-input-modality follows the keyboard, not a component's own guess (1.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:54.4911515Z   ✓  163 [chromium] › apps/web/e2e/interaction-state.spec.ts:78:1 › data-policy-mode follows a saved change to the execution policy (3.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:55.9456058Z   ✓  164 [chromium] › apps/web/e2e/interaction-state.spec.ts:120:1 › Tab produces a visible, non-accent focus ring on the settings gear (1.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:57.0793259Z   ✓  165 [chromium] › apps/web/e2e/interaction-state.spec.ts:144:1 › reduced motion collapses every animation's duration, none left spinning at zero forever (1.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:02:59.5623114Z   ✓  166 [chromium] › apps/web/e2e/interactions.spec.ts:38:1 › a question is asked, answered, and the answer opens the next turn (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:01.0368190Z   ✓  167 [chromium] › apps/web/e2e/j1.spec.ts:78:1 › the client loads, reports a real connection, and asks what to do (1.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:03.3129626Z   ✓  168 [chromium] › apps/web/e2e/j1.spec.ts:98:1 › a suggestion produces a labelled sample with a real widget (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:05.3880098Z   ✓  169 [chromium] › apps/web/e2e/j1.spec.ts:118:1 › typing a message works, and the answer comes back from the node (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:08.8025805Z   ✓  170 [chromium] › apps/web/e2e/j1.spec.ts:134:1 › pinning and unpinning keeps the widget data (3.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:11.6785427Z   ✓  171 [chromium] › apps/web/e2e/j1.spec.ts:153:1 › reopening the app resumes the same conversation (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:16.3975798Z   ✓  172 [chromium] › apps/web/e2e/j1.spec.ts:164:1 › the composer is keyboard operable end to end (4.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:18.3955535Z   ✓  173 [chromium] › apps/web/e2e/j1.spec.ts:184:1 › the bearer token is never written into the page (2.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:18.9209845Z   ✓  174 [chromium] › apps/web/e2e/j1.spec.ts:194:1 › an unauthenticated client is told what it needs instead of failing silently (512ms)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:21.0033059Z   ✓  175 [chromium] › apps/web/e2e/j1.spec.ts:200:1 › a highlighted passage can be attached to the next prompt (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:22.2359279Z   ✓  176 [chromium] › apps/web/e2e/j1.spec.ts:226:1 › the header says nothing about background work when there is none (1.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:29.7629827Z   ✓  177 [chromium] › apps/web/e2e/j1.spec.ts:233:1 › a selected passage can be sent to a background session (7.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:34.8399189Z   ✓  178 [chromium] › apps/web/e2e/language-settings-en.spec.ts:100:1 › every Settings tab renders with no leftover Vietnamese chrome once English is chosen (5.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:37.4418963Z   ✓  179 [chromium] › apps/web/e2e/language-shell-en.spec.ts:66:1 › the hero empty state, header and an attachment failure read in English once the language is switched (2.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:40.8314009Z   ✓  180 [chromium] › apps/web/e2e/language-shell-en.spec.ts:105:1 › the voice overlay's dialog chrome reads in English once the language is switched (3.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:46.7335607Z   ✓  181 [chromium] › apps/web/e2e/language-switch.spec.ts:58:1 › choosing English changes the composer, a voice control, and the marketplace heading (5.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:50.0280177Z   ✓  182 [chromium] › apps/web/e2e/language-timeline-en.spec.ts:63:1 › switching to English translates an approval card and a tool call's chrome (3.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:03:53.7898225Z   ✓  183 [chromium] › apps/web/e2e/language.spec.ts:44:1 › switching the UI language changes visible labels, sets <html lang>, and survives a reload (3.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:01.8436219Z   ✓  184 [chromium] › apps/web/e2e/layout-tree.spec.ts:59:1 › a grid of two tiles and a card is drawn as the tree says, and again from history after a reload (8.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:10.8107692Z   ✓  185 [chromium] › apps/web/e2e/layout-tree.spec.ts:103:1 › tabs follow the keyboard, a collapsible opens, and a split stacks when narrow (8.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:12.6842945Z   ✓  186 [chromium] › apps/web/e2e/layout-tree.spec.ts:167:1 › a tree the node cannot honour is refused in the conversation, with the reason, and nothing is drawn (1.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:14.3721712Z   ✓  187 [chromium] › apps/web/e2e/marketplace-search.spec.ts:42:1 › a search result names its directory, its source and its risk lane (1.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:15.9938670Z   ✓  188 [chromium] › apps/web/e2e/marketplace-search.spec.ts:61:1 › every install control belongs to the row it acts on (1.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:18.2892232Z   ✓  189 [chromium] › apps/web/e2e/memory.spec.ts:57:1 › a node that has remembered nothing says so (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:20.7724142Z   ✓  190 [chromium] › apps/web/e2e/memory.spec.ts:76:1 › a remembered thing shows its source and its kind (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:24.2656378Z   ✓  191 [chromium] › apps/web/e2e/memory.spec.ts:95:1 › deleting a remembered thing removes it rather than hiding it (3.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:34.7277285Z   ✓  192 [chromium] › apps/web/e2e/mini-app.spec.ts:97:1 › renders a composed overview whose figures come from the node's own records (10.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:39.0758365Z   ✓  193 [chromium] › apps/web/e2e/mini-app.spec.ts:182:1 › the live view changes while the transcript keeps what it showed (4.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:42.7386793Z   ✓  194 [chromium] › apps/web/e2e/mini-app.spec.ts:218:1 › the expanded view is operable and dismissible from the keyboard alone (3.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:48.1190544Z   ✓  195 [chromium] › apps/web/e2e/mini-app.spec.ts:270:1 › a second surface is refused the live view and says so instead of taking over (5.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:52.0795815Z   ✓  196 [chromium] › apps/web/e2e/mini-app.spec.ts:311:1 › a pinned surface mounts near the viewport and suspends when it leaves (3.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:54.3688187Z   ✓  197 [chromium] › apps/web/e2e/model-pool.spec.ts:37:1 › the hotkey moves to the next profile and the label follows (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:55.6976773Z   ✓  198 [chromium] › apps/web/e2e/onboarding.spec.ts:55:1 › the empty state offers four chips and says which need a model (1.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:04:58.3659125Z   ✓  199 [chromium] › apps/web/e2e/onboarding.spec.ts:74:1 › a chip sends a real message and the empty state goes away (2.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:01.0616234Z   ✓  200 [chromium] › apps/web/e2e/onboarding.spec.ts:94:3 › the first run › shows the name, the tagline and one way in, and does not come back (2.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:04.3570433Z   ✓  201 [chromium] › apps/web/e2e/onboarding.spec.ts:130:3 › the first run on a node that has been told nothing › asks for nothing it does not need, and offers setup where the answer is used (3.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:07.1226390Z   ✓  202 [chromium] › apps/web/e2e/onboarding.spec.ts:159:3 › the first run on a node that has been told nothing › a reload after the first run does not ask again (2.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:08.5256890Z   ✓  203 [chromium] › apps/web/e2e/onboarding.spec.ts:187:3 › the first run carries the orb › the first run carries the same orb, drawn into the space it reserves (1.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:09.4291670Z   ✓  204 [chromium] › apps/web/e2e/onboarding.spec.ts:222:3 › the first run is not covered by its own orb › what is on top at the point somebody aims at is the control, not the orb (884ms)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:10.7777176Z   ✓  205 [chromium] › apps/web/e2e/orb.spec.ts:117:1 › the shipped orb is what an unpersonalized node draws (1.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:13.7639576Z   ✓  206 [chromium] › apps/web/e2e/orb.spec.ts:129:1 › a stored profile reaches the renderer and survives a reload (3.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:15.7813894Z   ✓  207 [chromium] › apps/web/e2e/orb.spec.ts:160:1 › the node refuses a profile value outside the declared bounds, and the orb keeps drawing (2.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:17.9131891Z   ✓  208 [chromium] › apps/web/e2e/orb.spec.ts:179:1 › typing does not rebuild the orb (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:18.9546006Z   ✓  209 [chromium] › apps/web/e2e/orb.spec.ts:195:1 › reduced motion wins over a profile that asks for motion (1.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:28.3365970Z   ✓  210 [chromium] › apps/web/e2e/orb.spec.ts:253:1 › a style chosen in Settings changes the orb at once, keeps its colours in the preview, and survives a reload (9.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:40.1643716Z   ✓  211 [chromium] › apps/web/e2e/orb.spec.ts:385:1 › on the light theme every style's interior shows through the glass, and the styles look different (11.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:42.7688302Z   ✓  212 [chromium] › apps/web/e2e/orb.spec.ts:427:1 › the styles are chosen from the keyboard alone, with a visible focus ring (2.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:52.0745461Z   ✓  213 [chromium] › apps/web/e2e/orb.spec.ts:448:3 › on a phone › the styles fit a 390px screen and answer a tap (9.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:05:58.6347972Z   ✓  214 [chromium] › apps/web/e2e/orb.spec.ts:490:1 › reduced motion stills every style, and the preview says so (6.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:00.0936448Z   ✓  215 [chromium] › apps/web/e2e/orb.spec.ts:524:1 › without WebGL the orb stays visible in its style's colours, and Settings says why it is still (1.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:01.5427078Z   ✓  216 [chromium] › apps/web/e2e/orb.spec.ts:562:1 › the shell publishes how the user is interacting and what the agent is doing (1.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:03.3485772Z   ✓  217 [chromium] › apps/web/e2e/orb.spec.ts:579:1 › the agent state follows a real turn (1.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:04.6001575Z   -  218 [chromium] › apps/web/e2e/orb.spec.ts:610:1 › the orb is not rebuilt while the pointer moves across it
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:07.5125831Z   ✓  219 [chromium] › apps/web/e2e/package-install.spec.ts:42:1 › a listing can be installed, and says so (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:10.2548789Z   ✓  220 [chromium] › apps/web/e2e/package-install.spec.ts:53:1 › a package the directory does not list is refused by name, in place (2.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:13.2935555Z   ✓  221 [chromium] › apps/web/e2e/package-install.spec.ts:73:3 › a result's source, risk lane and digest read apart at 1280 px, dark (3.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:17.1028080Z   ✓  222 [chromium] › apps/web/e2e/package-install.spec.ts:73:3 › a result's source, risk lane and digest read apart at 390 px, light (3.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:20.3237129Z   ✓  223 [chromium] › apps/web/e2e/package-install.spec.ts:73:3 › a result's source, risk lane and digest read apart at 390 px, dark (3.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:21.9715846Z   ✓  224 [chromium] › apps/web/e2e/package-install.spec.ts:101:1 › only the listing that was pressed reports an outcome (1.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:24.9395980Z   ✓  225 [chromium] › apps/web/e2e/package-lifecycle.spec.ts:39:1 › an uninstalled package keeps a restore control, and restoring brings it back (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:24.9626515Z   ✓  226 [chromium] › apps/web/e2e/package-lifecycle.spec.ts:77:1 › a package that is not installed is refused by name (13ms)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:29.3725402Z   ✓  227 [chromium] › apps/web/e2e/question-voice.spec.ts:57:1 › an answer spoken out loud lands in the transcript exactly where a pressed one does (4.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:32.0286406Z   ✓  228 [chromium] › apps/web/e2e/question.spec.ts:38:1 › an answer becomes the user's own message, and the card stops asking (2.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:34.4218127Z   ✓  229 [chromium] › apps/web/e2e/question.spec.ts:73:1 › a form's draft survives a rerender, and submitting sends the answers as a message (2.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:36.3575932Z   ✓  230 [chromium] › apps/web/e2e/reasoning-writing.spec.ts:143:1 › the reasoning block says it is still being written, and stops when the writing stops (1.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:38.0981873Z   ✓  231 [chromium] › apps/web/e2e/reasoning-writing.spec.ts:179:1 › a reasoning block the node recorded never claims to be still being written (1.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:42.2650776Z   ✓  232 [chromium] › apps/web/e2e/restart-session.spec.ts:62:1 › the logo returns to the start screen, and the fresh start survives a reload (4.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:44.6842719Z   ✓  233 [chromium] › apps/web/e2e/restart-session.spec.ts:85:1 › the next message opens a new conversation rather than continuing the old one (2.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:47.2634027Z   ✓  234 [chromium] › apps/web/e2e/secret-input.spec.ts:39:1 › a secret typed into the card is stored, and is nowhere afterwards (2.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:49.7430171Z   ✓  235 [chromium] › apps/web/e2e/secrets.spec.ts:42:1 › a secret typed into the card is stored, and is nowhere afterwards (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:52.9149419Z   ✓  236 [chromium] › apps/web/e2e/service-facet.spec.ts:93:1 › the widget's button calls the package's service and shows what it answered (3.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:06:55.7239315Z   ✓  237 [chromium] › apps/web/e2e/service-facet.spec.ts:110:1 › the agent calls the same capability, and the widget reads back what it added (2.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:07:11.4987704Z   ✓  238 [chromium] › apps/web/e2e/service-facet.spec.ts:126:1 › a spoken command runs the widget's action through the same host path (15.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:07:14.3496292Z [WebServer] services: com.example.notes@1.0.0:codegen_muo3qvxz2766b6m#com.example.notes.service stopped: mcp server com.example.notes@1.0.0:codegen_muo3qvxz2766b6m#com.example.notes.service exited with code 137
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:07:19.2716124Z   ✓  239 [chromium] › apps/web/e2e/service-facet.spec.ts:145:1 › a killed service shows as unavailable with its reason, the frame stays usable, and it comes back (7.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:07:31.8692642Z   ✓  240 [chromium] › apps/web/e2e/status-cards.spec.ts:197:1 › a status, a progress and a details card say what the model wrote, and nothing claims to be live (12.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:07:33.5455278Z   ✓  241 [chromium] › apps/web/e2e/status-cards.spec.ts:285:1 › a progress value above its maximum is refused with the host's reason, and no card is drawn (1.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:07:34.6527748Z   ✓  242 [chromium] › apps/web/e2e/status-cards.spec.ts:294:1 › the cards add no motion of their own when motion is reduced (1.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:07:41.9260237Z   ✓  243 [chromium] › apps/web/e2e/status-cards.spec.ts:308:1 › the cards read at phone width without scrolling sideways (7.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:07:50.4986633Z   ✓  244 [chromium] › apps/web/e2e/status-cards.spec.ts:336:1 › the library previews each card through the production renderer (8.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:07:57.8391342Z   ✓  245 [chromium] › apps/web/e2e/status-cards.spec.ts:393:1 › a details card as a tile of a grid asked for three columns keeps each label beside or above its own value (7.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:03.1450344Z   ✓  246 [chromium] › apps/web/e2e/status-cards.spec.ts:444:1 › the grid of cards reads at phone width, each fact's value under its label (5.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:04.8668620Z   ✓  247 [chromium] › apps/web/e2e/status-cards.spec.ts:468:1 › a status card an older node stored with a line break in its label says it cannot be read, and draws no forged line (1.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:06.0950828Z   ✓  248 [chromium] › apps/web/e2e/suggestions.spec.ts:53:1 › a chip drawn from the node's own records says where it came from (1.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:08.1828111Z   ✓  249 [chromium] › apps/web/e2e/suggestions.spec.ts:64:1 › pressing a suggestion sends the sentence it showed (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:09.4501993Z   ✓  250 [chromium] › apps/web/e2e/suggestions.spec.ts:88:1 › with two sessions behind it, the offer is the one touched last (1.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:11.6913961Z   ✓  251 [chromium] › apps/web/e2e/table-contract.spec.ts:68:1 › a table sorts, pages, searches, selects and exports a CSV with its formulas defused (2.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:18.7306063Z   ✓  252 [chromium] › apps/web/e2e/table-contract.spec.ts:158:1 › the table stays usable on a phone-sized screen (7.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:22.4180575Z   ✓  253 [chromium] › apps/web/e2e/task-stop.spec.ts:42:1 › pressing Stop changes the task's state on the node, and says which of the two things happened (3.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:25.3132561Z   ✓  254 [chromium] › apps/web/e2e/terminal.spec.ts:46:1 › a command typed into the terminal runs, and its result goes back to the conversation (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:28.2367029Z   ✓  255 [chromium] › apps/web/e2e/terminal.spec.ts:73:1 › the keyboard can leave the terminal, and the process panel closes back to its button (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:31.5019332Z   ✓  256 [chromium] › apps/web/e2e/terminal.spec.ts:98:1 › closing the terminal says the shell ended instead of leaving a dead prompt that looks live (3.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:32.6986086Z   ✓  257 [chromium] › apps/web/e2e/terminal.spec.ts:107:1 › the card fits a narrow window without scrolling the page sideways (1.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:32.7229446Z   ✓  258 [chromium] › apps/web/e2e/terminal.spec.ts:118:1 › a terminal asked for a conversation that does not exist is never opened (17ms)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:32.8796427Z (node:4733) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:32.8797262Z (Use `node --trace-warnings ...` to show where the warning was created)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:36.3383235Z   ✓  259 [chromium] › apps/web/e2e/theme-authoring.spec.ts:11:5 › a theme author previews production components and reloads data in place at 1280 dark (3.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:39.3098129Z   ✓  260 [chromium] › apps/web/e2e/theme-authoring.spec.ts:11:5 › a theme author previews production components and reloads data in place at 1280 light (3.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:42.1571827Z   ✓  261 [chromium] › apps/web/e2e/theme-authoring.spec.ts:11:5 › a theme author previews production components and reloads data in place at 390 dark (2.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:45.0238736Z   ✓  262 [chromium] › apps/web/e2e/theme-authoring.spec.ts:11:5 › a theme author previews production components and reloads data in place at 390 light (2.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:08:54.7728156Z   ✓  263 [chromium] › apps/web/e2e/theme-gallery.spec.ts:13:3 › theme gallery previews without writes, customizes and resets in place at 1280 dark (9.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:09:05.0219900Z   ✓  264 [chromium] › apps/web/e2e/theme-gallery.spec.ts:13:3 › theme gallery previews without writes, customizes and resets in place at 1280 light (10.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:09:19.0157711Z   ✓  265 [chromium] › apps/web/e2e/theme-gallery.spec.ts:13:3 › theme gallery previews without writes, customizes and resets in place at 390 dark (14.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:09:33.7825773Z   ✓  266 [chromium] › apps/web/e2e/theme-gallery.spec.ts:13:3 › theme gallery previews without writes, customizes and resets in place at 390 light (14.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:09:40.8832550Z [overflow] theme-picker-1280-dark: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:09:43.3718894Z [overflow] theme-picker-1280-light: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:09:47.6090734Z [overflow] theme-picker-390-dark: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:09:52.8745697Z [overflow] theme-picker-390-dark-details: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:04.2328097Z [overflow] theme-picker-1280-fallback: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:13.7823183Z [overflow] theme-fallback-low-contrast-1280-dark: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:16.5775455Z [overflow] theme-fallback-low-contrast-1280-light: scrollWidth 1280 - clientWidth 1280 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:20.2258605Z [overflow] theme-fallback-low-contrast-390-dark: scrollWidth 390 - clientWidth 390 = 0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:26.7226829Z   ✓  267 [chromium] › apps/web/e2e/themes.spec.ts:83:1 › a package theme restyles the window in place, falls back when removed or unreadable, and returns when restored (52.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:30.1982087Z   ✓  268 [chromium] › apps/web/e2e/turn-stop.spec.ts:70:1 › pressing Stop ends the reply, keeps what it wrote with a stopped label, and nothing more arrives (3.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:33.4038609Z   ✓  269 [chromium] › apps/web/e2e/turn-stop.spec.ts:78:1 › Escape in the composer stops the reply the same way (3.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:36.5590415Z   ✓  270 [chromium] › apps/web/e2e/turn-stop.spec.ts:84:1 › typing "dừng lại" while the reply is being written stops it, and the sentence is not left in the composer (3.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:38.9233125Z   ✓  271 [chromium] › apps/web/e2e/turn-stop.spec.ts:95:1 › an ordinary sentence typed while the reply is being written stays in the composer and does not stop it (2.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:43.4690741Z   ✓  272 [chromium] › apps/web/e2e/voice-agent-control.spec.ts:90:1 › the header's home button and a typed control_app decision land on the same start screen (4.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:47.9205385Z   ✓  273 [chromium] › apps/web/e2e/voice-agent-control.spec.ts:112:1 › a spoken sentence the registry does not match reaches control_app, with the same read-back the typed route gets (4.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:49.9432505Z   ✓  274 [chromium] › apps/web/e2e/voice-bar.spec.ts:46:1 › the compact surface is the whole window when the client is asked for it (2.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:52.4595671Z   ✓  275 [chromium] › apps/web/e2e/voice-bar.spec.ts:64:1 › the session survives both directions of the change (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:10:57.3205739Z   ✓  276 [chromium] › apps/web/e2e/voice-control.spec.ts:94:1 › a spoken command and the same click open Settings in the same state (4.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:01.9121307Z   ✓  277 [chromium] › apps/web/e2e/voice-control.spec.ts:124:1 › a spoken tab change lands on the tab that was named (4.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:06.2536601Z   ✓  278 [chromium] › apps/web/e2e/voice-control.spec.ts:141:1 › a spoken quit asks instead of closing anything (4.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:10.4959163Z   ✓  279 [chromium] › apps/web/e2e/voice-control.spec.ts:158:1 › a command the registry does not know is refused and changes nothing (4.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:14.9729278Z   ✓  280 [chromium] › apps/web/e2e/voice-control.spec.ts:180:1 › a spoken end closes the voice session (4.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:19.2905455Z   ✓  281 [chromium] › apps/web/e2e/voice-control.spec.ts:191:1 › a spoken home returns to the start screen (4.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:23.2296697Z   ✓  282 [chromium] › apps/web/e2e/voice-control.spec.ts:208:1 › a spoken attach opens the file picker (3.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:27.7440923Z   ✓  283 [chromium] › apps/web/e2e/voice-control.spec.ts:223:1 › a spoken window command is refused here rather than reported as done (4.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:28.9745983Z   ✓  284 [chromium] › apps/web/e2e/voice-control.spec.ts:234:1 › the fixture route is not there unless a scripted provider is loaded (1.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:29.1261352Z   -  285 [chromium] › apps/web/e2e/voice-live-provider.spec.ts:137:1 › a spoken settings-open command reaches control_app and lands on the same panel as a click
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:29.2605856Z   -  286 [chromium] › apps/web/e2e/voice-live-provider.spec.ts:183:1 › a spoken home-navigation command reaches control_app
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:35.7521095Z   ✓  287 [chromium] › apps/web/e2e/voice-widget-action.spec.ts:90:1 › a spoken action the widget does not offer changes nothing (6.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:41.5344008Z   ✓  288 [chromium] › apps/web/e2e/voice-widget-action.spec.ts:120:1 › a spoken action and the same click reach the same state (5.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:45.4342028Z   ✓  289 [chromium] › apps/web/e2e/voice.spec.ts:76:1 › a session opened before any conversation exists still gets an answer (3.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:11:54.6887836Z   ✓  290 [chromium] › apps/web/e2e/voice.spec.ts:103:1 › a microphone session carries audio both ways and records the transcript (9.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:12:02.4258842Z   ✓  291 [chromium] › apps/web/e2e/widget-appearance.spec.ts:24:3 › an isolated widget follows appearance in place at 1280 dark (7.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:12:10.3455495Z   ✓  292 [chromium] › apps/web/e2e/widget-appearance.spec.ts:24:3 › an isolated widget follows appearance in place at 1280 light (7.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:12:21.9072855Z   ✓  293 [chromium] › apps/web/e2e/widget-appearance.spec.ts:24:3 › an isolated widget follows appearance in place at 390 dark (11.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:12:31.9023230Z   ✓  294 [chromium] › apps/web/e2e/widget-appearance.spec.ts:24:3 › an isolated widget follows appearance in place at 390 light (10.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:12:56.0659819Z   ✓  295 [chromium] › apps/web/e2e/widget-artifacts.spec.ts:93:1 › a widget picks through host chrome, reads in chunks, and saves and attaches a copy it wrote (24.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:13:11.2696052Z   ✓  296 [chromium] › apps/web/e2e/widget-artifacts.spec.ts:212:1 › the widget's file comes back as a card the person can open and save, in both themes and on a phone (15.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:13:33.4205375Z   ✓  297 [chromium] › apps/web/e2e/widget-artifacts.spec.ts:269:1 › the host's file questions fit a phone and both themes (22.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:13:55.9486065Z   ✓  298 [chromium] › apps/web/e2e/widget-frame-grant.spec.ts:158:1 › a frame reloaded after its URL lapsed reads a fresh URL once and runs again, with its state (22.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:14:05.0208093Z   ✓  299 [chromium] › apps/web/e2e/widget-frame-grant.spec.ts:210:1 › a lapsed frame URL fetched on its own is refused, with no bearer token to fall back on (9.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:14:34.6706155Z   ✓  300 [chromium] › apps/web/e2e/widget-frame-grant.spec.ts:224:1 › when the one re-read fails too, the failure is shown once with a way to try again, and nothing loops (29.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:14:38.2255859Z   ✓  301 [chromium] › apps/web/e2e/widget-frame.spec.ts:51:1 › a widget package runs in a sandboxed frame, and its code is the package's (3.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:14:41.5818030Z   ✓  302 [chromium] › apps/web/e2e/widget-frame.spec.ts:66:1 › the frame is sandboxed with scripts and without a shared origin (3.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:14:44.0766498Z   ✓  303 [chromium] › apps/web/e2e/widget-frame.spec.ts:73:1 › an action the widget invokes reaches the host and comes back (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:14:48.1064202Z   ✓  304 [chromium] › apps/web/e2e/widget-frame.spec.ts:94:1 › one frame load hands the widget exactly one init and gets exactly one ready back (4.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:14:51.1525287Z   ✓  305 [chromium] › apps/web/e2e/widget-frame.spec.ts:134:1 › an action binding the host never accepted is refused, and nothing is performed (3.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:14:54.1845965Z   ✓  306 [chromium] › apps/web/e2e/widget-frame.spec.ts:155:1 › the widget document is served under a policy that only this app may frame and nothing may widen (3.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:14:58.9303717Z   ✓  307 [chromium] › apps/web/e2e/widget-frame.spec.ts:170:1 › state the widget saves is stored by the node and is there when the frame is opened again (4.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:01.7312797Z   ✓  308 [chromium] › apps/web/e2e/widget-library.spec.ts:62:1 › the library opens from Extensions and the conversation stays mounted (2.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:04.9436660Z   ✓  309 [chromium] › apps/web/e2e/widget-library.spec.ts:83:1 › the terminal is listed as a host card, described and never opened from the library (3.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:28.7662942Z   ✓  310 [chromium] › apps/web/e2e/widget-library.spec.ts:104:1 › every catalog card previews through the production renderer (23.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:32.9399623Z   ✓  311 [chromium] › apps/web/e2e/widget-library.spec.ts:135:1 › a click anywhere on a card opens it, even on a control drawn inside its preview (4.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:36.5318995Z   ✓  312 [chromium] › apps/web/e2e/widget-library.spec.ts:160:1 › a data-backed widget renders instead of reporting its dataset unavailable (3.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:39.7170526Z   ✓  313 [chromium] › apps/web/e2e/widget-library.spec.ts:174:1 › browsing the catalog does not fetch third-party media (3.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:44.1607714Z   ✓  314 [chromium] › apps/web/e2e/widget-library.spec.ts:194:1 › the Lab shows developer controls that actually change the preview (4.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:46.9369544Z   ✓  315 [chromium] › apps/web/e2e/widget-library.spec.ts:258:1 › Escape closes the library and focus returns to the control that opened it (2.8s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:48.8485736Z   ✓  316 [chromium] › apps/web/e2e/widget-library.spec.ts:278:1 › a typed command opens the same library surface (1.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:52.0163047Z   ✓  317 [chromium] › apps/web/e2e/widget-library.spec.ts:290:1 › installed packages are reported as provenance, never as catalog cards (3.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:15:55.7264966Z   ✓  318 [chromium] › apps/web/e2e/widget-library.spec.ts:319:1 › an installed package's widget becomes a card, rendered by the catalog (3.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:02.7647386Z   ✓  319 [chromium] › apps/web/e2e/widget-semantic.spec.ts:89:1 › a pick on a live surface reaches the next turn as a note, then as a delta, and not at all when nothing changed (7.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:06.3712589Z   ✓  320 [chromium] › apps/web/e2e/widget-semantic.spec.ts:132:1 › a frame's own words about what it shows reach the next turn, cleaned and marked as its own (3.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:08.7887426Z   ✓  321 [chromium] › apps/web/e2e/widget.spec.ts:104:1 › a scripted table recipe renders a real widget inside the conversation (2.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:11.1483740Z   ✓  322 [chromium] › apps/web/e2e/widget.spec.ts:128:1 › a widget the client cannot render shows its text alternative instead of nothing (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:13.4569799Z   ✓  323 [chromium] › apps/web/e2e/widget.spec.ts:194:1 › a gallery widget draws pictures the node actually holds (2.3s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:15.9532976Z   ✓  324 [chromium] › apps/web/e2e/widget.spec.ts:232:1 › a youtube widget embeds the video the host named, and nothing else (2.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:21.0186287Z   ✓  325 [chromium] › apps/web/e2e/xy-charts.spec.ts:97:1 › an area chart hides a series from its legend, selects a point from the keyboard, and keeps both after a reload (5.0s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:24.9509047Z   ✓  326 [chromium] › apps/web/e2e/xy-charts.spec.ts:173:1 › a stacked area says it is stacked, and a chart over more rows than it holds says it draws only the first (3.9s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:28.3272693Z   ✓  327 [chromium] › apps/web/e2e/xy-charts.spec.ts:198:1 › the arrow keys walk a scatter plot's points in the order of x, not the order of its rows (3.4s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:30.4208227Z   ✓  328 [chromium] › apps/web/e2e/xy-charts.spec.ts:240:1 › a field the rows lack and a value that is not a number are refused with the host's reason, and no chart is drawn (2.1s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:32.9929861Z   ✓  329 [chromium] › apps/web/e2e/xy-charts.spec.ts:251:1 › a page that asks for a point the node no longer holds says it was refused and draws the rows it holds (2.6s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:34.2502378Z   ✓  330 [chromium] › apps/web/e2e/xy-charts.spec.ts:285:1 › the charts add no motion of their own when motion is reduced (1.2s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:40.0185616Z   ✓  331 [chromium] › apps/web/e2e/xy-charts.spec.ts:298:1 › the charts are usable at phone width without scrolling sideways, in the light theme (5.7s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:46.4843113Z   ✓  332 [chromium] › apps/web/e2e/xy-charts.spec.ts:321:1 › the library previews both charts through the production renderer, usable without a node (6.5s)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9634291Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9650839Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9659126Z   1) [chromium] › apps/web/e2e/appearance-depth.spec.ts:423:1 › a typed sentence and the keyboard alone choose a theme through the same write as a click 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9660764Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9661680Z     Test timeout of 60000ms exceeded.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9662385Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9663351Z     Error: page.evaluate: Test timeout of 60000ms exceeded.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9664503Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9665734Z       107 |
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9667247Z       108 | async function recordOverflow(page: Page, shot: string): Promise<void> {
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9669335Z     > 109 |   const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9670830Z           |                                                   ^
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9672290Z       110 |     scrollWidth: document.documentElement.scrollWidth,
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9673688Z       111 |     clientWidth: document.documentElement.clientWidth,
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9675130Z       112 |   }));
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9677177Z         at recordOverflow (/home/runner/work/clarkcant/clarkcant/apps/web/e2e/appearance-depth.spec.ts:109:51)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9679336Z         at /home/runner/work/clarkcant/clarkcant/apps/web/e2e/appearance-depth.spec.ts:467:9
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9680492Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9682014Z     attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9684559Z     test-results/appearance-depth-a-typed-s-205c9-h-the-same-write-as-a-click-chromium/test-failed-1.png
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9687041Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9688436Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9690355Z     Error Context: test-results/appearance-depth-a-typed-s-205c9-h-the-same-write-as-a-click-chromium/error-context.md
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9692880Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9696068Z     attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9697869Z     test-results/appearance-depth-a-typed-s-205c9-h-the-same-write-as-a-click-chromium/trace.zip
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9699383Z     Usage:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9699532Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9700109Z         pnpm exec playwright show-trace test-results/appearance-depth-a-typed-s-205c9-h-the-same-write-as-a-click-chromium/trace.zip
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9700683Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9701138Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9701676Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9702058Z     Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9702357Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9702495Z     Test timeout of 60000ms exceeded.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9702689Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9703109Z     attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9704245Z     test-results/appearance-depth-a-typed-s-205c9-h-the-same-write-as-a-click-chromium-retry1/test-failed-1.png
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9707508Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9708029Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9709050Z     Error Context: test-results/appearance-depth-a-typed-s-205c9-h-the-same-write-as-a-click-chromium-retry1/error-context.md
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9709892Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9710780Z     attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9711657Z     test-results/appearance-depth-a-typed-s-205c9-h-the-same-write-as-a-click-chromium-retry1/trace.zip
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9712446Z     Usage:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9712659Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9714023Z         pnpm exec playwright show-trace test-results/appearance-depth-a-typed-s-205c9-h-the-same-write-as-a-click-chromium-retry1/trace.zip
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9715010Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9715769Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9716310Z 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9716497Z   1 failed
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9718023Z     [chromium] › apps/web/e2e/appearance-depth.spec.ts:423:1 › a typed sentence and the keyboard alone choose a theme through the same write as a click 
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9719207Z   3 skipped
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:47.9719601Z   327 passed (27.5m)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.3932994Z [ELIFECYCLE] Command failed with exit code 1.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4035865Z ##[error]Process completed with exit code 1.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4119194Z ##[group]Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4119627Z with:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4119827Z   name: e2e-test-results
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4120069Z   path: test-results/
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4120291Z   retention-days: 7
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4120505Z   if-no-files-found: ignore
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4120742Z   compression-level: 6
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4120955Z   overwrite: false
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4121174Z   include-hidden-files: false
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.4121413Z ##[endgroup]
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.5871300Z (node:10858) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.5872834Z (Use `node --trace-deprecation ...` to show where the warning was created)
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.6142358Z With the provided path, there will be 68 files uploaded
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.6148723Z Artifact name is valid!
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.6149462Z Root directory input is valid!
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:48.8164709Z Beginning upload of artifact content to blob storage
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:49.1718107Z (node:10858) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:49.3704388Z Uploaded bytes 8388608
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:49.5958354Z Uploaded bytes 16777216
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:49.8952962Z Uploaded bytes 25165824
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.2453045Z Uploaded bytes 33554432
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.4975963Z Uploaded bytes 40810418
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.5170010Z Finished uploading artifact content to blob storage!
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.5174596Z SHA256 digest of uploaded artifact zip is 59bf9c969955a8b7b60daf183d85b628433c55179a6eb41b3b25b41b8fa69d2b
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.5176411Z Finalizing artifact upload
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.7303201Z Artifact e2e-test-results.zip successfully finalized. Artifact ID 11099380253
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.7304921Z Artifact e2e-test-results has been successfully uploaded! Final size is 40810418 bytes. Artifact ID is 11099380253
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.7314697Z Artifact download URL: https://github.com/digitopvn/clarkcant/actions/runs/36717022516/artifacts/11099380253
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.7588663Z Post job cleanup.
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.8496727Z [command]/usr/bin/git version
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.8537724Z git version 2.55.0
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.8578950Z Temporarily overriding HOME='/home/runner/work/_temp/ea3ef5b5-1e48-49e9-936d-b3b2a7757968' before making global git config changes
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.8580767Z Adding repository directory to the temporary git global config as a safe directory
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.8585517Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/clarkcant/clarkcant
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.8625155Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.8660891Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.8901132Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.8940661Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.9180771Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.9214834Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:50.9620693Z Cleaning up orphan processes
+e2e (browser suite)	UNKNOWN STEP	2026-09-30T13:16:51.0065620Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11d5960a326750d5838078e36cf38b85af677262, actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020, actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

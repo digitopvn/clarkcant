@@ -1,0 +1,10 @@
+
+ RUN  v5.0.0 D:/wt300
+
+ ✓ packages/conversation-client/test/styles.spec.ts (16 tests) 33ms
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  20:51:18
+   Duration  1.32s (import 68%, transform 29%, tests 3%)
+

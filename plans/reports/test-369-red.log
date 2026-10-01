@@ -1,0 +1,99 @@
+
+ RUN  v5.0.0 D:/wt300
+
+ ❯ apps/runtime/test/task-dispatch.spec.ts (12 tests | 1 failed | 10 skipped) 65ms
+   ❯ dispatching a task runs a worker (9)
+     × refuses a delayed dispatch after storage closes, with admission closed: false 36ms
+     ✓ refuses a delayed dispatch after storage closes, with admission closed: true 28ms
+     ↓ succeeds and settles the task through verification when the run produces verified evidence
+     ↓ fails the task when the run produces no verified evidence
+     ↓ runs a real worker child process, which honestly reports not-verified and fails the task
+     ↓ refuses a project root this node does not own, without starting a worker
+     ↓ kills a running worker on stop, and reports how many it stopped
+     ↓ kills a worker and fails the task when its wall-clock budget is exhausted
+     ↓ refuses to accept a run whose usage exceeded the task's token budget, even with verified evidence
+   ↓ the evidence a task settles on (3)
+     ↓ is the last thing verified when everything was
+     ↓ is the first thing that was not, however much succeeded after it
+     ↓ is nothing when there is none
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/runtime/test/task-dispatch.spec.ts > dispatching a task runs a worker > refuses a delayed dispatch after storage closes, with admission closed: false
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ apps/runtime/test/task-dispatch.spec.ts:135:20
+    133|     const queued = await new Promise<boolean>((resolve) => setImmediat…
+    134|     await vi_flush();
+    135|     expect(queued).toBe(false);
+       |                    ^
+    136|     expect(workers).toBe(0);
+    137|     expect(settlements).toBe(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 2 unhandled errors during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: database is not open
+ ❯ oneRow packages/storage/src/db.ts:138:24
+    136| /** Read a single row, or `undefined` when there is no match. */
+    137| export function oneRow<T>(db: Database, sql: string, ...params: unknow…
+    138|   const statement = db.prepare(sql);
+       |                        ^
+    139|   return statement.get(...(params as never[])) as T | undefined;
+    140| }
+ ❯ getTask packages/storage/src/repositories/tasks.ts:92:15
+ ❯ runOne apps/runtime/src/task-dispatch.ts:510:18
+ ❯ pump apps/runtime/src/task-dispatch.ts:502:12
+ ❯ Object.dispatch apps/runtime/src/task-dispatch.ts:1124:7
+ ❯ Immediate.<anonymous> apps/runtime/test/task-dispatch.spec.ts:133:98
+ ❯ processImmediate node:internal/timers:574:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'ERR_INVALID_STATE' }
+This error originated in "apps/runtime/test/task-dispatch.spec.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The last test to run before this error was "refuses a delayed dispatch after storage closes, with admission closed: false". This means either:
+- the error was thrown while Vitest was running this test, or
+- the error was thrown after the test completed, and this was the most recent test at that point.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: database is not open
+ ❯ oneRow packages/storage/src/db.ts:138:24
+    136| /** Read a single row, or `undefined` when there is no match. */
+    137| export function oneRow<T>(db: Database, sql: string, ...params: unknow…
+    138|   const statement = db.prepare(sql);
+       |                        ^
+    139|   return statement.get(...(params as never[])) as T | undefined;
+    140| }
+ ❯ getTask packages/storage/src/repositories/tasks.ts:92:15
+ ❯ runDispatchedTask packages/core/src/conductor.ts:1034:16
+ ❯ refuse apps/runtime/src/task-dispatch.ts:490:27
+ ❯ Object.dispatch apps/runtime/src/task-dispatch.ts:1113:14
+ ❯ Immediate.<anonymous> apps/runtime/test/task-dispatch.spec.ts:133:98
+ ❯ processImmediate node:internal/timers:574:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'ERR_INVALID_STATE' }
+This error originated in "apps/runtime/test/task-dispatch.spec.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The last test to run before this error was "refuses a delayed dispatch after storage closes, with admission closed: true". This means either:
+- the error was thrown while Vitest was running this test, or
+- the error was thrown after the test completed, and this was the most recent test at that point.
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed | 10 skipped (12)
+     Errors  2 errors
+   Start at  19:41:15
+   Duration  4.45s (import 70%, transform 28%, tests 1%)
+

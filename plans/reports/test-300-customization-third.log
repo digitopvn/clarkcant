@@ -1,0 +1,16 @@
+
+ RUN  v5.0.0 D:/wt300
+
+ ✓ packages/design-tokens/test/appearance.spec.ts (21 tests) 21ms
+ ✓ packages/conversation-client/test/appearance.spec.ts (15 tests) 181ms
+ ✓ apps/runtime/test/theme-routes.spec.ts (18 tests) 815ms
+
+ Test Files  3 passed (3)
+      Tests  54 passed (54)
+   Start at  18:48:21
+   Duration  5.90s (import 61%, transform 26%, tests 12%)
+
+  Transform  transforming modules took 2.16s · 26% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

@@ -1,0 +1,11 @@
+
+ RUN  v5.0.0 D:/wt300
+
+ ✓ packages/core/test/preference-registry.spec.ts (35 tests) 459ms
+ ✓ apps/runtime/test/theme-routes.spec.ts (19 tests) 891ms
+
+ Test Files  2 passed (2)
+      Tests  54 passed (54)
+   Start at  19:09:26
+   Duration  5.92s (import 59%, transform 24%, tests 17%)
+

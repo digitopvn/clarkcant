@@ -1,0 +1,578 @@
+
+ RUN  v5.0.0 D:/wt300
+
+created a dashboard widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-FXRa3F
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-FXRa3F
+ ✓ packages/widget-cli/test/cli-usage.spec.ts (9 tests) 11ms
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-NbHUvj
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-NbHUvj
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-HYFmpL
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-HYFmpL
+unknown template "nope"; expected one of blank, form, dashboard
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-TgvYAs
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-TgvYAs
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-eafpeQ
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-eafpeQ
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-5eeROJ
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-5eeROJ
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-RRp1Uo
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-RRp1Uo
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-YFqYeW
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-YFqYeW
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-3arN0k
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-3arN0k
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-DH5o4K
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-DH5o4K
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-L6GhoR
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-L6GhoR
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-KyX2su
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-KyX2su
+ ❯ packages/widget-cli/test/theme-cli.spec.ts (10 tests | 2 failed) 127ms
+   ❯ theme authoring through the shared clark CLI (10)
+     × initializes, audits and packs an immutable generalized theme artifact without an account 27ms
+     ✓ preserves existing author files and refuses missing directories and unknown commands 2ms
+     ✓ audits arbitrary third-party contrast and protected status colors 21ms
+     ✓ refuses undeclared styling, executable payload and unbounded typography: {"css":"@import url(https://external.test/theme.css)"} 12ms
+     ✓ refuses undeclared styling, executable payload and unbounded typography: {"script":"execute()"} 11ms
+     ✓ refuses undeclared styling, executable payload and unbounded typography: {"typography":{"font":"https://external.test/font.woff2"}} 12ms
+     ✓ refuses undeclared styling, executable payload and unbounded typography: {"typography":{"scale":100}} 11ms
+     × cannot make reduced-motion durations nonzero with a theme's speed multiplier 13ms
+     ✓ refuses a symlink asset instead of hashing bytes outside the package 8ms
+     ✓ excludes repository metadata, dependencies and artifacts from author bytes 8ms
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-MyE6T0
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-MyE6T0
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-ETocnF
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-ETocnF
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-2yfRYS
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-2yfRYS
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  ok   keyboard reachability — 1 reachable element(s), each with a visible focus ring
+  ok   touch target size — 1 interactive element(s), all at or above the minimum
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 60 characters
+  ok   the narrow layout — 320px: rendered=true, overflows=false
+  ok   the compact layout — 480px: rendered=true, overflows=false
+  ok   the expanded layout — 1024px: rendered=true, overflows=false
+  ok   the loading state — rendered=true
+  ok   the read-only state — rendered=true
+  ok   reduced motion — rendered with reduced motion: nothing animates, and no text sits over motion
+
+28 passed, 0 failed, 2 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+--frames C:\Users\admin\AppData\Local\Temp\clark-widget-2yfRYS\not-there.json could not be read as frame facts
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-mdXZKC
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-mdXZKC
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-G20tbN
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-G20tbN
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-ef8a21
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-ef8a21
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-B7YCwN
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-B7YCwN
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-qHzPtL
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-qHzPtL
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-Tz8eO8
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-Tz8eO8
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-b640Uc
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-b640Uc
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-WJMbVb
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-WJMbVb
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-ISUYyr
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-ISUYyr
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-XbH7hS
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-XbH7hS
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-1XVdUx
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-1XVdUx
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-1xvdux@0.1.0
+  sha256:7d6f986574c5574ff48e917a587ad8e046d7010ca826a1576fb64bcd022be69d
+  C:\Users\admin\AppData\Local\Temp\clark-widget-1XVdUx\dist\artifact.json
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-i60nDp
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-i60nDp
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-i60ndp@0.1.0
+  sha256:f35c4542662635e620dd7562c1853a2b10096b04e9235d2c5b87ea0ca651a2b3
+  C:\Users\admin\AppData\Local\Temp\clark-widget-i60nDp\dist\artifact.json
+version 0.1.0 was already packed with a different digest.
+A version whose bytes changed is a different package wearing the same number; bump the version.
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-CslcMy
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-CslcMy
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  FAIL the required fixtures are present — missing: empty
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+19 passed, 1 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+Refusing to pack a package that fails conformance.
+clark widget <command> [dir]
+
+  clark widget init <dir> [--template blank|form|dashboard]   scaffold a package
+  clark widget test [dir]                                     run the conformance suite
+  clark widget pack [dir]                                     build the artifact and its digest
+  clark widget dev [dir] [--port N] [--builtin <id>]          run the dev host and its browser shell
+  clark widget publish [dir]                                  prepare the directory submission
+  clark theme init <dir>                              scaffold a data-only theme package
+  clark theme dev [dir] [--port N]                     preview production components with live reload
+  clark theme test [dir]                              audit documents, assets and both schemes
+  clark theme pack [dir]                              pack through the shared immutable artifact path
+
+A local path needs no account. init, test, pack and dev all work without a directory or a login.
+clark widget <command> [dir]
+
+  clark widget init <dir> [--template blank|form|dashboard]   scaffold a package
+  clark widget test [dir]                                     run the conformance suite
+  clark widget pack [dir]                                     build the artifact and its digest
+  clark widget dev [dir] [--port N] [--builtin <id>]          run the dev host and its browser shell
+  clark widget publish [dir]                                  prepare the directory submission
+  clark theme init <dir>                              scaffold a data-only theme package
+  clark theme dev [dir] [--port N]                     preview production components with live reload
+  clark theme test [dir]                              audit documents, assets and both schemes
+  clark theme pack [dir]                              pack through the shared immutable artifact path
+
+A local path needs no account. init, test, pack and dev all work without a directory or a login.
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-2bEav5
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-2bEav5
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-2beav5@0.1.0
+  sha256:efd373f3f662937090df43df9129f734ae9890379649c34aaa675ffb20fc4049
+  C:\Users\admin\AppData\Local\Temp\clark-widget-2bEav5\dist\artifact.json
+prepared the directory entry for com.example.clark-widget-2beav5@0.1.0  risk lane: isolated-ui  digest: sha256:efd373f3f662937090df43df9129f734ae9890379649c34aaa675ffb20fc4049  C:\Users\admin\AppData\Local\Temp\clark-widget-2bEav5\dist\directory-entry.jsonSubmitting needs a directory account; a local path needs none.created a dashboard widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-CD85vf
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-CD85vf
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 65 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-cd85vf@0.1.0
+  sha256:8de7122a6bd2ec3cc124c99c11d71bc03574c6263cbefae9da392d2949890746
+  C:\Users\admin\AppData\Local\Temp\clark-widget-CD85vf\dist\artifact.json
+prepared the directory entry for com.example.clark-widget-cd85vf@0.1.0  risk lane: isolated-ui  digest: sha256:8de7122a6bd2ec3cc124c99c11d71bc03574c6263cbefae9da392d2949890746  C:\Users\admin\AppData\Local\Temp\clark-widget-CD85vf\dist\directory-entry.jsonSubmitting needs a directory account; a local path needs none.created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-FgrCH3
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-FgrCH3
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-fgrch3@0.1.0
+  sha256:42a6d80a443a61eecf9b8db381f0d5fd3766a52ac086a9f11f80f58af1fad145
+  C:\Users\admin\AppData\Local\Temp\clark-widget-FgrCH3\dist\artifact.json
+prepared the directory entry for com.example.clark-widget-fgrch3@0.1.0  risk lane: service  digest: sha256:42a6d80a443a61eecf9b8db381f0d5fd3766a52ac086a9f11f80f58af1fad145  C:\Users\admin\AppData\Local\Temp\clark-widget-FgrCH3\dist\directory-entry.jsonSubmitting needs a directory account; a local path needs none.created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-14N369
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-14N369
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  FAIL the required fixtures are present — missing: error
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+19 passed, 1 failed, 10 need the dev host
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-ltYj5y
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-ltYj5y
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-ltyj5y@0.1.0
+  sha256:87715ca35d16048c84d53a36a81e5322ddcc5a4a677f24e5d913e9db8b0577d2
+  C:\Users\admin\AppData\Local\Temp\clark-widget-ltYj5y\dist\artifact.json
+The checks marked n/a are not verified by this command: they need a rendered frame.Refusing to publish a package that fails conformance.version 0.1.0 was already packed with a different digest.
+A version whose bytes changed is a different package wearing the same number; bump the version.
+prepared the directory entry for com.example.clark-widget-ltyj5y@0.1.0  risk lane: isolated-ui  digest: sha256:87715ca35d16048c84d53a36a81e5322ddcc5a4a677f24e5d913e9db8b0577d2  C:\Users\admin\AppData\Local\Temp\clark-widget-ltYj5y\dist\directory-entry.jsonSubmitting needs a directory account; a local path needs none. ✓ packages/widget-cli/test/conformance.spec.ts (35 tests) 474ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/widget-cli/test/theme-cli.spec.ts > theme authoring through the shared clark CLI > initializes, audits and packs an immutable generalized theme artifact without an account
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ packages/widget-cli/test/theme-cli.spec.ts:37:51
+     35|     const path = root();
+     36|     expect(await runCli(["theme", "init", path])).toBe(0);
+     37|     expect(await runCli(["theme", "test", path])).toBe(0);
+       |                                                   ^
+     38|     const report = runThemeConformance(path);
+     39|     expect(report.summary.fail).toBe(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  packages/widget-cli/test/theme-cli.spec.ts > theme authoring through the shared clark CLI > cannot make reduced-motion durations nonzero with a theme's speed multiplier
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ packages/widget-cli/test/theme-cli.spec.ts:86:23
+     84|     edit(path, (theme) => { theme.motion = { speed: 2, easing: "steppe…
+     85|     const report = runThemeConformance(path);
+     86|     expect(report.ok).toBe(true);
+       |                       ^
+     87|     expect(report.checks.filter((check) => check.id.endsWith(":reduced…
+     88|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  2 failed | 52 passed (54)
+   Start at  18:11:29
+   Duration  3.26s (import 67%, transform 26%, tests 7%)
+
+  Transform  transforming modules took 2.28s · 26% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

@@ -1,0 +1,69 @@
+
+ RUN  v5.0.0 D:/wt300
+
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-ElS9em
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-ElS9em
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-RiGjk1
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-RiGjk1
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-HtLQ16
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-HtLQ16
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-su8GR6
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-su8GR6
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-2E2ysO
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-2E2ysO
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-nzHOlW
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-nzHOlW
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-NEdDpL
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-NEdDpL
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-PBwnE3
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-PBwnE3
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-cCz6PT
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-cCz6PT
+stderr | packages/widget-cli/test/dev-host.spec.ts > the dev host serving a catalog widget > serves the same shell, naming a catalog widget instead of a package
+WebSocket server error: Port 24678 is already in use
+
+stderr | packages/widget-cli/test/dev-host.spec.ts > the dev host serving a catalog widget > offers the entry's own fixtures, so the fixture control is not decorative
+WebSocket server error: Port 24678 is already in use
+
+stderr | packages/widget-cli/test/dev-host.spec.ts > the dev host serving a catalog widget > hands the frame the fixture the shell is showing
+WebSocket server error: Port 24678 is already in use
+
+ ❯ packages/widget-cli/test/theme-dev-host.spec.ts (2 tests | 1 failed) 255ms
+   ❯ the production theme author dev host (2)
+     × serves checked theme data and the production module entry, refusing other origins and package file browsing 110ms
+     ✓ reports a changed or invalid document and closes its recursive watcher 144ms
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-iZC9CX
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-iZC9CX
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-3HTkVI
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-3HTkVI
+ ✓ packages/widget-cli/test/dev-host.spec.ts (40 tests) 498ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/widget-cli/test/theme-dev-host.spec.ts > the production theme author dev host > serves checked theme data and the production module entry, refusing other origins and package file browsing
+AssertionError: expected '<!doctype html><html lang="en"><head>…' to contain '@react-refresh'
+
+- Expected
++ Received
+
+- @react-refresh
++ <!doctype html><html lang="en"><head>
++   <script type="module" src="/@vite/client"></script>
++ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ClarkCant Theme Lab</title></head><body><main id="cc-theme-dev-root"></main><script type="module" src="/src/theme-dev-runtime.tsx"></script></body></html>
+
+ ❯ packages/widget-cli/test/theme-dev-host.spec.ts:18:20
+     16|       const html = await (await fetch(host.url)).text();
+     17|       expect(html).toContain("theme-dev-runtime.tsx");
+     18|       expect(html).toContain("@react-refresh");
+       |                    ^
+     19|       const view = await (await fetch(`${host.url}/dev/theme`)).json();
+     20|       expect(view.themes).toHaveLength(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 41 passed (42)
+   Start at  18:18:37
+   Duration  2.88s (import 61%, transform 25%, tests 14%)
+

@@ -1,0 +1,60 @@
+
+ RUN  v5.0.0 D:/wt300
+
+ ✓ apps/runtime/test/peer-delegation.spec.ts (27 tests) 11760ms
+   ✓ a task one Clark hands to another (17)
+     ✓ runs on the other node within what its owner allowed, and settles the sender's own task 474ms
+     ✓ stops a worker already running on the other node when the sender stops the task 1138ms
+     ✓ stops a worker running here when this node's owner stops the task 903ms
+     ✓ counts a hand-over and its answer once, however often they arrive 467ms
+     ✓ takes an answer only from the node the task was handed to, and a grant only from its own sender 376ms
+     ✓ tells the sender while its task waits for the other node's owner, and settles it on their decision 634ms
+     ✓ withdraws an automation's own grant on both nodes when it is paused or removed, and writes a new one to resume 525ms
+     ✓ holds a run on the other node to the sender's time limit and run count 1663ms
+   ✓ what the other node can run, asked before a task is handed to it (4)
+     ✓ shows the sender a node that cannot run the task yet, warns at setup, and says at once that a hand-over waits there 483ms
+   ✓ the files a task handed to another Clark brings back (6)
+     ✓ brings a file the task wrote back to the sender within its owner's byte budget, and shows it with the result 444ms
+     ✓ fetches, when it starts again, a file it accepted and had not received, and says it arrived 462ms
+     ✓ leaves on the running node a file larger than the sender's byte budget, stores no copy, and says why 436ms
+     ✓ is offered no file when the sender's owner allowed no bytes, and the running node copies none 439ms
+     ✓ keeps the files on the running node when its owner let none go back, though the sender asked, and says so 434ms
+     ✓ offers nothing to a sender that has not said it takes files, and answers it as before 433ms
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: database is not open
+ ❯ oneRow packages/storage/src/db.ts:138:24
+    136| /** Read a single row, or `undefined` when there is no match. */
+    137| export function oneRow<T>(db: Database, sql: string, ...params: unknow…
+    138|   const statement = db.prepare(sql);
+       |                        ^
+    139|   return statement.get(...(params as never[])) as T | undefined;
+    140| }
+ ❯ getTask packages/storage/src/repositories/tasks.ts:92:15
+ ❯ runOne apps/runtime/src/task-dispatch.ts:510:18
+ ❯ pump apps/runtime/src/task-dispatch.ts:502:12
+ ❯ Object.dispatch apps/runtime/src/task-dispatch.ts:1124:7
+ ❯ Object.services.conductor.runTask apps/runtime/test/peer-delegation.spec.ts:168:56
+ ❯ Object.startTask apps/runtime/src/delegation-handlers.ts:106:25
+ ❯ Immediate.<anonymous> apps/runtime/src/delegation.ts:800:27
+ ❯ processImmediate node:internal/timers:574:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'ERR_INVALID_STATE' }
+This error originated in "apps/runtime/test/peer-delegation.spec.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The last test to run before this error was "tells the sender its outcome is unknown when the node running it restarted part-way". This means either:
+- the error was thrown while Vitest was running this test, or
+- the error was thrown after the test completed, and this was the most recent test at that point.
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  1 passed (1)
+      Tests  27 passed (27)
+     Errors  1 error
+   Start at  19:37:06
+   Duration  16.71s (tests 71%, import 20%, transform 10%)
+

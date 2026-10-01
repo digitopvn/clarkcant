@@ -1,0 +1,30 @@
+
+ RUN  v5.0.0 D:/wt300
+
+ ✓ apps/runtime/test/task-dispatch.spec.ts (12 tests) 659ms
+ ✓ apps/runtime/test/peer-delegation.spec.ts (27 tests) 14542ms
+   ✓ a task one Clark hands to another (17)
+     ✓ runs on the other node within what its owner allowed, and settles the sender's own task 480ms
+     ✓ stops a worker already running on the other node when the sender stops the task 1131ms
+     ✓ stops a worker running here when this node's owner stops the task 881ms
+     ✓ settles the sender's task when a hand-over or a stop could not be delivered 3186ms
+     ✓ counts a hand-over and its answer once, however often they arrive 466ms
+     ✓ takes an answer only from the node the task was handed to, and a grant only from its own sender 392ms
+     ✓ tells the sender while its task waits for the other node's owner, and settles it on their decision 564ms
+     ✓ withdraws an automation's own grant on both nodes when it is paused or removed, and writes a new one to resume 511ms
+     ✓ holds a run on the other node to the sender's time limit and run count 1667ms
+   ✓ what the other node can run, asked before a task is handed to it (4)
+     ✓ shows the sender a node that cannot run the task yet, warns at setup, and says at once that a hand-over waits there 451ms
+   ✓ the files a task handed to another Clark brings back (6)
+     ✓ brings a file the task wrote back to the sender within its owner's byte budget, and shows it with the result 438ms
+     ✓ fetches, when it starts again, a file it accepted and had not received, and says it arrived 440ms
+     ✓ leaves on the running node a file larger than the sender's byte budget, stores no copy, and says why 447ms
+     ✓ is offered no file when the sender's owner allowed no bytes, and the running node copies none 373ms
+     ✓ keeps the files on the running node when its owner let none go back, though the sender asked, and says so 391ms
+     ✓ offers nothing to a sender that has not said it takes files, and answers it as before 437ms
+
+ Test Files  2 passed (2)
+      Tests  39 passed (39)
+   Start at  19:41:38
+   Duration  18.81s (tests 67%, import 24%, transform 10%)
+

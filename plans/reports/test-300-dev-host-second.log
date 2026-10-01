@@ -1,0 +1,36 @@
+
+ RUN  v5.0.0 D:/wt300
+
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-IIhJC5
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-IIhJC5
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-5YLPJz
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-5YLPJz
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-ZsjnMK
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-ZsjnMK
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-FtQRvD
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-FtQRvD
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-eKMk2c
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-eKMk2c
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-bz4qzZ
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-bz4qzZ
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-mP5YaW
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-mP5YaW
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-4yW98I
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-4yW98I
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-gqhMId
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-gqhMId
+stderr | packages/widget-cli/test/theme-dev-host.spec.ts > the production theme author dev host > reports a changed or invalid document and closes its recursive watcher
+WebSocket server error: Port 24678 is already in use
+
+ ✓ packages/widget-cli/test/theme-dev-host.spec.ts (2 tests) 361ms
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-3tnefP
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-3tnefP
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-8FSUOT
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-8FSUOT
+ ✓ packages/widget-cli/test/dev-host.spec.ts (40 tests) 490ms
+
+ Test Files  2 passed (2)
+      Tests  42 passed (42)
+   Start at  18:22:17
+   Duration  2.94s (import 60%, transform 24%, tests 15%)
+

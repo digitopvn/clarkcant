@@ -1,0 +1,153 @@
+
+ RUN  v5.0.0 D:/wt300
+
+ ✓ packages/design-tokens/test/appearance.spec.ts (19 tests) 21ms
+ ❯ packages/conversation-client/test/appearance.spec.ts (14 tests | 1 failed) 177ms
+   ✓ applyAppearance (7)
+     ✓ resolves the in-app reduced-motion preference for the global desktop relay 1ms
+     ✓ publishes only drawn checked snapshots, deduplicates them and accepts the host's detached revision 6ms
+     ✓ starts on Clark Default, in a token sheet of its own ahead of the component sheet 1ms
+     ✓ replaces only the token sheet when a theme is applied 1ms
+     ✓ draws Clark Default, and says why, when the document is not one the contract accepts 1ms
+     ✓ refuses a theme whose colours fail the contrast audit, draws Clark Default, and names the pairs 2ms
+     ✓ returns to exactly the stylesheet Clark Default always had 1ms
+   ❯ the theme a page starts in (7)
+     × remembers the last theme drawn on this device, and forgets it on Clark Default 5ms
+     ✓ starts a new page in the remembered theme, checked like any other document 29ms
+     ✓ starts on Clark Default when what was remembered is not a document the contract accepts 27ms
+     ✓ starts on Clark Default when the remembered theme is one whose colours fail the contrast audit 26ms
+     ✓ still installs the component styles, and draws Clark Default, when building a stylesheet throws at load 27ms
+     ✓ draws Clark Default at load when the page refuses the remembered theme's sheet 26ms
+     ✓ draws Clark Default at load when only the remembered theme fails to compile 22ms
+ ❯ apps/runtime/test/theme-routes.spec.ts (18 tests | 15 failed) 575ms
+   ❯ the themes this node can draw (6)
+     × previews a checked installed theme without changing the saved choice 52ms
+     × stores audited accent and density, refusing unreadable color without changing the preference 26ms
+     ✓ is Clark Default alone until a package provides another 24ms
+     × lists an installed theme with the version, digest, lane and source of the package that provides it 33ms
+     × labels a theme shipped beside a stronger facet with the package's strongest lane 32ms
+     × names a theme that did not pass validation instead of leaving it out 32ms
+   ❯ the appearance a choice resolves to (7)
+     × follows the package through update, rollback, uninstall and restore without a Pi restart 39ms
+     × records a theme-only package as a change the UI refreshes, not one a Pi worker reloads 32ms
+     × falls back to Clark Default and says why when an update makes the chosen theme invalid 38ms
+     × falls back to Clark Default and names the unreadable pairs when an update makes the chosen theme too dim 41ms
+     × falls back when the package is installed but its files cannot be located 30ms
+     × does not draw files the directory now lists under a digest other than the one installed 30ms
+     × falls back when a stored built-in name is one this build does not have 23ms
+   ❯ choosing a theme (5)
+     ✓ refuses a theme no installed package provides, and keeps the choice it had 25ms
+     × refuses a theme whose colours fail the contrast audit, and names why 32ms
+     × refuses a theme that did not pass validation, and a built-in this build does not have 30ms
+     ✓ leaves a value that is not a reference at all to the key's own schema 24ms
+     × accepts Clark Default and a theme this node can draw 30ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 16 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the themes this node can draw > previews a checked installed theme without changing the saved choice
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the themes this node can draw > lists an installed theme with the version, digest, lane and source of the package that provides it
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the themes this node can draw > labels a theme shipped beside a stronger facet with the package's strongest lane
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the themes this node can draw > names a theme that did not pass validation instead of leaving it out
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the appearance a choice resolves to > follows the package through update, rollback, uninstall and restore without a Pi restart
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the appearance a choice resolves to > records a theme-only package as a change the UI refreshes, not one a Pi worker reloads
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the appearance a choice resolves to > falls back to Clark Default and says why when an update makes the chosen theme invalid
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the appearance a choice resolves to > falls back to Clark Default and names the unreadable pairs when an update makes the chosen theme too dim
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the appearance a choice resolves to > falls back when the package is installed but its files cannot be located
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the appearance a choice resolves to > does not draw files the directory now lists under a digest other than the one installed
+ FAIL  apps/runtime/test/theme-routes.spec.ts > choosing a theme > refuses a theme whose colours fail the contrast audit, and names why
+ FAIL  apps/runtime/test/theme-routes.spec.ts > choosing a theme > refuses a theme that did not pass validation, and a built-in this build does not have
+ FAIL  apps/runtime/test/theme-routes.spec.ts > choosing a theme > accepts Clark Default and a theme this node can draw
+Error: nested transaction: SQLite would implicitly commit the outer transaction, breaking durability. Pass the work into the outer transaction instead of starting a new one.
+ ❯ transaction packages/storage/src/db.ts:80:11
+     78| export function transaction<T>(db: Database, fn: () => T): T {
+     79|   if (inTransaction(db)) {
+     80|     throw new Error(
+       |           ^
+     81|       "nested transaction: SQLite would implicitly commit the outer tr…
+     82|     );
+ ❯ setPreference packages/core/src/preferences.ts:93:10
+ ❯ packages/core/src/preference-registry.ts:188:21
+ ❯ transaction packages/storage/src/db.ts:87:20
+ ❯ writeRegisteredPreference packages/core/src/preference-registry.ts:187:18
+ ❯ defaultWrite packages/core/src/execution-policy-migration.ts:315:3
+ ❯ migrateExecutionPolicy packages/core/src/execution-policy-migration.ts:406:47
+ ❯ readExecutionPolicy packages/core/src/execution-policy.ts:388:10
+ ❯ installPackage apps/runtime/src/application/package-install.ts:397:18
+ ❯ handlePackageRoutes apps/runtime/src/routes/packages.ts:205:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/16]⎯
+
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the themes this node can draw > stores audited accent and density, refusing unreadable color without changing the preference
+Error: nested transaction: SQLite would implicitly commit the outer transaction, breaking durability. Pass the work into the outer transaction instead of starting a new one.
+ ❯ transaction packages/storage/src/db.ts:80:11
+     78| export function transaction<T>(db: Database, fn: () => T): T {
+     79|   if (inTransaction(db)) {
+     80|     throw new Error(
+       |           ^
+     81|       "nested transaction: SQLite would implicitly commit the outer tr…
+     82|     );
+ ❯ setPreference packages/core/src/preferences.ts:93:10
+ ❯ packages/core/src/preference-registry.ts:188:21
+ ❯ transaction packages/storage/src/db.ts:87:20
+ ❯ writeRegisteredPreference packages/core/src/preference-registry.ts:187:18
+ ❯ handlePreferenceRoutes apps/runtime/src/routes/preferences.ts:199:21
+ ❯ handleRequest apps/runtime/src/gateway.ts:255:30
+ ❯ apps/runtime/test/theme-routes.spec.ts:194:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/16]⎯
+
+ FAIL  apps/runtime/test/theme-routes.spec.ts > the appearance a choice resolves to > falls back when a stored built-in name is one this build does not have
+Error: nested transaction: SQLite would implicitly commit the outer transaction, breaking durability. Pass the work into the outer transaction instead of starting a new one.
+ ❯ transaction packages/storage/src/db.ts:80:11
+     78| export function transaction<T>(db: Database, fn: () => T): T {
+     79|   if (inTransaction(db)) {
+     80|     throw new Error(
+       |           ^
+     81|       "nested transaction: SQLite would implicitly commit the outer tr…
+     82|     );
+ ❯ setPreference packages/core/src/preferences.ts:93:10
+ ❯ packages/core/src/preference-registry.ts:188:21
+ ❯ transaction packages/storage/src/db.ts:87:20
+ ❯ writeRegisteredPreference packages/core/src/preference-registry.ts:187:18
+ ❯ apps/runtime/test/theme-routes.spec.ts:411:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/16]⎯
+
+ FAIL  packages/conversation-client/test/appearance.spec.ts > the theme a page starts in > remembers the last theme drawn on this device, and forgets it on Clark Default
+AssertionError: expected { theme: { …(4) }, …(2) } to deeply equal { theme: { …(4) }, …(1) }
+
+- Expected
++ Received
+
+@@ -1,6 +1,10 @@
+  {
++   "customization": {
++     "accent": null,
++     "density": "comfortable",
++   },
+    "theme": {
+      "appearanceApi": {
+        "max": 1,
+        "min": 1,
+      },
+
+ ❯ packages/conversation-client/test/appearance.spec.ts:160:70
+    158|   it("remembers the last theme drawn on this device, and forgets it on…
+    159|     applyAppearance({ theme: DUSK, themeRef: "package:com.example.dusk…
+    160|     expect(JSON.parse(stored.get(APPEARANCE_STORAGE_KEY) ?? "null")).t…
+       |                                                                      ^
+    161|       theme: DUSK,
+    162|       themeRef: "package:com.example.dusk#dusk",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/16]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  16 failed | 35 passed (51)
+   Start at  18:45:09
+   Duration  5.70s (import 63%, transform 27%, tests 10%)
+
+  Transform  transforming modules took 2.13s · 27% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
