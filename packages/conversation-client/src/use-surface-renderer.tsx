@@ -120,6 +120,31 @@ interface ActionRun {
   approvalId?: string;
 }
 
+/** One widget's view writes: whether one is in flight, at which revision it was sent, and the latest change waiting. */
+export interface ViewQueue {
+  inFlight: boolean;
+  revision?: number;
+  queued?: { view: Record<string, unknown>; onSettled?: (timeline: Timeline) => void };
+}
+
+/**
+ * Whether a view change is sent now, and at which revision.
+ *
+ * An ordinary change waits behind a write in flight. A change sent as the page goes away cannot wait, because the answer
+ * that would release it never arrives: it is sent at once, with `keepalive`, at the revision the write in flight
+ * produces if the node accepts it (a view write moves the revision by one). If that write is refused, so is this one,
+ * and the node's own freshness window keeps what it reports honest.
+ */
+export function planViewWrite(
+  queue: ViewQueue | undefined,
+  revision: number,
+  leaving: boolean,
+): { send: false } | { send: true; expectedRevision: number; keepalive: boolean } {
+  if (queue?.inFlight !== true) return { send: true, expectedRevision: revision, keepalive: leaving };
+  if (!leaving) return { send: false };
+  return { send: true, expectedRevision: (queue.revision ?? revision) + 1, keepalive: true };
+}
+
 function newInvocationId(): string {
   const cryptoApi = globalThis.crypto as { randomUUID?: () => string } | undefined;
   if (cryptoApi?.randomUUID !== undefined) return cryptoApi.randomUUID();
@@ -226,29 +251,56 @@ export function useSurfaceRenderer({
    * latest waiting change is sent, so a burst of clicks is one write per round trip and ends at what the person last
    * chose. A refusal drops the waiting change and says why beside the widget, which then draws the view the node holds.
    */
-  const viewQueues = useRef(new Map<string, { inFlight: boolean; queued?: { view: Record<string, unknown>; onSettled?: (timeline: Timeline) => void } }>());
+  const viewQueues = useRef(new Map<string, ViewQueue>());
   /** A refusal said beside a widget, and how many there have been: each one sets the widget back to the node's view. */
   const [viewRefusals, setViewRefusals] = useState<Record<string, { message: string; count: number }>>({});
   const sendView = useCallback(
-    (conversation: string, instanceId: string, datasetRef: string | undefined, action: TimelineAction, revision: number, view: Record<string, unknown>, refused: MessageKey, onSettled?: (timeline: Timeline) => void): void => {
-      const queue = viewQueues.current.get(instanceId) ?? { inFlight: false };
-      if (queue.inFlight) {
-        viewQueues.current.set(instanceId, { inFlight: true, queued: { view, ...(onSettled === undefined ? {} : { onSettled }) } });
+    (conversation: string, instanceId: string, datasetRef: string | undefined, action: TimelineAction, revision: number, view: Record<string, unknown>, refused: MessageKey, onSettled?: (timeline: Timeline) => void, leaving = false): void => {
+      const queue = viewQueues.current.get(instanceId);
+      const plan = planViewWrite(queue, revision, leaving);
+      if (!plan.send) {
+        viewQueues.current.set(instanceId, { ...(queue ?? { inFlight: true }), queued: { view, ...(onSettled === undefined ? {} : { onSettled }) } });
         return;
       }
-      viewQueues.current.set(instanceId, { inFlight: true });
+      if (queue?.inFlight === true) {
+        // The page is going away: what waited is older than this write, and nothing after it will run.
+        viewQueues.current.set(instanceId, { inFlight: true, revision: plan.expectedRevision });
+        void client
+          .invokeAction(
+            conversation,
+            instanceId,
+            {
+              actionBindingId: action.actionBindingId,
+              expectedRevision: plan.expectedRevision,
+              expectedBindingDigest: action.bindingDigest,
+              input: view,
+              invocationId: newInvocationId(),
+            },
+            { keepalive: true },
+          )
+          .then((result) => applyTimeline(result.timeline))
+          // Best-effort on a page that is unloading; the node stops believing an old "playing" on its own.
+          .catch(() => undefined);
+        return;
+      }
+      viewQueues.current.set(instanceId, { inFlight: true, revision: plan.expectedRevision });
       setViewRefusals((current) => {
         const refusal = current[instanceId];
         return refusal === undefined || refusal.message === "" ? current : { ...current, [instanceId]: { message: "", count: refusal.count } };
       });
       void client
-        .invokeAction(conversation, instanceId, {
-          actionBindingId: action.actionBindingId,
-          expectedRevision: revision,
-          expectedBindingDigest: action.bindingDigest,
-          input: view,
-          invocationId: newInvocationId(),
-        })
+        .invokeAction(
+          conversation,
+          instanceId,
+          {
+            actionBindingId: action.actionBindingId,
+            expectedRevision: plan.expectedRevision,
+            expectedBindingDigest: action.bindingDigest,
+            input: view,
+            invocationId: newInvocationId(),
+          },
+          plan.keepalive ? { keepalive: true } : {},
+        )
         .then((result) => {
           const queued = viewQueues.current.get(instanceId)?.queued;
           viewQueues.current.set(instanceId, { inFlight: false });
@@ -528,7 +580,7 @@ export function useSurfaceRenderer({
               {...(needsBinding && !actionReady
                 ? {}
                 : {
-                    onAction: (action: string, payload: Record<string, unknown>) => {
+                    onAction: (action: string, payload: Record<string, unknown>, options?: { leaving?: boolean }) => {
                       // A table's export is a read the node answers with a file, through its own person-only route.
                       if (isTable && action === "export.requested" && conversationId !== undefined) {
                         if (exportStatus !== "pending") exportTable(conversationId, instance.instanceId, payload);
@@ -544,6 +596,10 @@ export function useSurfaceRenderer({
                           const viewInput = definitionId === BOARD_ID && action === BOARD_MOVE_OPERATION
                             ? { ...payload, external: boundAction !== undefined }
                             : payload;
+                          if (options?.leaving === true) {
+                            sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, matchingAction, instance.revision, viewInput, VIEW_REFUSED[viewAction] ?? "widgets.xyChart.viewRefused", undefined, true);
+                            return;
+                          }
                           sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, matchingAction, instance.revision, viewInput, VIEW_REFUSED[viewAction] ?? "widgets.xyChart.viewRefused", (nextTimeline) => {
                             if (definitionId !== BOARD_ID || action !== BOARD_MOVE_OPERATION || boundAction === undefined) return;
                             const current = nextTimeline.instances.find((entry) => entry.instanceId === instance.instanceId);

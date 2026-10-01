@@ -218,7 +218,8 @@ test("a picture picked in a composed gallery reaches the carousel beside it, the
   await expect(choice).toHaveAttribute("aria-pressed", "true");
   await expect(carousel).toHaveAttribute("data-carousel-index", "1");
 
-  // The surface's own state holds the pick, which is what a turn reads.
+  // The surface's own state holds the pick, which is what a turn reads. It holds the stored value, counted from 0: the
+  // second picture is `picture: 1`. Only a media widget's own semantic summary counts from 1 (`selectedNumber`).
   const liveRoute = press.url().replace(/\/actions$/u, "/live");
   await expect
     .poll(async () => {

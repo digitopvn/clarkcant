@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { MediaPlaybackState } from "@clarkcant/contracts";
 
+import { GatewayClient } from "../src/api.ts";
 import { createPlaybackCoalescer, flushPlaybackOnLeave } from "../src/playback-coalescer.ts";
+import { planViewWrite } from "../src/use-surface-renderer.tsx";
 
 describe("local playback state coalescing", () => {
   it("writes the initial state and coalesces frequent clock updates to the interval", () => {
@@ -123,6 +125,24 @@ describe("leaving a playing local video", () => {
     ]);
   });
 
+  it("marks only the write made as the page goes away as leaving", () => {
+    const page = new EventTarget();
+    const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    const writes: { state: MediaPlaybackState; leaving: boolean }[] = [];
+    const coalescer = createPlaybackCoalescer({ now: () => 0, intervalMs: 60_000, write: (state, { leaving }) => writes.push({ state, leaving }) });
+    let current: MediaPlaybackState = { status: "playing", position: 0, duration: 60 };
+    const stop = flushPlaybackOnLeave({ page, document: doc, read: () => current, report: coalescer.report });
+    coalescer.report(current, "playing");
+    current = { status: "playing", position: 4, duration: 60 };
+    doc.visibilityState = "hidden";
+    doc.dispatchEvent(new Event("visibilitychange"));
+    current = { status: "playing", position: 6, duration: 60 };
+    page.dispatchEvent(new Event("pagehide"));
+    stop();
+    expect(writes.map((write) => write.leaving)).toEqual([false, false, true]);
+    expect(writes[2]?.state).toEqual({ status: "paused", position: 6, duration: 60 });
+  });
+
   it("keeps an ended player ended and writes nothing for a player that never reported", () => {
     const ended = harness({ status: "ended", position: 60, duration: 60 });
     ended.stop();
@@ -131,5 +151,32 @@ describe("leaving a playing local video", () => {
     untouched.page.dispatchEvent(new Event("pagehide"));
     untouched.stop();
     expect(untouched.writes).toEqual([]);
+  });
+});
+
+describe("sending the write a page makes as it goes away", () => {
+  it("sends it at once at the revision a write in flight leads to, and an ordinary change waits", () => {
+    expect(planViewWrite(undefined, 4, false)).toEqual({ send: true, expectedRevision: 4, keepalive: false });
+    expect(planViewWrite({ inFlight: false }, 4, true)).toEqual({ send: true, expectedRevision: 4, keepalive: true });
+    expect(planViewWrite({ inFlight: true, revision: 4 }, 4, false)).toEqual({ send: false });
+    // A view write moves the revision by one, so the leaving write is not refused for the one ahead of it.
+    expect(planViewWrite({ inFlight: true, revision: 4 }, 4, true)).toEqual({ send: true, expectedRevision: 5, keepalive: true });
+  });
+
+  it("asks the browser to keep the request alive past the page only when told to", async () => {
+    const inits: (RequestInit | undefined)[] = [];
+    const client = new GatewayClient({
+      baseUrl: "http://127.0.0.1:8765",
+      token: "tok",
+      fetchImpl: (async (_input: string | URL | Request, init?: RequestInit) => {
+        inits.push(init);
+        return new Response(JSON.stringify({ outcome: "done", revision: 5, timeline: { instances: [] } }), { status: 200 });
+      }) as typeof fetch,
+    });
+    const invocation = { actionBindingId: "act_view", expectedRevision: 4, expectedBindingDigest: "sha256:x", input: {}, invocationId: "inv_1" };
+    await client.invokeAction("conv_1", "winst_1", invocation, { keepalive: true });
+    await client.invokeAction("conv_1", "winst_1", { ...invocation, invocationId: "inv_2" });
+    expect(inits[0]?.keepalive).toBe(true);
+    expect(inits[1]?.keepalive).toBeUndefined();
   });
 });

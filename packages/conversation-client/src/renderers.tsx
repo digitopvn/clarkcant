@@ -209,7 +209,8 @@ export interface RendererProps {
   dataset?: RendererDataset | undefined;
   state?: Record<string, unknown> | undefined;
   /** Reports the revision the user saw, so a stale action is refused server-side. */
-  onAction?: ((action: string, payload: Record<string, unknown>) => void) | undefined;
+  /** `leaving` marks a write sent as the page goes away: the host sends it at once, with `keepalive`. */
+  onAction?: ((action: string, payload: Record<string, unknown>, options?: { leaving?: boolean }) => void) | undefined;
   onStateChange?: ((patch: Record<string, unknown>) => void) | undefined;
   /**
    * Resolves an imported image to a fetchable URL, or `undefined` while it is not available.
@@ -2382,7 +2383,7 @@ function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactE
   const playback = readMediaPlayback(state);
   // Made once for the player's life: it remembers what was last written, so a new one each render would forget it.
   const [coalescer] = useState<PlaybackCoalescer>(() => createPlaybackCoalescer({
-    write: (next) => callbackRef.current?.(MEDIA_VIEW_OPERATION, { ...next }),
+    write: (next, { leaving }) => callbackRef.current?.(MEDIA_VIEW_OPERATION, { ...next }, leaving ? { leaving: true } : undefined),
   }));
   // Where the player last said it was, kept for when it goes away: by then the element itself may be gone.
   const lastKnown = useRef<MediaPlaybackState | undefined>(undefined);
