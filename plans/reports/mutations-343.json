@@ -1,0 +1,22 @@
+[
+  {
+    "mutation": "person-only",
+    "exitCode": 1,
+    "detected": true
+  },
+  {
+    "mutation": "transaction-files",
+    "exitCode": 1,
+    "detected": true
+  },
+  {
+    "mutation": "migration",
+    "exitCode": 1,
+    "detected": true
+  },
+  {
+    "mutation": "policy",
+    "exitCode": 1,
+    "detected": true
+  }
+]

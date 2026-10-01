@@ -1,0 +1,42 @@
+
+ RUN  v5.0.0 D:/wt343
+
+ ❯ apps/runtime/test/conversation-delete.spec.ts (15 tests | 1 failed | 14 skipped) 5ms
+   ↓ releases attachments and finalized unattached widget files only after commit, preserving shared bytes
+   ↓ rolls back rows and bytes when deletion fails at artifacts
+   ↓ rolls back rows and bytes when deletion fails at conversations
+   ↓ removes the four restrictive foreign-key owners and their private widget without turning off foreign keys
+   ↓ reports locked bytes as pending and retries the durable cleanup without resurrecting deleted rows
+   ↓ keeps data while a widget action is aborting or a model turn still holds the conversation
+   ↓ does not let the standalone release helper unlink files inside a caller's transaction
+   ↓ asks through policy, keeps data on denial, and spends a principal-bound permission exactly once
+   ↓ keeps all data with a expired permission
+   ↓ keeps all data with a wrong-target permission
+   ↓ keeps all data with a tightened-policy permission
+   ↓ binds the chat command to the current conversation and asks the same policy
+   ↓ binds the voice command to the current conversation and asks the same policy
+   ↓ refuses agent intents and machine relays, including alternate path segmentation
+   × upgrades a populated schema 38 without rewriting applied migrations or disabling foreign keys 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/runtime/test/conversation-delete.spec.ts > upgrades a populated schema 38 without rewriting applied migrations or disabling foreign keys
+Error: migration 40 (conversation_deletion_permissions_and_cleanup) leaves a gap; expected version 39
+ ❯ assertMigrationListIsSane packages/storage/src/migrate.ts:1644:13
+    1642|     }
+    1643|     if (seen.size > 0 && migration.version !== previous + 1) {
+    1644|       throw new Error(
+       |             ^
+    1645|         `migration ${migration.version} (${migration.name}) leaves a g…
+    1646|       );
+ ❯ migrate packages/storage/src/migrate.ts:1665:3
+ ❯ apps/runtime/test/conversation-delete.spec.ts:41:98
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 14 skipped (15)
+   Start at  15:45:10
+   Duration  2.72s (import 70%, transform 29%)
+

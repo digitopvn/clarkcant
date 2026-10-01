@@ -1,0 +1,6 @@
+$ tsc -p tsconfig.json && tsc -p tsconfig.web.json
+packages/conversation-client/src/Conversation.tsx(643,59): error TS2304: Cannot find name 't'.
+packages/conversation-client/src/Conversation.tsx(646,14): error TS2304: Cannot find name 't'.
+packages/conversation-client/src/Conversation.tsx(649,45): error TS2304: Cannot find name 't'.
+packages/conversation-client/src/Conversation.tsx(649,69): error TS2304: Cannot find name 't'.
+[ELIFECYCLE] Command failed with exit code 2.

@@ -1,0 +1,3 @@
+Confirmed the root cause locally after 09:00 UTC: the focused test failed with the same assertion as Windows run 36692667263. Fixed in the test-only commit 2caefcd8 on PR #365. It now bounds the grant by the actual write start/end plus grantTtlMs and asserts finalization keeps that expiry unchanged; maker access after expiry, other-widget expiry and revocation checks remain.
+
+All 31 artifact broker tests and pnpm verify pass after the former cutoff (4,917 tests, 34 existing skips). Runtime/client sources are unchanged from 537af854, whose local verify:full passed 315 E2E with 3 existing skips. Required CI on 2caefcd8 is running (36694419931 / 36694425708); the superseded runs were cancelled by workflow concurrency. This issue stays open until the repaired PR lands.

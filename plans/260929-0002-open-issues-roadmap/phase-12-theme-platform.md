@@ -1,11 +1,13 @@
 ---
 phase: 12
 title: "#201 nền tảng theme"
-status: pending
+status: in-progress
 issues: [201]
 ---
 
 # Phase 12 — #201 nền tảng theme
+
+Ngày 2026-09-30: M1 #296/PR304, M2 #297/PR305 và M3 #298/PR347 đã land. M4 #299/PR367 và docs web PR60 đã land, CI/Deploy xanh; [đối chiếu nghiệm thu](../reports/closure-260930-1812-299.md). Đang triển khai M5 #300 tại D:/wt300; sau đó M7 #302. M6 #301 vẫn gated bởi #194.
 
 ## Yêu cầu
 

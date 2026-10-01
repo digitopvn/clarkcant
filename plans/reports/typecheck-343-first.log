@@ -1,0 +1,6 @@
+$ tsc -p tsconfig.json && tsc -p tsconfig.web.json
+apps/runtime/src/routes/conversations.ts(969,95): error TS2379: Argument of type '{ locale: AppIntentLocale; mint: (intent: { kind: "voice.end" | "voice.open" | "window.expand" | "window.minimise" | "window.minimal" | "window.fullscreen" | "window.windowed" | ... 21 more ... | "appearance.open-theme-gallery"; ... 13 more ...; colorScheme?: "system" | ... 2 more ... | undefined; }) => string; dele...' is not assignable to parameter of type '{ conversationId: string; deletionPermit?: string; locale: AppIntentLocale; mint: (intent: { kind: "voice.end" | "voice.open" | "window.expand" | "window.minimise" | "window.minimal" | ... 23 more ... | "appearance.open-theme-gallery"; ... 13 more ...; colorScheme?: "system" | ... 2 more ... | undefined; }) => strin...' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the types of the target's properties.
+  Types of property 'deletionPermit' are incompatible.
+    Type 'string | undefined' is not assignable to type 'string'.
+      Type 'undefined' is not assignable to type 'string'.
+[ELIFECYCLE] Command failed with exit code 2.

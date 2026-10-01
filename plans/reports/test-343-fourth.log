@@ -1,0 +1,47 @@
+
+ RUN  v5.0.0 D:/wt343
+
+ ✓ packages/storage/test/audit.spec.ts (7 tests) 150ms
+ ✓ packages/conversation-client/test/styles.spec.ts (16 tests) 32ms
+ ❯ apps/runtime/test/conversation-delete.spec.ts (15 tests | 1 failed) 216ms
+   ✓ releases attachments and finalized unattached widget files only after commit, preserving shared bytes 20ms
+   ✓ rolls back rows and bytes when deletion fails at artifacts 13ms
+   ✓ rolls back rows and bytes when deletion fails at conversations 13ms
+   ✓ removes the four restrictive foreign-key owners and their private widget without turning off foreign keys 14ms
+   × reports locked bytes as pending and retries the durable cleanup without resurrecting deleted rows 15ms
+   ✓ keeps data while a widget action is aborting or a model turn still holds the conversation 14ms
+   ✓ does not let the standalone release helper unlink files inside a caller's transaction 13ms
+   ✓ asks through policy, keeps data on denial, and spends a principal-bound permission exactly once 17ms
+   ✓ keeps all data with a expired permission 13ms
+   ✓ keeps all data with a wrong-target permission 13ms
+   ✓ keeps all data with a tightened-policy permission 13ms
+   ✓ binds the chat command to the current conversation and asks the same policy 12ms
+   ✓ binds the voice command to the current conversation and asks the same policy 11ms
+   ✓ refuses agent intents and machine relays, including alternate path segmentation 11ms
+   ✓ upgrades a populated schema 38 without rewriting applied migrations or disabling foreign keys 22ms
+ ✓ apps/runtime/test/open-interfaces.spec.ts (23 tests) 770ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/runtime/test/conversation-delete.spec.ts > reports locked bytes as pending and retries the durable cleanup without resurrecting deleted rows
+SystemError: Path is a directory: rm returned EISDIR (is a directory) C:\Users\admin\AppData\Local\Temp\clarkcant-delete-JtXpPm\blobs\53dabc6b14e918a0eec20e347ca0bf23.txt
+ ❯ apps/runtime/test/conversation-delete.spec.ts:82:3
+     80|   expect(remove()).toMatchObject({deleted: true, pendingFiles: 1});
+     81|   expect(getConversation(db, id)).toBeUndefined(); expect(existsSync(a…
+     82|   rmSync(a.blobPath); writeFileSync(a.blobPath, "released lock");
+       |   ^
+     83|   expect(sweepConversationFileCleanup(deps())).toEqual({pending: 0}); …
+     84| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 3 passed (4)
+      Tests  1 failed | 60 passed (61)
+   Start at  15:23:35
+   Duration  5.33s (import 61%, transform 26%, tests 13%)
+
+  Transform  transforming modules took 2.43s · 26% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

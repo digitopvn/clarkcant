@@ -1,6 +1,6 @@
 ---
 title: "#200 và phần còn lại của #198: tách widget platform thành sub-issue có thứ tự"
-status: pending
+status: in-progress
 created: 2026-09-30
 issues: [200, 198, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 332, 333, 334, 335]
 related: [195, 226, 280, 281, 282, 283]
@@ -48,6 +48,11 @@ vào cuối body), issue [#198](https://github.com/digitopvn/clarkcant/issues/19
 | 02 Widget còn lại của #198: P1 timeline, tree, kanban, media semantic; P2 map, diagram, media | chờ | #282, #283 merge; #324 cần #313 và #329 | [phase-02-198-remaining-widgets.md](phase-02-198-remaining-widgets.md) |
 
 Hai phase chạy song song được, trừ các điểm chung trong mục "Ghi chú xung đột file".
+
+## Trạng thái
+
+- #334 đã đóng qua PR #375; #335 đã đóng qua PR #376. Tài liệu chính thức EN/VI được cập nhật và deploy qua web PR #65.
+- #315 là bước kế tiếp trước #316 vì #316 phụ thuộc JobRef và concurrency/background execution của #315.
 
 ## Thứ tự đề xuất
 

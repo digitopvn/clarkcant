@@ -1,0 +1,66 @@
+
+ RUN  v5.0.0 D:/wt343
+
+ ❯ apps/runtime/test/artifact-broker.spec.ts (31 tests | 1 failed | 30 skipped) 60ms
+   ↓ staged blobs (2)
+     ↓ streams a file larger than one chunk in order and reads it back range by range
+     ↓ never turns a staging name into a path
+   ↓ a working artifact, written in chunks (5)
+     ↓ creates, streams more than one chunk, reads every range back and finalizes with a digest
+     ↓ refuses an oversized chunk, a chunk out of order, and a range that is a bug in the reader
+     ↓ refuses a chunk that would take the artifact past the one-file ceiling, and takes one that fits
+     ↓ refuses a type the attachment pipeline would not take, and bytes that disagree with the declared type
+     ↓ counts a chunk against the principal's one quota, attachments included
+   ❯ a ref is a pointer, not a permission (5)
+     ↓ refuses another instance that was never granted the artifact
+     ↓ refuses an instance of another principal, and an artifact of another principal
+     ↓ refuses once the grant expires, and once it is revoked
+     × keeps a finalized file readable by the widget that made it, and ends every other widget's grant on time 59ms
+     ↓ answers a widget route only for an instance the conversation in its path holds
+   ↓ a file read as an agent button's context (1)
+     ↓ is read only for a widget the conversation still holds, even one with a live grant
+   ↓ a file the person picked (3)
+     ↓ stores the bytes as an external, sealed artifact and grants it to that instance only
+     ↓ takes a file whose system named its type by another name, or by none, and reads what it is from the bytes
+     ↓ refuses bytes that are not what the widget asked for, or not what they claim to be
+   ↓ handing a finalized artifact to the conversation (3)
+     ↓ refuses a working artifact, and attaches a finalized one the model can read
+     ↓ attaches one file once, however often the widget asks
+     ↓ saves as a download on the person's route only once it is finalized, under a name and never a path
+   ↓ a widget lets go of a file it made (4)
+     ↓ discards a working file with its staged bytes, and a finalized one with bytes nothing else holds
+     ↓ keeps the bytes of a file it attached, because the attachment points at them too
+     ↓ refuses a file the person chose, and a file another widget made, even one it was granted
+     ↓ refuses once the person revoked the widget's access
+   ↓ one widget's share of the quota (3)
+     ↓ refuses bytes past the instance cap long before the principal's quota, and only for that widget
+     ↓ counts what the widget attached to the conversation against its share, for as long as the attachment is kept
+     ↓ does not count a file the person picked, so a widget that was handed files is never locked out by them
+   ↓ an empty file (1)
+     ↓ finalizes an empty text file, and still refuses an empty picture
+   ↓ retention (4)
+     ↓ clears staged files a previous process left behind, and only those, when the node starts
+     ↓ does nothing when there is no staging folder yet
+     ↓ sweeps a working artifact whose time ran out, with its staged bytes
+     ↓ removes a deleted conversation's artifacts, keeping a blob an attachment still shares until that goes too
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/runtime/test/artifact-broker.spec.ts > a ref is a pointer, not a permission > keeps a finalized file readable by the widget that made it, and ends every other widget's grant on time
+AssertionError: expected 1790845672477 to be less than 1790845200000
+ ❯ apps/runtime/test/artifact-broker.spec.ts:405:53
+    403|     // The maker's grant is as old as its last write; a day later it w…
+    404|     const makerGrant = getArtifactGrant(services.runtime.db, artifactI…
+    405|     expect(Date.parse(makerGrant?.expiresAt ?? AT)).toBeLessThan(Date.…
+       |                                                     ^
+    406|     // Another widget the file was shared with holds an ordinary grant…
+    407|     const other = instance();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 30 skipped (31)
+   Start at  16:07:47
+   Duration  5.27s (import 71%, transform 28%, tests 1%)
+

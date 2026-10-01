@@ -1,0 +1,1 @@
+- [PR diff fallback](reference_pr_diff_fallback.md) — read clarkcant PR diffs via patch-diff WebFetch when Bash/gh cannot spawn; Grep (not Read) node_modules

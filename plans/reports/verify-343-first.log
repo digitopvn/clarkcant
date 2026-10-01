@@ -1,0 +1,1524 @@
+$ pnpm run invariants && pnpm run typecheck && pnpm run lint && pnpm run test
+$ node tools/check-invariants.mjs
+PASS  docs-manifest-integrity
+      · 32 manifest entries verified
+PASS  workspace-phase-traceability
+      · 32 workspace packages carry phase + status metadata
+PASS  stub-marks-owning-phase
+      · 7 stub files carry an owning-phase marker
+PASS  node-type-stripping-syntax
+      · 889 TypeScript files checked for transform-only syntax
+PASS  no-committed-secrets
+      · 1130 files scanned for credential patterns
+PASS  pinned-dependency-specifiers
+      · 120 dependency specifiers checked for pinning
+PASS  scope-and-acceptance-traceability
+      · 151 cited test titles checked against 438 spec files; rows that cite a path rather than a quoted title are not matched to a case
+PASS  browser-entries-avoid-node-builtins
+      · 213 module(s) reachable from 3 browser entry/entries
+PASS  single-execution-policy-reader
+      · 1 canonical policy read(s) across 458 module(s), 2 allowed to open the key
+PASS  implementation-status-registry
+      · 34 entries (16 implemented, 14 partial, 4 blocked, 0 not-implemented) verified against 32 workspace packages
+      · 15 @status-ref reference(s) across 976 source files
+      · 18 V row(s) agree with the registry; gates #2/#3/#4/#5 represented
+      · V02, runtime.local-transport cite a test a platform condition skips on some runners, so their evidence is thinner there than on this one
+      · evidence is checked for existence and for a platform-conditional skip: a runtime condition that is not derived from process.platform or process.arch (an opt-in live provider, for instance) is not this check's subject
+PASS  tsx-files-are-typechecked
+      · 60 .tsx file(s) checked against 2 typecheck config(s) — tsconfig.json, tsconfig.web.json
+PASS  pr-bodies-close-nothing
+      · 10 checked-in PR body file(s) checked for a closing keyword beside an issue reference; 0 such pair(s) found
+
+all 12 invariant checks passed
+$ tsc -p tsconfig.json && tsc -p tsconfig.web.json
+$ eslint .
+$ vitest run
+
+ RUN  v5.0.0 D:/wt343
+
+ ✓ packages/widget-host/test/session.spec.ts (43 tests) 698ms
+   ✓ the artifacts@1 extension (14)
+     ✓ keeps only the latest entries of what the frame said, so a frame that keeps asking cannot grow the record 607ms
+ ✓ packages/contracts/test/contracts.spec.ts (78 tests) 24ms
+ ✓ packages/core/test/app-intents.spec.ts (31 tests) 34ms
+ ✓ packages/capability-host/test/dependency-lock.spec.ts (23 tests) 227ms
+ ✓ apps/runtime/test/jev-decider.spec.ts (19 tests) 577ms
+ ✓ packages/storage/test/notifications.spec.ts (40 tests) 1258ms
+[fts-baseline] lexical 30/31 (96.8%); semantic-only 2/8 (25.0%) — the gap Phase 10 must close
+lexical failures:
+  phân tích cảm xúc khách hàng → expected (nothing), got msg_meeting
+ ✓ apps/runtime/test/session-search.spec.ts (22 tests) 691ms
+ ✓ packages/widget-sdk/test/runtime.spec.ts (32 tests) 91ms
+created a dashboard widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-yUltOh
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-yUltOh
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-Jc4zXb
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-Jc4zXb
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-6HXMCe
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-6HXMCe
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-Dh0BNd
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-Dh0BNd
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-7m83PD
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-7m83PD
+unknown template "nope"; expected one of blank, form, dashboard
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-XfJU5i
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-XfJU5i
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-w3ks7W
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-w3ks7W
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-NOSywF
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-NOSywF
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-BCXkp5
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-BCXkp5
+ ✓ apps/runtime/test/jev-selector.spec.ts (23 tests) 71ms
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-MHL2bD
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-MHL2bD
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-R1h6RN
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-R1h6RN
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-CYvXlz
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-CYvXlz
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-vIVC38
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-vIVC38
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-ms7q7R
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-ms7q7R
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-ERbI8a
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-ERbI8a
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-zpSii9
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-zpSii9
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-u3qO1h
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-u3qO1h
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-UPL8Ub
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-UPL8Ub
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-7xnIcI
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-7xnIcI
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-QFOhZW
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-QFOhZW
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-qTSRru
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-qTSRru
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  ok   keyboard reachability — 1 reachable element(s), each with a visible focus ring
+  ok   touch target size — 1 interactive element(s), all at or above the minimum
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 60 characters
+  ok   the narrow layout — 320px: rendered=true, overflows=false
+  ok   the compact layout — 480px: rendered=true, overflows=false
+  ok   the expanded layout — 1024px: rendered=true, overflows=false
+  ok   the loading state — rendered=true
+  ok   the read-only state — rendered=true
+  ok   reduced motion — rendered with reduced motion: nothing animates, and no text sits over motion
+
+28 passed, 0 failed, 2 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+--frames C:\Users\admin\AppData\Local\Temp\clark-widget-qTSRru\not-there.json could not be read as frame facts
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-Wmd4wf
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-Wmd4wf
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-MIX6tq
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-MIX6tq
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-Qat1No
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-Qat1No
+ ✓ packages/storage/test/storage.spec.ts (32 tests) 1369ms
+   ✓ failure injection around a backup (V18) (6)
+     ✓ keeps verifying over many rounds, so a leak or a drift fails here rather than later 723ms
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-o3RhOL
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-o3RhOL
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-KDHQ0b
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-KDHQ0b
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-u6P2ka
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-u6P2ka
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-jz3dW1
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-jz3dW1
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-DKGvSp
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-DKGvSp
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-xELKdF
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-xELKdF
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-IHwcUz
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-IHwcUz
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-v0QkJ3
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-v0QkJ3
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-Ulnk4V
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-Ulnk4V
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-KNjEZR
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-KNjEZR
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-1cTqOy
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-1cTqOy
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-1ctqoy@0.1.0
+  sha256:6cc26489d12c4b115f0803c2737a10524ae9eca1487421a7a37c3f2c140c89f6
+  C:\Users\admin\AppData\Local\Temp\clark-widget-1cTqOy\dist\artifact.json
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-XpNpik
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-XpNpik
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-xpnpik@0.1.0
+  sha256:b7624467b08abdcf6ad015ee7bc0bc894f59617b288b2e0ba010859fc5c6ca71
+  C:\Users\admin\AppData\Local\Temp\clark-widget-XpNpik\dist\artifact.json
+version 0.1.0 was already packed with a different digest.
+A version whose bytes changed is a different package wearing the same number; bump the version.
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-j5YHDn
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-j5YHDn
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  FAIL the required fixtures are present — missing: empty
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+19 passed, 1 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+Refusing to pack a package that fails conformance.
+clark widget <command> [dir]
+
+  clark widget init <dir> [--template blank|form|dashboard]   scaffold a package
+  clark widget test [dir]                                     run the conformance suite
+  clark widget pack [dir]                                     build the artifact and its digest
+  clark widget dev [dir] [--port N] [--builtin <id>]          run the dev host and its browser shell
+  clark widget publish [dir]                                  prepare the directory submission
+
+A local path needs no account. init, test, pack and dev all work without a directory or a login.
+clark widget <command> [dir]
+
+  clark widget init <dir> [--template blank|form|dashboard]   scaffold a package
+  clark widget test [dir]                                     run the conformance suite
+  clark widget pack [dir]                                     build the artifact and its digest
+  clark widget dev [dir] [--port N] [--builtin <id>]          run the dev host and its browser shell
+  clark widget publish [dir]                                  prepare the directory submission
+
+A local path needs no account. init, test, pack and dev all work without a directory or a login.
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-fHqcj5
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-fHqcj5
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-fhqcj5@0.1.0
+  sha256:d2b3aab2eb2a61be22145b86f765bf1d80dfd9290248719c80c497791b80def4
+  C:\Users\admin\AppData\Local\Temp\clark-widget-fHqcj5\dist\artifact.json
+prepared the directory entry for com.example.clark-widget-fhqcj5@0.1.0  risk lane: isolated-ui  digest: sha256:d2b3aab2eb2a61be22145b86f765bf1d80dfd9290248719c80c497791b80def4  C:\Users\admin\AppData\Local\Temp\clark-widget-fHqcj5\dist\directory-entry.jsonSubmitting needs a directory account; a local path needs none.created a dashboard widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-r6Gzlk
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-r6Gzlk
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 65 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-r6gzlk@0.1.0
+  sha256:8852142a57d6fa5ad835126697d5c4031027090e1335fb5fd2674fdafb5d5ed8
+  C:\Users\admin\AppData\Local\Temp\clark-widget-r6Gzlk\dist\artifact.json
+prepared the directory entry for com.example.clark-widget-r6gzlk@0.1.0  risk lane: isolated-ui  digest: sha256:8852142a57d6fa5ad835126697d5c4031027090e1335fb5fd2674fdafb5d5ed8  C:\Users\admin\AppData\Local\Temp\clark-widget-r6Gzlk\dist\directory-entry.jsonSubmitting needs a directory account; a local path needs none. ✓ packages/core/test/core.spec.ts (49 tests) 1026ms
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-XTqTeU
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-XTqTeU
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-xtqteu@0.1.0
+  sha256:f2e52c6d84b0c707f67744dba5ca648034dfba0fdf532d2e99b57a1aeaac0fe9
+  C:\Users\admin\AppData\Local\Temp\clark-widget-XTqTeU\dist\artifact.json
+prepared the directory entry for com.example.clark-widget-xtqteu@0.1.0  risk lane: service  digest: sha256:f2e52c6d84b0c707f67744dba5ca648034dfba0fdf532d2e99b57a1aeaac0fe9  C:\Users\admin\AppData\Local\Temp\clark-widget-XTqTeU\dist\directory-entry.jsonSubmitting needs a directory account; a local path needs none.created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-jkG0ww
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-jkG0ww
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  FAIL the required fixtures are present — missing: error
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+19 passed, 1 failed, 10 need the dev host
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-FeipOy
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-FeipOy
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-feipoy@0.1.0
+  sha256:51ace6d5afb8cdece4e24b4f232b5fce285a34b2adeacff10b0b4806646b23f0
+  C:\Users\admin\AppData\Local\Temp\clark-widget-FeipOy\dist\artifact.json
+The checks marked n/a are not verified by this command: they need a rendered frame.Refusing to publish a package that fails conformance.version 0.1.0 was already packed with a different digest.
+A version whose bytes changed is a different package wearing the same number; bump the version.
+prepared the directory entry for com.example.clark-widget-feipoy@0.1.0  risk lane: isolated-ui  digest: sha256:51ace6d5afb8cdece4e24b4f232b5fce285a34b2adeacff10b0b4806646b23f0  C:\Users\admin\AppData\Local\Temp\clark-widget-FeipOy\dist\directory-entry.jsonSubmitting needs a directory account; a local path needs none. ✓ packages/widget-cli/test/conformance.spec.ts (35 tests) 796ms
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-hEsnBJ
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-hEsnBJ
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-devhost-8D7qa3
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-devhost-8D7qa3
+ ✓ packages/widget-cli/test/dev-host.spec.ts (40 tests) 944ms
+ ✓ apps/runtime/test/project-finder.spec.ts (31 tests) 1626ms
+ ✓ packages/conversation-client/test/inbox-model.spec.ts (42 tests) 15ms
+ ✓ apps/runtime/test/update-checks.spec.ts (26 tests) 1081ms
+ ✓ packages/core/test/execution-policy.spec.ts (34 tests) 138ms
+ ✓ packages/widget-host/test/seams.spec.ts (42 tests) 153ms
+ ✓ apps/runtime/test/command-policy.spec.ts (27 tests) 292ms
+ ✓ apps/worker/test/worker.spec.ts (29 tests) 231ms
+ ✓ apps/runtime/test/notice-operations.spec.ts (17 tests) 865ms
+ ✓ apps/runtime/test/composer-references.spec.ts (20 tests) 1098ms
+ ✓ apps/runtime/test/package-install-capability-approval.spec.ts (17 tests) 1149ms
+ ✓ apps/runtime/test/mini-app-data.spec.ts (25 tests) 1161ms
+widget action: could not settle eff_munu2fqdfef3d339 in the effect ledger (the disk is full)
+ ✓ apps/runtime/test/open-interfaces.spec.ts (23 tests) 1345ms
+ ✓ apps/runtime/test/task-approval-decide.spec.ts (7 tests) 471ms
+ ✓ apps/runtime/test/artifact-broker.spec.ts (31 tests) 1638ms
+ ✓ apps/runtime/test/automations.spec.ts (12 tests) 1779ms
+   ✓ a task set up in the conversation (7)
+     ✓ says once, in the inbox and its conversation, when a run that came due was refused 381ms
+   ✓ quieting an automation's notices (1)
+     ✓ quiets that one automation, and never another automation or a reminder 722ms
+ ✓ packages/core/test/preference-registry.spec.ts (33 tests) 900ms
+ ✓ apps/runtime/test/api.spec.ts (39 tests) 2046ms
+   ✓ a command runs only when the user approves the one that was displayed (5)
+     ✓ runs it on approval, and appends the output with its evidence 352ms
+ ✓ packages/contracts/test/calendar-view.spec.ts (25 tests) 662ms
+   ✓ times without an offset (3)
+     ✓ places the same rows on the same days whatever timezone the reading process is in 642ms
+ ✓ apps/runtime/test/mini-app-compose.spec.ts (16 tests) 695ms
+ ✓ apps/runtime/test/effect-reconciliation.spec.ts (13 tests) 688ms
+ ✓ packages/core/test/mini-app-ownership.spec.ts (12 tests) 256ms
+ ✓ apps/runtime/test/inbox.spec.ts (40 tests) 2436ms
+   ✓ what is waiting for the person (13)
+     ✓ finds what is open at the end of a conversation longer than a timeline page, and can decide it 582ms
+ ✓ apps/runtime/test/voice-gateway.spec.ts (43 tests) 2421ms
+   ✓ a lease whose peer cannot be reached (2)
+     ✓ is kept while the peer keeps answering, so a live session is never ended for being quiet 682ms
+stdout | packages/core/test/execution-policy-parity.spec.ts > no tuple is looser than the legacy policy it replaced > holds for every surface, category, intent and boundary
+legacy-vs-canonical tuples evaluated: 1120 over 10 legacy configurations
+
+ ✓ packages/core/test/execution-policy-parity.spec.ts (9 tests) 160ms
+ ✓ packages/core/test/automation.spec.ts (22 tests) 491ms
+ ✓ apps/runtime/test/package-lifecycle-route.spec.ts (13 tests) 898ms
+ ✓ apps/runtime/test/app-intents.spec.ts (21 tests) 955ms
+ ✓ apps/runtime/test/calendar-views.spec.ts (23 tests) 1046ms
+ ✓ packages/contracts/test/xy-charts.spec.ts (31 tests) 28ms
+ ✓ apps/runtime/test/status-cards.spec.ts (22 tests) 965ms
+ ✓ apps/runtime/test/peer-notices.spec.ts (12 tests) 3669ms
+   ✓ a paired Clark's notice (5)
+     ✓ is recorded once in the other node's inbox, under the sender's name, however often it is sent 632ms
+     ✓ is taken only under a decision of the receiving node's owner, and is refused whole when it brings anything else 539ms
+     ✓ holds one peer to its rate and to its own share of the inbox, and a refusal past the rate is final 638ms
+   ✓ a paired node that cannot be reached (7)
+     ✓ is told once per outage, after a while, and the notice goes when the node answers again 362ms
+ ✓ apps/runtime/test/input-primitives.spec.ts (20 tests) 922ms
+ ✓ apps/runtime/test/mini-app-actions.spec.ts (11 tests) 624ms
+ ✓ packages/core/test/execution-policy-migration.spec.ts (20 tests) 421ms
+ ✓ apps/runtime/test/view-tool.spec.ts (12 tests) 48ms
+ ✓ apps/runtime/test/widget-semantic.spec.ts (14 tests) 1046ms
+ ✓ packages/core/test/install-from-source.spec.ts (20 tests) 451ms
+ ✓ apps/runtime/test/j1-journey.spec.ts (20 tests) 577ms
+ ✓ apps/runtime/test/theme-routes.spec.ts (16 tests) 1274ms
+ ✓ packages/voice-adapters/test/gemini-live.spec.ts (30 tests) 17ms
+ ✓ apps/runtime/test/peers.spec.ts (10 tests) 1424ms
+ ✓ packages/contracts/test/artifact-viewers.spec.ts (35 tests) 31ms
+ ✓ packages/conversation-client/test/orb-profile.spec.ts (32 tests) 22ms
+ ❯ packages/conversation-client/test/styles.spec.ts (16 tests | 2 failed) 71ms
+   ✓ the stylesheet survives being embedded in TypeScript (5)
+     ✓ contains no backtick, which would end the template literal early 2ms
+     ✓ contains no interpolation sequence, which would be evaluated 0ms
+     ✓ closes every brace it opens 0ms
+     ✓ never transitions every property 0ms
+     ✓ turns off every animation that never ends, rather than shortening it 1ms
+   ❯ every variable the stylesheet reads exists (1)
+     × reads no variable that nothing defines, unless it names a fallback 20ms
+   ❯ the look a theme's identity reaches (10)
+     ✓ reads each identity variable with Clark Default's own value, so Clark draws exactly as it did 4ms
+     ✓ never lets a recipe or an effect reach a focus ring, a disabled control, provenance or the host's own cards 24ms
+     ✓ draws the host's own cards with no theme surface, texture, blur or shadow 3ms
+     ✓ draws the buttons in the host's own cards and panels as Clark's, whatever the theme's button recipe 3ms
+     ✓ draws Stop with the host's own look, which no recipe or effect reaches 2ms
+     ✓ blurs only the modal under glass, never a card or the composer 1ms
+     ✓ draws the backdrop and its pointer light at the strengths the protected audit measures 2ms
+     ✓ stops the theme's motion and the pointer light under the person's own Reduced setting, as under the system's 2ms
+     × draws every focus ring in the protected focus colour 3ms
+     ✓ keeps the host's own cards edged whatever a card recipe says 0ms
+ ✓ apps/runtime/test/worker-command-broker.spec.ts (22 tests) 2374ms
+   ✓ stopping a task stops what it started on the host (1)
+     ✓ ends a real command the task's worker is still running 1465ms
+ ✓ packages/contracts/test/activity-timeline.spec.ts (25 tests) 769ms
+   ✓ grouping by day (7)
+     ✓ groups by the same days whatever timezone the reading process is in 742ms
+ ✓ apps/runtime/test/activity-timeline.spec.ts (31 tests) 1439ms
+ ✓ apps/runtime/test/notice-action-surfaces.spec.ts (33 tests) 5097ms
+   ✓ installing a notice's update is the person's own decision (6)
+     ✓ installs from the person's press, dismisses the notice, and says what the update runs without 1586ms
+     ✓ installs one update once: a second press while the first is installing is told so 2021ms
+ ✓ apps/runtime/test/github-polling.spec.ts (10 tests) 629ms
+ ✓ apps/runtime/test/browser-task-tool.spec.ts (15 tests) 630ms
+ ✓ apps/runtime/test/workflow-executor.spec.ts (21 tests) 1433ms
+   ✓ a run (14)
+     ✓ ends a step still running at the total deadline as uncertain, with the arguments it was sent 611ms
+     ✓ promises no inbox question when the ledger could not hold the call 403ms
+     ✓ says a read that did not finish changed nothing, and asks nobody about it 402ms
+ ✓ packages/core/test/widget-lifecycle.spec.ts (18 tests) 387ms
+ ✓ packages/contracts/test/composition-graph.spec.ts (16 tests) 22ms
+ ✓ packages/conversation-client/test/chart-layout.spec.ts (40 tests) 78ms
+ ✓ packages/storage/test/artifact-refs.spec.ts (20 tests) 758ms
+ ✓ apps/runtime/test/delegated-artifacts.spec.ts (18 tests) 554ms
+ ✓ packages/core/test/surface-snapshot.spec.ts (10 tests) 383ms
+ ✓ packages/conversation-client/test/widget-artifacts.spec.ts (21 tests) 44ms
+ ✓ packages/signal-sources/test/github.spec.ts (18 tests) 55ms
+ ✓ apps/runtime/test/artifact-transfer.spec.ts (13 tests) 471ms
+ ✓ packages/contracts/test/status-cards.spec.ts (17 tests) 25ms
+ ✓ packages/storage/test/peer-delivery-state.spec.ts (13 tests) 303ms
+ ✓ packages/core/test/package-sources.spec.ts (22 tests) 13ms
+ ✓ apps/runtime/test/peer-skip.spec.ts (13 tests) 6337ms
+   ✓ a message given up on, to a peer that takes skips (7)
+     ✓ is skipped, so what follows is delivered, and each owner is told once, with the skip audited on both sides 822ms
+     ✓ settles, as uncertain, the task whose result was lost on its way back 534ms
+     ✓ gives up on a hand-over queued behind an unreachable peer on its own schedule, even while the one ahead waits out its backoff, and settles it as not run 518ms
+     ✓ sends every skip a long run of given-up messages needs before what the gap refuses is sent again 301ms
+     ✓ tells and audits a skip only once it has read the peer's answer, so a crash or a lost answer cannot lose either 779ms
+   ✓ the receiving side of a skip (2)
+     ✓ tells its owner about at most 30 skips a minute from one peer, and still takes and audits the rest 696ms
+   ✓ a message given up on, to a peer too old to take a skip (2)
+     ✓ keeps today's behaviour, sends no skip, and tells the owner once that the pairing is stuck until that device updates 1097ms
+     ✓ frees itself once that device is updated: its next refusal says it takes skips, and what was lost is skipped 1024ms
+ ✓ packages/design-tokens/test/identity-protected.spec.ts (16 tests) 786ms
+   ✓ identity (3)
+     ✓ writes only closed names and host-written values for every recipe and effect at every bound 733ms
+ ✓ packages/core/test/consent.spec.ts (21 tests) 448ms
+ ✓ packages/conversation-client/test/orb.spec.ts (17 tests) 11ms
+ ✓ apps/runtime/test/task-browser.spec.ts (20 tests) 7983ms
+   ✓ a lost submit in a real browser (1)
+     ✓ leaves one unknown row, an uncertain task and one notice, and sends the form once 7083ms
+ ✓ apps/runtime/test/action-widget.spec.ts (59 tests) 7785ms
+   ✓ an invoke button (15)
+     ✓ promises no inbox question when the ledger could not record the call as unknown 1049ms
+     ✓ ends a call past the binding's deadline as uncertain: into the ledger, recorded, and never sent again 1052ms
+     ✓ reports a read that ran out of time plainly and frees the press, because nothing changed 1062ms
+   ✓ a workflow button (6)
+     ✓ ends a step past the total deadline as uncertain, into the ledger 1057ms
+     ✓ says a read step that ran out of time changed nothing, and opens no ledger entry for it 1062ms
+ ✓ apps/runtime/test/package-install-legacy-grant-resolution.spec.ts (8 tests) 390ms
+ ✓ apps/runtime/test/compose-layout.spec.ts (13 tests) 687ms
+ ✓ apps/runtime/test/model-router.spec.ts (23 tests) 9ms
+ ✓ apps/runtime/test/task-dispatch.spec.ts (10 tests) 981ms
+   ✓ dispatching a task runs a worker (7)
+     ✓ runs a real worker child process, which honestly reports not-verified and fails the task 597ms
+ ✓ packages/core/test/hardening.spec.ts (22 tests) 523ms
+ ✓ apps/runtime/test/control-app-tool.spec.ts (20 tests) 925ms
+ ✓ apps/runtime/test/github-signals.spec.ts (11 tests) 2067ms
+   ✓ what a delivery starts (5)
+     ✓ refuses to start work in a checkout that is not a clone of the repository the signal is about 505ms
+     ✓ starts work in a clone of that repository, whichever way its remote is written 638ms
+     ✓ asks for a token only a task's git and gh, and the repository poller, can receive, when the automation will push 448ms
+ ✓ apps/desktop/test/file-bridge.spec.ts (19 tests | 2 skipped) 885ms
+   ✓ writing a file whole (6)
+     ✓ leaves the original as it was and removes its temporary file when the write cannot finish 733ms
+ ✓ apps/runtime/test/xy-charts.spec.ts (20 tests) 975ms
+ ✓ apps/desktop/test/security.spec.ts (29 tests) 11ms
+ ✓ packages/conversation-client/test/theme.spec.ts (20 tests) 21ms
+ ✓ apps/runtime/test/effect-notices.spec.ts (9 tests) 428ms
+ ✓ packages/contracts/test/artifacts.spec.ts (24 tests) 19ms
+ ✓ apps/runtime/test/work-recovery.spec.ts (14 tests) 607ms
+ ✓ packages/pi-adapter/test/scoped-fs.spec.ts (30 tests) 8812ms
+   ✓ the scoped tools (15)
+     ✓ returns no match from a search that has to stop its matching thread 5089ms
+     ✓ refuses a find glob that cannot finish matching, instead of holding the event loop 1294ms
+     ✓ matches a glob, and a pattern with no wildcard as a substring 517ms
+     ✓ labels a search that was cut at the match bound 514ms
+     ✓ does not follow a symlink out of the root while searching 620ms
+ ✓ apps/runtime/test/preflight.spec.ts (25 tests) 55ms
+ ✓ packages/contracts/test/table-view.spec.ts (29 tests) 89ms
+ ✓ apps/runtime/test/composition-graph.spec.ts (9 tests) 515ms
+ ✓ packs/google-calendar/test/connector.spec.ts (6 tests) 481ms
+   ✓ writing through the connector (3)
+     ✓ reports a write that timed out as unknown, not as failed 335ms
+ ✓ apps/runtime/test/terminal-sessions.spec.ts (15 tests | 13 skipped) 7ms
+ ✓ apps/runtime/test/artifact-viewers.spec.ts (31 tests) 1342ms
+ ✓ packages/integration-sdk/test/token-exchange.spec.ts (8 tests) 176ms
+ ✓ apps/runtime/test/package-files-route.spec.ts (14 tests) 911ms
+ ✓ packages/conversation-client/test/inbox-notify-decide.spec.ts (22 tests) 11ms
+ ✓ packages/core/test/package-manifest.spec.ts (15 tests) 96ms
+ ✓ apps/runtime/test/autonomy-settings.spec.ts (13 tests) 460ms
+ ✓ apps/runtime/test/activity-route.spec.ts (12 tests) 527ms
+ ✓ apps/runtime/test/attachment-routes.spec.ts (15 tests) 751ms
+ ✓ apps/runtime/test/stop-turn.spec.ts (8 tests) 574ms
+ ✓ apps/runtime/test/webhook-signals.spec.ts (7 tests) 398ms
+ ✓ packages/design-tokens/test/appearance.spec.ts (19 tests) 33ms
+ ✓ packages/core/test/package-uninstall.spec.ts (11 tests) 228ms
+ ✓ apps/runtime/test/attachment-in-turn.spec.ts (12 tests) 660ms
+ ✓ apps/runtime/test/conductor-routing.spec.ts (7 tests) 456ms
+ ✓ apps/runtime/test/attachments.spec.ts (15 tests) 591ms
+ ✓ packages/conversation-client/test/table-model.spec.ts (19 tests) 49ms
+ ✓ apps/runtime/test/run-command.spec.ts (17 tests) 4063ms
+   ✓ running a real command (5)
+     ✓ kills a command that overruns its deadline instead of holding the turn open 1659ms
+     ✓ does not hand the command the node's own keys 389ms
+     ✓ stops one running command by its work id and reports it as stopped, not timed out 1463ms
+     ✓ caps the output and says that it did 327ms
+ ✓ apps/runtime/test/pack-load.spec.ts (9 tests) 1062ms
+   ✓ the node's own path to loading the pack (1)
+     ✓ stops reporting the pack as one no worker has loaded 731ms
+ ✓ apps/runtime/test/work-supervisor.spec.ts (15 tests) 56ms
+ ✓ packages/conversation-client/test/app-intents.spec.ts (15 tests) 9ms
+ ✓ apps/runtime/test/hybrid-rank.spec.ts (13 tests) 476ms
+ ✓ packages/capability-host/test/quarantine.spec.ts (11 tests | 1 skipped) 936ms
+   ✓ the isolated build (3)
+     ✓ reports a build that fails, and one that does not finish 525ms
+ ✓ apps/runtime/test/peer-signals.spec.ts (6 tests) 1287ms
+ ✓ packages/integration-sdk/test/calendar-api.spec.ts (9 tests) 195ms
+ ✓ packages/pi-adapter/test/personal-instructions-wiring.spec.ts (9 tests) 14ms
+ ✓ packages/core/test/installed-widgets.spec.ts (11 tests) 194ms
+ ✓ packages/conversation-client/test/appearance.spec.ts (12 tests) 360ms
+ ✓ packages/contracts/test/surface-composition.spec.ts (14 tests) 21ms
+ ✓ packages/contracts/test/themes.spec.ts (15 tests) 23ms
+ ✓ packages/core/test/widget-state-patch.spec.ts (14 tests) 290ms
+ ✓ packages/core/test/effect-reconciliation.spec.ts (12 tests) 312ms
+ ✓ apps/runtime/test/service-container.spec.ts (15 tests) 12ms
+ ✓ packages/conversation-client/test/desktop-compact.spec.ts (21 tests) 9ms
+ ✓ packages/contracts/test/interactions.spec.ts (23 tests) 10ms
+ ✓ apps/runtime/test/expiry-notices.spec.ts (8 tests) 439ms
+ ✓ apps/runtime/test/artifact-server.spec.ts (8 tests) 907ms
+ ✓ packages/conversation-client/test/question-card.spec.ts (13 tests) 11ms
+ ✓ packages/conversation-client/test/card-state-matrix.spec.ts (7 tests) 10ms
+ ✓ packages/conversation-client/test/host-cards.spec.ts (16 tests) 14ms
+ ✓ packages/conversation-client/test/artifact-viewers.spec.ts (12 tests) 27ms
+ ✓ apps/runtime/test/session-search-hosts.spec.ts (6 tests) 5ms
+ ✓ apps/runtime/test/node-tools.spec.ts (11 tests) 1152ms
+ ✓ packages/conversation-client/test/task-cards.spec.ts (17 tests) 14ms
+ ✓ apps/runtime/test/preference-routes.spec.ts (15 tests) 845ms
+ ✓ packages/conversation-client/test/markdown.spec.tsx (17 tests) 63ms
+ ✓ packages/contracts/test/notice-actions.spec.ts (12 tests) 36ms
+ ✓ apps/runtime/test/read-attachment-tool.spec.ts (11 tests) 616ms
+ ✓ apps/runtime/test/terminal-tools.spec.ts (16 tests) 68ms
+ ✓ apps/runtime/test/schema-patterns.spec.ts (70 tests) 26ms
+ ✓ packages/core/test/onboarding.spec.ts (18 tests) 397ms
+ ✓ apps/desktop/test/detached-window.spec.ts (16 tests) 8ms
+[calibration] BLOCKED: jev-vs-rank calibration was not produced. Set CLARKCANT_JEV_LIVE=1 and TYPESAFE_API_KEY to run it. The default is "rank" until it is measured.
+ ✓ apps/runtime/test/jev-calibration-live.spec.ts (3 tests | 2 skipped) 53ms
+ ✓ apps/runtime/test/interactions.spec.ts (13 tests) 14ms
+ ✓ packages/conversation-client/test/notice-action-surfaces.spec.ts (14 tests) 8ms
+ ✓ apps/runtime/test/vector-index.spec.ts (14 tests) 563ms
+ ✓ apps/runtime/test/fs-search.spec.ts (12 tests) 45ms
+ ✓ apps/runtime/test/frame-grant-lifetime.spec.ts (7 tests) 447ms
+ ✓ packages/conversation-client/test/input-modality.spec.ts (21 tests) 9ms
+ ✓ apps/runtime/test/browser-effects.spec.ts (11 tests) 6249ms
+   ✓ a submit that really timed out (1)
+     ✓ writes an unknown row and one notice pointing at the task, and answers nothing twice 5746ms
+ ✓ apps/runtime/test/installed-widgets-route.spec.ts (7 tests) 421ms
+ ✓ packages/core/test/widget-frame.spec.ts (10 tests) 95ms
+ ✓ apps/runtime/test/widget-state-route.spec.ts (8 tests) 554ms
+ ✓ packages/conversation-client/test/action-messages.spec.ts (11 tests) 9ms
+ ✓ packages/conversation-client/test/mini-app-helpers.spec.ts (13 tests) 29ms
+ ✓ apps/cli/test/cli.spec.ts (15 tests) 854ms
+ ✓ packages/contracts/test/widget-props.spec.ts (13 tests) 48ms
+ ✓ apps/runtime/test/table-export-route.spec.ts (12 tests) 574ms
+ ✓ apps/runtime/test/conversation-delete.spec.ts (11 tests) 443ms
+ ✓ apps/runtime/test/suggestions.spec.ts (12 tests) 441ms
+ ✓ tools/test/platform-skipped-tests.spec.ts (19 tests) 15ms
+ ✓ packages/conversation-client/test/api-stream.spec.ts (13 tests) 41ms
+ ✓ packages/contracts/test/widget-semantic.spec.ts (14 tests) 20ms
+ ✓ apps/runtime/test/app-intents-appearance.spec.ts (8 tests) 260ms
+ ✓ apps/runtime/test/peer-transport-answer.spec.ts (5 tests) 558ms
+ ✓ apps/runtime/test/session-store.spec.ts (8 tests) 405ms
+ ✓ apps/runtime/test/session-preview.spec.ts (8 tests) 26ms
+ ✓ packages/core/test/installed-themes.spec.ts (9 tests) 130ms
+ ✓ apps/runtime/test/service-host.spec.ts (29 tests) 16164ms
+   ✓ a capability another package held when this one started (1)
+     ✓ is served by this package after the next reconcile once that package is gone, without restarting its service 443ms
+   ✓ what the manifest declares against what the service lists (2)
+     ✓ never registers a tool the manifest did not declare 342ms
+     ✓ registers a declared tool the service does not list as not loaded, with that as the reason 313ms
+   ✓ a tool whose input schema could stall the node (1)
+     ✓ is registered as not loaded, says why, and cannot stall the node on an input made to backtrack 412ms
+   ✓ a service that is not running (9)
+     ✓ starts the service once an engine appears, without restarting the node 379ms
+     ✓ does not come back after a stop that landed while it was waiting to restart 1440ms
+     ✓ marks the capabilities down when the service is killed, and brings it back with its data 2155ms
+     ✓ reports a call whose service exits mid-call as sent, so the caller keeps it as one that may have run 397ms
+     ✓ leaves a service that keeps dying stopped, and says so 864ms
+   ✓ a call its caller bounds (5)
+     ✓ ends a call past the caller's deadline as timed out, says it may have run, and tells the service to drop it 2890ms
+     ✓ withdraws a call when the caller's signal aborts, as cancelled rather than as nothing having happened 2758ms
+     ✓ never gives a call more time than the host's own ceiling, and answers a quick one as usual 1318ms
+ ✓ packages/contracts/test/form-fields.spec.ts (25 tests) 14ms
+created a blank widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-TCKfY1
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-TCKfY1
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-tckfy1@0.1.0
+  sha256:f7680a58ac8c0378f13f528890af5a902d7b8fb18edac3e2f50bfd462afd5352
+  C:\Users\admin\AppData\Local\Temp\clark-widget-TCKfY1\dist\artifact.json
+prepared the directory entry for com.example.clark-widget-tckfy1@0.1.0  risk lane: isolated-ui  digest: sha256:f7680a58ac8c0378f13f528890af5a902d7b8fb18edac3e2f50bfd462afd5352  C:\Users\admin\AppData\Local\Temp\clark-widget-TCKfY1\dist\directory-entry.jsonSubmitting needs a directory account; a local path needs none. ✓ apps/runtime/test/portable-runtime.spec.ts (9 tests | 5 skipped) 4ms
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 0
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — stateVersion is 0, so there is nothing to migrate
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-tckfy1@0.2.0
+  sha256:e2f7ed4adc847feb628758df24389861f1af9b4eebb99326b41f6f9cc3346763
+  C:\Users\admin\AppData\Local\Temp\clark-widget-TCKfY1\dist\artifact.json
+Refusing to publish com.example.clark-widget-tckfy1@0.2.0:
+  com.example.clark-widget-tckfy1.main@1: stateSchema changed but stateVersion is still 0; raise it and add a migration step
+ ✓ packages/contracts/test/preferences.spec.ts (17 tests) 20ms
+
+schema
+  ok   the default fixture matches the props schema — fixtures/default.json validates
+  ok   malformed props are rejected — required property "title" is missing
+  ok   additional props are rejected when the schema forbids them — unknown property "conformanceExtraKey"
+  ok   the state version is declared — stateVersion is 1
+
+security
+  ok   a forged nonce is rejected — NONCE_MISMATCH
+  ok   a message from another window is rejected — SOURCE_MISMATCH
+  ok   no secret, shell or approval surface is reachable — none of readAllSecrets, shell, queryCoreDb, disableCSP, approve, installAnything, registerSidebar, grant, fs, readFile, writeFile is on the author API
+  ok   the entry reaches no origin the manifest does not declare — the entry names no origin
+  ok   a host-owned card cannot be minted by a widget — question-card is recognised as host-owned
+
+lifecycle
+  ok   the widget mounts on init — status after init: ready, mount handlers fired: 1
+  ok   a props update reaches the widget — subscribers notified: 1
+  ok   suspend and resume are delivered — suspended: conformance, resumed: 1
+  ok   dispose stops listening — disposed: 1, listener present: false
+  ok   the declared state migration carries the previous version's fixture to a valid current state — fixtures/state-v0.json migrates to a state stateSchema accepts (1 operation)
+
+interaction
+  ok   a repeated invocation runs the action once — times run: 1
+  ok   a stale state write is refused — STALE_REVISION
+  ok   an action the host never accepted is refused — ACTION_UNKNOWN
+  ok   the definition declares its sizing, which is what pin and detach depend on — compact: true, expanded: true
+  n/a  keyboard reachability — needs a rendered frame
+  n/a  touch target size — needs a rendered frame
+  n/a  detach keeps one live owner — needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames
+  n/a  a spoken action and the same click agree — needs a rendered frame and a voice session, and a voice session needs a provider account
+
+rendering
+  ok   the required fixtures are present — present: default, empty, error, compact
+  ok   a text fallback is declared — textFallback: 61 characters
+  n/a  the narrow layout — needs a rendered frame at a known viewport
+  n/a  the compact layout — needs a rendered frame at a known viewport
+  n/a  the expanded layout — needs a rendered frame at a known viewport
+  n/a  the loading state — needs a rendered frame at a known viewport
+  n/a  the read-only state — needs a rendered frame at a known viewport
+  n/a  reduced motion — needs a rendered frame at a known viewport
+
+20 passed, 0 failed, 10 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.
+
+packed com.example.clark-widget-tckfy1@0.3.0
+  sha256:8a5aebca9ab42cbe0d67d37f26c5d95440b7dba85096f00dd77b9853003d7c69
+  C:\Users\admin\AppData\Local\Temp\clark-widget-TCKfY1\dist\artifact.json
+ ✓ apps/runtime/test/task-dispatch-project-work-pack.spec.ts (2 tests) 774ms
+   ✓ dispatching project.code.change@1 through the project-work pack (2)
+     ✓ runs a real worker child that calls write_project_file, and settles the task succeeded with evidence 773ms
+prepared the directory entry for com.example.clark-widget-tckfy1@0.3.0  risk lane: isolated-ui  digest: sha256:8a5aebca9ab42cbe0d67d37f26c5d95440b7dba85096f00dd77b9853003d7c69  C:\Users\admin\AppData\Local\Temp\clark-widget-TCKfY1\dist\directory-entry.jsonSubmitting needs a directory account; a local path needs none. ✓ packages/widget-cli/test/version-rules.spec.ts (12 tests) 157ms
+ ✓ apps/runtime/test/package-install-local-chain.spec.ts (2 tests) 194ms
+ ✓ packages/conversation-client/test/appearance-actions.spec.ts (10 tests) 12ms
+ ✓ packages/storage/test/outbox-backoff.spec.ts (10 tests) 196ms
+ ✓ apps/runtime/test/session-preview-real.spec.ts (3 tests) 3706ms
+   ✓ a frame captured from a real browser (3)
+     ✓ is served back from the route under its own digest, with the size it was captured at 584ms
+     ✓ changes digest when the page changes, and keeps both frames addressable 1233ms
+     ✓ is not served to a caller without this node's token, and a digest it does not hold is not found 1734ms
+ ✓ apps/desktop/test/window-mode.spec.ts (14 tests) 7ms
+ ✓ packages/contracts/test/text-rules.spec.ts (36 tests) 11ms
+ ✓ packages/conversation-client/test/app-intents-agent-control.spec.ts (15 tests) 8ms
+ ✓ packages/storage/test/secrets.spec.ts (11 tests) 401ms
+ ✓ apps/runtime/test/task-dispatch-scoped.spec.ts (8 tests) 13640ms
+   ✓ a repository is worked on in the task's own worktree (3)
+     ✓ runs a real worker whose command commits on the task's branch, and leaves the person's tree alone 3781ms
+     ✓ gives each repository of one task its own worktree, and takes them all away when it ends 6798ms
+     ✓ refuses a repository task on a node that keeps no place for worktrees, rather than working in place 1089ms
+   ✓ stopping a task stops the commands its worker started on the host (1)
+     ✓ ends a long command when the task is stopped 1642ms
+ ✓ apps/runtime/test/widget-voice-action.spec.ts (10 tests) 7ms
+ ✓ packages/node-link/test/node-link.spec.ts (12 tests) 278ms
+ ✓ packages/capability-host/test/secrets.spec.ts (12 tests) 7ms
+ ✓ apps/runtime/test/peer-transport-backoff.spec.ts (5 tests) 162ms
+ ✓ packages/core/test/control-sessions.spec.ts (11 tests) 6ms
+ ↓ apps/runtime/test/hybrid-calibration-live.spec.ts (1 test | 1 skipped)
+ ✓ packages/contracts/test/attachments.spec.ts (12 tests) 11ms
+ ✓ apps/runtime/test/secret-broker.spec.ts (11 tests) 463ms
+ ✓ packages/conversation-client/test/activity-timeline.spec.ts (10 tests) 21ms
+ ✓ packages/conversation-client/test/attachments.spec.ts (11 tests) 601ms
+   ✓ encoding the bytes (2)
+     ✓ encodes a file larger than the argument limit without overflowing the stack 591ms
+ ✓ packages/contracts/test/composition-layout.spec.ts (10 tests) 40ms
+ ✓ packages/pi-adapter/test/personal-instructions.spec.ts (12 tests) 5ms
+ ✓ packages/contracts/test/execution.spec.ts (14 tests) 10ms
+ ✓ packages/voice-adapters/test/voice-capabilities.spec.ts (9 tests) 10ms
+ ✓ apps/runtime/test/memory.spec.ts (11 tests) 450ms
+ ✓ packages/voice-adapters/test/gemini-tts.spec.ts (11 tests) 9ms
+ ✓ packages/conversation-client/test/installed-entries.spec.ts (8 tests) 6ms
+ ✓ apps/runtime/test/selector-budget-wiring.spec.ts (2 tests) 197ms
+ ✓ packages/contracts/test/models.spec.ts (16 tests) 20ms
+ ✓ apps/runtime/test/terminal-gateway.spec.ts (3 tests | 1 skipped) 56ms
+ ✓ apps/runtime/test/background-sessions.spec.ts (8 tests) 8ms
+ ✓ apps/runtime/test/project-session.confinement.spec.ts (4 tests) 76ms
+ ✓ packages/conversation-client/test/voice-transport.spec.ts (3 tests) 5ms
+[jev-live] BLOCKED: live provider evidence was not produced. Set CLARKCANT_JEV_LIVE=1 and TYPESAFE_API_KEY to run it.
+ ✓ apps/runtime/test/jev-live.spec.ts (4 tests | 3 skipped) 3ms
+ ✓ packages/widget-catalog/test/timeline-schemas.spec.ts (4 tests) 51ms
+ ✓ packages/pi-adapter/test/env-file.spec.ts (18 tests) 8ms
+ ✓ packages/core/test/widget-document.spec.ts (10 tests) 13ms
+ ✓ packages/pi-adapter/test/session-persistence.spec.ts (8 tests) 92ms
+ ✓ packages/core/test/app-intents-widgets.spec.ts (15 tests) 20ms
+ ✓ apps/runtime/test/peer-transport-skip.spec.ts (3 tests) 105ms
+ ✓ examples/note-widget/test/editor.spec.ts (9 tests) 191ms
+ ✓ packages/conversation-client/test/app-intents-appearance.spec.ts (6 tests) 7ms
+ ✓ packages/core/test/package-fetch.spec.ts (46 tests) 22350ms
+   ✓ fetchGitArtifact (9)
+     ✓ refuses a ref that is not a full commit id, before any fetch 330ms
+     ✓ refuses a bare local path unless the caller explicitly opts in (C1: scheme allowlist) 319ms
+     ✓ refuses a non-https, non-local scheme outright, even one that names a real transport (C1) 354ms
+     ✓ fetches a commit-pinned ref from a local repository and computes a stable digest over it 686ms
+     ✓ keys the cache by url as well as ref, so two remotes sharing a commit id do not collide (M3) 1586ms
+     ✓ refuses a commit that does not exist at the remote 715ms
+     ✓ times out rather than hanging forever on an unreachable remote (H4) 2730ms
+     ✓ changes digest when the tree changes, so a mutated commit is never mistaken for the pinned one 3597ms
+   ✓ N2: expectedDigest is checked before a fetch becomes servable (4)
+     ✓ refuses a git fetch whose bytes do not match expectedDigest, and leaves no servable cache directory (staged, before rename) 1884ms
+     ✓ refuses a git cache hit whose already-cached bytes do not match a newly expected digest, without deleting the cache 2093ms
+     ✓ succeeds when expectedDigest matches what was actually fetched 2718ms
+     ✓ [fails on the old behaviour] a digest mismatch used to be caught only by the caller, after the rename already made the bytes servable 2049ms
+   ✓ H1: a fetched git artifact actually serves a file end to end (1)
+     ✓ resolves the entry's source to the cache path and reads a file out of it, once fetched 2207ms
+   ✓ fetchNpmArtifact (19)
+     ✓ N3: tar hardening (9)
+       ✓ aborts a download that exceeds the size cap while streaming, even when the server sends no content-length at all 334ms
+ ✓ apps/runtime/test/capability-waiters.spec.ts (3 tests) 174ms
+ ✓ packages/conversation-client/test/input-primitives.spec.ts (7 tests) 12ms
+ ✓ packages/storage/test/migration-split-theme-preference.spec.ts (7 tests) 175ms
+ ✓ packages/conversation-client/test/locale.spec.ts (15 tests) 38ms
+ ✓ packages/core/test/task-cancel.spec.ts (6 tests) 124ms
+ ✓ packages/execution-supervisor/test/native-binding.spec.ts (8 tests) 4ms
+ ✓ apps/runtime/test/stop-and-audit.spec.ts (5 tests) 1900ms
+   ✓ stopping a command that is running (2)
+     ✓ kills it, settles the promise, and does not report success 1758ms
+ ✓ packages/signal-sources/test/webhook.spec.ts (7 tests) 20ms
+ ✓ packages/core/test/directory-index.spec.ts (10 tests) 50ms
+ ✓ packages/conversation-client/test/orb-theme-default.spec.ts (9 tests) 8ms
+ ✓ examples/media-widget-contract/test/fixture.spec.ts (9 tests) 204ms
+ ✓ packages/conversation-client/test/theme-contrast-lines.spec.ts (6 tests) 27ms
+ ✓ packages/conversation-client/test/artifact-block.spec.ts (6 tests) 7ms
+ ✓ packages/conversation-client/test/composer.spec.ts (11 tests) 7ms
+ ✓ examples/mcp-app-fixture/test/bridge.spec.ts (9 tests) 11ms
+ ✓ apps/runtime/test/model-bootstrap-routing.spec.ts (7 tests) 367ms
+ ✓ packages/conversation-client/test/wake-word.spec.ts (10 tests) 5ms
+ ✓ packages/conversation-client/test/widget-lab.spec.ts (14 tests) 20ms
+ ✓ packages/conversation-client/test/frame-grant-renewal.spec.ts (7 tests) 29ms
+ ✓ packages/core/test/task-cancel-peer.spec.ts (4 tests) 101ms
+ ✓ packages/design-tokens/test/motion.spec.ts (12 tests) 7ms
+created a form widget package in C:\Users\admin\AppData\Local\Temp\clark-widget-detach-gQhdhI
+next: clark widget test C:\Users\admin\AppData\Local\Temp\clark-widget-detach-gQhdhI
+ ✓ packages/widget-cli/test/cli-usage.spec.ts (9 tests) 18ms
+ ✓ apps/runtime/test/install-approval.spec.ts (13 tests) 16560ms
+   ✓ an install the policy asks about waits in the inbox (2)
+     ✓ is listed under waiting with the package, the version, what it asks for and the artifact it is about 1201ms
+     ✓ is not listed once the directory no longer lists the artifact it asked about 1559ms
+   ✓ the person's answer (3)
+     ✓ installs on Approve, through the same install, once 1885ms
+     ✓ installs nothing on Deny 1136ms
+     ✓ installs nothing once the approval has expired, decided late or swept 1146ms
+   ✓ settling an expired install approval (1)
+     ✓ leaves one the person decided between the sweep's read and its write as they decided it 944ms
+   ✓ an approval stays bound to the artifact it was given for (4)
+     ✓ does not install a listing republished after the ask, and leaves the question as it was 1788ms
+     ✓ refuses a decision made on another digest than the one asked about 1035ms
+     ✓ has the install itself refuse an approval given for another artifact 970ms
+     ✓ still honours a policy that now forbids installing, even after Approve 845ms
+   ✓ machine surfaces cannot install or decide an install (3)
+     ✓ lists both routes as person-only, matching the raw segments 1079ms
+     ✓ refuses a request the MCP endpoint or the relay forwarded, and installs nothing 1856ms
+     ✓ gives the model no way to install: the package tool lists, uninstalls, restores and rolls back only 1113ms
+ ✓ packages/mcp-adapters/test/streamable-http.spec.ts (10 tests) 3038ms
+   ✓ failure modes (4)
+     ✓ settles a request the server never answers 1185ms
+ ✓ packages/core/test/install-consent.spec.ts (7 tests) 5ms
+ ✓ apps/runtime/test/background-route.spec.ts (5 tests) 290ms
+ ✓ packages/conversation-client/test/voice-overlay.spec.ts (12 tests) 9ms
+ ❯ packages/storage/test/audit.spec.ts (7 tests | 1 failed) 350ms
+   ❯ what is written down (7)
+     × applies the migration that adds the table 84ms
+     ✓ reads back newest first, with the fields it was given 47ms
+     ✓ survives the process that wrote it 58ms
+     ✓ keeps principals apart 41ms
+     ✓ bounds a summary rather than storing a document 40ms
+     ✓ bounds the read as well, so a long trail cannot be asked for by accident 38ms
+     ✓ records every kind of effect the contract names 40ms
+ ✓ packages/core/test/widget-state-migration.spec.ts (10 tests) 12ms
+ ✓ packages/conversation-client/test/composer-trigger.spec.ts (11 tests) 8ms
+ ✓ apps/runtime/test/request-secret.spec.ts (5 tests) 195ms
+ ✓ packages/conversation-client/test/terminal-socket.spec.ts (8 tests) 8ms
+ ✓ apps/runtime/test/action-speech.spec.ts (5 tests) 5ms
+ ✓ apps/runtime/test/session-recap.spec.ts (4 tests) 8ms
+ ✓ packages/conversation-client/test/settings-rows.spec.ts (7 tests) 6ms
+ ✓ packages/design-tokens/test/stylesheet.spec.ts (9 tests) 6ms
+ ✓ packages/conversation-client/test/surfaces.spec.ts (5 tests) 8ms
+ ✓ packages/conversation-client/test/status-cards.spec.ts (6 tests) 11ms
+ ✓ packages/widget-cli/test/detach-real-browser.e2e.spec.ts (1 test) 1531ms
+   ✓ detach against a real browser (1)
+     ✓ moves the lease to a real detached window and back, with never more than one owner 1530ms
+ ✓ packages/storage/test/notice-operations-storage.spec.ts (3 tests) 125ms
+ ✓ packages/mcp-adapters/test/stdio.spec.ts (19 tests) 8722ms
+   ✓ the handshake (2)
+     ✓ reports what the server said it speaks 322ms
+   ✓ failure modes each settle (6)
+     ✓ times out a server that stops answering, instead of hanging 2720ms
+   ✓ liveness (4)
+     ✓ fails a ping to a server that stopped answering, within the ceiling 2646ms
+ ✓ packages/storage/test/migration-backfill-granted-capabilities.spec.ts (3 tests) 92ms
+ ✓ packages/design-tokens/test/contrast.spec.ts (14 tests) 8ms
+HEAD is now at d5d377d initial
+ ✓ packages/conversation-client/test/calendar-layout.spec.ts (6 tests) 17ms
+ ✓ packages/core/test/lease-sweep.spec.ts (4 tests) 96ms
+ ✓ packages/contracts/test/app-intents-agent-control.spec.ts (11 tests) 12ms
+ ✓ packages/widget-catalog/test/xy-chart-schemas.spec.ts (5 tests) 27ms
+ ✓ apps/runtime/test/pdf-text.spec.ts (7 tests) 6ms
+ ✓ apps/runtime/test/work-tools.spec.ts (6 tests) 9ms
+ ✓ packages/conversation-client/test/widget-library-state.spec.ts (13 tests) 8ms
+ ✓ apps/runtime/test/attachment-server.spec.ts (4 tests) 436ms
+ ✓ apps/runtime/test/worker-process.spec.ts (7 tests) 3481ms
+   ✓ the runtime starts a worker of its own (7)
+     ✓ runs it in a separate process and returns the record it produced 665ms
+     ✓ reports the capability it withheld when the brief does not grant it 617ms
+     ✓ registers the granted capability instead of withholding it 525ms
+     ✓ reports a run that demonstrated nothing as a result rather than as an error 585ms
+     ✓ refuses a brief the worker cannot run, naming it as the worker's failure 560ms
+     ✓ refuses to run a real model it was given no model for, rather than letting one be picked 522ms
+ ✓ packages/widget-catalog/test/status-card-schemas.spec.ts (7 tests) 29ms
+ ✓ apps/desktop/test/preload-subscriptions.spec.ts (3 tests) 7ms
+ ✓ packages/widget-catalog/test/fixtures.spec.ts (7 tests) 53ms
+ ✓ packages/contracts/test/app-intents-appearance.spec.ts (5 tests) 25ms
+ ✓ apps/runtime/test/process-tree.spec.ts (14 tests | 4 skipped) 11008ms
+   ✓ the lifetime a stop on Windows sweeps within (3)
+     ✓ ends at the child's exit, not at a stop that comes later 434ms
+   ✓ stopping a command a .cmd shim started, on Windows (3)
+     ✓ ends the command a shim left running when the stop comes after the shim has gone 3314ms
+     ✓ ends the command a shim left running when the shim goes while the stop is under way 3439ms
+     ✓ leaves alone a process the shim did not start 3534ms
+ ✓ packages/pi-adapter/test/scoped-fs-canonicalisation.spec.ts (2 tests) 27ms
+ ✓ apps/runtime/test/model-generation.spec.ts (3 tests) 9ms
+ ✓ packages/conversation-client/test/memory-groups.spec.ts (6 tests) 7ms
+ ✓ packs/browser-playwright/test/injection.spec.ts (6 tests) 9610ms
+   ✓ instruction text on a page is data, not authority (6)
+     ✓ does not grant a capability the page asks for 1007ms
+     ✓ does not talk the driver out of requiring approval 1489ms
+     ✓ still applies approval when it was granted, so the refusal above was about approval 3104ms
+     ✓ does not widen the secret-entry suspension the page asks it to ignore 1039ms
+     ✓ does not act on a link the page supplies, because the driver acts on references it issued 1695ms
+     ✓ carries the injected text as page content rather than as an instruction 1116ms
+ ✓ packages/core/test/continuation.spec.ts (8 tests) 6ms
+ ✓ packages/conversation-client/test/package-provenance.spec.ts (8 tests) 6ms
+ ✓ tools/test/tsconfig-coverage.spec.ts (11 tests) 8ms
+ ✓ packages/core/test/package-files.spec.ts (6 tests) 38ms
+ ✓ apps/runtime/test/peer-delegation.spec.ts (27 tests) 22775ms
+   ✓ a task one Clark hands to another (17)
+     ✓ runs on the other node within what its owner allowed, and settles the sender's own task 1073ms
+     ✓ stops a worker already running on the other node when the sender stops the task 1764ms
+     ✓ stops a worker running here when this node's owner stops the task 1514ms
+     ✓ settles the sender's task when a hand-over or a stop could not be delivered 3243ms
+     ✓ counts a hand-over and its answer once, however often they arrive 929ms
+     ✓ takes an answer only from the node the task was handed to, and a grant only from its own sender 574ms
+     ✓ tells the sender while its task waits for the other node's owner, and settles it on their decision 1031ms
+     ✓ withdraws an automation's own grant on both nodes when it is paused or removed, and writes a new one to resume 973ms
+     ✓ holds a run on the other node to the sender's time limit and run count 2344ms
+   ✓ what the other node can run, asked before a task is handed to it (4)
+     ✓ shows the sender a node that cannot run the task yet, warns at setup, and says at once that a hand-over waits there 1307ms
+     ✓ stops a hand-over waiting there for a capability when the sender stops it 349ms
+     ✓ refuses at once, as before, a hand-over from a node that would not hear it waits 308ms
+     ✓ tells a peer only what its owner allowed that peer, and nothing to a peer it allowed nothing 322ms
+   ✓ the files a task handed to another Clark brings back (6)
+     ✓ brings a file the task wrote back to the sender within its owner's byte budget, and shows it with the result 752ms
+     ✓ fetches, when it starts again, a file it accepted and had not received, and says it arrived 935ms
+     ✓ leaves on the running node a file larger than the sender's byte budget, stores no copy, and says why 900ms
+     ✓ is offered no file when the sender's owner allowed no bytes, and the running node copies none 791ms
+     ✓ keeps the files on the running node when its owner let none go back, though the sender asked, and says so 774ms
+     ✓ offers nothing to a sender that has not said it takes files, and answers it as before 869ms
+ ✓ apps/runtime/test/model-catalogue.spec.ts (6 tests) 7ms
+ ✓ apps/runtime/test/lease-sweeper.spec.ts (5 tests) 116ms
+ ✓ packages/conversation-client/test/action-button.spec.ts (5 tests) 7ms
+ ✓ packages/conversation-client/test/live-reply.spec.ts (5 tests) 6ms
+ ✓ apps/runtime/test/credential-vault.spec.ts (4 tests) 148ms
+ ✓ apps/runtime/test/pi-session-watch.spec.ts (6 tests) 2696ms
+   ✓ watching a session (2)
+     ✓ lists sessions by their first question, and follows appended messages 2685ms
+ ✓ packages/core/test/browser-press.spec.ts (6 tests) 6ms
+ ✓ apps/runtime/test/env-file-flag.spec.ts (2 tests) 2475ms
+   ✓ the node's .env file (2)
+     ✓ is read by default 1199ms
+     ✓ is not read with --no-env-file 1275ms
+ ✓ packages/widget-cli/test/dev-shell-convergence.spec.ts (6 tests) 4ms
+ ✓ packages/widget-catalog/test/registry.spec.ts (9 tests) 10ms
+ ✓ packages/core/test/frame-grant.spec.ts (5 tests) 5ms
+ ✓ packages/conversation-client/test/orb-selection.spec.ts (5 tests) 7ms
+ ✓ apps/runtime/test/turn-control.spec.ts (2 tests) 91ms
+ ✓ apps/runtime/test/voice-live.spec.ts (5 tests) 5ms
+ ✓ packages/design-tokens/test/contrast-themes.spec.ts (35 tests) 7ms
+ ✓ tools/test/setup.spec.ts (12 tests) 11ms
+ ✓ tools/test/issue-closing-keywords.spec.ts (10 tests) 6ms
+ ✓ apps/desktop/test/appearance-tokens.spec.ts (4 tests) 29ms
+ ✓ packages/widget-catalog/test/preview.spec.ts (9 tests) 6ms
+ ✓ packages/conversation-client/test/statusline.spec.ts (8 tests) 5ms
+ ✓ apps/runtime/test/identity.spec.ts (3 tests) 202ms
+ ✓ packages/storage/test/widget-semantic.spec.ts (3 tests) 226ms
+ ✓ packages/contracts/test/composer-references.spec.ts (18 tests) 15ms
+ ✓ packages/widget-catalog/test/calendar-schemas.spec.ts (4 tests) 32ms
+ ✓ apps/runtime/test/ask-user-question.spec.ts (3 tests) 21ms
+ ✓ packages/conversation-client/test/fill-message.spec.ts (6 tests) 6ms
+ ✓ apps/runtime/test/bind-failure.spec.ts (1 test) 1437ms
+   ✓ a node that cannot bind its port (1)
+     ✓ names the port and says what to do, instead of a stack trace 1435ms
+ ✓ apps/runtime/test/e2e-fixture-digests.spec.ts (5 tests) 33ms
+ ✓ apps/runtime/test/package-install-route.spec.ts (18 tests) 24149ms
+   ✓ installing from the directory (6)
+     ✓ installs a listed package and says what it verified 2095ms
+     ✓ records the effect it performed without a card 1777ms
+     ✓ leaves no executed-effect audit row when the fetch fails, unlike a fetch that succeeds 1158ms
+     ✓ does not let a forged grantedCapabilities in the request body become authority (issue #93, P1) 1796ms
+     ✓ asks first when the policy says to, and installs nothing 1058ms
+     ✓ refuses on a node that refuses every effect, and installs nothing 917ms
+   ✓ what the route refuses, with the code the resolver already uses (6)
+     ✓ refuses a package built for another platform, naming both sides 1307ms
+     ✓ refuses an entry that publishes no digest 858ms
+     ✓ refuses a package needing a host API this node does not implement 1151ms
+     ✓ refuses a package the directory does not list 1181ms
+     ✓ says the directory is unconfigured rather than that the package is missing 920ms
+     ✓ refuses a request that does not say what to install 996ms
+   ✓ the frozen build input the route records (3)
+     ✓ resolves the closure before installing, and reports what the lock covers 2203ms
+     ✓ refuses a second install whose resolution is not the frozen one, naming the artifact 1843ms
+     ✓ refuses an entry with no digest before it freezes anything 1108ms
+   ✓ the frozen closure the install route consumes (3)
+     ✓ hands back the artifact a build reads, and keeps its coverage claim honest 815ms
+     ✓ reports that a build would refuse the closure, and the runner really does 1978ms
+     ✓ refuses a floating range before anything is frozen 986ms
+ ✓ packs/browser-playwright/test/driver.spec.ts (12 tests) 14704ms
+   ✓ a managed profile is a separate identity (2)
+     ✓ refuses to navigate outside the declared origins 609ms
+   ✓ observation and action correlation (T53) (5)
+     ✓ stamps element references and reports the viewport 732ms
+     ✓ refuses an observation it no longer retains 495ms
+     ✓ refuses an element reference that is no longer in the document 606ms
+     ✓ applies a click on a real element and reports it as observed 1990ms
+     ✓ invalidates the plan when the target version moves 2954ms
+   ✓ secret entry suspends capture and input (T56) (1)
+     ✓ reports sensitive input once a password field has focus, and refuses input 1752ms
+   ✓ local stop and human takeover outrank a plan (T59) (2)
+     ✓ refuses every action after a stop, including navigation 812ms
+     ✓ refuses input while a human has takeover 2647ms
+   ✓ consequential operations and unsupported operations (2)
+     ✓ refuses an unapproved submit 984ms
+     ✓ refuses an operation it does not implement rather than substituting one 899ms
+ ✓ packages/widget-cli/test/catalog-target.spec.ts (5 tests) 9ms
+ ✓ packages/conversation-client/test/catalog-coverage.spec.ts (5 tests) 5ms
+ ✓ packages/host-adapters/test/vault.spec.ts (3 tests) 82ms
+ ✓ packages/conversation-client/test/surface-graph.spec.ts (3 tests) 5ms
+ ✓ packages/widget-cli/test/dev-lease.spec.ts (4 tests) 82ms
+ ✓ apps/runtime/test/child-env.spec.ts (5 tests) 22ms
+ ✓ apps/runtime/test/terminal-output.spec.ts (7 tests) 5ms
+ ✓ packages/conversation-client/test/selection.spec.ts (7 tests) 6ms
+ ✓ packages/conversation-client/test/desktop-notify-status.spec.ts (3 tests) 5ms
+ ✓ packages/contracts/test/app-intents-widgets.spec.ts (8 tests) 9ms
+ ✓ packages/conversation-client/test/suggestions.spec.ts (4 tests) 4ms
+ ✓ apps/desktop/test/launch-args.spec.ts (4 tests) 6ms
+ ✓ packages/widget-catalog/test/search.spec.ts (10 tests) 9ms
+ ✓ packages/conversation-client/test/media-embed.spec.ts (4 tests) 4ms
+ ✓ packages/conversation-client/test/follow-bottom.spec.ts (5 tests) 4ms
+ ✓ apps/runtime/test/identifier-uniqueness.spec.ts (4 tests) 150ms
+ ✓ apps/runtime/test/voice-answer.spec.ts (2 tests) 3ms
+ ✓ apps/runtime/test/tool-catalogue.spec.ts (2 tests) 110ms
+ ✓ apps/runtime/test/readiness.spec.ts (3 tests) 6ms
+ ✓ packages/conversation-client/test/keep-mounted-frame.spec.ts (3 tests) 4ms
+ ✓ packages/conversation-client/test/search-select.spec.ts (4 tests) 5ms
+ ✓ packages/widget-catalog/test/fixture-schema.spec.ts (4 tests) 12ms
+ ✓ packs/data-canvas/test/definitions.spec.ts (6 tests) 14ms
+ ✓ packages/conversation-client/test/first-run.spec.ts (3 tests) 4ms
+ ✓ packages/conversation-client/test/package-change-listeners.spec.ts (3 tests) 27ms
+ ✓ packages/contracts/test/redaction.spec.ts (5 tests) 6ms
+ ✓ packages/conversation-client/test/host-card-entries.spec.ts (3 tests) 5ms
+ ✓ tools/test/invariants-context.spec.ts (3 tests) 3ms
+ ✓ packages/conversation-client/test/recent-effect-text.spec.ts (3 tests) 3ms
+ ✓ packages/conversation-client/test/frame-height.spec.ts (3 tests) 3ms
+ ✓ apps/runtime/test/jev-stored-key.spec.ts (4 tests) 4ms
+ ✓ packages/conversation-client/test/model-switch-shortcut.spec.ts (2 tests) 3ms
+ ✓ packages/conversation-client/test/pin-label.spec.ts (2 tests) 2ms
+Preparing worktree (new branch 'clarkcant/task-task_earlier')
+ ✓ apps/runtime/test/embeddings-local.spec.ts (4 tests | 1 skipped) 2266ms
+   ✓ loading (2)
+     ✓ returns a reason, not an exception, when the model cannot be used 2262ms
+ ✓ packages/pi-adapter/test/skills.spec.ts (5 tests) 7362ms
+   ✓ the real adapter's skills (4)
+     ✓ lists personal and project skills with a revision and no path 7313ms
+ ✓ packages/pi-adapter/test/pi-adapter.spec.ts (30 tests) 29877ms
+   ✓ real SDK adapter availability (P0.1) (1)
+     ✓ loads the installed Pi SDK and reports the required exports as present 29675ms
+ ✓ tools/test/scan-secret-history.spec.ts (5 tests) 7497ms
+   ✓ secret scanning across reachable Git history (5)
+     ✓ accepts clean history and scans repeated blobs only once 1760ms
+     ✓ finds a deleted credential in docs and never prints its value 3191ms
+     ✓ includes other refs, merge results, binary bytes and every credential category 1570ms
+     ✓ fails closed for a shallow clone or a non-repository 966ms
+ ✓ tools/test/ci-test-scope.spec.ts (18 tests) 4215ms
+   ✓ conservative documentation scope (18)
+     ✓ skips runtime tests for a real prose-only commit and appends output 1664ms
+     ✓ retains both sides of a source-to-documentation rename 1049ms
+     ✓ keeps mixed documentation and code commits full 618ms
+     ✓ keeps empty diffs and missing or invalid bases full 877ms
+ ✓ packages/pi-adapter/test/sdk-compatibility.spec.ts (7 tests) 14764ms
+   ✓ the extension seam this feature depends on (6)
+     ✓ exports the loader, the session factory and the extension runtime 13557ms
+     ✓ calls an inline factory with an api that can register the hook 1092ms
+ ✓ apps/runtime/test/coding-journey.spec.ts (4 tests) 28432ms
+   ✓ a labelled issue becomes a draft pull request (4)
+     ✓ fixes, tests, commits, pushes and opens the pull request in the task's own worktree, and says so 8728ms
+     ✓ reports a failing test as not done, and pushes nothing 6432ms
+     ✓ stops the command it is running when the task is stopped, and says it stopped 7274ms
+     ✓ calls a pull request it was stopped in the middle of unknown, and tells the person once 5997ms
+ ✓ packs/project-work/test/worktree.spec.ts (12 tests) 15375ms
+   ✓ a lock records the repository, not just the path (T15) (5)
+     ✓ reads the identity of a real repository 1332ms
+     ✓ accepts a lock while nothing has moved 1981ms
+     ✓ catches HEAD moving under a running task 2063ms
+     ✓ catches the same path belonging to a different repository 1881ms
+     ✓ does not treat a detached HEAD as a branch named HEAD 1326ms
+   ✓ a dirty working tree is refused, never cleaned (T16) (7)
+     ✓ refuses an uncommitted edit and names the file 2128ms
+     ✓ refuses an untracked file too, because it is also work that exists nowhere else 1103ms
+     ✓ leaves the user's edit exactly as it was 729ms
+     ✓ does not commit, checkout or reset anything while refusing 958ms
+     ✓ allows a clean tree 679ms
+     ✓ refuses on the lock before it even looks at the tree 917ms
+ ✓ packs/browser-playwright/test/click-answer.spec.ts (13 tests) 26040ms
+   ✓ a click is judged by the answer to what it sent (13)
+     ✓ calls a form POST the server never answers unknown, and blocks sending it again until the page is observed 5932ms
+     ✓ calls a script's fetch the server never answers unknown 2409ms
+     ✓ calls an answered submission applied, and the page it landed on a new document 2495ms
+     ✓ calls a client error refused by the site, and a server error unknown 5414ms
+     ✓ says a click nobody marked as submitting sent something, when it did 2565ms
+     ✓ stops a link to an undeclared origin before anything is sent there 740ms
+     ✓ stops a script taking the page to an undeclared origin, and says so 2018ms
+     ✓ opens no pop-up a script asks for, on any site 1608ms
+     ✓ loads no frame from an undeclared origin 1420ms
+     ✓ refuses an address the server redirects to an undeclared origin, and sends nothing there 356ms
+     ✓ reports a click that sent nothing as applied without waiting out the deadline 520ms
+     ✓ names what each reference is and which of them submit 428ms
+Preparing worktree (new branch 'clarkcant/task-task_earlier')
+ ✓ apps/runtime/test/worktree-sweep.spec.ts (6 tests) 18084ms
+   ✓ the worktrees a stopped node left behind (6)
+     ✓ removes a finished task's clean worktree and keeps its branch with what it committed 4225ms
+     ✓ keeps a finished task's worktree holding uncommitted changes, and says where it is once 4267ms
+     ✓ leaves the worktree of a task that is still open, and of one this node has never heard of 3452ms
+     ✓ tidies each repository's worktree of a finished task, and says once where the kept ones are 3882ms
+     ✓ takes a finished task's folder away once every worktree in it is gone 1976ms
+ ✓ packs/project-work/test/managed-worktree.spec.ts (12 tests) 25373ms
+   ✓ a task works in its own worktree, never in the person's tree (6)
+     ✓ makes a worktree of HEAD under the node's directory, on a branch named for the task 2994ms
+     ✓ leaves what the person has not committed exactly where it is 2526ms
+     ✓ reuses the worktree a task already has, keeping what it did 3848ms
+     ✓ gives each repository of one task its own worktree, even two that share a folder name 8204ms
+     ✓ continues in the worktree a task made before tasks could name several repositories 888ms
+   ✓ taking a finished task's worktree away (2)
+     ✓ removes a clean worktree and keeps the branch with what the task committed 1164ms
+     ✓ keeps a worktree holding changes nobody committed 794ms
+   ✓ finding what a stopped node left behind (4)
+     ✓ names each task's worktree with its repository, branch and whether it holds uncommitted changes 1748ms
+     ✓ finds every repository's worktree of a task, and a task's worktree from before 2127ms
+     ✓ takes a task's folder away only once nothing is left in it 712ms
+     ✓ ignores anything in the folder that is not a worktree git knows about 318ms
+ ✓ apps/runtime/test/service-container-engine.spec.ts (3 tests | 1 skipped) 17445ms
+   ✓ a service container on a real engine (2)
+     ✓ refuses the network and every write outside the private folder, and runs unprivileged 14979ms
+     ✓ runs the notes package's service: a note is added, listed, and kept in the private folder 573ms
+ ✓ apps/runtime/test/task-dispatch-browser.spec.ts (15 tests) 35139ms
+   ✓ a task dispatched to the browser (8)
+     ✓ runs a worker whose lost submit becomes an unknown effect, an uncertain task and one notice 548ms
+   ✓ a task dispatched to the browser, on the node's model (7)
+     ✓ works the task on the node's model, offered use_browser and nothing else, with the key over stdin only 28275ms
+     ✓ stops the worker at its token budget after the turn that crossed it, before asking the model again 1178ms
+     ✓ ends the provider call when the person stops the task 2239ms
+     ✓ keeps the key out of what comes back even when the provider's error quotes it and the quote is cut short 1112ms
+     ✓ says the model answered without using the browser when it replied in words and called nothing 1022ms
+ ✓ packs/browser-playwright/test/submit-once.spec.ts (4 tests) 30675ms
+   ✓ a timed-out submit is not sent twice (4)
+     ✓ reports the outcome as unknown, not as failed 5867ms
+     ✓ refuses to resend the same action, so the submission count stays at one 6984ms
+     ✓ allows the action again once the page has been observed 11540ms
+     ✓ does not block a different action, because only the unknown one is suspect 6244ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/conversation-client/test/styles.spec.ts > every variable the stylesheet reads exists > reads no variable that nothing defines, unless it names a fallback
+AssertionError: expected [ '--cc-radius-control', …(1) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "--cc-radius-control",
++   "--cc-surface",
++ ]
+
+ ❯ packages/conversation-client/test/styles.spec.ts:106:21
+    104|     const unguarded = [...APP_CSS.matchAll(/var\((--cc-[a-z0-9-]+)\)/g…
+    105|     const missing = [...new Set(unguarded)].filter((name) => !defined.…
+    106|     expect(missing).toEqual([]);
+       |                     ^
+    107|   });
+    108| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  packages/conversation-client/test/styles.spec.ts > the look a theme's identity reaches > draws every focus ring in the protected focus colour
+AssertionError: .cc-delete-question button:focus-visible: expected '2px solid var(--cc-accent)' to contain 'var(--cc-focus)'
+
+Expected: "var(--cc-focus)"
+Received: "2px solid var(--cc-accent)"
+
+ ❯ packages/conversation-client/test/styles.spec.ts:315:33
+    313|     for (const { selector, body } of rings) {
+    314|       const outline = /\boutline\s*:\s*([^;]+)/.exec(body)?.[1] ?? "";
+    315|       expect(outline, selector).toContain("var(--cc-focus)");
+       |                                 ^
+    316|     }
+    317|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  packages/storage/test/audit.spec.ts > what is written down > applies the migration that adds the table
+AssertionError: expected 39 to be 38 // Object.is equality
+
+- Expected
++ Received
+
+- 38
++ 39
+
+ ❯ packages/storage/test/audit.spec.ts:58:38
+     56|     // into the colour-scheme preference; 37 records the files a task …
+     57|     // version is the count of migrations that have run.
+     58|     expect(currentSchemaVersion(db)).toBe(38);
+       |                                      ^
+     59|   });
+     60|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed | 367 passed | 1 skipped (370)
+      Tests  3 failed | 4910 passed | 34 skipped (4947)
+   Start at  15:18:20
+   Duration  49.34s (tests 73%, import 20%, transform 7%)
+
+    Isolate  370 workers spawned · ~195ms startup each (spawn + environment, per file)
+             at least ~2.48s faster with isolate: false — reuses workers across files instead of one per file
+
+[ELIFECYCLE] Test failed. See above for more details.
+[ELIFECYCLE] Command failed with exit code 1.

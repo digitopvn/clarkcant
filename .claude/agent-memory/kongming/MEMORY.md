@@ -1,0 +1,1 @@
+- [244 peer delegation counsel](project-244-peer-delegation.md) — receiver-side allowance model advised for NodeLink delegate; check if it landed

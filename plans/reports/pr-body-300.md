@@ -1,0 +1,16 @@
+Theme authors can initialize, develop, audit and pack a data-only theme through `clark theme` on the existing package CLI. The loopback dev host renders production ClarkCant components and reloads checked theme data in place. Conformance reuses production contrast/protected-state audits, validates contained assets and rejects executable styling payloads; packed artifacts honestly retain browser checks as unverified.
+
+Settings → Experience opens a utility Theme Lab that preserves the conversation and draft. It previews installed themes without writing preferences, then applies through the existing canonical write. Real accent and compact density use the shared appearance compiler; unsafe accents are refused before storage. Theme choice/recent history commit atomically, customization reset preserves theme/scheme/language, and an unsafe saved accent after a package update is kept but not drawn. Preview covers production conversation/composer/control/widget/approval/status/modal/Orb components, both schemes, widths, reduced motion and token/recipe inspection. Nested modal focus and Escape remain usable.
+
+Addresses #300, part of #201 M5, after #296–#299, and #369 discovered during final verification. A separate focused runtime commit refuses a delayed dispatcher callback after SQLite closes, leaving persisted work to boot recovery; it does not attempt a refusal write against closed storage. Official paired documentation: [web #61](https://github.com/digitopvn/clarkcant-web/pull/61); merge docs after this implementation lands.
+
+Validation:
+- Focused CLI/conformance, dev-host, compiler/client, runtime and atomic preference tests passed; the transaction test aborts history insertion and proves the theme write rolls back.
+- Four author browser journeys and ten appearance-depth/Gallery journeys passed at 1280/390 px, dark/light, including hot reload/refusal/recovery, keyboard-only Apply, focus restoration, draft preservation, real customization/reset and unsafe-write refusal.
+- Final `pnpm verify:full` passed on reviewed head 53b6c443: 4,954 unit tests, 34 conditional skips, 328 browser journeys and three external-provider gated skips, with invariants/typecheck/lint green. Visual review also repaired missing shared styles and undefined button/field classes in c2d3ed4a and 53b6c443. Separate regressions failed before the repairs; all 14 focused author/Gallery/appearance-depth journeys pass. The intervening stylesheet run was stopped and is not claimed as passing.
+- Earlier verification failures were repaired at their causes: nested focus, a nonexistent CSS variable, canonical query error shape and #369's closed-storage callback. Two real-SQLite regressions failed before the lifecycle guard; 39 dispatcher/delegation tests now pass without unhandled errors.
+- Official docs: 200 local links/anchors and 16 rendered responsive light/dark previews passed without overflow or browser errors.
+
+No marketplace publishing or new raw CSS/script/font-resource contract is introduced. Required Linux/macOS/Windows, browser and desktop checks must pass on this exact head before merge.
+
+CI note: both prior timeout reruns passed on 374e100a. New push run 36727138566 and PR run 36727144845 target 53b6c443 and must pass before merge. Details and before/after proof are recorded on issue #300.

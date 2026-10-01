@@ -1,0 +1,48 @@
+
+ RUN  v5.0.0 D:/wt343
+
+ ❯ apps/runtime/test/conversation-delete.spec.ts (15 tests | 2 failed | 13 skipped) 36ms
+   ↓ releases attachments and finalized unattached widget files only after commit, preserving shared bytes
+   × rolls back rows and bytes when deletion fails at artifacts 21ms
+   × rolls back rows and bytes when deletion fails at conversations 14ms
+   ↓ removes the four restrictive foreign-key owners and their private widget without turning off foreign keys
+   ↓ reports locked bytes as pending and retries the durable cleanup without resurrecting deleted rows
+   ↓ keeps data while a widget action is aborting or a model turn still holds the conversation
+   ↓ does not let the standalone release helper unlink files inside a caller's transaction
+   ↓ asks through policy, keeps data on denial, and spends a principal-bound permission exactly once
+   ↓ keeps all data with a expired permission
+   ↓ keeps all data with a wrong-target permission
+   ↓ keeps all data with a tightened-policy permission
+   ↓ binds the chat command to the current conversation and asks the same policy
+   ↓ binds the voice command to the current conversation and asks the same policy
+   ↓ refuses agent intents and machine relays, including alternate path segmentation
+   ↓ upgrades a populated schema 38 without rewriting applied migrations or disabling foreign keys
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/runtime/test/conversation-delete.spec.ts > rolls back rows and bytes when deletion fails at artifacts
+ FAIL  apps/runtime/test/conversation-delete.spec.ts > rolls back rows and bytes when deletion fails at conversations
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ apps/runtime/test/conversation-delete.spec.ts:63:34
+     61|   expect(db.prepare("SELECT * FROM attachments").all()).toHaveLength(1…
+     62|   expect(db.prepare("SELECT * FROM conversation_file_cleanup").all()).…
+     63|   expect(existsSync(a.blobPath)).toBe(true); expect(existsSync(b.blobP…
+       |                                  ^
+     64| });
+     65|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 13 skipped (15)
+   Start at  15:45:07
+   Duration  2.75s (import 70%, transform 28%, tests 1%)
+

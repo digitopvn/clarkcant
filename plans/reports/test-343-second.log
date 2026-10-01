@@ -1,0 +1,83 @@
+
+ RUN  v5.0.0 D:/wt343
+
+ ✓ packages/conversation-client/test/app-intents.spec.ts (15 tests) 5ms
+ ❯ packages/core/test/app-intents.spec.ts (31 tests | 1 failed) 29ms
+   ❯ every documented way of asking maps to one intent (4)
+     ✓ matches each Vietnamese and English phrase to exactly the intent it names 5ms
+     × covers every intent kind that a sentence with no target table can name 4ms
+     ✓ a long command phrase wins over a short one 0ms
+     ✓ reads the same whether the tone marks arrived or not 0ms
+   ✓ a notice action said as a sentence (2)
+     ✓ names the action and never a notice, in Vietnamese and English 1ms
+     ✓ is recognised only as the whole request, so work that mentions a notification stays with the agent 0ms
+   ✓ a command the registry does not know (4)
+     ✓ says so and produces nothing executable 0ms
+     ✓ refuses a tab change that names no tab rather than guessing one 0ms
+     ✓ refuses an unknown command in English when asked, and in Vietnamese by default 0ms
+     ✓ refuses a tab change with no tab named in English when asked 0ms
+   ✓ a work request is not an app intent (10)
+     ✓ leaves a question that mentions settings to the agent 0ms
+     ✓ leaves a long sentence that opens with a command verb to the agent 0ms
+     ✓ leaves a short work request alone even though it starts with a verb-like word 0ms
+     ✓ does not refuse a short work request that opens with a control verb 0ms
+     ✓ does not read an ordinary sentence as a command because of a shared bare spelling 0ms
+     ✓ does not stop a reply on a yes, or on an instruction that only starts with a stop 0ms
+     ✓ leaves a request about an email inbox or an error message to the agent 0ms
+     ✓ closes the inbox by going back to the conversation 0ms
+     ✓ leaves a request that only starts like the file dialog to the agent 0ms
+     ✓ is not fooled by a tab name inside a question 0ms
+   ✓ the appearance commands (6)
+     ✓ chooses an installed theme by its name, the longest name first 1ms
+     ✓ reads the colour scheme with its tone marks, and refuses to guess between two 0ms
+     ✓ leaves work about somebody else's interface or theme to the agent 0ms
+     ✓ keeps the scheme phrases when an installed theme is named with their words 0ms
+     ✓ asks for the installed themes only for a sentence about the look 0ms
+     ✓ makes every appearance intent executable without a question 0ms
+   ✓ quitting and answering about an effect always ask first (2)
+     ✓ makes every intent but app.quit and the effect answers executable, and those a question 0ms
+     ✓ carries the tab on a settings intent and nothing extra on the others 0ms
+   ✓ the read-back sentence (2)
+     ✓ exists once for every intent, in Vietnamese, and is a question only for the one that asks 1ms
+     ✓ reads back in English when the caller asks for it, defaulting to Vietnamese otherwise 1ms
+   ✓ the audit record (1)
+     ✓ records what was done, from where, and never the words that were said 12ms
+ ✓ apps/runtime/test/conversation-delete.spec.ts (11 tests) 159ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/core/test/app-intents.spec.ts > every documented way of asking maps to one intent > covers every intent kind that a sentence with no target table can name
+AssertionError: expected [ 'app.quit', …(24) ] to deeply equal [ 'app.quit', …(25) ]
+
+- Expected
++ Received
+
+@@ -2,11 +2,10 @@
+    "app.quit",
+    "appearance.open-theme-gallery",
+    "appearance.reset",
+    "appearance.set-color-scheme",
+    "composer.attach",
+-   "conversation.delete",
+    "effect.confirmed",
+    "effect.failed",
+    "inbox.ask",
+    "inbox.open",
+    "model.cycle",
+
+ ❯ packages/core/test/app-intents.spec.ts:207:58
+    205|       (kind) => kind !== "model.select" && kind !== "orb.select" && ki…
+    206|     );
+    207|     expect(DOCUMENTED.map((entry) => entry.kind).sort()).toEqual([...c…
+       |                                                          ^
+    208|   });
+    209|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 56 passed (57)
+   Start at  15:08:52
+   Duration  2.80s (import 67%, transform 29%, tests 4%)
+

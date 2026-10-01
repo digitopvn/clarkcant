@@ -1,0 +1,65 @@
+
+ RUN  v5.0.0 D:/wt343
+
+ ✓ apps/runtime/test/attachments.spec.ts (15 tests) 337ms
+ ❯ apps/runtime/test/conversation-delete.spec.ts (11 tests | 3 failed) 165ms
+   ✓ releases attachments and finalized unattached widget files only after commit, preserving shared bytes 24ms
+   ✓ rolls back both release functions and the conversation when deletion fails after their rows were removed 13ms
+   ✓ does not let the standalone release helper unlink files inside a caller's transaction 13ms
+   × asks through policy, keeps data on denial, and spends a principal-bound permission exactly once 16ms
+   ✓ keeps all data with a expired permission 13ms
+   ✓ keeps all data with a wrong-target permission 12ms
+   ✓ keeps all data with a tightened-policy permission 14ms
+   × binds the chat command to the current conversation and asks the same policy 14ms
+   × binds the voice command to the current conversation and asks the same policy 11ms
+   ✓ refuses agent intents and machine relays, including alternate path segmentation 11ms
+   ✓ upgrades a populated schema 38 without rewriting applied migrations or disabling foreign keys 21ms
+ ✓ apps/runtime/test/artifact-broker.spec.ts (31 tests) 951ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/runtime/test/conversation-delete.spec.ts > asks through policy, keeps data on denial, and spends a principal-bound permission exactly once
+Error: missing confirmation
+ ❯ apps/runtime/test/conversation-delete.spec.ts:76:26
+     74|   if (first.deleted || first.decision.kind !== "needs-confirmation") t…
+     75|   const outcome = consumeConfirmation(deps(), {principalId: owner, tok…
+     76|   if (!outcome.ok) throw new Error("missing confirmation");
+       |                          ^
+     77|   const granted = grantConversationDeletion(deps(), outcome.intent, "e…
+     78|   if (granted.kind !== "intent") throw new Error("missing permit");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  apps/runtime/test/conversation-delete.spec.ts > binds the chat command to the current conversation and asks the same policy
+ FAIL  apps/runtime/test/conversation-delete.spec.ts > binds the voice command to the current conversation and asks the same policy
+AssertionError: expected { kind: 'refused', …(1) } to match object { kind: 'needs-confirmation', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "intent": {
+-     "conversationId": "conv_delete",
+-     "kind": "conversation.delete",
+-   },
+-   "kind": "needs-confirmation",
++   "kind": "refused",
+  }
+
+ ❯ apps/runtime/test/conversation-delete.spec.ts:102:20
+    100|   policy("guarded");
+    101|   const decision = decideAppIntent(deps(), {principalId: owner, conver…
+    102|   expect(decision).toMatchObject({kind: "needs-confirmation", intent: …
+       |                    ^
+    103| });
+    104|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  3 failed | 54 passed (57)
+   Start at  15:07:27
+   Duration  7.07s (import 70%, transform 19%, tests 11%)
+

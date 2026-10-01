@@ -1,0 +1,38 @@
+Scope: all 33 workspace projects
+✓ Lockfile passes supply-chain policies (verified 2h ago)
+Lockfile is up to date, resolution step is skipped
+Packages are hard linked from the content-addressable store to the virtual store.
+  Content-addressable store is at: D:\.pnpm-store\v11
+  Virtual store is at:             node_modules/.pnpm
+Progress: resolved 252, reused 251, downloaded 0, added 199
+Progress: resolved 303, reused 303, downloaded 0, added 264
+Progress: resolved 303, reused 303, downloaded 0, added 268
+Packages: +303
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 303, reused 303, downloaded 0, added 303, done
+.../node_modules/onnxruntime-node postinstall$ node ./script/install
+.../node_modules/onnxruntime-node postinstall: Done
+Ignored build scripts: @google/genai@1.52.0, protobufjs@7.6.6.
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+
+devDependencies:
++ @eslint/js 10.0.1
++ @playwright/test 1.63.0
++ @types/node 24.13.4
++ eslint 10.10.0
++ tsx 4.23.13
++ typescript 5.9.3
++ typescript-eslint 8.70.0
++ vitest 5.0.0
+
+Done in 6s using pnpm v12.4.2
+
+ RUN  v5.0.0 D:/wt299
+
+ ✓ packages/widget-sdk/test/runtime.spec.ts (32 tests) 112ms
+
+ Test Files  1 passed (1)
+      Tests  32 passed (32)
+   Start at  16:17:24
+   Duration  1.25s (import 61%, transform 29%, tests 10%)
+
