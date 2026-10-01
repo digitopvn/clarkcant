@@ -22,6 +22,7 @@ const KIND_LABEL: Record<WorkView["kind"], string> = {
   command: "lệnh",
   task: "task",
   terminal: "terminal",
+  job: "package job",
 };
 
 const STATE_LABEL: Record<WorkView["state"], string> = {
@@ -49,7 +50,7 @@ export function createWorkTools(input: {
       name: "list_work",
       label: "Xem việc đang chạy",
       description:
-        "List the work running on this node: background requests, commands you ran, task workers and terminals. " +
+        "List the work running on this node: background requests, commands you ran, task workers, terminals and package jobs. " +
         "Use it when the user asks what is still running or wants to stop something. Each line has an id to pass " +
         "to stop_work. By default only this conversation's work is listed.",
       parameters: {

@@ -1535,6 +1535,57 @@ trình duyệt [widget-artifacts.spec.ts](../apps/web/e2e/widget-artifacts.spec.
 một đoạn, đọc nó trong hai đoạn, ghi và lưu một bản sao, đính kèm nó, rồi mở lại từ một thẻ tệp. Nó chạy ở cả hai
 giao diện và ở 390 px.
 
+### 10.2 Job chạy lâu (`jobs@1`)
+
+Một capability của package có công việc kéo dài hơn một lần bấm khai báo điều đó trong tools facet:
+
+    { "ref": "com.example.notes.export@1", "tool": "export_notes", "effectCategory": "read",
+      "execution": { "kind": "job", "version": 1 } }
+
+Một lần bấm vào binding của capability đó không chờ service làm xong. `actions.invoke` trả về một **JobRef**, là một
+id `job_…` không mang nghĩa, và node chạy lời gọi ở nền. Widget giữ JobRef trong state của chính nó, nhờ vậy một frame
+được mount lại vẫn theo dõi đúng job đó:
+
+    const jobId = await api.actions.invoke("binding_notes_export", { steps: 12, stepMs: 1500 }, invocationId);
+    await api.state.update((state) => ({ ...state, exportJob: jobId }), { exportJob: jobId });
+    const stop = api.jobs.subscribe(jobId, (job) => render(job));
+
+`jobs.available()` cho biết host có cung cấp `jobs@1` trong `init.extensions` hay không; khi không có, mọi lời gọi bị
+từ chối ngay tại chỗ. `jobs.get(ref)` đọc một snapshot: trạng thái (`queued`, `running`, `waiting`, `completed`,
+`failed`, `cancelled`), tiến độ, output, lỗi, tệp kết quả và các mốc thời gian. `jobs.subscribe(ref, handler)` bắt đầu
+từ snapshot đó, hỏi lại mỗi giây, chỉ đưa cho handler những snapshot đã thay đổi, và tự dừng khi job kết thúc, khi gặp
+`JOB_NOT_FOUND` hoặc `EXTENSION_NOT_OFFERED`, hoặc sau 30 lần đọc bị từ chối liên tiếp. `jobs.cancel(ref)` yêu cầu node
+dừng job; job đã kết thúc bị từ chối với `JOB_NOT_RUNNING`. Contract nằm ở [jobs.ts](../packages/contracts/src/jobs.ts).
+
+**JobRef là con trỏ, không phải quyền.** Node kiểm tra lại mọi lần đọc và huỷ theo chủ sở hữu của job: principal,
+widget instance, binding của nó cùng package generation mà binding đó được cấp quyền, và capability. Bất kỳ sai lệch
+nào, kể cả một ref bị chép sang widget khác, đều nhận `JOB_NOT_FOUND`, giống hệt một ref chưa từng tồn tại.
+
+Những gì job báo cáo là của chính service: tiến độ chỉ đến từ `notifications/progress` của MCP mà service gửi cho lời
+gọi đó, và các tệp nó trả về trở thành `ArtifactRef` mà widget đọc được qua `artifacts@1`. Việc đọc job có ngân sách
+riêng cho mỗi phiên frame (tối đa 60 lần dồn, sau đó 5 lần mỗi giây, tối đa 4 lần chờ cùng lúc), tách khỏi ngân sách
+message, nên widget đang theo dõi job không làm nghẽn các lời gọi bridge khác.
+
+Một job được chạy tối đa 30 phút thay vì hạn 60 giây của một lần bấm; quá thời hạn đó nó kết thúc ở trạng thái thất
+bại. Trong lúc chạy, nó nằm trong danh sách công việc đang chạy của node (`GET /work`), và việc dừng nó ở đó
+(`POST /work/{id}/cancel`), Dừng khẩn cấp và việc tắt node đều huỷ nó. Nút Dừng của hội thoại kết thúc câu trả lời và
+một lần bấm còn đang chờ, không kết thúc một job đã chạy, giống như các công việc nền khác. Lệnh huỷ được báo cho service
+qua cơ chế huỷ của MCP; vì service có thể đã làm xong tác động trước khi nhận được, phần kết thúc ghi rằng job "may
+already have completed its effect" thay vì khẳng định không có gì xảy ra. Job còn mở khi node khởi động lại được đánh
+dấu thất bại kèm lời giải thích đó; nó không bao giờ tự chạy lại.
+
+Khi job kết thúc, hội thoại nhận một ghi chú nêu capability, tối đa ba tệp kết quả và bước tiếp theo, và hộp thư ghi
+lại cùng kết thúc đó. Nếu execution policy cần hỏi trước khi capability chạy, lần bấm sẽ hiện thẻ phê duyệt của host
+trước, và job chỉ bắt đầu sau khi một người phê duyệt ở đó; widget không bao giờ tự phê duyệt job của chính nó. Hội
+thoại còn job đang mở thì không xoá được cho tới khi job kết thúc hoặc bị huỷ.
+
+Kiểm thử: [jobs.spec.ts](../packages/contracts/test/jobs.spec.ts) cho các quy tắc,
+[job-host.spec.ts](../apps/runtime/test/job-host.spec.ts) cho job host của node, Dừng và khởi động lại,
+[action-widget.spec.ts](../apps/runtime/test/action-widget.spec.ts) cho lần bấm, phê duyệt và các route bridge,
+[runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) cho SDK, và hành trình trên trình duyệt
+[package-job.spec.ts](../apps/web/e2e/package-job.spec.ts). Hành trình đó theo dõi tiến độ của một service thật qua
+một lần tải lại, từ chối một JobRef giả, huỷ từ widget, hoàn tất kèm một tệp và kết thúc một job bằng Dừng khẩn cấp.
+
 ---
 
 ## 11. Pin / detach lifecycle
@@ -1726,6 +1777,19 @@ kết quả theo schema bridge của widget; kết quả sai schema trở thành
 cách widget vẽ trạng thái và xử lý bridge, không chứng minh service hoạt động đúng. Package frame nhận cùng widget SDK
 runtime dùng cho bridge, vẫn nằm trong opaque-origin sandbox, và chỉ tải module package qua dev host.
 
+Binding tới capability được khai báo với `"execution": { "kind": "job", "version": 1 }` dùng fixture `job` thay cho
+`outcome`, và mọi binding như vậy đều phải có nó:
+
+    { "actionBindingId": "binding_notes_export", "capabilityRef": "com.example.notes.export@1",
+      "job": { "steps": [{ "current": 1, "total": 3, "message": "exported step 1 of 3" }],
+               "output": "Exported 1 note(s).", "error": "the export could not be written" } }
+
+Khi đó một lần bấm trả về một JobRef mô phỏng, và danh sách **Simulated jobs** của shell hiển thị từng job với **Next
+step**, **Complete** và **Fail**. Next step chuyển job từ queued sang running rồi đi qua từng bước tiến độ của fixture;
+`jobs.cancel` của chính widget kết thúc nó ở trạng thái cancelled. Mọi kết thúc đều ghi "(simulated by clark widget
+dev)". Host giữ tối đa 32 job trong bộ nhớ, dọn chỗ từ các job đã kết thúc, và quên hết khi dừng. Nó không bao giờ gọi
+service, nên một job thật vẫn phải được kiểm thử trên node.
+
 Semantic inspector nhận đề xuất `semantic.publish` từ frame qua normalizer dùng chung với runtime. Nó hiển thị tài
 liệu đã chuẩn hoá, các trường bị cắt hoặc loại bỏ, delta so với lần publish trước, ghi chú ngữ cảnh cho lượt kế tiếp
 và nội dung `inspect_ui`. Nội dung do frame đề xuất luôn được xem là dữ liệu không đáng tin; publish hơn bốn lần
@@ -1765,6 +1829,8 @@ Widget không publish-ready nếu thiếu các test sau:
   tra;
 - state version valid;
 - unknown event/action reject.
+- `fixtures/dev-host-services.json`, nếu có, chỉ nêu các capability đã khai báo và cung cấp fixture `job` cho đúng
+  những binding có capability chạy dưới dạng job.
 
 ### Security
 

@@ -154,6 +154,8 @@ export function actionRefusalMessage(
 /** An answered press. A service's or Clark's own output is shown as it came; a workflow's report is said here. */
 export function actionResultMessage(t: Translate, result: ActionInvocationResult): string {
   if (result.outcome === "background") return t("widgets.action.background");
+  // The output of a job outcome is its JobRef, which is for the widget; the person is told what started.
+  if (result.outcome === "job") return t("widgets.action.job");
   if (result.approvalRequired !== undefined) {
     return result.workflow === undefined ? t("widgets.action.awaitingApproval") : workflowMessage(t, result.workflow);
   }

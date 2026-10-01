@@ -2066,6 +2066,26 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           effectCategory: "local-write" as const,
         },
         {
+          actionBindingId: "binding_notes_export",
+          label: "Xuất ghi chú",
+          proposal: {
+            kind: "invoke" as const,
+            capabilityRef: "com.example.notes.export@1",
+            args: {},
+            bindings: [
+              { target: "steps", source: "user-input" as const },
+              { target: "stepMs", source: "user-input" as const },
+            ],
+          },
+          inputSchema: {
+            type: "object",
+            properties: { steps: { type: "integer", minimum: 1, maximum: 50 }, stepMs: { type: "integer", minimum: 10, maximum: 10000 } },
+            required: ["steps", "stepMs"],
+            additionalProperties: false,
+          },
+          effectCategory: "read" as const,
+        },
+        {
           actionBindingId: "binding_notes_list",
           label: "Tải danh sách",
           proposal: { kind: "invoke" as const, capabilityRef: "com.example.notes.list@1", args: {} },

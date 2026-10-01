@@ -1602,6 +1602,41 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 40,
+    name: "package_jobs",
+    reversible: true,
+    up(db) {
+      db.exec(`
+        CREATE TABLE jobs (
+          job_id TEXT PRIMARY KEY,
+          node_id TEXT NOT NULL,
+          owner_principal_id TEXT NOT NULL,
+          conversation_id TEXT,
+          instance_id TEXT NOT NULL,
+          action_binding_id TEXT NOT NULL,
+          package_id TEXT NOT NULL,
+          package_generation TEXT NOT NULL,
+          capability_ref TEXT NOT NULL,
+          effect_category TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'waiting', 'completed', 'failed', 'cancelled')),
+          progress_current REAL,
+          progress_total REAL,
+          progress_message TEXT,
+          result_refs TEXT NOT NULL DEFAULT '[]',
+          output TEXT,
+          error TEXT,
+          node_boot_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          ended_at TEXT
+        );
+        CREATE INDEX idx_jobs_node_status ON jobs(node_id, status, created_at);
+        CREATE INDEX idx_jobs_owner ON jobs(owner_principal_id, instance_id, action_binding_id, package_generation, created_at);
+        CREATE INDEX idx_jobs_conversation ON jobs(conversation_id, status);
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

@@ -46,6 +46,7 @@ export * from "./nodelink.ts";
 export * from "./voice.ts";
 export * from "./attachments.ts";
 export * from "./artifacts.ts";
+export * from "./jobs.ts";
 export * from "./composer-references.ts";
 export * from "./app-intents.ts";
 export * from "./conversation-deletion.ts";

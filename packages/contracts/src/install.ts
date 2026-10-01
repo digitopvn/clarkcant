@@ -88,6 +88,8 @@ export const serviceCapabilityDeclarationSchema = z.strictObject({
   ref: capabilityRefSchema,
   summary: z.string().min(1).max(400),
   effectCategory: effectCategorySchema,
+  /** Absent means the capability remains an ordinary request/response call. */
+  execution: z.strictObject({ kind: z.literal("job"), version: z.literal(1) }).optional(),
 });
 export type ServiceCapabilityDeclaration = z.infer<typeof serviceCapabilityDeclarationSchema>;
 

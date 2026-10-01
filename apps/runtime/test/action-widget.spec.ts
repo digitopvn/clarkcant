@@ -13,7 +13,7 @@ import {
   writeRegisteredPreference,
 } from "@clarkcant/core";
 import { ACTION, DETAILS } from "@clarkcant/data-canvas";
-import { appendMessage, insertBrokerArtifact, putArtifactGrant, recordWidgetProposal } from "@clarkcant/storage";
+import { appendMessage, conversationHasUnsettledWork, insertBrokerArtifact, putArtifactGrant, recordWidgetProposal } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 
 import {
@@ -34,6 +34,11 @@ import { sweepUnknownEffects } from "../src/effect-notices.ts";
 import { promptForTurn } from "../src/model-turn.ts";
 import { recoverUnfinishedWork } from "../src/work-recovery.ts";
 import { stopTurnOnNode } from "../src/application/stop-turn.ts";
+import { runApprovedCapability, capabilityInvokeDeps } from "../src/application/capability-invoke.ts";
+import { createPackageJobHost } from "../src/job-host.ts";
+import { handleRequest } from "../src/gateway.ts";
+import { decideApprovalForNode } from "../src/routes/conversations.ts";
+import { createWorkSupervisor } from "../src/work-supervisor.ts";
 import { invokeWidgetAction, widgetActionTarget } from "../src/application/widget-actions.ts";
 import { ServiceCallError, type ServiceCallOptions, type ServiceHost } from "../src/service-host.ts";
 import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
@@ -719,6 +724,35 @@ describe("an invoke button", () => {
     setPolicy({ rules: [] });
     expect(await press(button, "inv_policy")).toMatchObject({ ok: true, status: 200 });
     expect(calls).toHaveLength(1);
+  });
+
+  it("closes the ledger entry of a write a person approved once the service answers, leaving nothing running", async () => {
+    const button = await addButton();
+    setPolicy({ mode: "ask" });
+    const asked = await press(button, "inv_approved_write");
+    expect(asked).toMatchObject({ ok: true, status: 202, body: expect.objectContaining({ outcome: "approval-required" }) });
+    if (!asked.ok) throw new Error("unreachable");
+    const approvalId = (asked.body.approvalRequired as { approvalId: string }).approvalId;
+    const card = buildTimeline(services, { conversationId, afterSequence: 0 }).messages
+      .flatMap((message) => (message as { blocks: MessageBlock[] }).blocks)
+      .find((block) => block.type === "approval-card" && block.approvalId === approvalId) as
+      | Extract<MessageBlock, { type: "approval-card" }>
+      | undefined;
+    if (card === undefined) throw new Error("no approval card was shown");
+
+    const decided = await decideApprovalForNode(services, {
+      conversationId,
+      approvalId,
+      decision: "granted",
+      digest: card.operationDigest,
+      principal: { principalId: services.runtime.identity.ownerPrincipalId, kind: "user", nodeId: services.runtime.identity.nodeId },
+      at: AT,
+    });
+    expect(decided).toMatchObject({ ok: true });
+    expect(calls).toHaveLength(1);
+    expect(effectRows()).toEqual([expect.objectContaining({ capability_ref: ADD, state: "confirmed" })]);
+    // Nothing is left open, so the conversation can still be deleted.
+    expect(conversationHasUnsettledWork(services.runtime.db, conversationId)).toBe(false);
   });
 
   it("holds a service error as uncertain, because the service may have done part of it, and never sends that id again", async () => {
@@ -1546,5 +1580,202 @@ describe("the counters a press is admitted by", () => {
     // The press was in flight, but the conversation's Stop counts the turn once, as a reply, and not again here.
     expect(seen).toEqual([{ stopped: 0, running: true }]);
     expect(actionRunning("inv_turn_stop")).toBe(false);
+  });
+});
+
+describe("a button whose capability runs as a durable job", () => {
+  const JOB = "com.example.notes.render@1" as CapabilityRef;
+
+  function serveJob(): void {
+    register(JOB, "local-write");
+    served.set(JOB, { packageId: PACKAGE, generationId: GENERATION });
+    services.serviceHost = {
+      ...services.serviceHost,
+      execution: (ref: CapabilityRef) => (ref === JOB ? { kind: "job", version: 1 } : undefined),
+    } as unknown as ServiceHost;
+    services.packageJobs = createPackageJobHost({
+      db: services.runtime.db,
+      nodeId: services.runtime.identity.nodeId,
+      nodeBootId: "boot_test",
+      newId: services.conductor.newId,
+      supervisor: createWorkSupervisor(),
+    });
+  }
+
+  function jobRow(jobId: string): { status: string; instance_id: string; action_binding_id: string } | undefined {
+    return rows<{ status: string; instance_id: string; action_binding_id: string }>(
+      "SELECT status, instance_id, action_binding_id FROM jobs WHERE job_id = ?",
+      jobId,
+    )[0];
+  }
+
+  it("answers a press with a JobRef, keeps that answer for the same invocation, and settles the ledger when the job ends", async () => {
+    serveJob();
+    answer = () => Promise.resolve({ content: "rendered" });
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+
+    const first = await press(button, "inv_job_once");
+    expect(first).toMatchObject({ ok: true, status: 202, body: expect.objectContaining({ outcome: "job" }) });
+    if (!first.ok) throw new Error("unreachable");
+    const jobId = (first.body.job as { jobId: string }).jobId;
+    expect(jobRow(jobId)).toMatchObject({ instance_id: button });
+
+    const again = await press(button, "inv_job_once");
+    expect(again).toMatchObject({ ok: true, status: 202, body: expect.objectContaining({ outcome: "job", duplicate: true, job: { jobId } }) });
+    await until(() => jobRow(jobId)?.status === "completed");
+    expect(calls.filter((call) => call.ref === JOB)).toHaveLength(1);
+    // The press's 60 s deadline is how long the press waits; the job runs under the service host's job ceiling.
+    expect(calls[0]?.options?.timeoutMs).toBeUndefined();
+    expect(calls[0]?.options?.signal).toBeInstanceOf(AbortSignal);
+    await until(() => effectRows().some((row) => row.capability_ref === JOB && row.state === "confirmed"));
+  });
+
+  it("says nothing was sent when the job host cannot record a job, instead of holding the press as uncertain", async () => {
+    serveJob();
+    const jobs = services.packageJobs;
+    if (jobs === undefined) throw new Error("no job host");
+    services.packageJobs = { ...jobs, start: () => { throw new Error("the jobs table could not be written"); } };
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+
+    const refused = await press(button, "inv_job_unrecorded");
+    expect(refused).toMatchObject({ ok: false, code: "JOB_HOST_UNAVAILABLE" });
+    if (refused.ok) throw new Error("unreachable");
+    expect(refused.message).toContain("nothing was sent");
+    expect(detailOf(refused)).not.toMatchObject({ outcome: "uncertain" });
+    expect(calls).toHaveLength(0);
+    expect(effectRows().filter((row) => row.state === "unknown" || row.state === "submitted")).toEqual([]);
+  });
+
+  it("starts the approved job for the press that asked, and the same invocation reads that job afterwards", async () => {
+    serveJob();
+    answer = () => Promise.resolve({ content: "rendered" });
+    setPolicy({ mode: "ask" });
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+
+    const asked = await press(button, "inv_job_approved");
+    expect(asked).toMatchObject({ ok: true, status: 202, body: expect.objectContaining({ outcome: "approval-required" }) });
+    if (!asked.ok) throw new Error("unreachable");
+    const approvalId = (asked.body.approvalRequired as { approvalId: string }).approvalId;
+    const card = buildTimeline(services, { conversationId, afterSequence: 0 }).messages
+      .flatMap((message) => (message as { blocks: MessageBlock[] }).blocks)
+      .find((block) => block.type === "approval-card" && block.approvalId === approvalId) as
+      | Extract<MessageBlock, { type: "approval-card" }>
+      | undefined;
+    if (card === undefined) throw new Error("no approval card was shown");
+    const bindingId = getInstance(services.conductor, button)?.actionBindingIds[0];
+    expect(JSON.parse(card.payload ?? "{}")).toMatchObject({
+      jobOrigin: { instanceId: button, actionBindingId: bindingId, invocationId: "inv_job_approved" },
+    });
+    expect(calls).toHaveLength(0);
+
+    // A card whose payload names another widget is not the operation that was approved.
+    const forged = await runApprovedCapability(capabilityInvokeDeps(services), {
+      payload: JSON.stringify({ ...JSON.parse(card.payload ?? "{}"), jobOrigin: { instanceId: "winst_other", actionBindingId: bindingId } }),
+      expectedDigest: card.operationDigest,
+      approvalId,
+      conversationId,
+      checkJobOrigin: () => ({ ok: true, bindingGeneration: GENERATION }),
+    });
+    expect(forged).toMatchObject({ ok: false, code: "APPROVAL_FORGED" });
+    // The press it names is checked again when the approval is used.
+    const stale = await runApprovedCapability(capabilityInvokeDeps(services), {
+      payload: card.payload ?? "",
+      expectedDigest: card.operationDigest,
+      approvalId,
+      conversationId,
+      checkJobOrigin: () => ({ ok: false, message: "the widget action this job was approved for changed" }),
+    });
+    expect(stale).toMatchObject({ ok: false, code: "APPROVAL_STALE" });
+    expect(calls).toHaveLength(0);
+
+    const decided = await decideApprovalForNode(services, {
+      conversationId,
+      approvalId,
+      decision: "granted",
+      digest: card.operationDigest,
+      principal: { principalId: services.runtime.identity.ownerPrincipalId, kind: "user", nodeId: services.runtime.identity.nodeId },
+      at: AT,
+    });
+    expect(decided).toMatchObject({ ok: true });
+    const replayed = await press(button, "inv_job_approved");
+    expect(replayed).toMatchObject({ ok: true, status: 202, body: expect.objectContaining({ outcome: "job", duplicate: true }) });
+    if (!replayed.ok) throw new Error("unreachable");
+    const jobId = (replayed.body.job as { jobId: string }).jobId;
+    expect(jobRow(jobId)).toMatchObject({ instance_id: button, action_binding_id: bindingId });
+    await until(() => jobRow(jobId)?.status === "completed");
+    expect(calls.filter((call) => call.ref === JOB)).toHaveLength(1);
+    await until(() => effectRows().some((row) => row.capability_ref === JOB && row.state === "confirmed"));
+  });
+
+  async function jobRoute(method: "GET" | "POST", instanceId: string, jobId: string, conversation = conversationId, authorized = true) {
+    return handleRequest({ services, now: () => AT }, {
+      method,
+      path: `/conversations/${conversation}/widgets/${instanceId}/jobs/${jobId}`,
+      query: {},
+      headers: authorized ? { authorization: `Bearer ${services.runtime.identity.localToken}` } : {},
+      body: method === "POST" ? "{}" : "",
+    });
+  }
+
+  it("records the job under the generation of the binding that authorized it, so the widget can read it", async () => {
+    serveJob();
+    answer = neverAnswers;
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+    // The binding was made before the service reported its generation, as a widget composed while the service starts is.
+    served.set(JOB, { packageId: PACKAGE, generationId: `${PACKAGE}@1.0.0:code_started_later` });
+    const started = await press(button, "inv_job_generation");
+    if (!started.ok) throw new Error("the job did not start");
+    const jobId = (started.body.job as { jobId: string }).jobId;
+
+    expect(rows<{ package_generation: string }>("SELECT package_generation FROM jobs WHERE job_id = ?", jobId)[0]?.package_generation).toBe(GENERATION);
+    expect((await jobRoute("GET", button, jobId)).status).toBe(200);
+  });
+
+  it("lets only the widget binding that started a job read and stop it", async () => {
+    serveJob();
+    answer = neverAnswers;
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+    const other = await place({ label: "Render too", action: { kind: "invoke", capabilityRef: JOB, args: { text: "y" } } });
+    const started = await press(button, "inv_job_route");
+    if (!started.ok) throw new Error("the job did not start");
+    const jobId = (started.body.job as { jobId: string }).jobId;
+    await until(() => calls.length === 1);
+
+    expect((await jobRoute("GET", button, jobId, conversationId, false)).status).toBe(401);
+    const read = await jobRoute("GET", button, jobId);
+    expect(read.status).toBe(200);
+    expect((read.body as { job: Record<string, unknown> })).toMatchObject({ job: { jobId, status: "running", resultRefs: [] } });
+    expect((read.body as { job: Record<string, unknown> }).job).not.toHaveProperty("ownerPrincipalId");
+    // Another widget in the same conversation, the same widget in another conversation, a ref that is not a job.
+    expect((await jobRoute("GET", other, jobId)).status).toBe(404);
+    expect((await jobRoute("POST", other, jobId)).status).toBe(404);
+    expect((await jobRoute("GET", button, jobId, "conv_elsewhere")).status).toBe(404);
+    expect((await jobRoute("GET", button, "not-a-job")).status).toBe(404);
+
+    // A record whose origin differs in any one field — principal, binding, generation, capability — is not this widget's.
+    const base = services.runtime.db.prepare("SELECT * FROM jobs WHERE job_id = ?").get(jobId) as Record<string, unknown>;
+    const variants: [string, Record<string, unknown>][] = [
+      ["job_foreign_principal", { owner_principal_id: "prin_someone_else" }],
+      ["job_foreign_binding", { action_binding_id: "act_other" }],
+      ["job_foreign_generation", { package_generation: `${PACKAGE}@0.9.0:code_0` }],
+      ["job_foreign_capability", { capability_ref: ADD }],
+    ];
+    for (const [id, change] of variants) {
+      const row = { ...base, ...change, job_id: id };
+      const columns = Object.keys(row);
+      services.runtime.db
+        .prepare(`INSERT INTO jobs (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`)
+        .run(...(Object.values(row) as never[]));
+      expect((await jobRoute("GET", button, id)).status).toBe(404);
+      expect((await jobRoute("POST", button, id)).status).toBe(404);
+    }
+
+    const stopped = await jobRoute("POST", button, jobId);
+    expect(stopped.status).toBe(202);
+    await until(() => jobRow(jobId)?.status === "cancelled");
+    expect((await jobRoute("POST", button, jobId)).status).toBe(409);
+    const ended = ((await jobRoute("GET", button, jobId)).body as { job: Record<string, string> });
+    expect(ended.job).toMatchObject({ status: "cancelled" });
+    expect(ended.job.error).toContain("may already have completed");
   });
 });

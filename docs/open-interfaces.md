@@ -418,6 +418,22 @@ carries a path.
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | – `201 { artifactRef, attachmentRef }` through the attachment pipeline; the person sends it with their next message |
 | DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – discards a file this instance made, with its bytes unless an attachment or another record still points at them; another's is `403 ARTIFACT_NOT_CREATOR` |
 
+Package jobs a widget follows (`jobs@1`, [widget-development.md §10.2](widget-development.md#102-long-running-jobs-jobs1))
+are in `/openapi.json`. A press on a binding whose capability runs as a job answers with a JobRef (`job_…`) instead of
+waiting for the service; these routes read and stop it. A JobRef is a pointer, not a permission: the node answers only
+when one of this instance's own invoke bindings started the job, in this conversation, for the same principal, package
+generation and capability. Anything else, including a ref that does not exist, is `404 JOB_NOT_FOUND`
+(`packages/contracts/src/jobs.ts`).
+
+| Method | Path | Body / answer |
+|---|---|---|
+| GET | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – `{ job: { jobId, status, progress?, resultRefs, output?, error?, createdAt, startedAt?, endedAt? } }`; files are `ArtifactRef`s, never paths |
+| POST | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – cancels the service request, `202 { accepted, jobId }`; an ended job is `409 JOB_NOT_RUNNING` and stays readable |
+
+A node without a job host answers `503 JOB_UNAVAILABLE`. `POST /stop` also cancels running package jobs and counts them
+in `stopped.jobs`.
+
+
 Every instance route is checked again against that instance's grant. A ref is a pointer, not a permission, so an
 expired (`403 ARTIFACT_GRANT_EXPIRED`) or revoked (`403 ARTIFACT_GRANT_REVOKED`) grant stops the next call. Sizes,
 types and quota follow the attachment rules (`413 ARTIFACT_TOO_LARGE`, `415 ARTIFACT_TYPE_MISMATCH`, `409

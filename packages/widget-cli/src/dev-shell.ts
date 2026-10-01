@@ -606,6 +606,11 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
           <h2>Capability simulator</h2>
           ${capabilityRows}
         </section>
+        <section data-dev-jobs>
+          <h2>Simulated jobs</h2>
+          <p data-dev-job-empty>A press on a binding with a <code>job</code> in <code>fixtures/dev-host-services.json</code> starts one here. Nothing runs: each step is the fixture's, and every ending says it was simulated.</p>
+          <ul data-dev-job-list></ul>
+        </section>
         <section data-dev-picker>
           <h2>File picker</h2>
           ${pickerNote}

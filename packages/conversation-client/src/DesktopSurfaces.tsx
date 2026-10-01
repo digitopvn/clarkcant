@@ -739,6 +739,19 @@ export function PinnedLiveSurface({
             openExternal: () => undefined,
           }}
           artifacts={artifactHost.broker}
+          jobs={async (request) => {
+            try {
+              if (request.op === "cancel") await client.cancelWidgetJob(conversationId, instanceId, request.jobId);
+              const job = await client.getWidgetJob(conversationId, instanceId, request.jobId);
+              return { status: "ok", job };
+            } catch (cause) {
+              return {
+                status: "refused",
+                code: cause instanceof GatewayError ? cause.code : "JOB_UNAVAILABLE",
+                message: cause instanceof Error ? cause.message : "the job is unavailable to this widget",
+              };
+            }
+          }}
         />
         )}
         {frame !== null && artifactHost.chrome}

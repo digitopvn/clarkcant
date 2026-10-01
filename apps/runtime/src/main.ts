@@ -525,7 +525,7 @@ async function main(): Promise<void> {
         });
         await work.supervisor.drain(1_500);
         // A child given SIGTERM gets its grace before the group is killed; exiting first would skip the second step.
-        if (stopped.commands + stopped.tasks > 0) {
+        if (stopped.commands + stopped.tasks + stopped.jobs > 0) {
           await new Promise((resolve) => setTimeout(resolve, STOP_GRACE_MS + 100));
         }
         await modelTurn?.dispose();

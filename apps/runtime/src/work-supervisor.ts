@@ -31,7 +31,7 @@ import {
  * left unfinished (`work-recovery.ts`).
  */
 
-export type WorkKind = "background" | "command" | "task" | "terminal";
+export type WorkKind = "background" | "command" | "task" | "terminal" | "job";
 export type WorkState = BackgroundSession["status"];
 
 /** One piece of work, as a listing shows it: no pid, no path beyond what the person already saw, no environment. */
@@ -119,6 +119,8 @@ export interface WorkSupervisor {
   cancel(workId: string): CancelOutcome;
   /** Stop every background run and empty the queue, answering how many there were. */
   cancelBackground(reason?: "stopped" | "shutdown"): number;
+  /** Stop every registered source of one kind. */
+  cancelKind(kind: Exclude<WorkKind, "background">): number;
   /** Everything, newest first; finished background entries are kept for a while (see `background-sessions.ts`). */
   list(filter?: { conversationId?: string; includeFinished?: boolean }): WorkView[];
   /** The background lane alone, as the header mark and `/background-sessions` show it. */
@@ -289,6 +291,15 @@ export function createWorkSupervisor(
     return open.length;
   };
 
+  const cancelKind = (kind: Exclude<WorkKind, "background">): number => {
+    let cancelled = 0;
+    for (const source of sources) {
+      if (source.kind !== kind) continue;
+      for (const work of source.list()) if (source.cancel(work.workId)) cancelled += 1;
+    }
+    return cancelled;
+  };
+
   return {
     submitBackground(input) {
       const workId = input.workId ?? `bg-${randomBytes(6).toString("hex")}`;
@@ -350,6 +361,7 @@ export function createWorkSupervisor(
     },
 
     cancelBackground,
+    cancelKind,
 
     list(filter = {}) {
       const all = [...views(store.list()), ...sources.flatMap((source) => source.list())];
