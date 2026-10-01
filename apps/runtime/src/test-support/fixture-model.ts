@@ -52,6 +52,7 @@ import { controlApp, createNodeTools, createRememberTool, type CommandToolDeps }
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps, indexDirectoryPath } from "../project-finder.ts";
 import { createInvokeCapabilityTool } from "../invoke-capability-tool.ts";
+import { createInspectUiTool } from "../inspect-ui-tool.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "../request-secret.ts";
 import { commandDigest } from "../run-command.ts";
 import { captureBrowserFrame, previewPageUrl } from "./browser-frame.ts";
@@ -478,6 +479,12 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       const reply = asked.ok ? "Fixture: tui đã hỏi một câu và để nó hết hạn, không ai trả lời." : asked.message;
       if (asked.ok) sweepExpired(deps.services(), instantSchema.parse(new Date().toISOString()));
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    if (/^(?:kiểm tra giao diện|inspect the ui)$/iu.test(input.text.trim())) {
+      const inspectUi = createInspectUiTool({ deps: () => deps.services().conductor, conversationId: input.conversationId });
+      const result = await inspectUi.execute({ scope: "recent" });
+      return { text: result.text, block: { type: "text", format: "plain", content: result.text, streaming: false } };
     }
 
     /*
@@ -2157,6 +2164,56 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * A carousel over pictures this node holds, placed through the same catalog view the model uses.
+     * The browser journey supplies two local images and then checks that selection survives a pin restore.
+    */
+    if (/^(?:đặt|place)\s+(?:bộ ảnh|carousel)$/iu.test(input.text.trim())) {
+      const recent = listLocalImages(deps.services().runtime.db, input.principal.principalId, 12);
+      const images = ["First carousel image", "Second carousel image"].flatMap((altText) => {
+        const image = recent.find((candidate) => candidate.altText === altText);
+        return image === undefined ? [] : [image];
+      });
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.carousel@1");
+      if (images.length < 2 || view === undefined) {
+        const reply = "Fixture: cần hai ảnh thử để dựng bộ ảnh.";
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+      const block = await view.build({
+        props: {
+          imageRefs: images.map((image) => image.imageId),
+          alts: images.map((image) => image.altText),
+          title: "Bộ ảnh (fixture)",
+        },
+        caption: "",
+        at: instantSchema.parse(new Date().toISOString()),
+        principal: input.principal as never,
+        messageId: input.messageId,
+        conversationId: input.conversationId,
+      });
+      return { text: "Fixture: bộ ảnh dựng từ những ảnh node này đang giữ (không phải model thật).", block };
+    }
+
+    /*
+     * A local video placed through the same catalog view the model uses, so it carries the host's playback-state
+     * binding. The node has no video import yet: the browser journey answers this one reference's authenticated fetch
+     * with a real WebM clip, and everything after the bytes — the object URL, the page's media policy, the player and
+     * the state the node holds — is the production path.
+     */
+    if (/^(?:đặt|place)\s+(?:video cục bộ|local video)$/iu.test(input.text.trim())) {
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.video@1");
+      if (view === undefined) return undefined;
+      const block = await view.build({
+        props: { videoRef: "video_e2e_local_clip", alt: "Đoạn phim thử tám giây", title: "Video cục bộ (fixture)" },
+        caption: "",
+        at: instantSchema.parse(new Date().toISOString()),
+        principal: input.principal as never,
+        messageId: input.messageId,
+        conversationId: input.conversationId,
+      });
+      return { text: "Fixture: một video cục bộ từ tham chiếu bài kiểm thử cung cấp (không phải model thật).", block };
+    }
+
+    /*
      * A table with every part of its contract: declared columns, search, multi-select, totals, several pages and a
      * cell that is a spreadsheet formula.
      *
@@ -2227,27 +2284,21 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         const empty = "Fixture: node này chưa có ảnh nào để dựng thư viện.";
         return { text: empty, block: { type: "text", format: "plain", content: empty, streaming: false } };
       }
-      const instance = createInstance(deps.services().conductor, {
-        definition: GALLERY,
-        packageDigest: definitionDigest(GALLERY),
-        ownerPrincipalId: input.principal.principalId,
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === GALLERY.id);
+      if (view === undefined) return undefined;
+      const block = await view.build({
         props: {
           imageRefs: images.map((image) => image.imageId),
           alts: images.map((image) => image.altText),
           title: "Thư viện ảnh (fixture)",
         },
-      });
-      const snapshot = captureSnapshot(deps.services().conductor, {
+        caption: "",
+        at: instantSchema.parse(new Date().toISOString()),
+        principal: input.principal as never,
         messageId: input.messageId,
-        instance,
-        textAlternative: GALLERY.textFallback,
-        presentationRef: `catalog:${GALLERY.id}`,
+        conversationId: input.conversationId,
       });
-      const reply = "Fixture: thư viện ảnh dựng từ những ảnh node này đang giữ, không phải model thật.";
-      return {
-        text: reply,
-        block: { type: "surface", definitionRef: { id: GALLERY.id, version: GALLERY.version }, snapshot },
-      };
+      return { text: "Fixture: thư viện ảnh dựng từ những ảnh node này đang giữ, không phải model thật.", block };
     }
 
     /*
