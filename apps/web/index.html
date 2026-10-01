@@ -26,10 +26,17 @@
       client and handed to the DOM as a blob URL; without `blob:` here every imported picture
       rendered as "could not be loaded" while the node was serving it correctly. `data:` stays for
       inline icons, and no remote origin is allowed — a picture from the node is the only picture.
+
+      `media-src` allows `blob:` for the same reason and nothing else: the bytes behind a local video
+      widget's reference are fetched with the bearer token through the same authenticated client and handed to `<video>` as an
+      object URL this page created. Without it the directive fell back to `default-src 'self'` and
+      Chromium rejected every local video ("Media load rejected by URL safety check"). No remote media
+      origin is allowed and `data:` is not added: the only media a page can play is media its own code
+      fetched from the node.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; frame-src 'self' http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; frame-src 'self' http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
   </head>
   <body>
