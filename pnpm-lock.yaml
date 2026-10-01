@@ -565,6 +565,9 @@ importers:
       '@clarkcant/design-tokens':
         specifier: workspace:*
         version: link:../design-tokens
+      '@clarkcant/integration-sdk':
+        specifier: workspace:*
+        version: link:../integration-sdk
       '@clarkcant/storage':
         specifier: workspace:*
         version: link:../storage
