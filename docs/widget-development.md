@@ -1184,6 +1184,28 @@ the invoke result, approval matching and refusal rollback; the browser journey
 [kanban-board.spec.ts](../apps/web/e2e/kanban-board.spec.ts) exercises keyboard, mouse and touch moves in conversation,
 responsive light/dark and reduced motion, plus the read-only Widget Library preview.
 
+### 8.10 Media widgets and semantic state
+
+`canvas.image@1` describes the supplied alt text and includes dimensions only when the owning node has them. Gallery and
+carousel state stores a bounded `selectedIndex` (state version 2); an old version-1 state migrates to the first item,
+and an index is normalized against the current props. Gallery/carousel selection is written through the host's
+`media.view` binding, and the `media.select` event may also update a composed surface. Their semantic document reports
+the item count, selected item and alt text.
+
+`canvas.video@1` stores `status`, `position` and `duration` through the same host binding. Position writes are coalesced:
+pause, seek and end flush immediately, while continuous playback writes at most every three seconds. A restored playing
+state is read as paused and never starts playback. YouTube semantics use only its validated video id and title; no
+third-party playback messages are read. Image, gallery/carousel, local-video and YouTube semantics use the same bounded
+document for voice, the next-turn note and `inspect_ui`.
+
+The unit coverage is in [media-view.spec.ts](../packages/contracts/test/media-view.spec.ts),
+[playback-coalescer.spec.ts](../packages/conversation-client/test/playback-coalescer.spec.ts), and
+[widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts). The browser journey in
+[widget.spec.ts](../apps/web/e2e/widget.spec.ts) verifies a gallery selection through `inspect_ui` and a carousel
+selection through the next-turn note and pin restore, including keyboard focus and a 390 px light/reduced-motion view.
+The local-video pause journey is not yet verified: Chromium rejects the existing host-fetched `blob:` URL under the
+current page CSP. The contract requires that CSP to remain unchanged; see [#374](https://github.com/digitopvn/clarkcant/issues/374).
+
 ---
 
 ## 9. Semantic contract for voice and the next turn

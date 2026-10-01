@@ -1184,6 +1184,28 @@ kết quả invoke, khớp approval và rollback khi bị từ chối; browser j
 [kanban-board.spec.ts](../apps/web/e2e/kanban-board.spec.ts) chạy thao tác bàn phím, chuột và cảm ứng trong hội thoại,
 theme sáng/tối thích ứng và giảm chuyển động, cùng preview chỉ-đọc trong Widget Library.
 
+### 8.10 Widget media và trạng thái semantic
+
+`canvas.image@1` mô tả alt text được cung cấp và chỉ đưa kích thước vào khi node sở hữu ảnh có các giá trị đó. State
+gallery và carousel lưu `selectedIndex` có giới hạn (state version 2); state cũ version 1 được migrate về mục đầu tiên,
+và chỉ số luôn được chuẩn hoá theo props hiện tại. Lựa chọn gallery/carousel được ghi qua binding `media.view` của
+host; event `media.select` cũng có thể cập nhật surface được ghép. Semantic document của chúng báo số mục, mục đang
+chọn và alt text.
+
+`canvas.video@1` lưu `status`, `position` và `duration` qua cùng binding của host. Các lần ghi vị trí được gộp: pause,
+seek và kết thúc ghi ngay; trong khi phát liên tục thì tối đa ba giây mới ghi một lần. State đang phát khi được khôi
+phục sẽ được đọc là paused và không tự phát. Semantic của YouTube chỉ dùng video id đã kiểm tra cùng title; không đọc
+message playback của bên thứ ba. Image, gallery/carousel, video cục bộ và YouTube dùng chung một document có giới hạn
+cho voice, ghi chú lượt kế tiếp và `inspect_ui`.
+
+Unit test nằm ở [media-view.spec.ts](../packages/contracts/test/media-view.spec.ts),
+[playback-coalescer.spec.ts](../packages/conversation-client/test/playback-coalescer.spec.ts) và
+[widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts). Browser journey trong
+[widget.spec.ts](../apps/web/e2e/widget.spec.ts) xác minh lựa chọn gallery qua `inspect_ui` và lựa chọn carousel qua
+ghi chú lượt kế tiếp cùng khôi phục pin, gồm focus bàn phím và màn hình sáng/rút gọn chuyển động rộng 390 px. Journey
+pause video cục bộ chưa được xác minh: Chromium từ chối URL `blob:` hiện tại do host fetch theo page CSP. Hợp đồng vẫn
+yêu cầu giữ CSP nguyên trạng; xem [#374](https://github.com/digitopvn/clarkcant/issues/374).
+
 ---
 
 ## 9. Semantic contract cho voice và lượt kế tiếp
