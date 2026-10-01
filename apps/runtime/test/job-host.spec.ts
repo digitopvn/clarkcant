@@ -71,6 +71,7 @@ describe("durable package job host", () => {
     expect(host.recover()).toBe(1);
     expect(reports).toHaveLength(1);
     expect(reports[0]).toContain("may have completed its effect");
+    expect(reports[0]).toContain("example.export@1");
     expect(host.canAdmit()).toBe(true);
     expect(host.recover()).toBe(0);
     expect(reports).toHaveLength(1);

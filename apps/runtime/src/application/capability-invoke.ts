@@ -435,7 +435,9 @@ export async function invokeCapability(
           instanceId: origin.instanceId,
           actionBindingId: origin.actionBindingId,
           packageId: served.packageId as JobRecord["packageId"],
-          packageGeneration: served.generationId,
+          // The generation of the binding that authorized the press, so every later read is checked against the same
+          // tuple the press was. A binding made for another known generation was refused as stale above.
+          packageGeneration: request.bindingGeneration ?? served.generationId,
           capabilityRef: ref,
           effectCategory: descriptor.effectCategory,
         },

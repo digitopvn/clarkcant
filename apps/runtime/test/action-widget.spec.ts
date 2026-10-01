@@ -1672,6 +1672,20 @@ describe("a button whose capability runs as a durable job", () => {
     });
   }
 
+  it("records the job under the generation of the binding that authorized it, so the widget can read it", async () => {
+    serveJob();
+    answer = neverAnswers;
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+    // The binding was made before the service reported its generation, as a widget composed while the service starts is.
+    served.set(JOB, { packageId: PACKAGE, generationId: `${PACKAGE}@1.0.0:code_started_later` });
+    const started = await press(button, "inv_job_generation");
+    if (!started.ok) throw new Error("the job did not start");
+    const jobId = (started.body.job as { jobId: string }).jobId;
+
+    expect(rows<{ package_generation: string }>("SELECT package_generation FROM jobs WHERE job_id = ?", jobId)[0]?.package_generation).toBe(GENERATION);
+    expect((await jobRoute("GET", button, jobId)).status).toBe(200);
+  });
+
   it("lets only the widget binding that started a job read and stop it", async () => {
     serveJob();
     answer = neverAnswers;

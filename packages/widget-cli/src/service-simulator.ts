@@ -18,7 +18,7 @@ export type ServiceReadiness = CapabilityReadiness;
 export interface ServiceBinding {
   actionBindingId: string;
   capabilityRef: string;
-  outcome: unknown;
+  outcome?: unknown;
   /** Present when the capability runs as a job: the press answers with a simulated JobRef instead of `outcome`. */
   job?: DevJobFixture | undefined;
 }
@@ -136,7 +136,7 @@ export function actionResult(input: {
   nonce: string;
   actionBindingId: string;
   invocationId: string;
-  outcome: unknown;
+  outcome?: unknown;
 }): Record<string, unknown> {
   const candidate = typeof input.outcome === "object" && input.outcome !== null
     ? { ...input.outcome, kind: "action-result", nonce: input.nonce, actionBindingId: input.actionBindingId, invocationId: input.invocationId }

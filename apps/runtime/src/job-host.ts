@@ -75,7 +75,8 @@ export function createPackageJobHost(input: {
   nodeBootId: string;
   newId: (prefix: string) => string;
   supervisor: WorkSupervisor;
-  report?: (conversationId: string, text: string) => void;
+  /** How a job ended, said in its conversation. `job` is the ended record, so a caller can point an inbox notice at it. */
+  report?: (conversationId: string, text: string, job: Pick<JobRecord, "jobId" | "status">) => void;
   now?: () => Instant;
   maxActiveJobs?: number;
   artifactBroker?: ArtifactBrokerDeps;
@@ -110,7 +111,7 @@ export function createPackageJobHost(input: {
     const message = jobEndNotice(job, outcome);
     if (job.conversationId !== undefined) {
       try {
-        input.report?.(job.conversationId, message);
+        input.report?.(job.conversationId, message, job);
       } catch {
         // Reporting is best effort; the persisted job and effect ledger remain authoritative.
       }
@@ -236,7 +237,11 @@ export function createPackageJobHost(input: {
       const count = failInterruptedJobs(input.db, { nodeId: input.nodeId, currentBootId: input.nodeBootId, at: now() });
       for (const job of interrupted) {
         if (job.conversationId !== undefined) {
-          input.report?.(job.conversationId, "A package job was interrupted when the node restarted. Its service may have completed its effect; review it before retrying.");
+          input.report?.(
+            job.conversationId,
+            `The package job for ${job.capabilityRef} was interrupted when the node restarted. Its service may have completed its effect; review it before retrying.`,
+            { jobId: job.jobId, status: "failed" },
+          );
         }
       }
       return count;

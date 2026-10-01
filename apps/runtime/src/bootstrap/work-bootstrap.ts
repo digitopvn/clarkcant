@@ -4,6 +4,7 @@ import { listSecretMetadata } from "@clarkcant/storage";
 
 import { withholdFromChildren } from "../child-env.ts";
 import { answerUncertain } from "../delegation-handlers.ts";
+import { tryRecordNodeNotice } from "../notices.ts";
 import { machineBootId } from "../process-tree.ts";
 import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
 import { createPackageJobHost, type PackageJobHost } from "../job-host.ts";
@@ -99,7 +100,22 @@ export function attachNodeWork(input: {
       newId: services.conductor.newId,
       now: () => new Date(),
     },
-    report: (conversationId, text) => appendHostReply(services, { conversationId, text, at: nowInstant() }),
+    // The note is the result; the notice is the pointer to it, which is also how an open conversation learns to re-read.
+    report: (conversationId, text, job) => {
+      const at = nowInstant();
+      appendHostReply(services, { conversationId, text, at });
+      tryRecordNodeNotice(services, {
+        sourceKind: "package",
+        category: "result",
+        severity: job.status === "completed" ? "success" : job.status === "cancelled" ? "info" : "warning",
+        title: job.status === "completed" ? "A package job finished" : job.status === "cancelled" ? "A package job was stopped" : "A package job did not finish",
+        body: text,
+        conversationId,
+        subject: { kind: "conversation", conversationId },
+        dedupKey: `job:${job.jobId}`,
+        at,
+      });
+    },
   });
   services.packageJobs = packageJobs;
 
