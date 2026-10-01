@@ -1,0 +1,23 @@
+
+ RUN  v5.0.0 D:/wt302
+
+ ✓ apps/desktop/test/detached-window.spec.ts (19 tests) 25ms
+ ✓ apps/runtime/test/e2e-fixture-digests.spec.ts (7 tests) 14ms
+ ✓ packages/widget-cli/test/reference-themes.spec.ts (8 tests) 119ms
+ ✓ packages/widget-cli/test/reference-theme-preview.spec.ts (8 tests) 11418ms
+   ✓ pixel-arcade production components on this platform (4)
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 1280 dark 2010ms
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 1280 light 1692ms
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 390 dark 1573ms
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 390 light 1686ms
+   ✓ neo-brutalism production components on this platform (4)
+     ✓ neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 dark 1321ms
+     ✓ neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 light 864ms
+     ✓ neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 dark 1098ms
+     ✓ neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 light 963ms
+
+ Test Files  4 passed (4)
+      Tests  42 passed (42)
+   Start at  21:12:25
+   Duration  13.95s (tests 57%, import 31%, transform 12%)
+

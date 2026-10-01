@@ -1,0 +1,11 @@
+
+ RUN  v5.0.0 D:/wt302
+
+ ✓ apps/desktop/test/appearance-tokens.spec.ts (4 tests) 10ms
+ ✓ apps/desktop/test/detached-window.spec.ts (19 tests) 23ms
+
+ Test Files  2 passed (2)
+      Tests  23 passed (23)
+   Start at  20:20:35
+   Duration  1.17s (import 68%, transform 30%, tests 2%)
+

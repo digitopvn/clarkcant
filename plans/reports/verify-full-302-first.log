@@ -1,0 +1,37 @@
+$ pnpm run verify && pnpm run test:e2e
+$ pnpm run invariants && pnpm run typecheck && pnpm run lint && pnpm run test
+$ node tools/check-invariants.mjs
+PASS  docs-manifest-integrity
+      · 32 manifest entries verified
+FAIL  workspace-phase-traceability
+      · 32 workspace packages carry phase + status metadata
+      ✗ examples/themes has no package.json
+PASS  stub-marks-owning-phase
+      · 7 stub files carry an owning-phase marker
+PASS  node-type-stripping-syntax
+      · 910 TypeScript files checked for transform-only syntax
+PASS  no-committed-secrets
+      · 1165 files scanned for credential patterns
+PASS  pinned-dependency-specifiers
+      · 125 dependency specifiers checked for pinning
+PASS  scope-and-acceptance-traceability
+      · 151 cited test titles checked against 450 spec files; rows that cite a path rather than a quoted title are not matched to a case
+PASS  browser-entries-avoid-node-builtins
+      · 220 module(s) reachable from 3 browser entry/entries
+PASS  single-execution-policy-reader
+      · 1 canonical policy read(s) across 467 module(s), 2 allowed to open the key
+PASS  implementation-status-registry
+      · 34 entries (16 implemented, 14 partial, 4 blocked, 0 not-implemented) verified against 32 workspace packages
+      · 15 @status-ref reference(s) across 1001 source files
+      · 18 V row(s) agree with the registry; gates #2/#3/#4/#5 represented
+      · V02, runtime.local-transport cite a test a platform condition skips on some runners, so their evidence is thinner there than on this one
+      · evidence is checked for existence and for a platform-conditional skip: a runtime condition that is not derived from process.platform or process.arch (an opt-in live provider, for instance) is not this check's subject
+PASS  tsx-files-are-typechecked
+      · 64 .tsx file(s) checked against 2 typecheck config(s) — tsconfig.json, tsconfig.web.json
+PASS  pr-bodies-close-nothing
+      · 10 checked-in PR body file(s) checked for a closing keyword beside an issue reference; 0 such pair(s) found
+
+1 invariant check(s) failed
+[ELIFECYCLE] Command failed with exit code 1.
+[ELIFECYCLE] Command failed with exit code 1.
+[ELIFECYCLE] Command failed with exit code 1.

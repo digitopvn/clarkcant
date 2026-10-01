@@ -1,0 +1,106 @@
+[WebServer] (node:67056) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] no model configured; the node will answer with scripts and capabilities only
+[WebServer] frame grants: fixture lifetime seam loaded (CC_FRAME_GRANT_FIXTURE=1)
+[WebServer] project sessions: FIXTURE starter loaded — a session is reported, and no worker is spawned
+[WebServer] overview: FIXTURE composer loaded — overview requests are scripted, and no provider is called for them
+[WebServer] filesystem search: read-only over C:\, D:\, E:\, G:\ — no index is built; matches are sent to the model provider
+[WebServer] views: 25 definition(s) the model may show — canvas.line@1, canvas.bar@1, canvas.donut@1, canvas.table@1, canvas.metrics@1, canvas.filter@1, canvas.image@1, canvas.carousel@1, canvas.gallery@1, canvas.youtube@1, canvas.video@1, canvas.action@1, canvas.form@1, canvas.list@1, canvas.status@1, canvas.progress@1, canvas.details@1, canvas.code@1, canvas.diff@1, canvas.file@1, canvas.area@1, canvas.scatter@1, canvas.calendar@1, canvas.timeline@1, canvas.overview@1
+[WebServer] catalog: every family a composed surface needs is drawable
+[WebServer] session transcripts: .data\e2e\sessions
+[WebServer] selector: disabled (no credential or local-only); composed surfaces use the deterministic path
+[WebServer] update check: FIXTURE — no periodic job started, no registry is called
+[WebServer] voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output
+[WebServer] clarkcant node "e2e-node" listening on http://127.0.0.1:9296
+[WebServer] node id: node_eda2d3e34da5465b97424d61
+[WebServer] data dir: .data/e2e
+[WebServer] container engine: docker 29.8.0 — the OCI image can be built on this machine
+[WebServer] commands require the bearer token stored in the node's identity.json
+[WebServer] project index: 1 scanned, 1 kept, 1 removed
+[WebServer] (node:71116) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] npm fixture registry listening on http://127.0.0.1:9298
+[WebServer] (node:34760) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] $ vite build --outDir dist
+[WebServer] (node:87656) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] vite v8.3.0 building client environment for production...
+[WebServer] transforming...
+[WebServer] ✓ 370 modules transformed.
+[WebServer] rendering chunks...
+[WebServer] computing gzip size...
+[WebServer] dist/assets/plus-jakarta-sans-cyrillic-ext-wght-normal-lLTsRRxN.woff2      1.71 kB
+[WebServer] dist/assets/voice-capture-worklet-DsmQparT.js                              1.99 kB
+[WebServer] dist/index.html                                                            2.49 kB │ gzip:   1.19 kB
+[WebServer] dist/assets/plus-jakarta-sans-vietnamese-wght-normal-qRpaaN48.woff2        8.35 kB
+[WebServer] dist/assets/plus-jakarta-sans-latin-ext-wght-normal-DmpS2jIq.woff2        21.72 kB
+[WebServer] dist/assets/plus-jakarta-sans-latin-wght-normal-eXO_dkmS.woff2            27.34 kB
+[WebServer] dist/assets/main-DjYd3uYR.css                                              1.36 kB │ gzip:   0.51 kB
+[WebServer] dist/widget-runtime.js                                                     0.51 kB │ gzip:   0.35 kB │ map:     2.08 kB
+[WebServer] dist/assets/rolldown-runtime-hePW80VL.js                                   0.71 kB │ gzip:   0.42 kB
+[WebServer] dist/assets/addon-fit-DIOBYJe3.js                                          1.25 kB │ gzip:   0.53 kB │ map:     3.37 kB
+[WebServer] dist/assets/src-C3a-LLmH.js                                              314.42 kB │ gzip:  94.72 kB │ map: 1,728.85 kB
+[WebServer] dist/assets/xterm-ScmBfeDI.js                                            331.22 kB │ gzip:  83.07 kB │ map:   675.33 kB
+[WebServer] dist/assets/main-Be4NhV0o.js                                           1,443.77 kB │ gzip: 393.82 kB │ map: 4,174.57 kB
+[WebServer] 
+[WebServer] ✓ built in 449ms
+[WebServer] [plugin builtin:vite-reporter] 
+[WebServer] (!) Some chunks are larger than 500 kB after minification. Consider:
+[WebServer] - Using dynamic import() to code-split the application
+[WebServer] - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+[WebServer] - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[WebServer] (node:87756) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:87924) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer]   ➜  Local:   http://127.0.0.1:4693/
+
+Running 1 test using 1 worker
+
+(node:79500) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x  1 [chromium] › apps\web\e2e\attachments.spec.ts:200:1 › an upload still checking keeps the draft and selected file until a later send (10.9s)
+
+
+  1) [chromium] › apps\web\e2e\attachments.spec.ts:200:1 › an upload still checking keeps the draft and selected file until a later send 
+
+    Error: expect(locator).toHaveValue(expected) failed
+
+    Locator:  locator('[data-composer]')
+    Expected: "đọc giúp tui tệp pdf này"
+    Received: ""
+    Timeout:  10000ms
+
+    Call log:
+      - Expect "toHaveValue" locator('[data-composer]') with timeout 10000ms
+      - waiting for locator('[data-composer]')
+        24 × locator resolved to <textarea rows="1" role="combobox" data-composer="true" aria-expanded="false" aria-autocomplete="list" aria-label="Nhập tin nhắn" placeholder="Nhắn gì cũng được…" aria-controls="cc-composer-references"></textarea>
+           - unexpected value ""
+
+
+      216 |     await composer.press("Enter");
+      217 |     await expect(page.locator("[data-send]")).toBeDisabled();
+    > 218 |     await expect(composer).toHaveValue("đọc giúp tui tệp pdf này");
+          |                            ^
+      219 |     await expect(chips(page)).toHaveCount(1);
+      220 |     expect(messageWrites).toBe(0);
+      221 |     finishUpload();
+        at D:\wt302\apps\web\e2e\attachments.spec.ts:218:28
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\attachments-an-upload-stil-5a939-ted-file-until-a-later-send-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\attachments-an-upload-stil-5a939-ted-file-until-a-later-send-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\attachments-an-upload-stil-5a939-ted-file-until-a-later-send-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\attachments-an-upload-stil-5a939-ted-file-until-a-later-send-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › apps\web\e2e\attachments.spec.ts:200:1 › an upload still checking keeps the draft and selected file until a later send 

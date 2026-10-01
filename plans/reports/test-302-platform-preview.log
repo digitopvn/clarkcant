@@ -1,0 +1,68 @@
+
+ RUN  v5.0.0 D:/wt302
+
+stderr | packages/widget-cli/test/reference-theme-preview.spec.ts
+WebSocket server error: Port 24678 is already in use
+
+ ❯ packages/widget-cli/test/reference-theme-preview.spec.ts (8 tests | 8 failed) 10177ms
+   ❯ reference themes in production components on this platform (8)
+     × pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 1280 dark 1235ms
+     × pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 1280 light 662ms
+     × pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 390 dark 371ms
+     × pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 390 light 429ms
+     × neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 dark 5681ms
+     × neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 light 666ms
+     × neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 dark 376ms
+     × neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 light 427ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > reference themes in production components on this platform > pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 1280 dark
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > reference themes in production components on this platform > pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 1280 light
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > reference themes in production components on this platform > pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 390 dark
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > reference themes in production components on this platform > pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 390 light
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > reference themes in production components on this platform > neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 light
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > reference themes in production components on this platform > neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 dark
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > reference themes in production components on this platform > neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 light
+TypeError: Cannot read properties of undefined (reading 'border')
+ ❯ packages/widget-cli/test/reference-theme-preview.spec.ts:57:55
+     55|         expect(actual.accent.toUpperCase()).toBe(snapshot.tokens.color…
+     56|         expect(actual.radius).toBe(snapshot.tokens.radius.card);
+     57|         expect(actual.line).toBe(`${snapshot.identity.border.width}px …
+       |                                                       ^
+     58|         expect(actual.heading).toBe(String(snapshot.identity.typograph…
+     59|         await browserExpect(preview.locator("[data-orb-profile]").firs…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > reference themes in production components on this platform > neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 dark
+Error: expect(locator).toBeVisible() failed
+
+Locator: locator('[data-theme-preview-canvas]')
+Expected: visible
+Timeout: 5000ms
+Error: element(s) not found
+
+Call log:
+  - Expect "toBeVisible" locator('[data-theme-preview-canvas]') with timeout 5000ms
+  - waiting for locator('[data-theme-preview-canvas]')
+
+ ❯ captureRawStack node_modules/.pnpm/playwright-core@1.63.0/node_modules/playwright-core/lib/coreBundle.js:8588:17
+ ❯ callMatcherAsStep node_modules/.pnpm/playwright@1.63.0/node_modules/playwright/lib/matchers/expect.js:13310:57
+ ❯ Object.toBeVisible node_modules/.pnpm/playwright@1.63.0/node_modules/playwright/lib/matchers/expect.js:13302:23
+ ❯ packages/widget-cli/test/reference-theme-preview.spec.ts:43:38
+     41|         await page.goto(host.url);
+     42|         const preview = page.locator("[data-theme-preview-canvas]");
+     43|         await browserExpect(preview).toBeVisible();
+       |                                      ^
+     44|         await page.locator(`.cc-theme-lab-controls [data-segment="${sc…
+     45|         await browserExpect(preview).toHaveAttribute("data-cc-theme", …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  8 failed (8)
+   Start at  20:04:20
+   Duration  13.02s (tests 79%, import 16%, transform 5%)
+

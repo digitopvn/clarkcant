@@ -1,0 +1,42 @@
+
+ RUN  v5.0.0 D:/wt302
+
+ ❯ packages/widget-cli/test/reference-theme-preview.spec.ts (8 tests | 4 failed) 5955ms
+   ✓ pixel-arcade production components on this platform (4)
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 1280 dark 1152ms
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 1280 light 765ms
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 390 dark 756ms
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 390 light 808ms
+   ❯ neo-brutalism production components on this platform (4)
+     × neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 dark 761ms
+     × neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 light 499ms
+     × neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 dark 479ms
+     × neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 light 528ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > neo-brutalism production components on this platform > neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 dark
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > neo-brutalism production components on this platform > neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 light
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > neo-brutalism production components on this platform > neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 dark
+ FAIL  packages/widget-cli/test/reference-theme-preview.spec.ts > neo-brutalism production components on this platform > neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 light
+AssertionError: expected 'none' to contain 'radial-gradient'
+
+Expected: "radial-gradient"
+Received: "none"
+
+ ❯ packages/widget-cli/test/reference-theme-preview.spec.ts:63:28
+     61|         expect(await preview.evaluate((element) => getComputedStyle(el…
+     62|         const background = await preview.locator(".cc-dot-grid").evalu…
+     63|         expect(background).toContain(name === "pixel-arcade" ? "linear…
+       |                            ^
+     64|         await browserExpect(preview.locator("[data-orb-profile]").firs…
+     65|         const draft = preview.locator("textarea");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 4 passed (8)
+   Start at  20:52:41
+   Duration  9.06s (tests 66%, import 24%, transform 9%)
+

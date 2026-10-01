@@ -1,0 +1,85 @@
+$ playwright test "apps/web/e2e/reference-theme-composition.spec.ts" "apps/web/e2e/widget-appearance.spec.ts"
+[WebServer] (node:62760) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] no model configured; the node will answer with scripts and capabilities only
+[WebServer] frame grants: fixture lifetime seam loaded (CC_FRAME_GRANT_FIXTURE=1)
+[WebServer] project sessions: FIXTURE starter loaded — a session is reported, and no worker is spawned
+[WebServer] overview: FIXTURE composer loaded — overview requests are scripted, and no provider is called for them
+[WebServer] filesystem search: read-only over C:\, D:\, E:\, G:\ — no index is built; matches are sent to the model provider
+[WebServer] views: 25 definition(s) the model may show — canvas.line@1, canvas.bar@1, canvas.donut@1, canvas.table@1, canvas.metrics@1, canvas.filter@1, canvas.image@1, canvas.carousel@1, canvas.gallery@1, canvas.youtube@1, canvas.video@1, canvas.action@1, canvas.form@1, canvas.list@1, canvas.status@1, canvas.progress@1, canvas.details@1, canvas.code@1, canvas.diff@1, canvas.file@1, canvas.area@1, canvas.scatter@1, canvas.calendar@1, canvas.timeline@1, canvas.overview@1
+[WebServer] catalog: every family a composed surface needs is drawable
+[WebServer] session transcripts: .data\e2e\sessions
+[WebServer] selector: disabled (no credential or local-only); composed surfaces use the deterministic path
+[WebServer] update check: FIXTURE — no periodic job started, no registry is called
+[WebServer] voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output
+[WebServer] clarkcant node "e2e-node" listening on http://127.0.0.1:9376
+[WebServer] node id: node_145a90262e384748a5b4d0d7
+[WebServer] data dir: .data/e2e
+[WebServer] container engine: docker 29.8.0 — the OCI image can be built on this machine
+[WebServer] commands require the bearer token stored in the node's identity.json
+[WebServer] project index: 1 scanned, 1 kept, 1 removed
+[WebServer] (node:88048) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] npm fixture registry listening on http://127.0.0.1:9378
+[WebServer] (node:82364) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] $ vite build --outDir dist
+[WebServer] (node:44680) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] vite v8.3.0 building client environment for production...
+[WebServer] transforming...
+[WebServer] ✓ 370 modules transformed.
+[WebServer] rendering chunks...
+[WebServer] computing gzip size...
+[WebServer] dist/assets/plus-jakarta-sans-cyrillic-ext-wght-normal-lLTsRRxN.woff2      1.71 kB
+[WebServer] dist/assets/voice-capture-worklet-DsmQparT.js                              1.99 kB
+[WebServer] dist/index.html                                                            2.49 kB │ gzip:   1.19 kB
+[WebServer] dist/assets/plus-jakarta-sans-vietnamese-wght-normal-qRpaaN48.woff2        8.35 kB
+[WebServer] dist/assets/plus-jakarta-sans-latin-ext-wght-normal-DmpS2jIq.woff2        21.72 kB
+[WebServer] dist/assets/plus-jakarta-sans-latin-wght-normal-eXO_dkmS.woff2            27.34 kB
+[WebServer] dist/assets/main-DjYd3uYR.css                                              1.36 kB │ gzip:   0.51 kB
+[WebServer] dist/widget-runtime.js                                                     0.51 kB │ gzip:   0.35 kB │ map:     2.08 kB
+[WebServer] dist/assets/rolldown-runtime-hePW80VL.js                                   0.71 kB │ gzip:   0.42 kB
+[WebServer] dist/assets/addon-fit-DIOBYJe3.js                                          1.25 kB │ gzip:   0.53 kB │ map:     3.37 kB
+[WebServer] dist/assets/src-C3a-LLmH.js                                              314.42 kB │ gzip:  94.72 kB │ map: 1,728.85 kB
+[WebServer] dist/assets/xterm-ScmBfeDI.js                                            331.22 kB │ gzip:  83.07 kB │ map:   675.33 kB
+[WebServer] dist/assets/main-DYr4gyIW.js                                           1,443.85 kB │ gzip: 393.85 kB │ map: 4,174.92 kB
+[WebServer] 
+[WebServer] ✓ built in 460ms
+[WebServer] [plugin builtin:vite-reporter] 
+[WebServer] (!) Some chunks are larger than 500 kB after minification. Consider:
+[WebServer] - Using dynamic import() to code-split the application
+[WebServer] - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+[WebServer] - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[WebServer] (node:88772) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:14344) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer]   ➜  Local:   http://127.0.0.1:4773/
+
+Running 20 tests using 1 worker
+
+(node:65936) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ok  1 [chromium] › apps\web\e2e\reference-theme-composition.spec.ts:14:3 › pixel-arcade reaches a real declarative composition and its built-in widgets at 1280 dark (2.5s)
+  ok  2 [chromium] › apps\web\e2e\reference-theme-composition.spec.ts:14:3 › pixel-arcade reaches a real declarative composition and its built-in widgets at 1280 light (2.1s)
+  ok  3 [chromium] › apps\web\e2e\reference-theme-composition.spec.ts:14:3 › pixel-arcade reaches a real declarative composition and its built-in widgets at 390 dark (2.9s)
+  ok  4 [chromium] › apps\web\e2e\reference-theme-composition.spec.ts:14:3 › pixel-arcade reaches a real declarative composition and its built-in widgets at 390 light (3.0s)
+  ok  5 [chromium] › apps\web\e2e\reference-theme-composition.spec.ts:14:3 › neo-brutalism reaches a real declarative composition and its built-in widgets at 1280 dark (1.9s)
+  ok  6 [chromium] › apps\web\e2e\reference-theme-composition.spec.ts:14:3 › neo-brutalism reaches a real declarative composition and its built-in widgets at 1280 light (1.9s)
+  ok  7 [chromium] › apps\web\e2e\reference-theme-composition.spec.ts:14:3 › neo-brutalism reaches a real declarative composition and its built-in widgets at 390 dark (2.4s)
+  ok  8 [chromium] › apps\web\e2e\reference-theme-composition.spec.ts:14:3 › neo-brutalism reaches a real declarative composition and its built-in widgets at 390 light (2.3s)
+  ok  9 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows dusk appearance in place at 1280 dark (2.9s)
+  ok 10 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows dusk appearance in place at 1280 light (2.6s)
+  ok 11 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows dusk appearance in place at 390 dark (3.1s)
+  ok 12 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows dusk appearance in place at 390 light (3.8s)
+  ok 13 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows pixel-arcade appearance in place at 1280 dark (3.4s)
+  ok 14 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows pixel-arcade appearance in place at 1280 light (3.2s)
+  ok 15 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows pixel-arcade appearance in place at 390 dark (4.2s)
+  ok 16 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows pixel-arcade appearance in place at 390 light (4.3s)
+  ok 17 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows neo-brutalism appearance in place at 1280 dark (3.0s)
+  ok 18 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows neo-brutalism appearance in place at 1280 light (3.3s)
+  ok 19 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows neo-brutalism appearance in place at 390 dark (3.9s)
+  ok 20 [chromium] › apps\web\e2e\widget-appearance.spec.ts:31:3 › an isolated widget follows neo-brutalism appearance in place at 390 light (4.6s)
+
+  20 passed (1.1m)

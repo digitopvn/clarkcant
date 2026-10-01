@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "org.clarkcant.neo-brutalism",
+  "version": "1.0.0",
+  "digest": "sha256:e0e6746daf2de84c0818a211b5392f0a88b64183ea0443e4d4e0c832873bdce4",
+  "themeDigests": {
+    "neo-brutalism": "sha256:f82e943c56a3f26022c21bebddfe861f2a4c8e853b255a9e58360a5fae0e2dcb"
+  },
+  "files": [
+    {
+      "path": "LICENSE",
+      "bytes": 932,
+      "sha256": "7dbe5315df91d19114224a0216322b6f9b6298b19a4de95fcf8e2107fcc48829"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2651,
+      "sha256": "efbcb9663a72c4d11e01109af3ff4741167cdc8c8418d491487109c48d73d4b0"
+    },
+    {
+      "path": "clarkcant.json",
+      "bytes": 811,
+      "sha256": "f76270ac81531fac9f9f3729d2045ed5c852a20830fc7caf413cab4251827f2e"
+    },
+    {
+      "path": "themes/neo-brutalism.json",
+      "bytes": 1014,
+      "sha256": "60e6c0ea93e52b59dd6e9a782756866fbe8de06b60b92521e0d873e188c0a011"
+    }
+  ],
+  "unverifiedChecks": [
+    "theme-browser"
+  ],
+  "platforms": [
+    "darwin-arm64",
+    "darwin-x64",
+    "linux-x64",
+    "linux-arm64",
+    "win32-x64",
+    "win32-arm64",
+    "web"
+  ],
+  "publisher": {
+    "id": "clarkcant",
+    "sourceUrl": "https://github.com/digitopvn/clarkcant/tree/main/examples/themes/neo-brutalism",
+    "license": "Apache-2.0"
+  }
+}

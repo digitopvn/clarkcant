@@ -1,0 +1,23 @@
+
+schema
+  ok   Package manifest and declarations — Current generalized package manifest accepted
+  ok   Contained Theme documents — 1 checked theme facets
+
+security
+  ok   neo-brutalism: protected host semantics and visible boundaries — Status, focus, disabled states, effects and Orb pass the production audit
+  ok   Themes have no executable styling or remote resources — Data-only theme packages require no capabilities, network, filesystem, device or lifecycle-script permissions
+  ok   Package assets stay inside the package — 2 regular files read through the production containment boundary; ThemeDocument accepts no raw CSS, HTML, script or remote asset references
+  ok   Data-only theme artifacts contain no executable styling payload — No script, raw stylesheet or executable asset
+
+interaction
+  n/a  Production preview at narrow/normal/compact widths, keyboard and reduced motion — Run clark theme dev; schema and token audits do not prove browser layout or keyboard behavior
+
+rendering
+  ok   neo-brutalism: text and focus contrast in both schemes — [{"scheme":"dark","failures":[],"checked":40},{"scheme":"light","failures":[],"checked":40}]
+  ok   neo-brutalism: dark equivalent reduced-motion path — Compiled reduced durations remain zero and easings linear regardless of theme motion
+  ok   neo-brutalism: dark bounded readable typography — Host type scale and closed system font profiles; no arbitrary CSS or external font URL
+  ok   neo-brutalism: light equivalent reduced-motion path — Compiled reduced durations remain zero and easings linear regardless of theme motion
+  ok   neo-brutalism: light bounded readable typography — Host type scale and closed system font profiles; no arbitrary CSS or external font URL
+
+11 passed, 0 failed, 1 need the dev host
+The checks marked n/a are not verified by this command: they need a rendered frame.

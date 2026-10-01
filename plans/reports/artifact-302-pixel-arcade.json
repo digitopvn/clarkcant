@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "org.clarkcant.pixel-arcade",
+  "version": "1.0.0",
+  "digest": "sha256:8a476ad3ccd66e9e767969f6e208ac760330e14590fd0d6ce81e33c8dca6f9c6",
+  "themeDigests": {
+    "pixel-arcade": "sha256:a0d19b2ee56ba789883925532251857cc96d5c06f416287ba39511f49a72c0f6"
+  },
+  "files": [
+    {
+      "path": "LICENSE",
+      "bytes": 932,
+      "sha256": "7dbe5315df91d19114224a0216322b6f9b6298b19a4de95fcf8e2107fcc48829"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2620,
+      "sha256": "6f71927ba6b11e9185622117de6eb3836ba89ff6068df66d628b7e90098c5ad6"
+    },
+    {
+      "path": "clarkcant.json",
+      "bytes": 814,
+      "sha256": "dd9e4e296153bb2474ae0a02df105ad023912ff46117f3469fc3fe641523d0e3"
+    },
+    {
+      "path": "themes/pixel-arcade.json",
+      "bytes": 1026,
+      "sha256": "69f3324b0c81da38e9e226365927a5481ac47a1e7b956f4b53c0447b29a56870"
+    }
+  ],
+  "unverifiedChecks": [
+    "theme-browser"
+  ],
+  "platforms": [
+    "darwin-arm64",
+    "darwin-x64",
+    "linux-x64",
+    "linux-arm64",
+    "win32-x64",
+    "win32-arm64",
+    "web"
+  ],
+  "publisher": {
+    "id": "clarkcant",
+    "sourceUrl": "https://github.com/digitopvn/clarkcant/tree/main/examples/themes/pixel-arcade",
+    "license": "Apache-2.0"
+  }
+}

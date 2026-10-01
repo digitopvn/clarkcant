@@ -1,0 +1,20 @@
+
+ RUN  v5.0.0 D:/wt302
+
+ ✓ packages/widget-cli/test/reference-theme-preview.spec.ts (8 tests) 6845ms
+   ✓ pixel-arcade production components on this platform (4)
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 1280 dark 1088ms
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 1280 light 792ms
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 390 dark 684ms
+     ✓ pixel-arcade keeps keyboard, narrow layout and reduced motion usable at 390 light 820ms
+   ✓ neo-brutalism production components on this platform (4)
+     ✓ neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 dark 1047ms
+     ✓ neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 1280 light 757ms
+     ✓ neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 dark 683ms
+     ✓ neo-brutalism keeps keyboard, narrow layout and reduced motion usable at 390 light 753ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  20:53:14
+   Duration  9.78s (tests 71%, import 21%, transform 8%)
+

@@ -1,0 +1,471 @@
+[WebServer] (node:65352) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] no model configured; the node will answer with scripts and capabilities only
+[WebServer] frame grants: fixture lifetime seam loaded (CC_FRAME_GRANT_FIXTURE=1)
+[WebServer] project sessions: FIXTURE starter loaded — a session is reported, and no worker is spawned
+[WebServer] overview: FIXTURE composer loaded — overview requests are scripted, and no provider is called for them
+[WebServer] filesystem search: read-only over C:\, D:\, E:\, G:\ — no index is built; matches are sent to the model provider
+[WebServer] views: 25 definition(s) the model may show — canvas.line@1, canvas.bar@1, canvas.donut@1, canvas.table@1, canvas.metrics@1, canvas.filter@1, canvas.image@1, canvas.carousel@1, canvas.gallery@1, canvas.youtube@1, canvas.video@1, canvas.action@1, canvas.form@1, canvas.list@1, canvas.status@1, canvas.progress@1, canvas.details@1, canvas.code@1, canvas.diff@1, canvas.file@1, canvas.area@1, canvas.scatter@1, canvas.calendar@1, canvas.timeline@1, canvas.overview@1
+[WebServer] catalog: every family a composed surface needs is drawable
+[WebServer] session transcripts: .data\e2e\sessions
+[WebServer] selector: disabled (no credential or local-only); composed surfaces use the deterministic path
+[WebServer] update check: FIXTURE — no periodic job started, no registry is called
+[WebServer] voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output
+[WebServer] clarkcant node "e2e-node" listening on http://127.0.0.1:9296
+[WebServer] node id: node_0a62071da4eb4ce495c236c3
+[WebServer] data dir: .data/e2e
+[WebServer] container engine: docker 29.8.0 — the OCI image can be built on this machine
+[WebServer] commands require the bearer token stored in the node's identity.json
+[WebServer] project index: 1 scanned, 1 kept, 1 removed
+[WebServer] (node:72188) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] npm fixture registry listening on http://127.0.0.1:9298
+[WebServer] (node:8544) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] $ vite build --outDir dist
+[WebServer] (node:84092) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] vite v8.3.0 building client environment for production...
+[WebServer] transforming...
+[WebServer] ✓ 370 modules transformed.
+[WebServer] rendering chunks...
+[WebServer] computing gzip size...
+[WebServer] dist/assets/plus-jakarta-sans-cyrillic-ext-wght-normal-lLTsRRxN.woff2      1.71 kB
+[WebServer] dist/assets/voice-capture-worklet-DsmQparT.js                              1.99 kB
+[WebServer] dist/index.html                                                            2.49 kB │ gzip:   1.19 kB
+[WebServer] dist/assets/plus-jakarta-sans-vietnamese-wght-normal-qRpaaN48.woff2        8.35 kB
+[WebServer] dist/assets/plus-jakarta-sans-latin-ext-wght-normal-DmpS2jIq.woff2        21.72 kB
+[WebServer] dist/assets/plus-jakarta-sans-latin-wght-normal-eXO_dkmS.woff2            27.34 kB
+[WebServer] dist/assets/main-DjYd3uYR.css                                              1.36 kB │ gzip:   0.51 kB
+[WebServer] dist/widget-runtime.js                                                     0.51 kB │ gzip:   0.35 kB │ map:     2.08 kB
+[WebServer] dist/assets/rolldown-runtime-hePW80VL.js                                   0.71 kB │ gzip:   0.42 kB
+[WebServer] dist/assets/addon-fit-DIOBYJe3.js                                          1.25 kB │ gzip:   0.53 kB │ map:     3.37 kB
+[WebServer] dist/assets/src-CIK1j5Ap.js                                              314.41 kB │ gzip:  94.72 kB │ map: 1,728.85 kB
+[WebServer] dist/assets/xterm-ScmBfeDI.js                                            331.22 kB │ gzip:  83.07 kB │ map:   675.33 kB
+[WebServer] dist/assets/main-Do8RvaPw.js                                           1,443.15 kB │ gzip: 393.70 kB │ map: 4,174.24 kB
+[WebServer] 
+[WebServer] ✓ built in 494ms
+[WebServer] [plugin builtin:vite-reporter] 
+[WebServer] (!) Some chunks are larger than 500 kB after minification. Consider:
+[WebServer] - Using dynamic import() to code-split the application
+[WebServer] - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+[WebServer] - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[WebServer] (node:36792) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:79000) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer]   ➜  Local:   http://127.0.0.1:4693/
+
+Running 12 tests using 1 worker
+
+(node:76632) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x   1 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 1280 dark (2.3s)
+(node:85612) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x   2 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 1280 light (2.3s)
+(node:81256) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x   3 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 390 dark (3.3s)
+(node:70600) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x   4 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 390 light (3.2s)
+(node:85788) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x   5 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 1280 dark (2.7s)
+(node:86800) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x   6 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 1280 light (2.6s)
+(node:62188) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x   7 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 390 dark (3.5s)
+(node:84804) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x   8 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 390 light (3.3s)
+(node:9352) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x   9 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 1280 dark (2.3s)
+(node:61800) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x  10 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 1280 light (2.2s)
+(node:3520) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x  11 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 390 dark (2.5s)
+(node:82364) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x  12 [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 390 light (2.4s)
+
+
+  1) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 1280 dark 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "5c14aef40ad14a17", "scheme": "dark", "themeRef": "package:com.example.theme-dusk#dusk", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#7AA2F7", "border": "#3B4261", "canvas": "#1A1B26", "card": "#24283B", "code": "#101318", "danger": "#F7768E", "elevated": "#292E42", "focus": "#7DCFFF", "onAccent": "#1A1B26", "success": "#8EBCA3", "text": "#C0CAF5", "textMuted": "#A9B1D6", "textTertiary": "#9AA3CC", "warning": "#D1AC68", "window": "#1F2335"}, "identity": {"border": {"style": "solid", "width": 1}, "effects": {"backdrop": {"intensity": 0.5, "kind": "dot-grid", "scale": 22}, "surface": {"intensity": 0.5, "kind": "none"}}, "fieldRadius": "10px", "iconStroke": 1.8, "recipes": {"badge": "pill", "button": "outlined", "card": "outlined", "composer": "floating", "input": "outlined", "modal": "floating"}, "shadow": {"color": "text", "offset": 4, "style": "soft"}, "typography": {"body": "clark", "display": "clark", "headingWeight": 600, "mono": "clark"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "cubic-bezier(0.22, 1.28, 0.36, 1)", "easing": "cubic-bezier(0.2, 0, 0.2, 1)", "enter": "560ms", "exit": "320ms", "glow": "7200ms", "micro": "120ms", "normal": "180ms", "orb": "600ms", "panel": "280ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0.375rem", "button": "0.5rem", "card": "0.75rem", "modal": "1.25rem", "pill": "999px", "response": "1rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-ec5cf-rance-in-place-at-1280-dark-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-ec5cf-rance-in-place-at-1280-dark-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-ec5cf-rance-in-place-at-1280-dark-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-ec5cf-rance-in-place-at-1280-dark-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 1280 light 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "96a6e5e721c6f01f", "scheme": "light", "themeRef": "package:com.example.theme-dusk#dusk", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#2959AA", "border": "#C4C8DA", "canvas": "#E1E2E7", "card": "#F2F2F5", "code": "#F2F2EF", "danger": "#A33B45", "elevated": "#FFFFFF", "focus": "#007197", "onAccent": "#FFFFFF", "success": "#3F6B52", "text": "#343B58", "textMuted": "#4C5374", "textTertiary": "#565C7A", "warning": "#7A5B1E", "window": "#E9E9ED"}, "identity": {"border": {"style": "solid", "width": 1}, "effects": {"backdrop": {"intensity": 0.5, "kind": "dot-grid", "scale": 22}, "surface": {"intensity": 0.5, "kind": "none"}}, "fieldRadius": "10px", "iconStroke": 1.8, "recipes": {"badge": "pill", "button": "outlined", "card": "outlined", "composer": "floating", "input": "outlined", "modal": "floating"}, "shadow": {"color": "text", "offset": 4, "style": "soft"}, "typography": {"body": "clark", "display": "clark", "headingWeight": 600, "mono": "clark"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "cubic-bezier(0.22, 1.28, 0.36, 1)", "easing": "cubic-bezier(0.2, 0, 0.2, 1)", "enter": "560ms", "exit": "320ms", "glow": "7200ms", "micro": "120ms", "normal": "180ms", "orb": "600ms", "panel": "280ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0.375rem", "button": "0.5rem", "card": "0.75rem", "modal": "1.25rem", "pill": "999px", "response": "1rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-edd52-ance-in-place-at-1280-light-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-edd52-ance-in-place-at-1280-light-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-edd52-ance-in-place-at-1280-light-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-edd52-ance-in-place-at-1280-light-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 390 dark 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "5c14aef40ad14a17", "scheme": "dark", "themeRef": "package:com.example.theme-dusk#dusk", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#7AA2F7", "border": "#3B4261", "canvas": "#1A1B26", "card": "#24283B", "code": "#101318", "danger": "#F7768E", "elevated": "#292E42", "focus": "#7DCFFF", "onAccent": "#1A1B26", "success": "#8EBCA3", "text": "#C0CAF5", "textMuted": "#A9B1D6", "textTertiary": "#9AA3CC", "warning": "#D1AC68", "window": "#1F2335"}, "identity": {"border": {"style": "solid", "width": 1}, "effects": {"backdrop": {"intensity": 0.5, "kind": "dot-grid", "scale": 22}, "surface": {"intensity": 0.5, "kind": "none"}}, "fieldRadius": "10px", "iconStroke": 1.8, "recipes": {"badge": "pill", "button": "outlined", "card": "outlined", "composer": "floating", "input": "outlined", "modal": "floating"}, "shadow": {"color": "text", "offset": 4, "style": "soft"}, "typography": {"body": "clark", "display": "clark", "headingWeight": 600, "mono": "clark"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "cubic-bezier(0.22, 1.28, 0.36, 1)", "easing": "cubic-bezier(0.2, 0, 0.2, 1)", "enter": "560ms", "exit": "320ms", "glow": "7200ms", "micro": "120ms", "normal": "180ms", "orb": "600ms", "panel": "280ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0.375rem", "button": "0.5rem", "card": "0.75rem", "modal": "1.25rem", "pill": "999px", "response": "1rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-bb8f6-arance-in-place-at-390-dark-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-bb8f6-arance-in-place-at-390-dark-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-bb8f6-arance-in-place-at-390-dark-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-bb8f6-arance-in-place-at-390-dark-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  4) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 390 light 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "96a6e5e721c6f01f", "scheme": "light", "themeRef": "package:com.example.theme-dusk#dusk", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#2959AA", "border": "#C4C8DA", "canvas": "#E1E2E7", "card": "#F2F2F5", "code": "#F2F2EF", "danger": "#A33B45", "elevated": "#FFFFFF", "focus": "#007197", "onAccent": "#FFFFFF", "success": "#3F6B52", "text": "#343B58", "textMuted": "#4C5374", "textTertiary": "#565C7A", "warning": "#7A5B1E", "window": "#E9E9ED"}, "identity": {"border": {"style": "solid", "width": 1}, "effects": {"backdrop": {"intensity": 0.5, "kind": "dot-grid", "scale": 22}, "surface": {"intensity": 0.5, "kind": "none"}}, "fieldRadius": "10px", "iconStroke": 1.8, "recipes": {"badge": "pill", "button": "outlined", "card": "outlined", "composer": "floating", "input": "outlined", "modal": "floating"}, "shadow": {"color": "text", "offset": 4, "style": "soft"}, "typography": {"body": "clark", "display": "clark", "headingWeight": 600, "mono": "clark"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "cubic-bezier(0.22, 1.28, 0.36, 1)", "easing": "cubic-bezier(0.2, 0, 0.2, 1)", "enter": "560ms", "exit": "320ms", "glow": "7200ms", "micro": "120ms", "normal": "180ms", "orb": "600ms", "panel": "280ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0.375rem", "button": "0.5rem", "card": "0.75rem", "modal": "1.25rem", "pill": "999px", "response": "1rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-dc7c8-rance-in-place-at-390-light-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-dc7c8-rance-in-place-at-390-light-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-dc7c8-rance-in-place-at-390-light-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-dc7c8-rance-in-place-at-390-light-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  5) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 1280 dark 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "5bfa0159b25bd160", "scheme": "dark", "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#79E8BC", "border": "#27292D", "canvas": "#111317", "card": "#17191D", "code": "#101318", "danger": "#C8757C", "elevated": "#1B1D22", "focus": "#D8D2F0", "onAccent": "#000000", "success": "#8EBCA3", "text": "#E7E7EA", "textMuted": "#A0A2AB", "textTertiary": "#858994", "warning": "#D1AC68", "window": "#14161A"}, "identity": {"border": {"style": "solid", "width": 2}, "effects": {"backdrop": {"intensity": 0.06, "kind": "scanlines", "scale": 16}, "surface": {"intensity": 0, "kind": "none"}}, "fieldRadius": "0rem", "iconStroke": 2, "recipes": {"badge": "square", "button": "beveled", "card": "raised", "composer": "framed", "input": "outlined", "modal": "framed"}, "shadow": {"color": "text", "offset": 3, "style": "hard"}, "typography": {"body": "system", "display": "mono", "headingWeight": 700, "mono": "typewriter"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "steps(4)", "easing": "steps(4)", "enter": "747ms", "exit": "427ms", "glow": "9600ms", "micro": "160ms", "normal": "240ms", "orb": "800ms", "panel": "373ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0rem", "button": "0rem", "card": "0rem", "modal": "0rem", "pill": "999px", "response": "0.125rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-95b82-rance-in-place-at-1280-dark-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-95b82-rance-in-place-at-1280-dark-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-95b82-rance-in-place-at-1280-dark-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-95b82-rance-in-place-at-1280-dark-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  6) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 1280 light 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "fa40bedcbb29c895", "scheme": "light", "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#6B5FA8", "border": "#E5E5E1", "canvas": "#F7F7F5", "card": "#FFFFFF", "code": "#F2F2EF", "danger": "#A33B45", "elevated": "#FFFFFF", "focus": "#5B4FA0", "onAccent": "#FFFFFF", "success": "#3F6B52", "text": "#1A1A1C", "textMuted": "#5C5E66", "textTertiary": "#696C74", "warning": "#7A5B1E", "window": "#FFFFFF"}, "identity": {"border": {"style": "solid", "width": 2}, "effects": {"backdrop": {"intensity": 0.06, "kind": "scanlines", "scale": 16}, "surface": {"intensity": 0, "kind": "none"}}, "fieldRadius": "0rem", "iconStroke": 2, "recipes": {"badge": "square", "button": "beveled", "card": "raised", "composer": "framed", "input": "outlined", "modal": "framed"}, "shadow": {"color": "text", "offset": 3, "style": "hard"}, "typography": {"body": "system", "display": "mono", "headingWeight": 700, "mono": "typewriter"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "steps(4)", "easing": "steps(4)", "enter": "747ms", "exit": "427ms", "glow": "9600ms", "micro": "160ms", "normal": "240ms", "orb": "800ms", "panel": "373ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0rem", "button": "0rem", "card": "0rem", "modal": "0rem", "pill": "999px", "response": "0.125rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-382e4-ance-in-place-at-1280-light-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-382e4-ance-in-place-at-1280-light-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-382e4-ance-in-place-at-1280-light-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-382e4-ance-in-place-at-1280-light-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  7) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 390 dark 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "5bfa0159b25bd160", "scheme": "dark", "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#79E8BC", "border": "#27292D", "canvas": "#111317", "card": "#17191D", "code": "#101318", "danger": "#C8757C", "elevated": "#1B1D22", "focus": "#D8D2F0", "onAccent": "#000000", "success": "#8EBCA3", "text": "#E7E7EA", "textMuted": "#A0A2AB", "textTertiary": "#858994", "warning": "#D1AC68", "window": "#14161A"}, "identity": {"border": {"style": "solid", "width": 2}, "effects": {"backdrop": {"intensity": 0.06, "kind": "scanlines", "scale": 16}, "surface": {"intensity": 0, "kind": "none"}}, "fieldRadius": "0rem", "iconStroke": 2, "recipes": {"badge": "square", "button": "beveled", "card": "raised", "composer": "framed", "input": "outlined", "modal": "framed"}, "shadow": {"color": "text", "offset": 3, "style": "hard"}, "typography": {"body": "system", "display": "mono", "headingWeight": 700, "mono": "typewriter"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "steps(4)", "easing": "steps(4)", "enter": "747ms", "exit": "427ms", "glow": "9600ms", "micro": "160ms", "normal": "240ms", "orb": "800ms", "panel": "373ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0rem", "button": "0rem", "card": "0rem", "modal": "0rem", "pill": "999px", "response": "0.125rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-369af-arance-in-place-at-390-dark-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-369af-arance-in-place-at-390-dark-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-369af-arance-in-place-at-390-dark-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-369af-arance-in-place-at-390-dark-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  8) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 390 light 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "fa40bedcbb29c895", "scheme": "light", "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#6B5FA8", "border": "#E5E5E1", "canvas": "#F7F7F5", "card": "#FFFFFF", "code": "#F2F2EF", "danger": "#A33B45", "elevated": "#FFFFFF", "focus": "#5B4FA0", "onAccent": "#FFFFFF", "success": "#3F6B52", "text": "#1A1A1C", "textMuted": "#5C5E66", "textTertiary": "#696C74", "warning": "#7A5B1E", "window": "#FFFFFF"}, "identity": {"border": {"style": "solid", "width": 2}, "effects": {"backdrop": {"intensity": 0.06, "kind": "scanlines", "scale": 16}, "surface": {"intensity": 0, "kind": "none"}}, "fieldRadius": "0rem", "iconStroke": 2, "recipes": {"badge": "square", "button": "beveled", "card": "raised", "composer": "framed", "input": "outlined", "modal": "framed"}, "shadow": {"color": "text", "offset": 3, "style": "hard"}, "typography": {"body": "system", "display": "mono", "headingWeight": 700, "mono": "typewriter"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "steps(4)", "easing": "steps(4)", "enter": "747ms", "exit": "427ms", "glow": "9600ms", "micro": "160ms", "normal": "240ms", "orb": "800ms", "panel": "373ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0rem", "button": "0rem", "card": "0rem", "modal": "0rem", "pill": "999px", "response": "0.125rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-21e2a-rance-in-place-at-390-light-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-21e2a-rance-in-place-at-390-light-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-21e2a-rance-in-place-at-390-light-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-21e2a-rance-in-place-at-390-light-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  9) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 1280 dark 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "9006c4c90d9c4db9", "scheme": "dark", "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#7DB4F0", "border": "#27292D", "canvas": "#111317", "card": "#17191D", "code": "#101318", "danger": "#C8757C", "elevated": "#1B1D22", "focus": "#D8D2F0", "onAccent": "#000000", "success": "#8EBCA3", "text": "#E7E7EA", "textMuted": "#A0A2AB", "textTertiary": "#858994", "warning": "#D1AC68", "window": "#14161A"}, "identity": {"border": {"style": "solid", "width": 3}, "effects": {"backdrop": {"intensity": 0, "kind": "none", "scale": 22}, "surface": {"intensity": 0, "kind": "none"}}, "fieldRadius": "0.125rem", "iconStroke": 2.5, "recipes": {"badge": "square", "button": "raised", "card": "raised", "composer": "integrated", "input": "underlined", "modal": "framed"}, "shadow": {"color": "text", "offset": 6, "style": "hard"}, "typography": {"body": "system", "display": "system", "headingWeight": 800, "mono": "clark"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "cubic-bezier(0.3, 1.4, 0.5, 1)", "easing": "cubic-bezier(0.2, 0, 0, 1)", "enter": "747ms", "exit": "427ms", "glow": "9600ms", "micro": "160ms", "normal": "240ms", "orb": "800ms", "panel": "373ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0rem", "button": "0.125rem", "card": "0.125rem", "modal": "0.125rem", "pill": "999px", "response": "0.125rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-427bb-rance-in-place-at-1280-dark-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-427bb-rance-in-place-at-1280-dark-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-427bb-rance-in-place-at-1280-dark-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-427bb-rance-in-place-at-1280-dark-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  10) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 1280 light 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "8668db9e9b188eb9", "scheme": "light", "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#1F5FA8", "border": "#E5E5E1", "canvas": "#F7F7F5", "card": "#FFFFFF", "code": "#F2F2EF", "danger": "#A33B45", "elevated": "#FFFFFF", "focus": "#5B4FA0", "onAccent": "#FFFFFF", "success": "#3F6B52", "text": "#1A1A1C", "textMuted": "#5C5E66", "textTertiary": "#696C74", "warning": "#7A5B1E", "window": "#FFFFFF"}, "identity": {"border": {"style": "solid", "width": 3}, "effects": {"backdrop": {"intensity": 0, "kind": "none", "scale": 22}, "surface": {"intensity": 0, "kind": "none"}}, "fieldRadius": "0.125rem", "iconStroke": 2.5, "recipes": {"badge": "square", "button": "raised", "card": "raised", "composer": "integrated", "input": "underlined", "modal": "framed"}, "shadow": {"color": "text", "offset": 6, "style": "hard"}, "typography": {"body": "system", "display": "system", "headingWeight": 800, "mono": "clark"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "cubic-bezier(0.3, 1.4, 0.5, 1)", "easing": "cubic-bezier(0.2, 0, 0, 1)", "enter": "747ms", "exit": "427ms", "glow": "9600ms", "micro": "160ms", "normal": "240ms", "orb": "800ms", "panel": "373ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0rem", "button": "0.125rem", "card": "0.125rem", "modal": "0.125rem", "pill": "999px", "response": "0.125rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-d551c-ance-in-place-at-1280-light-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-d551c-ance-in-place-at-1280-light-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-d551c-ance-in-place-at-1280-light-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-d551c-ance-in-place-at-1280-light-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  11) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 390 dark 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "9006c4c90d9c4db9", "scheme": "dark", "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#7DB4F0", "border": "#27292D", "canvas": "#111317", "card": "#17191D", "code": "#101318", "danger": "#C8757C", "elevated": "#1B1D22", "focus": "#D8D2F0", "onAccent": "#000000", "success": "#8EBCA3", "text": "#E7E7EA", "textMuted": "#A0A2AB", "textTertiary": "#858994", "warning": "#D1AC68", "window": "#14161A"}, "identity": {"border": {"style": "solid", "width": 3}, "effects": {"backdrop": {"intensity": 0, "kind": "none", "scale": 22}, "surface": {"intensity": 0, "kind": "none"}}, "fieldRadius": "0.125rem", "iconStroke": 2.5, "recipes": {"badge": "square", "button": "raised", "card": "raised", "composer": "integrated", "input": "underlined", "modal": "framed"}, "shadow": {"color": "text", "offset": 6, "style": "hard"}, "typography": {"body": "system", "display": "system", "headingWeight": 800, "mono": "clark"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "cubic-bezier(0.3, 1.4, 0.5, 1)", "easing": "cubic-bezier(0.2, 0, 0, 1)", "enter": "747ms", "exit": "427ms", "glow": "9600ms", "micro": "160ms", "normal": "240ms", "orb": "800ms", "panel": "373ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0rem", "button": "0.125rem", "card": "0.125rem", "modal": "0.125rem", "pill": "999px", "response": "0.125rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-a651c-arance-in-place-at-390-dark-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-a651c-arance-in-place-at-390-dark-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-a651c-arance-in-place-at-390-dark-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-a651c-arance-in-place-at-390-dark-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  12) [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 390 light 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    Expected: undefined
+    Received: {"appearanceApi": 2, "revision": "8668db9e9b188eb9", "scheme": "light", "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism", "tokenContractVersion": 2, "tokens": {"color": {"accent": "#1F5FA8", "border": "#E5E5E1", "canvas": "#F7F7F5", "card": "#FFFFFF", "code": "#F2F2EF", "danger": "#A33B45", "elevated": "#FFFFFF", "focus": "#5B4FA0", "onAccent": "#FFFFFF", "success": "#3F6B52", "text": "#1A1A1C", "textMuted": "#5C5E66", "textTertiary": "#696C74", "warning": "#7A5B1E", "window": "#FFFFFF"}, "identity": {"border": {"style": "solid", "width": 3}, "effects": {"backdrop": {"intensity": 0, "kind": "none", "scale": 22}, "surface": {"intensity": 0, "kind": "none"}}, "fieldRadius": "0.125rem", "iconStroke": 2.5, "recipes": {"badge": "square", "button": "raised", "card": "raised", "composer": "integrated", "input": "underlined", "modal": "framed"}, "shadow": {"color": "text", "offset": 6, "style": "hard"}, "typography": {"body": "system", "display": "system", "headingWeight": 800, "mono": "clark"}}, "layout": {"composerMaxWidth": "840px", "composerMinHeight": "70px", "conversationMaxWidth": "800px", "modalWidth": "700px", "topBarHeight": "62px"}, "motion": {"bounce": "cubic-bezier(0.3, 1.4, 0.5, 1)", "easing": "cubic-bezier(0.2, 0, 0, 1)", "enter": "747ms", "exit": "427ms", "glow": "9600ms", "micro": "160ms", "normal": "240ms", "orb": "800ms", "panel": "373ms"}, "motionReduced": {"bounce": "linear", "easing": "linear", "enter": "0ms", "exit": "0ms", "glow": "0ms", "micro": "0ms", "normal": "0ms", "orb": "0ms", "panel": "0ms"}, "radius": {"badge": "0rem", "button": "0.125rem", "card": "0.125rem", "modal": "0.125rem", "pill": "999px", "response": "0.125rem"}, "space": {"lg": "1rem", "md": "0.75rem", "s20": "1.25rem", "s40": "2.5rem", "s48": "3rem", "s64": "4rem", "s80": "5rem", "sm": "0.5rem", "xl": "1.5rem", "xs": "0.25rem", "xxl": "2rem", "xxs": "0.125rem"}, "type": {"bodyLg": {"lineHeight": "1.5rem", "size": "1rem"}, "bodyMd": {"lineHeight": "1.375rem", "size": "0.875rem"}, "bodySm": {"lineHeight": "1.25rem", "size": "0.8125rem"}, "displayLg": {"lineHeight": "2.625rem", "size": "2.125rem"}, "displayXl": {"lineHeight": "3.75rem", "size": "3.25rem"}, "headingLg": {"lineHeight": "2rem", "size": "1.5rem"}, "headingMd": {"lineHeight": "1.625rem", "size": "1.125rem"}, "label": {"lineHeight": "1rem", "size": "0.75rem"}, "meta": {"lineHeight": "1rem", "size": "0.6875rem"}, "monoSm": {"lineHeight": "1.25rem", "size": "0.75rem"}}}}
+
+      88 |     await expect.poll(async () => (await readWidget(frame)).appearance?.themeRef).toBe(themeRef);
+      89 |     const canonical = await (await request.get(`${node}/appearance`, { headers })).json();
+    > 90 |     expect((await readWidget(frame)).appearance).toEqual(canonical.snapshot);
+         |                                                  ^
+      91 |     if (theme.orb !== undefined) {
+      92 |       const orb = page.locator("canvas[data-orb-profile]").first();
+      93 |       await expect(orb).toHaveAttribute("data-orb-profile", theme.orb);
+        at D:\wt302\apps\web\e2e\widget-appearance.spec.ts:90:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-0e34e-rance-in-place-at-390-light-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\widget-appearance-an-isola-0e34e-rance-in-place-at-390-light-chromium\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\widget-appearance-an-isola-0e34e-rance-in-place-at-390-light-chromium\trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results\widget-appearance-an-isola-0e34e-rance-in-place-at-390-light-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  12 failed
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 1280 dark 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 1280 light 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 390 dark 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows dusk appearance in place at 390 light 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 1280 dark 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 1280 light 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 390 dark 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows pixel-arcade appearance in place at 390 light 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 1280 dark 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 1280 light 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 390 dark 
+    [chromium] › apps\web\e2e\widget-appearance.spec.ts:29:3 › an isolated widget follows neo-brutalism appearance in place at 390 light 

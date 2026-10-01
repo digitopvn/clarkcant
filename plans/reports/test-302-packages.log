@@ -1,0 +1,10 @@
+
+ RUN  v5.0.0 D:/wt302
+
+ ✓ packages/widget-cli/test/reference-themes.spec.ts (8 tests) 91ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  20:16:50
+   Duration  2.84s (import 70%, transform 27%, tests 3%)
+

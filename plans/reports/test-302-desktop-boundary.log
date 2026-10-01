@@ -1,0 +1,50 @@
+
+ RUN  v5.0.0 D:/wt302
+
+ ✓ apps/desktop/test/appearance-tokens.spec.ts (4 tests) 20ms
+ ❯ apps/desktop/test/detached-window.spec.ts (19 tests | 1 failed) 26ms
+   ❯ the detached appearance boundary (3)
+     ✓ keeps the real Electron smoke fixture equal to current compiler output 12ms
+     × keeps every reference-package smoke snapshot equal to the installed theme compiler 2ms
+     ✓ uses the current canonical schema, accepts a snapshot and refuses raw/privileged styling 9ms
+   ✓ the detached bootstrap (7)
+     ✓ carries the widget host bootstrap and cannot be widened by its input 0ms
+     ✓ names every field that would make a detached window privileged 0ms
+     ✓ refuses a bootstrap carrying a credential rather than quietly stripping it 0ms
+     ✓ refuses a field a detached window does not receive 0ms
+     ✓ refuses a window that has nothing to show 0ms
+     ✓ accepts the bootstrap it builds 0ms
+     ✓ refuses a window with no composition to draw 0ms
+   ✓ the detached window itself (5)
+     ✓ is as hardened as the window it came from 0ms
+     ✓ puts the preload where Electron reads it, not spread across the window options 0ms
+     ✓ refuses to build without a preload path 0ms
+     ✓ opens beside its parent and inside the work area 0ms
+     ✓ clamps a window that would otherwise open off-screen 0ms
+   ✓ the relayed intent (3)
+     ✓ accepts the four fields an action needs and nothing else 0ms
+     ✓ refuses an intent that tries to act as the host 0ms
+     ✓ refuses an intent that names no binding or no instance 0ms
+   ✓ the detached channels (1)
+     ✓ names each one, so the allowlist stays a list of things permitted 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/desktop/test/detached-window.spec.ts > the detached appearance boundary > keeps every reference-package smoke snapshot equal to the installed theme compiler
+Error: ENOENT: no such file or directory, open 'D:\wt302\apps\desktop\test\fixtures\reference-appearance.json'
+ ❯ apps/desktop/test/detached-window.spec.ts:41:32
+     39|
+     40|   it("keeps every reference-package smoke snapshot equal to the instal…
+     41|     const fixture = JSON.parse(readFileSync(new URL("./fixtures/refere…
+       |                                ^
+     42|     const expected = [];
+     43|     for (const name of ["pixel-arcade", "neo-brutalism"]) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 22 passed (23)
+   Start at  20:20:14
+   Duration  1.17s (import 67%, transform 30%, tests 2%)
+

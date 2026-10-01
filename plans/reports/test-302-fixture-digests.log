@@ -1,0 +1,10 @@
+
+ RUN  v5.0.0 D:/wt302
+
+ ✓ apps/runtime/test/e2e-fixture-digests.spec.ts (7 tests) 54ms
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  20:25:38
+   Duration  2.44s (import 70%, transform 27%, tests 2%)
+
