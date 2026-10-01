@@ -421,6 +421,22 @@ câu trả lời nào mang đường dẫn.
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | – `201 { artifactRef, attachmentRef }` qua luồng đính kèm; người dùng gửi nó cùng tin nhắn kế tiếp |
 | DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – bỏ một tệp instance này đã tạo, cùng byte của nó trừ khi một tệp đính kèm hoặc bản ghi khác vẫn trỏ tới; tệp của instance khác là `403 ARTIFACT_NOT_CREATOR` |
 
+Các job của package mà widget theo dõi (`jobs@1`, [widget-development.vi.md §10.2](widget-development.vi.md#102-job-chạy-lâu-jobs1))
+có trong `/openapi.json`. Một lần bấm vào binding có capability chạy dưới dạng job trả về một JobRef (`job_…`) thay vì
+chờ service; các route này đọc và dừng job đó. JobRef là con trỏ, không phải quyền: node chỉ trả lời khi chính một
+invoke binding của instance này đã khởi động job, trong hội thoại này, cho cùng principal, package generation và
+capability. Mọi trường hợp khác, kể cả một ref không tồn tại, đều là `404 JOB_NOT_FOUND`
+(`packages/contracts/src/jobs.ts`).
+
+| Method | Path | Body / câu trả lời |
+|---|---|---|
+| GET | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – `{ job: { jobId, status, progress?, resultRefs, output?, error?, createdAt, startedAt?, endedAt? } }`; tệp là `ArtifactRef`, không bao giờ là đường dẫn |
+| POST | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – huỷ request tới service, `202 { accepted, jobId }`; job đã kết thúc là `409 JOB_NOT_RUNNING` và vẫn đọc được |
+
+Node không có job host trả lời `503 JOB_UNAVAILABLE`. `POST /stop` cũng huỷ các job package đang chạy và đếm chúng
+trong `stopped.jobs`.
+
+
 Mọi route của instance đều được kiểm tra lại theo grant của instance đó. Ref là con trỏ, không phải quyền, nên một
 grant đã hết hạn (`403 ARTIFACT_GRANT_EXPIRED`) hoặc bị thu hồi (`403 ARTIFACT_GRANT_REVOKED`) sẽ chặn ngay lời gọi
 kế tiếp. Kích thước, kiểu và hạn mức theo quy tắc đính kèm (`413 ARTIFACT_TOO_LARGE`, `415 ARTIFACT_TYPE_MISMATCH`,

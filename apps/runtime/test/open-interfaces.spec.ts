@@ -98,6 +98,7 @@ describe("discovery", () => {
       "/signals/webhook/{source}",
       "/automations",
       "/stop",
+      "/conversations/{conversationId}/widgets/{instanceId}/jobs/{jobId}",
     ]) {
       expect(document.paths).toHaveProperty([path]);
     }
