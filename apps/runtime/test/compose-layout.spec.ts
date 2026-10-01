@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { type Instant, LAYOUT_COMPOSITION_SCHEMA_VERSION, MAX_LAYOUT_DEPTH } from "@clarkcant/contracts";
-import { appendMessage, findBundleForMessage, findCompositionByMessage, type Database } from "@clarkcant/storage";
+import { appendMessage, findBundleForMessage, findCompositionByMessage, insertLocalImage, type Database } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 
 import { type ComposeDeps } from "../src/compose-mini-app.ts";
@@ -82,6 +82,7 @@ function compile(proposal: unknown, imageRef?: { imageId: string; altText: strin
     registry: compose.registry,
     rowsBySlot: rowsBySlotOf(published),
     initialState: { period: "week", timezone: "UTC" },
+    pictureRefs: published.pictureRefs,
     ...(imageRef === undefined ? {} : { imageRef }),
   });
 }
@@ -144,7 +145,7 @@ describe("compiling a proposed layout", () => {
     );
     expect(problemsOf(leaf("canvas.overview@1"))).toContain("names the container");
     expect(problemsOf(leaf("canvas.action@1"))).toContain("a button is placed with its own show_view");
-    expect(problemsOf(leaf("canvas.carousel@1"))).toContain("no source for it yet");
+    expect(problemsOf(leaf("canvas.video@1", { videoRef: "video_x", alt: "A clip" }))).toContain("no source for it yet");
   });
 
   it("refuses a field a node does not have, rather than dropping it", () => {
@@ -162,6 +163,68 @@ describe("compiling a proposed layout", () => {
     );
     expect(problemsOf(leaf("canvas.table@1", { pageSize: 1000 }))).toContain("do not fit its schema");
     expect(problemsOf(leaf("canvas.image@1"))).toContain("no imported image on this node");
+  });
+});
+
+describe("placing the person's pictures in a layout", () => {
+  /** Imported pictures, oldest first, so the newest is the last one named here. */
+  function importPictures(count: number): string[] {
+    const ids: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const imageId = `image_layout_${String(index).padStart(2, "0")}`;
+      insertLocalImage(db(), {
+        imageId,
+        ownerPrincipalId: PRINCIPAL,
+        nodeId: services.runtime.identity.nodeId,
+        artifactId: `art_${imageId}`,
+        mimeType: "image/png",
+        byteSize: 68,
+        width: 1,
+        height: 1,
+        digest: `sha256:${imageId}`,
+        altText: `Picture ${String(index)}`,
+        blobPath: `unused-${imageId}`,
+        createdAt: new Date(Date.parse(AT) + index * 1000).toISOString() as Instant,
+      });
+      ids.push(imageId);
+    }
+    return ids;
+  }
+
+  it("lists a gallery and a carousel among the widgets a leaf may name, and still not a video", () => {
+    const named = compose.registry.entries().map((entry) => entry.definition.id);
+    expect(named).toContain("canvas.gallery@1");
+    const result = compile(leaf("canvas.video@1", { videoRef: "video_x", alt: "A clip" }));
+    expect(result.ok).toBe(false);
+  });
+
+  it("fills a gallery and a carousel with the node's own pictures, newest first, cut to what each holds", () => {
+    const ids = importPictures(30);
+    const newestFirst = [...ids].reverse();
+    const result = compile({
+      kind: "stack",
+      children: [
+        // A model names a title; which pictures, and what they say, is the node's.
+        leaf("canvas.gallery@1", { title: "Ảnh của tôi", imageRefs: ["image_someone_else"], alts: ["Not mine"] }),
+        leaf("canvas.carousel@1"),
+      ],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [gallery, carousel] = result.sections;
+    expect(gallery?.sectionId).toBe("pictures-1");
+    expect(gallery?.slot).toBe("pictures");
+    expect(gallery?.props).toMatchObject({ title: "Ảnh của tôi", imageRefs: newestFirst, alts: newestFirst.map((id) => `Picture ${String(Number(id.slice(-2)))}`) });
+    expect(gallery?.props.imageRefs).not.toContain("image_someone_else");
+    // A carousel holds at most 24; it shows the newest 24 rather than being refused.
+    expect(carousel?.sectionId).toBe("pictures-2");
+    expect(carousel?.props.imageRefs).toEqual(newestFirst.slice(0, 24));
+    expect(gallery?.textAlternative).toContain("Hình ảnh đã nhập: Picture 29; Picture 28");
+  });
+
+  it("refuses a gallery or carousel when the node holds no picture to show", () => {
+    expect(problemsOf(leaf("canvas.gallery@1"))).toContain("asks for pictures, and there is no imported image on this node to show");
+    expect(problemsOf(leaf("canvas.carousel@1"))).toContain("asks for pictures");
   });
 });
 

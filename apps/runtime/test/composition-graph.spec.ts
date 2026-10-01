@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { type Instant } from "@clarkcant/contracts";
-import { findBundleForMessage, findCompositionByMessage, type Database } from "@clarkcant/storage";
+import { deleteLocalImage, findBundleForMessage, findCompositionByMessage, insertLocalImage, type Database } from "@clarkcant/storage";
 
 import { type ComposeDeps, rowsBySlotOf } from "../src/compose-mini-app.ts";
 import { compileLayout, composeLayout } from "../src/compose-layout.ts";
@@ -250,6 +250,72 @@ describe("a person changing a linked surface", () => {
       invocationId: "inv_choice_stale",
     });
     expect(stale.status).toBe(409);
+  });
+
+  it("keeps the picture a composed gallery picked, gives it to the carousel beside it, and says it to the model", async () => {
+    for (const [index, altText] of ["Bến cảng", "Cánh đồng", "Ngọn hải đăng"].entries()) {
+      insertLocalImage(db(), {
+        imageId: `image_graph_${String(index)}`,
+        ownerPrincipalId: owner,
+        nodeId: services.runtime.identity.nodeId,
+        artifactId: `art_graph_${String(index)}`,
+        mimeType: "image/png",
+        byteSize: 68,
+        width: 1,
+        height: 1,
+        digest: `sha256:graph-${String(index)}`,
+        altText,
+        blobPath: `unused-graph-${String(index)}`,
+        createdAt: new Date(Date.parse(AT) + index * 1000).toISOString() as Instant,
+      });
+    }
+    const pick = [{ event: "media.select", steps: [{ op: "select-field", key: "picture", field: "selectedIndex" }] }];
+    const outcome = composeLayout(compose, {
+      conversationId: CONVERSATION,
+      messageId: "msg_pictures",
+      principalId: owner,
+      intent: "",
+      layout: { kind: "stack", children: [leaf("canvas.gallery@1", {}, { on: pick }), leaf("canvas.carousel@1", {}, { on: pick })] },
+      state: { picture: { type: "number", initial: 0 } },
+      title: "Ảnh đã nhập",
+    });
+    expect(outcome.ok).toBe(true);
+    const spec = findCompositionByMessage(db(), "msg_pictures", owner);
+    if (spec === undefined) throw new Error("no composition stored");
+    const instanceId = spec.instanceId;
+    const live = (await call("GET", `/conversations/${CONVERSATION}/widgets/${instanceId}/live`)).body as Live;
+    expect(live.availability).toEqual({ "pictures-1": "live", "pictures-2": "live" });
+    expect(live.semanticState?.values).toMatchObject({ picture: 0 });
+
+    const binding = eventBinding(live, "pictures-1");
+    const response = await call("POST", `/conversations/${CONVERSATION}/widgets/${instanceId}/actions`, {
+      instanceId,
+      actionBindingId: binding.actionBindingId,
+      expectedRevision: live.revision,
+      expectedBindingDigest: binding.bindingDigest,
+      input: { event: "media.select", payload: { selectedIndex: 2 } },
+      invocationId: "inv_picture_two",
+    });
+    expect(response.status).toBe(200);
+    expect((response.body as { state: { graph?: Record<string, unknown> } }).state.graph).toEqual({ picture: 2 });
+    const reloaded = (await call("GET", `/conversations/${CONVERSATION}/widgets/${instanceId}/live`)).body as Live;
+    expect(reloaded.semanticState?.values).toMatchObject({ picture: 2 });
+
+    // A picked picture that is not a number is not what the surface declared, and is refused.
+    const wrong = await call("POST", `/conversations/${CONVERSATION}/widgets/${instanceId}/actions`, {
+      instanceId,
+      actionBindingId: binding.actionBindingId,
+      expectedRevision: reloaded.revision,
+      expectedBindingDigest: binding.bindingDigest,
+      input: { event: "media.select", payload: { selectedIndex: "two" } },
+      invocationId: "inv_picture_text",
+    });
+    expect(wrong.status).toBe(400);
+
+    // Pictures the person removed are not drawn as broken images: the set says it is missing.
+    for (const index of [0, 1, 2]) deleteLocalImage(db(), `image_graph_${String(index)}`, owner, AT);
+    const emptied = (await call("GET", `/conversations/${CONVERSATION}/widgets/${instanceId}/live`)).body as Live;
+    expect(emptied.availability).toEqual({ "pictures-1": "missing", "pictures-2": "missing" });
   });
 
   it("refuses an event its rules do not allow, and keeps nothing of it", async () => {

@@ -127,12 +127,12 @@ const AVAILABILITY_TEXT_KEY: Record<RegionAvailability, MessageKey | undefined> 
 export const STATE_EVENT_OPERATION = "state.event";
 
 /**
- * Events that only describe the view: a search's settled query, a list's selection, a calendar's view and a timeline's
- * selected entry. Unless the surface's graph listens to them they stay on the page, like the table sort, because nothing
+ * Events that only describe the view: a search's settled query, a list's selection, a calendar's view, a timeline's
+ * selected entry and a gallery's or carousel's picture. Unless the surface's graph listens to them they stay on the page, like the table sort, because nothing
  * on the node answers them; forwarding one would reach the action route as if a person had pressed something. A calendar's selected day is still
  * sent as `date.select`, which the surface itself answers.
  */
-const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change", "calendar.view", "timeline.select", "tree.select", "tree.toggle"]);
+const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change", "calendar.view", "timeline.select", "tree.select", "tree.toggle", "media.select"]);
 
 /**
  * The binding an intent goes to: a section's `state.event` binding for a graph event, and its other binding for
@@ -315,7 +315,7 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
                 {t("widgets.surface.calendarMissingHint")}
               </p>
             )}
-            {availability === "missing" && section.slot === "image" && (
+            {availability === "missing" && (section.slot === "image" || section.slot === "pictures") && (
               <p className="cc-freshness" style={{ margin: 0 }}>
                 {t("widgets.surface.imageMissingHint")}
               </p>
@@ -544,6 +544,19 @@ function LayoutCollapsible(props: { label: string; open: boolean; children: Reac
     </details>
   );
 }
+/**
+ * Every imported picture a composed surface's sections ask for: an image leaf's one reference and a gallery's or
+ * carousel's list. A renderer only draws a URL it is handed, so a reference missed here is a picture left unread.
+ */
+export function composedImageRefs(sections: readonly { props: Record<string, unknown> }[]): string[] {
+  const refs = new Set<string>();
+  for (const section of sections) {
+    const listed: unknown[] = Array.isArray(section.props.imageRefs) ? section.props.imageRefs : [];
+    for (const ref of [section.props.imageRef, ...listed]) if (typeof ref === "string" && ref !== "") refs.add(ref);
+  }
+  return [...refs];
+}
+
 /** Sections whose data could not be resolved, for a caller that wants to say what is missing. */
 export function unavailableSections(view: CompositeSurfaceView): string[] {
   return view.sections

@@ -2330,10 +2330,11 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * refusal sentence are the host's. `bảng điều khiển` is a grid of two metric tiles and a card holding a search box
      * above the table it narrows; `đầy đủ` uses every container kind; `có liên kết` connects a choice to the series a line
      * chart plots and a search box to a table through declared state; `thẻ trạng thái` puts a status, a progress and a
-     * details card in the three columns of a grid; `quá sâu`, `widget lạ` and `liên kết sai` are proposals the host
-     * refuses.
+     * details card in the three columns of a grid; `ảnh` puts a gallery and a carousel of the person's imported pictures
+     * side by side, both reporting the picture picked to one declared key; `quá sâu`, `widget lạ` and `liên kết sai` are
+     * proposals the host refuses.
      */
-    const arranged = /^bố cục\s+(bảng điều khiển|đầy đủ|có liên kết|liên kết sai|quá sâu|widget lạ|thẻ trạng thái)$/iu.exec(input.text.trim());
+    const arranged = /^bố cục\s+(bảng điều khiển|đầy đủ|có liên kết|liên kết sai|quá sâu|widget lạ|thẻ trạng thái|ảnh)$/iu.exec(input.text.trim());
     if (arranged !== null) {
       const compose = deps.wiring.compose();
       if (compose === undefined) return undefined;
@@ -2364,6 +2365,8 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         metric: { type: "string", initial: "completed" },
         query: { type: "string", initial: "" },
       };
+      // Which pictures the two leaves show is the node's; the model names only the widgets and what they report.
+      const pickPicture = [{ event: "media.select", steps: [{ op: "select-field", key: "picture", field: "selectedIndex" }] }];
       let nested: Record<string, unknown> = leaf("canvas.metrics@1");
       for (let level = 0; level < 6; level += 1) nested = { kind: "stack", children: [nested] };
       const layout: Record<string, unknown> =
@@ -2446,7 +2449,15 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
                           }),
                         ],
                       }
-                    : { kind: "grid", children: [leaf("canvas.metrics@1"), leaf("canvas.sparkle@1")] };
+                    : which === "ảnh"
+                      ? {
+                          kind: "split",
+                          children: [
+                            wired(leaf("canvas.gallery@1", { title: "Ảnh đã nhập" }), pickPicture),
+                            wired(leaf("canvas.carousel@1", { title: "Đang xem" }), pickPicture),
+                          ],
+                        }
+                      : { kind: "grid", children: [leaf("canvas.metrics@1"), leaf("canvas.sparkle@1")] };
       try {
         const block = await view.build({
           props: {
@@ -2458,8 +2469,11 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
                   ? "Bảng có liên kết"
                   : which === "thẻ trạng thái"
                     ? "Tình hình hôm nay"
-                    : "Bảng điều khiển",
+                    : which === "ảnh"
+                      ? "Ảnh của tôi"
+                      : "Bảng điều khiển",
             ...(which === "có liên kết" || which === "liên kết sai" ? { state: linkedState } : {}),
+            ...(which === "ảnh" ? { state: { picture: { type: "number", initial: 0 } } } : {}),
           },
           caption: "",
           at: instantSchema.parse(new Date().toISOString()),

@@ -174,6 +174,80 @@ test("the transcript's copy can be explored on the page, and nothing is sent", a
   expect(sent).toBe(0);
 });
 
+/** One pixel, as a PNG: what is under test is that a reference the node minted is drawn, not the picture. */
+const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
+test("a picture picked in a composed gallery reaches the carousel beside it, the surface's state and inspect_ui", async ({ page, request }, testInfo) => {
+  test.setTimeout(150_000);
+  // The pictures are imported through the production route, so the layout shows what the node holds, not fixture data.
+  for (const altText of ["Bến cảng lúc sáng", "Cánh đồng lúa chín"]) {
+    const uploaded = await request.post(`${GATEWAY}/images`, {
+      headers: { authorization: `Bearer ${token()}` },
+      data: { dataBase64: ONE_PIXEL_PNG, mimeType: "image/png", altText },
+    });
+    expect(uploaded.ok()).toBe(true);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApp(page);
+  const before = await page.locator("[data-layout-root]").count();
+  await say(page, "bố cục ảnh");
+  await expect(page.locator("[data-layout-root]")).toHaveCount(before + 1, { timeout: 30_000 });
+
+  await page.locator("[data-open-live]").last().click();
+  const live = page.locator("[data-pin-live]").last().locator("[data-surface-composition]");
+  await expect(live).toBeVisible({ timeout: 30_000 });
+  const gallery = live.locator("[data-section-id='pictures-1']");
+  const carousel = live.locator("[data-section-id='pictures-2'] [data-carousel-index]");
+  await expect(gallery.locator("img[data-image-ref]").first()).toHaveAttribute("src", /^blob:/u, { timeout: 15_000 });
+  await expect(carousel).toHaveAttribute("data-carousel-index", "0");
+
+  // Chosen from the keyboard: the node is told the event with the index the gallery stores, and the carousel follows.
+  const choice = gallery.locator(".cc-gallery-select").nth(1);
+  const pressed = page.waitForRequest(
+    (sent) => sent.method() === "POST" && ACTION_ROUTE.test(sent.url()) && JSON.stringify(sent.postDataJSON()).includes("media.select"),
+  );
+  // Reached with Tab from the picture before it, so the ring drawn is the keyboard's, not a pointer's.
+  await gallery.locator(".cc-gallery-select").first().focus();
+  await page.keyboard.press("Tab");
+  await expect(choice).toBeFocused();
+  expect(await choice.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe("none");
+  await page.keyboard.press("Enter");
+  const press = await pressed;
+  expect((press.postDataJSON() as { input: unknown }).input).toEqual({ event: "media.select", payload: { selectedIndex: 1 } });
+  expect((await press.response())?.status()).toBe(200);
+  await expect(choice).toHaveAttribute("aria-pressed", "true");
+  await expect(carousel).toHaveAttribute("data-carousel-index", "1");
+
+  // The surface's own state holds the pick, which is what a turn reads.
+  const liveRoute = press.url().replace(/\/actions$/u, "/live");
+  await expect
+    .poll(async () => {
+      const read = await request.get(liveRoute, { headers: { authorization: `Bearer ${token()}` } });
+      return ((await read.json()) as { semanticState?: { values?: unknown } }).semanticState?.values;
+    })
+    .toEqual({ picture: 1 });
+  await say(page, "kiểm tra giao diện");
+  const inspection = page.locator("[data-role='assistant']").last();
+  await expect(inspection).toContainText("picture: 1", { timeout: 20_000 });
+
+  // Reloaded, both leaves draw the picture the node kept.
+  await page.reload();
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  const again = page.locator("[data-pin-live]").last().locator("[data-surface-composition]");
+  await expect(again).toBeVisible({ timeout: 30_000 });
+  await expect(again.locator("[data-section-id='pictures-2'] [data-carousel-index]")).toHaveAttribute("data-carousel-index", "1", { timeout: 15_000 });
+  await expect(again.locator("[data-section-id='pictures-1'] .cc-gallery-select").nth(1)).toHaveAttribute("aria-pressed", "true");
+
+  // A phone's width in both themes: the theme the page applied is read back, and nothing scrolls sideways.
+  for (const colorScheme of ["dark", "light"] as const) {
+    await page.emulateMedia({ colorScheme });
+    await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute("data-cc-theme"))).toBe(colorScheme);
+    await again.scrollIntoViewIfNeeded();
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+    await page.screenshot({ path: testInfo.outputPath(`graph-pictures-390-${colorScheme}.png`) });
+  }
+});
+
 test("a graph the node cannot check is refused in the conversation, with the reason, and nothing is drawn", async ({ page }) => {
   test.setTimeout(60_000);
   await openApp(page);

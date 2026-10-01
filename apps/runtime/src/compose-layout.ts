@@ -69,7 +69,8 @@ export type ProposedLayoutNode =
  * The widget families a leaf may be drawn from, and the region each one reads.
  *
  * The region is what decides where a section's rows come from, so a family is listed here only when
- * the node has a real source for it. Media other than an imported image has none yet.
+ * the node has a real source for it. Media is not a family here: of its widgets, only an imported image and a gallery or
+ * carousel of the person's imported pictures have one (see `slotFor`); a video or a YouTube embed has none yet.
  */
 const SLOT_BY_FAMILY: Readonly<Record<string, CompositionSlot>> = {
   metrics: "metrics",
@@ -87,6 +88,20 @@ const SLOT_BY_FAMILY: Readonly<Record<string, CompositionSlot>> = {
   timeline: "timeline",
 };
 
+/** The media widgets the node has a source for: the newest imported image, or the person's imported pictures as a set. */
+const PICTURE_SLOT_BY_DEFINITION: Readonly<Record<string, CompositionSlot>> = {
+  "canvas.image@1": "image",
+  "canvas.gallery@1": "pictures",
+  "canvas.carousel@1": "pictures",
+};
+
+/** How many pictures a gallery or carousel holds, from its own props schema, so a set is cut to fit rather than refused. */
+function pictureLimit(definition: { propsSchema?: unknown }): number {
+  const schema = definition.propsSchema as { properties?: { imageRefs?: { maxItems?: unknown } } } | undefined;
+  const max = schema?.properties?.imageRefs?.maxItems;
+  return typeof max === "number" && Number.isInteger(max) && max > 0 ? max : 1;
+}
+
 /** The widgets a layout leaf may name, for the model's instructions and for a refusal that lists them. */
 export function layoutLeafWidgets(registry: CatalogRegistry): string[] {
   return registry
@@ -96,7 +111,7 @@ export function layoutLeafWidgets(registry: CatalogRegistry): string[] {
         SLOT_BY_FAMILY[entry.family] !== undefined ||
         entry.family === "choice" ||
         entry.family === "input" ||
-        entry.definition.id === "canvas.image@1",
+        PICTURE_SLOT_BY_DEFINITION[entry.definition.id] !== undefined,
     )
     .map((entry) => entry.definition.id)
     .sort();
@@ -242,6 +257,8 @@ export interface CompileLayoutInput {
   rowsBySlot: Partial<Record<CompositionSlot, Record<string, unknown>[]>>;
   initialState: CompileInput["initialState"];
   imageRef?: { imageId: string; altText: string };
+  /** The person's imported pictures, newest first, for a gallery or carousel leaf. */
+  pictureRefs?: { imageId: string; altText: string }[];
   /** The state the model declared for the surface, as it wrote it: `{ key: { type, initial } }`. Checked with the graph. */
   state?: unknown;
 }
@@ -304,8 +321,15 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
       problems.push(`${where} asks for an image, and there is no imported image on this node to show`);
       return undefined;
     }
+    if (slot === "pictures" && (input.pictureRefs ?? []).length === 0) {
+      problems.push(`${where} asks for pictures, and there is no imported image on this node to show`);
+      return undefined;
+    }
 
-    const props = leafProps(slot, { ...(recipe?.fixed.find((region) => region.slot === slot)?.props ?? {}), ...node.props }, input);
+    const props = leafProps(slot, { ...(recipe?.fixed.find((region) => region.slot === slot)?.props ?? {}), ...node.props }, {
+      ...input,
+      ...(slot === "pictures" ? { pictureRefs: (input.pictureRefs ?? []).slice(0, pictureLimit(entry.definition)) } : {}),
+    });
     // Held to the whole schema — ranges, enums and item shapes — the same check every stored instance passes.
     const validation = validateProps(entry.definition, props);
     if (!validation.ok) {
@@ -414,7 +438,8 @@ function slotFor(definitionId: string, family: string, wired: boolean, where: st
   if (slot !== undefined) return slot;
   // A choice or an input placed on its own acts only through the surface's state, so it is placed only when it writes some.
   if ((family === "choice" || family === "input") && wired) return family;
-  if (definitionId === "canvas.image@1") return "image";
+  const picture = PICTURE_SLOT_BY_DEFINITION[definitionId];
+  if (picture !== undefined) return picture;
   if (family === "layout") {
     problems.push(`${where} names the container "${definitionId}"; nest a ${LAYOUT_CONTAINER_KINDS.join(", ")} node instead`);
   } else if (family === "action") {
@@ -428,7 +453,9 @@ function slotFor(definitionId: string, family: string, wired: boolean, where: st
       `${where} names "${definitionId}", which sends its value nowhere on its own; give it an "on" rule that writes the surface's state, or make it a field of a canvas.form@1`,
     );
   } else if (family === "media") {
-    problems.push(`${where} names "${definitionId}", and this node has no source for it yet; only an imported image can be placed`);
+    problems.push(
+      `${where} names "${definitionId}", and this node has no source for it yet; only an imported image, or a gallery or carousel of imported pictures, can be placed`,
+    );
   } else {
     problems.push(`${where} names "${definitionId}", which cannot be placed in a layout`);
   }
@@ -471,6 +498,7 @@ export function composeLayout(deps: ComposeDeps, input: ComposeLayoutInput): Com
     rowsBySlot: rowsBySlotOf(published),
     initialState: { period, timezone },
     ...(published.imageRefs[0] === undefined ? {} : { imageRef: published.imageRefs[0] }),
+    pictureRefs: published.pictureRefs,
     ...(input.state === undefined ? {} : { state: input.state }),
   });
   if (!compiled.ok) {
