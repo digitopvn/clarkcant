@@ -172,6 +172,8 @@ for (const select of document.querySelectorAll("select[data-dev-action='service-
 document.querySelector("[data-dev-action='service-restart']")?.addEventListener("click", () => {
   void send({ kind: "service-restart", value: true });
 });
+/* The controls are drawn before this script has read the state; a change made before now would go nowhere. */
+document.body.dataset.devShellReady = "true";
 
 compositionName?.addEventListener("change", () => {
   const option = compositionName.selectedOptions[0];

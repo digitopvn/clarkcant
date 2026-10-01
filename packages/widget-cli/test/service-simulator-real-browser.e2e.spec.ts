@@ -1,11 +1,30 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 
 import { startDevHost, type DevHost } from "../src/dev-host.ts";
 import { serviceStatus } from "../src/service-simulator.ts";
 
 let host: DevHost | undefined;
 let browser: Browser | undefined;
+
+async function shellShows(page: Page, attribute: string, value: string): Promise<boolean> {
+  // A dev shell reloads after every control change; its controls answer only once its script has said so.
+  return page.evaluate(([name, expected]) => document.body.dataset.devShellReady === "true" && document.body.getAttribute(name) === expected, [attribute, value] as const);
+}
+
+async function shellChange(page: Page, change: () => Promise<unknown>): Promise<void> {
+  // Every control change reloads the shell. Wait for that reload and for the new page's script, so the next change
+  // is not made on a page that is about to go away or that does not listen yet.
+  await eventually(async () => shellReady(page), "dev shell ready");
+  const reloaded = page.waitForEvent("framenavigated", (frame) => frame === page.mainFrame());
+  await change();
+  await reloaded;
+  await eventually(async () => shellReady(page), "dev shell ready after reload");
+}
+
+async function shellReady(page: Page): Promise<boolean> {
+  return page.evaluate(() => document.body?.dataset.devShellReady === "true").catch(() => false);
+}
 
 async function eventually(check: () => Promise<boolean>, message: string): Promise<void> {
   for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -57,12 +76,12 @@ describe("service simulator in Chromium", () => {
     });
     expect(visibleFocus).toBe(true);
 
-    await page.locator('[data-dev-action="theme"][data-dev-value="light"]').click();
-    await eventually(async () => (await page.locator("body").getAttribute("data-dev-theme")) === "light", "light theme");
-    await page.locator('[data-dev-action="theme"][data-dev-value="dark"]').click();
-    await eventually(async () => (await page.locator("body").getAttribute("data-dev-theme")) === "dark", "dark theme");
+    await shellChange(page, () => page.locator('[data-dev-action="theme"][data-dev-value="light"]').click());
+    await eventually(async () => shellShows(page, "data-dev-theme", "light"), "light theme");
+    await shellChange(page, () => page.locator('[data-dev-action="theme"][data-dev-value="dark"]').click());
+    await eventually(async () => shellShows(page, "data-dev-theme", "dark"), "dark theme");
 
-    await page.getByLabel("Readiness for com.example.notes.add@1").selectOption("ready");
+    await shellChange(page, () => page.getByLabel("Readiness for com.example.notes.add@1").selectOption("ready"));
     await eventually(
       async () => host?.state().serviceReadiness["com.example.notes.add@1"]?.healthy === true,
       "ready service state",
@@ -72,17 +91,17 @@ describe("service simulator in Chromium", () => {
     await add.click();
     await eventually(async () => (await frame.locator("[data-notes-output]").textContent())?.includes("Saved from the development service simulator") === true, "fixture action result");
 
-    await page.getByLabel("Readiness for com.example.notes.add@1").selectOption("blocked");
+    await shellChange(page, () => page.getByLabel("Readiness for com.example.notes.add@1").selectOption("blocked"));
     await eventually(async () => await add.isDisabled(), "blocked add binding");
     expect(await frame.locator("[data-notes-unavailable]").textContent()).toContain("service is blocked");
 
-    await page.getByLabel("Readiness for com.example.notes.add@1").selectOption("ready");
-    await page.getByLabel("Readiness for com.example.notes.list@1").selectOption("unhealthy");
+    await shellChange(page, () => page.getByLabel("Readiness for com.example.notes.add@1").selectOption("ready"));
+    await shellChange(page, () => page.getByLabel("Readiness for com.example.notes.list@1").selectOption("unhealthy"));
     await eventually(async () => (await page.locator("[data-dev-service-health]").textContent()) === "degraded", "degraded service state");
     expect(await add.isDisabled()).toBe(false);
     expect(await list.isDisabled()).toBe(true);
 
-    await page.locator('input[data-dev-action="offline"]').check();
+    await shellChange(page, () => page.locator('input[data-dev-action="offline"]').check());
     await eventually(async () => await add.isDisabled(), "offline binding refusal");
     expect(await frame.locator("[data-notes-unavailable]").textContent()).toContain("the node is offline");
     const offlineResult = await frame.locator("body").evaluate(async () => {
@@ -105,7 +124,8 @@ describe("service simulator in Chromium", () => {
     });
     expect(offlineResult).toContain("offline");
 
-    await page.locator('input[data-dev-action="offline"]').uncheck();
+    await shellChange(page, () => page.locator('input[data-dev-action="offline"]').uncheck());
+    await eventually(async () => shellReady(page), "dev shell ready");
     await page.locator('[data-dev-action="service-restart"]').click();
     await eventually(async () => (await page.locator('[data-dev-status="loading"]').count()) === 5, "restart loading state");
     await eventually(async () => await add.isDisabled(), "restart disables the add binding");
