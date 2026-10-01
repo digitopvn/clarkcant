@@ -722,6 +722,24 @@ describe("the jobs@1 extension", () => {
     bus.deliver({ kind: "dispose", nonce: NONCE });
   });
 
+  it("refuses a malformed ref at once, delivers only changed snapshots and ends on a refusal that will not change", async () => {
+    vi.useFakeTimers();
+    const { runtime, requests, answer } = ready();
+    expect(() => runtime.api().jobs.subscribe("not-a-job" as never, () => undefined)).toThrow(/JobRef/);
+    expect(requests()).toHaveLength(0);
+
+    const seen: string[] = [];
+    runtime.api().jobs.subscribe(jobId, (job) => seen.push(job.status));
+    answer(requests()[0]?.requestId ?? "", { status: "ok", job: snapshot("running") });
+    await vi.advanceTimersByTimeAsync(1000);
+    answer(requests()[1]?.requestId ?? "", { status: "ok", job: snapshot("running") });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(seen).toEqual(["running"]);
+    answer(requests()[2]?.requestId ?? "", { status: "refused", code: "JOB_NOT_FOUND", message: "that job is not available to this widget" });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(requests()).toHaveLength(3);
+  });
+
   it("rejects pending calls and clears subscription timers on dispose", async () => {
     vi.useFakeTimers();
     const { bus, runtime, requests } = ready();

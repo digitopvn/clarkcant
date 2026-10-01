@@ -147,14 +147,26 @@ export interface CapabilityInvokeRequest {
    */
   beforeSend?: (call: { effectCategory: EffectCategory; description: string }) => void;
   /** Jobs are only started by a host-validated widget binding with a durable origin tuple. */
-  jobOrigin?: { instanceId: string; actionBindingId: string };
+  jobOrigin?: JobOrigin;
   onJobSettled?: (outcome: JobRunOutcome) => void;
+}
+
+/**
+ * The widget press a long-running capability call came from: its instance, its binding and the invocation id the
+ * widget used. An approval for a job covers this too, so the job it starts belongs to that press and nothing else.
+ */
+export interface JobOrigin {
+  instanceId: string;
+  actionBindingId: string;
+  invocationId?: string;
 }
 
 /** What an approval is also bound to besides the call: the code that would run it, and the effect it was shown as. */
 export interface CapabilityApprovalContext {
   generation: string;
   effectCategory: EffectCategory;
+  /** Present only for a long-running capability: the widget press whose job an approval would start. */
+  jobOrigin?: JobOrigin;
 }
 
 /**
@@ -163,9 +175,30 @@ export interface CapabilityApprovalContext {
  */
 export function capabilityDigest(ref: string, args: Record<string, unknown>, context: CapabilityApprovalContext): string {
   return payloadDigest(
-    asJsonValue({ capabilityRef: ref, args, generation: context.generation, effectCategory: context.effectCategory }),
+    asJsonValue({
+      capabilityRef: ref,
+      args,
+      generation: context.generation,
+      effectCategory: context.effectCategory,
+      // Added only when present, so an approval for a request/response call keeps the digest it always had.
+      ...(context.jobOrigin === undefined ? {} : { jobOrigin: canonicalOrigin(context.jobOrigin) }),
+    }),
   );
 }
+
+function canonicalOrigin(origin: { instanceId: string; actionBindingId: string; invocationId?: string | undefined }): JobOrigin {
+  return {
+    instanceId: origin.instanceId,
+    actionBindingId: origin.actionBindingId,
+    ...(origin.invocationId === undefined ? {} : { invocationId: origin.invocationId }),
+  };
+}
+
+const jobOriginSchema = z.strictObject({
+  instanceId: z.string().min(1).max(128),
+  actionBindingId: z.string().min(1).max(128),
+  invocationId: z.string().min(1).max(128).optional(),
+});
 
 /** An approval card is left long enough to read and decide, and not so long it can be approved for a stale reason. */
 const APPROVAL_TTL_MS = 15 * 60_000;
@@ -279,7 +312,11 @@ export async function invokeCapability(
   const checked = validateArgs(descriptor.inputSchema, request.args);
   if (!checked.ok) return refused(400, "INVALID_INPUT", `${request.ref} does not accept that input: ${checked.message}`);
 
-  const context: CapabilityApprovalContext = { generation: served.generationId, effectCategory: descriptor.effectCategory };
+  const context: CapabilityApprovalContext = {
+    generation: served.generationId,
+    effectCategory: descriptor.effectCategory,
+    ...(execution?.kind === "job" && request.jobOrigin !== undefined ? { jobOrigin: request.jobOrigin } : {}),
+  };
   const approvedBy = request.approvedBy;
   if (
     approvedBy !== undefined &&
@@ -320,6 +357,7 @@ export async function invokeCapability(
       source: request.source,
       generation: context.generation,
       effectCategory: context.effectCategory,
+      ...(context.jobOrigin === undefined ? {} : { jobOrigin: canonicalOrigin(context.jobOrigin) }),
     });
     if (payload.length > PAYLOAD_LIMIT) {
       return refused(
@@ -401,11 +439,9 @@ export async function invokeCapability(
           capabilityRef: ref,
           effectCategory: descriptor.effectCategory,
         },
-        run: (signal, onProgress) => host.call(ref, request.args, {
-          ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
-          signal,
-          onProgress,
-        }),
+        // A press's deadline bounds how long the press waits for an answer, and a job answers at once with its ref; the
+        // job itself runs under the service host's job ceiling, and Stop, emergency Stop and shutdown still end it.
+        run: (signal, onProgress) => host.call(ref, request.args, { signal, onProgress }),
         ...(request.onJobSettled === undefined ? {} : { onSettled: request.onJobSettled }),
       });
       return { kind: "job", ref, effectCategory: descriptor.effectCategory, job, description };
@@ -456,17 +492,48 @@ export function isCapabilityPayload(payload: string): boolean {
 }
 
 /**
+ * The host's re-check of the widget press an approved job names, made when the approval is used rather than trusted
+ * from the card: the instance must still be in this conversation and the person's, and the binding must still be its
+ * `invoke` binding for this capability. Its answer is the generation the binding was compiled against.
+ */
+export type ApprovedJobOriginCheck = (
+  origin: JobOrigin,
+  ref: string,
+) => { ok: true; bindingGeneration: string } | { ok: false; message: string };
+
+/** The effect-ledger hooks a caller wraps around the call, the same ones a widget press uses. */
+export type CapabilityLedgerHooks = Pick<CapabilityInvokeRequest, "beforeSend" | "onJobSettled">;
+
+/**
  * Run a capability call a person approved on the host's card.
  *
  * The payload is the card's own, and it is hashed again against the digest the decision covered before anything
  * runs; the registry and the arguments are checked again too, because a service can stop between the question and the
- * answer.
+ * answer. A long-running capability's card also names the widget press it came from; that press is checked again by
+ * `checkJobOrigin`, and the job it starts belongs to it.
  */
 export async function runApprovedCapability(
   deps: CapabilityInvokeDeps,
-  input: { payload: string; expectedDigest: string; approvalId: string; conversationId: string },
-): Promise<{ ok: true; blocks: MessageBlock[]; description: string; succeeded: boolean } | { ok: false; code: string; message: string }> {
-  let parsed: { capabilityRef?: unknown; args?: unknown; source?: unknown; generation?: unknown; effectCategory?: unknown };
+  input: {
+    payload: string;
+    expectedDigest: string;
+    approvalId: string;
+    conversationId: string;
+    checkJobOrigin?: ApprovedJobOriginCheck;
+    ledger?: (call: { ref: string; args: Record<string, unknown> }) => CapabilityLedgerHooks;
+  },
+): Promise<
+  | { ok: true; blocks: MessageBlock[]; description: string; succeeded: boolean; job?: { record: JobRecord; origin: JobOrigin } }
+  | { ok: false; code: string; message: string }
+> {
+  let parsed: {
+    capabilityRef?: unknown;
+    args?: unknown;
+    source?: unknown;
+    generation?: unknown;
+    effectCategory?: unknown;
+    jobOrigin?: unknown;
+  };
   try {
     parsed = JSON.parse(input.payload) as typeof parsed;
   } catch {
@@ -479,16 +546,33 @@ export async function runApprovedCapability(
       : undefined;
   const generation = typeof parsed.generation === "string" ? parsed.generation : "";
   const effect = effectCategorySchema.safeParse(parsed.effectCategory);
-  if (ref === "" || args === undefined || generation === "" || !effect.success) {
+  const origin = parsed.jobOrigin === undefined ? undefined : jobOriginSchema.safeParse(parsed.jobOrigin);
+  if (ref === "" || args === undefined || generation === "" || !effect.success || origin?.success === false) {
     return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload names no capability" };
   }
-  const context: CapabilityApprovalContext = { generation, effectCategory: effect.data };
+  const jobOrigin = origin?.data === undefined ? undefined : canonicalOrigin(origin.data);
+  const context: CapabilityApprovalContext = {
+    generation,
+    effectCategory: effect.data,
+    ...(jobOrigin === undefined ? {} : { jobOrigin }),
+  };
   if (capabilityDigest(ref, args, context) !== input.expectedDigest) {
     return {
       ok: false,
       code: "APPROVAL_FORGED",
       message: "the operation changed after it was displayed; the decision does not cover what would run",
     };
+  }
+  let bindingGeneration: string | undefined;
+  if (jobOrigin !== undefined) {
+    const checked = input.checkJobOrigin?.(jobOrigin, ref) ?? {
+      ok: false as const,
+      message: "this node cannot check the widget this job was approved for",
+    };
+    if (!checked.ok) {
+      return { ok: false, code: "APPROVAL_STALE", message: `${checked.message}; nothing was run — ask again from the widget` };
+    }
+    bindingGeneration = checked.bindingGeneration;
   }
 
   const now = deps.now ?? nowInstant;
@@ -498,19 +582,36 @@ export async function runApprovedCapability(
     args,
     source: parsed.source === "widget" || parsed.source === "voice" ? parsed.source : "agent",
     conversationId: input.conversationId,
-    approvedBy: { approvalId: input.approvalId, ...context },
+    approvedBy: { approvalId: input.approvalId, generation, effectCategory: effect.data },
+    ...(jobOrigin === undefined ? {} : { jobOrigin }),
+    ...(bindingGeneration === undefined ? {} : { bindingGeneration }),
+    ...(input.ledger?.({ ref, args }) ?? {}),
   });
-  const succeeded = outcome.kind === "done";
+  const succeeded = outcome.kind === "done" || outcome.kind === "job";
   const result =
-    outcome.kind === "done" ? outcome.output : outcome.kind === "refused" ? outcome.message : "not run";
+    outcome.kind === "done"
+      ? outcome.output
+      : outcome.kind === "job"
+        ? `job ${outcome.job.jobId}`
+        : outcome.kind === "refused"
+          ? outcome.message
+          : "not run";
+  const label =
+    outcome.kind === "job" ? `Đã bắt đầu job cho ${ref}` : succeeded ? `Đã gọi ${ref}` : `Không gọi được ${ref}`;
   const block: MessageBlock = {
     type: "tool-activity",
     toolCallId: `invoke-${input.approvalId}`,
     name: "invoke_capability",
-    label: succeeded ? `Đã gọi ${ref}` : `Không gọi được ${ref}`,
+    label,
     status: succeeded ? "done" : "failed",
     // The approval id travels with the receipt so the card it answered reads as decided, including after a reload.
-    args: { capabilityRef: ref, approvalId: input.approvalId, decision: "granted", outcome: succeeded ? "done" : "refused" },
+    args: {
+      capabilityRef: ref,
+      approvalId: input.approvalId,
+      decision: "granted",
+      outcome: outcome.kind === "job" ? "job" : succeeded ? "done" : "refused",
+      ...(outcome.kind === "job" ? { jobId: outcome.job.jobId } : {}),
+    },
     result,
     startedAt,
     endedAt: now(),
@@ -518,7 +619,8 @@ export async function runApprovedCapability(
   return {
     ok: true,
     blocks: [block],
-    description: succeeded ? `invoked ${ref}` : `could not invoke ${ref}: ${result}`,
+    description: outcome.kind === "job" ? `started job ${outcome.job.jobId} for ${ref}` : succeeded ? `invoked ${ref}` : `could not invoke ${ref}: ${result}`,
     succeeded,
+    ...(outcome.kind === "job" && jobOrigin !== undefined ? { job: { record: outcome.job, origin: jobOrigin } } : {}),
   };
 }

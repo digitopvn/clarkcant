@@ -195,6 +195,12 @@ export interface FrameSessionInput {
   /** Artifact requests a frame may have unanswered at once. */
   maxArtifactInFlight?: number;
   maxJobInFlight?: number;
+  /**
+   * The rate of job requests, counted apart from `maxMessages` for the same reason as artifacts: a widget that watches a
+   * job for half an hour reads it many times. A bucket of `jobBurst` requests refilled at `jobRefillPerSecond`.
+   */
+  jobBurst?: number;
+  jobRefillPerSecond?: number;
   /** Refusals kept for `refused()`, newest last. Older ones are dropped, so a frame that keeps failing cannot grow it. */
   maxRecordedRefusals?: number;
   /**
@@ -254,17 +260,23 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const maxRecordedRefusals = input.maxRecordedRefusals ?? 64;
   const maxTranscriptEntries = input.maxTranscriptEntries ?? 500;
   const clock = input.now ?? ((): number => Date.now());
-  let artifactTokens = artifactBurst;
-  let artifactRefilledAt = clock();
-  /** Take one artifact request from the bucket, refilled for the time since the last one. */
-  const takeArtifactToken = (): boolean => {
-    const at = clock();
-    artifactTokens = Math.min(artifactBurst, artifactTokens + (Math.max(0, at - artifactRefilledAt) / 1000) * artifactRefillPerSecond);
-    artifactRefilledAt = at;
-    if (artifactTokens < 1) return false;
-    artifactTokens -= 1;
-    return true;
+  const jobBurst = input.jobBurst ?? 60;
+  const jobRefillPerSecond = input.jobRefillPerSecond ?? 2;
+  /** A request bucket that refills for the time since its last request; `take` spends one, or says it is empty. */
+  const bucket = (burst: number, refillPerSecond: number): (() => boolean) => {
+    let tokens = burst;
+    let refilledAt = clock();
+    return () => {
+      const at = clock();
+      tokens = Math.min(burst, tokens + (Math.max(0, at - refilledAt) / 1000) * refillPerSecond);
+      refilledAt = at;
+      if (tokens < 1) return false;
+      tokens -= 1;
+      return true;
+    };
   };
+  const takeArtifactToken = bucket(artifactBurst, artifactRefillPerSecond);
+  const takeJobToken = bucket(jobBurst, jobRefillPerSecond);
   const artifactsInFlight = new Set<string>();
   const jobsInFlight = new Set<string>();
   const transcript: { kind: string; detail: string }[] = [];
@@ -670,10 +682,19 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         postArtifactResult(requestId, { status: "refused", code: "ARTIFACT_RATE_LIMITED", message: reason });
         return refuseAnswered("ARTIFACT_RATE_LIMITED", reason);
       }
+      const claimsJob =
+        typeof event.data === "object" && event.data !== null && (event.data as { kind?: unknown }).kind === "job.request";
+      if (claimsJob && !takeJobToken()) {
+        const reason = `at most ${String(jobRefillPerSecond)} job requests a second, after a burst of ${String(jobBurst)}`;
+        const requestId = answerableRequestId(event.data, input.nonce);
+        if (requestId === undefined || jobsInFlight.has(requestId) || input.jobs === undefined) return refuse("JOB_RATE_LIMITED", reason);
+        postJobResult(requestId, { status: "refused", code: "JOB_RATE_LIMITED", message: reason });
+        return refuseAnswered("JOB_RATE_LIMITED", reason);
+      }
       if (bytes > ceiling) {
         return refuse("TOO_LARGE", `message of ${String(bytes)} bytes exceeds ${String(ceiling)}`);
       }
-      if (!claimsArtifact) {
+      if (!claimsArtifact && !claimsJob) {
         messages += 1;
         if (messages > maxMessages) {
           return refuse("MESSAGE_BUDGET_EXCEEDED", `frame sent more than ${String(maxMessages)} messages`);

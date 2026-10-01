@@ -45,6 +45,29 @@ export interface PackageJobHost {
 }
 
 const MAX_ACTIVE_JOBS = 4;
+const NAMED_RESULTS = 3;
+
+/**
+ * The note a finished job leaves in its conversation: which capability, what it produced by name, and what to do next.
+ * Words never claim more than the job record holds; a stopped or failed job that was sent may still have had its effect.
+ */
+export function jobEndNotice(
+  job: Pick<JobRecord, "capabilityRef" | "status" | "resultRefs">,
+  outcome: Pick<JobRunOutcome, "status" | "sent">,
+): string {
+  const what = `The package job for ${job.capabilityRef}`;
+  if (outcome.status === "completed") {
+    if (job.resultRefs.length === 0) return `${what} completed. Its widget shows the result.`;
+    const names = job.resultRefs.slice(0, NAMED_RESULTS).map((ref) => `“${ref.name}”`).join(", ");
+    const more = job.resultRefs.length > NAMED_RESULTS ? ` and ${String(job.resultRefs.length - NAMED_RESULTS)} more` : "";
+    return `${what} completed and produced ${names}${more}. Open its widget to use ${job.resultRefs.length === 1 ? "it" : "them"}.`;
+  }
+  if (outcome.sent === false) return `${what} ended before its request was sent. Nothing ran; it can be started again from its widget.`;
+  if (outcome.status === "cancelled") {
+    return `${what} was stopped. The service may have finished its effect before it received the cancellation; check the result before starting it again.`;
+  }
+  return `${what} failed. The service may have done part of its work; check the result before starting it again.`;
+}
 
 export function createPackageJobHost(input: {
   db: Database;
@@ -84,13 +107,7 @@ export function createPackageJobHost(input: {
     const job = getJob(input.db, jobId);
     if (!changed || job === undefined) return undefined;
     publish(job);
-    const message = outcome.status === "completed"
-      ? `A package job completed${job.resultRefs.length > 0 ? ` and produced ${String(job.resultRefs.length)} file artifact${job.resultRefs.length === 1 ? "" : "s"}` : ""}. Its widget can show the result.`
-      : outcome.sent === false
-        ? "A package job ended before its service request was sent. Nothing ran; it can be tried again."
-      : outcome.status === "cancelled"
-        ? "A package job was stopped. The service may have completed its effect before it received the cancellation; review the result before trying again."
-        : "A package job failed. The service may have completed part of its effect; review it before trying again.";
+    const message = jobEndNotice(job, outcome);
     if (job.conversationId !== undefined) {
       try {
         input.report?.(job.conversationId, message);
@@ -180,6 +197,9 @@ export function createPackageJobHost(input: {
             : "The package service did not complete the job. Its effect may have happened; review before retrying.",
         };
         reportSettled(outcome);
+      }).catch(() => {
+        // Recording the ending itself failed (a full or locked database). The job stays open in storage, so the next
+        // boot's recovery marks it interrupted with a may-have-run explanation; nothing is retried here.
       }).finally(() => active.delete(job.jobId));
       return running;
     },

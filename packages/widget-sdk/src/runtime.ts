@@ -6,6 +6,7 @@ import {
   BRIDGE_PROTOCOL,
   BRIDGE_VERSION,
   artifactRequestSchema,
+  jobRefWireSchema,
   jobRequestSchema,
   jobSnapshotWireSchema,
   hostToWidgetSchema,
@@ -315,10 +316,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
 
     if (message.kind === "job.changed") {
       for (const subscription of jobSubscriptions) {
-        if (!subscription.closed && subscription.jobId === message.job.jobId) {
-          subscription.handler(freezeSnapshot(message.job));
-          if (isTerminalJob(message.job.status)) closeJobSubscription(subscription);
-        }
+        if (!subscription.closed && subscription.jobId === message.job.jobId) deliverJob(subscription, message.job);
       }
       return;
     }
@@ -396,23 +394,37 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
 
   const readJob = async (jobId: JobRef): Promise<JobSnapshot> => emitJobResult(await jobRequest({ op: "get", jobId }));
 
+  /** Hand a snapshot to the subscriber when it differs from the last one, and end the subscription at a terminal state. */
+  function deliverJob(subscription: JobSubscription, job: JobSnapshot): void {
+    const seen = JSON.stringify(job);
+    if (seen !== subscription.last) {
+      subscription.last = seen;
+      try {
+        subscription.handler(freezeSnapshot(job));
+      } catch {
+        // A widget's own handler error does not stop the host's record of the job or the next read.
+      }
+    }
+    if (isTerminalJob(job.status)) closeJobSubscription(subscription);
+  }
+
   const pollJobSubscription = async (subscription: JobSubscription): Promise<void> => {
     if (subscription.closed || subscription.polling) return;
     subscription.polling = true;
     try {
       const job = await readJob(subscription.jobId);
-      if (subscription.closed) return;
-      subscription.handler(job);
-      if (isTerminalJob(job.status)) {
-        closeJobSubscription(subscription);
-        return;
-      }
-    } catch {
-      // Keep the subscription alive through transient refusals; the next bounded read can recover from persisted state.
+      subscription.failures = 0;
+      if (!subscription.closed) deliverJob(subscription, job);
+    } catch (cause) {
+      // A transient refusal (busy, rate limited, the host briefly away) is read again from the persisted job; one that
+      // will not change, or too many in a row, ends the subscription rather than polling forever.
+      subscription.failures += 1;
+      const code = cause instanceof Error ? cause.message.split(":", 1)[0] ?? "" : "";
+      if (FINAL_JOB_REFUSALS.has(code) || subscription.failures >= JOB_POLL.maxFailures) closeJobSubscription(subscription);
     } finally {
       subscription.polling = false;
       if (!subscription.closed) {
-        subscription.timer = setTimeout(() => void pollJobSubscription(subscription), 1000);
+        subscription.timer = setTimeout(() => void pollJobSubscription(subscription), JOB_POLL.intervalMs);
       }
     }
   };
@@ -631,7 +643,9 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         requireReady("đăng ký theo dõi job");
         if (!extensions.has(JOBS_EXTENSION)) throw new Error(`widget runtime: host không mở ${JOBS_EXTENSION} cho frame này`);
         if (jobSubscriptions.size >= 4) throw new Error("JOB_BUSY: at most four job subscriptions are allowed per frame");
-        const subscription = { jobId: ref, handler, polling: false, closed: false };
+        const jobId = jobRefWireSchema.safeParse(ref);
+        if (!jobId.success) throw new Error("widget runtime: không phải JobRef hợp lệ");
+        const subscription: JobSubscription = { jobId: jobId.data, handler, polling: false, closed: false, failures: 0 };
         jobSubscriptions.add(subscription);
         void pollJobSubscription(subscription);
         return () => closeJobSubscription(subscription);
@@ -674,7 +688,15 @@ interface JobSubscription {
   timer?: ReturnType<typeof setTimeout>;
   polling: boolean;
   closed: boolean;
+  /** The last snapshot handed to the widget, so an unchanged read is not delivered again. */
+  last?: string;
+  /** Reads refused in a row; past `JOB_POLL.maxFailures` the subscription ends instead of retrying forever. */
+  failures: number;
 }
+
+const JOB_POLL = Object.freeze({ intervalMs: 1000, maxFailures: 30 });
+/** Refusals that will not change by asking again: the job is not this widget's, or the host does not offer jobs. */
+const FINAL_JOB_REFUSALS = new Set(["JOB_NOT_FOUND", "EXTENSION_NOT_OFFERED"]);
 
 function isTerminalJob(status: JobSnapshot["status"]): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";

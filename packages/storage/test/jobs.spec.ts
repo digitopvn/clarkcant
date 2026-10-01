@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Instant } from "@clarkcant/contracts";
 
 import { closeDatabase, migrate, openDatabase, type Database } from "../src/index.ts";
+import { conversationHasUnsettledWork } from "../src/repositories/conversation-deletion.ts";
 import { failInterruptedJobs, getJob, getOwnedJob, insertJob, listOpenJobs, transitionJob, updateJobProgress } from "../src/repositories/jobs.ts";
 
 let db: Database;
@@ -59,5 +60,12 @@ describe("durable package jobs", () => {
     expect(failInterruptedJobs(db, { nodeId: "node_1", currentBootId: "boot_2", at: NOW })).toBe(1);
     expect(getJob(db, "job_2")?.error).toContain("may have completed its effect");
     expect(listOpenJobs(db, "node_1")).toEqual([]);
+  });
+
+  it("keeps a conversation with an open job from being deleted until the job ends", () => {
+    addJob({ conversationId: "conv_1" });
+    expect(conversationHasUnsettledWork(db, "conv_1")).toBe(true);
+    expect(transitionJob(db, { jobId: "job_1", status: "cancelled", at: NOW })).toBe(true);
+    expect(conversationHasUnsettledWork(db, "conv_1")).toBe(false);
   });
 });

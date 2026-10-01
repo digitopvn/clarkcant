@@ -32,6 +32,7 @@ import {
   getActionBinding,
   getInstance,
   handleUserMessage,
+  settleApprovedInvokeJob,
   invocationPreflight,
   liveOwnerOf,
   liveStateOf,
@@ -59,6 +60,7 @@ import {
   findCompositionByInstance,
   getConversation,
   getWorkRun,
+  instanceIsInConversation,
   latestMessages,
   listConversations,
   nextMessageSequence,
@@ -74,7 +76,7 @@ import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
 import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../application/stop-turn.ts";
 import { bindingAvailability } from "../application/action-bindings.ts";
-import { invokeWidgetAction } from "../application/widget-actions.ts";
+import { actionLedgerHooks, invokeWidgetAction } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
 import { resolveComposerReferences } from "../composer-references.ts";
 import { type InteractionDeps, answerQuestion, askQuestionAgain, cancelQuestion } from "../interactions.ts";
@@ -1720,6 +1722,33 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
 }
 
 /**
+ * The widget press an approved job names, checked again when the approval is used: the instance must still be in this
+ * conversation and the person's, and the binding must still be that instance's `invoke` binding for this capability.
+ */
+function checkApprovedJobOrigin(
+  services: Pick<NodeServices, "runtime" | "conductor">,
+  conversationId: string,
+  origin: { instanceId: string; actionBindingId: string },
+  ref: string,
+): { ok: true; bindingGeneration: string } | { ok: false; message: string } {
+  const gone = { ok: false as const, message: "the widget this job was approved for is no longer here" };
+  if (!instanceIsInConversation(services.runtime.db, { conversationId, instanceId: origin.instanceId })) return gone;
+  const instance = getInstance(services.conductor, origin.instanceId);
+  if (instance === undefined || instance.ownerPrincipalId !== services.runtime.identity.ownerPrincipalId) return gone;
+  if (!instance.actionBindingIds.includes(origin.actionBindingId)) return gone;
+  const binding = getActionBinding(services.conductor, origin.actionBindingId);
+  if (
+    binding?.instanceId !== origin.instanceId ||
+    binding.proposal.kind !== "invoke" ||
+    binding.proposal.capabilityRef !== ref ||
+    binding.packageGeneration === undefined
+  ) {
+    return { ok: false, message: "the widget action this job was approved for changed" };
+  }
+  return { ok: true, bindingGeneration: binding.packageGeneration };
+}
+
+/**
  * Carry out a decision on an operation the agent asked for.
  *
  * Shared by the HTTP route and the voice session, because "the user approved this" has to mean exactly the
@@ -1729,7 +1758,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
  * something that did not happen is how a transcript starts lying.
  */
 export async function decideApprovalForNode(
-  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "projects" | "serviceHost">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "projects" | "serviceHost" | "packageJobs">,
   input: {
     conversationId: string;
     approvalId: string;
@@ -1817,8 +1846,27 @@ export async function decideApprovalForNode(
       expectedDigest: decided.approval.operationDigest,
       approvalId: input.approvalId,
       conversationId: input.conversationId,
+      checkJobOrigin: (origin, ref) => checkApprovedJobOrigin(services, input.conversationId, origin, ref),
+      ledger: (call) =>
+        actionLedgerHooks(services, {
+          conversationId: input.conversationId,
+          principalId: input.principal.principalId,
+          intent: `approved ${call.ref}`,
+          ref: call.ref,
+          args: call.args,
+        }).hooks,
     });
     if (!invoked.ok) return { ok: false, code: invoked.code, message: invoked.message };
+    if (invoked.job?.origin.invocationId !== undefined) {
+      // The press that asked keeps one answer: the same invocation id arriving again reads this job, not a new one.
+      settleApprovedInvokeJob(services.conductor, {
+        invocationId: invoked.job.origin.invocationId,
+        instanceId: invoked.job.origin.instanceId,
+        actionBindingId: invoked.job.origin.actionBindingId,
+        approvalId: input.approvalId,
+        jobId: invoked.job.record.jobId,
+      });
+    }
     appendHostReply(services, { conversationId: input.conversationId, blocks: invoked.blocks, at: input.at });
     appendAuditEvent(services.runtime.db, {
       auditId: services.conductor.newId("audit"),

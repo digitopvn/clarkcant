@@ -61,9 +61,7 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
     case 6:
       // POST /conversations/:id/widgets/:instanceId/artifacts/pick: a file the person chose in host chrome, granted to
       // a widget. The grant is the person's choice; a machine surface cannot make it for them.
-      return (first === "conversations" && third === "widgets" && fifth === "artifacts" && sixth === "pick") ||
-        // POST /conversations/:id/widgets/:instance/jobs/:jobId: cancelling effectful package work is a person's action.
-        (first === "conversations" && third === "widgets" && fifth === "jobs");
+      return first === "conversations" && third === "widgets" && fifth === "artifacts" && sixth === "pick";
     default:
       return false;
   }

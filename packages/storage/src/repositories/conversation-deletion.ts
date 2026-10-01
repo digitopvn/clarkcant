@@ -4,7 +4,8 @@ import { type Database, inTransaction } from "../db.ts";
 export function conversationHasUnsettledWork(db: Database, id: string): boolean {
   return db.prepare("SELECT 1 FROM tasks WHERE conversation_id = ? AND state NOT IN ('succeeded','failed','cancelled') LIMIT 1").get(id) !== undefined
     || db.prepare("SELECT 1 FROM effects WHERE task_id IN (SELECT task_id FROM tasks WHERE conversation_id = ?) AND state IN ('prepared','submitted','uncertain') LIMIT 1").get(id) !== undefined
-    || db.prepare("SELECT 1 FROM work_runs WHERE conversation_id = ? AND ended_at IS NULL LIMIT 1").get(id) !== undefined;
+    || db.prepare("SELECT 1 FROM work_runs WHERE conversation_id = ? AND ended_at IS NULL LIMIT 1").get(id) !== undefined
+    || db.prepare("SELECT 1 FROM jobs WHERE conversation_id = ? AND status IN ('queued','running','waiting') LIMIT 1").get(id) !== undefined;
 }
 
 function requireTransaction(db: Database): void {
@@ -35,7 +36,7 @@ export function deleteConversationRows(db: Database, id: string, artifactInstanc
   ]) db.prepare(sql).run(id);
   // Saved memories are independent user resources; remove only conversation-scoped memory.
   db.prepare("DELETE FROM memory_records WHERE conversation_id = ? AND scope = 'conversation'").run(id);
-  for (const table of ["tasks", "pins", "messages", "conversation_authority", "surface_compositions", "widget_semantic_state", "session_files", "history_fts", "work_runs", "notifications", "peer_allowances", "commands"]) {
+  for (const table of ["tasks", "pins", "messages", "conversation_authority", "surface_compositions", "widget_semantic_state", "session_files", "history_fts", "work_runs", "jobs", "notifications", "peer_allowances", "commands"]) {
     db.prepare(`DELETE FROM ${table} WHERE conversation_id = ?`).run(id);
   }
   // Events are the append-only audit/replication sequence, not the conversation's mutable storage.

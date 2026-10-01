@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { closeDatabase, insertJob, migrate, openDatabase, type Database } from "@clarkcant/storage";
 import { createWorkSupervisor } from "../src/work-supervisor.ts";
-import { createPackageJobHost } from "../src/job-host.ts";
+import { createPackageJobHost, jobEndNotice } from "../src/job-host.ts";
 
 let db: Database;
 beforeEach(() => {
@@ -94,5 +94,32 @@ describe("durable package job host", () => {
     expect(calls).toBe(0);
     expect(outcomes).toMatchObject([{ status: "cancelled", sent: false }]);
     expect(reports[0]).toContain("Nothing ran");
+  });
+
+  it("names what a finished job produced and what to do next", () => {
+    const ref = (name: string) => ({ v: 1, artifactId: `art_${name}`, kind: "fixed", mimeType: "image/png", sizeBytes: 1, name }) as never;
+    expect(jobEndNotice({ capabilityRef: "example.export@1" as never, status: "completed", resultRefs: [ref("a.png")] }, { status: "completed" }))
+      .toBe("The package job for example.export@1 completed and produced “a.png”. Open its widget to use it.");
+    expect(jobEndNotice({
+      capabilityRef: "example.export@1" as never, status: "completed",
+      resultRefs: [ref("1.png"), ref("2.png"), ref("3.png"), ref("4.png")],
+    }, { status: "completed" })).toContain("“1.png”, “2.png”, “3.png” and 1 more");
+    expect(jobEndNotice({ capabilityRef: "example.export@1" as never, status: "cancelled", resultRefs: [] }, { status: "cancelled", sent: true }))
+      .toContain("may have finished its effect");
+    expect(jobEndNotice({ capabilityRef: "example.export@1" as never, status: "cancelled", resultRefs: [] }, { status: "cancelled", sent: false }))
+      .toContain("Nothing ran");
+  });
+
+  it("leaves the job for boot recovery, without an unhandled rejection, when its ending cannot be recorded", async () => {
+    const local = openDatabase({ path: ":memory:" });
+    migrate(local);
+    const host = createPackageJobHost({ db: local, nodeId: "node_1", nodeBootId: "boot_1", newId: () => "job_unused", supervisor: createWorkSupervisor() });
+    let answer: (() => void) | undefined;
+    host.start({ job: job("job_unrecorded"), run: () => new Promise((resolve) => { answer = () => resolve({ content: "done" }); }) });
+    await flush();
+    closeDatabase(local);
+    answer?.();
+    await flush();
+    expect(host.canAdmit()).toBe(true);
   });
 });

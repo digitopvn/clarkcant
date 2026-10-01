@@ -649,6 +649,29 @@ describe("the artifacts@1 extension", () => {
     expect(session.accept(read("artreq-d")).ok).toBe(true);
   });
 
+  it("paces job reads at their own rate, so watching a job does not spend the frame's message budget", async () => {
+    let now = 1_000_000;
+    const { session, posted } = makeSession({
+      maxMessages: 1,
+      jobBurst: 2,
+      jobRefillPerSecond: 1,
+      now: () => now,
+      jobs: async (request) => ({ status: "ok", job: { jobId: request.jobId, status: "running", resultRefs: [], createdAt: "2026-10-01T00:00:00.000Z" } }),
+    });
+    session.init();
+    const job = (requestId: string) => fromFrame({ kind: "job.request", requestId, request: { op: "get", jobId: "job_1" } });
+
+    expect(session.accept(job("jobreq-1")).ok).toBe(true);
+    await flush();
+    expect(session.accept(job("jobreq-2")).ok).toBe(true);
+    await flush();
+    expect(session.accept(job("jobreq-3"))).toMatchObject({ ok: false, code: "JOB_RATE_LIMITED", answered: true });
+    expect(posted.at(-1)).toMatchObject({ kind: "job-result", requestId: "jobreq-3", status: "refused", code: "JOB_RATE_LIMITED" });
+    expect(session.accept(fromFrame({ kind: "event", name: "x", payload: {} })).ok).toBe(true);
+    now += 1_000;
+    expect(session.accept(job("jobreq-4")).ok).toBe(true);
+  });
+
   it("paces artifact requests at a rate apart from other messages, and answers the one it turns away", async () => {
     let now = 1_000_000;
     const { session, posted } = makeSession({

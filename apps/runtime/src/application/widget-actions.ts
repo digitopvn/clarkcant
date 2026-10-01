@@ -38,6 +38,7 @@ import { actionRunning, beginActionRun, endActionRun } from "./action-runs.ts";
 import {
   type CapabilityInvokeOutcome,
   type CapabilityInvokeRequest,
+  type CapabilityLedgerHooks,
   type CapabilityInvokeSource,
   capabilityInvokeDeps,
   invokeCapability,
@@ -233,6 +234,14 @@ function actionBody(
   };
 }
 
+/**
+ * A press that started a durable job. `output` carries the JobRef as well, because a frame reads a binding's answer
+ * there; the job itself, not this answer, says how it is going.
+ */
+function jobBody(jobId: string): Record<string, unknown> {
+  return { outcome: "job", job: { jobId }, output: jobId };
+}
+
 /** Why a call that was sent has no answer that can be trusted, as a clause of the sentence the person reads. */
 function noAnswerClause(code: string, message: string, deadlineMs: number | undefined): string {
   switch (code) {
@@ -259,6 +268,51 @@ function uncertainMessage(label: string, code: string, message: string, deadline
 }
 
 /**
+ * The effect-ledger hooks around one capability call made for a person: `beforeSend` opens the entry once the call is
+ * decided (a `read` opens none), and `onJobSettled` settles it when a durable job the call started ends. A synchronous
+ * call is settled by its caller on the answer, through `opened()`. Shared by a widget press and an approved card, so
+ * both leave the same record of what was sent.
+ */
+export function actionLedgerHooks(
+  services: Pick<NodeServices, "runtime" | "conductor">,
+  call: { conversationId: string; principalId: string; intent: string; ref: string; args: Record<string, unknown> },
+): { hooks: CapabilityLedgerHooks; opened: () => OpenedActionEffect | undefined } {
+  let opened: OpenedActionEffect | undefined;
+  return {
+    opened: () => opened,
+    hooks: {
+      beforeSend: ({ effectCategory }) => {
+        if (effectCategory === "read") return;
+        opened = openActionEffect(services, {
+          conversationId: call.conversationId,
+          principalId: call.principalId,
+          capabilityRef: call.ref,
+          args: call.args,
+          intent: call.intent,
+          effectCategory,
+        });
+      },
+      onJobSettled: (jobOutcome) => {
+        if (opened === undefined) return;
+        if (jobOutcome.sent === false) {
+          settleActionEffect(services, opened, { kind: "not-sent", reason: "the package job ended before the service request was sent" });
+          return;
+        }
+        if (jobOutcome.status === "completed") {
+          settleActionEffect(services, opened, { kind: "answered", evidence: `the package job completed: ${call.ref}` });
+          return;
+        }
+        settleActionEffect(services, opened, {
+          kind: "no-answer",
+          stopped: jobOutcome.status === "cancelled",
+          reason: `the package job ${jobOutcome.status}; its effect may have happened before the service stopped answering`,
+        });
+      },
+    },
+  };
+}
+
+/**
  * One service call a press makes, inside the effect ledger.
  *
  * The ledger entry is opened by `invokeCapability`'s `beforeSend`, after the registry, the schema and the policy have
@@ -270,54 +324,25 @@ async function callInLedger(
   services: WidgetActionServices,
   call: { conversationId: string; principalId: string; intent: string; request: Omit<CapabilityInvokeRequest, "beforeSend"> },
 ): Promise<StepCall & { taskId?: string }> {
-  const ledger: { opened?: OpenedActionEffect } = {};
+  const ledger = actionLedgerHooks(services, {
+    conversationId: call.conversationId,
+    principalId: call.principalId,
+    intent: call.intent,
+    ref: call.request.ref,
+    args: call.request.args,
+  });
   let outcome: CapabilityInvokeOutcome;
   try {
-    outcome = await invokeCapability(capabilityInvokeDeps(services), {
-      ...call.request,
-      beforeSend: ({ effectCategory }) => {
-        if (effectCategory === "read") return;
-        ledger.opened = openActionEffect(services, {
-          conversationId: call.conversationId,
-          principalId: call.principalId,
-          capabilityRef: call.request.ref,
-          args: call.request.args,
-          intent: call.intent,
-          effectCategory,
-        });
-      },
-      ...(call.request.jobOrigin === undefined ? {} : { jobOrigin: call.request.jobOrigin }),
-      onJobSettled: (jobOutcome) => {
-        if (ledger.opened === undefined) return;
-        if (jobOutcome.sent === false) {
-          settleActionEffect(services, ledger.opened, {
-            kind: "not-sent",
-            reason: "the package job ended before the service request was sent",
-          });
-          return;
-        }
-        if (jobOutcome.status === "completed") {
-          settleActionEffect(services, ledger.opened, {
-            kind: "answered",
-            evidence: `the package job completed: ${call.request.ref}`,
-          });
-          return;
-        }
-        settleActionEffect(services, ledger.opened, {
-          kind: "no-answer",
-          stopped: jobOutcome.status === "cancelled",
-          reason: `the package job ${jobOutcome.status}; its effect may have happened before the service stopped answering`,
-        });
-      },
-    });
+    outcome = await invokeCapability(capabilityInvokeDeps(services), { ...call.request, ...ledger.hooks });
   } catch (cause) {
     // Thrown on this node before the call was sent: a service's failure is an answer, not a throw.
-    if (ledger.opened !== undefined) {
-      settleActionEffect(services, ledger.opened, { kind: "not-sent", reason: cause instanceof Error ? cause.message : String(cause) });
+    const opened = ledger.opened();
+    if (opened !== undefined) {
+      settleActionEffect(services, opened, { kind: "not-sent", reason: cause instanceof Error ? cause.message : String(cause) });
     }
     throw cause;
   }
-  const opened = ledger.opened;
+  const opened = ledger.opened();
   if (opened === undefined) return { outcome, recorded: false };
   if (outcome.kind === "done") {
     settleActionEffect(services, opened, { kind: "answered", evidence: `the service answered: ${outcome.output.slice(0, 200)}` });
@@ -404,6 +429,8 @@ function replay(
       return body(202, { outcome: "approval-required", approvalRequired: { approvalId: prior.approvalId } });
     case "background":
       return body(202, { outcome: "background", background: { workId: prior.workId, state: prior.state } });
+    case "job":
+      return body(202, jobBody(prior.jobId));
     case "workflow":
       return workflowResult(services, checked, request.conversationId, prior.report, true);
     case "uncertain":
@@ -515,7 +542,7 @@ async function invokeCapabilityAction(
         source,
         conversationId: request.conversationId,
         bindingGeneration: checked.binding.packageGeneration,
-        jobOrigin: { instanceId: request.instanceId, actionBindingId: request.actionBindingId },
+        jobOrigin: { instanceId: request.instanceId, actionBindingId: request.actionBindingId, invocationId: request.invocationId },
         ...(limits.deadlineMs === undefined ? {} : { timeoutMs: limits.deadlineMs }),
         signal: admitted.controller.signal,
       },
@@ -576,14 +603,11 @@ async function invokeCapabilityAction(
     };
   }
   if (outcome.kind === "job") {
-    settle(services, checked, request, { kind: "done", output: outcome.job.jobId });
+    settle(services, checked, request, { kind: "job", jobId: outcome.job.jobId });
     return {
       ok: true,
       status: 202,
-      body: actionBody(services, checked, request.conversationId, false, {
-        outcome: "job",
-        output: outcome.job.jobId,
-      }),
+      body: actionBody(services, checked, request.conversationId, false, jobBody(outcome.job.jobId)),
     };
   }
   settle(services, checked, request, { kind: "done", output: outcome.output });
