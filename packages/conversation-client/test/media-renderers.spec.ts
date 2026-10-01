@@ -2,6 +2,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { graphFeedState, type CompositionGraph } from "@clarkcant/contracts";
+
 import { CATALOG, type RendererProps } from "../src/renderers.tsx";
 
 function render(definitionId: string, props: Record<string, unknown>, state?: Record<string, unknown>): string {
@@ -31,6 +33,24 @@ describe("media renderers", () => {
     expect(render("canvas.carousel@1", PICTURES, { selectedIndex: 1 })).toContain('data-carousel-index="1"');
     expect(render("canvas.carousel@1", PICTURES, { selectedIndex: 9 })).toContain('data-carousel-index="2"');
     expect(render("canvas.gallery@1", PICTURES, { selectedIndex: 2 })).toMatch(/aria-pressed="true"[^>]*>(?:(?!<\/button>).)*data-image-ref="three"/);
+  });
+
+  it("draws the picture a composed surface holds, in the carousel beside the gallery that picked it", () => {
+    const graph: CompositionGraph = {
+      state: { picture: { type: "number", initial: 0 } },
+      on: ["pictures-1", "pictures-2"].map((sectionId) => ({
+        sectionId,
+        event: "media.select",
+        steps: [{ op: "select-field" as const, key: "picture", field: "selectedIndex" }],
+      })),
+      feed: [],
+    };
+    const carousel = { sectionId: "pictures-2", definitionId: "canvas.carousel@1" };
+    const gallery = { sectionId: "pictures-1", definitionId: "canvas.gallery@1" };
+    expect(render("canvas.carousel@1", PICTURES, graphFeedState(graph, { picture: 2 }, carousel as never))).toContain('data-carousel-index="2"');
+    expect(render("canvas.gallery@1", PICTURES, graphFeedState(graph, { picture: 1 }, gallery as never))).toMatch(
+      /aria-pressed="true"[^>]*>(?:(?!<\/button>).)*data-image-ref="two"/,
+    );
   });
 
   it("keeps a gallery caption outside its selection button", () => {

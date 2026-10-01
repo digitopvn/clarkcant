@@ -87,7 +87,7 @@ const GRAPH: CompositionGraph = {
         { op: "select-field", key: "branchOpen", field: "expanded" },
       ],
     },
-    { sectionId: "gallery-1", event: "media.select", steps: [{ op: "select-field", key: "galleryIndex", field: "index" }] },
+    { sectionId: "gallery-1", event: "media.select", steps: [{ op: "select-field", key: "galleryIndex", field: "selectedIndex" }] },
   ],
   feed: [
     { sectionId: "table-1", op: "query", key: "query" },
@@ -111,8 +111,10 @@ describe("checking a graph", () => {
       sectionId: "gallery-1",
       definitionId: "canvas.gallery@1",
       event: "media.select",
-      payload: { index: 2 },
+      payload: { selectedIndex: 2 },
     })).toEqual({ ok: true, values: { ...graphValues(GRAPH), galleryIndex: 2 }, changed: ["galleryIndex"] });
+    // The field is the one the gallery stores, so a payload that names another is refused rather than guessed at.
+    expect(run("gallery-1", "media.select", { index: 2 }).ok).toBe(false);
   });
 
   it("refuses an event a leaf does not emit, and says what it does emit", () => {
@@ -293,6 +295,8 @@ describe("feeding leaves and reading values", () => {
     expect(graphFeedState(GRAPH, values, SECTIONS[0] as never)).toEqual({ query: "acme" });
     expect(graphFeedState(GRAPH, values, SECTIONS[1] as never)).toEqual({ value: "created" });
     expect(graphFeedState(undefined, values, SECTIONS[3] as never)).toEqual({});
+    // A gallery whose choice the surface holds gets that choice back as the index it draws.
+    expect(graphFeedState(GRAPH, { ...values, galleryIndex: 3 }, SECTIONS[8] as never)).toEqual({ selectedIndex: 3 });
     expect(graphFeedsReading(GRAPH, ["metric"]).map((feed) => feed.sectionId)).toEqual(["line-1"]);
   });
 

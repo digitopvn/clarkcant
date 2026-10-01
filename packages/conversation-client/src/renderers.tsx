@@ -2193,7 +2193,7 @@ function Carousel({ props, imageUrl, state, onAction, onStateChange }: RendererP
   const select = (next: number) => {
     setIndex(next);
     onStateChange?.({ selectedIndex: next });
-    onAction?.("media.select", { index: next });
+    onAction?.("media.select", { selectedIndex: next });
   };
   const ref = refs[current];
   const alt = alts[current] ?? "";
@@ -2296,7 +2296,7 @@ function Gallery({ props, imageUrl, state, onAction, onStateChange }: RendererPr
                   onClick={() => {
                     setSelectedIndex(index);
                     onStateChange?.({ selectedIndex: index });
-                    onAction?.("media.select", { index });
+                    onAction?.("media.select", { selectedIndex: index });
                   }}
                 >
                   <img src={picture.url} alt={picture.alt} loading="lazy" decoding="async" data-image-ref={picture.ref} />

@@ -541,9 +541,7 @@ export function useSurfaceRenderer({
                         const matchingAction = instance.actions?.find((candidate) => candidate.viewOperation === viewAction) ?? boundAction;
                         if (matchingAction !== undefined && matchingAction.available && conversationId !== undefined) {
                           const datasetRef = instance.props.datasetRef;
-                          const viewInput = action === "media.select" && typeof payload.index === "number"
-                            ? { selectedIndex: payload.index }
-                            : definitionId === BOARD_ID && action === BOARD_MOVE_OPERATION
+                          const viewInput = definitionId === BOARD_ID && action === BOARD_MOVE_OPERATION
                             ? { ...payload, external: boundAction !== undefined }
                             : payload;
                           sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, matchingAction, instance.revision, viewInput, VIEW_REFUSED[viewAction] ?? "widgets.xyChart.viewRefused", (nextTimeline) => {
