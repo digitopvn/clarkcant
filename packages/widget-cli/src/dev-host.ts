@@ -564,7 +564,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
               state = { ...state, serviceReadiness: Object.fromEntries(source.serviceCapabilities.map((ref) => [ref, readinessForStatus("ready")])) };
               restartTimer = undefined;
               for (const client of clients) client.write("event: reload\ndata: {}\n\n");
-            }, 900);
+            }, 2_000);
           }
         } catch {
           // A malformed action leaves the state alone and is reported, rather than resetting the shell.
