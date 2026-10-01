@@ -22,6 +22,7 @@ export function createDevModuleServer(opaqueFrame = false, wsServer?: HttpServer
     appType: "custom",
     logLevel: "error",
     plugins: [react()],
+    optimizeDeps: { noDiscovery: true },
     server,
   });
 }
