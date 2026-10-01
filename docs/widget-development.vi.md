@@ -1191,34 +1191,56 @@ theme sáng/tối thích ứng và giảm chuyển động, cùng preview chỉ-
 ### 8.11 Widget media và trạng thái semantic
 
 `canvas.image@1` mô tả alt text được cung cấp và chỉ đưa kích thước vào khi node sở hữu ảnh có các giá trị đó. State
-gallery và carousel lưu `selectedIndex` có giới hạn (state version 2); state cũ version 1 được migrate về mục đầu tiên,
-và chỉ số luôn được chuẩn hoá theo props hiện tại. Lựa chọn gallery/carousel được ghi qua binding `media.view` của
-host; event `media.select` cũng có thể cập nhật surface được ghép. Semantic document của chúng báo số mục, mục đang
-chọn (đếm từ 1) và alt text của mục đó.
+gallery và carousel lưu `selectedIndex` có giới hạn, đếm từ 0 (state version 2); state cũ version 1 được migrate về mục
+đầu tiên, và chỉ số luôn được chuẩn hoá theo props hiện tại. Lựa chọn gallery/carousel được ghi qua binding `media.view`
+của host. Khi node từ chối một lần ghi, widget vẽ lại mục node đang giữ và nói lý do ngay bên cạnh, giống các view widget
+khác. Semantic document của chúng đếm theo cách con người đếm, dưới một tên khác: `selectedNumber` là mục đang chọn đếm
+từ 1, đi cùng `itemCount` và alt text của mục đó, còn summary ghi "showing picture 2 of 3". Gallery hoặc carousel được
+đặt trước khi có binding này thì không có binding `media.view`; chúng vẫn render và lựa chọn vẫn hoạt động trên trang,
+nhưng lựa chọn đó không được lưu, nên document của chúng báo mục đầu tiên. Event `media.select` được khai báo trong
+contract của composition graph, nhưng layout ghép chưa đặt được gallery hay carousel: layout chỉ liệt kê một họ widget
+khi node có nguồn dữ liệu thật cho nó.
 
 `canvas.video@1` lưu `status`, `position` và `duration` qua cùng binding của host (state version 2; state cũ
 version 1 được migrate thành paused tại 0). Các lần ghi vị trí đi qua một bộ gộp playback dùng chung
 ([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), chính bộ mà widget audio đã lên kế
-hoạch (#324) sẽ dùng lại: pause, seek và kết thúc ghi ngay; trong khi phát liên tục thì tối đa ba giây mới ghi một lần. Player được khôi
+hoạch (#324) sẽ dùng lại: pause, seek và kết thúc ghi ngay; trong khi phát liên tục thì tối đa mỗi
+`MEDIA_PLAYBACK_WRITE_INTERVAL_MS` (ba giây) mới ghi một lần. Mỗi lần ghi là một view action có binding, nên nó cũng ghi
+một action invocation và trả về timeline của cuộc hội thoại; một đường chỉ-ghi-state nhẹ hơn sẽ cần route mới và không
+thuộc thay đổi này. Khi trang bị ẩn, player ghi vị trí hiện tại; khi rời trang hoặc player bị gỡ, nó tự ghi trạng thái
+dừng tại chỗ đã dừng. Những lần ghi này là best-effort, vì trang đang đóng có thể không gửi xong request. Vì vậy node
+cũng thôi tin một "playing" đã lưu khi nó cũ hơn `MEDIA_PLAYING_FRESH_MS` (hai khoảng ghi cộng hai giây dư, tính từ
+`updated_at` của dòng state): khi đó semantic document báo video dừng ở vị trí đã lưu cuối cùng. Một lần ghi playback bị
+từ chối được nói ngay bên cạnh player, player không bị tua đi, và lần ghi kế tiếp vẫn được gửi dù player chưa di chuyển.
+Player được khôi
 phục sẽ tua tới vị trí đã lưu khi metadata tải xong và vẫn dừng; khôi phục không bao giờ tự phát, và lần tua do khôi
-phục không được ghi ngược lại. Semantic document báo status như lần ghi cuối, còn vị trí và thời lượng làm tròn tới
+phục không được ghi ngược lại. Semantic document báo vị trí và thời lượng làm tròn tới
 một phần mười giây. Semantic của YouTube chỉ dùng video id đã kiểm tra cùng title; không đọc
 message playback của bên thứ ba. Image, gallery/carousel, video cục bộ và YouTube dùng chung một document có giới hạn
 cho voice, ghi chú lượt kế tiếp và `inspect_ui`.
 
-Unit test nằm ở [media-view.spec.ts](../packages/contracts/test/media-view.spec.ts),
-[playback-coalescer.spec.ts](../packages/conversation-client/test/playback-coalescer.spec.ts) (gồm số lần ghi trong một phút
-phát liên tục), [media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts),
-[widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts) (gồm giới hạn ở props lớn nhất được chấp nhận) và
-[security.spec.ts](../apps/desktop/test/security.spec.ts) cho media policy của desktop. Browser journey trong
-[widget.spec.ts](../apps/web/e2e/widget.spec.ts) xác minh lựa chọn gallery qua `inspect_ui` và lựa chọn carousel qua
-ghi chú lượt kế tiếp cùng khôi phục pin, gồm focus bàn phím và màn hình sáng/rút gọn chuyển động rộng 390 px. Cùng tệp đó
-pause một clip WebM cục bộ thật trong Chromium, đọc vị trí đã dừng qua `inspect_ui`, rồi tải lại trang khi video đã
-được ghim để kiểm tra cả hai player mở lại đúng vị trí đó mà không tự phát. Node chưa nhập được tệp video, nên journey
-tự trả bytes cho đúng một tham chiếu của clip; phần fetch có xác thực, object URL, page policy, player và state do node
-giữ đều là đường production.
+Ghim một widget media hoạt động như với tree và timeline: pin là một chip gọn trên kệ, và cả bản ghi pin lẫn view state
+của widget đều còn sau khi tải lại. Không có player thứ hai được ghim và chạy riêng; sau khi tải lại, chính widget trong
+cuộc hội thoại mở lại với state đã lưu.
 
-Video cục bộ phát từ object URL mà client tạo từ bytes đã fetch bằng token của node, giống hệt ảnh đã nhập. Vì vậy page
+Unit test nằm ở [media-view.spec.ts](../packages/contracts/test/media-view.spec.ts) (gồm khoảng thời gian còn tin
+"playing"),
+[playback-coalescer.spec.ts](../packages/conversation-client/test/playback-coalescer.spec.ts) (gồm số lần ghi trong một phút
+phát liên tục và các lần ghi khi trang bị ẩn, bị rời đi hoặc player bị gỡ),
+[media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts) (gồm thông báo từ chối),
+[widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts) (gồm một "playing" đã cũ, một gallery được đặt
+không có binding, và giới hạn ở props lớn nhất được chấp nhận) và
+[security.spec.ts](../apps/desktop/test/security.spec.ts) cho media policy của desktop. Các browser journey trong
+[widget.spec.ts](../apps/web/e2e/widget.spec.ts) xác minh lựa chọn gallery qua `inspect_ui`, lựa chọn carousel qua ghi
+chú lượt kế tiếp, một lựa chọn bị từ chối ở cả hai, và state của carousel sau khi ghim rồi tải lại, với focus bàn phím
+và cả hai theme ở 390 px. Cùng tệp đó phát một clip WebM cục bộ thật trong Chromium khoảng năm giây và đếm số lần ghi so
+với số nhịp đồng hồ, từ chối một lần ghi, đọc vị trí đã dừng qua `inspect_ui`, rồi tải lại sau khi ghim để kiểm tra
+player mở lại đúng vị trí đó mà không tự phát.
+
+Node chưa nhập được video: `/images` chỉ nhận ảnh. Vì vậy video cục bộ chỉ phát được từ một tham chiếu mà host đã phục
+vụ sẵn, và browser journey tự trả bytes cho đúng một tham chiếu của clip; phần fetch có xác thực, object URL, page
+policy, player và state do node giữ đều là đường production. Video đó phát từ object URL mà client tạo từ bytes đã fetch
+bằng token của node, giống hệt ảnh đã nhập. Vì vậy page
 policy cho phép `media-src 'self' blob:` ở cả [apps/web/index.html](../apps/web/index.html) và policy của cửa sổ desktop
 ([security.mjs](../apps/desktop/src/security.mjs)), và không gì hơn: không origin media từ xa và không media `data:`
 ([#374](https://github.com/digitopvn/clarkcant/issues/374)). Embed YouTube là một frame, do `frame-src` quản lý, không
@@ -1252,7 +1274,8 @@ Ai viết tài liệu:
 
 - **Surface dựng sẵn và surface ghép** được host mô tả từ state nó lưu: khoảng thời gian, ngày được chọn và các giá trị
   graph đã khai báo. Widget media chỉ được mô tả từ props đã kiểm tra và view state có giới hạn của chúng: alt text và
-  kích thước đã biết của ảnh, mục đang chọn của gallery hoặc carousel, trạng thái phát và vị trí của video cục bộ, cùng
+  kích thước đã biết của ảnh, mục đang chọn của gallery hoặc carousel (`selectedNumber`, đếm từ 1), trạng thái phát và
+  vị trí của video cục bộ (một "playing" mà player không còn ghi mới được đọc là đang dừng), cùng
   id đã kiểm tra và title của video YouTube ([§8.11](#811-widget-media-và-trạng-thái-semantic)).
 - **Widget chạy trong frame riêng** đề xuất summary, selected ID và giá trị bằng
   `semantic.publish(summary, selectedIds, values?)`. Host gửi lần publish cuối của một loạt sau 250 ms, kiểm tra theo

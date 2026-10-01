@@ -27,8 +27,8 @@
 
 1. Wire renderer props/state callbacks and transition events through the phase-1 helper.
 2. Add semantic branches for the five media definitions; prove changed state updates the semantic revision and reaches both inspection and the next turn.
-3. Add compatibility, keyboard/focus, reduced-motion, light/dark and 390 px checks, including pin restore with no autoplay.
-4. Update the smallest relevant internal doc sections and T75 in the English-only ledger.
+3. Add compatibility, keyboard/focus, reduced-motion, light/dark and 390 px checks, including view state that survives pinning and a reload, with no autoplay.
+4. Update the smallest relevant internal doc sections and T76 in the English-only ledger.
 5. Run focused tests, then `pnpm verify`, `pnpm verify:full`, and `pnpm invariants`.
 
 ## Risk and rollback
