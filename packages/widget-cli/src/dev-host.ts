@@ -27,6 +27,14 @@ import {
   serviceStatus,
   type ServiceBinding,
 } from "./service-simulator.ts";
+import { inspectSemanticProposal, type SemanticInspection } from "./dev-semantic.ts";
+import {
+  declaredCompositionEvents,
+  declaredCompositionInputs,
+  declaredWidgetEvents,
+  validateCompositionEvent,
+  validateDeclaredWidgetEvent,
+} from "./dev-composition.ts";
 
 /**
  * `clark widget dev` — the local isolated host.
@@ -116,6 +124,14 @@ document.documentElement.style.setProperty("--frame-width", width + "px");
 
 const log = document.querySelector("[data-dev-log]");
 const semantic = document.querySelector("[data-dev-semantic]");
+const semanticDropped = document.querySelector("[data-dev-semantic-dropped]");
+const semanticDelta = document.querySelector("[data-dev-semantic-delta]");
+const semanticContext = document.querySelector("[data-dev-semantic-context]");
+const semanticInspectUi = document.querySelector("[data-dev-semantic-inspect-ui]");
+const semanticChurn = document.querySelector("[data-dev-semantic-churn]");
+const compositionName = document.querySelector("[data-dev-composition-name]");
+const compositionPayload = document.querySelector("[data-dev-composition-payload]");
+const compositionResult = document.querySelector("[data-dev-composition-result]");
 const findings = document.querySelector("[data-dev-findings]");
 
 function appendLog(line) {
@@ -152,6 +168,41 @@ for (const select of document.querySelectorAll("select[data-dev-action='service-
 }
 document.querySelector("[data-dev-action='service-restart']")?.addEventListener("click", () => {
   void send({ kind: "service-restart", value: true });
+});
+
+compositionName?.addEventListener("change", () => {
+  const option = compositionName.selectedOptions[0];
+  try {
+    compositionPayload.value = JSON.stringify(JSON.parse(option?.dataset.example ?? "{}"), null, 2);
+    compositionResult.textContent = "";
+  } catch {
+    compositionResult.textContent = "Không đọc được ví dụ event đã khai báo.";
+  }
+});
+document.querySelector("[data-dev-composition-send]")?.addEventListener("click", async () => {
+  try {
+    const response = await fetch("/dev/api/composition-event", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        nonce: bridgeNonce,
+        name: compositionName.value,
+        payload: JSON.parse(compositionPayload.value),
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      compositionResult.textContent = "Từ chối event: " + result.problem;
+      appendLog("composition event refused: " + result.problem);
+      return;
+    }
+    const values = result.event.values ?? result.event.payload;
+    const mode = result.event.values === undefined ? "đã được kiểm tra theo schema khai báo" : "đã được kiểm tra và áp dụng vào graph mô phỏng";
+    compositionResult.textContent = "Event " + result.event.name + " " + mode + ":\\n" + JSON.stringify(values);
+    appendLog("composition event " + result.event.name + " " + JSON.stringify(result.event.payload));
+  } catch (error) {
+    compositionResult.textContent = "Payload phải là JSON hợp lệ: " + String(error);
+  }
 });
 
 /* The audit runs over facts collected here; the decision about what they mean lives in the CLI's tested code. */
@@ -213,8 +264,58 @@ events.addEventListener("reload", () => location.reload());
 
 /* The frame speaks the bridge; a dev host shows what it said rather than silently accepting it. */
 window.addEventListener("message", (event) => {
-  appendLog(new Date().toISOString() + " " + JSON.stringify(event.data).slice(0, 400));
-  if (event.data && event.data.kind === "semantic.publish") semantic.textContent = event.data.summary;
+  if (event.source !== frameElement?.contentWindow || event.data?.nonce !== bridgeNonce) return;
+  if (event.data.kind === "event") {
+    void fetch("/dev/api/composition-event", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ nonce: bridgeNonce, name: event.data.name, payload: event.data.payload }),
+    }).then(async (response) => {
+      const result = await response.json();
+      if (!response.ok) {
+        const problem = result.problem ?? "event refused";
+        appendLog("widget event " + String(event.data.name) + " refused: " + problem);
+        compositionResult.textContent = "Từ chối widget event: " + problem;
+        return;
+      }
+      const validatedFields = result.event.payload ?? result.event.values;
+      appendLog("widget event " + result.event.name + " validated fields " + JSON.stringify(validatedFields));
+      compositionResult.textContent = "Widget event " + result.event.name + " đã được kiểm tra:\\n" + JSON.stringify(validatedFields);
+    }).catch((error) => {
+      const problem = String(error);
+      appendLog("widget event refused: " + problem);
+      compositionResult.textContent = "Không đọc được widget event: " + problem;
+    });
+    return;
+  }
+  if (event.data.kind !== "semantic.publish") return;
+  appendLog(new Date().toISOString() + " semantic.publish " + JSON.stringify(event.data).slice(0, 400));
+  void fetch("/dev/api/semantic", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      nonce: bridgeNonce,
+      proposal: {
+        summary: event.data.summary,
+        selectedIds: event.data.selectedIds,
+        values: event.data.values,
+      },
+    }),
+  }).then(async (response) => {
+    const result = await response.json();
+    if (!response.ok) {
+      semantic.textContent = "Từ chối semantic.publish: " + (result.problems ?? []).join("; ");
+      return;
+    }
+    semantic.textContent = JSON.stringify(result.doc, null, 2);
+    semanticDropped.textContent = result.clippedOrDropped.length === 0 ? "Không có trường bị cắt hoặc loại bỏ." : result.clippedOrDropped.join("\\n");
+    semanticDelta.textContent = result.delta.length === 0 ? "Không có thay đổi so với lần publish trước." : result.delta.join("\\n");
+    semanticContext.textContent = result.contextNote || "(không có ngữ cảnh mới cho lượt tiếp theo)";
+    semanticInspectUi.textContent = result.inspectUi;
+    semanticChurn.textContent = result.churnWarning ? "Cảnh báo: widget publish hơn 4 lần trong 1 giây; việc này làm tăng delta cho lượt tiếp theo." : "";
+  }).catch((error) => {
+    semantic.textContent = "Không đọc được semantic.publish: " + String(error);
+  });
 });
 
 /*
@@ -358,6 +459,7 @@ interface ShellSource {
   requestedCapabilities: readonly string[];
   serviceCapabilities: readonly string[];
   serviceBindings: readonly ServiceBinding[];
+  eventSchemas: Record<string, Record<string, unknown>>;
   entryUrl: string;
   definition: { textFallback: string; semanticDescription: string };
   /** Fixture name to its props, handed to the frame in the handshake. Empty for a catalog widget. */
@@ -385,6 +487,7 @@ function packageSource(requested: string): ShellSource {
     requestedCapabilities: facet.definition.requestedCapabilities,
     serviceCapabilities: simulator.capabilities,
     serviceBindings: simulator.bindings,
+    eventSchemas: facet.definition.eventSchemas,
     entryUrl: `/${facet.entryPath}`,
     definition: {
       textFallback: facet.definition.textFallback,
@@ -410,6 +513,7 @@ function catalogSource(definitionId: string): ShellSource {
     requestedCapabilities: target.entry.definition.requestedCapabilities,
     serviceCapabilities: [],
     serviceBindings: [],
+    eventSchemas: target.entry.definition.eventSchemas,
     entryUrl: "/catalog-runtime.html",
     definition: {
       textFallback: target.entry.definition.textFallback,
@@ -430,6 +534,8 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   }
 
   const source = options.builtin === undefined ? packageSource(options.root ?? "") : catalogSource(options.builtin);
+  const compositionEvents = declaredWidgetEvents(source.definitionId, source.eventSchemas);
+  const compositionInputs = declaredCompositionInputs(source.definitionId);
   /*
    * The one discriminator for "this host serves a catalog widget": a package has a directory whose files may be
    * served, and a catalog widget does not, which is also exactly when Vite is needed to serve the frame's module.
@@ -447,6 +553,8 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   const capabilities = source.requestedCapabilities;
   const files = source.files.map((file) => file.name);
   let state = initialState({ fixtures, requestedCapabilities: capabilities, serviceCapabilities: source.serviceCapabilities, files });
+  let semanticInspection: SemanticInspection | undefined;
+  let semanticPublishTimes: number[] = [];
   const bridgeNonce = randomBytes(16).toString("hex");
   const framePrefix = `/dev/frame/${bridgeNonce}`;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
@@ -514,6 +622,104 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
           actionAvailability: actionAvailability({ bindings: source.serviceBindings, readiness: state.serviceReadiness, offline: state.offline }),
         }),
       );
+      return;
+    }
+
+    if (path === "/dev/api/semantic" && request.method === "POST") {
+      let body = "";
+      request.on("data", (chunk: unknown) => {
+        body += String(chunk);
+        if (body.length > 32_768) request.destroy();
+      });
+      request.on("end", () => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, problems: ["request must be JSON"] }));
+          return;
+        }
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          Array.isArray(parsed) ||
+          (parsed as { nonce?: unknown }).nonce !== bridgeNonce
+        ) {
+          response.writeHead(403, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, problems: ["frame nonce did not match this dev host"] }));
+          return;
+        }
+        const result = inspectSemanticProposal({
+          definitionId: source.definitionId,
+          rawProposal: (parsed as { proposal?: unknown }).proposal,
+          ...(semanticInspection === undefined
+            ? {}
+            : { previous: { doc: semanticInspection.doc, revision: semanticInspection.revision } }),
+          revision: (semanticInspection?.revision ?? 0) + 1,
+          recentPublishTimes: semanticPublishTimes,
+          now: Date.now(),
+        });
+        if (!result.ok) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify(result));
+          return;
+        }
+        semanticInspection = result.inspection;
+        semanticPublishTimes = result.recentPublishTimes;
+        response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        response.end(JSON.stringify(result.inspection));
+      });
+      return;
+    }
+
+    if (path === "/dev/api/composition-event" && request.method === "POST") {
+      let body = "";
+      request.on("data", (chunk: unknown) => {
+        body += String(chunk);
+        if (body.length > 8_192) request.destroy();
+      });
+      request.on("end", () => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, problem: "request must be JSON" }));
+          return;
+        }
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          Array.isArray(parsed) ||
+          (parsed as { nonce?: unknown }).nonce !== bridgeNonce
+        ) {
+          response.writeHead(403, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, problem: "frame nonce did not match this dev host" }));
+          return;
+        }
+        const name = (parsed as { name?: unknown }).name;
+        const rawPayload = (parsed as { payload?: unknown }).payload;
+        if (typeof name === "string" && declaredCompositionEvents(source.definitionId).some((event) => event.name === name)) {
+          const result = validateCompositionEvent(source.definitionId, name, rawPayload);
+          response.writeHead(result.ok ? 200 : 400, { "content-type": "application/json", "cache-control": "no-store" });
+          response.end(JSON.stringify(result));
+          return;
+        }
+        const declaredSchema = typeof name === "string" ? source.eventSchemas[name] : undefined;
+        if (declaredSchema !== undefined) {
+          const validated = validateDeclaredWidgetEvent(declaredSchema, rawPayload);
+          const result = validated.ok
+            ? { ok: true, event: { name, payload: validated.payload } }
+            : { ok: false, problem: validated.problem };
+          response.writeHead(result.ok ? 200 : 400, { "content-type": "application/json", "cache-control": "no-store" });
+          response.end(JSON.stringify(result));
+          return;
+        }
+        const result = validateCompositionEvent(source.definitionId, name, rawPayload);
+        response.writeHead(result.ok ? 200 : 400, { "content-type": "application/json", "cache-control": "no-store" });
+        response.end(JSON.stringify(result));
+      });
       return;
     }
 
@@ -750,6 +956,8 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
             serviceCapabilities: source.serviceCapabilities,
             entryUrl: root === undefined ? source.entryUrl : `${framePrefix}${source.entryUrl}`,
             definition: source.definition,
+            compositionEvents,
+            compositionInputs,
             ...(root === undefined ? {} : { files }),
           },
           state,

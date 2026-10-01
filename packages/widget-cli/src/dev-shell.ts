@@ -24,6 +24,7 @@ import {
   type ServiceReadiness,
   type ServiceStatus,
 } from "./service-simulator.ts";
+import type { DeclaredCompositionEvent } from "./dev-composition.ts";
 
 export const DEV_VIEWPORTS = ["narrow-320", "conversation", "compact", "expanded"] as const;
 export type DevViewport = (typeof DEV_VIEWPORTS)[number];
@@ -380,6 +381,8 @@ export interface ShellInput {
   serviceCapabilities?: readonly string[];
   entryUrl: string;
   definition: { textFallback: string; semanticDescription: string };
+  compositionEvents?: readonly DeclaredCompositionEvent[];
+  compositionInputs?: readonly string[];
   /** Fixture files the simulated picker offers, by name. Absent for a catalog widget, which has no package. */
   files?: readonly string[];
 }
@@ -404,6 +407,38 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
         `${state.fixture === name ? ' data-dev-selected="true"' : ""}>${escapeHtml(name)}</button>`,
     )
     .join("\n        ");
+
+  const compositionEvents = input.compositionEvents ?? [];
+  const compositionInputs = input.compositionInputs ?? [];
+  const compositionEventOptions = compositionEvents
+    .map(
+      (event) =>
+        '<option value="' +
+        escapeHtml(event.name) +
+        '" data-example="' +
+        escapeHtml(JSON.stringify(event.example)) +
+        '">' +
+        escapeHtml(event.name) +
+        " — " +
+        escapeHtml(event.fields.join(", ")) +
+        "</option>",
+    )
+    .join("\n          ");
+  const compositionEventPanel =
+    compositionEvents.length === 0
+      ? "<p>Widget này không khai báo composition event nào.</p>"
+      : '<label for="dev-composition-name">Event đã khai báo</label>\n' +
+        '<select id="dev-composition-name" data-dev-composition-name>' +
+        compositionEventOptions +
+        '</select>\n<label for="dev-composition-payload">Payload JSON</label>\n' +
+        '<textarea id="dev-composition-payload" data-dev-composition-payload rows="4">' +
+        escapeHtml(JSON.stringify(compositionEvents[0]?.example ?? {}, null, 2)) +
+        '</textarea>\n<button type="button" data-dev-composition-send>Gửi event mô phỏng</button>\n' +
+        '<p data-dev-composition-result role="status" aria-live="polite"></p>';
+  const compositionInputList =
+    compositionInputs.length === 0
+      ? "Không khai báo input/feed composition."
+      : compositionInputs.map(escapeHtml).join(", ");
 
   const viewportButtons = DEV_VIEWPORTS.map(
     (name) =>
@@ -491,8 +526,9 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
       iframe { width: 100%; height: 420px; border: 0; background: #fff; display: block; }
       button { background: transparent; color: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; cursor: pointer; }
       button[data-dev-selected="true"] { border-color: currentColor; }
-      button:focus-visible, input:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
-      select:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
+      input, select, textarea { color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 4px; }
+      textarea { width: 100%; resize: vertical; font: 12px/1.4 ui-monospace, monospace; }
+      button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
       aside { border-left: 1px solid var(--line); border-bottom: 0; display: grid; gap: 16px; align-content: start; }
       aside section { display: grid; gap: 6px; }
       h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0; }
@@ -500,6 +536,10 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
       .row { display: flex; flex-wrap: wrap; gap: 6px; }
       [data-dev-findings] li { margin-bottom: 4px; }
       [data-dev-findings] li[data-severity="error"] { color: #fca5a5; }
+      @media (max-width: 800px) {
+        main { grid-template-columns: minmax(0, 1fr); }
+        aside { border-left: 0; border-top: 1px solid var(--line); }
+      }
     </style>
   </head>
   <body ${attributes}>
@@ -536,8 +576,22 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
       </div>
       <aside>
         <section>
-          <h2>Semantic</h2>
+          <h2>Semantic inspector · source: frame</h2>
           <pre data-dev-semantic>chưa publish gì</pre>
+          <p data-dev-semantic-dropped aria-live="polite"></p>
+          <p data-dev-semantic-churn role="status"></p>
+          <h2>Delta</h2>
+          <pre data-dev-semantic-delta></pre>
+          <h2>Ngữ cảnh lượt tiếp theo</h2>
+          <pre data-dev-semantic-context></pre>
+          <h2>inspect_ui</h2>
+          <pre data-dev-semantic-inspect-ui></pre>
+        </section>
+        <section>
+          <h2>Composition event simulator · mô phỏng</h2>
+          <p>Input/feed được chấp nhận: ${compositionInputList}</p>
+          <p>Chỉ áp dụng event vào graph kiểm thử cục bộ; không gọi capability.</p>
+          ${compositionEventPanel}
         </section>
         <section>
           <h2>Action log</h2>

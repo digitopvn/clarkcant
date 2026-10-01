@@ -101,9 +101,12 @@ test("the conversation board supports keyboard, mouse and touch moves with bound
   const doing = board.locator("[data-board-column='doing']");
   const doingBox = await doing.boundingBox();
   if (doingBox === null) throw new Error("the destination column is not laid out");
+  const reviewBox = await card("review").boundingBox();
+  if (reviewBox === null) throw new Error("the existing destination card is not laid out");
+  const touchTargetY = reviewBox.y + reviewBox.height + 4;
   await handle.dispatchEvent("pointerdown", { pointerId: 17, pointerType: "touch", button: 0, clientX: handleBox.x + 20, clientY: handleBox.y + 20 });
-  await board.dispatchEvent("pointermove", { pointerId: 17, pointerType: "touch", clientX: doingBox.x + doingBox.width / 2, clientY: doingBox.y + 30 });
-  await board.dispatchEvent("pointerup", { pointerId: 17, pointerType: "touch", clientX: doingBox.x + doingBox.width / 2, clientY: doingBox.y + 30 });
+  await board.dispatchEvent("pointermove", { pointerId: 17, pointerType: "touch", clientX: doingBox.x + doingBox.width / 2, clientY: touchTargetY });
+  await board.dispatchEvent("pointerup", { pointerId: 17, pointerType: "touch", clientX: doingBox.x + doingBox.width / 2, clientY: touchTargetY });
   await expect.poll(() => heldState(page, conversation, instanceId), { timeout: 10_000 }).toMatchObject({ order: { todo: [], doing: ["review", "schema"] } });
 
   await page.screenshot({ path: testInfo.outputPath("kanban-board-1280-dark.png"), fullPage: false });
