@@ -135,6 +135,13 @@ test("a finished job hands the widget its file by reference and says so in the c
   await expect(job).toContainText("Exported");
   await expect(job).toHaveAttribute("data-notes-job-files", /\S/);
   await expect(page.getByText(`The package job for ${EXPORT} completed`).last()).toBeVisible({ timeout: 30_000 });
+  // The same ending is in the inbox, so it is found again after the conversation has moved on.
+  const inbox = (await (await page.request.get(`${GATEWAY}/inbox`, { headers: { authorization: `Bearer ${token()}` } })).json()) as {
+    notices: { title: string; body?: string }[];
+  };
+  expect(inbox.notices).toContainEqual(
+    expect.objectContaining({ title: "A package job finished", body: expect.stringContaining(`The package job for ${EXPORT} completed`) }),
+  );
 });
 
 test("an emergency Stop ends a running job, and the widget reads that ending from the node", async ({ page, request }) => {
