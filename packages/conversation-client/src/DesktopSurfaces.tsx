@@ -268,6 +268,12 @@ export function PinnedLiveSurface({
    * widget on a timer, which is work nobody asked for and a lease nobody is using.
    */
   const [inView, setInView] = useState(false);
+  /*
+   * The one exception to "offscreen means unmounted": a frame whose package was granted a profile with authorized
+   * playback, and which the person chose, in host chrome, to keep running. Never the widget's own choice, never the
+   * default, and shown while it runs out of view, with a Stop beside it.
+   */
+  const [keepPlaying, setKeepPlaying] = useState(false);
   const ownerToken = useRef<string>(newOwnerToken());
   /*
    * Graph events go to the node one at a time, each against the revision the one before it produced, and the surface is
@@ -330,13 +336,17 @@ export function PinnedLiveSurface({
     void load();
   }, [refreshSignal, load]);
 
+  const playbackAllowed = live?.kind === "isolated-frame" && live.frame?.offscreen === "authorized-playback";
+  const playingOffscreen = keepPlaying && playbackAllowed && !inView;
+  const active = inView || (keepPlaying && playbackAllowed);
+
   useEffect(() => {
     /*
      * Offscreen means no subscription. The cleanup below releases the lease and clears the timer, so leaving the
      * viewport suspends the surface the same way unmounting it does — and returning re-claims with the *same* owner
      * token, which is the same owner rather than a second one.
      */
-    if (!inView) {
+    if (!active) {
       // The cleanup below released the lease, so the surface must stop saying it holds the live view. Saying
       // "owner" while holding nothing is the exact claim this component exists to avoid making.
       setOwnership("claiming");
@@ -383,10 +393,10 @@ export function PinnedLiveSurface({
       // Best effort: the lease is what makes a failed release recoverable.
       void client.releaseLiveOwner(conversationId, instanceId, ownerToken.current).catch(() => undefined);
     };
-  }, [client, conversationId, instanceId, inView, load]);
+  }, [client, conversationId, instanceId, active, load]);
 
   const watchesServices =
-    inView && live?.kind === "isolated-frame" && live.bindings.some((entry) => entry.available !== undefined);
+    active && live?.kind === "isolated-frame" && live.bindings.some((entry) => entry.available !== undefined);
   useEffect(() => {
     if (!watchesServices) return;
     const timer = setInterval(() => void load(), SERVICE_AVAILABILITY_MS);
@@ -550,7 +560,7 @@ export function PinnedLiveSurface({
    * Offscreen means unmounted. Not polling while still rendering the surface would leave the heavy part on screen
    * doing nothing — and the point of both items is that a surface nobody is looking at costs nothing.
    */
-  if (live === undefined || !inView) {
+  if (live === undefined || !active) {
     return (
       <div
         ref={panel}
@@ -601,6 +611,56 @@ export function PinnedLiveSurface({
         aria-label={displayMode === "expanded" ? t("shell.live.expandedAria").replace("{title}", title ?? instanceId) : undefined}
       >
         {head}
+        {playbackAllowed && frame !== null && (
+          <button
+            type="button"
+            className="cc-icon-btn"
+            style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+            data-keep-playing={keepPlaying ? "true" : "false"}
+            aria-pressed={keepPlaying}
+            aria-label={t("shell.live.keepPlayingAria")}
+            onClick={() => setKeepPlaying((value) => !value)}
+          >
+            {t("shell.live.keepPlaying")}
+          </button>
+        )}
+        {/*
+          Host chrome, pinned to the viewport, while the frame runs out of view: what is still running and the way to
+          stop it. The frame cannot draw or remove this.
+        */}
+        {playingOffscreen && (
+          <div
+            className="cc-freshness"
+            role="status"
+            data-offscreen-playing={instanceId}
+            style={{
+              position: "fixed",
+              insetInlineEnd: "var(--cc-space-md)",
+              insetBlockEnd: "var(--cc-space-md)",
+              zIndex: 20,
+              display: "flex",
+              gap: "var(--cc-space-sm)",
+              alignItems: "center",
+              margin: 0,
+              padding: "var(--cc-space-xs) var(--cc-space-sm)",
+              background: "var(--cc-canvas)",
+              border: "1px solid var(--cc-border)",
+              borderRadius: "var(--cc-radius-card)",
+            }}
+          >
+            <span>{t("shell.live.playingOffscreen").replace("{title}", title ?? instanceId)}</span>
+            <button
+              type="button"
+              className="cc-icon-btn"
+              style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+              data-stop-offscreen-playing={instanceId}
+              aria-label={t("shell.live.stopPlayingAria").replace("{title}", title ?? instanceId)}
+              onClick={() => setKeepPlaying(false)}
+            >
+              {t("shell.live.stopPlaying")}
+            </button>
+          </div>
+        )}
         {live.stateStatus.kind !== "writable" && (
           <p className="cc-freshness" data-live-notice="true" data-state-status={live.stateStatus.kind} role="status">
             {frameStateNotice(live.stateStatus, t)}

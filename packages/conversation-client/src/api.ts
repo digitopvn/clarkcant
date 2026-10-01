@@ -132,6 +132,11 @@ export interface IsolatedFrameLiveResponse {
     /** Granted capabilities held back because they cannot run yet, each with the reason the node gave. */
     unavailableCapabilities?: readonly { ref: string; code: string; message: string }[];
     allowedOrigins: readonly string[];
+    /**
+     * What the frame does out of view under its package's granted profile. `authorized-playback` lets the person keep
+     * it running offscreen from host chrome; absent or `suspend`, it unmounts when scrolled away.
+     */
+    offscreen?: "suspend" | "authorized-playback";
   } | null;
   /** Present when `frame` is null: the widget's own text alternative, from its definition. */
   textFallback?: string;
@@ -506,7 +511,36 @@ export interface InstalledPackageView {
   lock?: { ref: string; digest: string; coverage: string };
   /** The version a rollback would make active again; absent when no other version was ever active here. */
   previousVersion?: string;
+  /**
+   * The resource profile the package asked for and what this node decided. Absent when the node could not read the
+   * package's manifest, which is not the same as the light profile.
+   */
+  resources?: PackageResourcesView;
 }
+
+/** The node's resource decision for one package: the bounds its code runs in, or why it does not run. */
+export type PackageResourcesView =
+  | {
+      requested: ResourceProfileName;
+      status: "granted";
+      profile: ResourceProfileName;
+      bounds: {
+        memoryMib: number;
+        cpus: number;
+        pids: number;
+        tmpfsMib: number;
+        callDeadlineMs: number;
+        jobDeadlineMs: number;
+        maxActiveJobs: number;
+      };
+      summary: string;
+      offscreen: "suspend" | "authorized-playback";
+      /** Facts the node states beside the grant, such as limits its container engine does not enforce. */
+      notes: string[];
+    }
+  | { requested: ResourceProfileName; status: "degraded"; reason: string };
+
+export type ResourceProfileName = "interactive-light" | "interactive-heavy" | "media-workstation" | "background-compute";
 
 /** A package that was uninstalled here and can be restored without fetching anything. */
 export interface RestorablePackageView {

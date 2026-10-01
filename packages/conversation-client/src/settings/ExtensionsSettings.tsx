@@ -6,6 +6,8 @@ import type {
   GatewayClient,
   InstalledPackageView,
   PackageChangeResponse,
+  PackageResourcesView,
+  ResourceProfileName,
   PendingCapabilityApprovalView,
   RestorablePackageView,
 } from "../api.ts";
@@ -260,6 +262,60 @@ function CapabilityApprovalsSection({ client, revision }: { client: GatewayClien
   );
 }
 
+/** Whole MiB as a person reads them: GiB from 1024 up. */
+function formatMib(mib: number): string {
+  return mib >= 1024 ? `${String(mib / 1024)} GiB` : `${String(mib)} MiB`;
+}
+
+/** A deadline in the largest whole unit that says it: seconds, minutes or hours. */
+function formatDuration(ms: number): string {
+  if (ms >= 3_600_000 && ms % 3_600_000 === 0) return `${String(ms / 3_600_000)} h`;
+  if (ms >= 60_000 && ms % 60_000 === 0) return `${String(ms / 60_000)} min`;
+  return `${String(Math.round(ms / 1000))} s`;
+}
+
+/**
+ * The resource profile a package asked for and what the node decided: the bounds its code runs in, or, when the
+ * profile was not granted, the node's reason. A refused profile is never shown as a smaller one that "still works".
+ */
+export function PackageResources({ resources }: { resources: PackageResourcesView }): ReactElement {
+  const t = useT();
+  const label = (name: ResourceProfileName): string => t(`settings.extensions.resources.profile.${name}`);
+  if (resources.status === "degraded") {
+    return (
+      <dd data-installed-resources="degraded" data-resource-profile={resources.requested}>
+        {t("settings.extensions.resources.degraded")
+          .replace("{profile}", label(resources.requested))
+          .replace("{reason}", resources.reason)}
+      </dd>
+    );
+  }
+  const { bounds } = resources;
+  return (
+    <dd data-installed-resources="granted" data-resource-profile={resources.profile}>
+      <span style={{ display: "block" }}>{t("settings.extensions.resources.granted").replace("{profile}", label(resources.profile))}</span>
+      <span style={{ display: "block" }} data-resource-bounds="true">
+        {t("settings.extensions.resources.bounds")
+          .replace("{memory}", formatMib(bounds.memoryMib))
+          .replace("{cpus}", String(bounds.cpus))
+          .replace("{pids}", String(bounds.pids))
+          .replace("{scratch}", formatMib(bounds.tmpfsMib))
+          .replace("{call}", formatDuration(bounds.callDeadlineMs))
+          .replace("{job}", formatDuration(bounds.jobDeadlineMs))
+          .replace("{jobs}", String(bounds.maxActiveJobs))}
+      </span>
+      {resources.offscreen === "authorized-playback" && (
+        <span style={{ display: "block" }}>{t("settings.extensions.resources.playback")}</span>
+      )}
+      {resources.notes.map((note) => (
+        <span key={note} style={{ display: "block" }} data-resource-note="true">
+          {note}
+        </span>
+      ))}
+    </dd>
+  );
+}
+
 /**
  * What is installed, and where each package came from.
  *
@@ -389,6 +445,12 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
                 </dd>
                 <dt>{t("settings.extensions.installed.installedAt")}</dt>
                 <dd>{entry.activatedAt}</dd>
+                {entry.resources !== undefined && (
+                  <>
+                    <dt>{t("settings.extensions.installed.resources")}</dt>
+                    <PackageResources resources={entry.resources} />
+                  </>
+                )}
               </dl>
               <div className="cc-package-actions">
                 <button

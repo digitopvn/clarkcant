@@ -26,6 +26,11 @@ export const MESSAGES_SHELL_VI = {
 
   "shell.live.detachAria": "Mở widget này trong một cửa sổ riêng",
   "shell.live.detachLabel": "Cửa sổ riêng",
+  "shell.live.keepPlaying": "Tiếp tục phát khi cuộn đi",
+  "shell.live.keepPlayingAria": "Để widget này tiếp tục chạy khi nó ra khỏi màn hình",
+  "shell.live.playingOffscreen": "{title} vẫn đang chạy ngoài màn hình.",
+  "shell.live.stopPlaying": "Dừng",
+  "shell.live.stopPlayingAria": "Dừng {title} đang chạy ngoài màn hình",
   "shell.live.closeAria": "Đóng bản hiện tại (Escape)",
   "shell.live.closeLabel": "Đóng (Esc)",
   "shell.live.expandedAria": "Bản hiện tại: {title}",
@@ -229,6 +234,11 @@ export const MESSAGES_SHELL_EN = {
 
   "shell.live.detachAria": "Open this widget in its own window",
   "shell.live.detachLabel": "Own window",
+  "shell.live.keepPlaying": "Keep playing when scrolled away",
+  "shell.live.keepPlayingAria": "Let this widget keep running when it is out of view",
+  "shell.live.playingOffscreen": "{title} is still running out of view.",
+  "shell.live.stopPlaying": "Stop",
+  "shell.live.stopPlayingAria": "Stop {title}, which is running out of view",
   "shell.live.closeAria": "Close this view (Escape)",
   "shell.live.closeLabel": "Close (Esc)",
   "shell.live.expandedAria": "Live view: {title}",
