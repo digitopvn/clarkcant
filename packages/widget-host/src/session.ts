@@ -1,12 +1,15 @@
 import { appearanceSnapshotSchema, type AppearanceSnapshot, type SemanticProposal } from "@clarkcant/contracts";
 import {
   ARTIFACTS_EXTENSION,
+  JOBS_EXTENSION,
   APPEARANCE_EXTENSION,
   BRIDGE_PROTOCOL,
   BRIDGE_VERSION,
   acceptBridgeMessage,
   type ArtifactRef as WireArtifactRef,
   type ArtifactRequest,
+  type JobRequest,
+  type JobSnapshot,
   type HostToWidgetMessage,
   type WidgetToHostMessage,
 } from "@clarkcant/widget-sdk";
@@ -47,6 +50,8 @@ export type FrameRefusal =
   | "EXTENSION_NOT_OFFERED"
   | "ARTIFACT_BUSY"
   | "ARTIFACT_RATE_LIMITED"
+  | "JOB_BUSY"
+  | "JOB_RATE_LIMITED"
   | "DISPOSED";
 
 /**
@@ -61,6 +66,11 @@ export type FrameArtifactOutcome =
 
 /** The host's side of `artifacts@1`: one call per request, each re-checked by the node against this frame's grant. */
 export type FrameArtifactBroker = (request: ArtifactRequest) => Promise<FrameArtifactOutcome>;
+
+export type FrameJobOutcome =
+  | { status: "ok"; job: JobSnapshot }
+  | { status: "refused"; code: string; message: string };
+export type FrameJobBroker = (request: JobRequest) => Promise<FrameJobOutcome>;
 
 export type FrameAcceptance =
   | { ok: true; kind: WidgetToHostMessage["kind"]; detail?: string }
@@ -165,6 +175,8 @@ export interface FrameSessionInput {
    * widget is never left waiting.
    */
   artifacts?: FrameArtifactBroker;
+  /** The versioned `jobs@1` bridge. Every request is checked again by the trusted node route. */
+  jobs?: FrameJobBroker;
   /** Overridable so a test can drive the budget without sending thousands of messages. */
   maxMessageBytes?: number;
   maxMessages?: number;
@@ -182,6 +194,7 @@ export interface FrameSessionInput {
   artifactRefillPerSecond?: number;
   /** Artifact requests a frame may have unanswered at once. */
   maxArtifactInFlight?: number;
+  maxJobInFlight?: number;
   /** Refusals kept for `refused()`, newest last. Older ones are dropped, so a frame that keeps failing cannot grow it. */
   maxRecordedRefusals?: number;
   /**
@@ -253,6 +266,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
     return true;
   };
   const artifactsInFlight = new Set<string>();
+  const jobsInFlight = new Set<string>();
   const transcript: { kind: string; detail: string }[] = [];
   /** Record what the frame said, dropping the oldest entries past the bound. */
   const record = (entry: { kind: string; detail: string }): void => {
@@ -283,6 +297,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   let appearanceRevision = "";
   const initExtensions = [
     ...(input.artifacts === undefined ? [] : [ARTIFACTS_EXTENSION]),
+    ...(input.jobs === undefined ? [] : [JOBS_EXTENSION]),
     ...(appearance === undefined ? [] : [APPEARANCE_EXTENSION]),
   ];
   const postActions = (): void => {
@@ -346,6 +361,22 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
     } else {
       input.post({ ...base, ...(outcome.message === undefined || outcome.message === "" ? {} : { message: outcome.message.slice(0, 600) }) });
     }
+  };
+
+  const postJobResult = (requestId: string, outcome: FrameJobOutcome): void => {
+    if (status === "disposed") return;
+    if (outcome.status === "ok") {
+      input.post({ kind: "job-result", nonce: input.nonce, requestId, status: "ok", job: outcome.job });
+      return;
+    }
+    input.post({
+      kind: "job-result",
+      nonce: input.nonce,
+      requestId,
+      status: "refused",
+      code: (outcome.code || "JOB_REFUSED").slice(0, 60),
+      message: (outcome.message || "job request refused").slice(0, 600),
+    });
   };
 
   const init = (): Extract<HostToWidgetMessage, { kind: "init" }> => {
@@ -557,6 +588,29 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
           })
           .finally(() => artifactsInFlight.delete(requestId));
         return { ok: true, kind: "artifact.request", detail };
+      }
+
+      case "job.request": {
+        if (input.jobs === undefined) {
+          postJobResult(message.requestId, { status: "refused", code: "EXTENSION_NOT_OFFERED", message: `the host did not offer ${JOBS_EXTENSION}` });
+          return refuseAnswered("EXTENSION_NOT_OFFERED", `the host did not offer ${JOBS_EXTENSION}`);
+        }
+        const maxJobInFlight = input.maxJobInFlight ?? 4;
+        if (jobsInFlight.size >= maxJobInFlight) {
+          postJobResult(message.requestId, { status: "refused", code: "JOB_BUSY", message: "too many job requests are waiting for this frame" });
+          return refuseAnswered("JOB_BUSY", "too many job requests are waiting for this frame");
+        }
+        if (jobsInFlight.has(message.requestId)) return refuse("JOB_RATE_LIMITED", "this job request id is already in flight");
+        jobsInFlight.add(message.requestId);
+        void input.jobs(message.request).then((outcome) => postJobResult(message.requestId, outcome)).catch(() => {
+          postJobResult(message.requestId, {
+            status: "refused",
+            code: "JOB_UNAVAILABLE",
+            message: "the job request could not be completed; its saved state is still available",
+          });
+        }).finally(() => jobsInFlight.delete(message.requestId));
+        record({ kind: "job.request", detail: message.request.op });
+        return { ok: true, kind: "job.request", detail: message.request.op };
       }
 
       case "semantic.publish":

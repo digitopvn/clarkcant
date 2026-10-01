@@ -59,6 +59,7 @@ import {
   type Suggestion,
   type VoiceCapabilities,
 } from "@clarkcant/contracts";
+import { jobSnapshotWireSchema, type JobSnapshot } from "@clarkcant/widget-sdk";
 
 import {
   type StartVoiceSessionOptions,
@@ -1723,6 +1724,21 @@ export class GatewayClient {
 
   #artifactPath(conversationId: string, instanceId: string, rest = ""): string {
     return `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/artifacts${rest}`;
+  }
+
+  #jobPath(conversationId: string, instanceId: string, jobId: string): string {
+    return `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/jobs/${encodeURIComponent(jobId)}`;
+  }
+
+  async getWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<JobSnapshot> {
+    const body = await this.#call<{ job?: unknown }>("GET", this.#jobPath(conversationId, instanceId, jobId));
+    const parsed = jobSnapshotWireSchema.safeParse(body.job);
+    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job snapshot");
+    return parsed.data;
+  }
+
+  async cancelWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<void> {
+    await this.#call("POST", this.#jobPath(conversationId, instanceId, jobId), {});
   }
 
   #artifactRef(body: { artifactRef?: unknown }): ArtifactRef {

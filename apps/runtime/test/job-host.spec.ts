@@ -1,0 +1,98 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { closeDatabase, insertJob, migrate, openDatabase, type Database } from "@clarkcant/storage";
+import { createWorkSupervisor } from "../src/work-supervisor.ts";
+import { createPackageJobHost } from "../src/job-host.ts";
+
+let db: Database;
+beforeEach(() => {
+  db = openDatabase({ path: ":memory:" });
+  migrate(db);
+});
+afterEach(() => closeDatabase(db));
+
+const job = (jobId: string) => ({
+  jobId: jobId as never,
+  nodeId: "node_1" as never,
+  ownerPrincipalId: "prin_1" as never,
+  conversationId: "conv_1" as never,
+  instanceId: "winst_1",
+  actionBindingId: "binding_1",
+  packageId: "pkg_1" as never,
+  packageGeneration: "generation_1",
+  capabilityRef: "example.export@1" as never,
+  effectCategory: "local-write" as const,
+});
+
+async function flush(): Promise<void> {
+  for (let index = 0; index < 10; index += 1) await Promise.resolve();
+}
+
+describe("durable package job host", () => {
+  it("lists jobs in the supervisor, enforces active capacity, and routes Stop to the service signal", async () => {
+    const supervisor = createWorkSupervisor();
+    const host = createPackageJobHost({ db, nodeId: "node_1", nodeBootId: "boot_1", newId: () => "job_unused", supervisor, maxActiveJobs: 1 });
+    let signal: AbortSignal | undefined;
+    let settled = 0;
+    const started = host.start({
+      job: job("job_active"),
+      run: (nextSignal) => new Promise((_resolve, reject) => {
+        signal = nextSignal;
+        nextSignal.addEventListener("abort", () => reject(nextSignal.reason), { once: true });
+      }),
+      onSettled: () => { settled += 1; },
+    });
+
+    expect(started.status).toBe("running");
+    await flush();
+    expect(host.canAdmit()).toBe(false);
+    expect(supervisor.list()).toContainEqual(expect.objectContaining({ workId: "job_active", kind: "job", state: "running" }));
+    expect(() => host.start({ job: job("job_second"), run: async () => ({ content: "must not run" }) })).toThrow(/limit/);
+
+    expect(supervisor.cancel("job_active")).toBe("stopped");
+    await flush();
+    expect(signal?.aborted).toBe(true);
+    expect(host.get("job_active", { ownerPrincipalId: "prin_1", instanceId: "winst_1", actionBindingId: "binding_1", packageGeneration: "generation_1" })?.status).toBe("cancelled");
+    expect(settled).toBe(1);
+    expect(supervisor.list()).toEqual([]);
+    expect(settled).toBe(1);
+  });
+
+  it("reports a restart interruption and never calls the old service again", () => {
+    const supervisor = createWorkSupervisor();
+    const reports: string[] = [];
+    const host = createPackageJobHost({
+      db, nodeId: "node_1", nodeBootId: "boot_2", newId: () => "job_unused", supervisor,
+      report: (_conversationId, text) => reports.push(text),
+    });
+    insertJob(db, { ...job("job_crashed"), status: "running", resultRefs: [], createdAt: "2026-10-01T10:00:00.000Z", startedAt: "2026-10-01T10:00:00.000Z", nodeBootId: "boot_1" } as never);
+
+    expect(host.recover()).toBe(1);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toContain("may have completed its effect");
+    expect(host.canAdmit()).toBe(true);
+    expect(host.recover()).toBe(0);
+    expect(reports).toHaveLength(1);
+  });
+
+  it("stops a job before dispatch without sending a service request or claiming an uncertain effect", async () => {
+    const supervisor = createWorkSupervisor();
+    const reports: string[] = [];
+    const outcomes: unknown[] = [];
+    const host = createPackageJobHost({
+      db, nodeId: "node_1", nodeBootId: "boot_1", newId: () => "job_unused", supervisor,
+      report: (_conversationId, text) => reports.push(text),
+    });
+    let calls = 0;
+    host.start({
+      job: job("job_not_sent"),
+      run: async () => { calls += 1; return { content: "must not run" }; },
+      onSettled: (outcome) => outcomes.push(outcome),
+    });
+    expect(supervisor.cancelKind("job")).toBe(1);
+    await flush();
+    expect(calls).toBe(0);
+    expect(outcomes).toMatchObject([{ status: "cancelled", sent: false }]);
+    expect(reports[0]).toContain("Nothing ran");
+  });
+});

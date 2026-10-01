@@ -6,6 +6,7 @@ import { withholdFromChildren } from "../child-env.ts";
 import { answerUncertain } from "../delegation-handlers.ts";
 import { machineBootId } from "../process-tree.ts";
 import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
+import { createPackageJobHost, type PackageJobHost } from "../job-host.ts";
 import { listRunningCommands, setCommandJournal, stopCommand } from "../run-command.ts";
 import type { NodeServices } from "../services.ts";
 import { createWorkJournal, type NodeWorkJournal } from "../work-journal.ts";
@@ -30,6 +31,7 @@ import {
 export interface NodeWork {
   supervisor: WorkSupervisor;
   journal: NodeWorkJournal;
+  packageJobs: PackageJobHost;
   /** Register the task dispatcher once it exists. */
   addSource(source: WorkSource): void;
   /** Report and settle what an earlier process left open. Run once, after `wireRuntime`. */
@@ -84,6 +86,22 @@ export function attachNodeWork(input: {
         ),
     }),
   );
+  const packageJobs = createPackageJobHost({
+    db: runtime.db,
+    nodeId,
+    nodeBootId: journal.nodeBootId,
+    newId: services.conductor.newId,
+    supervisor,
+    artifactBroker: {
+      db: runtime.db,
+      dataDir: runtime.dataDir,
+      nodeId,
+      newId: services.conductor.newId,
+      now: () => new Date(),
+    },
+    report: (conversationId, text) => appendHostReply(services, { conversationId, text, at: nowInstant() }),
+  });
+  services.packageJobs = packageJobs;
 
   supervisor.addSource({
     kind: "command",
@@ -124,9 +142,11 @@ export function attachNodeWork(input: {
   return {
     supervisor,
     journal,
+    packageJobs,
     addSource: (source) => void supervisor.addSource(source),
-    recover: () =>
-      recoverUnfinishedWork({
+    recover: () => {
+      packageJobs.recover();
+      return recoverUnfinishedWork({
         db: runtime.db,
         nodeId,
         nodeBootId: journal.nodeBootId,
@@ -146,6 +166,7 @@ export function attachNodeWork(input: {
         },
         // A task a peer handed over is answered too, or that peer's own task would wait for an answer that never comes.
         onUncertain: answerUncertain(services, () => nowInstant()),
-      }),
+      });
+    },
   };
 }

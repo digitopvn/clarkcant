@@ -14,6 +14,7 @@ import type { SemanticProposal } from "@clarkcant/contracts";
 import {
   createFrameSession,
   type FrameArtifactBroker,
+  type FrameJobBroker,
   type FrameActionAvailability,
   type FrameActionOutcome,
   type FrameSession,
@@ -103,6 +104,7 @@ export interface WidgetFrameProps {
    * answered with a refusal. Read through the latest props, like every other callback, so it may change without a remount.
    */
   artifacts?: FrameArtifactBroker | undefined;
+  jobs?: FrameJobBroker | undefined;
 }
 
 /**
@@ -309,6 +311,13 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
             artifacts: (request) =>
               latest.current.artifacts?.(request) ??
               Promise.resolve({ status: "refused" as const, code: "ARTIFACT_UNAVAILABLE", message: "the host stopped answering file requests" }),
+          }),
+      ...(latest.current.jobs === undefined
+        ? {}
+        : {
+            jobs: (request) =>
+              latest.current.jobs?.(request) ??
+              Promise.resolve({ status: "refused" as const, code: "JOB_UNAVAILABLE", message: "the host stopped answering job requests" }),
           }),
       // The frame is reached only this way: an opaque origin has no address to call, so `postMessage` is the whole
       // transport and `"*"` is correct — the session checks the window the message came from, not the target.

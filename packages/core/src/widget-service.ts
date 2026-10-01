@@ -1861,6 +1861,20 @@ export function forgetStartedInvokeAction(deps: WidgetDeps, invocationId: string
     .run(invocationId);
 }
 
+/** Attach the accepted job to the original approval outcome without allowing an invocation to run twice. */
+export function settleApprovedInvokeJob(
+  deps: WidgetDeps,
+  input: { invocationId: string; instanceId: string; actionBindingId: string; approvalId: string; jobId: string },
+): void {
+  deps.db.prepare(`UPDATE action_invocations
+    SET outcome = json_set(outcome, '$.result', json(?)), recorded_at = ?
+    WHERE invocation_id = ? AND instance_id = ? AND action_binding_id = ?
+      AND json_extract(outcome, '$.result.kind') = 'approval-required'
+      AND json_extract(outcome, '$.result.approvalId') = ?`)
+    .run(toJson({ kind: "done", output: input.jobId }), deps.now(), input.invocationId,
+      input.instanceId, input.actionBindingId, input.approvalId);
+}
+
 function readDisplayMode(input: Record<string, unknown>): "compact" | "expanded" {
   return input.displayMode === "expanded" ? "expanded" : "compact";
 }

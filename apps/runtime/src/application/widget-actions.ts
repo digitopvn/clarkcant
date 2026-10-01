@@ -175,6 +175,7 @@ function statusOf(code: string): number {
     case "WORKFLOW_STOPPED":
       return 409;
     case "RATE_LIMITED":
+    case "JOB_LIMIT_REACHED":
       return 429;
     case "SERVICE_TOOL_FAILED":
       return 502;
@@ -182,6 +183,7 @@ function statusOf(code: string): number {
     case "CAPABILITY_NOT_READY":
     case "BACKGROUND_UNAVAILABLE":
     case "LEDGER_UNAVAILABLE":
+    case "JOB_HOST_UNAVAILABLE":
       return 503;
     case "SERVICE_TIMED_OUT":
     case "SERVICE_UNREACHABLE":
@@ -206,7 +208,7 @@ function gateRefusal(checked: Extract<BoundActionCheck, { ok: false }>): WidgetA
   };
 }
 
-type WidgetActionServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "turnControl">;
+type WidgetActionServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "turnControl" | "packageJobs">;
 
 type Admitted = Extract<BoundActionCheck, { ok: true }>;
 
@@ -284,6 +286,29 @@ async function callInLedger(
           effectCategory,
         });
       },
+      ...(call.request.jobOrigin === undefined ? {} : { jobOrigin: call.request.jobOrigin }),
+      onJobSettled: (jobOutcome) => {
+        if (ledger.opened === undefined) return;
+        if (jobOutcome.sent === false) {
+          settleActionEffect(services, ledger.opened, {
+            kind: "not-sent",
+            reason: "the package job ended before the service request was sent",
+          });
+          return;
+        }
+        if (jobOutcome.status === "completed") {
+          settleActionEffect(services, ledger.opened, {
+            kind: "answered",
+            evidence: `the package job completed: ${call.request.ref}`,
+          });
+          return;
+        }
+        settleActionEffect(services, ledger.opened, {
+          kind: "no-answer",
+          stopped: jobOutcome.status === "cancelled",
+          reason: `the package job ${jobOutcome.status}; its effect may have happened before the service stopped answering`,
+        });
+      },
     });
   } catch (cause) {
     // Thrown on this node before the call was sent: a service's failure is an answer, not a throw.
@@ -298,6 +323,7 @@ async function callInLedger(
     settleActionEffect(services, opened, { kind: "answered", evidence: `the service answered: ${outcome.output.slice(0, 200)}` });
     return { outcome, recorded: false };
   }
+  if (outcome.kind === "job") return { outcome, recorded: false };
   if (outcome.kind !== "refused") return { outcome, recorded: false };
   if (!outcome.sent) {
     settleActionEffect(services, opened, { kind: "not-sent", reason: outcome.message });
@@ -489,6 +515,7 @@ async function invokeCapabilityAction(
         source,
         conversationId: request.conversationId,
         bindingGeneration: checked.binding.packageGeneration,
+        jobOrigin: { instanceId: request.instanceId, actionBindingId: request.actionBindingId },
         ...(limits.deadlineMs === undefined ? {} : { timeoutMs: limits.deadlineMs }),
         signal: admitted.controller.signal,
       },
@@ -545,6 +572,17 @@ async function invokeCapabilityAction(
       body: actionBody(services, checked, request.conversationId, false, {
         outcome: "approval-required",
         approvalRequired: { approvalId: outcome.approval.approvalId },
+      }),
+    };
+  }
+  if (outcome.kind === "job") {
+    settle(services, checked, request, { kind: "done", output: outcome.job.jobId });
+    return {
+      ok: true,
+      status: 202,
+      body: actionBody(services, checked, request.conversationId, false, {
+        outcome: "job",
+        output: outcome.job.jobId,
       }),
     };
   }

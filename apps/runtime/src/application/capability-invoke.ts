@@ -6,6 +6,7 @@ import {
   type Instant,
   MAX_PATTERN_INPUT_LENGTH,
   type MessageBlock,
+  type JobRecord,
   nowInstant,
   overlongPatternInput,
   unsafeSchemaPattern,
@@ -23,6 +24,7 @@ import { z } from "zod";
 
 import { ServiceCallError, type ServiceHost } from "../service-host.ts";
 import type { NodeServices } from "../services.ts";
+import type { PackageJobHost, JobRunOutcome } from "../job-host.ts";
 
 /**
  * Calling a package's service capability, whoever asked.
@@ -62,10 +64,13 @@ export type CapabilityInvokeRefusal =
   | "SERVICE_UNREACHABLE"
   | "SERVICE_TIMED_OUT"
   | "SERVICE_CANCELLED"
-  | "LEDGER_UNAVAILABLE";
+  | "LEDGER_UNAVAILABLE"
+  | "JOB_HOST_UNAVAILABLE"
+  | "JOB_LIMIT_REACHED";
 
 export type CapabilityInvokeOutcome =
   | { kind: "done"; ref: CapabilityRef; effectCategory: EffectCategory; output: string; description: string }
+  | { kind: "job"; ref: CapabilityRef; effectCategory: EffectCategory; job: JobRecord; description: string }
   | {
       kind: "approval-required";
       approval: ApprovalRecord;
@@ -93,11 +98,12 @@ export interface CapabilityInvokeDeps {
   newId: (prefix: string) => string;
   now?: () => Instant;
   serviceHost: ServiceHost | undefined;
+  packageJobs?: PackageJobHost;
 }
 
 /** The node's own answer to every field, read at the call so a service started a moment ago is the one reached. */
 export function capabilityInvokeDeps(
-  services: Pick<NodeServices, "runtime" | "conductor" | "serviceHost">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "serviceHost" | "packageJobs">,
 ): CapabilityInvokeDeps {
   return {
     db: services.runtime.db,
@@ -105,6 +111,7 @@ export function capabilityInvokeDeps(
     principalId: services.runtime.identity.ownerPrincipalId,
     newId: services.conductor.newId,
     serviceHost: services.serviceHost,
+    ...(services.packageJobs === undefined ? {} : { packageJobs: services.packageJobs }),
   };
 }
 
@@ -139,6 +146,9 @@ export interface CapabilityInvokeRequest {
    * `LEDGER_UNAVAILABLE` with nothing sent.
    */
   beforeSend?: (call: { effectCategory: EffectCategory; description: string }) => void;
+  /** Jobs are only started by a host-validated widget binding with a durable origin tuple. */
+  jobOrigin?: { instanceId: string; actionBindingId: string };
+  onJobSettled?: (outcome: JobRunOutcome) => void;
 }
 
 /** What an approval is also bound to besides the call: the code that would run it, and the effect it was shown as. */
@@ -246,6 +256,15 @@ export async function invokeCapability(
     return refused(404, "CAPABILITY_MISSING", `capability ${request.ref} is not registered on this node yet`);
   }
   const { readiness } = descriptor;
+  const execution = host.execution?.(ref);
+  if (execution?.kind === "job") {
+    if (deps.packageJobs === undefined || request.jobOrigin === undefined || request.bindingGeneration === undefined) {
+      return refused(503, "JOB_HOST_UNAVAILABLE", "this long-running capability needs its originating widget binding and node job host");
+    }
+    if (!deps.packageJobs.canAdmit()) {
+      return refused(429, "JOB_LIMIT_REACHED", "the node is at its active package job limit; this job was not sent");
+    }
+  }
   if (!readiness.authenticated) {
     return refused(409, "CAPABILITY_NOT_AUTHENTICATED", `capability ${request.ref} needs its connection signed in`);
   }
@@ -363,6 +382,34 @@ export async function invokeCapability(
   );
 
   try {
+    if (execution?.kind === "job") {
+      const origin = request.jobOrigin;
+      const packageJobs = deps.packageJobs;
+      if (origin === undefined || packageJobs === undefined) {
+        return refused(503, "JOB_HOST_UNAVAILABLE", "the node could not start this package job; nothing was sent");
+      }
+      const job = packageJobs.start({
+        job: {
+          jobId: deps.newId("job") as JobRecord["jobId"],
+          nodeId: deps.nodeId,
+          ownerPrincipalId: deps.principalId as JobRecord["ownerPrincipalId"],
+          ...(request.conversationId === undefined ? {} : { conversationId: request.conversationId as JobRecord["conversationId"] }),
+          instanceId: origin.instanceId,
+          actionBindingId: origin.actionBindingId,
+          packageId: served.packageId as JobRecord["packageId"],
+          packageGeneration: served.generationId,
+          capabilityRef: ref,
+          effectCategory: descriptor.effectCategory,
+        },
+        run: (signal, onProgress) => host.call(ref, request.args, {
+          ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+          signal,
+          onProgress,
+        }),
+        ...(request.onJobSettled === undefined ? {} : { onSettled: request.onJobSettled }),
+      });
+      return { kind: "job", ref, effectCategory: descriptor.effectCategory, job, description };
+    }
     const result = await host.call(ref, request.args, {
       ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
       ...(request.signal === undefined ? {} : { signal: request.signal }),

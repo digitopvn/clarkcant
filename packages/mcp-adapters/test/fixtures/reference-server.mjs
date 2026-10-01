@@ -107,6 +107,23 @@ function handle(request) {
       return;
     }
     if (name === "write_note") {
+      if (MODE === "files") {
+        send({ jsonrpc: "2.0", id, result: { content: [
+          { type: "text", text: "result ready" },
+          { type: "resource", resource: { uri: "file:///private/service/output.txt", mimeType: "text/plain", text: "real service bytes" } },
+          { type: "resource", resource: { uri: "file:///private/service/blob.txt", mimeType: "text/plain", blob: Buffer.from("binary resource").toString("base64") } },
+          { type: "image", mimeType: "image/png", data: "invalid base64!" },
+          { type: "resource_link", uri: "file:///private/service/link.txt", name: "link.txt" },
+        ] } });
+        return;
+      }
+      if (MODE === "progress") {
+        const token = params?._meta?.progressToken;
+        send({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token + 1, progress: 99, total: 100, message: "wrong request" } });
+        send({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: 2, total: 3, message: "working" } });
+        send({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: 1, total: 3, message: "stale" } });
+        send({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: 3, total: 3, message: "done" } });
+      }
       if (MODE === "toolerror") {
         send({ jsonrpc: "2.0", id, result: textResult("the note store is read-only today", true) });
         return;

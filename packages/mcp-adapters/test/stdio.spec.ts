@@ -104,11 +104,30 @@ describe("tools come back validated", () => {
 });
 
 describe("calling a tool", () => {
+  it("returns embedded file bytes separately, omits malformed data, and exposes no service paths", async () => {
+    const transport = await connect("files");
+    const result = await transport.callTool("write_note", { text: "x" });
+    expect(result.content).toContain("result ready");
+    expect(result.filesOmitted).toBe(true);
+    expect(result.files?.map((file) => new TextDecoder().decode(file.bytes))).toEqual(["real service bytes", "binary resource"]);
+    expect(JSON.stringify(result)).not.toContain("file:///");
+    expect(JSON.stringify(result)).not.toContain("/private/");
+  });
   it("returns the text the server produced", async () => {
     const transport = await connect();
     await expect(transport.callTool("echo", { text: "hello" })).resolves.toEqual({
       content: "hello",
     });
+  });
+
+  it("delivers only matching, monotonic and bounded progress notifications", async () => {
+    const transport = await connect("progress");
+    const reports: { current: number; total?: number; message?: string }[] = [];
+    await transport.callTool("write_note", { text: "x" }, { onProgress: (progress) => reports.push(progress) });
+    expect(reports).toEqual([
+      { current: 2, total: 3, message: "working" },
+      { current: 3, total: 3, message: "done" },
+    ]);
   });
 
   it("surfaces a tool-level failure in the server's own words", async () => {

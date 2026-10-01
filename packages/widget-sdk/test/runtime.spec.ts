@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compileAppearance } from "@clarkcant/design-tokens";
 import { APPEARANCE_EXTENSION, BRIDGE_PROTOCOL, BRIDGE_VERSION } from "../src/index.ts";
@@ -647,5 +647,91 @@ describe("the artifacts@1 extension", () => {
     await flush();
     answer(requests()[2]?.requestId ?? "", { status: "refused", code: "ARTIFACT_NOT_CREATOR", message: "not yours" });
     await expect(refused).rejects.toThrow(/ARTIFACT_NOT_CREATOR/);
+  });
+});
+
+describe("the jobs@1 extension", () => {
+  const jobId = "job_123";
+  const snapshot = (status: "queued" | "running" | "completed" = "running") => ({
+    jobId,
+    status,
+    resultRefs: [],
+    createdAt: "2026-10-01T00:00:00.000Z",
+    ...(status === "completed" ? { endedAt: "2026-10-01T00:00:02.000Z" } : {}),
+  });
+  type Sent = { kind?: string; requestId?: string; request?: { op: string; jobId: string } };
+
+  function ready(extensions: string[] = ["jobs@1"]) {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    bus.deliver(initMessage({ extensions }));
+    const requests = () => (bus.sent as Sent[]).filter((message) => message.kind === "job.request");
+    const answer = (requestId: string, result: Record<string, unknown>) =>
+      bus.deliver({ kind: "job-result", nonce: NONCE, requestId, ...result });
+    return { bus, runtime, requests, answer };
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it("refuses locally when jobs@1 is not offered", async () => {
+    const { runtime, requests } = ready([]);
+    expect(runtime.api().jobs.available()).toBe(false);
+    await expect(runtime.api().jobs.get(jobId)).rejects.toThrow(/jobs@1/);
+    expect(() => runtime.api().jobs.subscribe(jobId, () => undefined)).toThrow(/jobs@1/);
+    expect(requests()).toHaveLength(0);
+  });
+
+  it("re-authorizes get and cancel through separate host requests", async () => {
+    const { runtime, requests, answer } = ready();
+    expect(runtime.api().jobs.available()).toBe(true);
+    const getting = runtime.api().jobs.get(jobId);
+    expect(requests()[0]?.request).toEqual({ op: "get", jobId });
+    answer(requests()[0]?.requestId ?? "", { status: "ok", job: snapshot() });
+    const job = await getting;
+    expect(job).toMatchObject({ jobId, status: "running" });
+    expect(Object.isFrozen(job)).toBe(true);
+
+    const cancelling = runtime.api().jobs.cancel(jobId);
+    expect(requests()[1]?.request).toEqual({ op: "cancel", jobId });
+    answer(requests()[1]?.requestId ?? "", { status: "ok" });
+    await expect(cancelling).resolves.toBeUndefined();
+  });
+
+  it("resumes from a snapshot, serializes polling and stops when terminal", async () => {
+    vi.useFakeTimers();
+    const { bus, runtime, requests, answer } = ready();
+    const seen: string[] = [];
+    const unsubscribe = runtime.api().jobs.subscribe(jobId, (job) => seen.push(job.status));
+    expect(requests()).toHaveLength(1);
+    expect(requests()[0]?.request).toEqual({ op: "get", jobId });
+
+    // A slow host response must not cause overlapping polls.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(requests()).toHaveLength(1);
+    answer(requests()[0]?.requestId ?? "", { status: "ok", job: snapshot("running") });
+    for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    expect(seen).toEqual(["running"]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(requests()).toHaveLength(2);
+    answer(requests()[1]?.requestId ?? "", { status: "ok", job: snapshot("completed") });
+    for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    expect(seen).toEqual(["running", "completed"]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(requests()).toHaveLength(2);
+    unsubscribe();
+    bus.deliver({ kind: "dispose", nonce: NONCE });
+  });
+
+  it("rejects pending calls and clears subscription timers on dispose", async () => {
+    vi.useFakeTimers();
+    const { bus, runtime, requests } = ready();
+    const pending = runtime.api().jobs.get(jobId);
+    const unsubscribe = runtime.api().jobs.subscribe("job_other", () => undefined);
+    expect(requests()).toHaveLength(2);
+    bus.deliver({ kind: "dispose", nonce: NONCE });
+    await expect(pending).rejects.toThrow(/disposed/);
+    unsubscribe();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(requests()).toHaveLength(2);
   });
 });

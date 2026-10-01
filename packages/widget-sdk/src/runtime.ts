@@ -2,14 +2,20 @@ import {
   APPEARANCE_EXTENSION,
   ARTIFACT_BRIDGE_LIMITS,
   ARTIFACTS_EXTENSION,
+  JOBS_EXTENSION,
   BRIDGE_PROTOCOL,
   BRIDGE_VERSION,
   artifactRequestSchema,
+  jobRequestSchema,
+  jobSnapshotWireSchema,
   hostToWidgetSchema,
   widgetToHostSchema,
   type ActionAvailability,
   type ArtifactRef,
   type ArtifactRequest,
+  type JobRef,
+  type JobRequest,
+  type JobSnapshot,
   type HostToWidgetMessage,
   type WidgetAuthorApi,
   type ReadonlyAppearanceSnapshot,
@@ -134,6 +140,9 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
    */
   const writeChains = new Map<string, Promise<unknown>>();
   const knownSizes = new Map<string, number>();
+  const jobWaiters = new Map<string, { resolve: (result: JobResult) => void; reject: (error: Error) => void }>();
+  const jobSubscriptions = new Set<JobSubscription>();
+  let jobRequests = 0;
 
   const send = (message: unknown): void => {
     deps.endpoint.postMessage(message);
@@ -267,6 +276,15 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       }
       artifactWaiters.clear();
       artifactQueue.length = 0;
+      for (const waiter of jobWaiters.values()) {
+        waiter.reject(new Error("widget runtime: the host disposed the frame before the job request answered"));
+      }
+      jobWaiters.clear();
+      for (const subscription of jobSubscriptions) {
+        subscription.closed = true;
+        if (subscription.timer !== undefined) clearTimeout(subscription.timer);
+      }
+      jobSubscriptions.clear();
       appearanceHandlers.clear();
       deps.endpoint.removeEventListener("message", handleMessage);
       return;
@@ -284,6 +302,24 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       artifactWaiters.delete(message.requestId);
       waiter.resolve(message);
       drainArtifactQueue();
+      return;
+    }
+
+    if (message.kind === "job-result") {
+      const waiter = jobWaiters.get(message.requestId);
+      if (waiter === undefined) return;
+      jobWaiters.delete(message.requestId);
+      waiter.resolve(message);
+      return;
+    }
+
+    if (message.kind === "job.changed") {
+      for (const subscription of jobSubscriptions) {
+        if (!subscription.closed && subscription.jobId === message.job.jobId) {
+          subscription.handler(freezeSnapshot(message.job));
+          if (isTerminalJob(message.job.status)) closeJobSubscription(subscription);
+        }
+      }
       return;
     }
 
@@ -328,6 +364,58 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       artifactQueue.push({ request: parsed.data, resolve, reject });
       drainArtifactQueue();
     });
+
+  const jobRequest = async (request: JobRequest): Promise<JobResult> => {
+    requireReady("dùng jobs");
+    if (!extensions.has(JOBS_EXTENSION)) throw new Error(`widget runtime: host không mở ${JOBS_EXTENSION} cho frame này`);
+    const parsed = jobRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new Error(`widget runtime: yêu cầu job không hợp lệ: ${parsed.error.issues[0]?.message ?? "sai dạng"}`);
+    }
+    if (jobWaiters.size >= 4) throw new Error("JOB_BUSY: too many job requests are waiting for this frame");
+    jobRequests += 1;
+    const requestId = `jobreq-${String(jobRequests)}`;
+    return new Promise<JobResult>((resolve, reject) => {
+      jobWaiters.set(requestId, { resolve, reject });
+      send({ kind: "job.request", nonce: speakingNonce(), requestId, request: parsed.data });
+    });
+  };
+
+  const closeJobSubscription = (subscription: JobSubscription): void => {
+    subscription.closed = true;
+    if (subscription.timer !== undefined) clearTimeout(subscription.timer);
+    jobSubscriptions.delete(subscription);
+  };
+
+  const emitJobResult = (result: JobResult): JobSnapshot => {
+    if (result.status !== "ok") throw new Error(`${result.code ?? "JOB_REFUSED"}: ${result.message ?? "host refused the job request"}`);
+    const parsed = jobSnapshotWireSchema.safeParse(result.job);
+    if (!parsed.success) throw new Error("widget runtime: host returned an invalid job snapshot");
+    return freezeSnapshot(parsed.data);
+  };
+
+  const readJob = async (jobId: JobRef): Promise<JobSnapshot> => emitJobResult(await jobRequest({ op: "get", jobId }));
+
+  const pollJobSubscription = async (subscription: JobSubscription): Promise<void> => {
+    if (subscription.closed || subscription.polling) return;
+    subscription.polling = true;
+    try {
+      const job = await readJob(subscription.jobId);
+      if (subscription.closed) return;
+      subscription.handler(job);
+      if (isTerminalJob(job.status)) {
+        closeJobSubscription(subscription);
+        return;
+      }
+    } catch {
+      // Keep the subscription alive through transient refusals; the next bounded read can recover from persisted state.
+    } finally {
+      subscription.polling = false;
+      if (!subscription.closed) {
+        subscription.timer = setTimeout(() => void pollJobSubscription(subscription), 1000);
+      }
+    }
+  };
 
   /** An answer that must be `ok`, with a ref. A refusal becomes an error that names the host's code first. */
   const expectRef = (result: ArtifactResult): ArtifactRef => {
@@ -530,6 +618,25 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         knownSizes.delete(ref.artifactId);
       },
     },
+    jobs: {
+      available: () => extensions.has(JOBS_EXTENSION),
+      get: (ref) => readJob(ref),
+      cancel: async (ref) => {
+        const result = await jobRequest({ op: "cancel", jobId: ref });
+        if (result.status !== "ok") {
+          throw new Error(`${result.code ?? "JOB_REFUSED"}: ${result.message ?? "host refused the job request"}`);
+        }
+      },
+      subscribe: (ref, handler) => {
+        requireReady("đăng ký theo dõi job");
+        if (!extensions.has(JOBS_EXTENSION)) throw new Error(`widget runtime: host không mở ${JOBS_EXTENSION} cho frame này`);
+        if (jobSubscriptions.size >= 4) throw new Error("JOB_BUSY: at most four job subscriptions are allowed per frame");
+        const subscription = { jobId: ref, handler, polling: false, closed: false };
+        jobSubscriptions.add(subscription);
+        void pollJobSubscription(subscription);
+        return () => closeJobSubscription(subscription);
+      },
+    },
     lifecycle: {
       onMount: (handler) => mountHandlers.add(handler),
       onSuspend: (handler) => suspendHandlers.add(handler),
@@ -560,6 +667,18 @@ export function readyMessage(nonce: string): Extract<WidgetToHostMessage, { kind
 }
 
 type ArtifactResult = Extract<HostToWidgetMessage, { kind: "artifact-result" }>;
+type JobResult = Extract<HostToWidgetMessage, { kind: "job-result" }>;
+interface JobSubscription {
+  jobId: JobRef;
+  handler: (job: JobSnapshot) => void;
+  timer?: ReturnType<typeof setTimeout>;
+  polling: boolean;
+  closed: boolean;
+}
+
+function isTerminalJob(status: JobSnapshot["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
 
 function artifactError(result: ArtifactResult): Error {
   const code = result.code ?? (result.status === "cancelled" ? "CANCELLED" : "ARTIFACT_REFUSED");

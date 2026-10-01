@@ -16,7 +16,7 @@
  * redirect names, which is the whole reason `redirect: "error"` is set rather than left to default.
  */
 
-import { type McpToolMetadata, mcpToolMetadataSchema, type McpTransport } from "./index.ts";
+import { type McpToolMetadata, mcpToolMetadataSchema, normalizeMcpToolResult, type McpToolResult, type McpTransport } from "./index.ts";
 import type { ServerHandshake } from "./stdio.ts";
 
 export interface StreamableHttpMcpTransportOptions {
@@ -113,16 +113,14 @@ export class StreamableHttpMcpTransport implements McpTransport {
     return tools;
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<{ content: string }> {
+  async callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult> {
     const result = (await this.#request("tools/call", { name, arguments: args })) as {
-      content?: { type?: string; text?: string }[];
+      content?: unknown[];
       isError?: boolean;
     };
 
-    const text = (result?.content ?? [])
-      .filter((part) => part?.type === "text" && typeof part.text === "string")
-      .map((part) => part.text as string)
-      .join("\n");
+    const normalized = normalizeMcpToolResult(result);
+    const text = normalized.content;
 
     if (result?.isError === true) {
       // A tool that reports failure has still answered. The caller gets the server's own words
@@ -130,7 +128,7 @@ export class StreamableHttpMcpTransport implements McpTransport {
       throw new Error(`mcp tool ${name} reported an error: ${text || "no detail given"}`);
     }
 
-    return { content: text };
+    return normalized;
   }
 
   async close(): Promise<void> {

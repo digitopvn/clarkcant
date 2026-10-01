@@ -41,6 +41,7 @@ import { loadLocalEmbedder } from "./embeddings-local.ts";
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 import type { SkillCatalog } from "./composer-references.ts";
 import type { ServiceHost } from "./service-host.ts";
+import type { PackageJobHost } from "./job-host.ts";
 import { BROWSER_TASK_CAPABILITY, BROWSER_TASK_NOT_ROUTABLE } from "./task-browser.ts";
 import type { TaskDispatcher } from "./task-dispatch.ts";
 import {
@@ -284,6 +285,8 @@ export interface NodeServices {
    * capability is refused as not served by this node.
    */
   serviceHost?: ServiceHost;
+  /** Durable jobs started by versioned long-running package capabilities. */
+  packageJobs?: PackageJobHost;
 }
 
 /**
