@@ -60,7 +60,8 @@ const TEXT = {
     "no-file": "Mở một tệp trước.",
     empty: "Chọn một đoạn văn bản để nhờ Clark viết lại.",
     "too-long": `Clark chỉ đọc được tối đa ${String(EDITOR_LIMITS.excerptChars)} ký tự; hãy chọn đoạn ngắn hơn.`,
-    busy: "Đang chờ việc trước xong.",
+    // The status line already says what the editor is waiting for; a second sentence would only repeat it.
+    busy: "",
   },
 };
 

@@ -1,0 +1,19 @@
+{
+  "name": "@clarkcant/reference-apps",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reference widget apps that use only shipped host contracts: a text editor that opens and saves a real file.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "clarkcant": {
+    "phase": "P6",
+    "status": "implemented",
+    "blueprint": "docs/widget-development.md"
+  },
+  "scripts": {
+    "test": "clark widget test text-editor"
+  },
+  "devDependencies": {
+    "@clarkcant/widget-cli": "workspace:*"
+  }
+}
