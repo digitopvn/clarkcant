@@ -528,7 +528,6 @@ export const YOUTUBE: WidgetDefinition = {
   datasetRefs: [],
 };
 
-/** A video the host holds, served under an opaque reference like an imported image. */
 /** What a local video holds and reports: the coalesced playback state, never a stream of clock ticks. */
 const VIDEO_PLAYBACK_SCHEMA = {
   type: "object",
@@ -540,6 +539,7 @@ const VIDEO_PLAYBACK_SCHEMA = {
   },
 } as const;
 
+/** A video the host holds, served under an opaque reference like an imported image. */
 export const VIDEO: WidgetDefinition = {
   id: "canvas.video@1",
   version: "1.0.0",

@@ -45,4 +45,27 @@ describe("media renderers", () => {
     expect(video).not.toContain("autoplay");
     expect(video).not.toContain("autoPlay");
   });
+
+  it("says beside each media widget why the node refused its last change", () => {
+    const refusal = { message: "This could not be done. Nothing was changed.", viewReset: 1 };
+    for (const [definitionId, props, name] of [
+      ["canvas.carousel@1", PICTURES, "carousel"],
+      ["canvas.gallery@1", PICTURES, "gallery"],
+      ["canvas.video@1", { videoRef: "clip", alt: "A short clip" }, "video"],
+    ] as const) {
+      const drawn = render(definitionId, props, { ...refusal, selectedIndex: 1 });
+      expect(drawn).toContain(`data-media-message="${name}"`);
+      expect(drawn).toMatch(/role="status"[^>]*>This could not be done\. Nothing was changed\.</);
+      // No refusal, no sentence.
+      expect(render(definitionId, props, { selectedIndex: 1 })).not.toContain("data-media-message");
+    }
+    // The carousel draws the picture the node holds next to the refusal, not the one that was refused.
+    expect(render("canvas.carousel@1", PICTURES, { ...refusal, selectedIndex: 1 })).toContain('data-carousel-index="1"');
+  });
+
+  it("names a picture without a description by its place, in the reader's language", () => {
+    const gallery = render("canvas.gallery@1", { imageRefs: ["one", "two"] });
+    expect(gallery).not.toMatch(/aria-label="\d+\/\d+"/);
+    expect(gallery).toMatch(/aria-label="(?:Ảnh 2\/2|Picture 2 of 2)"/);
+  });
 });

@@ -148,7 +148,7 @@ import {
   timelineToggle,
 } from "./timeline-layout.ts";
 import { vendorEmbedUrl } from "./media-embed.ts";
-import { createPlaybackCoalescer } from "./playback-coalescer.ts";
+import { createPlaybackCoalescer, flushPlaybackOnLeave, type PlaybackCoalescer, type PlaybackWriteReason } from "./playback-coalescer.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import {
@@ -2188,9 +2188,7 @@ function Carousel({ props, imageUrl, state, onAction, onStateChange }: RendererP
   const t = useT();
   const refs = pictureRefs(props.imageRefs);
   const alts = pictureAlts(props.alts, refs.length);
-  const savedIndex = readMediaSelection(state, refs.length).selectedIndex;
-  const [index, setIndex] = useState(savedIndex);
-  useEffect(() => setIndex(savedIndex), [savedIndex]);
+  const [index, setIndex] = useStoredSelection(state, refs.length);
   const current = refs.length === 0 ? 0 : Math.min(index, refs.length - 1);
   const select = (next: number) => {
     setIndex(next);
@@ -2232,7 +2230,35 @@ function Carousel({ props, imageUrl, state, onAction, onStateChange }: RendererP
           )}
         </div>
       )}
+      <ViewMessage state={state} name="carousel" />
     </Frame>
+  );
+}
+
+/**
+ * The picture a carousel or gallery shows, as the node holds it, adopted whenever that changes; between those, what the
+ * person just chose is drawn at once. A refusal counts up `viewReset`, so a choice the node refused is undrawn even when
+ * the picture it holds did not move.
+ */
+function useStoredSelection(state: Record<string, unknown> | undefined, count: number): [number, (next: number) => void] {
+  const stored = readMediaSelection(state, count).selectedIndex;
+  const storedKey = `${String(stored)}#${String(state?.viewReset ?? 0)}`;
+  const [selected, setSelected] = useState(stored);
+  const [syncedKey, setSyncedKey] = useState(storedKey);
+  if (syncedKey !== storedKey) {
+    setSyncedKey(storedKey);
+    setSelected(stored);
+  }
+  return [selected, setSelected];
+}
+
+/** Why the node refused this widget's last change, said beside it; the widget already draws what the node holds. */
+function ViewMessage({ state, name }: { state: Record<string, unknown> | undefined; name: string }): ReactElement | null {
+  if (typeof state?.message !== "string" || state.message === "") return null;
+  return (
+    <p className="cc-freshness" role="status" data-media-message={name} style={{ margin: 0 }}>
+      {state.message}
+    </p>
   );
 }
 
@@ -2241,9 +2267,7 @@ function Gallery({ props, imageUrl, state, onAction, onStateChange }: RendererPr
   const t = useT();
   const refs = pictureRefs(props.imageRefs);
   const alts = pictureAlts(props.alts, refs.length);
-  const savedIndex = readMediaSelection(state, refs.length).selectedIndex;
-  const [selectedIndex, setSelectedIndex] = useState(savedIndex);
-  useEffect(() => setSelectedIndex(savedIndex), [savedIndex]);
+  const [selectedIndex, setSelectedIndex] = useStoredSelection(state, refs.length);
   const shown = refs.flatMap((ref, index) => {
     const url = imageUrl?.(ref);
     return url === undefined ? [] : [{ ref, url, alt: alts[index] ?? "" }];
@@ -2267,7 +2291,7 @@ function Gallery({ props, imageUrl, state, onAction, onStateChange }: RendererPr
                 <button
                   type="button"
                   className="cc-gallery-select"
-                  aria-label={picture.alt || `${index + 1}/${refs.length}`}
+                  aria-label={picture.alt || fillMessage(t("widgets.gallery.pictureOf"), { number: String(index + 1), count: String(refs.length) })}
                   aria-pressed={selected}
                   onClick={() => {
                     setSelectedIndex(index);
@@ -2284,6 +2308,7 @@ function Gallery({ props, imageUrl, state, onAction, onStateChange }: RendererPr
           })}
         </ul>
       )}
+      <ViewMessage state={state} name="gallery" />
     </Frame>
   );
 }
@@ -2355,9 +2380,35 @@ function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactE
   const restored = useRef(false);
   const restoringSeek = useRef(false);
   const playback = readMediaPlayback(state);
-  const coalescer = useRef(createPlaybackCoalescer({
+  // Made once for the player's life: it remembers what was last written, so a new one each render would forget it.
+  const [coalescer] = useState<PlaybackCoalescer>(() => createPlaybackCoalescer({
     write: (next) => callbackRef.current?.(MEDIA_VIEW_OPERATION, { ...next }),
-  })).current;
+  }));
+  // Where the player last said it was, kept for when it goes away: by then the element itself may be gone.
+  const lastKnown = useRef<MediaPlaybackState | undefined>(undefined);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const report = (next: MediaPlaybackState, reason: PlaybackWriteReason): void => {
+    lastKnown.current = next;
+    coalescer.report(next, reason);
+  };
+  useEffect(
+    () =>
+      flushPlaybackOnLeave({
+        page: window,
+        document,
+        read: () => {
+          const video = videoRef.current;
+          return video === null || lastKnown.current === undefined ? lastKnown.current : playbackFrom(video, clockStatus(video));
+        },
+        report: coalescer.report,
+      }),
+    // The player, its coalescer and the page are fixed for this widget's life.
+    [coalescer],
+  );
+  // A refused write leaves the node holding something other than what this page sent, so the next report is written
+  // even when it says the same. The player is not moved to the node's position: what it shows is where it really is.
+  const viewReset = typeof state?.viewReset === "number" ? state.viewReset : 0;
+  useEffect(() => coalescer.forget(), [coalescer, viewReset]);
   const playbackFrom = (video: HTMLVideoElement, status: MediaPlaybackState["status"]): MediaPlaybackState => ({
     status,
     position: Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0,
@@ -2383,19 +2434,23 @@ function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactE
             controls
             preload="metadata"
             onLoadedMetadata={(event) => restorePosition(event.currentTarget)}
-            onPlaying={(event) => coalescer(playbackFrom(event.currentTarget, "playing"), "playing")}
-            onTimeUpdate={(event) => coalescer(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "timeupdate")}
+            ref={videoRef}
+            onPlaying={(event) => report(playbackFrom(event.currentTarget, "playing"), "playing")}
+            onTimeUpdate={(event) => {
+              // The restore seek reports the clock before it settles; that is the node's own position coming back.
+              if (!restoringSeek.current) report(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "timeupdate");
+            }}
             onPause={(event) => {
-              if (!event.currentTarget.ended) coalescer(playbackFrom(event.currentTarget, "paused"), "pause");
+              if (!event.currentTarget.ended) report(playbackFrom(event.currentTarget, "paused"), "pause");
             }}
             onSeeked={(event) => {
               if (restoringSeek.current) {
                 restoringSeek.current = false;
                 return;
               }
-              coalescer(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "seek");
+              report(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "seek");
             }}
-            onEnded={(event) => coalescer(playbackFrom(event.currentTarget, "ended"), "ended")}
+            onEnded={(event) => report(playbackFrom(event.currentTarget, "ended"), "ended")}
             src={url}
             {...(poster === undefined ? {} : { poster })}
             aria-label={alt}
@@ -2404,6 +2459,7 @@ function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactE
           <figcaption className="cc-freshness">{alt}</figcaption>
         </figure>
       )}
+      <ViewMessage state={state} name="video" />
     </Frame>
   );
 }
