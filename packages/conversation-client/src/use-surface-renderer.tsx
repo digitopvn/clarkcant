@@ -14,6 +14,7 @@ import {
   BOARD_APPROVAL_OPERATION,
   BOARD_RESOLVE_OPERATION,
   BOARD_ACKNOWLEDGE_OPERATION,
+  MEDIA_VIEW_OPERATION,
   XY_CHART_KIND,
   XY_CHART_VIEW_OPERATION,
 } from "@clarkcant/contracts";
@@ -106,6 +107,7 @@ const VIEW_REFUSED: Record<string, MessageKey> = {
   [TIMELINE_SELECT_OPERATION]: "widgets.timeline.selectRefused",
   [TREE_SELECT_OPERATION]: "widgets.tree.actionRefused",
   [TREE_TOGGLE_OPERATION]: "widgets.tree.actionRefused",
+  [MEDIA_VIEW_OPERATION]: "widgets.action.refusedGeneric",
 };
 /** The argument an agent-bound list item is sent under when the binding names none. */
 const DEFAULT_ITEM_KEY = "itemId";
@@ -456,7 +458,9 @@ export function useSurfaceRenderer({
         ? [TREE_SELECT_OPERATION, TREE_TOGGLE_OPERATION]
         : definitionId === BOARD_ID
           ? [BOARD_MOVE_OPERATION, BOARD_APPROVAL_OPERATION, BOARD_RESOLVE_OPERATION, BOARD_ACKNOWLEDGE_OPERATION]
-          : viewOperation === undefined ? [] : [viewOperation];
+          : definitionId === "canvas.carousel@1" || definitionId === "canvas.gallery@1" || definitionId === "canvas.video@1"
+            ? [MEDIA_VIEW_OPERATION]
+            : viewOperation === undefined ? [] : [viewOperation];
       const viewRefusal = viewRefusals[instance.instanceId];
       const widgetState: Record<string, unknown> | undefined =
         viewOperations.length > 0
@@ -532,14 +536,17 @@ export function useSurfaceRenderer({
                       }
                       // A chart's, a calendar's or a timeline's view goes through its own binding, without a "done" line: the widget itself
                       // shows it.
-                      if (viewOperations.includes(action)) {
-                        const matchingAction = instance.actions?.find((candidate) => candidate.viewOperation === action) ?? boundAction;
+                      const viewAction = action === "media.select" ? MEDIA_VIEW_OPERATION : action;
+                      if (viewOperations.includes(viewAction)) {
+                        const matchingAction = instance.actions?.find((candidate) => candidate.viewOperation === viewAction) ?? boundAction;
                         if (matchingAction !== undefined && matchingAction.available && conversationId !== undefined) {
                           const datasetRef = instance.props.datasetRef;
-                          const viewInput = definitionId === BOARD_ID && action === BOARD_MOVE_OPERATION
+                          const viewInput = action === "media.select" && typeof payload.index === "number"
+                            ? { selectedIndex: payload.index }
+                            : definitionId === BOARD_ID && action === BOARD_MOVE_OPERATION
                             ? { ...payload, external: boundAction !== undefined }
                             : payload;
-                          sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, matchingAction, instance.revision, viewInput, VIEW_REFUSED[action] ?? "widgets.xyChart.viewRefused", (nextTimeline) => {
+                          sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, matchingAction, instance.revision, viewInput, VIEW_REFUSED[viewAction] ?? "widgets.xyChart.viewRefused", (nextTimeline) => {
                             if (definitionId !== BOARD_ID || action !== BOARD_MOVE_OPERATION || boundAction === undefined) return;
                             const current = nextTimeline.instances.find((entry) => entry.instanceId === instance.instanceId);
                             const invoke = current?.actions?.find((candidate) => candidate.viewOperation === undefined);

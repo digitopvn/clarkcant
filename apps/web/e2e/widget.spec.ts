@@ -101,6 +101,28 @@ async function openConversation(page: Page, conversationId: string): Promise<voi
   await expect(page.locator("textarea[aria-label='Nhập tin nhắn']")).toBeVisible();
 }
 
+/** The conversation the browser is actively reading, captured from its own timeline request. */
+function watchConversation(page: Page): () => string {
+  let id = "";
+  page.on("request", (request) => {
+    const match = /\/conversations\/([^/?]+)\/(?:timeline|messages)/u.exec(request.url());
+    if (match !== null) id = decodeURIComponent(match[1] ?? "");
+  });
+  return () => {
+    if (id === "") throw new Error("the app has not requested its conversation yet");
+    return id;
+  };
+}
+
+async function heldWidgetState(page: Page, conversationId: string, instanceId: string): Promise<Record<string, unknown>> {
+  const response = await page.request.get(`${GATEWAY}/conversations/${encodeURIComponent(conversationId)}/timeline?after=0`, {
+    headers: { authorization: `Bearer ${token()}` },
+  });
+  expect(response.ok(), "the node returns the live widget state with its timeline").toBe(true);
+  const timeline = (await response.json()) as { instances?: { instanceId: string; state?: Record<string, unknown> }[] };
+  return timeline.instances?.find((entry) => entry.instanceId === instanceId)?.state ?? {};
+}
+
 test("a scripted table recipe renders a real widget inside the conversation", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
   await openApp(page);
@@ -196,17 +218,16 @@ test("a gallery widget draws pictures the node actually holds", async ({ page })
   // fixture with its own image data would prove that a renderer ran and nothing about whether the host can
   // resolve a reference it minted. The upload goes through the production route with the node's own token, so
   // this is the path a person's imported picture takes.
-  const uploaded = await fetch(`${GATEWAY}/images`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" },
-    body: JSON.stringify({
+  for (const altText of ["First gallery image", "Second gallery image"]) {
+    const uploaded = await api<{ image: { imageId: string } }>("POST", "/images", {
       dataBase64: ONE_PIXEL_PNG,
       mimeType: "image/png",
-      altText: "Một điểm ảnh, do bài kiểm thử này tải lên",
-    }),
-  });
-  expect(uploaded.ok).toBe(true);
+      altText,
+    });
+    expect(uploaded.image.imageId).not.toBe("");
+  }
 
+  const conversation = watchConversation(page);
   await openApp(page);
   await page.locator("[data-composer]").click();
   await page.keyboard.type("thư viện ảnh");
@@ -226,7 +247,73 @@ test("a gallery widget draws pictures the node actually holds", async ({ page })
   expect(source ?? "").toMatch(/^blob:/);
   expect(await frame.locator("[data-widget-fallback='true']").count()).toBe(0);
 
+  const selection = frame.locator(".cc-gallery-select").nth(1);
+  await expect(selection).toBeVisible();
+  const selectedAlt = await selection.getAttribute("aria-label");
+  await selection.click();
+  await expect(selection).toHaveAttribute("aria-pressed", "true");
+  const instanceId = await frame.evaluate((element) => element.closest("[data-widget-instance]")?.getAttribute("data-widget-instance") ?? "");
+  expect(instanceId).not.toBe("");
+  await expect.poll(() => heldWidgetState(page, conversation(), instanceId)).toMatchObject({ selectedIndex: 1 });
+
+  await page.locator("[data-composer='true']").fill("kiểm tra giao diện");
+  await page.locator("[data-composer='true']").press("Enter");
+  const inspection = page.locator('[data-role="assistant"]').last();
+  await expect(inspection).toContainText('selectedIndex: 2', { timeout: 20_000 });
+  if (selectedAlt !== null) await expect(inspection).toContainText(selectedAlt);
+
   await page.screenshot({ path: join(EVIDENCE, "widget-03-gallery.png"), fullPage: true });
+});
+
+test("a carousel selection reaches the next turn and survives pin restore", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  for (const altText of ["First carousel image", "Second carousel image"]) {
+    const uploaded = await api<{ image: { imageId: string } }>("POST", "/images", {
+      dataBase64: ONE_PIXEL_PNG,
+      mimeType: "image/png",
+      altText,
+    });
+    expect(uploaded.image.imageId).not.toBe("");
+  }
+
+  const conversation = watchConversation(page);
+  await openApp(page);
+  const composer = page.locator("[data-composer='true']");
+  await composer.fill("đặt bộ ảnh");
+  await composer.press("Enter");
+
+  const carousel = page.locator("[data-carousel-index]").last();
+  await expect(carousel).toBeVisible({ timeout: 20_000 });
+  await expect(carousel.locator(".cc-carousel-controls button")).toHaveCount(2);
+  await expect(carousel.locator(".cc-carousel-controls .cc-freshness")).toHaveText("1/2");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  const next = carousel.locator(".cc-carousel-controls button").last();
+  await next.focus();
+  expect(await next.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe("none");
+  await page.keyboard.press("Enter");
+  await expect(carousel).toHaveAttribute("data-carousel-index", "1");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
+  const selectedAlt = await carousel.locator("figcaption").textContent();
+  expect(selectedAlt).not.toBeNull();
+
+  const instanceId = await carousel.evaluate((element) => element.closest("[data-widget-instance]")?.getAttribute("data-widget-instance") ?? "");
+  expect(instanceId).not.toBe("");
+  await expect.poll(() => heldWidgetState(page, conversation(), instanceId)).toMatchObject({ selectedIndex: 1 });
+
+  await composer.fill("giao diện đang cho thấy gì");
+  await composer.press("Enter");
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(selectedAlt ?? "", { timeout: 20_000 });
+
+  await page.locator(`[data-pin-instance='${instanceId}']`).click();
+  await expect(page.locator("[data-pin-shelf] [data-pin-definition='canvas.carousel@1']")).toBeVisible();
+  await page.reload();
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("[data-pin-shelf] [data-pin-definition='canvas.carousel@1']")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("[data-carousel-index]").last()).toHaveAttribute("data-carousel-index", "1", { timeout: 20_000 });
+  await expect.poll(() => heldWidgetState(page, conversation(), instanceId)).toMatchObject({ selectedIndex: 1 });
 });
 
 test("a youtube widget embeds the video the host named, and nothing else", async ({ page }) => {
@@ -248,4 +335,3 @@ test("a youtube widget embeds the video the host named, and nothing else", async
 
   await page.screenshot({ path: join(EVIDENCE, "widget-04-youtube.png"), fullPage: true });
 });
-

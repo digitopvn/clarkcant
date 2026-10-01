@@ -5,15 +5,16 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { type Instant, UI_CONTEXT_BUDGET, UI_CONTEXT_HEADING, type WidgetDefinition } from "@clarkcant/contracts";
-import { createInstance } from "@clarkcant/core";
+import { createInstance, getActionBinding, getInstance, invokeMiniAppAction } from "@clarkcant/core";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
-import { findCompositionByMessage, getWidgetSemantic, touchWidgetSemantic } from "@clarkcant/storage";
+import { findCompositionByMessage, getWidgetSemantic, insertLocalImage, touchWidgetSemantic } from "@clarkcant/storage";
 
 import { composeLayout } from "../src/compose-layout.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { createInspectUiTool } from "../src/inspect-ui-tool.ts";
 import { createModelTurn } from "../src/model-turn.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { buildViewCatalog } from "../src/view-catalog.ts";
 import { conversationUiContext, focusedSemanticView, refreshWidgetSemantic } from "../src/widget-semantic.ts";
 
 /**
@@ -437,5 +438,142 @@ describe("voice and text", () => {
     expect(view?.textRepresentation).toContain('metric: "created"');
     // Voice keeps every binding the view holds, including the ones the model's note leaves out.
     expect(view?.availableActions.length ?? 0).toBeGreaterThanOrEqual(doc?.availableActions.length ?? 0);
+  });
+});
+
+describe("host media semantics", () => {
+  const placeMedia = async (definitionId: string, props: Record<string, unknown>): Promise<string> => {
+    const view = buildViewCatalog(services.conductor).find((candidate) => candidate.id === definitionId);
+    if (view === undefined) throw new Error(`${definitionId} is not registered`);
+    const block = await view.build({
+      props,
+      caption: "",
+      at: AT,
+      principal: { principalId: services.runtime.identity.ownerPrincipalId as never, kind: "user", nodeId: services.runtime.identity.nodeId as never },
+      messageId: `msg_${definitionId.replaceAll(/[^a-z0-9]/gi, "_")}`,
+      conversationId: CONVERSATION,
+    });
+    if (block.type !== "surface" || typeof block.snapshot.instanceId !== "string") throw new Error(`${definitionId} did not produce a live widget`);
+    return block.snapshot.instanceId;
+  };
+
+  const writeMediaState = (instanceId: string, input: Record<string, unknown>, invocationId: string) => {
+    const instance = getInstance(services.conductor, instanceId);
+    const bindingId = instance?.actionBindingIds[0];
+    if (instance === undefined || bindingId === undefined) throw new Error("media widget has no host state binding");
+    const binding = getActionBinding(services.conductor, bindingId);
+    if (binding === undefined) throw new Error("media widget state binding is missing");
+    return invokeMiniAppAction(services.conductor, {
+      conversationId: CONVERSATION,
+      principalId: instance.ownerPrincipalId,
+      instanceId,
+      actionBindingId: binding.actionBindingId,
+      expectedRevision: instance.revision,
+      expectedBindingDigest: binding.bindingDigest,
+      input,
+      invocationId,
+    });
+  };
+
+  it("describes image props, carousel selection, video playback and a validated YouTube identity", async () => {
+    insertLocalImage(services.runtime.db, {
+      imageId: "image_owned_semantic",
+      ownerPrincipalId: services.runtime.identity.ownerPrincipalId,
+      nodeId: services.runtime.identity.nodeId,
+      artifactId: "art_image_semantic",
+      mimeType: "image/png",
+      byteSize: 68,
+      width: 640,
+      height: 480,
+      digest: "sha256:semantic-image",
+      altText: "A green leaf",
+      blobPath: "unused-semantic-test-blob",
+      createdAt: AT,
+    });
+    insertLocalImage(services.runtime.db, {
+      imageId: "image_other_owner_semantic",
+      ownerPrincipalId: "p_other",
+      nodeId: services.runtime.identity.nodeId,
+      artifactId: "art_image_other_semantic",
+      mimeType: "image/png",
+      byteSize: 68,
+      width: 999,
+      height: 777,
+      digest: "sha256:other-image",
+      altText: "Other owner's image",
+      blobPath: "unused-other-semantic-test-blob",
+      createdAt: AT,
+    });
+    const imageId = await placeMedia("canvas.image@1", { imageRef: "image-not-present", alt: "A green leaf" });
+    const knownImageId = await placeMedia("canvas.image@1", { imageRef: "image_owned_semantic", alt: "A green leaf" });
+    const foreignImageId = await placeMedia("canvas.image@1", { imageRef: "image_other_owner_semantic", alt: "A private picture" });
+    expect(refreshWidgetSemantic(services.conductor, imageId)?.doc).toMatchObject({ values: { alt: "A green leaf" } });
+    expect(refreshWidgetSemantic(services.conductor, knownImageId)?.doc).toMatchObject({ values: { alt: "A green leaf", width: 640, height: 480 } });
+    expect(refreshWidgetSemantic(services.conductor, foreignImageId)?.doc.values).not.toHaveProperty("width");
+
+    const carouselId = await placeMedia("canvas.carousel@1", { imageRefs: ["one", "two"], alts: ["First", "Second"] });
+    expect(writeMediaState(carouselId, { selectedIndex: 1 }, "inv_carousel_semantic").ok).toBe(true);
+    expect(refreshWidgetSemantic(services.conductor, carouselId)?.doc).toMatchObject({ values: { selectedIndex: 2, itemCount: 2, alt: "Second" } });
+
+    const videoId = await placeMedia("canvas.video@1", { videoRef: "video-ref", alt: "A short film" });
+    expect(writeMediaState(videoId, { status: "playing", position: 12, duration: 90 }, "inv_video_semantic").ok).toBe(true);
+    expect(refreshWidgetSemantic(services.conductor, videoId)?.doc).toMatchObject({
+      summary: "Video playing: A short film",
+      values: { status: "playing", position: 12, duration: 90, alt: "A short film" },
+    });
+    expect(writeMediaState(videoId, { status: "playing", position: 91, duration: 90 }, "inv_video_invalid")).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+
+    const youtubeId = await placeMedia("canvas.youtube@1", { videoId: "dQw4w9WgXcQ", title: "A named video" });
+    expect(refreshWidgetSemantic(services.conductor, youtubeId)?.doc).toMatchObject({
+      title: "A named video",
+      values: { videoId: "dQw4w9WgXcQ", title: "A named video" },
+    });
+  });
+
+  it("stores gallery selection through the host binding for inspect_ui and the next turn", async () => {
+    const catalog = buildViewCatalog(services.conductor);
+    const gallery = catalog.find((view) => view.id === "canvas.gallery@1");
+    if (gallery === undefined) throw new Error("the gallery view is not registered");
+    const principalId = services.runtime.identity.ownerPrincipalId as never;
+    const block = await gallery.build({
+      props: { imageRefs: ["image-a", "image-b", "image-c"], alts: ["First item", "Second item", "Third item"] },
+      caption: "",
+      at: AT,
+      principal: { principalId, kind: "user", nodeId: services.runtime.identity.nodeId as never },
+      messageId: "msg_gallery_semantic",
+      conversationId: CONVERSATION,
+    });
+    if (block.type !== "surface") throw new Error("the gallery did not produce a live widget");
+    const instanceId = block.snapshot.instanceId;
+    if (typeof instanceId !== "string") throw new Error("the gallery snapshot has no instance id");
+    const instance = getInstance(services.conductor, instanceId);
+    const bindingId = instance?.actionBindingIds[0];
+    if (instance === undefined || bindingId === undefined) throw new Error("the gallery has no host view binding");
+    const binding = getActionBinding(services.conductor, bindingId);
+    if (binding === undefined || binding.proposal.kind !== "view") throw new Error("the gallery has no host view binding");
+
+    const outcome = invokeMiniAppAction(services.conductor, {
+      conversationId: CONVERSATION,
+      principalId: instance.ownerPrincipalId,
+      instanceId,
+      actionBindingId: binding.actionBindingId,
+      expectedRevision: instance.revision,
+      expectedBindingDigest: binding.bindingDigest,
+      input: { selectedIndex: 1 },
+      invocationId: "inv_gallery_semantic",
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.ok && outcome.state).toEqual({ selectedIndex: 1 });
+    expect(services.runtime.db.prepare("SELECT state_version FROM widget_state WHERE instance_id = ?").get(instanceId)).toMatchObject({ state_version: 2 });
+    expect(refreshWidgetSemantic(services.conductor, instanceId)?.doc).toMatchObject({
+      values: { selectedIndex: 2, itemCount: 3, alt: "Second item" },
+    });
+    touchWidgetSemantic(services.runtime.db, { instanceId, conversationId: CONVERSATION, at: AT });
+    const inspectUi = createInspectUiTool({ deps: () => services.conductor, conversationId: CONVERSATION });
+    expect((await inspectUi.execute({ scope: "instance", instanceId })).text).toContain('alt: "Second item"');
+
+    const adapter = await turnWithModel();
+    await say("mô tả mục đang chọn");
+    expect(uiNoteOf(adapter.allPrompts()[0] ?? "")).toContain('alt: "Second item"');
   });
 });

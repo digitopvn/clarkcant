@@ -445,6 +445,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   display: grid; gap: var(--cc-space-md); margin: 0; padding: 0; list-style: none;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
 }
+.cc-gallery-select { width: 100%; padding: 0; color: inherit; text-align: left; background: transparent; border: 0; cursor: pointer; }
+.cc-gallery-select[aria-pressed="true"] { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
 .cc-gallery img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
 .cc-carousel { display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-carousel-controls { display: flex; align-items: center; justify-content: center; gap: var(--cc-space-md); }

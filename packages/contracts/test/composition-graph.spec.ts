@@ -31,6 +31,7 @@ const SECTIONS = [
   { sectionId: "metrics-1", definitionId: "canvas.metrics@1" },
   { sectionId: "calendar-1", definitionId: "canvas.calendar@1" },
   { sectionId: "tree-1", definitionId: "canvas.tree@1" },
+  { sectionId: "gallery-1", definitionId: "canvas.gallery@1" },
 ];
 
 const GRAPH: CompositionGraph = {
@@ -46,6 +47,7 @@ const GRAPH: CompositionGraph = {
     selectedNode: { type: "string", initial: "" },
     toggledNode: { type: "string", initial: "" },
     branchOpen: { type: "boolean", initial: false },
+    galleryIndex: { type: "number", initial: 0 },
   },
   on: [
     { sectionId: "search-1", event: "query.change", steps: [{ op: "select-field", key: "query", field: "query" }] },
@@ -85,6 +87,7 @@ const GRAPH: CompositionGraph = {
         { op: "select-field", key: "branchOpen", field: "expanded" },
       ],
     },
+    { sectionId: "gallery-1", event: "media.select", steps: [{ op: "select-field", key: "galleryIndex", field: "index" }] },
   ],
   feed: [
     { sectionId: "table-1", op: "query", key: "query" },
@@ -101,6 +104,15 @@ const run = (sectionId: string, event: string, payload: unknown, current = graph
 describe("checking a graph", () => {
   it("accepts a graph whose every rule, step and feed fits its leaf and its key", () => {
     expect(checkCompositionGraph(GRAPH, SECTIONS)).toEqual([]);
+  });
+
+  it("wires a media selection into durable composition state", () => {
+    expect(applyGraphEvent(GRAPH, graphValues(GRAPH), {
+      sectionId: "gallery-1",
+      definitionId: "canvas.gallery@1",
+      event: "media.select",
+      payload: { index: 2 },
+    })).toEqual({ ok: true, values: { ...graphValues(GRAPH), galleryIndex: 2 }, changed: ["galleryIndex"] });
   });
 
   it("refuses an event a leaf does not emit, and says what it does emit", () => {

@@ -80,6 +80,7 @@ import {
   BOARD_APPROVAL_OPERATION,
   BOARD_RESOLVE_OPERATION,
   BOARD_ACKNOWLEDGE_OPERATION,
+  MEDIA_VIEW_OPERATION,
   MAX_BOARD_COLUMNS,
   MAX_BOARD_CARDS,
   readBoard,
@@ -117,6 +118,9 @@ import {
   TIMELINE,
   TREE,
   BOARD,
+  CAROUSEL,
+  GALLERY,
+  VIDEO,
   WIDGETS as CATALOG_WIDGETS,
   primitivePropsProblems,
 } from "@clarkcant/data-canvas";
@@ -182,6 +186,9 @@ export function buildViewCatalog(
     TIMELINE.id,
     TREE.id,
     BOARD.id,
+    CAROUSEL.id,
+    GALLERY.id,
+    VIDEO.id,
   ]);
   const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
@@ -232,6 +239,7 @@ export function buildViewCatalog(
     calendarView(deps),
     timelineView(deps, () => compose?.timezone() ?? nodeTimeZone()),
     treeView(deps),
+    ...[CAROUSEL, GALLERY, VIDEO].map((definition) => mediaView(deps, definition)),
     boardView(deps, actions),
   );
   if (compose === undefined) return simple;
@@ -914,6 +922,55 @@ function treeView(deps: WidgetDeps): ViewDescriptor {
           if (!select.ok) throw new Error(select.message);
           if (!toggle.ok) throw new Error(toggle.message);
           return [select.binding, toggle.binding];
+        },
+      });
+      return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
+    },
+  };
+}
+
+function mediaView(deps: WidgetDeps, definition: WidgetDefinition): ViewDescriptor {
+  return {
+    id: definition.id,
+    label: definition.semanticDescription,
+    notes: `${definition.semanticDescription}. Playback and selection state are kept by the host when changed.`,
+    shownText: `Shown: ${definition.id}. The host keeps its bounded view state.`,
+    build: (request) => {
+      const schema = validateProps(definition, request.props);
+      if (!schema.ok) throw new Error(`${definition.id} has props that do not fit its schema: ${schema.problems.join(", ")}`);
+      const packageDigest = definitionDigest(definition);
+      const { snapshot } = placeInstance(deps, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: request.principal.principalId,
+        props: request.props,
+        messageId: request.messageId,
+        textAlternative: keptText(definition.id, request.caption, definition.textFallback),
+        presentationRef: `catalog:${definition.id}`,
+        bind: (instanceId) => {
+          const result = compileActionBinding({
+            bindingId: deps.newId("act"),
+            instance: {
+              instanceId,
+              ownerNodeId: deps.nodeId,
+              definitionRef: { id: definition.id, version: definition.version, packageDigest },
+              actionBindingRevision: 1,
+            },
+            packageGeneration: packageDigest,
+            label: "Media view state",
+            proposal: { kind: "view", operation: MEDIA_VIEW_OPERATION, args: {} },
+            inputSchema: { type: "object" },
+            allowedDataRefs: [],
+            fixedConstraints: {},
+            effectCategory: "read",
+            requiresApproval: false,
+            limits: {},
+            bindingDigest: `sha256:${MEDIA_VIEW_OPERATION}:${instanceId}`,
+            at: deps.now(),
+            knownCapabilities: new Set(),
+          });
+          if (!result.ok) throw new Error(result.message);
+          return [result.binding];
         },
       });
       return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
