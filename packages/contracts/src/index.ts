@@ -49,6 +49,7 @@ export * from "./jobs.ts";
 export * from "./resource-profiles.ts";
 export * from "./service-egress.ts";
 export * from "./browser-token.ts";
+export * from "./declared-reach.ts";
 export * from "./composer-references.ts";
 export * from "./app-intents.ts";
 export * from "./conversation-deletion.ts";

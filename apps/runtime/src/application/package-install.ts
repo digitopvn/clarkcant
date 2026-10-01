@@ -2,6 +2,8 @@ import { join } from "node:path";
 
 import {
   capabilityRefSchema,
+  declaredReachMismatch,
+  declaredReachOf,
   entryFitsHost,
   instantSchema,
   nowInstant,
@@ -496,6 +498,28 @@ export async function installPackage(
   const directoryForInstall = index.entries.map((candidate) => (candidate === entry ? resolvedEntry : candidate));
 
   /*
+   * The manifest inside the artifact this node just fetched and digest-verified. A resolved entry is always `local` by
+   * this point (the fetch re-points git and npm sources at the cache path), so this is the package's own word.
+   */
+  const fetchedManifest = resolvedEntry.source.kind === "local" ? readPackage(resolvedEntry.source.path).manifest : undefined;
+
+  /*
+   * What the person was shown is what they agree to. The listing and the install question show the entry's declared
+   * reach (the origins, secrets and browser-token providers), so an artifact that declares a different one is refused
+   * before anything is recorded or installed, rather than installed on a consent given for something else. A listing
+   * that says nothing claims the package reaches nothing.
+   */
+  const reachMismatch = declaredReachMismatch(entry.declaredReach, declaredReachOf({ facets: fetchedManifest?.facets ?? [] }));
+  if (reachMismatch !== undefined) {
+    return {
+      kind: "refused",
+      status: 409,
+      code: "DECLARED_REACH_MISMATCH",
+      message: `${entry.packageId}@${entry.version} was not installed: ${reachMismatch}`,
+    };
+  }
+
+  /*
    * Autonomy without a record is the one combination this node refuses, the same way `run_command` does: an effect
    * nobody approved and nobody can find afterwards is worse than a question. Recorded only once the artifact this
    * node is about to install is actually in hand (M4) — a fetch failure above returns before this line runs, and
@@ -539,7 +563,6 @@ export async function installPackage(
    * succeed. Values that do not parse as a `CapabilityRef` are dropped rather than trusted — the manifest is
    * package-authored content, not a schema-checked boundary.
    */
-  const fetchedManifest = resolvedEntry.source.kind === "local" ? readPackage(resolvedEntry.source.path).manifest : undefined;
   const manifestRequestedCapabilities: readonly CapabilityRef[] = (fetchedManifest?.requestedCapabilities ?? [])
     .map((ref) => capabilityRefSchema.safeParse(ref))
     .filter((parsed): parsed is { success: true; data: CapabilityRef } => parsed.success)

@@ -1,4 +1,11 @@
-import { nowInstant, type DirectoryEntry, type Principal, type WaitingItem } from "@clarkcant/contracts";
+import {
+  canonicalReach,
+  declaredReachIsEmpty,
+  nowInstant,
+  type DirectoryEntry,
+  type Principal,
+  type WaitingItem,
+} from "@clarkcant/contracts";
 import { decideApproval, directoryIndexPath, readDirectoryIndex } from "@clarkcant/core";
 import { allRows, oneRow } from "@clarkcant/storage";
 
@@ -69,6 +76,9 @@ export function listPendingInstallApprovals(
         displayName: entry.displayName,
         riskTier: entry.riskTier,
         permissions: [...entry.permissionsSummary],
+        ...(entry.declaredReach === undefined || declaredReachIsEmpty(entry.declaredReach)
+          ? {}
+          : { reach: canonicalReach(entry.declaredReach) }),
         description: row.operation_description,
         operationDigest: row.operation_digest,
         requestedAt: row.requested_at as InstallApprovalItem["requestedAt"],

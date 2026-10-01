@@ -1,9 +1,13 @@
 import { join } from "node:path";
 
 import {
+  declaredReachIsEmpty,
+  declaredReachOf,
   decideResourceProfile,
   DEFAULT_RESOURCE_PROFILE,
   describeResourceProfile,
+  type DeclaredReach,
+  type PackageManifest,
   type ResourceGrant,
   type ResourceProfile,
   type ResourceProfileName,
@@ -84,25 +88,32 @@ export function packageResourcesView(grant: ResourceGrant): PackageResourcesView
 }
 
 /**
- * The resource request in an installed package's manifest, read from the files this node holds for it.
- *
- * `unreadable` when the node has no directory, no listing for that version and digest, or a manifest it cannot read:
- * then package details say nothing about resources rather than guess the light profile.
+ * The manifest of an installed package, read from the files this node holds for it, or `unreadable` when the node has
+ * no directory, no listing for that version and digest, or a manifest it cannot read.
  */
-export function installedResourceRequest(
+export function installedManifest(
   installed: { packageId: string; version: string; digest: string },
   dataDir: string,
-): ResourceRequest | undefined | "unreadable" {
+): PackageManifest | "unreadable" {
   const index = readDirectoryIndex(directoryIndexPath(process.env));
   if (index.kind !== "configured") return "unreadable";
   const root = packageRootFrom(index.entries, join(dataDir, "package-cache"))(installed);
   if (root === undefined) return "unreadable";
   try {
     const pkg = readPackage(root);
-    // A manifest the reader could not read at all comes back empty, with its problems, not as an empty request.
+    // A manifest the reader could not read at all comes back empty, with its problems, not as an empty manifest.
     if (!("id" in pkg.manifest)) return "unreadable";
-    return pkg.manifest.resources;
+    return pkg.manifest;
   } catch {
     return "unreadable";
   }
+}
+
+/**
+ * What an installed package reaches, from its own manifest (the declaration the host enforces), or `undefined` when it
+ * reaches nothing.
+ */
+export function installedReach(manifest: PackageManifest): DeclaredReach | undefined {
+  const reach = declaredReachOf(manifest);
+  return declaredReachIsEmpty(reach) ? undefined : reach;
 }

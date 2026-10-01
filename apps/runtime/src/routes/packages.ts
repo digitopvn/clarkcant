@@ -27,7 +27,7 @@ import {
 } from "../application/package-install.ts";
 import { decideInstallApproval, isInstallApproval } from "../application/install-approval.ts";
 import { changePackage } from "../application/package-lifecycle.ts";
-import { installedResourceRequest, packageResourceGrant, packageResourcesView } from "../package-resources.ts";
+import { installedManifest, installedReach, packageResourceGrant, packageResourcesView } from "../package-resources.ts";
 import { resourceProfilePolicy, type ServiceHost } from "../service-host.ts";
 import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
 
@@ -82,10 +82,17 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
        * request is not reported as the light profile.
        */
       packages: listInstalledPackages(deps).map((installed) => {
-        const request = installedResourceRequest(installed, runtime.dataDir);
-        if (request === "unreadable") return installed;
-        const grant = packageResourceGrant({ packageId: installed.packageId, request, serviceHost: services.serviceHost, policy });
-        return { ...installed, resources: packageResourcesView(grant) };
+        const manifest = installedManifest(installed, runtime.dataDir);
+        if (manifest === "unreadable") return installed;
+        const grant = packageResourceGrant({
+          packageId: installed.packageId,
+          request: manifest.resources,
+          serviceHost: services.serviceHost,
+          policy,
+        });
+        // And what it reaches beyond its sandbox, from the same manifest, so details show what install consent covered.
+        const reach = installedReach(manifest);
+        return { ...installed, resources: packageResourcesView(grant), ...(reach === undefined ? {} : { reach }) };
       }),
       // Uninstalled here and restorable without fetching anything: the generation rows outlive an uninstall.
       restorable: listRestorablePackages(deps),
