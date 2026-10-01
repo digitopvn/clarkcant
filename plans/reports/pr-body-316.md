@@ -66,6 +66,13 @@ All runs were on Windows 11 with Docker 29.8.0, against commit 107727a8 (the doc
   - `test:reference-theme-browser`: 8 passed;
   - `test:e2e`: 356 passed and 3 skipped, out of 359, in 15.1 min.
 - `apps/web/e2e/resource-egress.spec.ts` passed both of its tests inside that run.
+- CI run 36906217265 on `ec8c7383` is green on its second attempt, including verify on windows-latest, macos-latest
+  and ubuntu-latest, and the rootless-Docker service-container job.
+  - The first attempt failed one e2e test, `calendar-views.spec.ts:422` ("the week view is usable at phone width…"),
+    including Playwright's retry: the selected-event detail never appeared after the tap. That test and this change
+    share no code.
+  - Rerun alone locally, that spec passed 9 of 9.
+  - The failed-job rerun in CI passed the e2e suite: 356 passed and 3 skipped, and the calendar test passed.
 
 ## Not in this PR
 
