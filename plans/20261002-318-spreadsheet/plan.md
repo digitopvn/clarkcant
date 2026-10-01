@@ -1,6 +1,6 @@
 ---
 title: "#318 Reference app B: spreadsheet"
-status: in-progress
+status: completed
 created: 2026-10-02
 issues: [318]
 related: [200, 313, 314, 317, 382]
@@ -42,3 +42,11 @@ related: [200, 313, 314, 317, 382]
 - Selecting a range and asking Clark to format it as percent applies the format, with the fixture model proving it saw the host-read range.
 - No host path in frame traffic; keyboard grid navigation; light and dark themes; 390 px with the grid scrolling inside its card.
 - `clark widget test` and `clark widget pack` pass; focused tests, `pnpm verify` and `pnpm verify:full` pass; docs are bilingual.
+
+## Status
+
+- Phase 1: done (`feat(artifacts): accept tab-separated values as a text type`).
+- Phase 2: done (`feat(examples): add a reference spreadsheet package`).
+- Phase 3: done (`test(e2e): walk the reference spreadsheet through files, Clark and the keyboard`, `docs(widgets): describe the reference spreadsheet and its limits`).
+- Verification and evidence: `plans/reports/fullstack-261002-318-spreadsheet.md`.
+- Official docs (`digitopvn/clarkcant-web`) follow once the PR merges, so they do not describe unshipped behavior.
