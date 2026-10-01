@@ -1188,6 +1188,43 @@ the invoke result, approval matching and refusal rollback; the browser journey
 [kanban-board.spec.ts](../apps/web/e2e/kanban-board.spec.ts) exercises keyboard, mouse and touch moves in conversation,
 responsive light/dark and reduced motion, plus the read-only Widget Library preview.
 
+### 8.11 Media widgets and semantic state
+
+`canvas.image@1` describes the supplied alt text and includes dimensions only when the owning node has them. Gallery and
+carousel state stores a bounded `selectedIndex` (state version 2); an old version-1 state migrates to the first item,
+and an index is normalized against the current props. Gallery/carousel selection is written through the host's
+`media.view` binding, and the `media.select` event may also update a composed surface. Their semantic document reports
+the item count, the selected item (counted from 1) and its alt text.
+
+`canvas.video@1` stores `status`, `position` and `duration` through the same host binding (state version 2; an old
+version-1 state migrates to paused at 0). Position writes go through one shared playback coalescer
+([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), the one the planned audio widget (#324) is to reuse:
+pause, seek and end flush immediately, while continuous playback writes at most every three seconds. A restored player
+seeks to the stored position once its metadata loads and stays paused; restoring never starts playback, and the restore
+seek is not written back. The semantic document reports the status as last written and the position and duration in
+tenths of a second. YouTube semantics use only its validated video id and title; no
+third-party playback messages are read. Image, gallery/carousel, local-video and YouTube semantics use the same bounded
+document for voice, the next-turn note and `inspect_ui`.
+
+The unit coverage is in [media-view.spec.ts](../packages/contracts/test/media-view.spec.ts),
+[playback-coalescer.spec.ts](../packages/conversation-client/test/playback-coalescer.spec.ts) (including the write count over a
+minute of continuous play), [media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts),
+[widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts) (including the bounds at the largest accepted props) and
+[security.spec.ts](../apps/desktop/test/security.spec.ts) for the desktop media policy. The browser journey in
+[widget.spec.ts](../apps/web/e2e/widget.spec.ts) verifies a gallery selection through `inspect_ui` and a carousel
+selection through the next-turn note and pin restore, including keyboard focus and a 390 px light/reduced-motion view.
+The same file pauses a real local WebM clip in Chromium, reads the paused position through `inspect_ui`, and reloads with
+the video pinned to check that both players reopen at that position without playing. The node does not import video
+files yet, so that journey answers the clip's one reference itself; the authenticated fetch, the object URL, the page
+policy, the player and the node-held state are the production path.
+
+A local video plays from an object URL the client creates from bytes it fetched with the node's token, exactly like an
+imported picture. The page policy therefore allows `media-src 'self' blob:` in both
+[apps/web/index.html](../apps/web/index.html) and the desktop window policy
+([security.mjs](../apps/desktop/src/security.mjs)), and nothing more: no remote media origin and no `data:` media
+([#374](https://github.com/digitopvn/clarkcant/issues/374)). A YouTube embed is a frame, governed by `frame-src`, not
+by this directive.
+
 ---
 
 ## 9. Semantic contract for voice and the next turn
@@ -1215,7 +1252,9 @@ instructions.
 Who writes the document:
 
 - **Built-in and composed surfaces** are described by the host from the state it stores: period, selected day and the
-  declared graph values.
+  declared graph values. Media widgets are described from validated props and their bounded view state only: an
+  image's alt text and known dimensions, a gallery's or carousel's selected item, a local video's playback status and
+  position, and a YouTube video's validated id and title ([§8.11](#811-media-widgets-and-semantic-state)).
 - **A widget in its own frame** proposes a summary, selected IDs and values with
   `semantic.publish(summary, selectedIds, values?)`. The host sends the last of a burst after 250 ms, validates it
   against a strict schema (`POST …/widgets/{instanceId}/semantic`), cleans it and marks it as the widget's own words. A

@@ -1188,6 +1188,42 @@ kết quả invoke, khớp approval và rollback khi bị từ chối; browser j
 [kanban-board.spec.ts](../apps/web/e2e/kanban-board.spec.ts) chạy thao tác bàn phím, chuột và cảm ứng trong hội thoại,
 theme sáng/tối thích ứng và giảm chuyển động, cùng preview chỉ-đọc trong Widget Library.
 
+### 8.11 Widget media và trạng thái semantic
+
+`canvas.image@1` mô tả alt text được cung cấp và chỉ đưa kích thước vào khi node sở hữu ảnh có các giá trị đó. State
+gallery và carousel lưu `selectedIndex` có giới hạn (state version 2); state cũ version 1 được migrate về mục đầu tiên,
+và chỉ số luôn được chuẩn hoá theo props hiện tại. Lựa chọn gallery/carousel được ghi qua binding `media.view` của
+host; event `media.select` cũng có thể cập nhật surface được ghép. Semantic document của chúng báo số mục, mục đang
+chọn (đếm từ 1) và alt text của mục đó.
+
+`canvas.video@1` lưu `status`, `position` và `duration` qua cùng binding của host (state version 2; state cũ
+version 1 được migrate thành paused tại 0). Các lần ghi vị trí đi qua một bộ gộp playback dùng chung
+([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), chính bộ mà widget audio đã lên kế
+hoạch (#324) sẽ dùng lại: pause, seek và kết thúc ghi ngay; trong khi phát liên tục thì tối đa ba giây mới ghi một lần. Player được khôi
+phục sẽ tua tới vị trí đã lưu khi metadata tải xong và vẫn dừng; khôi phục không bao giờ tự phát, và lần tua do khôi
+phục không được ghi ngược lại. Semantic document báo status như lần ghi cuối, còn vị trí và thời lượng làm tròn tới
+một phần mười giây. Semantic của YouTube chỉ dùng video id đã kiểm tra cùng title; không đọc
+message playback của bên thứ ba. Image, gallery/carousel, video cục bộ và YouTube dùng chung một document có giới hạn
+cho voice, ghi chú lượt kế tiếp và `inspect_ui`.
+
+Unit test nằm ở [media-view.spec.ts](../packages/contracts/test/media-view.spec.ts),
+[playback-coalescer.spec.ts](../packages/conversation-client/test/playback-coalescer.spec.ts) (gồm số lần ghi trong một phút
+phát liên tục), [media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts),
+[widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts) (gồm giới hạn ở props lớn nhất được chấp nhận) và
+[security.spec.ts](../apps/desktop/test/security.spec.ts) cho media policy của desktop. Browser journey trong
+[widget.spec.ts](../apps/web/e2e/widget.spec.ts) xác minh lựa chọn gallery qua `inspect_ui` và lựa chọn carousel qua
+ghi chú lượt kế tiếp cùng khôi phục pin, gồm focus bàn phím và màn hình sáng/rút gọn chuyển động rộng 390 px. Cùng tệp đó
+pause một clip WebM cục bộ thật trong Chromium, đọc vị trí đã dừng qua `inspect_ui`, rồi tải lại trang khi video đã
+được ghim để kiểm tra cả hai player mở lại đúng vị trí đó mà không tự phát. Node chưa nhập được tệp video, nên journey
+tự trả bytes cho đúng một tham chiếu của clip; phần fetch có xác thực, object URL, page policy, player và state do node
+giữ đều là đường production.
+
+Video cục bộ phát từ object URL mà client tạo từ bytes đã fetch bằng token của node, giống hệt ảnh đã nhập. Vì vậy page
+policy cho phép `media-src 'self' blob:` ở cả [apps/web/index.html](../apps/web/index.html) và policy của cửa sổ desktop
+([security.mjs](../apps/desktop/src/security.mjs)), và không gì hơn: không origin media từ xa và không media `data:`
+([#374](https://github.com/digitopvn/clarkcant/issues/374)). Embed YouTube là một frame, do `frame-src` quản lý, không
+thuộc directive này.
+
 ---
 
 ## 9. Semantic contract cho voice và lượt kế tiếp
@@ -1215,7 +1251,9 @@ chỉ dẫn.
 Ai viết tài liệu:
 
 - **Surface dựng sẵn và surface ghép** được host mô tả từ state nó lưu: khoảng thời gian, ngày được chọn và các giá trị
-  graph đã khai báo.
+  graph đã khai báo. Widget media chỉ được mô tả từ props đã kiểm tra và view state có giới hạn của chúng: alt text và
+  kích thước đã biết của ảnh, mục đang chọn của gallery hoặc carousel, trạng thái phát và vị trí của video cục bộ, cùng
+  id đã kiểm tra và title của video YouTube ([§8.11](#811-widget-media-và-trạng-thái-semantic)).
 - **Widget chạy trong frame riêng** đề xuất summary, selected ID và giá trị bằng
   `semantic.publish(summary, selectedIds, values?)`. Host gửi lần publish cuối của một loạt sau 250 ms, kiểm tra theo
   schema chặt (`POST …/widgets/{instanceId}/semantic`), làm sạch và đánh dấu đó là lời của chính widget. Frame không
