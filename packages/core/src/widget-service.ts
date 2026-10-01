@@ -1875,10 +1875,10 @@ function readDisplayMode(input: Record<string, unknown>): "compact" | "expanded"
 export function readWidgetStateRow(
   db: Database,
   instanceId: string,
-): { revision: number; stateVersion: number; body: Record<string, unknown> } | undefined {
-  const row = oneRow<{ state_revision: number; state_version: number; document: string }>(
+): { revision: number; stateVersion: number; body: Record<string, unknown>; updatedAt: string } | undefined {
+  const row = oneRow<{ state_revision: number; state_version: number; document: string; updated_at: string }>(
     db,
-    "SELECT state_revision, state_version, document FROM widget_state WHERE instance_id = ?",
+    "SELECT state_revision, state_version, document, updated_at FROM widget_state WHERE instance_id = ?",
     instanceId,
   );
   if (row === undefined) return undefined;
@@ -1887,6 +1887,7 @@ export function readWidgetStateRow(
     revision: Number(row.state_revision),
     stateVersion: Number(row.state_version),
     body: typeof body === "object" && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : {},
+    updatedAt: String(row.updated_at),
   };
 }
 
@@ -1900,10 +1901,10 @@ export function liveStateOf(
   deps: WidgetDeps,
   instanceId: string,
   definition?: Pick<WidgetDefinition, "stateVersion" | "stateMigrations">,
-): { revision: number; stateVersion: number; body: Record<string, unknown> } | undefined {
+): { revision: number; stateVersion: number; body: Record<string, unknown>; updatedAt: string } | undefined {
   const row = readWidgetStateRow(deps.db, instanceId);
   if (row === undefined || definition === undefined) return row;
-  return { revision: row.revision, ...stateAsCurrentVersion(definition, row) };
+  return { revision: row.revision, updatedAt: row.updatedAt, ...stateAsCurrentVersion(definition, row) };
 }
 
 type InputValidation = { ok: true; patch: Record<string, unknown> } | { ok: false; message: string };

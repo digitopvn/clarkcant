@@ -4,10 +4,12 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type Instant, SEMANTIC_LIMITS, UI_CONTEXT_BUDGET, UI_CONTEXT_HEADING, type WidgetDefinition, canonicalSemanticDoc } from "@clarkcant/contracts";
+import { type Instant, MEDIA_PLAYING_FRESH_MS, SEMANTIC_LIMITS, UI_CONTEXT_BUDGET, UI_CONTEXT_HEADING, type WidgetDefinition, canonicalSemanticDoc } from "@clarkcant/contracts";
 import { createInstance, getActionBinding, getInstance, invokeMiniAppAction } from "@clarkcant/core";
+import { GALLERY } from "@clarkcant/data-canvas";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
 import { findCompositionByMessage, getWidgetSemantic, insertLocalImage, touchWidgetSemantic } from "@clarkcant/storage";
+import { definitionDigest } from "@clarkcant/widget-host";
 
 import { composeLayout } from "../src/compose-layout.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
@@ -513,13 +515,26 @@ describe("host media semantics", () => {
 
     const carouselId = await placeMedia("canvas.carousel@1", { imageRefs: ["one", "two"], alts: ["First", "Second"] });
     expect(writeMediaState(carouselId, { selectedIndex: 1 }, "inv_carousel_semantic").ok).toBe(true);
-    expect(refreshWidgetSemantic(services.conductor, carouselId)?.doc).toMatchObject({ values: { selectedIndex: 2, itemCount: 2, alt: "Second" } });
+    expect(refreshWidgetSemantic(services.conductor, carouselId)?.doc).toMatchObject({
+      summary: "Carousel: showing picture 2 of 2 — Second",
+      values: { selectedNumber: 2, itemCount: 2, alt: "Second" },
+    });
+    // The stored index counts from 0; the document says the picture as a person counts it, under its own name.
+    expect(refreshWidgetSemantic(services.conductor, carouselId)?.doc.values).not.toHaveProperty("selectedIndex");
 
     const videoId = await placeMedia("canvas.video@1", { videoRef: "video-ref", alt: "A short film" });
     expect(writeMediaState(videoId, { status: "playing", position: 12, duration: 90 }, "inv_video_semantic").ok).toBe(true);
     expect(refreshWidgetSemantic(services.conductor, videoId)?.doc).toMatchObject({
       summary: "Video playing: A short film",
       values: { status: "playing", position: 12, duration: 90, alt: "A short film" },
+    });
+    // A player that stopped writing (a closed tab, a crash) left "playing" behind; it is read as paused where it was.
+    services.runtime.db
+      .prepare("UPDATE widget_state SET updated_at = ? WHERE instance_id = ?")
+      .run(new Date(Date.now() - MEDIA_PLAYING_FRESH_MS - 1_000).toISOString(), videoId);
+    expect(refreshWidgetSemantic(services.conductor, videoId)?.doc).toMatchObject({
+      summary: "Video paused: A short film",
+      values: { status: "paused", position: 12, duration: 90 },
     });
     expect(writeMediaState(videoId, { status: "playing", position: 91, duration: 90 }, "inv_video_invalid")).toMatchObject({ ok: false, code: "INVALID_INPUT" });
     expect(writeMediaState(videoId, { status: "paused", position: 41.26, duration: 90.04 }, "inv_video_paused").ok).toBe(true);
@@ -571,7 +586,7 @@ describe("host media semantics", () => {
     expect(outcome.ok && outcome.state).toEqual({ selectedIndex: 1 });
     expect(services.runtime.db.prepare("SELECT state_version FROM widget_state WHERE instance_id = ?").get(instanceId)).toMatchObject({ state_version: 2 });
     expect(refreshWidgetSemantic(services.conductor, instanceId)?.doc).toMatchObject({
-      values: { selectedIndex: 2, itemCount: 3, alt: "Second item" },
+      values: { selectedNumber: 2, itemCount: 3, alt: "Second item" },
     });
     touchWidgetSemantic(services.runtime.db, { instanceId, conversationId: CONVERSATION, at: AT });
     const inspectUi = createInspectUiTool({ deps: () => services.conductor, conversationId: CONVERSATION });
@@ -601,6 +616,21 @@ describe("host media semantics", () => {
         if (typeof value === "string") expect(value.length).toBeLessThanOrEqual(SEMANTIC_LIMITS.string);
       }
     }
-    expect(refreshWidgetSemantic(services.conductor, galleryId)?.doc.values).toMatchObject({ selectedIndex: 48, itemCount: 48 });
+    expect(refreshWidgetSemantic(services.conductor, galleryId)?.doc.values).toMatchObject({ selectedNumber: 48, itemCount: 48 });
+  });
+
+  it("still describes a gallery placed before media views had a host binding", () => {
+    // Placed the way an older node placed it: the definition alone, no view binding and no state row.
+    const instanceId = createInstance(services.conductor, {
+      definition: GALLERY,
+      packageDigest: definitionDigest(GALLERY),
+      ownerPrincipalId: services.runtime.identity.ownerPrincipalId as never,
+      props: { imageRefs: ["image-a", "image-b"], alts: ["First item", "Second item"] },
+    }).instanceId;
+    expect(getInstance(services.conductor, instanceId)?.actionBindingIds).toEqual([]);
+    expect(refreshWidgetSemantic(services.conductor, instanceId)?.doc).toMatchObject({
+      summary: "Gallery: showing picture 1 of 2 — First item",
+      values: { selectedNumber: 1, itemCount: 2, alt: "First item" },
+    });
   });
 });

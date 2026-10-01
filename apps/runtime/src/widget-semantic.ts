@@ -34,6 +34,7 @@ import {
   readBoard,
   readBoardState,
   boardSemantic,
+  playingIsFresh,
   readMediaPlayback,
   readMediaSelection,
 } from "@clarkcant/contracts";
@@ -229,19 +230,27 @@ export function buildWidgetSemantic(
       instanceId,
       definitionId,
       ...(typeof instance.props.title === "string" ? { title: instance.props.title } : {}),
-      summary: `${definitionId === CAROUSEL.id ? "Carousel" : "Gallery"}: ${String(refs.length)} images; showing ${String(state.selectedIndex + 1)}${alt === "" ? "" : ` — ${alt}`}`,
-      values: { selectedIndex: state.selectedIndex + 1, itemCount: refs.length, alt },
+      // Counted from 1, as a person says it ("picture 2 of 3"), and named so: the stored `selectedIndex` counts from 0.
+      summary: `${definitionId === CAROUSEL.id ? "Carousel" : "Gallery"}: showing picture ${String(state.selectedIndex + 1)} of ${String(refs.length)}${alt === "" ? "" : ` — ${alt}`}`,
+      values: { selectedNumber: state.selectedIndex + 1, itemCount: refs.length, alt },
       availableActions,
       freshness: "unknown",
     });
   }
 
   if (definitionId === VIDEO.id) {
-    const body = liveStateOf(deps, instanceId, VIDEO)?.body;
-    // The bounded position and duration come from the shared reader. The status is reported as last written, because the
-    // document describes the player now; only a restored player is read as paused.
+    const live = liveStateOf(deps, instanceId, VIDEO);
+    const body = live?.body;
+    // The bounded position and duration come from the shared reader. "ended" is reported as written. "playing" is
+    // believed only while the player keeps writing it: a playing player writes at least every interval, so an older
+    // "playing" was left by a player that is gone and is read as paused where it was last seen.
     const playback = readMediaPlayback(body);
-    const status = body?.status === "playing" || body?.status === "ended" ? body.status : "paused";
+    const status =
+      body?.status === "ended"
+        ? "ended"
+        : body?.status === "playing" && playingIsFresh(live?.updatedAt, deps.now())
+          ? "playing"
+          : "paused";
     const alt = typeof instance.props.alt === "string" ? instance.props.alt : "";
     // Tenths of a second: enough to say where a video stopped, without a float's noise in every sentence.
     const seconds = (value: number): number => Math.round(value * 10) / 10;
