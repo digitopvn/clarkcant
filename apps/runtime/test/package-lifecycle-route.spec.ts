@@ -492,3 +492,91 @@ describe("what a running frame is brokered", () => {
     expect(after.frame.unavailableCapabilities).toEqual([]);
   });
 });
+
+describe("the resource profile a package runs in, as package details and its frame read it", () => {
+  /** The package's manifest in the current schema, asking for a profile; a v1 manifest has no way to ask. */
+  function requestProfile(root: string, version: string, profile: string): void {
+    writeFileSync(
+      join(root, "clarkcant.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        id: PACKAGE,
+        version,
+        displayName: "Board",
+        description: "A task board.",
+        hostApi: { min: 1, max: 1 },
+        facets: [
+          { kind: "ui", id: WIDGET_ID, entry: "widgets/main/index.html", definition: "widgets/main/widget.json", isolation: "isolated-ui" },
+        ],
+        requestedCapabilities: [],
+        permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
+        platforms: ["darwin-arm64", "linux-x64", "win32-x64", "web"],
+        publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
+        dependencies: [],
+        resources: { version: 1, profile },
+      }),
+    );
+  }
+
+  it("grants the light profile to a package that asks for nothing, and its frame unmounts out of view", async () => {
+    recordInstall("2.0.0");
+    const listed = await send("GET", "/packages");
+    expect(listed.body).toMatchObject({
+      packages: [
+        {
+          packageId: PACKAGE,
+          resources: {
+            requested: "interactive-light",
+            status: "granted",
+            profile: "interactive-light",
+            bounds: { memoryMib: 256, cpus: 1, pids: 128, tmpfsMib: 16, callDeadlineMs: 60_000, maxActiveJobs: 4 },
+            offscreen: "suspend",
+            notes: [],
+          },
+        },
+      ],
+    });
+    expect((await live(makeInstance())).body).toMatchObject({ frame: { offscreen: "suspend" } });
+  });
+
+  it("lets a frame whose package was granted authorized playback keep running out of view, and a refused one not", async () => {
+    requestProfile(join(dir, "board-2"), "2.0.0", "media-workstation");
+    recordInstall("2.0.0");
+    const instanceId = makeInstance();
+    expect((await send("GET", "/packages")).body).toMatchObject({
+      packages: [{ resources: { requested: "media-workstation", status: "granted", offscreen: "authorized-playback" } }],
+    });
+    expect((await live(instanceId)).body).toMatchObject({ frame: { offscreen: "authorized-playback" } });
+
+    // A rule the person set refusing local writes refuses the larger profile, and the frame is back to unmounting.
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => AT as never },
+      {
+        principalId: services.runtime.identity.ownerPrincipalId,
+        key: EXECUTION_POLICY_PREFERENCE_KEY,
+        value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, rules: [{ effectCategory: "local-write", decision: "deny" }] },
+        source: "user",
+      },
+    );
+    expect(written.ok).toBe(true);
+    expect((await send("GET", "/packages")).body).toMatchObject({
+      packages: [
+        {
+          resources: {
+            requested: "media-workstation",
+            status: "degraded",
+            reason: "media-workstation is not granted: a rule refuses local-write effects on this machine",
+          },
+        },
+      ],
+    });
+    expect((await live(instanceId)).body).toMatchObject({ frame: { offscreen: "suspend" } });
+  });
+
+  it("says nothing about resources for a package whose files this node cannot read, rather than claim the light profile", async () => {
+    recordInstall("3.0.0", "sha256:board-3.0.0");
+    const listed = (await send("GET", "/packages")).body as { packages: Record<string, unknown>[] };
+    expect(listed.packages[0]?.packageId).toBe(PACKAGE);
+    expect(listed.packages[0]).not.toHaveProperty("resources");
+  });
+});

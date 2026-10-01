@@ -13,6 +13,8 @@ import {
   type MessageSurface,
   type Principal,
   type ReferenceBlock,
+  type ResourceProfile,
+  type ResourceRequest,
   COMPOSER_SURFACE_HEADER,
   capabilityRefSchema,
   conversationDeleteRequestSchema,
@@ -82,6 +84,8 @@ import { resolveAttachmentRefs } from "../attachments.ts";
 import { resolveComposerReferences } from "../composer-references.ts";
 import { type InteractionDeps, answerQuestion, askQuestionAgain, cancelQuestion } from "../interactions.ts";
 import { resolveLiveSections } from "../mini-app-data.ts";
+import { packageResourceGrant } from "../package-resources.ts";
+import { resourceProfilePolicy } from "../service-host.ts";
 import { WorkAbort, nodeWork } from "../work-supervisor.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "../jev-decider.ts";
 import { type OwnedResources, ownedResources } from "../preflight.ts";
@@ -162,6 +166,25 @@ const STATE_REFUSAL_STATUS = {
  * Shared by the live route and the state route so both hold the widget to the same definition: the one the frame
  * the user is looking at was mounted from.
  */
+/** The granted profile's offscreen behaviour for a frame; anything not granted keeps the default, which suspends. */
+function frameOffscreen(
+  services: Pick<NodeServices, "runtime" | "serviceHost">,
+  packageId: string,
+  request: ResourceRequest | undefined,
+): ResourceProfile["offscreen"] {
+  const grant = packageResourceGrant({
+    packageId,
+    request,
+    serviceHost: services.serviceHost,
+    policy: resourceProfilePolicy({
+      db: services.runtime.db,
+      principalId: services.runtime.identity.ownerPrincipalId,
+      now: nowInstant,
+    }),
+  });
+  return grant.status === "granted" ? grant.profile.offscreen : "suspend";
+}
+
 function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity: { nodeId: string } }, widgetId: string) {
   const index = readDirectoryIndex(directoryIndexPath(process.env));
   /*
@@ -398,6 +421,11 @@ function resolveLiveWidget(
         grantedCapabilities: capabilities.ready,
         unavailableCapabilities,
         allowedOrigins: isolated.allowedOrigins,
+        /*
+         * What the frame does out of view under its package's granted profile. Only `authorized-playback` lets the
+         * person keep it running offscreen, from host chrome; every other answer unmounts it as before.
+         */
+        offscreen: frameOffscreen(services, isolated.packageId, isolated.resources),
       },
       /*
        * The same shape the composition path returns, and for the same reason: an invocation is re-authorized

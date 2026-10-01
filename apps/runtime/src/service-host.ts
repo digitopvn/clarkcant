@@ -995,7 +995,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
  * same version is not the code that was consented to.
  */
 export function packageRootFrom(entries: readonly DirectoryEntry[], cacheRoot: string) {
-  return (generation: PackageGeneration): string | undefined => {
+  return (generation: Pick<PackageGeneration, "packageId" | "version" | "digest">): string | undefined => {
     const entry = entries.find(
       (candidate) =>
         candidate.version === generation.version &&

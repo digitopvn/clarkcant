@@ -27,6 +27,8 @@ import {
 } from "../application/package-install.ts";
 import { decideInstallApproval, isInstallApproval } from "../application/install-approval.ts";
 import { changePackage } from "../application/package-lifecycle.ts";
+import { installedResourceRequest, packageResourceGrant, packageResourcesView } from "../package-resources.ts";
+import { resourceProfilePolicy, type ServiceHost } from "../service-host.ts";
 import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
 
 /**
@@ -41,7 +43,7 @@ export interface PackageRouteDeps {
   services: {
     runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string }; dataDir: string };
     conductor: { newId: (prefix: string) => string };
-    serviceHost?: { reconcile(): Promise<void> } | undefined;
+    serviceHost?: (Pick<ServiceHost, "reconcile"> & Partial<Pick<ServiceHost, "resourceGrant">>) | undefined;
   };
   request: GatewayRequest;
   segments: string[];
@@ -70,8 +72,19 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
    */
   if (segments.length === 1 && segments[0] === "packages" && request.method === "GET") {
     const deps = { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: services.conductor.newId };
+    const policy = resourceProfilePolicy({ db: runtime.db, principalId: runtime.identity.ownerPrincipalId, now: nowInstant });
     return json(200, {
-      packages: listInstalledPackages(deps),
+      /*
+       * Each with the resource profile it asked for and what this node granted, so package details show the bounds the
+       * code runs in or why it does not run. Left out when the node cannot read the package's manifest: an unknown
+       * request is not reported as the light profile.
+       */
+      packages: listInstalledPackages(deps).map((installed) => {
+        const request = installedResourceRequest(installed, runtime.dataDir);
+        if (request === "unreadable") return installed;
+        const grant = packageResourceGrant({ packageId: installed.packageId, request, serviceHost: services.serviceHost, policy });
+        return { ...installed, resources: packageResourcesView(grant) };
+      }),
       // Uninstalled here and restorable without fetching anything: the generation rows outlive an uninstall.
       restorable: listRestorablePackages(deps),
     });
