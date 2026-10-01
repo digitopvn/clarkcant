@@ -1591,6 +1591,87 @@ Kiểm thử: [jobs.spec.ts](../packages/contracts/test/jobs.spec.ts) cho các q
 [package-job.spec.ts](../apps/web/e2e/package-job.spec.ts). Hành trình đó theo dõi tiến độ của một service thật qua
 một lần tải lại, từ chối một JobRef giả, huỷ từ widget, hoàn tất kèm một tệp và kết thúc một job bằng Dừng khẩn cấp.
 
+### 10.3 Ứng dụng mẫu: trình soạn thảo văn bản
+
+[`examples/reference-apps/text-editor`](../examples/reference-apps/text-editor) là một ứng dụng hoàn chỉnh chỉ dựng
+trên các hợp đồng ở trên. Nó có một facet UI cách ly, không có service, không xin quyền nào và không yêu cầu capability
+nào. Người dùng mở một tệp văn bản, sửa, lưu và nhờ Clark viết lại một đoạn đang chọn, còn frame không bao giờ thấy tệp
+nằm ở đâu. `clark widget init --template pure-ui` tạo một package mới từ bản sao của nó
+([§16](#16-developer-cli-target)).
+
+**Package.** `clarkcant.json` là manifest schema phiên bản 2 cho mọi nền tảng và cho web. `widget.json` nhận hai
+prop: `title`, và `rewriteBinding` là id của binding `agent` mà host đặt cho trình soạn thảo. `stateSchema` chỉ nhận
+`file`, `base` (hai `ArtifactRef`), `draft` và `draftTooLarge`, với `additionalProperties: false`. Các quy tắc là hàm
+thuần trong [`editor-core.js`](../examples/reference-apps/text-editor/widgets/main/editor-core.js), được kiểm thử không
+cần trình duyệt; `main.js` lo phần DOM và các lời gọi SDK.
+
+**Mở tệp.** `artifacts.pick({ accept: ["text/plain", "text/markdown", "text/csv", "application/json"] })` hỏi host,
+và host vẽ hộp hỏi bên ngoài frame. Trình soạn thảo từ chối tệp lớn hơn 1 MiB trước khi đọc byte nào. Phần còn lại được
+đọc theo từng đoạn 256 KiB và giải mã UTF-8 nghiêm ngặt: byte không phải văn bản bị từ chối kèm lý do, thay vì được hiển
+thị bằng ký tự thay thế mà một lần lưu sẽ ghi ngược lại vào tệp.
+
+**Sửa và giữ bản nháp.** Bản nháp chưa lưu được ghi vào widget state 400 ms sau khi người dùng ngừng gõ, mỗi lần chỉ một
+lượt ghi. Một lượt ghi bị từ chối được trả lời bằng state mà host đã commit. Vì vậy tải lại trang, một bản đã ghim hay
+một thiết bị khác đều thấy cùng bản nháp. Widget state chứa tối đa 16 KiB, nên bản nháp có JSON lớn hơn 12 KiB không
+được giữ và cũng không bao giờ bị cắt. Trình soạn thảo nói rõ bản nháp sẽ không còn sau khi tải lại, và cờ báo được giữ
+lại để lần tải sau cũng nói như vậy. Khi tải, trình soạn thảo đọc lại các byte đã lưu qua `base`. Nếu không đọc được
+(quyền với một tệp đã chọn chỉ kéo dài 24 giờ), bản nháp vẫn được hiển thị, đánh dấu chưa lưu, kèm lý do.
+
+**Hai chỗ xem cùng một trình soạn thảo.** Khi state đã commit đến từ một chỗ xem khác, trình soạn thảo nhận lấy nếu
+nó không còn gì chưa gửi. Nếu cả hai cùng đổi, nó hiện *Giữ bản của tôi* và *Dùng bản kia*, và không vứt bản nào.
+
+**Lưu.** Trình soạn thảo ghi một artifact `working` cùng loại và cùng tên với tệp đã mở, theo từng đoạn, finalize nó
+rồi gọi `export(ref, { suggestedName })`. Host quyết định điều đó nghĩa là gì. Trên máy tính, host đưa ra *Ghi đè tệp
+gốc* cho tệp đã chọn trong frame này, vì cùng loại; trên web, host bắt đầu tải xuống và nói rằng ghi đè tệp gốc là tính
+năng của ứng dụng máy tính. Trình soạn thảo chỉ biết `true` hoặc `false`. Với `true`, bản sao trở thành `base` mới và
+bản sao trước đó do trình soạn thảo tạo bị bỏ; với `false`, bản sao không dùng đến bị bỏ. Trình soạn thảo không bao giờ
+bỏ tệp mà người dùng đã chọn. Ctrl+S (Cmd+S trên macOS) để lưu. *Đính kèm* finalize một bản sao rồi gọi
+`attachToConversation`.
+
+**Những gì Clark được cho xem.** Trình soạn thảo công bố một câu tóm tắt ("Editing notes.txt: 3 lines, with unsaved
+changes.") và các giá trị `open`, `file`, `lines`, `dirty`, `selectionStart`, `selectionEnd`, `selectedChars` và
+`selectedText`. Đoạn trích bị cắt ở 200 ký tự, giới hạn của host cho một giá trị, và chỗ cắt được đánh dấu. Khoảng đang
+chọn cũng là một id được chọn (`chars:6-11`). Host giới hạn, che thông tin nhạy cảm và đánh dấu tất cả là lời của chính
+widget.
+
+**Nhờ Clark sửa đoạn đang chọn.** Host đặt trình soạn thảo kèm một binding `agent` có `contextRefs` là
+`["selection", "widget"]` và truyền id của nó qua prop. Khi người dùng bấm *Nhờ Clark viết lại đoạn chọn*:
+
+1. Trình soạn thảo công bố semantic document rồi chờ 450 ms, quá khoảng ổn định 250 ms của host, để host đọc đúng đoạn
+   đang chọn này chứ không phải đoạn trước đó. Đoạn chọn dài hơn 200 ký tự bị từ chối ngay trong trình soạn thảo, vì
+   Clark sẽ chỉ đọc được một phần.
+2. `actions.invoke(rewriteBinding, {}, invocationId)` bắt đầu một lượt. Host đọc đoạn đang chọn và document của widget
+   vào phần dữ liệu của lượt đó, phần này được đánh dấu là dữ liệu chứ không phải chỉ dẫn.
+3. Câu trả lời quay về dưới dạng output của lần bấm, tối đa 2.000 ký tự. Trình soạn thảo coi nó là văn bản không tin
+   cậy: lấy khối có rào (```) đầu tiên, nếu không có thì lấy cả câu trả lời, và bỏ các ký tự điều khiển và ký tự vô hình,
+   trừ xuống dòng và tab.
+4. Đề xuất được hiển thị để xem lại và nhận bàn phím tại tiêu đề của nó. *Thay đoạn đã chọn* chỉ áp dụng nếu khoảng đã
+   chọn vẫn còn đúng đoạn văn bản Clark được cho xem; Escape hoặc *Bỏ qua* để đóng. Thay đổi đã áp dụng là một chỉnh sửa
+   chưa lưu như mọi chỉnh sửa khác.
+
+Clark không bao giờ ghi vào frame, và không model nào phê duyệt một lần lưu: xuất tệp vẫn là hành động của người dùng
+trong hộp hỏi của host.
+
+**Khoảng trống đã biết.** Hiện tại, gõ yêu cầu trong ô soạn tin ("rút ngắn dòng thứ hai") không thể thay đổi trình soạn
+thảo. Chưa có công cụ agent nào thực hiện được action riêng của một widget cách ly, nên thay đổi chỉ đến được frame qua
+nút của chính trình soạn thảo. Clark vẫn đọc được trình soạn thảo qua ghi chú lượt kế tiếp và `inspect_ui`. Việc này
+được theo dõi ở [#382](https://github.com/digitopvn/clarkcant/issues/382).
+
+**Trợ năng.** Mọi điều khiển đều là nút gốc hoặc ô văn bản, theo thứ tự tab cố định, với viền focus nhìn thấy được. Hộp
+hỏi của host và đề xuất nhận bàn phím tại tiêu đề của chúng. Màu lấy từ appearance token của host (`appearance@1`), nếu
+không có thì theo lựa chọn sáng hoặc tối của hệ thống. Chế độ giảm chuyển động bỏ mọi hiệu ứng chuyển tiếp. Thanh công
+cụ xuống dòng ở 390 px, và frame xin host chiều cao đúng bằng nội dung.
+
+Kiểm thử: [editor-core.spec.ts](../examples/reference-apps/text-editor/test/editor-core.spec.ts) cho các quy tắc,
+[package.spec.ts](../examples/reference-apps/text-editor/test/package.spec.ts) cho conformance và manifest,
+[pure-ui-template.spec.ts](../packages/widget-cli/test/pure-ui-template.spec.ts) cho template, và hành trình trên trình
+duyệt [text-editor.spec.ts](../apps/web/e2e/text-editor.spec.ts). Hành trình đó mở, sửa, tải lại, lưu thành tệp tải
+xuống rồi mở lại trên web. Nó ghi đè tệp gốc rồi mở lại với một preload máy tính được mô phỏng; hộp thoại thật của shell
+được kiểm thử trong [file-bridge.spec.ts](../apps/desktop/test/file-bridge.spec.ts). Nó nhờ Clark qua model kịch bản,
+model này trích đoạn đang chọn từ phần dữ liệu, rồi áp dụng câu trả lời, và từ chối một câu trả lời khi khoảng đã chọn đã
+đổi. Nó chạy chỉ bằng bàn phím, ở 390 px với cả hai giao diện sáng và tối khi bật giảm chuyển động, và kiểm tra rằng
+không có vị trí trên đĩa hay file handle nào đi qua bridge.
+
 ---
 
 ## 11. Pin / detach lifecycle
@@ -1732,9 +1813,14 @@ Templates:
 - blank;
 - dashboard;
 - form;
+- pure-ui: bản sao của trình soạn thảo văn bản mẫu ([§10.3](#103-ứng-dụng-mẫu-trình-soạn-thảo-văn-bản)), mang id,
+  facet id và tên riêng của package mới, không kèm các kiểm thử của trình soạn thảo;
 - editor;
 - media;
 - MCP App adapter.
+
+Hiện tại `clark widget init --template` nhận `blank`, `form`, `dashboard` và `pure-ui`. `editor`, `media` và MCP App
+adapter chưa được triển khai.
 
 ### dev
 
