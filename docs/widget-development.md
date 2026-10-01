@@ -2267,3 +2267,55 @@ a package that is ready to use. No real dev flow depends on the old behavior ("l
 uses its own dev host and does not go through this route. An old dev DB that sees its generation disappear from this
 route after upgrading should re-run `POST /packages/install` for that package, or `node
 tools/check-invariants.mjs --fix-manifest` if it only needs to resync `docs/manifest.json` after editing this file.
+
+---
+
+## 24. Reference apps
+
+Reference apps are complete packages that show how the platform's pieces fit together in one real widget. They live
+in `examples/reference-apps/` and are tested like any other package, plus a browser journey through a real node.
+
+### 24.1 Spreadsheet
+
+`examples/reference-apps/spreadsheet` ([#318](https://github.com/digitopvn/clarkcant/issues/318), part of [#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with one
+isolated UI facet and no service. It shows a widget that works on a file, keeps a large document within bounds,
+describes itself to Clark and applies a change Clark chose.
+
+- **Files.** CSV and TSV come in through `api.artifacts.pick` ([§10.1](#101-files-by-reference-artifacts1)) and are
+  read in 256 KiB chunks; the widget never sees a path. An export is a new file written through `create`, `write`,
+  `finalize` and `export`, with a byte-order mark as the host's table export writes. XLSX is not supported: there is
+  no vetted parser in the tree and the host's file broker does not accept the type.
+- **Bounds.** At most 25,000 cells, 64 columns and 5,000 rows are loaded, and no file is read past 8 MiB. Reading stops
+  at the bound and a notice says how much is shown and that an export writes only that part. Rows and columns are
+  virtualized, so a large sheet keeps only the cells in view in the document.
+- **State.** The widget state holds the source file's reference, the edits since, the formats and the active cell,
+  never the sheet itself. When the edits outgrow 10 KiB of the host's 16 KiB, the widget writes the whole sheet to a
+  file of its own and starts again from it.
+- **Formulas.** A closed set: arithmetic, cell and range references, and `SUM`, `AVERAGE`, `MIN`, `MAX` and
+  `COUNT`. A parser builds a tree that the widget walks; no text is ever run as code. Errors are values (`#DIV/0!`,
+  `#VALUE!`, `#REF!`, `#NAME?`, `#PARSE!`, `#NUM!`, `#LIMIT!`), and a circular reference is `#CIRC!` with
+  the cells on it named in the notice.
+- **CSV injection.** An export carries computed values, never formulas. Text that starts with `=`, `+`, `-`,
+  `@`, a tab or a carriage return is written behind a `'`, the same rule as `toCsv`, and a leading `'` reads back
+  as text, so an exported file imports to the same values.
+- **Semantic document.** The selected A1 range, an excerpt of at most 12 rows by 8 columns, the active cell's formula
+  and value, and the sheet's size, sized to fit the host's semantic limits so nothing is cut.
+- **Formatting through Clark.** The widget's "format as percent" button presses an `agent` binding whose id arrives
+  as the `formatBinding` prop and whose context is `selection` and `widget`. The press sends nothing: the host reads
+  the range from the widget's semantic document and asks for exactly one line, `format: percent <range>`. The widget
+  treats the reply as untrusted, applies it only when it is that line for the range selected at the press, and says so
+  when it is not.
+- **Keyboard.** Arrow keys move, Shift extends the selection, Home/End and Ctrl+Home/End jump, Page Up/Down page,
+  Enter or F2 edits, typing starts an edit, Escape cancels, Tab moves right and Delete clears the selection.
+
+Two limits are stated rather than hidden. Nothing in the product places a package widget with a bound action yet: in the
+browser suite the fixture node places the spreadsheet and compiles its binding the way the host compiles a model's
+proposal. And a request typed in the composer reaches Clark through the semantic note but cannot change the frame. Both
+are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382).
+
+Tests: unit tests for the parser, formulas, bounds and semantic document in
+[test/](../examples/reference-apps/spreadsheet/test/) (28 tests); `clark widget test` passes 22 checks, with 12
+needing the dev host; and the browser journey [spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (3 tests):
+import, edit, export and reimport in CSV and TSV to the same values; a selected range Clark formats as percent; a file
+past the bounds that loads its first part, says so and stays responsive; no path in bridge or frame traffic; and the
+grid from the keyboard, in both themes, at 390 px with the grid scrolling inside its card.

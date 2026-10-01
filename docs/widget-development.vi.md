@@ -2267,3 +2267,55 @@ một package sẵn sàng dùng. Không có flow dev thực nào phụ thuộc h
 dùng dev host riêng của nó, không đi qua route này. Một dev DB cũ thấy generation của mình biến mất khỏi route
 này sau khi nâng cấp nên chạy lại `POST /packages/install` cho package đó, hoặc `node
 tools/check-invariants.mjs --fix-manifest` nếu chỉ cần đồng bộ lại `docs/manifest.json` sau khi sửa file này.
+
+---
+
+## 24. Ứng dụng tham chiếu
+
+Ứng dụng tham chiếu là các package hoàn chỉnh cho thấy các phần của nền tảng ghép lại với nhau trong một widget thật.
+Chúng nằm trong `examples/reference-apps/` và được kiểm thử như mọi package khác, cộng thêm một hành trình trình duyệt
+qua một node thật.
+
+### 24.1 Bảng tính
+
+`examples/reference-apps/spreadsheet` ([#318](https://github.com/digitopvn/clarkcant/issues/318), thuộc [#200](https://github.com/digitopvn/clarkcant/issues/200)) là một package manifest v2 có một facet
+giao diện cách ly và không có service. Package cho thấy một widget làm việc với tệp, giữ một tài liệu lớn trong giới
+hạn, tự mô tả cho Clark và áp dụng một thay đổi do Clark chọn.
+
+- **Tệp.** CSV và TSV được nhập qua `api.artifacts.pick` ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)) và đọc theo
+  từng đoạn 256 KiB; widget không bao giờ thấy đường dẫn. Xuất ghi một tệp mới qua `create`, `write`, `finalize` và
+  `export`, có dấu BOM như chức năng xuất bảng của host. XLSX không được hỗ trợ: trong mã nguồn không có bộ phân tích
+  đã được thẩm định, và broker tệp của host không chấp nhận kiểu này.
+- **Giới hạn.** Tải tối đa 25.000 ô, 64 cột và 5.000 hàng, và không tệp nào được đọc quá 8 MiB. Việc đọc dừng ở giới
+  hạn và một thông báo cho biết đã hiện bao nhiêu và khi xuất chỉ ghi phần đó. Hàng và cột được vẽ ảo, nên một bảng lớn
+  chỉ giữ các ô đang nhìn thấy trong trang.
+- **Trạng thái.** Trạng thái widget giữ tham chiếu tới tệp nguồn, các sửa đổi từ đó, định dạng và ô hiện tại, không bao
+  giờ giữ chính bảng. Khi sửa đổi vượt 10 KiB trong 16 KiB host cho phép, widget ghi toàn bộ bảng vào một tệp riêng và
+  bắt đầu lại từ tệp ấy.
+- **Công thức.** Một tập đóng: số học, tham chiếu ô và vùng, và `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`. Một bộ
+  phân tích dựng cây và widget duyệt cây đó; không văn bản nào được chạy như mã. Lỗi là giá trị (`#DIV/0!`,
+  `#VALUE!`, `#REF!`, `#NAME?`, `#PARSE!`, `#NUM!`, `#LIMIT!`), và tham chiếu vòng là `#CIRC!`, với các ô
+  trên vòng được nêu tên trong thông báo.
+- **Chèn công thức vào CSV.** Tệp xuất mang giá trị đã tính, không bao giờ mang công thức. Văn bản bắt đầu bằng `=`,
+  `+`, `-`, `@`, tab hoặc ký tự CR được ghi kèm dấu `'` ở đầu, đúng quy tắc của `toCsv`, và dấu `'` ở đầu được
+  đọc lại là văn bản, nên một tệp đã xuất nhập lại vẫn ra cùng giá trị.
+- **Tài liệu ngữ nghĩa.** Vùng chọn dạng A1, một đoạn trích tối đa 12 hàng × 8 cột, công thức và giá trị của ô hiện tại,
+  và kích thước bảng, vừa trong giới hạn ngữ nghĩa của host nên không gì bị cắt.
+- **Định dạng qua Clark.** Nút "định dạng phần trăm" của widget bấm một binding `agent` có id được truyền qua prop
+  `formatBinding` và ngữ cảnh là `selection` và `widget`. Lần bấm không gửi gì: host đọc vùng chọn từ tài liệu ngữ
+  nghĩa của widget và yêu cầu đúng một dòng, `format: percent <vùng>`. Widget coi câu trả lời là không đáng tin, chỉ áp
+  dụng khi nó đúng là dòng đó cho vùng đã chọn lúc bấm, và nói rõ khi không phải.
+- **Bàn phím.** Phím mũi tên để di chuyển, Shift mở rộng vùng chọn, Home/End và Ctrl+Home/End để nhảy, Page Up/Down để
+  lật trang, Enter hoặc F2 để sửa, gõ phím để bắt đầu sửa, Escape để huỷ, Tab sang phải, Delete xoá vùng chọn.
+
+Hai giới hạn được nói rõ thay vì giấu đi. Hiện chưa có gì trong sản phẩm đặt một widget của package kèm một hành động đã
+gắn: trong bộ kiểm thử trình duyệt, node fixture đặt bảng tính và biên dịch binding của nó theo cách host biên dịch đề
+xuất của model. Và một yêu cầu gõ trong ô soạn tin tới được Clark qua ghi chú ngữ nghĩa nhưng không thay đổi được frame.
+Cả hai được theo dõi ở [#382](https://github.com/digitopvn/clarkcant/issues/382).
+
+Kiểm thử: unit test cho bộ phân tích, công thức, giới hạn và tài liệu ngữ nghĩa trong
+[test/](../examples/reference-apps/spreadsheet/test/) (28 test); `clark widget test` qua 22 kiểm tra, 12 kiểm tra cần
+dev host; và hành trình trình duyệt [spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (3 test): nhập, sửa,
+xuất và nhập lại ở CSV và TSV ra cùng giá trị; một vùng chọn được Clark định dạng phần trăm; một tệp vượt giới hạn chỉ
+tải phần đầu, nói rõ điều đó và vẫn phản hồi nhanh; không đường dẫn nào trong lưu lượng bridge hay frame; và dùng lưới
+bằng bàn phím, ở cả hai giao diện sáng tối, ở 390 px với lưới cuộn bên trong thẻ của nó.
