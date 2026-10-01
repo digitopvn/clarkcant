@@ -261,7 +261,8 @@ input schema the service listed for the tool decides whether the input is accept
 policy that asks puts a host-owned approval card in the conversation. The refusals are the `CapabilityInvokeRefusal`
 codes in that file.
 
-Not built: a credential broker for services, VM isolation, and calling a service on another node. A model reaches a
+What a service runs with, and how it reaches a provider without holding the key, is §14.1 and §14.2. Not built: VM
+isolation, and calling a service on another node. A model reaches a
 package service from the conversation by placing the generic action button with an `invoke` action (§8.1). The browser
 journey [`service-facet.spec.ts`](../apps/web/e2e/service-facet.spec.ts) still creates a package's own widget with
 `invoke` bindings through a fixture model.
@@ -1594,7 +1595,160 @@ it (`frame-ancestors 'self'`), plus the interface's origin when that is somewher
 writes this). The node checks `CC_APP_ORIGIN` at startup and refuses to start when it is not a
 bare `http(s)` origin. The request's `Host` header is never used.
 
-If an auth SDK needs a browser token, the host broker issues a short-lived/scoped token if the provider actually supports it; the token is not persisted in widget state.
+A short-lived, scoped browser token is the one exception to "a widget never holds a provider credential", and only
+where a package declares it (§14.3). Long-lived keys stay in the node: a service reaches its provider through the
+node, which adds the key itself (§14.2).
+
+### 14.1 Resource profiles
+
+A package asks for what its code runs with by naming a profile, never with numbers:
+
+    "resources": { "version": 1, "profile": "interactive-heavy" }
+
+The node owns the table ([resource-profiles.ts](../packages/contracts/src/resource-profiles.ts)) and decides what it
+grants. A package that names nothing runs as `interactive-light`, which is the envelope every service ran in before
+profiles existed, value for value, so an existing package runs exactly as it did.
+
+| Profile | Memory / CPUs / processes / `/tmp` | Per call | Per job | Jobs at once | Out of view |
+|---|---|---|---|---|---|
+| `interactive-light` | 256 MiB / 1 / 128 / 16 MiB | 60 s | 30 min | 4 | unmounted |
+| `interactive-heavy` | 1 GiB / 2 / 256 / 64 MiB | 120 s | 30 min | 2 | unmounted |
+| `media-workstation` | 4 GiB / 4 / 512 / 512 MiB | 300 s | 2 h | 1 | may keep playing |
+| `background-compute` | 2 GiB / 2 / 256 / 256 MiB | 60 s | 4 h | 2 | unmounted |
+
+Every profile has no network (`--network none`) and a `noexec` `/tmp`. Services and jobs keep running whether or not a
+frame is mounted. The largest result file stays the attachment maximum, because a file a service returns must stay
+attachable to a conversation. The three larger profiles are engineering defaults a reviewer can change in that file.
+The bounds reach the container's `--memory`, `--cpus`, `--pids-limit` and `/tmp` size, the call and job deadlines, and
+the job host's concurrency.
+
+The decision, `decideResourceProfile`, takes these steps in order:
+
+1. A GPU is never granted: the node does not pass one through to a container.
+2. `interactive-light` is always granted.
+3. A refusal from the execution policy wins.
+4. A profile is not granted when it needs more CPUs than the container engine reports, or more than half its memory.
+
+A profile that cannot be granted is never swapped for a smaller one. The package is degraded: its services are not
+started, and each capability shows the reason. Settings → Extensions shows the profile beside each installed package:
+its bounds when granted, or "Asked for …, not granted: …" when not. The capacity is what the engine reports, asked
+once per engine; under Docker Desktop that is its Linux VM's.
+
+Podman parity gap: rootless Podman without delegated cgroup v2 controllers accepts `--memory` and `--cpus` and does not
+apply them. The node grants the profile there with the note "the container engine does not enforce memory and CPU
+limits here", which package details show. The real-engine test
+[`service-container-engine.spec.ts`](../apps/runtime/test/service-container-engine.spec.ts) checks the limits a
+running container gets.
+
+**Out of view.** A frame unmounts when it scrolls out of view. A frame whose package was granted `media-workstation`
+gets a host-chrome toggle, "Keep playing when scrolled away". While it is on, the frame stays mounted out of view, and
+the host says "<title> is still running out of view". It is off for each new mount, and the widget cannot turn it on.
+
+### 14.2 Reaching a provider from a service
+
+A `tools` facet declares the secrets it needs and the origins it may reach:
+
+    "egress": {
+      "version": 1,
+      "secrets": [{ "name": "LOOKUP_API_KEY", "purpose": "Signs the lookups in with the provider." }],
+      "origins": [{
+        "origin": "https://api.example.com",
+        "purpose": "Looks up the words you ask about.",
+        "credential": { "secret": "LOOKUP_API_KEY", "header": "authorization", "scheme": "bearer" }
+      }]
+    }
+
+The container still has no network, and the service never holds the key. The node offers egress in MCP `initialize`
+(`capabilities.experimental["clarkcant/egress"]`, `version: 1`). The service then sends the node the request
+`clarkcant/egress.fetch` with `{ version: 1, url, method?, headers?, body? }` over the same stdio connection, and the
+node makes the HTTP request itself
+([service-egress.ts](../packages/contracts/src/service-egress.ts), [the broker](../apps/runtime/src/service-egress.ts)):
+
+- only to a declared origin, compared exactly, and never to a URL with credentials in it;
+- only while a host call to that service is in flight. Its requests stop when the last call ends, is cancelled, or the
+  service is stopped;
+- with the declared header added by the node from the secret the person stored for the consumer `package:<id>`. A
+  header of that name the service sets is dropped;
+- with cookie, proxy, forwarding and framing headers stripped, at most 1 MiB sent and 2 MiB returned, and 30 s per
+  request;
+- without following redirects, so a key never travels to another origin;
+- with the secret removed from every header and from the body of what comes back, so a provider that echoes the key
+  does not hand it to the service.
+
+A refusal is a JSON-RPC error: `-32010` origin not declared, `-32011` no call in flight, `-32012` credential
+unavailable, `-32013` too large, `-32014` the provider could not be reached, `-32015` stopped. Each request is audited
+as `egress` with the package, method, origin, secret name, status and outcome. The audit never records a path, a
+body, a value or a length.
+
+Until the declared secret is usable, the package's capabilities read as not signed in (`authenticated: false`) with
+the reason, for example "the secret LOOKUP_API_KEY has not been provided on this node". A press, the agent and voice
+are refused with `CAPABILITY_NOT_AUTHENTICATED`. Storing the key (`POST /credentials` with
+`"consumer": "package:<id>"`) signs the service in without restarting it, and removing the key signs it out. A secret
+also stored for a `command:` consumer is given to that command as an environment variable. Egress does not use such a
+secret, so store a separate one for the package.
+
+Not built: a proxied network for services that need raw sockets. Giving a container a network would weaken an isolation
+default, so it waits for that decision. Install consent is bound to the package's digest, so it covers the declared
+origins and secrets, but the install screens do not list them yet.
+
+### 14.3 Browser tokens (`tokens@1`)
+
+Some vendor SDKs only work with a token in the browser. A `ui` facet may declare the providers its frame needs one
+from (at most 8 providers, 16 scopes each):
+
+    "browserTokens": {
+      "version": 1,
+      "providers": [{ "provider": "example.maps", "scopes": ["tiles:read"], "purpose": "Draws the map tiles." }]
+    }
+
+The host offers `tokens@1` in `init.extensions` only to a frame whose package declared browser tokens:
+
+    if (api.tokens.available()) {
+      const token = await api.tokens.request({ provider: "example.maps", scopes: ["tiles:read"], ttlSeconds: 300 });
+      sdk.setAccessToken(token.value); // { provider, value, scopes, expiresAt }
+    }
+
+Each mount of the frame is its own session, a random id the host chrome keeps. The node issues a token for that
+instance and session only (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`, person-only). It revokes
+what the session was given when the frame goes (`DELETE …/browser-tokens/{session}`), when the package is uninstalled
+or rolled back, at the token's expiry when the provider gave more time than was asked, and when the node stops.
+
+A token is issued only when every one of these holds:
+
+- the provider and every scope are in the declaration;
+- the node has an adapter for the provider (`BrowserTokenAdapter` in
+  [`@clarkcant/integration-sdk`](../packages/integration-sdk/src/browser-token.ts)), and the adapter says it mints a
+  scoped token with those scopes;
+- the lifetime is within 30–3600 s and the provider's own maximum. A request that names none gets 900 s, capped the
+  same way.
+
+A request is refused, never narrowed. The codes are `TOKEN_PROVIDER_NOT_DECLARED`, `TOKEN_SCOPE_NOT_DECLARED`,
+`TOKEN_PROVIDER_UNAVAILABLE`, `TOKEN_PROVIDER_UNSCOPED`, `TOKEN_SCOPE_NOT_SUPPORTED`, `TOKEN_TTL_TOO_LONG`,
+`TOKEN_SESSION_ENDED` and `TOKEN_ISSUE_FAILED`. A provider that hands back a longer token than asked, and cannot
+revoke it, is refused. A session holds at most 8 tokens; a ninth withdraws the oldest.
+
+The value stays in the frame it was issued to:
+
+- the node keeps only the provider's token id;
+- the audit (`browser-token`) records the provider, instance and outcome, never the value;
+- the SDK and the host's frame session both refuse a `state.update`, `semantic.publish` or `actions.invoke` that
+  carries an issued token, with `TOKEN_NOT_ALLOWED`. The state write is answered with the committed state and
+  `STATE_HOLDS_TOKEN`.
+
+Token requests have their own budget per frame session: a burst of 10, then one every 5 s, at most 2 waiting.
+
+Limits: ClarkCant ships no provider adapter yet, so on a node without one every request is
+`503 TOKEN_PROVIDER_UNAVAILABLE`. The browser suite registers in-process fixture providers with
+`CC_BROWSER_TOKEN_FIXTURE=1`. An `expiry-only` provider's token cannot be withdrawn early; it lapses at its expiry.
+
+Tests: [browser-token.spec.ts](../packages/contracts/test/browser-token.spec.ts) and
+[the request check](../packages/integration-sdk/test/browser-token.spec.ts) for the rules,
+[browser-token-broker.spec.ts](../apps/runtime/test/browser-token-broker.spec.ts) for the node,
+[session.spec.ts](../packages/widget-host/test/session.spec.ts) and
+[runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) for the bridge, and the browser journey
+[resource-egress.spec.ts](../apps/web/e2e/resource-egress.spec.ts). The journey shows the granted profile in package
+details and on the running container. It reaches a fake provider with a key the page, the frame, the bridge, storage
+and the container never hold. It then keeps a minted token inside its frame and revokes it when the frame closes.
 
 ---
 
@@ -1720,6 +1874,15 @@ against the corresponding shared graph contract or package schema, then shows th
 payload and records it in the action log. Malformed and undeclared events are refused. Simulation never invokes a real
 capability or grants authority. The real-browser proof is
 [`semantic-composition-real-browser.e2e.spec.ts`](../packages/widget-cli/test/semantic-composition-real-browser.e2e.spec.ts).
+
+For a package, the **Resource profile · simulated** panel shows the profile the package asked for, decided by the
+node's own `decideResourceProfile`. **Policy refuses** answers as a node whose execution policy refused it: every
+service action becomes unavailable with the node's sentence. `interactive-light` and a GPU request answer as they would
+on a node, whichever button is chosen. The engine's capacity is not simulated. A package whose UI facet declares
+`browserTokens` is offered `tokens@1`, checked against the declaration with the node's own check and codes.
+**Provider issues** answers with a random `dev-simulated-…` value that opens nothing, and **Provider unavailable**
+answers `TOKEN_PROVIDER_UNAVAILABLE`. Every answer says it was simulated, and the log names the provider and outcome,
+never a value ([dev-resources.spec.ts](../packages/widget-cli/test/dev-resources.spec.ts)).
 
 ### test
 

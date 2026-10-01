@@ -345,6 +345,8 @@ Công việc chạy lâu của package cũng theo quy tắc đó (`jobs@1`, [wid
 
 Không giả token nào cũng scope/expire được theo ý app: adapter ghi chính xác provider hỗ trợ gì. Nếu token quyền quá rộng và SDK đòi browser thì nêu risk/thiết kế fallback. Uninstall/revoke ngừng refresh và thu hồi khi API hỗ trợ; không hứa đã thu hồi mọi access token ngay khi vendor không có cơ chế đó.
 
+**Node chạy gì hôm nay.** Service không bao giờ giữ key của nhà cung cấp: container của nó không có mạng, và nó nhờ node gửi request tới một origin mà package đã khai báo (`clarkcant/egress.fetch` qua kết nối MCP). Node gắn key mà người dùng đã lưu cho package đó, không đi theo redirect, xóa key khỏi kết quả trả về, và ghi audit request chỉ bằng tên secret. Khi key chưa được lưu, các capability của package được báo là chưa đăng nhập. Frame chỉ nhận token trình duyệt qua `tokens@1`, chỉ cho nhà cung cấp và scope mà package đã khai báo, và chỉ khi node có adapter cấp được token có phạm vi, ngắn hạn cho chúng; request bị từ chối chứ không bao giờ bị thu hẹp. Token gắn với một lần mount của frame, được thu hồi khi frame bị gỡ nếu nhà cung cấp hỗ trợ, không bao giờ được node lưu, và bị từ chối nếu widget cố đưa nó vào state, semantic publish hay action. ClarkCant chưa kèm adapter cho nhà cung cấp nào, nên node không có adapter sẽ trả lời `TOKEN_PROVIDER_UNAVAILABLE`. Chi tiết và mã lỗi: [widget development §14.2 và §14.3](widget-development.vi.md#142-service-gọi-tới-nhà-cung-cấp).
+
 ## 10. Use cases bên thứ ba — khả năng và giới hạn
 
 | Ví dụ | Widget/adapter hợp lý | Không được hứa mặc định |
@@ -411,6 +413,8 @@ Initial targets (phải đo): ordinary catalog spec ≤256 KiB; lazy mount heavy
 Offscreen widgets suspend rendering/subscriptions theo loại; active user-authorized player/call có exception và clear indicator. Stalled widget có timeout/error boundary/text fallback, không crash chat. Text alternatives, keyboard controls, reduced motion, contrast, focus restore và không focus-steal là release gates.
 
 State chia rõ client view, durable instance state và external service truth. Giá trị optimistic chỉ là pending; không hiện “đã gửi tin” trước provider ack/verification.
+
+**Node chạy gì hôm nay.** Package nêu tên một resource profile (`interactive-light`, `interactive-heavy`, `media-workstation` hoặc `background-compute`), không bao giờ nêu con số. Node sở hữu bảng giá trị, áp nó vào bộ nhớ, CPU, số tiến trình và `/tmp` của container service, hạn chót của mỗi lần gọi và mỗi job, và số job chạy đồng thời của job host, và giữ mọi profile không có mạng. `interactive-light` là mặc định và khớp từng giá trị với giới hạn mà service đã chạy trước khi có profile. Profile bị execution policy từ chối, hoặc lớn hơn mức container engine chứa được, khiến package ở trạng thái degraded kèm lý do trong chi tiết package; nó không bao giờ bị thay bằng profile nhỏ hơn, và không bao giờ cấp GPU. Chỉ frame được cấp `media-workstation` mới có nút gạt trong chrome của host để giữ frame được mount khi ra khỏi màn hình, nút này tắt sẵn cho mỗi lần mount mới. Podman rootless không được ủy quyền controller cgroup không áp giới hạn bộ nhớ và CPU; node nói rõ điều đó thay vì tuyên bố đã áp. Bảng và thứ tự quyết định: [widget development §14.1](widget-development.vi.md#141-resource-profile).
 
 ## 13. Conformance tests
 
