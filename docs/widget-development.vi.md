@@ -1633,8 +1633,8 @@ Hàm quyết định, `decideResourceProfile`, đi qua các bước theo thứ t
 
 Profile không cấp được thì không bao giờ bị thay bằng profile nhỏ hơn. Package ở trạng thái degraded: service của nó không
 được khởi động, và mỗi capability hiện lý do. Settings → Extensions hiện profile cạnh mỗi package đã cài: các giới hạn khi
-được cấp, hoặc "Đã xin … nhưng không được cấp: …" khi không. Năng lực máy là con số engine báo, được hỏi một lần cho mỗi
-engine; với Docker Desktop đó là con số của Linux VM của nó.
+được cấp, hoặc "Đã xin … nhưng không được cấp: …" khi không. Năng lực máy là con số engine báo, được giữ lại khi engine
+đã trả lời. Engine chưa trả lời sẽ được hỏi lại ở lần khởi động sau. Với Docker Desktop đó là con số của Linux VM của nó.
 
 Khoảng chênh với Podman: Podman rootless không được ủy quyền controller cgroup v2 vẫn nhận `--memory` và `--cpus` nhưng
 không áp dụng. Khi đó node vẫn cấp profile kèm ghi chú "the container engine does not enforce memory and CPU limits here",
@@ -1645,6 +1645,9 @@ container đang chạy nhận được.
 **Khi ra khỏi màn hình.** Frame bị gỡ khi cuộn ra khỏi màn hình. Frame của package được cấp `media-workstation` có thêm
 một nút gạt trong chrome của host, "Tiếp tục phát khi cuộn đi". Khi bật, frame vẫn được mount dù ra khỏi màn hình, và host
 báo "<tiêu đề> vẫn đang chạy ngoài màn hình". Nút này tắt sẵn cho mỗi lần mount mới, và widget không tự bật được.
+Frame của profile khác không có nút gạt này và bị gỡ khi ra khỏi màn hình. Nút Dừng vẫn kết thúc frame đang phát ngoài
+màn hình. Test: [offscreen-playback.spec.ts](../packages/conversation-client/test/offscreen-playback.spec.ts) cho phần
+quyết định, và journey trình duyệt [offscreen-playback.spec.ts](../apps/web/e2e/offscreen-playback.spec.ts).
 
 ### 14.2 Service gọi tới nhà cung cấp
 
@@ -1667,30 +1670,52 @@ hiện HTTP request
 ([service-egress.ts](../packages/contracts/src/service-egress.ts), [broker](../apps/runtime/src/service-egress.ts)):
 
 - chỉ tới origin đã khai báo, so khớp chính xác, và không bao giờ tới URL có chứa thông tin đăng nhập;
+- không tới origin loopback, mạng riêng hay link-local (`localhost`, `127.0.0.0/8`, `0.0.0.0/8`, `10.0.0.0/8`,
+  `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `::`, `fc00::/7`, `fe80::/10` và các dạng IPv4-mapped của
+  chúng), kể cả khi đã khai báo, trừ khi người dùng khởi động node với `CC_EGRESS_ALLOW_PRIVATE_NETWORK=1`. Mặc định là
+  tắt. Đây là thiết lập của node, và không trường nào trong manifest bật được nó. Bước kiểm tra đọc host của URL. Nó không
+  kiểm tra một tên công khai được phân giải ra địa chỉ nào;
 - chỉ khi đang có một lần gọi của host tới service đó. Request của service dừng khi lần gọi cuối kết thúc, bị hủy, hoặc
   service bị dừng;
+- chỉ với method mà các lần gọi đang chạy cho phép. Khi mỗi lần gọi đều được quyết định là `read` hoặc `local-write`,
+  request chỉ được `GET` hoặc `HEAD`. Method khác làm thay đổi dữ liệu ở nhà cung cấp, nên cần một lần gọi được quyết
+  định là `external-write`, `destructive`, `financial` hoặc `communication`, là những loại mà risk gate của execution
+  policy hỏi tới. Request không cho biết nó phục vụ lần gọi nào, nên effect của mọi lần gọi đang chạy cùng giới hạn nó;
+- mỗi service đang chạy gửi tối đa 30 request liền, sau đó được thêm 10 request mỗi giây;
 - với header đã khai báo do node gắn vào từ secret mà người dùng lưu cho consumer `package:<id>`. Header cùng tên do
   service tự đặt bị bỏ;
 - với các header cookie, proxy, forwarding và framing bị loại, gửi đi tối đa 1 MiB và nhận về tối đa 2 MiB, mỗi request
-  30 giây;
+  30 giây. Chính node yêu cầu kết quả không nén (`accept-encoding: identity`), và bỏ `accept-encoding` do service tự đặt;
 - không đi theo redirect, nên key không bao giờ đi sang origin khác;
-- với secret bị xóa khỏi mọi header và khỏi body của kết quả trả về, nên nhà cung cấp có lặp lại key thì service cũng
-  không nhận được.
+- với key được thay bằng `[redacted]` trong mọi header và trong body của kết quả trả về, ở dạng đã gửi, dạng JSON-escape,
+  dạng URL-encode, và dạng mã hóa base64 hoặc base64url. Đây là lớp bảo vệ ở mức cố gắng tối đa trước nhà cung cấp lặp
+  lại key. Nó không phải một bảo đảm: key mà nhà cung cấp trả về ở dạng khác, như bị chia nhỏ, băm, mã hóa hoặc nằm
+  trong một kiểu mã hóa khác, vẫn tới được service.
 
 Lời từ chối là một lỗi JSON-RPC: `-32010` origin chưa khai báo, `-32011` không có lần gọi nào đang chạy, `-32012` không có
-credential, `-32013` quá lớn, `-32014` không gọi được nhà cung cấp, `-32015` đã dừng. Mỗi request được ghi audit với loại
-`egress`, gồm package, method, origin, tên secret, status và kết quả. Audit không bao giờ ghi path, body, giá trị hay độ
-dài.
+credential, `-32013` quá lớn, `-32014` không gọi được nhà cung cấp, `-32015` đã dừng, `-32016` method mà các lần gọi đang
+chạy không cho phép, `-32017` quá nhiều request, `-32018` origin mà node này không gọi tới. Mỗi request được ghi audit với
+loại `egress`, gồm package, method, origin, tên secret, status và kết quả. Audit không bao giờ ghi path, body, giá trị hay
+độ dài. Lời từ chối cùng loại với một lời đã được ghi trong 60 giây qua thì không được ghi ngay: phần còn lại được ghi
+thành một dòng kèm số lượng khi khung thời gian khép lại hoặc service dừng, nên service không thể làm tràn audit.
 
 Khi secret đã khai báo chưa dùng được, các capability của package được báo là chưa đăng nhập (`authenticated: false`)
 kèm lý do, ví dụ "the secret LOOKUP_API_KEY has not been provided on this node". Nút bấm, agent và giọng nói đều bị từ
-chối với `CAPABILITY_NOT_AUTHENTICATED`. Lưu key (`POST /credentials` với `"consumer": "package:<id>"`) sẽ đăng nhập
+chối với `CAPABILITY_NOT_AUTHENTICATED`. Đây là trạng thái "cần đăng nhập" của service: nó không phải trạng thái vòng
+đời widget `needs_auth`, trạng thái đó vẫn không được đặt. Lưu key (`POST /credentials` với `"consumer": "package:<id>"`) sẽ đăng nhập
 service mà không cần khởi động lại, và xóa key thì đăng xuất. Secret cũng được lưu cho một consumer `command:` sẽ được
 đưa vào lệnh đó dưới dạng biến môi trường. Egress không dùng loại secret này, nên hãy lưu một secret riêng cho package.
 
+**Sự đồng ý khi cài hiện những gì.** Một mục trong thư mục nêu phạm vi tiếp cận của package trong `declaredReach`
+(`{ origins, secrets, browserTokens }`, [declared-reach.ts](../packages/contracts/src/declared-reach.ts)); mục không có
+trường này nghĩa là package không tiếp cận gì. Thẻ thư mục trong cuộc trò chuyện, câu hỏi cài đặt trong hộp thư, và chi
+tiết package trong Settings → Extensions liệt kê từng origin kèm mục đích, từng key theo tên kèm mục đích (không bao giờ
+hiện giá trị), và từng nhà cung cấp token trình duyệt kèm scope và mục đích, trước khi cấp bất cứ thứ gì. Artifact có
+manifest khai báo phạm vi khác với mục trong thư mục bị từ chối với `409 DECLARED_REACH_MISMATCH` trước khi ghi lại bất cứ
+thứ gì, nên sự đồng ý bao gồm đúng những gì đã hiện. Thông báo cập nhật chưa liệt kê phạm vi này.
+
 Chưa xây: mạng qua proxy cho service cần socket thô. Cho container có mạng sẽ làm yếu một mặc định cô lập, nên việc này
-chờ quyết định đó. Sự đồng ý khi cài gắn với digest của package, nên nó bao gồm các origin và secret đã khai báo, nhưng màn
-hình cài đặt chưa liệt kê chúng.
+chờ quyết định đó.
 
 ### 14.3 Token trình duyệt (`tokens@1`)
 
@@ -1711,7 +1736,7 @@ Host chỉ đề nghị `tokens@1` trong `init.extensions` cho frame có package
 
 Mỗi lần mount frame là một phiên riêng, với một id ngẫu nhiên do chrome của host giữ. Node chỉ cấp token cho đúng
 instance và phiên đó (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`, chỉ người dùng gọi được). Node thu
-hồi những gì phiên đã nhận khi frame bị gỡ (`DELETE …/browser-tokens/{session}`), khi package bị gỡ cài đặt hoặc rollback,
+hồi những gì phiên đã nhận khi frame bị gỡ (`DELETE …/browser-tokens/{session}`), khi package bị gỡ cài đặt, rollback hoặc cập nhật sang mã mới,
 tại thời điểm hết hạn khi nhà cung cấp cho thời hạn dài hơn yêu cầu, và khi node dừng.
 
 Token chỉ được cấp khi tất cả các điều sau đúng:
@@ -1723,17 +1748,23 @@ Token chỉ được cấp khi tất cả các điều sau đúng:
 - thời hạn nằm trong khoảng 30–3600 giây và không vượt mức tối đa của nhà cung cấp. Request không nêu thời hạn được
   900 giây, cũng bị giới hạn như vậy.
 
-Request bị từ chối chứ không bao giờ bị thu hẹp. Các mã là `TOKEN_PROVIDER_NOT_DECLARED`, `TOKEN_SCOPE_NOT_DECLARED`,
+Token được cấp trong lúc frame đóng, hoặc trong lúc mã của package kết thúc, sẽ bị rút và từ chối với
+`TOKEN_SESSION_ENDED` thay vì được giao. Request bị từ chối chứ không bao giờ bị thu hẹp. Các mã là `TOKEN_PROVIDER_NOT_DECLARED`, `TOKEN_SCOPE_NOT_DECLARED`,
 `TOKEN_PROVIDER_UNAVAILABLE`, `TOKEN_PROVIDER_UNSCOPED`, `TOKEN_SCOPE_NOT_SUPPORTED`, `TOKEN_TTL_TOO_LONG`,
 `TOKEN_SESSION_ENDED` và `TOKEN_ISSUE_FAILED`. Nhà cung cấp trả về token có thời hạn dài hơn yêu cầu mà không thu hồi
 được thì bị từ chối. Mỗi phiên giữ tối đa 8 token; token thứ chín sẽ rút token cũ nhất.
 
-Giá trị token ở lại trong frame được cấp:
+Node và host giữ giá trị token ngoài những gì chúng lưu và chuyển tiếp:
 
 - node chỉ giữ token id của nhà cung cấp;
 - audit (`browser-token`) ghi nhà cung cấp, instance và kết quả, không bao giờ ghi giá trị;
-- cả SDK và phiên frame của host đều từ chối `state.update`, `semantic.publish` hoặc `actions.invoke` có chứa token đã
-  cấp, với `TOKEN_NOT_ALLOWED`. Lần ghi state được trả lời bằng state đã lưu kèm `STATE_HOLDS_TOKEN`.
+- cả SDK và phiên frame của host đều từ chối, với `TOKEN_NOT_ALLOWED`, `state.update`, `semantic.publish`,
+  `actions.invoke`, lần ghi artifact (tên hoặc nội dung) hoặc liên kết bên ngoài có chứa token đã cấp. Lần ghi state được
+  trả lời bằng state đã lưu kèm `STATE_HOLDS_TOKEN`.
+
+Lớp bảo vệ này ở mức cố gắng tối đa. Nó bắt được token được chuyển tiếp đúng như lúc cấp, là lỗi thường gặp. Nó không
+chặn được widget mã hóa hoặc chia nhỏ token, hay gửi token đi qua request mạng của chính nó. Mã của widget có giá trị
+token, nên điều giới hạn rò rỉ là token có phạm vi, ngắn hạn và bị thu hồi khi frame bị gỡ.
 
 Request token có ngân sách riêng cho mỗi phiên frame: tối đa 10 liền, sau đó mỗi 5 giây một, và tối đa 2 request chờ cùng
 lúc.

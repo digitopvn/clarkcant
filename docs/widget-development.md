@@ -1631,8 +1631,9 @@ The decision, `decideResourceProfile`, takes these steps in order:
 
 A profile that cannot be granted is never swapped for a smaller one. The package is degraded: its services are not
 started, and each capability shows the reason. Settings → Extensions shows the profile beside each installed package:
-its bounds when granted, or "Asked for …, not granted: …" when not. The capacity is what the engine reports, asked
-once per engine; under Docker Desktop that is its Linux VM's.
+its bounds when granted, or "Asked for …, not granted: …" when not. The capacity is what the engine reports, kept
+once the engine answers. An engine that did not answer is asked again at the next start. Under Docker Desktop the
+capacity is its Linux VM's.
 
 Podman parity gap: rootless Podman without delegated cgroup v2 controllers accepts `--memory` and `--cpus` and does not
 apply them. The node grants the profile there with the note "the container engine does not enforce memory and CPU
@@ -1643,6 +1644,9 @@ running container gets.
 **Out of view.** A frame unmounts when it scrolls out of view. A frame whose package was granted `media-workstation`
 gets a host-chrome toggle, "Keep playing when scrolled away". While it is on, the frame stays mounted out of view, and
 the host says "<title> is still running out of view". It is off for each new mount, and the widget cannot turn it on.
+A frame of any other profile is offered no toggle and unmounts out of view. Stop still ends a frame that plays out of
+view. Tests: [offscreen-playback.spec.ts](../packages/conversation-client/test/offscreen-playback.spec.ts) for the
+decision, and the browser journey [offscreen-playback.spec.ts](../apps/web/e2e/offscreen-playback.spec.ts).
 
 ### 14.2 Reaching a provider from a service
 
@@ -1665,31 +1669,55 @@ node makes the HTTP request itself
 ([service-egress.ts](../packages/contracts/src/service-egress.ts), [the broker](../apps/runtime/src/service-egress.ts)):
 
 - only to a declared origin, compared exactly, and never to a URL with credentials in it;
+- not to a loopback, private or link-local origin (`localhost`, `127.0.0.0/8`, `0.0.0.0/8`, `10.0.0.0/8`,
+  `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `::`, `fc00::/7`, `fe80::/10` and their IPv4-mapped
+  forms), even a declared one, unless the person started the node with `CC_EGRESS_ALLOW_PRIVATE_NETWORK=1`. The default
+  is off. This is a node setting, and no manifest field turns it on. The check reads the URL's host. It does not check
+  what a public name resolves to;
 - only while a host call to that service is in flight. Its requests stop when the last call ends, is cancelled, or the
   service is stopped;
+- only with a method the calls in flight allow. While each call was decided as `read` or `local-write`, a request may
+  only `GET` or `HEAD`. Any other method changes something at the provider and needs a call decided as
+  `external-write`, `destructive`, `financial` or `communication`, which the execution policy's risk gate asks about. A
+  request does not say which call it serves, so the effects of all calls in flight together bound it;
+- at most a burst of 30 requests per running service, refilled at 10 a second;
 - with the declared header added by the node from the secret the person stored for the consumer `package:<id>`. A
   header of that name the service sets is dropped;
 - with cookie, proxy, forwarding and framing headers stripped, at most 1 MiB sent and 2 MiB returned, and 30 s per
-  request;
+  request. The node asks for an uncompressed answer itself (`accept-encoding: identity`), and drops the service's own
+  `accept-encoding`;
 - without following redirects, so a key never travels to another origin;
-- with the secret removed from every header and from the body of what comes back, so a provider that echoes the key
-  does not hand it to the service.
+- with the key replaced by `[redacted]` in every header and in the body of what comes back, as sent, JSON-escaped,
+  URL-encoded, and base64 or base64url encoded. This is a best-effort guard against a provider that echoes the key. It
+  is not a guarantee: a key the provider returns in another form, such as split, hashed, encrypted or inside another
+  encoding, reaches the service.
 
 A refusal is a JSON-RPC error: `-32010` origin not declared, `-32011` no call in flight, `-32012` credential
-unavailable, `-32013` too large, `-32014` the provider could not be reached, `-32015` stopped. Each request is audited
-as `egress` with the package, method, origin, secret name, status and outcome. The audit never records a path, a
-body, a value or a length.
+unavailable, `-32013` too large, `-32014` the provider could not be reached, `-32015` stopped, `-32016` a method the
+calls in flight do not allow, `-32017` too many requests, `-32018` an origin this node does not reach. Each request is
+audited as `egress` with the package, method, origin, secret name, status and outcome. The audit never records a path,
+a body, a value or a length. A refusal of a kind already written in the last 60 s is not written again at once: the
+rest are written as one row with their count when the window closes or the service stops, so a service cannot flood
+the audit.
 
 Until the declared secret is usable, the package's capabilities read as not signed in (`authenticated: false`) with
 the reason, for example "the secret LOOKUP_API_KEY has not been provided on this node". A press, the agent and voice
-are refused with `CAPABILITY_NOT_AUTHENTICATED`. Storing the key (`POST /credentials` with
+are refused with `CAPABILITY_NOT_AUTHENTICATED`. This is the "needs auth" state for a service: it is not the widget
+lifecycle state `needs_auth`, which stays unset. Storing the key (`POST /credentials` with
 `"consumer": "package:<id>"`) signs the service in without restarting it, and removing the key signs it out. A secret
 also stored for a `command:` consumer is given to that command as an environment variable. Egress does not use such a
 secret, so store a separate one for the package.
 
+**What install consent shows.** A directory entry states the package's reach in `declaredReach`
+(`{ origins, secrets, browserTokens }`, [declared-reach.ts](../packages/contracts/src/declared-reach.ts)); a listing
+without it says the package reaches nothing. The directory card in the conversation, the install question in the inbox,
+and package details in Settings → Extensions list each origin with its purpose, each key by name with its purpose
+(never a value), and each browser-token provider with its scopes and purpose, before anything is granted. An artifact
+whose manifest declares a different reach than its listing shows is refused with `409 DECLARED_REACH_MISMATCH` before
+anything is recorded, so consent covers what was shown. The update notice does not list the reach yet.
+
 Not built: a proxied network for services that need raw sockets. Giving a container a network would weaken an isolation
-default, so it waits for that decision. Install consent is bound to the package's digest, so it covers the declared
-origins and secrets, but the install screens do not list them yet.
+default, so it waits for that decision.
 
 ### 14.3 Browser tokens (`tokens@1`)
 
@@ -1710,8 +1738,8 @@ The host offers `tokens@1` in `init.extensions` only to a frame whose package de
 
 Each mount of the frame is its own session, a random id the host chrome keeps. The node issues a token for that
 instance and session only (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`, person-only). It revokes
-what the session was given when the frame goes (`DELETE …/browser-tokens/{session}`), when the package is uninstalled
-or rolled back, at the token's expiry when the provider gave more time than was asked, and when the node stops.
+what the session was given when the frame goes (`DELETE …/browser-tokens/{session}`), when the package is uninstalled,
+rolled back or updated to new code, at the token's expiry when the provider gave more time than was asked, and when the node stops.
 
 A token is issued only when every one of these holds:
 
@@ -1722,18 +1750,23 @@ A token is issued only when every one of these holds:
 - the lifetime is within 30–3600 s and the provider's own maximum. A request that names none gets 900 s, capped the
   same way.
 
-A request is refused, never narrowed. The codes are `TOKEN_PROVIDER_NOT_DECLARED`, `TOKEN_SCOPE_NOT_DECLARED`,
+A token minted while its frame closed, or while its package's code ended, is withdrawn and refused with
+`TOKEN_SESSION_ENDED` rather than handed out. A request is refused, never narrowed. The codes are `TOKEN_PROVIDER_NOT_DECLARED`, `TOKEN_SCOPE_NOT_DECLARED`,
 `TOKEN_PROVIDER_UNAVAILABLE`, `TOKEN_PROVIDER_UNSCOPED`, `TOKEN_SCOPE_NOT_SUPPORTED`, `TOKEN_TTL_TOO_LONG`,
 `TOKEN_SESSION_ENDED` and `TOKEN_ISSUE_FAILED`. A provider that hands back a longer token than asked, and cannot
 revoke it, is refused. A session holds at most 8 tokens; a ninth withdraws the oldest.
 
-The value stays in the frame it was issued to:
+The node and the host keep the value out of what they store and pass on:
 
 - the node keeps only the provider's token id;
 - the audit (`browser-token`) records the provider, instance and outcome, never the value;
-- the SDK and the host's frame session both refuse a `state.update`, `semantic.publish` or `actions.invoke` that
-  carries an issued token, with `TOKEN_NOT_ALLOWED`. The state write is answered with the committed state and
-  `STATE_HOLDS_TOKEN`.
+- the SDK and the host's frame session both refuse, with `TOKEN_NOT_ALLOWED`, a `state.update`, `semantic.publish`,
+  `actions.invoke`, artifact write (its name or content) or external link that carries an issued token. The state
+  write is answered with the committed state and `STATE_HOLDS_TOKEN`.
+
+This guard is best effort. It catches a token passed on as it was issued, which is the common mistake. It does not stop
+a widget that encodes or splits the token, or that sends it somewhere through its own network requests. The widget's
+code has the value, so what bounds a leak is that the token is scoped, short-lived and revoked when the frame goes.
 
 Token requests have their own budget per frame session: a burst of 10, then one every 5 s, at most 2 waiting.
 

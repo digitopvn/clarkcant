@@ -541,7 +541,10 @@ stdio. Khi facet `tools` của service khai báo `egress`, request `initialize` 
 `capabilities.experimental["clarkcant/egress"]` (`version: 1`), và service có thể gửi cho node request
 `clarkcant/egress.fetch` với `{ version: 1, url, method?, headers?, body? }`. Node chỉ thực hiện HTTP request tới
 origin đã khai báo, gắn header credential đã khai báo từ secret được lưu cho `package:<id>`, không đi theo redirect, và
-xóa secret khỏi kết quả trả về. Lời từ chối là các lỗi JSON-RPC từ `-32010` tới `-32015`
+thay secret bằng `[redacted]` trong kết quả trả về như một lớp bảo vệ ở mức cố gắng tối đa. Node chỉ trả lời `GET` và
+`HEAD` trừ khi một lần gọi đang chạy được quyết định là `external-write` hoặc rủi ro hơn, giới hạn tốc độ cho từng
+service, và từ chối origin loopback và mạng riêng trừ khi node chạy với `CC_EGRESS_ALLOW_PRIVATE_NETWORK=1`. Lời từ chối
+là các lỗi JSON-RPC từ `-32010` tới `-32018`
 (`packages/contracts/src/service-egress.ts`, [widget-development.vi.md §14.2](widget-development.vi.md#142-service-gọi-tới-nhà-cung-cấp)).
 Method này không có trên `POST /mcp`.
 

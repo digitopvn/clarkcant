@@ -539,7 +539,10 @@ When the service's `tools` facet declares `egress`, the node's `initialize` requ
 `capabilities.experimental["clarkcant/egress"]` (`version: 1`), and the service may send the node the request
 `clarkcant/egress.fetch` with `{ version: 1, url, method?, headers?, body? }`. The node makes the HTTP request to a
 declared origin only, adds the declared credential header from the secret stored for `package:<id>`, follows no
-redirect, and removes the secret from what it returns. Refusals are JSON-RPC errors `-32010` to `-32015`
+redirect, and replaces the secret with `[redacted]` in what it returns as a best-effort guard. It answers only `GET` and
+`HEAD` unless a call in flight was decided as `external-write` or riskier, rate-limits each service, and refuses
+loopback and private origins unless the node runs with `CC_EGRESS_ALLOW_PRIVATE_NETWORK=1`. Refusals are JSON-RPC
+errors `-32010` to `-32018`
 (`packages/contracts/src/service-egress.ts`, [widget-development.md §14.2](widget-development.md#142-reaching-a-provider-from-a-service)).
 This method is not on `POST /mcp`.
 
