@@ -11,6 +11,7 @@ const root = document.getElementById("root");
 const ADD = "binding_notes_add";
 const LIST = "binding_notes_list";
 const MALFORMED = "binding_notes_malformed";
+const EXPORT = "binding_notes_export";
 
 function draw() {
   const runtime = window.clarkcantWidget;
@@ -73,6 +74,65 @@ function draw() {
       });
   };
 
+  /*
+   * The export runs as a job: the press answers with a JobRef, which the widget keeps in its state so a remount picks
+   * the same job up again. Progress, the ending and the result file are the host's snapshot, never the widget's guess.
+   */
+  const exportButton = document.createElement("button");
+  exportButton.type = "button";
+  exportButton.textContent = "Xuất ghi chú";
+  exportButton.setAttribute("data-notes-export", "true");
+  const cancelExport = document.createElement("button");
+  cancelExport.type = "button";
+  cancelExport.textContent = "Dừng xuất";
+  cancelExport.disabled = true;
+  cancelExport.setAttribute("data-notes-export-cancel", "true");
+  const job = document.createElement("p");
+  job.setAttribute("data-notes-job", "true");
+  job.setAttribute("aria-live", "polite");
+  let following;
+  let unfollow = () => undefined;
+  const follow = (jobId) => {
+    unfollow();
+    following = jobId;
+    job.setAttribute("data-notes-job-id", jobId);
+    unfollow = api.jobs.subscribe(jobId, (snapshot) => {
+      if (following !== jobId) return;
+      const open = ["queued", "running", "waiting"].includes(snapshot.status);
+      cancelExport.disabled = !open;
+      job.setAttribute("data-notes-job-status", snapshot.status);
+      if (snapshot.progress !== undefined) job.setAttribute("data-notes-job-progress", String(snapshot.progress.current));
+      const files = snapshot.resultRefs.map((ref) => ref.name).join(", ");
+      job.setAttribute("data-notes-job-files", files);
+      const progress = snapshot.progress?.message ?? "";
+      job.textContent = [snapshot.status, progress, files, snapshot.output ?? "", snapshot.error ?? ""].filter((part) => part !== "").join(" · ");
+    });
+  };
+  exportButton.addEventListener("click", () => {
+    job.textContent = "đang gửi…";
+    void api.actions
+      .invoke(EXPORT, { steps: Number(root.dataset.exportSteps ?? 3), stepMs: Number(root.dataset.exportStepMs ?? 400) }, crypto.randomUUID())
+      .then((jobId) => {
+        if (typeof jobId !== "string") throw new Error("the host answered without a job");
+        follow(jobId);
+        // Kept so a remount follows the same job; a host that cannot save state still shows it until then.
+        return api.state.update(api.state.revision(), { exportJob: jobId }).catch(() => undefined);
+      })
+      .catch((error) => {
+        job.textContent = String(error && error.message ? error.message : error);
+        job.setAttribute("data-notes-job-status", "refused");
+      });
+  });
+  cancelExport.addEventListener("click", () => {
+    if (following === undefined) return;
+    cancelExport.disabled = true;
+    void api.jobs.cancel(following).catch((error) => {
+      job.textContent = String(error && error.message ? error.message : error);
+    });
+  });
+  const saved = api.state.get().exportJob;
+  if (typeof saved === "string" && api.jobs.available()) follow(saved);
+
   add.addEventListener("click", () => run(ADD, { text: field.value }));
   list.addEventListener("click", () => run(LIST, {}));
   malformed.addEventListener("click", () => run(MALFORMED, {}));
@@ -86,6 +146,7 @@ function draw() {
     for (const [binding, button] of [
       [ADD, add],
       [LIST, list],
+      [EXPORT, exportButton],
     ]) {
       const entry = entries.find((candidate) => candidate.actionBindingId === binding);
       const off = entry !== undefined && !entry.available;
@@ -104,7 +165,7 @@ function draw() {
   announce(api.actions.availability());
   api.actions.subscribe(announce);
 
-  root.append(title, label, add, list, malformed, unavailable, output);
+  root.append(title, label, add, list, malformed, exportButton, cancelExport, unavailable, output, job);
   root.setAttribute("data-widget-ready", "true");
 
   // The host sizes the frame; the widget says how tall its content is, again whenever that changes.

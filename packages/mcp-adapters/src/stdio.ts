@@ -18,7 +18,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
-import { type McpToolMetadata, mcpToolMetadataSchema, type McpTransport } from "./index.ts";
+import { type McpToolMetadata, mcpToolMetadataSchema, normalizeMcpToolResult, type McpToolResult, type McpTransport } from "./index.ts";
 
 export interface StdioMcpTransportOptions {
   serverId: string;
@@ -52,6 +52,9 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>;
   /** Removes the abort listener a caller's signal holds, once the request has settled some other way. */
   release?: () => void;
+  progressToken?: number;
+  lastProgress?: number;
+  onProgress?: (progress: { current: number; total?: number; message?: string }) => void;
 }
 
 /**
@@ -223,17 +226,15 @@ export class StdioMcpTransport implements McpTransport {
   async callTool(
     name: string,
     args: Record<string, unknown>,
-    options: { timeoutMs?: number; signal?: AbortSignal } = {},
-  ): Promise<{ content: string }> {
-    const result = (await this.#request("tools/call", { name, arguments: args }, options.timeoutMs, options.signal)) as {
-      content?: { type?: string; text?: string }[];
+    options: { timeoutMs?: number; signal?: AbortSignal; onProgress?: (progress: { current: number; total?: number; message?: string }) => void } = {},
+  ): Promise<McpToolResult> {
+    const result = (await this.#request("tools/call", { name, arguments: args }, options.timeoutMs, options.signal, options.onProgress)) as {
+      content?: unknown[];
       isError?: boolean;
     };
 
-    const text = (result?.content ?? [])
-      .filter((part) => part?.type === "text" && typeof part.text === "string")
-      .map((part) => part.text as string)
-      .join("\n");
+    const normalized = normalizeMcpToolResult(result);
+    const text = normalized.content;
 
     if (result?.isError === true) {
       // A tool that reports failure has still answered. The caller gets the server's own words
@@ -241,7 +242,7 @@ export class StdioMcpTransport implements McpTransport {
       throw new Error(`mcp tool ${name} reported an error: ${text || "no detail given"}`);
     }
 
-    return { content: text };
+    return normalized;
   }
 
   async close(): Promise<void> {
@@ -324,7 +325,7 @@ export class StdioMcpTransport implements McpTransport {
   }
 
   #onMessage(line: string): void {
-    let message: { id?: unknown; result?: unknown; error?: { message?: string } };
+    let message: { id?: unknown; method?: unknown; params?: unknown; result?: unknown; error?: { message?: string } };
     try {
       message = JSON.parse(line) as typeof message;
     } catch {
@@ -333,6 +334,24 @@ export class StdioMcpTransport implements McpTransport {
       return;
     }
 
+    if (message.method === "notifications/progress") {
+      if (message.params === null || typeof message.params !== "object") return;
+      const params = message.params as Record<string, unknown>;
+      if (typeof params.progressToken !== "number" || !Number.isSafeInteger(params.progressToken)) return;
+      const pending = this.#pending.get(params.progressToken);
+      if (pending === undefined || pending.progressToken !== params.progressToken || pending.onProgress === undefined) return;
+      if (typeof params.progress !== "number" || !Number.isFinite(params.progress) || params.progress < 0) return;
+      if (pending.lastProgress !== undefined && params.progress < pending.lastProgress) return;
+      if (params.total !== undefined && (typeof params.total !== "number" || !Number.isFinite(params.total) || params.total <= 0 || params.progress > params.total)) return;
+      if (params.message !== undefined && (typeof params.message !== "string" || params.message.length > 500)) return;
+      pending.lastProgress = params.progress;
+      pending.onProgress({
+        current: params.progress,
+        ...(typeof params.total === "number" ? { total: params.total } : {}),
+        ...(typeof params.message === "string" ? { message: params.message } : {}),
+      });
+      return;
+    }
     if (typeof message.id !== "number") return;
     const pending = this.#pending.get(message.id);
     if (!pending) return;
@@ -368,6 +387,7 @@ export class StdioMcpTransport implements McpTransport {
     params: Record<string, unknown>,
     timeoutOverrideMs?: number,
     signal?: AbortSignal,
+    onProgress?: (progress: { current: number; total?: number; message?: string }) => void,
   ): Promise<unknown> {
     const id = this.#nextId;
     this.#nextId += 1;
@@ -405,9 +425,16 @@ export class StdioMcpTransport implements McpTransport {
       signal?.addEventListener("abort", onAbort, { once: true });
       const release = signal === undefined ? undefined : (): void => signal.removeEventListener("abort", onAbort);
 
-      this.#pending.set(id, { resolve, reject, timer, ...(release === undefined ? {} : { release }) });
+      this.#pending.set(id, {
+        resolve,
+        reject,
+        timer,
+        ...(release === undefined ? {} : { release }),
+        ...(onProgress === undefined ? {} : { progressToken: id, onProgress }),
+      });
       try {
-        this.#write({ jsonrpc: "2.0", id, method, params });
+        const requestParams = onProgress === undefined ? params : { ...params, _meta: { progressToken: id } };
+        this.#write({ jsonrpc: "2.0", id, method, params: requestParams });
       } catch (cause) {
         clearTimeout(timer);
         release?.();

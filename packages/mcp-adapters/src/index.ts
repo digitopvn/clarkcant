@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { ARTIFACT_LIMITS } from "@clarkcant/contracts";
 
 /**
  * MCP tool and auth adapter seam.
@@ -30,6 +31,85 @@ export const mcpToolMetadataSchema = z.strictObject({
     .optional(),
 });
 export type McpToolMetadata = z.infer<typeof mcpToolMetadataSchema>;
+
+/** Bytes returned by an MCP tool, kept separate from its human-readable text and never exposed as a path. */
+export interface McpToolFile {
+  mimeType: string;
+  bytes: Uint8Array;
+}
+
+export interface McpToolResult {
+  content: string;
+  files?: McpToolFile[];
+  filesOmitted?: true;
+}
+
+const MAX_TOOL_RESULT_FILES = 32;
+const MAX_TOOL_RESULT_BYTES = 128 * 1024 * 1024;
+
+/** Keep MCP text readable and extract bounded image/audio/resource bytes for the node's ArtifactRef broker. */
+export function normalizeMcpToolResult(value: unknown): McpToolResult {
+  const result = value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
+  const contentParts = Array.isArray(result["content"]) ? result["content"] : [];
+  const text: string[] = [];
+  const files: McpToolFile[] = [];
+  let bytesStored = 0;
+  let filesOmitted = false;
+  const add = (mimeType: unknown, bytes: Uint8Array | undefined): void => {
+    if (typeof mimeType !== "string" || bytes === undefined) {
+      filesOmitted = true;
+      return;
+    }
+    if (files.length >= MAX_TOOL_RESULT_FILES || bytes.byteLength > ARTIFACT_LIMITS.maxBytes || bytesStored + bytes.byteLength > MAX_TOOL_RESULT_BYTES) {
+      filesOmitted = true;
+      return;
+    }
+    files.push({ mimeType, bytes });
+    bytesStored += bytes.byteLength;
+  };
+  const decode = (data: unknown): Uint8Array | undefined => {
+    if (typeof data !== "string" || data.length > Math.ceil(ARTIFACT_LIMITS.maxBytes / 3) * 4
+      || data.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) return undefined;
+    try {
+      const bytes = Buffer.from(data, "base64");
+      return bytes.toString("base64") === data ? new Uint8Array(bytes) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  for (const entry of contentParts) {
+    if (entry === null || typeof entry !== "object") continue;
+    const part = entry as Record<string, unknown>;
+    if (part["type"] === "text" && typeof part["text"] === "string") {
+      text.push(part["text"]);
+      continue;
+    }
+    if (part["type"] === "image" || part["type"] === "audio") {
+      const bytes = decode(part["data"]);
+      if (bytes === undefined) filesOmitted = true;
+      else add(part["mimeType"], bytes);
+      continue;
+    }
+    if (part["type"] !== "resource" || part["resource"] === null || typeof part["resource"] !== "object") continue;
+    const resource = part["resource"] as Record<string, unknown>;
+    const mimeType = typeof resource["mimeType"] === "string" ? resource["mimeType"] : "text/plain";
+    if (typeof resource["text"] === "string") {
+      if (Buffer.byteLength(resource["text"], "utf8") > ARTIFACT_LIMITS.maxBytes) filesOmitted = true;
+      else add(mimeType, new TextEncoder().encode(resource["text"]));
+    }
+    else if (typeof resource["blob"] === "string") {
+      const bytes = decode(resource["blob"]);
+      if (bytes === undefined) filesOmitted = true;
+      else add(mimeType, bytes);
+    }
+  }
+  if (filesOmitted) text.push("Some service file results were omitted because they were malformed or exceeded the bounded artifact limits.");
+  return {
+    content: text.join("\n"),
+    ...(files.length === 0 ? {} : { files }),
+    ...(filesOmitted ? { filesOmitted: true as const } : {}),
+  };
+}
 
 export interface NormalizedMcpTool {
   /** Namespaced to avoid collisions between servers. */
@@ -160,7 +240,7 @@ export function verifyTokenAudience(input: {
  */
 export interface McpTransport {
   listTools(): Promise<McpToolMetadata[]>;
-  callTool(name: string, args: Record<string, unknown>): Promise<{ content: string }>;
+  callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult>;
 }
 
 export {

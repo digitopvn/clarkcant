@@ -1455,6 +1455,58 @@ Tests: [artifacts.spec.ts](../packages/contracts/test/artifacts.spec.ts) for the
 chunk, reads it in two ranges, writes and saves a copy, attaches it, and opens it again from a file card. It runs in
 both themes and at 390 px.
 
+### 10.2 Long-running jobs (`jobs@1`)
+
+A package capability whose work outlasts one press declares it in its tools facet:
+
+    { "ref": "com.example.notes.export@1", "tool": "export_notes", "effectCategory": "read",
+      "execution": { "kind": "job", "version": 1 } }
+
+A press on a binding to that capability does not wait for the service to finish. `actions.invoke` resolves with a
+**JobRef**, an opaque `job_…` id, and the node runs the call in the background. The widget keeps the JobRef in its own
+state, so a remounted frame can follow the same job:
+
+    const jobId = await api.actions.invoke("binding_notes_export", { steps: 12, stepMs: 1500 }, invocationId);
+    await api.state.update((state) => ({ ...state, exportJob: jobId }), { exportJob: jobId });
+    const stop = api.jobs.subscribe(jobId, (job) => render(job));
+
+`jobs.available()` says whether the host offered `jobs@1` in `init.extensions`; every call rejects locally when it did
+not. `jobs.get(ref)` reads one snapshot: status (`queued`, `running`, `waiting`, `completed`, `failed`, `cancelled`),
+progress, output, error, result files and times. `jobs.subscribe(ref, handler)` starts from that snapshot, polls once a
+second, hands the handler only snapshots that changed, and stops by itself at an ending, on `JOB_NOT_FOUND` or
+`EXTENSION_NOT_OFFERED`, or after 30 refused reads in a row. `jobs.cancel(ref)` asks the node to stop the job; one that
+already ended is refused with `JOB_NOT_RUNNING`. The contract is [jobs.ts](../packages/contracts/src/jobs.ts).
+
+**A JobRef is a pointer, not a permission.** The node re-checks every read and cancel against the job's owner: the
+principal, the widget instance, its binding and the package generation that binding was authorized under, and the
+capability. Any mismatch, including a ref copied into another widget, is answered `JOB_NOT_FOUND`, the same as a ref
+that never existed.
+
+What a job reports is the service's own: progress comes only from MCP `notifications/progress` the service sends for
+the call, and files it returns become `ArtifactRef`s the widget can read through `artifacts@1`. Job reads have their
+own budget per frame session (a burst of 60, then 5 a second, at most 4 waiting at once), separate from the message
+budget, so a widget following a job does not starve its other bridge calls.
+
+A job may run for up to 30 minutes instead of the 60-second press deadline; past that it ends as failed. While it
+runs it is listed with the node's running work (`GET /work`), and stopping it there (`POST /work/{id}/cancel`),
+emergency Stop and node shutdown cancel it. The conversation's Stop ends the reply and a press still waiting, not a
+job that is already running, the same as other background work. A cancel tells the service
+through MCP cancellation; because the service may have finished its effect before it heard, the ending says the job
+"may already have completed its effect" rather than claiming nothing happened. A job still open when the node
+restarts is marked failed with that explanation; it is never run again by itself.
+
+When a job ends, the conversation gets a note naming the capability, up to three result files and what to do next,
+and the inbox records the same ending. If the execution policy asks before the capability runs, the press shows the
+host's approval card first, and the job starts only after a person approves it there; the widget never approves its
+own job. A conversation with an open job cannot be deleted until the job ends or is cancelled.
+
+Tests: [jobs.spec.ts](../packages/contracts/test/jobs.spec.ts) for the rules,
+[job-host.spec.ts](../apps/runtime/test/job-host.spec.ts) for the node's job host, Stop and restart,
+[action-widget.spec.ts](../apps/runtime/test/action-widget.spec.ts) for presses, approvals and the bridge routes,
+[runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) for the SDK, and the browser journey
+[package-job.spec.ts](../apps/web/e2e/package-job.spec.ts). The journey follows a real service's progress across a
+reload, refuses a forged JobRef, cancels from the widget, completes with a file and ends a job with emergency Stop.
+
 ---
 
 ## 11. Pin / detach lifecycle
@@ -1647,6 +1699,19 @@ widget rendering and bridge handling only. It does not prove the service impleme
 the same widget SDK runtime used by the bridge, stays in an opaque-origin sandbox, and can load package modules only
 through the dev host.
 
+A binding to a capability declared with `"execution": { "kind": "job", "version": 1 }` takes a `job` fixture instead
+of an `outcome`, and every such binding needs one:
+
+    { "actionBindingId": "binding_notes_export", "capabilityRef": "com.example.notes.export@1",
+      "job": { "steps": [{ "current": 1, "total": 3, "message": "exported step 1 of 3" }],
+               "output": "Exported 1 note(s).", "error": "the export could not be written" } }
+
+A press then answers with a simulated JobRef, and the shell's **Simulated jobs** list shows each job with **Next step**,
+**Complete** and **Fail**. Next step moves a queued job to running and then through the fixture's progress steps; the
+widget's own `jobs.cancel` ends it as cancelled. Every ending says "(simulated by clark widget dev)". The host keeps at
+most 32 jobs in memory, making room from ended ones, and forgets them when it stops. It never calls the service, so
+a real job still has to be tested on a node.
+
 The semantic inspector accepts the frame's `semantic.publish` proposal through the shared runtime normalizer. It
 shows the normalized document, fields clipped or dropped, the delta from the previous publish, the next-turn context
 note and `inspect_ui` text. Frame-proposed text is untrusted, and more than four publishes in one second raises a churn
@@ -1686,6 +1751,8 @@ A widget is not publish-ready if any of the following tests are missing:
   validated;
 - state version valid;
 - unknown event/action reject.
+- `fixtures/dev-host-services.json`, when present, names only declared capabilities and gives a `job` fixture to
+  exactly the bindings whose capability runs as a job.
 
 ### Security
 

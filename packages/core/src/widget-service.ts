@@ -1633,6 +1633,8 @@ interface InvokeRecord {
   result:
     | { kind: "done"; output: string }
     | { kind: "approval-required"; approvalId: string }
+    /** A long-running capability the node accepted as a durable job; its state is read through the job, not here. */
+    | { kind: "job"; jobId: string }
     /**
      * Sent, and its answer never came back: the deadline passed or a person stopped it. Recorded so the same
      * invocation id is told that again rather than sent a second time, which is how an effect would happen twice.
@@ -1859,6 +1861,25 @@ export function forgetStartedInvokeAction(deps: WidgetDeps, invocationId: string
       `DELETE FROM action_invocations WHERE invocation_id = ? AND json_extract(outcome, '$.result.kind') = 'started'`,
     )
     .run(invocationId);
+}
+
+/**
+ * Replace an invocation's `approval-required` outcome with the job its approval started, so the same invocation id
+ * arriving again is answered with that JobRef rather than a second job. Only the invocation the approved payload named,
+ * on the instance and binding it named and waiting on that approval, is changed.
+ */
+export function settleApprovedInvokeJob(
+  deps: WidgetDeps,
+  input: { invocationId: string; instanceId: string; actionBindingId: string; approvalId: string; jobId: string },
+): boolean {
+  const changed = deps.db.prepare(`UPDATE action_invocations
+    SET outcome = json_set(outcome, '$.result', json(?)), recorded_at = ?
+    WHERE invocation_id = ? AND instance_id = ? AND action_binding_id = ?
+      AND json_extract(outcome, '$.result.kind') = 'approval-required'
+      AND json_extract(outcome, '$.result.approvalId') = ?`)
+    .run(toJson({ kind: "job", jobId: input.jobId }), deps.now(), input.invocationId,
+      input.instanceId, input.actionBindingId, input.approvalId);
+  return Number(changed.changes) > 0;
 }
 
 function readDisplayMode(input: Record<string, unknown>): "compact" | "expanded" {

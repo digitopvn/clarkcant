@@ -82,6 +82,7 @@ const conversationId = { name: "conversationId", in: "path", required: true, sch
 const questionId = { name: "questionId", in: "path", required: true, schema: { type: "string" } };
 const instanceId = { name: "instanceId", in: "path", required: true, schema: { type: "string" } };
 const artifactId = { name: "artifactId", in: "path", required: true, schema: { type: "string" } };
+const jobId = { name: "jobId", in: "path", required: true, schema: { type: "string", pattern: "^job_[A-Za-z0-9_-]{1,120}$" } };
 
 function ok(description: string): Record<string, unknown> {
   return { description, content: { "application/json": { schema: { type: "object" } } } };
@@ -426,10 +427,35 @@ export function openApiDocument(): Record<string, unknown> {
           responses: { "201": ok("{ artifactRef, attachmentRef }"), "409": ok("ARTIFACT_NOT_FINALIZED"), ...refusals },
         },
       },
+      "/conversations/{conversationId}/widgets/{instanceId}/jobs/{jobId}": {
+        get: {
+          summary: "Read a package job this instance started (jobs@1)",
+          description:
+            "A JobRef is a pointer, not authority: the job must have been started by one of this instance's own invoke " +
+            "bindings, in this conversation, for the same principal, package generation and capability. Anything else, " +
+            "including a ref that does not exist, is 404 JOB_NOT_FOUND. Progress is only what the service reported; a " +
+            "finished job's files are ArtifactRefs this instance may read, never paths.",
+          parameters: [conversationId, instanceId, jobId],
+          responses: {
+            ...refusals,
+            "200": ok("{ job: { jobId, status, progress?, resultRefs, output?, error?, createdAt, startedAt?, endedAt? } }"),
+            "404": ok("JOB_NOT_FOUND"),
+            "503": ok("JOB_UNAVAILABLE"),
+          },
+        },
+        post: {
+          summary: "Stop a package job this instance started",
+          description:
+            "Cancels the running service request. A job that already reached the service may have completed its effect, " +
+            "and its ending says so. An ended job is 409 JOB_NOT_RUNNING with its saved result still readable.",
+          parameters: [conversationId, instanceId, jobId],
+          responses: { ...refusals, "202": ok("{ accepted: true, jobId }"), "404": ok("JOB_NOT_FOUND"), "409": ok("JOB_NOT_RUNNING") },
+        },
+      },
       "/stop": {
         post: {
           summary: "Emergency stop",
-          description: "Kills running commands, interrupts turns and stops background work on this node.",
+          description: "Kills running commands, interrupts turns and stops background work and package jobs on this node.",
           responses: { "200": ok("{ ok, stopped }"), ...refusals },
         },
       },

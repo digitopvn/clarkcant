@@ -59,6 +59,7 @@ import {
   type Suggestion,
   type VoiceCapabilities,
 } from "@clarkcant/contracts";
+import { jobSnapshotWireSchema, type JobSnapshot } from "@clarkcant/widget-sdk";
 
 import {
   type StartVoiceSessionOptions,
@@ -257,9 +258,12 @@ export interface ActionInvocationResult {
   approvalRequired?: { approvalId: string };
   /**
    * What the action came to: `done`, `approval-required`, or `background` when the node's background lane took it and
-   * its result will arrive in the conversation. Absent from a node that predates it.
+   * its result will arrive in the conversation, or `job` when a package service started a durable job whose JobRef is
+   * the `output`. Absent from a node that predates it.
    */
-  outcome?: "done" | "approval-required" | "background";
+  outcome?: "done" | "approval-required" | "background" | "job";
+  /** For a `job` outcome: the job the service started, readable only by the widget binding that started it. */
+  job?: { jobId: string };
   /** For a `background` outcome: the run the node started. */
   background?: { workId: string; state: "running" | "queued" };
   /** A sentence the node wrote about the outcome, such as a workflow's summary of its steps. */
@@ -1723,6 +1727,21 @@ export class GatewayClient {
 
   #artifactPath(conversationId: string, instanceId: string, rest = ""): string {
     return `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/artifacts${rest}`;
+  }
+
+  #jobPath(conversationId: string, instanceId: string, jobId: string): string {
+    return `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/jobs/${encodeURIComponent(jobId)}`;
+  }
+
+  async getWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<JobSnapshot> {
+    const body = await this.#call<{ job?: unknown }>("GET", this.#jobPath(conversationId, instanceId, jobId));
+    const parsed = jobSnapshotWireSchema.safeParse(body.job);
+    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job snapshot");
+    return parsed.data;
+  }
+
+  async cancelWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<void> {
+    await this.#call("POST", this.#jobPath(conversationId, instanceId, jobId), {});
   }
 
   #artifactRef(body: { artifactRef?: unknown }): ArtifactRef {

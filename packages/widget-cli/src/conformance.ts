@@ -18,6 +18,7 @@ import { auditFrame, evaluateDetach, type FrameFacts } from "./dev-shell.ts";
 import { REQUIRED_FIXTURES, readPackage, type WidgetPackage } from "@clarkcant/core";
 import { semanticDocWithinLimits } from "./dev-semantic.ts";
 import { validateDeclaredWidgetEventSchema } from "./dev-composition.ts";
+import { readServiceSimulator } from "./service-simulator.ts";
 
 /**
  * The conformance suite a widget has to pass before it is publish-ready.
@@ -136,6 +137,31 @@ export function runConformance(root: string, options: { frames?: FrameFacts } = 
     valid.ok ? "pass" : "fail",
     valid.ok ? "fixtures/default.json validates" : `fixtures/default.json: ${valid.problems.join("; ")}`,
   );
+
+  /*
+   * The dev host's service fixture, read the way `clark widget dev` reads it: a binding to an undeclared capability, or a
+   * job fixture that does not match the manifest's `execution`, would simulate something no node would ever answer.
+   */
+  if (existsSync(join(root, "fixtures", "dev-host-services.json"))) {
+    const tools = pkg.manifest.facets.flatMap((item) => (item.kind === "tools" ? item.capabilities : []));
+    let problem: string | undefined;
+    try {
+      readServiceSimulator(
+        root,
+        tools.map((capability) => capability.ref),
+        tools.filter((capability) => capability.execution?.kind === "job").map((capability) => capability.ref),
+      );
+    } catch (error) {
+      problem = error instanceof Error ? error.message : String(error);
+    }
+    add(
+      "schema.serviceSimulator",
+      "schema",
+      "the dev-host service fixture matches the manifest",
+      problem === undefined ? "pass" : "fail",
+      problem ?? "fixtures/dev-host-services.json binds only declared capabilities, and a job fixture only to a job capability",
+    );
+  }
 
   // A schema that accepts anything is not a schema, so the malformed case is constructed from the schema itself
   // rather than hand-written: a missing required key, or a wrong-typed one.

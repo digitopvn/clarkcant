@@ -299,6 +299,7 @@ semantic.publish(summary, selectedIds, values?)  # a proposal; actions come from
 artifacts.pick / read / create / write / finalize  # files by reference (artifacts@1), re-checked on every use
 artifacts.export / attachToConversation  # the host's Save As and the composer; the person decides
 artifacts.discard  # let go of a file this instance made
+jobs.get / subscribe / cancel  # package jobs by JobRef (jobs@1), re-checked on every use
 lifecycle.onMount / onSuspend / onResume / onDispose
 ```
 
@@ -335,6 +336,8 @@ Host-owned frame chrome shows app/source/account, permission controls and close/
 Unsafe HTML/SVG/Markdown is sanitized; Mermaid gets a strict wrapper and a worker timeout; no script callbacks from agent props. Datasets/attachments go through opaque refs, with no arbitrary paths, executable URLs, SQL or CSS property injection.
 
 Files follow the same rule (`artifacts@1`, [widget-development.md §10.1](widget-development.md#101-files-by-reference-artifacts1)). An isolated widget holds an `ArtifactRef`, never a path. The ref is a pointer, not a permission: the node re-checks every read, write, export and attach against the owner, the instance's expiring and revocable grant, and the artifact's state. Picking a file and saving a copy are host chrome outside the frame. On the desktop they use native dialogs; on the web they use a file input and a download. Replacing the original file is desktop-only. The bytes go through the attachment pipeline's type sniffing, allowlist, size ceiling and quota, and chunks are bounded at 256 KiB. One instance holds at most 128 MiB of the person's 1 GiB, a frame's file requests are rate-limited, and a widget can discard only a file it made. An agent button's `artifact:` context reference is read under the same decision as the pressed widget and reaches the model as the file's name, type and size plus, for text, a short excerpt marked as data. A widget that could draw its own "choose a file" button inside the frame still gets nothing until the person answers the host's prompt.
+
+Long-running package work follows it too (`jobs@1`, [widget-development.md §10.2](widget-development.md#102-long-running-jobs-jobs1)). A capability declared with `execution: { kind: "job", version: 1 }` answers a press with a JobRef and runs for up to 30 minutes under the node's job host. The JobRef is a pointer, not a permission: every read and cancel is re-checked against the principal, the instance, its binding, the package generation that binding was authorized under, and the capability, and anything else is refused as if the job did not exist. Progress is only what the service reports over MCP, result files are `ArtifactRef`s, stopping it from the work list, emergency Stop and shutdown cancel the job with a "may already have completed its effect" caution (the conversation's Stop leaves it running, like other background work), a restart marks it failed instead of running it again, and a policy question is answered on the host's approval card before the job starts, never by the widget.
 
 ## 9. Frontend credentials: an exception that must be designed correctly
 

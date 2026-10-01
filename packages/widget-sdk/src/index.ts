@@ -39,6 +39,9 @@ export type ReadonlyAppearanceSnapshot = DeepReadonly<AppearanceSnapshot>;
  * host re-checks this frame's grant on every use.
  */
 export const ARTIFACTS_EXTENSION = "artifacts@1";
+export const JOBS_EXTENSION = "jobs@1";
+
+export const jobRefWireSchema = z.string().regex(/^job_[A-Za-z0-9_-]{1,120}$/);
 
 export const ARTIFACT_BRIDGE_LIMITS = Object.freeze({
   /** Bytes in one write, and in one read. */
@@ -70,6 +73,29 @@ export const artifactRefWireSchema = z.strictObject({
   digest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
 });
 export type ArtifactRef = z.infer<typeof artifactRefWireSchema>;
+
+export const jobSnapshotWireSchema = z.strictObject({
+  jobId: jobRefWireSchema,
+  status: z.enum(["queued", "running", "waiting", "completed", "failed", "cancelled"]),
+  progress: z.strictObject({
+    current: z.number().finite().nonnegative(),
+    total: z.number().finite().positive().optional(),
+    message: z.string().max(500).optional(),
+  }).optional(),
+  resultRefs: z.array(artifactRefWireSchema).max(32),
+  output: z.string().max(16_000).optional(),
+  error: z.string().min(1).max(800).optional(),
+  createdAt: z.string().min(1).max(40),
+  startedAt: z.string().min(1).max(40).optional(),
+  endedAt: z.string().min(1).max(40).optional(),
+});
+export type JobRef = z.infer<typeof jobRefWireSchema>;
+export type JobSnapshot = z.infer<typeof jobSnapshotWireSchema>;
+export const jobRequestSchema = z.discriminatedUnion("op", [
+  z.strictObject({ op: z.literal("get"), jobId: jobRefWireSchema }),
+  z.strictObject({ op: z.literal("cancel"), jobId: jobRefWireSchema }),
+]);
+export type JobRequest = z.infer<typeof jobRequestSchema>;
 
 export const artifactRequestSchema = z.discriminatedUnion("op", [
   /** Ask the person to choose a file. The host shows its own chrome; the widget learns only what the person picked. */
@@ -224,6 +250,20 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
     chunkBase64: z.string().max(ARTIFACT_BRIDGE_LIMITS.chunkBase64Chars).optional(),
     eof: z.boolean().optional(),
   }),
+  z.strictObject({
+    kind: z.literal("job-result"),
+    nonce: z.string().min(16).max(200),
+    requestId: z.string().min(1).max(128),
+    status: z.enum(["ok", "refused"]),
+    code: z.string().min(1).max(60).optional(),
+    message: z.string().min(1).max(600).optional(),
+    job: jobSnapshotWireSchema.optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("job.changed"),
+    nonce: z.string().min(16).max(200),
+    job: jobSnapshotWireSchema,
+  }),
 ]);
 export type HostToWidgetMessage = z.infer<typeof hostToWidgetSchema>;
 
@@ -291,6 +331,12 @@ export const widgetToHostSchema = z.discriminatedUnion("kind", [
     nonce: z.string().min(16).max(200),
     requestId: z.string().min(1).max(128),
     request: artifactRequestSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("job.request"),
+    nonce: z.string().min(16).max(200),
+    requestId: z.string().min(1).max(128),
+    request: jobRequestSchema,
   }),
 ]);
 export type WidgetToHostMessage = z.infer<typeof widgetToHostSchema>;
@@ -422,6 +468,14 @@ export interface WidgetAuthorApi {
      * widget that created it may; a file the person chose is theirs. Bytes already sent in a message stay with it.
      */
     discard(ref: ArtifactRef): Promise<void>;
+  };
+  /** Durable package work (`jobs@1`). A JobRef is an opaque handle and each use is re-authorized by the host. */
+  jobs: {
+    available(): boolean;
+    get(ref: JobRef): Promise<JobSnapshot>;
+    cancel(ref: JobRef): Promise<void>;
+    /** Resumes from the durable snapshot; polls are serialized and stop on terminal state or unsubscribe. */
+    subscribe(ref: JobRef, handler: (job: JobSnapshot) => void): () => void;
   };
   lifecycle: {
     onMount(handler: () => void): void;

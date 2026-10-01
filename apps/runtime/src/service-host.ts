@@ -28,6 +28,7 @@ import {
   McpRequestCancelled,
   McpRequestNotSent,
   McpRequestTimeout,
+  type McpToolFile,
   type McpToolMetadata,
   StdioMcpTransport,
   type StdioMcpTransportOptions,
@@ -91,6 +92,7 @@ const ENGINE_RETRY_MS = 60_000;
 /** A container's first answer includes Node starting inside it, which is slower than a bare process. */
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 const CALL_TIMEOUT_MS = 60_000;
+const JOB_CALL_TIMEOUT_MS = 30 * 60_000;
 
 /** The four categories that order by reach. The others are different axes and are never rewritten. */
 const EFFECT_RANK: Partial<Record<EffectCategory, number>> = {
@@ -123,8 +125,8 @@ export interface ServiceConnection {
   callTool(
     name: string,
     args: Record<string, unknown>,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
-  ): Promise<{ content: string }>;
+    options?: { timeoutMs?: number; signal?: AbortSignal; onProgress?: (progress: { current: number; total?: number; message?: string }) => void },
+  ): Promise<{ content: string; files?: McpToolFile[]; filesOmitted?: true }>;
   ping(): Promise<void>;
   close(): Promise<void>;
   readonly stderrTail: string;
@@ -185,6 +187,7 @@ export type ServiceCallFailure =
 export interface ServiceCallOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
+  onProgress?: (progress: { current: number; total?: number; message?: string }) => void;
 }
 
 export class ServiceCallError extends Error {
@@ -206,7 +209,7 @@ export interface ServiceHost {
   /** Bring the running services in line with what is installed. Serialised: a second call waits for the first. */
   reconcile(): Promise<void>;
   /** Call a registered service capability. The caller has already asked the policy; this only runs it. */
-  call(ref: CapabilityRef, args: Record<string, unknown>, options?: ServiceCallOptions): Promise<{ content: string }>;
+  call(ref: CapabilityRef, args: Record<string, unknown>, options?: ServiceCallOptions): Promise<{ content: string; files?: McpToolFile[]; filesOmitted?: true }>;
   /**
    * The active generation whose service facet declares this ref and owns its registry row, whatever state the service
    * is in.
@@ -215,6 +218,8 @@ export interface ServiceHost {
    * another package holds, or one a package no longer active declared, is not something this host runs.
    */
   serves(ref: CapabilityRef): { packageId: string; generationId: string } | undefined;
+  /** The manifest's explicit execution mode; omission preserves synchronous capability calls. */
+  execution?(ref: CapabilityRef): { kind: "job"; version: 1 } | undefined;
   /** Stop every service. With `restart`, they are started again from scratch; without, the host stays stopped. */
   stopAll(options?: { restart?: boolean }): Promise<number>;
   /** What each facet is doing, for diagnostics and tests. */
@@ -818,10 +823,13 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       }
       try {
         // A caller may ask for less time than the host allows, never for more.
-        const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? CALL_TIMEOUT_MS, CALL_TIMEOUT_MS));
+        const jobMode = entry.facet.capabilities.some((declaration) => declaration.ref === ref && declaration.execution?.kind === "job");
+        const ceiling = jobMode ? JOB_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS;
+        const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? ceiling, ceiling));
         return await entry.connection.callTool(tool, args, {
           timeoutMs,
           ...(options.signal === undefined ? {} : { signal: options.signal }),
+          ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
         });
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
@@ -854,6 +862,14 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         // facet was refused stays refused until a reconcile claims it.
         if (entry.refused.has(ref) || !owns(entry, ref)) continue;
         return { packageId: entry.generation.packageId, generationId: entry.generation.generationId };
+      }
+      return undefined;
+    },
+
+    execution(ref) {
+      for (const entry of entries.values()) {
+        if (!entry.facet.capabilities.some((declaration) => declaration.ref === ref) || entry.refused.has(ref) || !owns(entry, ref)) continue;
+        return entry.facet.capabilities.find((declaration) => declaration.ref === ref)?.execution;
       }
       return undefined;
     },

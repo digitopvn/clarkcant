@@ -299,6 +299,7 @@ semantic.publish(summary, selectedIds, values?)  # chỉ là đề xuất; actio
 artifacts.pick / read / create / write / finalize  # tệp theo tham chiếu (artifacts@1), kiểm tra lại mỗi lần dùng
 artifacts.export / attachToConversation  # Lưu thành… của host và ô soạn tin; người dùng quyết định
 artifacts.discard  # bỏ một tệp do chính instance này tạo
+jobs.get / subscribe / cancel  # job của package theo JobRef (jobs@1), kiểm tra lại mỗi lần dùng
 lifecycle.onMount / onSuspend / onResume / onDispose
 ```
 
@@ -335,6 +336,8 @@ Host-owned frame chrome hiển thị app/source/account, permission controls và
 Unsafe HTML/SVG/Markdown sanitize; Mermaid strict wrapper và worker timeout; no script callbacks from agent props. Dataset/attachments qua opaque refs, no arbitrary paths, executable URLs, SQL hay CSS property injection.
 
 Tệp cũng theo đúng quy tắc đó (`artifacts@1`, [widget-development.vi.md §10.1](widget-development.vi.md#101-tệp-theo-tham-chiếu-artifacts1)). Một widget cách ly giữ một `ArtifactRef`, không bao giờ giữ đường dẫn. Ref là con trỏ, không phải quyền: node kiểm tra lại mỗi lần đọc, ghi, lưu ra và đính kèm, đối chiếu với chủ sở hữu, grant của instance (có hạn và thu hồi được) và trạng thái của artifact. Chọn tệp và lưu bản sao là giao diện của host, nằm ngoài frame. Trên desktop, chúng dùng hộp thoại gốc của hệ điều hành; trên web, chúng dùng ô chọn tệp và một lượt tải xuống. Ghi đè tệp gốc chỉ có trên desktop. Các byte đi qua các bước dò kiểu, danh sách cho phép, giới hạn kích thước và hạn mức của luồng đính kèm, và mỗi đoạn tối đa 256 KiB. Một instance giữ tối đa 128 MiB trong 1 GiB của người dùng, các yêu cầu tệp của một frame bị giới hạn tốc độ, và widget chỉ bỏ được tệp do chính nó tạo. Tham chiếu ngữ cảnh `artifact:` của một nút agent được đọc theo cùng quyết định như widget được bấm và tới model dưới dạng tên, kiểu và kích thước của tệp, cùng một đoạn trích ngắn được đánh dấu là dữ liệu nếu là văn bản. Một widget có thể tự vẽ nút "chọn tệp" trong frame, nhưng vẫn không nhận được gì cho tới khi người dùng trả lời lời nhắc của host.
+
+Công việc chạy lâu của package cũng theo quy tắc đó (`jobs@1`, [widget-development.vi.md §10.2](widget-development.vi.md#102-job-chạy-lâu-jobs1)). Một capability khai báo `execution: { kind: "job", version: 1 }` trả lời một lần bấm bằng một JobRef và chạy tối đa 30 phút dưới job host của node. JobRef là con trỏ, không phải quyền: mỗi lần đọc và huỷ đều được kiểm tra lại theo principal, instance, binding của nó, package generation mà binding đó được cấp quyền, và capability; mọi trường hợp khác bị từ chối như thể job không tồn tại. Tiến độ chỉ là những gì service báo qua MCP, tệp kết quả là `ArtifactRef`, việc dừng nó từ danh sách công việc, Dừng khẩn cấp và việc tắt node huỷ job kèm lời cảnh báo "may already have completed its effect" (nút Dừng của hội thoại để nó chạy tiếp, giống các công việc nền khác), khởi động lại đánh dấu job thất bại thay vì chạy lại, và câu hỏi của policy được trả lời trên thẻ phê duyệt của host trước khi job bắt đầu, không bao giờ bởi widget.
 
 ## 9. Frontend credentials: ngoại lệ phải thiết kế đúng
 
