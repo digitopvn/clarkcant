@@ -69,8 +69,8 @@ export const GRAPH_EVENTS: Readonly<Record<string, Readonly<Record<string, Graph
     "tree.select": { fields: { selectedId: "string" } },
     "tree.toggle": { fields: { nodeId: "string", expanded: "value" } },
   },
-  "canvas.carousel@1": { "media.select": { fields: { index: "value" }, echo: "index" } },
-  "canvas.gallery@1": { "media.select": { fields: { index: "value" }, echo: "index" } },
+  "canvas.carousel@1": { "media.select": { fields: { index: "value" } } },
+  "canvas.gallery@1": { "media.select": { fields: { index: "value" } } },
   "canvas.board@1": {
     "board.move": { fields: { cardId: "string", fromColumnId: "string", toColumnId: "string", position: "value" } },
   },
