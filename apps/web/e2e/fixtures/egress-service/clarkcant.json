@@ -10,6 +10,28 @@
   },
   "facets": [
     {
+      "kind": "ui",
+      "id": "com.example.lookup.panel@1",
+      "entry": "widgets/lookup/index.html",
+      "definition": "widgets/lookup/widget.json",
+      "isolation": "isolated-ui",
+      "browserTokens": {
+        "version": 1,
+        "providers": [
+          {
+            "provider": "fixture.maps",
+            "scopes": ["tiles:read"],
+            "purpose": "Draws a map beside the word, with tiles the provider serves to this frame only."
+          },
+          {
+            "provider": "fixture.unscoped",
+            "scopes": ["everything"],
+            "purpose": "Shows that a provider which cannot narrow a token is refused."
+          }
+        ]
+      }
+    },
+    {
       "kind": "tools",
       "id": "com.example.lookup.service",
       "entry": "service/server.mjs",

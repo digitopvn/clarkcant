@@ -2117,6 +2117,83 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * The lookup package's widget, whose one button is bound to a capability its service answers by asking the node to
+     * reach a provider. Stands in for the same step as the notes widget above: the binding is scripted, and everything
+     * after it — the binding check, readiness including whether the package was given its key, the service in its
+     * container and the node's egress broker — is the path a real binding takes.
+     */
+    if (/widget tra từ|lookup widget/i.test(input.text)) {
+      const definition = {
+        id: "com.example.lookup.panel@1",
+        version: "1.0.0",
+        renderer: "isolated-app" as const,
+        propsSchema: {
+          type: "object",
+          properties: { title: { type: "string", maxLength: 200 } },
+          required: ["title"],
+          additionalProperties: false,
+        },
+        eventSchemas: {},
+        stateSchema: { type: "object", properties: {}, additionalProperties: true },
+        stateVersion: 0,
+        semanticDescription: "Looks words up with a provider the node reaches for the package.",
+        requestedCapabilities: [],
+        sizing: { compact: true, expanded: true, minHeight: 200 },
+        textFallback: "Tra từ: định nghĩa do nhà cung cấp trả về qua node.",
+        effectCategories: ["read" as const],
+        datasetRefs: [],
+      };
+      const served = deps.services().serviceHost?.serves("com.example.lookup.define@1");
+      const instance = createInstance(deps.services().conductor, {
+        definition,
+        packageDigest: definitionDigest(definition),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Tra từ (fixture)" },
+      });
+      saveActionBinding(deps.services().conductor, {
+        // Fixed, because the widget's own code names it.
+        actionBindingId: "binding_lookup_define",
+        label: "Tra từ",
+        proposal: {
+          kind: "invoke" as const,
+          capabilityRef: "com.example.lookup.define@1",
+          args: {},
+          bindings: [{ target: "word", source: "user-input" as const }],
+        },
+        inputSchema: {
+          type: "object",
+          properties: { word: { type: "string", minLength: 1, maxLength: 60, pattern: "^[A-Za-z-]+$" } },
+          required: ["word"],
+          additionalProperties: false,
+        },
+        effectCategory: "read" as const,
+        instanceId: instance.instanceId,
+        definitionId: definition.id,
+        packageGeneration: served?.generationId ?? definitionDigest(definition),
+        allowedDataRefs: [],
+        fixedConstraints: {},
+        requiresApproval: false,
+        limits: {},
+        bindingDigest: "sha256:binding_lookup_define",
+        createdAt: instantSchema.parse(new Date().toISOString()),
+      });
+      const snapshot = captureSnapshot(deps.services().conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: widget tra từ, nút gọi dịch vụ của gói qua node (không phải model thật).",
+        block: {
+          type: "surface",
+          definitionRef: { id: definition.id, version: definition.version },
+          snapshot,
+        },
+      };
+    }
+
+    /*
      * The agent calling the same capability the notes widget's button calls.
      *
      * The decision to call `invoke_capability` is scripted; the tool is the real one, so the gate, the policy card and

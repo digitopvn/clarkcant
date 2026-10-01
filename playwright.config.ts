@@ -123,6 +123,13 @@ export default defineConfig({
                */
               CC_FRAME_GRANT_FIXTURE: "1",
               /*
+               * `CC_BROWSER_TOKEN_FIXTURE` registers two in-process browser-token providers — one that mints scoped,
+               * revocable tokens and one that cannot scope — and a route that hands back what was minted, so the token
+               * journey can search the page and the node for a value it knows. Random values, no provider account; the
+               * node answers 404 on that route when started without it.
+               */
+              CC_BROWSER_TOKEN_FIXTURE: "1",
+              /*
                * Every variable `apps/runtime/src/readiness.ts` counts as a configured credential, blanked. Playwright
                * starts this node with the developer's shell environment underneath `env`, so a provider key exported
                * locally made the node report a credential CI's node does not have, and the credentials specs failed
