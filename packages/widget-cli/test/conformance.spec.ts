@@ -93,6 +93,8 @@ describe("the conformance status split", () => {
     expect(unverified).toContain("interaction.voiceClickParity");
     expect(unverified).toContain("rendering.reducedMotion");
     expect(unverified).toContain("rendering.narrow");
+    expect(unverified).toContain("rendering.serviceBlocked");
+    expect(unverified).toContain("rendering.offline");
     expect(result.summary["requires-dev-host"]).toBe(unverified.length);
   });
 
@@ -133,6 +135,8 @@ describe("the frame checks, when a frame was measured", () => {
     states: [
       { name: "loading", rendered: true },
       { name: "readOnly", rendered: true },
+      { name: "serviceBlocked", rendered: true },
+      { name: "offline", rendered: true },
     ],
   };
 
@@ -148,6 +152,8 @@ describe("the frame checks, when a frame was measured", () => {
       "rendering.expanded",
       "rendering.loading",
       "rendering.readOnly",
+      "rendering.serviceBlocked",
+      "rendering.offline",
       "rendering.reducedMotion",
     ]) {
       expect(byId.get(id), id).toBe("pass");
@@ -191,6 +197,27 @@ describe("the frame checks, when a frame was measured", () => {
 
     // A collector that did not ask about the layouts is not a reason to assume they were fine.
     expect(result.checks.find((check) => check.id === "rendering.narrow")?.status).toBe("requires-dev-host");
+  });
+
+  it("fails blocked and offline rendering when the frame collected a blank state", async () => {
+    const result = runConformance(await tempPackage("form"), {
+      frames: {
+        ...clean,
+        states: [
+          { name: "serviceBlocked", rendered: false },
+          { name: "offline", rendered: false },
+        ],
+      },
+    });
+    expect(result.checks.find((check) => check.id === "rendering.serviceBlocked")?.status).toBe("fail");
+    expect(result.checks.find((check) => check.id === "rendering.offline")?.status).toBe("fail");
+  });
+
+  it("fails blocked and offline rendering when the frame omits either state", async () => {
+    const { states: _states, ...withoutStates } = clean;
+    const result = runConformance(await tempPackage("form"), { frames: withoutStates });
+    expect(result.checks.find((check) => check.id === "rendering.serviceBlocked")?.status).toBe("fail");
+    expect(result.checks.find((check) => check.id === "rendering.offline")?.status).toBe("fail");
   });
 
   it("does not treat a widget with nothing to tab to as a keyboard failure", async () => {

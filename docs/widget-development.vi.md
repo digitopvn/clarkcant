@@ -1624,6 +1624,23 @@ không bao giờ biết tệp nằm ở đâu. Bản giả lập giữ mọi th�
 kiểu từ byte, và không ghi gì xuống đĩa. Một lần `export` hay `attach` chỉ được ghi vào nhật ký của shell, nên một
 bản phát hành vẫn phải được kiểm thử với Lưu thành… và ô soạn tin của một host thật.
 
+Với mỗi capability `tools`, shell có thể đặt readiness dịch vụ thành `loading`, `ready`, `blocked` hoặc `unhealthy`,
+kèm lý do cho trạng thái blocked và unhealthy. Offline được ưu tiên hơn readiness; capability đang ready vẫn dùng
+được khi một capability khác unhealthy, và shell ghi nhãn trạng thái kết hợp này là degraded. **Simulate service
+restart** hiển thị loading rồi đưa các capability đã khai báo trở lại ready. Các control này gửi message availability
+`actions` và `action-result` của bridge tới frame. Chúng không khởi chạy service facet hoặc kết nối provider.
+
+Fixture tuỳ chọn chỉ chứa dữ liệu `fixtures/dev-host-services.json` ánh xạ từng `actionBindingId` tới capability `ref`
+trong tools facet đã khai báo và một kết quả bridge có giới hạn, ví dụ:
+
+    { "bindings": [{ "actionBindingId": "notes.list", "capabilityRef": "com.example.notes.list@1",
+      "outcome": { "status": "accepted", "message": "Loaded", "output": "One sample note" } }] }
+
+File tối đa 32 KiB và 64 binding. Capability ref chưa khai báo và binding ID trùng sẽ bị từ chối. Host kiểm tra từng
+kết quả theo schema bridge của widget; kết quả sai schema trở thành một lời từ chối hợp lệ. Fixture này chỉ kiểm tra
+cách widget vẽ trạng thái và xử lý bridge, không chứng minh service hoạt động đúng. Package frame nhận cùng widget SDK
+runtime dùng cho bridge, vẫn nằm trong opaque-origin sandbox, và chỉ tải module package qua dev host.
+
 ### test
 
 Chạy conformance suite.
@@ -1690,6 +1707,8 @@ Widget không publish-ready nếu thiếu các test sau:
 - error;
 - cached;
 - read-only;
+- blocked service;
+- offline;
 - reduced motion;
 - text fallback.
 

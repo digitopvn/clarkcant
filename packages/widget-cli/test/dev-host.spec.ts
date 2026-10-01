@@ -225,13 +225,20 @@ describe("the dev host server", () => {
   it("serves the package's own files", async () => {
     const { url, stop } = await started();
     try {
-      const fixture = await fetch(`${url}fixtures/default.json`);
-      expect(fixture.status).toBe(200);
+      const shell = await fetch(url);
+      const html = await shell.text();
+      const framePath = /<iframe[^>]+src="([^"]+)"/.exec(html)?.[1];
+      expect(framePath).toBeDefined();
+      const framePathname = new URL(framePath ?? "", url).pathname;
+      const framePrefix = framePathname.slice(0, framePathname.indexOf("/widgets/"));
+      const fixture = await fetch(`${url}${framePrefix.slice(1)}/fixtures/default.json`);
+      expect(fixture.status, `request path: ${new URL("fixtures/default.json", new URL(framePath ?? "", url)).pathname}; frame prefix: ${framePrefix}`).toBe(200);
       expect((await fixture.json()) as unknown).toEqual({ title: "Xin chào" });
 
-      const entry = await fetch(`${url}widgets/main/index.html`);
+      const entry = await fetch(new URL(framePath ?? "", url));
       expect(entry.status).toBe(200);
       expect(await entry.text()).toContain("<!doctype html>");
+      expect((await fetch(`${url}widgets/main/index.html`)).status).toBe(404);
     } finally {
       await stop();
     }

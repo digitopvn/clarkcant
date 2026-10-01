@@ -16,6 +16,9 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:widget-dev-host": "vitest run --config vitest.widget-dev-host.config.ts",
+    "test:widget-browser": "vitest run --config vitest.widget-browser.config.ts",
+    "test:reference-theme-browser": "vitest run --config vitest.reference-theme-browser.config.ts",
     "verify": "pnpm run invariants && pnpm run typecheck && pnpm run lint && pnpm run test",
     "invariants": "node tools/check-invariants.mjs",
     "onboard": "node tools/setup.mjs",
@@ -28,7 +31,7 @@
     "dev:desktop": "node tools/dev-desktop.mjs",
     "test:e2e": "playwright test",
     "test:live": "CC_LIVE_PROVIDER_TEST=1 playwright test voice-live-provider",
-    "verify:full": "pnpm run verify && pnpm run test:e2e"
+    "verify:full": "pnpm run verify && pnpm run test:widget-dev-host && pnpm run test:widget-browser && pnpm run test:reference-theme-browser && pnpm run test:e2e"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

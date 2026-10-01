@@ -1,11 +1,13 @@
-import { createServer, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
 import { readFileSync, statSync, watch, type FSWatcher } from "node:fs";
-import { extname, join, normalize, resolve, sep } from "node:path";
+import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 
 import type { ViteDevServer } from "vite";
-import { createDevModuleServer } from "./dev-module-server.ts";
+import { closeDevModuleServer, createDevModuleServer } from "./dev-module-server.ts";
 
 import { readPackage } from "@clarkcant/core";
+import { widgetToHostSchema } from "@clarkcant/widget-sdk";
 import { catalogFrameHtml, catalogTarget } from "./catalog-target.ts";
 import {
   applyShellAction,
@@ -17,6 +19,14 @@ import {
 } from "./dev-shell.ts";
 import { createDevArtifactBroker, readFixtureFiles, type DevArtifactEvent, type DevFixtureFile } from "./dev-artifacts.ts";
 import { openDevLeaseStore } from "./dev-lease.ts";
+import {
+  actionAvailability,
+  actionResult,
+  readServiceSimulator,
+  readinessForStatus,
+  serviceStatus,
+  type ServiceBinding,
+} from "./service-simulator.ts";
 
 /**
  * `clark widget dev` — the local isolated host.
@@ -81,6 +91,15 @@ function contentType(path: string): string {
   }
 }
 
+/** Only this host's own sandboxed frame may use the opaque-origin CORS exception. */
+function isPackageFrameRequest(request: IncomingMessage, framePrefix: string): boolean {
+  const host = request.headers.host;
+  return request.headers.origin === "null"
+    && host !== undefined
+    && request.url?.startsWith(`${framePrefix}/`) === true
+    && (host.startsWith("127.0.0.1:") || host.startsWith("localhost:"));
+}
+
 /**
  * The in-page script.
  *
@@ -110,7 +129,8 @@ async function send(action) {
     body: JSON.stringify(action),
   });
   state = await response.json();
-  location.reload();
+  if (action.kind === "service-restart") setTimeout(() => location.reload(), 500);
+  else location.reload();
 }
 
 for (const button of document.querySelectorAll("[data-dev-action][data-dev-value]")) {
@@ -124,6 +144,15 @@ for (const input of document.querySelectorAll("input[data-dev-action]")) {
     void send({ kind: input.dataset.devAction, value: input.dataset.devValue ?? input.checked });
   });
 }
+for (const select of document.querySelectorAll("select[data-dev-action='service-readiness']")) {
+  select.addEventListener("change", () => {
+    const reason = [...document.querySelectorAll("[data-dev-reason]")].find((input) => input.dataset.devReason === select.dataset.devValue)?.value ?? "";
+    void send({ kind: "service-readiness", capabilityRef: select.dataset.devValue, status: select.value, reason });
+  });
+}
+document.querySelector("[data-dev-action='service-restart']")?.addEventListener("click", () => {
+  void send({ kind: "service-restart", value: true });
+});
 
 /* The audit runs over facts collected here; the decision about what they mean lives in the CLI's tested code. */
 function collectFacts(frame) {
@@ -195,7 +224,7 @@ window.addEventListener("message", (event) => {
  * the first and refuses the second as a duplicate, which is the behaviour the host relies on too.
  */
 const frameElement = document.querySelector("[data-dev-frame]");
-const bridgeNonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+const bridgeNonce = state.bridgeNonce;
 function sendInit() {
   if (state.bridge !== true) return;
   frameElement.contentWindow?.postMessage({
@@ -215,6 +244,27 @@ function sendInit() {
 }
 frameElement?.addEventListener("load", sendInit);
 sendInit();
+
+function announceActions() {
+  if (state.bridge !== true || !state.serviceBindings?.length) return;
+  frameElement.contentWindow?.postMessage({ kind: "actions", nonce: bridgeNonce, actions: state.actionAvailability }, "*");
+}
+window.addEventListener("message", (event) => {
+  if (event.source !== frameElement?.contentWindow || event.data?.kind !== "ready" || event.data?.nonce !== bridgeNonce) return;
+  announceActions();
+});
+window.addEventListener("message", async (event) => {
+  const data = event.data;
+  if (event.source !== frameElement?.contentWindow || data?.kind !== "action.invoke" || data.nonce !== bridgeNonce) return;
+  const response = await fetch("/dev/api/service-action", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  const result = await response.json();
+  frameElement.contentWindow?.postMessage(result, "*");
+  appendLog("action " + String(data.actionBindingId) + " -> " + String(result.status));
+});
 
 /*
  * artifacts@1, answered by the dev host's simulated broker. Only this frame's messages with this page's nonce are
@@ -306,6 +356,8 @@ interface ShellSource {
   definitionId: string;
   fixtures: readonly string[];
   requestedCapabilities: readonly string[];
+  serviceCapabilities: readonly string[];
+  serviceBindings: readonly ServiceBinding[];
   entryUrl: string;
   definition: { textFallback: string; semanticDescription: string };
   /** Fixture name to its props, handed to the frame in the handshake. Empty for a catalog widget. */
@@ -323,12 +375,16 @@ function packageSource(requested: string): ShellSource {
   if (facet === undefined) {
     throw new Error(`no widget facet is declared in ${root}, so there is nothing to develop`);
   }
+  const serviceCapabilities = pkg.manifest.facets.flatMap((item) => item.kind === "tools" ? item.capabilities.map((capability) => capability.ref) : []);
+  const simulator = readServiceSimulator(root, serviceCapabilities);
   return {
     root,
     packageId: pkg.manifest.id,
     definitionId: facet.facetId,
     fixtures: Object.keys(pkg.fixtures),
     requestedCapabilities: facet.definition.requestedCapabilities,
+    serviceCapabilities: simulator.capabilities,
+    serviceBindings: simulator.bindings,
     entryUrl: `/${facet.entryPath}`,
     definition: {
       textFallback: facet.definition.textFallback,
@@ -352,6 +408,8 @@ function catalogSource(definitionId: string): ShellSource {
     definitionId: target.entry.definition.id,
     fixtures: target.entry.fixtures.map((fixture) => fixture.id),
     requestedCapabilities: target.entry.definition.requestedCapabilities,
+    serviceCapabilities: [],
+    serviceBindings: [],
     entryUrl: "/catalog-runtime.html",
     definition: {
       textFallback: target.entry.definition.textFallback,
@@ -383,15 +441,16 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
    * renderer rather than a copy of it, and there is no build step to forget. It is created only for a catalog
    * widget: a package's frame is its own entry HTML, which this server already knows how to serve.
    */
-  const vite: ViteDevServer | undefined =
-    root === undefined
-      ? await createDevModuleServer(true)
-      : undefined;
+  let vite: ViteDevServer | undefined;
 
   const fixtures = source.fixtures;
   const capabilities = source.requestedCapabilities;
   const files = source.files.map((file) => file.name);
-  let state = initialState({ fixtures, requestedCapabilities: capabilities, files });
+  let state = initialState({ fixtures, requestedCapabilities: capabilities, serviceCapabilities: source.serviceCapabilities, files });
+  const bridgeNonce = randomBytes(16).toString("hex");
+  const framePrefix = `/dev/frame/${bridgeNonce}`;
+  let restartTimer: ReturnType<typeof setTimeout> | undefined;
+  let vitePromise: Promise<ViteDevServer> | undefined;
   // Read on every pick, so switching the shell's picker control changes what the next pick returns.
   const artifacts = createDevArtifactBroker({ files: source.files, choosePick: () => state.pickFile });
   let reloadCount = 0;
@@ -404,9 +463,30 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   // Node's types instead of a fact about this code.
   const clients = new Set<ServerResponse>();
 
-  const server: Server = createServer((request, response) => {
+  const getVite = async (): Promise<ViteDevServer> => {
+    if (vite !== undefined) return vite;
+    vitePromise ??= createDevModuleServer(true, server, port, {
+      isolatedCache: true,
+      // This middleware-only catalog server has no HTML entry to scan. Discovering dependencies from the whole
+      // workspace source graph stalls cold-start optimization, so prebundle only React's runtime entry points.
+      optimizeDeps: { noDiscovery: true, include: ["react", "react-dom/client"] },
+    }).then(
+      (created) => {
+        vite = created;
+        return created;
+      },
+      (error: unknown) => {
+        vitePromise = undefined;
+        throw error;
+      },
+    );
+    return vitePromise;
+  };
+
+  const server: Server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
     const path = url.pathname;
+    const framePath = path.startsWith(`${framePrefix}/`) ? path.slice(framePrefix.length) : undefined;
 
     if (path === "/dev/events") {
       response.writeHead(200, {
@@ -428,7 +508,10 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
           viewportWidths: { "narrow-320": 320, conversation: 480, compact: 720, expanded: 1024 },
           // A package's frame speaks the bridge and is handed its fixture's props; a catalog frame is drawn directly.
           bridge: root !== undefined,
+          bridgeNonce,
           props: source.fixtureProps[state.fixture] ?? {},
+          serviceBindings: source.serviceBindings,
+          actionAvailability: actionAvailability({ bindings: source.serviceBindings, readiness: state.serviceReadiness, offline: state.offline }),
         }),
       );
       return;
@@ -479,7 +562,15 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       request.on("end", () => {
         try {
           const action = JSON.parse(body) as DevShellAction;
-          state = applyShellAction(state, action, { fixtures, capabilities, files });
+          state = applyShellAction(state, action, { fixtures, capabilities, serviceCapabilities: source.serviceCapabilities, files });
+          if (action.kind === "service-restart") {
+            if (restartTimer !== undefined) clearTimeout(restartTimer);
+            restartTimer = setTimeout(() => {
+              state = { ...state, serviceReadiness: Object.fromEntries(source.serviceCapabilities.map((ref) => [ref, readinessForStatus("ready")])) };
+              restartTimer = undefined;
+              for (const client of clients) client.write("event: reload\ndata: {}\n\n");
+            }, 2_000);
+          }
         } catch {
           // A malformed action leaves the state alone and is reported, rather than resetting the shell.
           response.writeHead(400, { "content-type": "application/json" });
@@ -488,6 +579,39 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
         }
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(state));
+      });
+      return;
+    }
+
+    if (path === "/dev/api/service-action" && request.method === "POST") {
+      let body = "";
+      request.on("data", (chunk: unknown) => {
+        body += String(chunk);
+        if (body.length > 8_192) request.destroy();
+      });
+      request.on("end", () => {
+        let raw: unknown;
+        try { raw = JSON.parse(body); }
+        catch {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "action must be JSON" }));
+          return;
+        }
+        const parsed = widgetToHostSchema.safeParse(raw);
+        const action = parsed.success && parsed.data.kind === "action.invoke" ? parsed.data : undefined;
+        if (action === undefined || action.nonce !== bridgeNonce) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "action must be a valid action.invoke message" }));
+          return;
+        }
+        const binding = source.serviceBindings.find((candidate) => candidate.actionBindingId === action.actionBindingId);
+        const readiness = binding === undefined ? undefined : state.serviceReadiness[binding.capabilityRef];
+        const outcome = binding === undefined || readiness === undefined || serviceStatus(readiness) !== "ready" || state.offline
+          ? { status: "refused", message: state.offline ? "the node is offline" : readiness?.blockedReason ?? "service is unavailable" }
+          : binding.outcome;
+        const answer = actionResult({ nonce: action.nonce, actionBindingId: action.actionBindingId, invocationId: action.invocationId, outcome });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(answer));
       });
       return;
     }
@@ -522,6 +646,20 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     if (path === "/dev/detached.js") {
       response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
       response.end(DETACHED_SCRIPT);
+      return;
+    }
+
+    if (framePath === "/widget-runtime.js") {
+      if (isPackageFrameRequest(request, framePrefix)) {
+        response.setHeader("access-control-allow-origin", "null");
+        response.setHeader("vary", "Origin");
+      }
+      const moduleServer = await getVite();
+      request.url = "/src/dev-frame-runtime.ts";
+      moduleServer.middlewares(request, response, () => {
+        response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        response.end("widget runtime module not found\n");
+      });
       return;
     }
 
@@ -583,7 +721,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       response.end(
         renderDetachedShell({
           definitionId: source.definitionId,
-          entryUrl: source.entryUrl,
+          entryUrl: root === undefined ? source.entryUrl : `${framePrefix}${source.entryUrl}`,
           definition: source.definition,
         }),
       );
@@ -609,7 +747,8 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
             definitionId: source.definitionId,
             fixtures,
             requestedCapabilities: capabilities,
-            entryUrl: source.entryUrl,
+            serviceCapabilities: source.serviceCapabilities,
+            entryUrl: root === undefined ? source.entryUrl : `${framePrefix}${source.entryUrl}`,
             definition: source.definition,
             ...(root === undefined ? {} : { files }),
           },
@@ -625,16 +764,23 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
        * workspace's sources the way the app's own build does. Handing the request over rather than answering it is
        * what keeps the preview the production renderer instead of a second implementation of it.
        */
-      if (vite === undefined) {
-        // Unreachable, since Vite is created exactly when there is no package root. Answered rather than left
-        // hanging, because a request that never gets a response is the failure this branch exists to avoid.
-        response.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
-        response.end("the catalog runtime is not running\n");
-        return;
-      }
-      vite.middlewares(request, response, () => {
+      const moduleServer = await getVite();
+      moduleServer.middlewares(request, response, () => {
         response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         response.end("not found\n");
+      });
+      return;
+    }
+
+    if (path.startsWith("/@fs/") || path.startsWith("/@id/") || path.startsWith("/node_modules/.vite/")) {
+      if (isPackageFrameRequest(request, framePrefix)) {
+        response.setHeader("access-control-allow-origin", "null");
+        response.setHeader("vary", "Origin");
+      }
+      const moduleServer = await getVite();
+      moduleServer.middlewares(request, response, () => {
+        response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        response.end("module not found\n");
       });
       return;
     }
@@ -644,7 +790,13 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
      * resolves to hands out the author's home directory, and it is the ordinary way a local tool becomes a way to
      * read files.
      */
-    const candidate = resolve(join(root, normalize(path)));
+    const packagePath = framePath;
+    if (packagePath === undefined) {
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("not found\n");
+      return;
+    }
+    const candidate = resolve(join(root, normalize(packagePath)));
     const inside = candidate === root || candidate.startsWith(root + sep);
     if (!inside) {
       response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
@@ -653,8 +805,27 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     }
     try {
       if (!statSync(candidate).isFile()) throw new Error("not a file");
+      // Sandboxed package frames have an opaque (`null`) origin and module scripts use CORS fetches. Permit that
+      // exact origin for files already confined under this package root; never reflect a website's arbitrary origin.
+      if (isPackageFrameRequest(request, framePrefix)) {
+        response.setHeader("access-control-allow-origin", "null");
+        response.setHeader("vary", "Origin");
+      }
       response.writeHead(200, { "content-type": contentType(candidate) });
-      response.end(readFileSync(candidate));
+      const contents = readFileSync(candidate);
+      if (candidate === resolve(root, source.entryUrl.slice(1)) && extname(candidate) === ".html") {
+        const html = contents.toString("utf8");
+        const entryDirectory = `${framePrefix}${dirname(source.entryUrl)}/`;
+        const base = `<base href="${entryDirectory}">`;
+        const runtime = `<script type="module" src="${framePrefix}/widget-runtime.js"></script>`;
+        const injection = `${base}\n  ${runtime}`;
+        const prepared = /<head\b[^>]*>/i.test(html)
+          ? html.replace(/<head\b[^>]*>/i, (head) => `${head}\n  ${injection}`)
+          : `${injection}\n${html}`;
+        response.end(prepared);
+      } else {
+        response.end(contents);
+      }
     } catch {
       response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
       response.end("not found\n");
@@ -687,21 +858,20 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     port,
     state: () => state,
     apply: (action) => {
-      state = applyShellAction(state, action, { fixtures, capabilities, files });
+      state = applyShellAction(state, action, { fixtures, capabilities, serviceCapabilities: source.serviceCapabilities, files });
       return state;
     },
     reloads: () => reloadCount,
     artifactEvents: () => artifacts.events(),
-    close: () =>
-      new Promise<void>((done) => {
-        watcher?.close();
-        for (const client of clients) client.end();
-        clients.clear();
-        void vite?.close();
-        lease.close();
-        server.close(() => {
-          done();
-        });
-      }),
+    close: async () => {
+      watcher?.close();
+      if (restartTimer !== undefined) clearTimeout(restartTimer);
+      for (const client of clients) client.end();
+      clients.clear();
+      lease.close();
+      const activeVite = await vitePromise?.catch(() => undefined);
+      await closeDevModuleServer(activeVite);
+      await new Promise<void>((done) => server.close(() => done()));
+    },
   };
 }

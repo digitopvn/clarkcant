@@ -1621,6 +1621,24 @@ it is. The simulation holds everything in memory and forgets it when the dev hos
 and it writes nothing to disk. An export or an attach is only recorded in the shell's log, so a real host's Save As
 and composer are still what a release is tested against.
 
+For each `tools` capability, the shell can set service readiness to `loading`, `ready`, `blocked` or `unhealthy`, with
+a reason for blocked and unhealthy states. Offline takes precedence over readiness; a ready capability remains usable
+when a different one is unhealthy, and the shell labels that mixed state degraded. **Simulate service restart** shows
+loading, then returns the declared capabilities to ready. These controls send the bridge's `actions` availability and
+`action-result` messages to the frame. They never start the service facet or contact a provider.
+
+Optional data-only fixture `fixtures/dev-host-services.json` maps each `actionBindingId` to a capability `ref` from a
+declared tools facet and a bounded bridge outcome, for example:
+
+    { "bindings": [{ "actionBindingId": "notes.list", "capabilityRef": "com.example.notes.list@1",
+      "outcome": { "status": "accepted", "message": "Loaded", "output": "One sample note" } }] }
+
+The file is limited to 32 KiB and 64 bindings. Unknown capability refs and duplicate binding IDs are refused. The host
+validates every outcome against the widget bridge schema; malformed outcomes become a valid refusal. This fixture tests
+widget rendering and bridge handling only. It does not prove the service implementation works. The package frame gets
+the same widget SDK runtime used by the bridge, stays in an opaque-origin sandbox, and can load package modules only
+through the dev host.
+
 ### test
 
 Runs the conformance suite.
@@ -1687,6 +1705,8 @@ A widget is not publish-ready if any of the following tests are missing:
 - error;
 - cached;
 - read-only;
+- blocked service;
+- offline;
 - reduced motion;
 - text fallback.
 

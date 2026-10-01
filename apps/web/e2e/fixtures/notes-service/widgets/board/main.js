@@ -10,6 +10,7 @@
 const root = document.getElementById("root");
 const ADD = "binding_notes_add";
 const LIST = "binding_notes_list";
+const MALFORMED = "binding_notes_malformed";
 
 function draw() {
   const runtime = window.clarkcantWidget;
@@ -44,6 +45,11 @@ function draw() {
   list.textContent = "Tải danh sách";
   list.setAttribute("data-notes-list", "true");
 
+  const malformed = document.createElement("button");
+  malformed.type = "button";
+  malformed.textContent = "Test malformed fixture";
+  malformed.setAttribute("data-notes-malformed", "true");
+
   const unavailable = document.createElement("p");
   unavailable.setAttribute("data-notes-unavailable", "true");
   unavailable.setAttribute("role", "status");
@@ -69,6 +75,7 @@ function draw() {
 
   add.addEventListener("click", () => run(ADD, { text: field.value }));
   list.addEventListener("click", () => run(LIST, {}));
+  malformed.addEventListener("click", () => run(MALFORMED, {}));
 
   /*
    * What the host last said about the service-backed bindings. A binding it cannot run is disabled, and its reason is
@@ -97,7 +104,7 @@ function draw() {
   announce(api.actions.availability());
   api.actions.subscribe(announce);
 
-  root.append(title, label, add, list, unavailable, output);
+  root.append(title, label, add, list, malformed, unavailable, output);
   root.setAttribute("data-widget-ready", "true");
 
   // The host sizes the frame; the widget says how tall its content is, again whenever that changes.

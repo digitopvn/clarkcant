@@ -528,14 +528,19 @@ export function runConformance(root: string, options: { frames?: FrameFacts } = 
   for (const [id, name, state] of [
     ["rendering.loading", "the loading state", "loading"],
     ["rendering.readOnly", "the read-only state", "readOnly"],
+    ["rendering.serviceBlocked", "a blocked service state", "serviceBlocked"],
+    ["rendering.offline", "the offline state", "offline"],
   ] as const) {
     const fact = frames?.states?.find((entry) => entry.name === state);
+    const mustReportState = state === "serviceBlocked" || state === "offline";
     add(
       id,
       "rendering",
       name,
-      fact === undefined ? "requires-dev-host" : fact.rendered ? "pass" : "fail",
-      fact === undefined ? "needs a rendered frame at a known viewport" : `rendered=${String(fact.rendered)}`,
+      fact === undefined ? (frames === undefined || !mustReportState ? "requires-dev-host" : "fail") : fact.rendered ? "pass" : "fail",
+      fact === undefined
+        ? frames === undefined || !mustReportState ? "needs a rendered frame at a known viewport" : "the rendered frame did not report this state"
+        : `rendered=${String(fact.rendered)}`,
     );
   }
 
