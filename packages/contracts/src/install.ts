@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { effectCategorySchema, instantSchema, platformSchema, principalIdSchema, semverSchema } from "./primitives.ts";
 import { capabilityRefSchema } from "./grants.ts";
+import { resourceRequestSchema } from "./resource-profiles.ts";
 
 /**
  * Capability packages and their install lifecycle.
@@ -236,6 +237,11 @@ export const packageManifestSchema = z.strictObject({
     lifecycleScripts: z.array(z.string().min(1).max(300)).max(32),
   }),
   platforms: z.array(platformSchema).min(1),
+  /**
+   * The resource profile the package asks for, by name (`resource-profiles.ts`). A request: the host decides what it
+   * grants, and a package that asks for nothing runs as `interactive-light`.
+   */
+  resources: resourceRequestSchema.optional(),
   /** Declared by the publisher; verified against the actual artifact, never trusted alone. */
   publisher: z
     .strictObject({
