@@ -67,7 +67,7 @@ describe("package job result artifacts", () => {
     expect(current?.resultRefs).toHaveLength(1);
     expect(storedBytesForInstance(db, owner.instanceId)).toBe(bytes.byteLength);
     expect(notices).toHaveLength(1);
-    expect(notices[0]).toContain("produced 1 file artifact");
+    expect(notices[0]).toContain("completed and produced “untitled.txt”. Open its widget to use it.");
     expect(host.get(job.jobId, { ...owner, actionBindingId: "binding_other" })).toBeUndefined();
     unsubscribe();
   });
