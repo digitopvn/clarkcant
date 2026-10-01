@@ -652,6 +652,10 @@ Host bảo đảm:
 - Biểu đồ nhận chuỗi từ một lựa chọn sẽ nói nó đang hiển thị chuỗi nào, gọi bằng tên lựa chọn mà người dùng đã chọn.
   Chuỗi mà dữ liệu không có cũng được nêu tên, và biểu đồ giữ chuỗi của chính nó.
 
+Khi phát triển tại máy, `clark widget dev` liệt kê input và event graph đã khai báo của từng definition. Event
+simulator kiểm tra rồi áp dụng một mẫu vào graph state tạm bằng chính composition contract dùng chung, sau đó hiển thị
+các giá trị đầu ra. Nó kiểm tra từng event đã khai báo riêng lẻ; không dựng cả composition và không gọi capability.
+
 Kiểm thử: [composition-graph.spec.ts](../packages/contracts/test/composition-graph.spec.ts) cho các quy tắc,
 [composition-graph.spec.ts](../apps/runtime/test/composition-graph.spec.ts) cho trình biên dịch và node,
 [surface-graph.spec.ts](../packages/conversation-client/test/surface-graph.spec.ts) cho trang, và journey trình duyệt
@@ -1218,6 +1222,10 @@ Ai viết tài liệu:
   được nêu action: action luôn lấy từ binding của instance, nên frame không thể quảng cáo một action mà nó không được
   bind.
 
+Khi phát triển package, semantic inspector hiển thị tài liệu sau cùng bước chuẩn hoá, delta, ghi chú ngữ cảnh cho lượt
+kế tiếp và `inspect_ui`. Nó đánh dấu các trường mà normalizer đã cắt hoặc loại bỏ, đồng thời cảnh báo khi publish quá
+bốn lần mỗi giây. Các chẩn đoán này không chạy model turn và không đổi giới hạn của runtime.
+
 Voice và click phải gọi cùng action binding/state path.
 
 Không publish raw DOM, hidden text, full dataset hoặc secret chỉ để voice “hiểu màn hình”.
@@ -1641,6 +1649,15 @@ kết quả theo schema bridge của widget; kết quả sai schema trở thành
 cách widget vẽ trạng thái và xử lý bridge, không chứng minh service hoạt động đúng. Package frame nhận cùng widget SDK
 runtime dùng cho bridge, vẫn nằm trong opaque-origin sandbox, và chỉ tải module package qua dev host.
 
+Semantic inspector nhận đề xuất `semantic.publish` từ frame qua normalizer dùng chung với runtime. Nó hiển thị tài
+liệu đã chuẩn hoá, các trường bị cắt hoặc loại bỏ, delta so với lần publish trước, ghi chú ngữ cảnh cho lượt kế tiếp
+và nội dung `inspect_ui`. Nội dung do frame đề xuất luôn được xem là dữ liệu không đáng tin; publish hơn bốn lần
+trong một giây sẽ hiện cảnh báo churn. Composition simulator liệt kê graph event đã khai báo cùng `eventSchemas` của
+package; nó kiểm payload bằng contract graph dùng chung hoặc schema package tương ứng, rồi hiển thị giá trị graph mô
+phỏng hoặc payload đã kiểm tra và ghi vào action log. Event sai định dạng hoặc chưa khai báo sẽ bị từ chối. Bản mô
+phỏng không gọi capability thật và không cấp quyền. Bằng chứng chạy browser thật nằm tại
+[`semantic-composition-real-browser.e2e.spec.ts`](../packages/widget-cli/test/semantic-composition-real-browser.e2e.spec.ts).
+
 ### test
 
 Chạy conformance suite.
@@ -1667,6 +1684,8 @@ Widget không publish-ready nếu thiếu các test sau:
 
 - malformed props reject;
 - additional props reject khi schema cấm;
+- tài liệu semantic dựng từ fixture nằm trong `SEMANTIC_LIMITS`, và schema event đã khai báo có thể được đọc và kiểm
+  tra;
 - state version valid;
 - unknown event/action reject.
 

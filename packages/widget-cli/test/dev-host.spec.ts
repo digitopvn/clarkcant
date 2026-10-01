@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -303,6 +303,105 @@ describe("the dev host server", () => {
       expect(host.state().viewport).toBe("compact");
     } finally {
       await stop();
+    }
+  });
+
+  it("inspects bounded semantic proposals and refuses a forged frame nonce", async () => {
+    const { url, stop } = await started();
+    try {
+      const state = (await (await fetch(`${url}dev/api/state`)).json()) as { bridgeNonce: string };
+      const proposal = {
+        summary: "quarterly widget summary ".repeat(16),
+        selectedIds: ["row-1"],
+        values: { query: "north region ".repeat(18) },
+      };
+      const accepted = await fetch(`${url}dev/api/semantic`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: state.bridgeNonce, proposal }),
+      });
+      const inspection = (await accepted.json()) as {
+        doc: { summary: string; values: Record<string, unknown>; source: string };
+        clippedOrDropped: string[];
+        delta: string[];
+        contextNote: string;
+        inspectUi: string;
+      };
+
+      expect(accepted.status).toBe(200);
+      expect(inspection.doc.summary).toHaveLength(300);
+      expect(inspection.doc.values.query).toHaveLength(200);
+      expect(inspection.doc.source).toBe("frame");
+      expect(inspection.clippedOrDropped).toEqual(["summary", "values.query (cleaned or clipped)"]);
+      expect(inspection.contextNote).toContain(inspection.doc.summary.slice(0, 30));
+      expect(inspection.inspectUi).toContain(inspection.doc.summary.slice(0, 30));
+
+      const changed = await fetch(`${url}dev/api/semantic`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: state.bridgeNonce, proposal: { summary: "updated", selectedIds: ["row-2"] } }),
+      });
+      expect(((await changed.json()) as { delta: string[] }).delta).toContain('summary: "updated"');
+
+      const forged = await fetch(`${url}dev/api/semantic`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: "not-the-frame-nonce", proposal: { summary: "forged" } }),
+      });
+      expect(forged.status).toBe(403);
+    } finally {
+      await stop();
+    }
+  });
+
+  it("simulates only declared composition events with a valid frame nonce", async () => {
+    const root = await tempPackage();
+    const definitionPath = join(root, "widgets", "main", "widget.json");
+    const definition = JSON.parse(readFileSync(definitionPath, "utf8")) as Record<string, unknown>;
+    definition.eventSchemas = {
+      "demo.changed": {
+        type: "object",
+        properties: { count: { type: "integer", minimum: 0 } },
+        required: ["count"],
+        additionalProperties: false,
+      },
+    };
+    writeFileSync(definitionPath, JSON.stringify(definition, null, 2) + "\n");
+    const host = await startDevHost({ root, port: 0, watchFiles: false });
+    const { url } = host;
+    try {
+      const state = (await (await fetch(`${url}dev/api/state`)).json()) as { bridgeNonce: string };
+      const accepted = await fetch(`${url}dev/api/composition-event`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: state.bridgeNonce, name: "demo.changed", payload: { count: 2 } }),
+      });
+      expect(accepted.status).toBe(200);
+      expect(await accepted.json()).toMatchObject({ ok: true, event: { name: "demo.changed", payload: { count: 2 } } });
+
+      const undeclared = await fetch(`${url}dev/api/composition-event`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: state.bridgeNonce, name: "not.declared", payload: {} }),
+      });
+      expect(undeclared.status).toBe(400);
+      expect((await undeclared.json() as { problem: string }).problem).toContain("does not declare event");
+
+      const malformed = await fetch(`${url}dev/api/composition-event`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: state.bridgeNonce, name: "demo.changed", payload: { count: "invalid" } }),
+      });
+      expect(malformed.status).toBe(400);
+
+      const forged = await fetch(`${url}dev/api/composition-event`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: "not-the-frame-nonce", name: "query.change", payload: { query: "x" } }),
+      });
+      expect(forged.status).toBe(403);
+    } finally {
+      await host.close();
     }
   });
 

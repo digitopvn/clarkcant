@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   applyStateMigrationOps,
   isHostOwnedBlock,
+  normalizeSemanticDoc,
   stateMigrationGaps,
   validateStateAgainstSchema,
   type MessageBlock,
@@ -15,6 +16,8 @@ import { createFrameSession } from "@clarkcant/widget-host";
 import { auditFrame, evaluateDetach, type FrameFacts } from "./dev-shell.ts";
 
 import { REQUIRED_FIXTURES, readPackage, type WidgetPackage } from "@clarkcant/core";
+import { semanticDocWithinLimits } from "./dev-semantic.ts";
+import { validateDeclaredWidgetEventSchema } from "./dev-composition.ts";
 
 /**
  * The conformance suite a widget has to pass before it is publish-ready.
@@ -165,6 +168,48 @@ export function runConformance(root: string, options: { frames?: FrameFacts } = 
         ? "an undeclared property was accepted"
         : extra.problems.join("; ")
       : "the schema allows additional properties, so there is nothing to reject",
+  );
+
+  const semanticFixtures = Object.entries(pkg.fixtures).map(([fixtureId, fixtureProps]) => {
+    const values =
+      typeof fixtureProps === "object" && fixtureProps !== null && !Array.isArray(fixtureProps)
+        ? (fixtureProps as Record<string, unknown>)
+        : {};
+    const doc = normalizeSemanticDoc({
+      instanceId: "conformance-" + fixtureId,
+      definitionId: definition.id,
+      summary: definition.semanticDescription,
+      values,
+      source: "frame",
+      freshness: "sample",
+    });
+    return { fixtureId, withinLimits: semanticDocWithinLimits(doc) };
+  });
+  const semanticFixturesWithinLimits = semanticFixtures.every((fixture) => fixture.withinLimits);
+  add(
+    "schema.semanticLimits",
+    "schema",
+    "the normalized semantic document stays within limits for every fixture",
+    semanticFixturesWithinLimits ? "pass" : "fail",
+    semanticFixturesWithinLimits
+      ? semanticFixtures.map((fixture) => fixture.fixtureId).join(", ") + " produce bounded documents"
+      : semanticFixtures.filter((fixture) => !fixture.withinLimits).map((fixture) => fixture.fixtureId).join(", ") + " exceeded semantic limits",
+  );
+
+  const invalidEventSchemas = Object.entries(definition.eventSchemas).flatMap(([name, schema]) => {
+    const checked = validateDeclaredWidgetEventSchema(schema);
+    return checked.ok ? [] : [name + ": " + checked.problem];
+  });
+  add(
+    "schema.events.valid",
+    "schema",
+    "declared event schemas can be read and validate payloads",
+    invalidEventSchemas.length === 0 ? "pass" : "fail",
+    invalidEventSchemas.length === 0
+      ? Object.keys(definition.eventSchemas).length === 0
+        ? "no event schemas are declared"
+        : "readable schemas: " + Object.keys(definition.eventSchemas).join(", ")
+      : invalidEventSchemas.join("; "),
   );
 
   add(

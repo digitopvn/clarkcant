@@ -83,6 +83,21 @@ describe("clark widget init", () => {
 });
 
 describe("the conformance status split", () => {
+  it("checks semantic limits for every fixture and refuses an unreadable declared event schema", async () => {
+    const root = await tempPackage("form");
+    const definitionPath = join(root, "widgets/main/widget.json");
+    const definition = JSON.parse(readFileSync(definitionPath, "utf8")) as Record<string, unknown>;
+    const valid = runConformance(root);
+    expect(valid.checks.find((check) => check.id === "schema.semanticLimits")).toMatchObject({ status: "pass" });
+    expect(valid.checks.find((check) => check.id === "schema.events.valid")).toMatchObject({ status: "pass" });
+
+    definition.eventSchemas = { "selection.change": { type: "unsupported-schema-type" } };
+    writeFileSync(definitionPath, JSON.stringify(definition, null, 2) + "\n");
+    const invalid = runConformance(root);
+    expect(invalid.checks.find((check) => check.id === "schema.events.valid")).toMatchObject({ status: "fail" });
+    expect(invalid.ok).toBe(false);
+  });
+
   it("reports the browser checks as unverified rather than as passing", async () => {
     const result = runConformance(await tempPackage());
     const unverified = result.checks.filter((check) => check.status === "requires-dev-host").map((check) => check.id);

@@ -651,6 +651,10 @@ What the host guarantees:
 - A chart fed by a choice says which series it shows, named by the option the person picked. A series the data does
   not have is named too, and the chart keeps its own.
 
+For local authoring, `clark widget dev` lists each definition's declared graph inputs and events. Its event simulator
+validates and applies a sample to scratch graph state using the same composition contracts, then shows the resulting
+values. This checks one declared event at a time; it does not build a composition or invoke a capability.
+
 Tests: [composition-graph.spec.ts](../packages/contracts/test/composition-graph.spec.ts) for the rules,
 [composition-graph.spec.ts](../apps/runtime/test/composition-graph.spec.ts) for the compiler and the node,
 [surface-graph.spec.ts](../packages/conversation-client/test/surface-graph.spec.ts) for the page, and the browser
@@ -1218,6 +1222,10 @@ Who writes the document:
   frame cannot name actions: the actions always come from the instance's bindings, so a frame cannot advertise an
   action it was not bound to.
 
+While developing a package, the semantic inspector shows the document after the same normalization, its delta, the
+next-turn context note and `inspect_ui`. It marks proposed fields the normalizer clipped or dropped and warns above
+four publishes per second. These diagnostics do not run a model turn or change the runtime's limits.
+
 Voice and click must call the same action binding/state path.
 
 Do not publish raw DOM, hidden text, the full dataset or secrets just so voice can “understand the screen”.
@@ -1639,6 +1647,15 @@ widget rendering and bridge handling only. It does not prove the service impleme
 the same widget SDK runtime used by the bridge, stays in an opaque-origin sandbox, and can load package modules only
 through the dev host.
 
+The semantic inspector accepts the frame's `semantic.publish` proposal through the shared runtime normalizer. It
+shows the normalized document, fields clipped or dropped, the delta from the previous publish, the next-turn context
+note and `inspect_ui` text. Frame-proposed text is untrusted, and more than four publishes in one second raises a churn
+warning. The composition simulator lists declared graph events and package `eventSchemas`; it validates a payload
+against the corresponding shared graph contract or package schema, then shows the simulated graph values or validated
+payload and records it in the action log. Malformed and undeclared events are refused. Simulation never invokes a real
+capability or grants authority. The real-browser proof is
+[`semantic-composition-real-browser.e2e.spec.ts`](../packages/widget-cli/test/semantic-composition-real-browser.e2e.spec.ts).
+
 ### test
 
 Runs the conformance suite.
@@ -1665,6 +1682,8 @@ A widget is not publish-ready if any of the following tests are missing:
 
 - malformed props reject;
 - additional props reject when the schema forbids them;
+- fixture-derived semantic documents stay within `SEMANTIC_LIMITS`, and declared event schemas can be parsed and
+  validated;
 - state version valid;
 - unknown event/action reject.
 
