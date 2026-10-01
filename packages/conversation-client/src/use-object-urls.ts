@@ -11,20 +11,77 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *   own blob URL, and a component that revokes "its" URL on cleanup can revoke the one another component is
  *   still displaying. That is exactly what happened when the transcript and the pinned view each managed
  *   this themselves: the picture rendered as a figure with a revoked `src`.
- * - **A URL is released only when its owner goes away.** Revoking on every dependency change releases URLs
- *   that are still on screen, which is indistinguishable from a corrupt image.
- * - **A late arrival is released, never stored.** A fetch that finishes after its caller stopped caring must
- *   not put a URL into the map, or nothing would ever revoke it.
+ * - **A URL is released only when it is no longer wanted.** When the set changes, the references still in it
+ *   keep their URL and their request in flight; only a reference that left the set is released, and only a
+ *   new one is fetched. Revoking everything on each change released URLs still on screen, and cancelling
+ *   every request in flight fetched the same bytes again for each change - up to a whole gallery's worth
+ *   each time a composed surface arrived. Everything left is released when the owner goes away.
+ * - **A late arrival is released, never stored.** A fetch that finishes after its reference stopped being
+ *   wanted must not put a URL into the map, or nothing would ever revoke it.
  *
  * Written once for two callers rather than twice: images and attachments differ only in which route the
  * bytes come from, and the three rules above are the part that must not be got wrong differently in two
  * places.
  */
+export interface ObjectUrlSet {
+  /** The references wanted now: those that left are released, new ones fetched, the rest kept as they are. */
+  want: (references: readonly string[]) => void;
+  get: (reference: string) => string | undefined;
+  /** Releases every URL; a request still in flight is released when it arrives. */
+  release: () => void;
+}
+
+/** The bookkeeping behind `useObjectUrls`, without React, so what it fetches and releases can be counted. */
+export function createObjectUrlSet(input: {
+  fetchUrl: (reference: string) => Promise<string>;
+  revoke: (url: string) => void;
+  onChange: () => void;
+}): ObjectUrlSet {
+  const urls = new Map<string, string>();
+  const inFlight = new Set<string>();
+  let wanted = new Set<string>();
+  return {
+    want: (references) => {
+      wanted = new Set(references.filter((reference) => reference !== ""));
+      for (const [reference, url] of urls) {
+        if (wanted.has(reference)) continue;
+        input.revoke(url);
+        urls.delete(reference);
+      }
+      for (const reference of wanted) {
+        if (urls.has(reference) || inFlight.has(reference)) continue;
+        inFlight.add(reference);
+        void input
+          .fetchUrl(reference)
+          .then((url) => {
+            inFlight.delete(reference);
+            if (!wanted.has(reference)) {
+              input.revoke(url);
+              return;
+            }
+            urls.set(reference, url);
+            input.onChange();
+          })
+          .catch(() => {
+            // The renderer shows its own message with the name it has, which is what a reader gets either way
+            // - bytes that cannot be fetched are a description, not a blank.
+            inFlight.delete(reference);
+          });
+      }
+    },
+    get: (reference) => urls.get(reference),
+    release: () => {
+      wanted = new Set();
+      for (const url of urls.values()) input.revoke(url);
+      urls.clear();
+    },
+  };
+}
+
 export function useObjectUrls(
   fetchUrl: (reference: string) => Promise<string>,
   references: readonly string[],
 ): (reference: string) => string | undefined {
-  const urls = useRef(new Map<string, string>());
   // Bumped when a URL lands, purely to re-render the surfaces that ask for one.
   const [version, setVersion] = useState(0);
   const key = references.filter((reference) => reference !== "").join(",");
@@ -37,42 +94,20 @@ export function useObjectUrls(
    */
   const fetchRef = useRef(fetchUrl);
   fetchRef.current = fetchUrl;
+  const [set] = useState(() =>
+    createObjectUrlSet({
+      fetchUrl: (reference) => fetchRef.current(reference),
+      revoke: (url) => URL.revokeObjectURL(url),
+      onChange: () => setVersion((current) => current + 1),
+    }),
+  );
 
-  useEffect(() => {
-    if (key === "") return;
-    let cancelled = false;
-    for (const reference of key.split(",")) {
-      if (urls.current.has(reference)) continue;
-      void fetchRef
-        .current(reference)
-        .then((url) => {
-          if (cancelled) {
-            URL.revokeObjectURL(url);
-            return;
-          }
-          urls.current.set(reference, url);
-          setVersion((current) => current + 1);
-        })
-        .catch(() => {
-          // The renderer shows its own message with the name it has, which is what a reader gets either way
-          // — bytes that cannot be fetched are a description, not a blank.
-        });
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [key]);
+  useEffect(() => set.want(key === "" ? [] : key.split(",")), [key, set]);
 
   /* Released once, when the component that needed them is gone. */
-  useEffect(() => {
-    const map = urls.current;
-    return () => {
-      for (const url of map.values()) URL.revokeObjectURL(url);
-      map.clear();
-    };
-  }, []);
+  useEffect(() => () => set.release(), [set]);
 
   // The identity changes when a URL arrives, so a memoised renderer that reads through this closure is
-  // rebuilt — the same reason `datasets` is a dependency where a table is rendered.
-  return useCallback((reference: string) => urls.current.get(reference), [version]);
+  // rebuilt - the same reason `datasets` is a dependency where a table is rendered.
+  return useCallback((reference: string) => set.get(reference), [set, version]);
 }

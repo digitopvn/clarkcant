@@ -34,12 +34,16 @@ import {
   readBoard,
   readBoardState,
   boardSemantic,
+  playingIsFresh,
+  readMediaPlayback,
+  readMediaSelection,
 } from "@clarkcant/contracts";
-import { ARTIFACT_VIEWER_KIND, CALENDAR, STATUS_CARD_KIND, TIMELINE, TREE } from "@clarkcant/data-canvas";
+import { ARTIFACT_VIEWER_KIND, CALENDAR, CAROUSEL, GALLERY, IMAGE, STATUS_CARD_KIND, TIMELINE, TREE, VIDEO, YOUTUBE } from "@clarkcant/data-canvas";
 import { type WidgetDeps, getActionBinding, getInstance, liveStateOf, semanticViewOf } from "@clarkcant/core";
 import {
   findCompositionByInstance,
   getDatasetForPrincipal,
+  getLocalImage,
   getWidgetSemantic,
   listTouchedWidgets,
   recordWidgetSemantic,
@@ -199,6 +203,83 @@ export function buildWidgetSemantic(
   if (board !== undefined) {
     const state = readBoardState(liveStateOf(deps, instanceId)?.body, board);
     return normalizeSemanticDoc({ instanceId, definitionId, ...boardSemantic(board, state), availableActions, freshness: "unknown" });
+  }
+
+  if (definitionId === IMAGE.id && typeof instance.props.imageRef === "string" && typeof instance.props.alt === "string") {
+    const image = getLocalImage(deps.db, instance.props.imageRef, instance.ownerPrincipalId);
+    return normalizeSemanticDoc({
+      instanceId,
+      definitionId,
+      summary: `Image: ${instance.props.alt}`,
+      values: {
+        alt: instance.props.alt,
+        ...(image?.width === undefined ? {} : { width: image.width }),
+        ...(image?.height === undefined ? {} : { height: image.height }),
+      },
+      availableActions,
+      freshness: "unknown",
+    });
+  }
+
+  if ((definitionId === CAROUSEL.id || definitionId === GALLERY.id) && Array.isArray(instance.props.imageRefs)) {
+    const refs = instance.props.imageRefs.filter((ref): ref is string => typeof ref === "string");
+    const alts = Array.isArray(instance.props.alts) ? instance.props.alts : [];
+    const state = readMediaSelection(liveStateOf(deps, instanceId, definitionId === CAROUSEL.id ? CAROUSEL : GALLERY)?.body, refs.length);
+    const alt = typeof alts[state.selectedIndex] === "string" ? alts[state.selectedIndex] as string : "";
+    return normalizeSemanticDoc({
+      instanceId,
+      definitionId,
+      ...(typeof instance.props.title === "string" ? { title: instance.props.title } : {}),
+      // Counted from 1, as a person says it ("picture 2 of 3"), and named so: the stored `selectedIndex` counts from 0.
+      summary: `${definitionId === CAROUSEL.id ? "Carousel" : "Gallery"}: showing picture ${String(state.selectedIndex + 1)} of ${String(refs.length)}${alt === "" ? "" : ` — ${alt}`}`,
+      values: { selectedNumber: state.selectedIndex + 1, itemCount: refs.length, alt },
+      availableActions,
+      freshness: "unknown",
+    });
+  }
+
+  if (definitionId === VIDEO.id) {
+    const live = liveStateOf(deps, instanceId, VIDEO);
+    const body = live?.body;
+    // The bounded position and duration come from the shared reader. "ended" is reported as written. "playing" is
+    // believed only while the player keeps writing it: a playing player writes at least every interval, so an older
+    // "playing" was left by a player that is gone and is read as paused where it was last seen.
+    const playback = readMediaPlayback(body);
+    const status =
+      body?.status === "ended"
+        ? "ended"
+        : body?.status === "playing" && playingIsFresh(live?.updatedAt, deps.now())
+          ? "playing"
+          : "paused";
+    const alt = typeof instance.props.alt === "string" ? instance.props.alt : "";
+    // Tenths of a second: enough to say where a video stopped, without a float's noise in every sentence.
+    const seconds = (value: number): number => Math.round(value * 10) / 10;
+    return normalizeSemanticDoc({
+      instanceId,
+      definitionId,
+      ...(typeof instance.props.title === "string" ? { title: instance.props.title } : {}),
+      summary: `Video ${status}: ${alt}`,
+      values: {
+        status,
+        position: seconds(playback.position),
+        ...(playback.duration > 0 ? { duration: seconds(playback.duration) } : {}),
+        alt,
+      },
+      availableActions,
+      freshness: "unknown",
+    });
+  }
+
+  if (definitionId === YOUTUBE.id && typeof instance.props.videoId === "string" && /^[A-Za-z0-9_-]{6,20}$/.test(instance.props.videoId) && typeof instance.props.title === "string") {
+    return normalizeSemanticDoc({
+      instanceId,
+      definitionId,
+      title: instance.props.title,
+      summary: `YouTube video: ${instance.props.title}`,
+      values: { videoId: instance.props.videoId, title: instance.props.title },
+      availableActions,
+      freshness: "unknown",
+    });
   }
   return normalizeSemanticDoc({ instanceId, definitionId, summary: `${definitionId} (${instance.lifecycle})`, availableActions });
 }

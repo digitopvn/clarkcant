@@ -724,8 +724,10 @@ export class GatewayClient {
     return this.#call("GET", `/terminals/${encodeURIComponent(terminalId)}/commands`);
   }
 
-  async #call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  /** `keepalive` lets a request outlive the page that sent it, for the last write a page makes as it goes away. */
+  async #call<T>(method: string, path: string, body?: unknown, init: { keepalive?: true } = {}): Promise<T> {
     const response = await this.#fetch(`${this.#baseUrl}${path}`, {
+      ...init,
       method,
       headers: {
         authorization: `Bearer ${this.#token}`,
@@ -1387,11 +1389,14 @@ export class GatewayClient {
       input: Record<string, unknown>;
       invocationId: string;
     },
+    options: { keepalive?: boolean } = {},
   ): Promise<ActionInvocationResult> {
-    return this.#call("POST", `/conversations/${conversationId}/widgets/${instanceId}/actions`, {
-      instanceId,
-      ...invocation,
-    });
+    return this.#call(
+      "POST",
+      `/conversations/${conversationId}/widgets/${instanceId}/actions`,
+      { instanceId, ...invocation },
+      options.keepalive === true ? { keepalive: true } : {},
+    );
   }
 
   /**

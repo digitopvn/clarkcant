@@ -20,7 +20,7 @@ import {
 import { useT } from "./i18n/locale-context.tsx";
 import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
-import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent } from "./mini-app-surface.tsx";
+import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent, composedImageRefs } from "./mini-app-surface.tsx";
 import { type FrameSource, WidgetFrame } from "./WidgetFrame.tsx";
 import { useWidgetArtifactHost } from "./widget-artifacts.tsx";
 import type { AppearanceSnapshot, AttachmentRef } from "@clarkcant/contracts";
@@ -425,15 +425,8 @@ export function PinnedLiveSurface({
   }, [displayMode]);
 
   /* Imported images are fetched through the authenticated client, not linked to directly. */
-  const imageRefs = useMemo(() => {
-    const refs = new Set<string>();
-    // Only a composition has sections to look through; a frame's pictures are its own document's business.
-    for (const section of live?.kind === "composition" ? live.sections : []) {
-      const ref = section.props.imageRef;
-      if (typeof ref === "string" && ref !== "") refs.add(ref);
-    }
-    return [...refs];
-  }, [live]);
+  // Only a composition has sections to look through; a frame's pictures are its own document's business.
+  const imageRefs = useMemo(() => composedImageRefs(live?.kind === "composition" ? live.sections : []), [live]);
 
   const imageUrl = useImageUrls(client, imageRefs);
 

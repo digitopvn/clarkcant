@@ -62,6 +62,7 @@ export const compositionSlotSchema = z.enum([
   "calendar",
   "timeline",
   "image",
+  "pictures",
   "note",
   "cta",
 ]);

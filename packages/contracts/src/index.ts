@@ -37,6 +37,7 @@ export * from "./calendar-view.ts";
 export * from "./activity-timeline.ts";
 export * from "./tree-view.ts";
 export * from "./board-view.ts";
+export * from "./media-view.ts";
 export * from "./text-rules.ts";
 export * from "./surface-composition.ts";
 export * from "./period.ts";
