@@ -326,9 +326,11 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
       return undefined;
     }
 
+    // A set is cut once, to what this widget holds, so its props, its stored rows and its text all name the same pictures.
+    const limit = slot === "pictures" ? pictureLimit(entry.definition) : undefined;
     const props = leafProps(slot, { ...(recipe?.fixed.find((region) => region.slot === slot)?.props ?? {}), ...node.props }, {
       ...input,
-      ...(slot === "pictures" ? { pictureRefs: (input.pictureRefs ?? []).slice(0, pictureLimit(entry.definition)) } : {}),
+      ...(limit === undefined ? {} : { pictureRefs: (input.pictureRefs ?? []).slice(0, limit) }),
     });
     // Held to the whole schema — ranges, enums and item shapes — the same check every stored instance passes.
     const validation = validateProps(entry.definition, props);
@@ -352,7 +354,7 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
     const sectionId = `${slot}-${String(count)}`;
     for (const rule of node.on ?? []) on.push({ ...(rule as Record<string, unknown>), sectionId });
     for (const entry of node.feed ?? []) feed.push({ ...(entry as Record<string, unknown>), sectionId });
-    const rows = input.rowsBySlot[slot];
+    const rows = limit === undefined ? input.rowsBySlot[slot] : input.rowsBySlot[slot]?.slice(0, limit);
     sections.push({
       sectionId,
       slot,

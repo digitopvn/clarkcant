@@ -219,6 +219,11 @@ describe("placing the person's pictures in a layout", () => {
     // A carousel holds at most 24; it shows the newest 24 rather than being refused.
     expect(carousel?.sectionId).toBe("pictures-2");
     expect(carousel?.props.imageRefs).toEqual(newestFirst.slice(0, 24));
+    // What history and a screen reader are told names only the pictures the carousel holds.
+    expect(carousel?.rows).toHaveLength(24);
+    expect(carousel?.textAlternative).toContain("Picture 6");
+    expect(carousel?.textAlternative).not.toContain("Picture 5");
+    expect(gallery?.rows).toHaveLength(30);
     expect(gallery?.textAlternative).toContain("Hình ảnh đã nhập: Picture 29; Picture 28");
   });
 
