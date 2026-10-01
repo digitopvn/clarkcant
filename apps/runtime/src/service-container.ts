@@ -200,9 +200,9 @@ async function isRootlessDocker(run: EngineRunner, timeoutMs: number): Promise<b
  * What the engine says about the machine it runs containers on: its memory, its CPUs, and whether it enforces the
  * memory and CPU limits a profile sets.
  *
- * Asked separately from `detectServiceEngine`, and only when a package asks for more than the light profile, so a node
- * that runs only light services asks nothing new of its engine. An answer that cannot be read leaves a field undefined,
- * and `decideResourceProfile` then grants without that check and says so; it never guesses a number.
+ * Asked separately from `detectServiceEngine`, once per engine by the service host, so the rootless check and finding
+ * an engine stay as they were. An answer that cannot be read leaves a field undefined, and `decideResourceProfile` then
+ * grants without that check and says so; it never guesses a number.
  *
  * Docker reports `MemoryLimit` and `CPUCfsQuota`, which are false where the daemon cannot apply the limits (rootless
  * without cgroup v2 delegation, or a kernel without the controllers). Podman reports the cgroup controllers its user may

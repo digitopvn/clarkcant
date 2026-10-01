@@ -28,8 +28,8 @@ import { resumeArtifactIntake } from "../delegated-artifacts.ts";
 import { taskDispatchReports } from "../task-reporting.ts";
 import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
-import { detectServiceEngine } from "../service-container.ts";
-import { createServiceHost, engineContainers, packageRootFrom } from "../service-host.ts";
+import { detectServiceEngine, readEngineCapacity } from "../service-container.ts";
+import { createServiceHost, engineContainers, packageRootFrom, resourceProfilePolicy } from "../service-host.ts";
 import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import type { NodeWork } from "./work-bootstrap.ts";
@@ -371,6 +371,12 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       return packageRootFrom(index.entries, join(services.runtime.dataDir, "package-cache"))(generation);
     },
     containers: engineContainers,
+    capacity: (engine) => readEngineCapacity(engine),
+    profilePolicy: resourceProfilePolicy({
+      db: services.runtime.db,
+      principalId: services.runtime.identity.ownerPrincipalId,
+      now: () => new Date().toISOString() as Instant,
+    }),
   });
   void services.serviceHost.reconcile().catch((cause: unknown) => {
     process.stderr.write(`services: not started — ${cause instanceof Error ? cause.message : String(cause)}\n`);

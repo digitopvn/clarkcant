@@ -290,12 +290,26 @@ export async function invokeCapability(
   }
   const { readiness } = descriptor;
   const execution = host.execution?.(ref);
+  // The granted profile bounds this package's own jobs and the files they keep, inside the node's own limits.
+  const granted = host.profile?.(ref);
+  const jobScope = {
+    packageId: served.packageId,
+    maxActive: granted?.maxActiveJobs ?? Number.POSITIVE_INFINITY,
+    ...(granted === undefined ? {} : { artifactMaxBytes: granted.artifactMaxBytes }),
+  };
   if (execution?.kind === "job") {
     if (deps.packageJobs === undefined || request.jobOrigin === undefined || request.bindingGeneration === undefined) {
       return refused(503, "JOB_HOST_UNAVAILABLE", "this long-running capability needs its originating widget binding and node job host");
     }
     if (!deps.packageJobs.canAdmit()) {
       return refused(429, "JOB_LIMIT_REACHED", "the node is at its active package job limit; this job was not sent");
+    }
+    if (!deps.packageJobs.canAdmit(jobScope)) {
+      return refused(
+        429,
+        "JOB_LIMIT_REACHED",
+        `this package runs at most ${String(jobScope.maxActive)} job${jobScope.maxActive === 1 ? "" : "s"} at once in its resource profile; this job was not sent`,
+      );
     }
   }
   if (!readiness.authenticated) {
@@ -443,6 +457,7 @@ export async function invokeCapability(
           capabilityRef: ref,
           effectCategory: descriptor.effectCategory,
         },
+        scope: jobScope,
         // A press's deadline bounds how long the press waits for an answer, and a job answers at once with its ref; the
         // job itself runs under the service host's job ceiling, and Stop, emergency Stop and shutdown still end it.
         run: (signal, onProgress) => host.call(ref, request.args, { signal, onProgress }),

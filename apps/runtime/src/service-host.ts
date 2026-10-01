@@ -5,19 +5,29 @@ import {
   type CapabilityDescriptor,
   type CapabilityReadiness,
   type CapabilityRef,
+  decideResourceProfile,
+  DEFAULT_RESOURCE_PROFILE,
   describeUnsafePattern,
   type DirectoryEntry,
   type EffectCategory,
+  type EngineCapacity,
   type Instant,
   type PackageGeneration,
+  RESOURCE_PROFILES,
+  type ResourceGrant,
+  type ResourceProfile,
+  type ResourceProfileName,
+  type ResourceRequest,
   type ServiceCapabilityDeclaration,
   type ToolsFacet,
   unsafeSchemaPattern,
 } from "@clarkcant/contracts";
 import {
   activeGenerations,
+  decideExecution,
   getCapability,
   packageProvidedCapabilities,
+  readExecutionPolicy,
   readPackage,
   registerCapability,
   type RegistryDeps,
@@ -66,6 +76,10 @@ export { engineEnvironment } from "./service-container.ts";
  *     call is still decided by the execution policy on its own.
  *   - `healthy` — the container is running and answers `ping`.
  *
+ * Each service runs in the resource profile the host granted its package (`decideResourceProfile`): the container's
+ * bounds, the call and job deadlines, the package's job limit and its artifact ceiling all come from it. A profile that
+ * cannot be granted is not replaced by a smaller one: the service is not started, and its capabilities say why.
+ *
  * A tool the service lists but the manifest does not declare is never registered: consent covered the declaration,
  * not whatever the code turned out to offer. A declared tool the service does not list is registered as not loaded,
  * with that as the reason, so a person reads why the button is off rather than a generic failure. So is a declared tool
@@ -91,8 +105,8 @@ const PING_INTERVAL_MS = 30_000;
 const ENGINE_RETRY_MS = 60_000;
 /** A container's first answer includes Node starting inside it, which is slower than a bare process. */
 const HANDSHAKE_TIMEOUT_MS = 30_000;
-const CALL_TIMEOUT_MS = 60_000;
-const JOB_CALL_TIMEOUT_MS = 30 * 60_000;
+/** What a service runs in when its package asks for nothing, or before a grant was decided. */
+const LIGHT_PROFILE = RESOURCE_PROFILES[DEFAULT_RESOURCE_PROFILE];
 
 /** The four categories that order by reach. The others are different axes and are never rewritten. */
 const EFFECT_RANK: Partial<Record<EffectCategory, number>> = {
@@ -145,6 +159,7 @@ export type ServiceLauncher = (spec: {
   packageRoot: string;
   dataDir: string;
   entry: string;
+  profile: ResourceProfile;
 }) => { command: string; args: string[] };
 
 export const containerLauncher: ServiceLauncher = (spec) => ({ command: spec.engine, args: serviceRunArgs(spec) });
@@ -167,6 +182,13 @@ export interface ServiceHostOptions {
     sweep: (engine: ContainerEngineName, nodeId: string) => Promise<string[]>;
   };
   timings?: { restartBaseMs?: number; pingIntervalMs?: number; engineRetryMs?: number };
+  /** What the engine can hold. Asked once per engine; absent, a larger profile is granted with a note saying so. */
+  capacity?: (engine: ContainerEngineName) => Promise<EngineCapacity>;
+  /**
+   * The execution policy's refusal of a profile larger than the light one, as the sentence a person reads, or
+   * undefined when it does not refuse. Read at each start, so a rule the person changed applies at the next one.
+   */
+  profilePolicy?: (input: { packageId: string; profile: ResourceProfileName }) => string | undefined;
 }
 
 /**
@@ -220,10 +242,14 @@ export interface ServiceHost {
   serves(ref: CapabilityRef): { packageId: string; generationId: string } | undefined;
   /** The manifest's explicit execution mode; omission preserves synchronous capability calls. */
   execution?(ref: CapabilityRef): { kind: "job"; version: 1 } | undefined;
+  /** The profile granted to the facet that serves a ref: its deadlines, job limit and artifact ceiling. */
+  profile?(ref: CapabilityRef): ResourceProfile | undefined;
+  /** The latest resource decision for a package's services on this node; undefined before one was made. */
+  resourceGrant?(packageId: string): ResourceGrant | undefined;
   /** Stop every service. With `restart`, they are started again from scratch; without, the host stays stopped. */
   stopAll(options?: { restart?: boolean }): Promise<number>;
   /** What each facet is doing, for diagnostics and tests. */
-  status(): { key: string; packageId: string; state: ServiceState; reason?: string; refs: CapabilityRef[] }[];
+  status(): { key: string; packageId: string; state: ServiceState; reason?: string; refs: CapabilityRef[]; grant?: ResourceGrant }[];
 }
 
 type ServiceState = "starting" | "running" | "restarting" | "stopped" | "failed";
@@ -233,6 +259,10 @@ interface ServiceEntry {
   generation: PackageGeneration;
   facet: ToolsFacet;
   packageRoot: string;
+  /** What the package's manifest asks for; undefined asks for the light profile. */
+  resources: ResourceRequest | undefined;
+  /** The decision made at the last start. */
+  grant?: ResourceGrant | undefined;
   /** The stable part of the container's name; each run adds its epoch, so a late cleanup never removes a newer run. */
   containerName: string;
   state: ServiceState;
@@ -299,6 +329,35 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
   let swept = false;
   let queue: Promise<unknown> = Promise.resolve();
   let halted = false;
+  const capacities = new Map<ContainerEngineName, Promise<EngineCapacity>>();
+
+  /** What the engine can hold, asked once per engine; an engine that does not answer reports nothing. */
+  function engineCapacity(name: ContainerEngineName): Promise<EngineCapacity> | undefined {
+    const ask = options.capacity;
+    if (ask === undefined) return undefined;
+    let known = capacities.get(name);
+    if (known === undefined) {
+      known = ask(name).catch((): EngineCapacity => ({}));
+      capacities.set(name, known);
+    }
+    return known;
+  }
+
+  /** The profile a facet's package is granted on this engine, decided afresh at every start. */
+  async function decideGrant(entry: ServiceEntry, name: ContainerEngineName): Promise<ResourceGrant> {
+    const requested = entry.resources?.profile ?? DEFAULT_RESOURCE_PROFILE;
+    const capacity = await engineCapacity(name);
+    let policyRefusal: string | undefined;
+    if (requested !== DEFAULT_RESOURCE_PROFILE) {
+      try {
+        policyRefusal = options.profilePolicy?.({ packageId: entry.generation.packageId, profile: requested });
+      } catch (cause) {
+        // A policy that cannot be read does not grant more of the machine than the light profile.
+        policyRefusal = `the execution policy could not be read (${cause instanceof Error ? cause.message : String(cause)})`;
+      }
+    }
+    return decideResourceProfile({ request: entry.resources, needsContainer: true, capacity, policyRefusal });
+  }
 
   /*
    * What the registry said about a service when the node last ran is not what is true now: nothing has started yet on
@@ -499,7 +558,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     }
   }
 
-  type Wanted = Pick<ServiceEntry, "key" | "generation" | "facet" | "packageRoot" | "containerName">;
+  type Wanted = Pick<ServiceEntry, "key" | "generation" | "facet" | "packageRoot" | "containerName" | "resources">;
 
   function desired(): Map<string, Wanted> {
     const wanted = new Map<string, Wanted>();
@@ -525,6 +584,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
           generation,
           facet,
           packageRoot: resolve(root),
+          resources: manifest.resources,
           containerName: serviceContainerName({
             nodeId: registry.nodeId,
             generationId: generation.generationId,
@@ -633,6 +693,20 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       return;
     }
 
+    const grant = await decideGrant(entry, found.engine);
+    if (!current(entry, epoch)) return;
+    entry.grant = grant;
+    if (grant.status === "degraded") {
+      // Not restarted on a timer: nothing about the engine or the policy changes by waiting. The next reconcile, an
+      // install or a node restart decides again.
+      entry.state = "stopped";
+      entry.reason = grant.reason;
+      markAll(entry, { loaded: false, healthy: false, blockedReason: grant.reason.slice(0, 500) });
+      log(`services: ${entry.key} not started: ${grant.reason}`);
+      return;
+    }
+    for (const note of grant.notes) log(`services: ${entry.key} ${grant.requested}: ${note}`);
+
     entry.state = "starting";
     entry.reason = "the service is starting";
     markAll(entry, { installed: true, loaded: false, healthy: false, blockedReason: "the service is starting" });
@@ -666,6 +740,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         packageRoot: entry.packageRoot,
         dataDir,
         entry: entry.facet.entry,
+        profile: grant.profile,
       });
     } catch (cause) {
       // Not something a restart changes: the package's folder or the node's data folder cannot be given to a container.
@@ -731,6 +806,10 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       });
     }, pingIntervalMs);
     entry.pingTimer.unref?.();
+  }
+
+  function grantedProfile(entry: ServiceEntry): ResourceProfile {
+    return entry.grant?.status === "granted" ? entry.grant.profile : LIGHT_PROFILE;
   }
 
   async function reconcileNow(): Promise<void> {
@@ -822,9 +901,10 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         throw new ServiceCallError("SERVICE_NOT_RUNNING", `${ref} cannot run now: ${reason}`);
       }
       try {
-        // A caller may ask for less time than the host allows, never for more.
+        // A caller may ask for less time than the granted profile allows, never for more.
         const jobMode = entry.facet.capabilities.some((declaration) => declaration.ref === ref && declaration.execution?.kind === "job");
-        const ceiling = jobMode ? JOB_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS;
+        const profile = grantedProfile(entry);
+        const ceiling = jobMode ? profile.jobDeadlineMs : profile.callDeadlineMs;
         const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? ceiling, ceiling));
         return await entry.connection.callTool(tool, args, {
           timeoutMs,
@@ -866,6 +946,15 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       return undefined;
     },
 
+    profile(ref) {
+      const entry = [...entries.values()].find((candidate) => candidate.tools.has(ref));
+      return entry === undefined ? undefined : grantedProfile(entry);
+    },
+
+    resourceGrant(packageId) {
+      return [...entries.values()].find((entry) => entry.generation.packageId === packageId && entry.grant !== undefined)?.grant;
+    },
+
     execution(ref) {
       for (const entry of entries.values()) {
         if (!entry.facet.capabilities.some((declaration) => declaration.ref === ref) || entry.refused.has(ref) || !owns(entry, ref)) continue;
@@ -892,6 +981,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         state: entry.state,
         ...(entry.reason === undefined ? {} : { reason: entry.reason }),
         refs: entry.facet.capabilities.map((declaration) => declaration.ref),
+        ...(entry.grant === undefined ? {} : { grant: entry.grant }),
       }));
     },
   };
@@ -916,6 +1006,30 @@ export function packageRootFrom(entries: readonly DirectoryEntry[], cacheRoot: s
     if (entry === undefined) return undefined;
     const source = entry.source.kind === "local" ? entry.source : resolveLocalSource(entry, cacheRoot);
     return source.kind === "local" ? source.path : undefined;
+  };
+}
+
+/**
+ * The execution policy's answer to a profile larger than the light one.
+ *
+ * Installing the package was the person's consent to what its manifest declares, the profile among it, so the policy
+ * is asked the question installing asked (a `local-write` effect the person started) and only a refusal counts: a rule
+ * or a node-wide refusal set after the install is the person's later decision about their machine. An answer to ask
+ * is not a refusal here, because there is no one to ask while a node starts its services, and consent already exists.
+ */
+export function resourceProfilePolicy(deps: { db: RegistryDeps["db"]; principalId: string; now: () => Instant }) {
+  return (input: { packageId: string; profile: ResourceProfileName }): string | undefined => {
+    const policy = readExecutionPolicy({ db: deps.db, now: deps.now }, deps.principalId);
+    const decision = decideExecution({
+      policy,
+      action: {
+        kind: "effect",
+        category: "local-write",
+        operationDigest: createHash("sha256").update(`resource-profile\n${input.packageId}\n${input.profile}`).digest("hex"),
+      },
+      intent: { kind: "interactive" },
+    });
+    return decision.kind === "deny" ? decision.reason : undefined;
   };
 }
 

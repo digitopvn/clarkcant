@@ -8,8 +8,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type CapabilityRef,
   DEFAULT_EXECUTION_POLICY_CONFIG,
+  type EngineCapacity,
   type ExecutionPolicyConfig,
   type Instant,
+  RESOURCE_PROFILES,
+  type ResourceProfileName,
 } from "@clarkcant/contracts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, getCapability, registerCapability, writeRegisteredPreference } from "@clarkcant/core";
 import { migrate, openDatabase, type Database } from "@clarkcant/storage";
@@ -22,7 +25,13 @@ import {
 } from "../src/application/capability-invoke.ts";
 import { describeCapabilityOutcome } from "../src/invoke-capability-tool.ts";
 import { NEEDS_ENGINE_REASON, type ServiceEngine } from "../src/service-container.ts";
-import { createServiceHost, serviceEffectCategory, type ServiceHost, type ServiceLauncher } from "../src/service-host.ts";
+import {
+  createServiceHost,
+  resourceProfilePolicy,
+  serviceEffectCategory,
+  type ServiceHost,
+  type ServiceLauncher,
+} from "../src/service-host.ts";
 
 /**
  * The service host and the one gate every caller goes through, against the notes package's real service.
@@ -80,6 +89,8 @@ function start(
     restartBaseMs?: number;
     engineRetryMs?: number;
     packageRoot?: (packageId: string) => string | undefined;
+    capacity?: EngineCapacity;
+    profilePolicy?: (input: { packageId: string; profile: ResourceProfileName }) => string | undefined;
   } = {},
 ): ServiceHost {
   const engine = options.engine;
@@ -91,6 +102,8 @@ function start(
       options.packageRoot === undefined ? (generation.packageId === PACKAGE ? root : undefined) : options.packageRoot(generation.packageId),
     launcher: options.launcher ?? plainLauncher(),
     log: (line) => logs.push(line),
+    ...(options.capacity === undefined ? {} : { capacity: async () => options.capacity ?? {} }),
+    ...(options.profilePolicy === undefined ? {} : { profilePolicy: options.profilePolicy }),
     timings: {
       restartBaseMs: options.restartBaseMs ?? 20,
       pingIntervalMs: 60_000,
@@ -202,6 +215,93 @@ afterEach(async () => {
   host = undefined;
   db.close();
   rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
+describe("the resource profile a service runs in", () => {
+  const GIB = 1024 * 1024 * 1024;
+  const roomy: EngineCapacity = { memoryBytes: 64 * GIB, cpus: 16, enforcesLimits: true };
+
+  function requesting(profile: ResourceProfileName): void {
+    const path = join(root, "clarkcant.json");
+    const manifest = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    writeFileSync(path, JSON.stringify({ ...manifest, resources: { version: 1, profile } }, null, 2));
+  }
+
+  /** The plain launcher, keeping what it was asked to launch, so the profile the container would get can be read. */
+  function recording(): { launcher: ServiceLauncher; profiles: string[] } {
+    const plain = plainLauncher();
+    const profiles: string[] = [];
+    return {
+      profiles,
+      launcher: (spec) => {
+        profiles.push(spec.profile.name);
+        return plain(spec);
+      },
+    };
+  }
+
+  it("runs a package that asks for nothing in the light profile, the envelope it always had", async () => {
+    activate();
+    const seen = recording();
+    const serviceHost = start({ launcher: seen.launcher, capacity: roomy });
+    await running(serviceHost);
+    expect(seen.profiles).toEqual(["interactive-light"]);
+    expect(serviceHost.profile?.(ADD)).toBe(RESOURCE_PROFILES["interactive-light"]);
+    expect(serviceHost.resourceGrant?.(PACKAGE)).toMatchObject({ status: "granted", requested: "interactive-light", notes: [] });
+  });
+
+  it("starts a package in the larger profile it asked for when the engine can hold it", async () => {
+    requesting("interactive-heavy");
+    activate();
+    const seen = recording();
+    const serviceHost = start({ launcher: seen.launcher, capacity: roomy, profilePolicy: () => undefined });
+    await running(serviceHost);
+    expect(seen.profiles).toEqual(["interactive-heavy"]);
+    expect(serviceHost.profile?.(ADD)?.callDeadlineMs).toBe(RESOURCE_PROFILES["interactive-heavy"].callDeadlineMs);
+    expect(serviceHost.status()[0]?.grant).toMatchObject({ status: "granted", requested: "interactive-heavy" });
+  });
+
+  it("does not start a profile the engine cannot hold, and says why on every capability, never running it smaller", async () => {
+    requesting("media-workstation");
+    activate();
+    const seen = recording();
+    const serviceHost = start({ launcher: seen.launcher, capacity: { memoryBytes: 64 * GIB, cpus: 2, enforcesLimits: true } });
+    await serviceHost.reconcile();
+    const reason = "media-workstation needs 4 CPUs, and the container engine here has 2";
+    await until(() => readiness(ADD)?.blockedReason === reason, "the degraded reason");
+    expect(readiness(LIST)).toMatchObject({ loaded: false, healthy: false, blockedReason: reason });
+    expect(seen.profiles).toEqual([]);
+    expect(serviceHost.status()[0]).toMatchObject({ state: "stopped", reason, grant: { status: "degraded", requested: "media-workstation" } });
+    const outcome = await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "widget" });
+    expect(outcome).toMatchObject({ kind: "refused", code: "CAPABILITY_NOT_READY" });
+    if (outcome.kind === "refused") expect(outcome.message).toContain(reason);
+  });
+
+  it("lets a rule the person set refuse a larger profile, through the same execution policy every effect asks", async () => {
+    requesting("interactive-heavy");
+    activate();
+    writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, rules: [{ effectCategory: "local-write", decision: "deny" }] });
+    const policy = resourceProfilePolicy({ db, principalId: PRINCIPAL, now: () => new Date().toISOString() as Instant });
+    const seen = recording();
+    const serviceHost = start({ launcher: seen.launcher, capacity: roomy, profilePolicy: policy });
+    await serviceHost.reconcile();
+    await until(() => readiness(ADD)?.blockedReason?.startsWith("interactive-heavy is not granted"), "the policy refusal");
+    expect(readiness(ADD)?.blockedReason).toBe("interactive-heavy is not granted: a rule refuses local-write effects on this machine");
+    expect(seen.profiles).toEqual([]);
+    // Asking is not refusing: consent to the declared profile was given at install, and nobody is there to ask at boot.
+    writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "ask" });
+    expect(policy({ packageId: PACKAGE, profile: "interactive-heavy" })).toBeUndefined();
+  });
+
+  it("grants a larger profile without an engine report, and says the check was not made", async () => {
+    requesting("background-compute");
+    activate();
+    const serviceHost = start({ capacity: {} });
+    await running(serviceHost);
+    const grant = serviceHost.resourceGrant?.(PACKAGE);
+    expect(grant?.status === "granted" && grant.notes[0]).toContain("did not report");
+    expect(logs.some((line) => line.includes("did not report"))).toBe(true);
+  });
 });
 
 describe("the effect a service call is decided under", () => {
