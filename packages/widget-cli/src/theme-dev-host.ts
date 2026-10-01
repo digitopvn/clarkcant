@@ -1,6 +1,7 @@
 import { createServer, type ServerResponse } from "node:http";
 import { watch } from "node:fs";
 import { resolve } from "node:path";
+import type { ViteDevServer } from "vite";
 
 import { installedThemes } from "@clarkcant/core";
 import type { ThemeDocument } from "@clarkcant/contracts";
@@ -28,7 +29,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
   const root = resolve(options.root);
   const initial = readThemeDevView(root);
   if (initial.themes.length === 0) throw new Error(initial.problem ?? "No theme facet to preview");
-  const vite = await createDevModuleServer();
+  let vite: ViteDevServer | undefined;
   const clients = new Set<ServerResponse>();
   let reloads = 0;
   let address = "";
@@ -39,6 +40,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
     if (request.method !== "GET") { response.writeHead(405); response.end("Read-only preview"); return; }
     const path = new URL(request.url ?? "/", `http://${address}`).pathname;
     if (path === "/") {
+      if (vite === undefined) { response.writeHead(503); response.end("Preview server is starting"); return; }
       void vite.transformIndexHtml("/", '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ClarkCant Theme Lab</title></head><body><main id="cc-theme-dev-root"></main><script type="module" src="/src/theme-dev-runtime.tsx"></script></body></html>')
         .then((html) => {
           response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
@@ -68,20 +70,25 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
       return;
     }
     if (path.startsWith("/src/") || path.startsWith("/@") || path.startsWith("/node_modules/")) {
+      if (vite === undefined) { response.writeHead(503); response.end("Preview server is starting"); return; }
       vite.middlewares(request, response, () => { response.writeHead(404); response.end("Not found"); });
       return;
     }
     response.writeHead(404); response.end("Not found");
   });
-  try {
-    await new Promise<void>((done, failed) => {
-      server.once("error", failed);
-      server.listen(options.port ?? 4319, "127.0.0.1", () => { server.removeListener("error", failed); done(); });
-    });
-  } catch (error) { await vite.close(); throw error; }
+  await new Promise<void>((done, failed) => {
+    server.once("error", failed);
+    server.listen(options.port ?? 4319, "127.0.0.1", () => { server.removeListener("error", failed); done(); });
+  });
   const bound = server.address();
   if (bound === null || typeof bound === "string") throw new Error("Theme dev host did not bind TCP");
   address = `127.0.0.1:${String(bound.port)}`;
+  try {
+    vite = await createDevModuleServer(false, server, bound.port);
+  } catch (error) {
+    await new Promise<void>((done, failed) => server.close((closeError) => closeError === undefined ? done() : failed(closeError)));
+    throw error;
+  }
   let timer: ReturnType<typeof setTimeout> | undefined;
   let watcher: ReturnType<typeof watch> | undefined;
   try { watcher = options.watchFiles === false ? undefined : watch(root, { recursive: true }, (_event, filename) => {
@@ -92,7 +99,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
       for (const client of clients) client.write(`data: ${String(reloads)}\n\n`);
     }, 75);
   }); } catch (error) {
-    await vite.close();
+    await vite?.close();
     await new Promise<void>((done) => server.close(() => done()));
     throw error;
   }
@@ -105,7 +112,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
         if (timer !== undefined) clearTimeout(timer);
         for (const client of clients) client.end();
         clients.clear();
-        await vite.close();
+        await vite?.close();
         await new Promise<void>((done, failed) => server.close((error) => error === undefined ? done() : failed(error)));
       })();
       return closing;

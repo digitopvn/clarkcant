@@ -17,6 +17,13 @@ import {
   applyPreviewAction,
   type PreviewState,
 } from "@clarkcant/widget-catalog/preview";
+import {
+  initialServiceState,
+  serviceStatus,
+  transitionServiceState,
+  type ServiceReadiness,
+  type ServiceStatus,
+} from "./service-simulator.ts";
 
 export const DEV_VIEWPORTS = ["narrow-320", "conversation", "compact", "expanded"] as const;
 export type DevViewport = (typeof DEV_VIEWPORTS)[number];
@@ -47,6 +54,8 @@ export interface DevShellState {
   readOnly: boolean;
   /** Declared capabilities, and what the simulator has decided for each. */
   capabilities: Record<string, "granted" | "denied">;
+  /** Simulated service readiness is separate from host capability grants. */
+  serviceReadiness: Record<string, ServiceReadiness>;
   /**
    * What the simulated picker answers the widget's next `artifacts.pick` with: a file in `fixtures/files/` by name, or
    * `""` for a person who closes the picker. Both are real paths a widget has to handle, so both are a click away.
@@ -55,13 +64,17 @@ export interface DevShellState {
 }
 
 export interface DevShellAction {
-  kind: "fixture" | "viewport" | "theme" | "reduced-motion" | "offline" | "read-only" | "capability" | "pick-file";
+  kind: "fixture" | "viewport" | "theme" | "reduced-motion" | "offline" | "read-only" | "capability" | "pick-file" | "service-readiness" | "service-restart";
   value: string | boolean;
+  capabilityRef?: string;
+  status?: ServiceStatus;
+  reason?: string;
 }
 
 export function initialState(input: {
   fixtures: readonly string[];
   requestedCapabilities: readonly string[];
+  serviceCapabilities?: readonly string[];
   /** The names of the package's fixture files, which the simulated picker offers. */
   files?: readonly string[];
 }): DevShellState {
@@ -78,6 +91,7 @@ export function initialState(input: {
      * when every capability is available, which is the state their users are least likely to be in.
      */
     capabilities: Object.fromEntries(input.requestedCapabilities.map((ref) => [ref, "denied" as const])),
+    serviceReadiness: initialServiceState(input.serviceCapabilities ?? []),
     pickFile: input.files?.[0] ?? "",
   };
 }
@@ -102,7 +116,7 @@ function basePreview(state: DevShellState): PreviewState {
 export function applyShellAction(
   state: DevShellState,
   action: DevShellAction,
-  known: { fixtures: readonly string[]; capabilities: readonly string[]; files?: readonly string[] },
+  known: { fixtures: readonly string[]; capabilities: readonly string[]; serviceCapabilities?: readonly string[]; files?: readonly string[] },
 ): DevShellState {
   switch (action.kind) {
     case "fixture": {
@@ -137,6 +151,19 @@ export function applyShellAction(
         : state;
     case "offline":
       return { ...state, offline: action.value === true };
+    case "service-readiness": {
+      if (typeof action.capabilityRef !== "string" || !known.serviceCapabilities?.includes(action.capabilityRef)) return state;
+      if (action.status === undefined || !("loading ready blocked unhealthy".split(" ") as string[]).includes(action.status)) return state;
+      return {
+        ...state,
+        serviceReadiness: transitionServiceState(state.serviceReadiness, action.capabilityRef, action.status, action.reason),
+      };
+    }
+    case "service-restart":
+      return {
+        ...state,
+        serviceReadiness: initialServiceState(known.serviceCapabilities ?? []),
+      };
     case "read-only":
       return { ...state, readOnly: action.value === true };
     case "capability": {
@@ -200,7 +227,7 @@ export interface FrameFacts {
   /** Each declared layout, as it actually rendered at a viewport. */
   layouts?: readonly { name: "narrow" | "compact" | "expanded"; viewportWidth: number; rendered: boolean; overflows: boolean }[];
   /** Each declared state the collector asked the frame to show. */
-  states?: readonly { name: "loading" | "readOnly"; rendered: boolean }[];
+  states?: readonly { name: "loading" | "readOnly" | "serviceBlocked" | "offline"; rendered: boolean }[];
   /**
    * What a real detach/reattach against the dev host's lease store showed, when the collector drove one.
    *
@@ -350,6 +377,7 @@ export interface ShellInput {
   definitionId: string;
   fixtures: readonly string[];
   requestedCapabilities: readonly string[];
+  serviceCapabilities?: readonly string[];
   entryUrl: string;
   definition: { textFallback: string; semanticDescription: string };
   /** Fixture files the simulated picker offers, by name. Absent for a catalog widget, which has no package. */
@@ -415,6 +443,21 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
           })
           .join("\n        ");
 
+  const serviceRows = (input.serviceCapabilities ?? []).length === 0
+    ? "<p>This package declares no service capabilities.</p>"
+    : (input.serviceCapabilities ?? []).map((ref) => {
+        const readiness = state.serviceReadiness[ref] ?? initialServiceState([ref])[ref];
+        const status = readiness === undefined ? "loading" : serviceStatus(readiness);
+        const reason = status === "blocked" || status === "unhealthy" ? readiness?.blockedReason ?? "" : "";
+        return `<label>${escapeHtml(ref)}
+          <select aria-label="Readiness for ${escapeHtml(ref)}" data-dev-action="service-readiness" data-dev-value="${escapeHtml(ref)}" data-dev-status="${status}">
+            ${(["loading", "ready", "blocked", "unhealthy"] as const).map((nextStatus) => `<option value="${nextStatus}"${status === nextStatus ? " selected" : ""}>${nextStatus}</option>`).join("")}
+          </select>
+          <input aria-label="Reason for ${escapeHtml(ref)}" data-dev-reason="${escapeHtml(ref)}" maxlength="500" value="${escapeHtml(reason)}" placeholder="Reason when blocked or unhealthy" />
+          <span data-dev-service-status="${escapeHtml(ref)}">${status}${reason === "" ? "" : `: ${escapeHtml(reason)}`}</span>
+        </label>`;
+      }).join("\n        ") + `<button type="button" data-dev-action="service-restart">Simulate service restart</button>`;
+
   const files = input.files ?? [];
   const pickerRows = [
     ...files.map(
@@ -449,6 +492,7 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
       button { background: transparent; color: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; cursor: pointer; }
       button[data-dev-selected="true"] { border-color: currentColor; }
       button:focus-visible, input:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
+      select:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
       aside { border-left: 1px solid var(--line); border-bottom: 0; display: grid; gap: 16px; align-content: start; }
       aside section { display: grid; gap: 6px; }
       h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0; }
@@ -498,6 +542,11 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
         <section>
           <h2>Action log</h2>
           <pre data-dev-log></pre>
+        </section>
+        <section>
+          <h2>Service readiness</h2>
+          ${serviceRows}
+          <p data-dev-service-health>${Object.values(state.serviceReadiness).some((entry) => serviceStatus(entry) === "unhealthy") && Object.values(state.serviceReadiness).some((entry) => serviceStatus(entry) === "ready") ? "degraded" : ""}</p>
         </section>
         <section>
           <h2>Capability simulator</h2>

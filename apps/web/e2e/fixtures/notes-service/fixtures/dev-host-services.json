@@ -1,0 +1,30 @@
+{
+  "bindings": [
+    {
+      "actionBindingId": "binding_notes_add",
+      "capabilityRef": "com.example.notes.add@1",
+      "outcome": {
+        "status": "accepted",
+        "message": "Fixture service accepted the note",
+        "output": "Saved from the development service simulator"
+      }
+    },
+    {
+      "actionBindingId": "binding_notes_list",
+      "capabilityRef": "com.example.notes.list@1",
+      "outcome": {
+        "status": "accepted",
+        "message": "Fixture notes loaded",
+        "output": "One sample note"
+      }
+    },
+    {
+      "actionBindingId": "binding_notes_malformed",
+      "capabilityRef": "com.example.notes.list@1",
+      "outcome": {
+        "status": "invalid",
+        "message": ""
+      }
+    }
+  ]
+}
