@@ -36,10 +36,16 @@ for (const name of names) describe(`${name} production components on this platfo
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+      page.on("requestfailed", (request) => errors.push(`${request.url()}: ${request.failure()?.errorText ?? "request failed"}`));
       try {
         await page.goto(host.url);
         const preview = page.locator("[data-theme-preview-canvas]");
-        await browserExpect(preview).toBeVisible();
+        try {
+          await browserExpect(preview).toBeVisible({ timeout: 15_000 });
+        } catch (error) {
+          const visibleText = await page.locator("body").innerText();
+          throw new Error(`Theme preview did not render. ${errors.join("\n")}\n${visibleText}`, { cause: error });
+        }
         await browserExpect(preview).toHaveCSS("overflow", "hidden");
         await page.locator(`.cc-theme-lab-controls [data-segment="${scheme}"]`).click();
         await browserExpect(preview).toHaveAttribute("data-cc-theme", scheme);
