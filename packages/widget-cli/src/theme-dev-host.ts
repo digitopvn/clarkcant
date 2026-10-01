@@ -84,7 +84,15 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
   if (bound === null || typeof bound === "string") throw new Error("Theme dev host did not bind TCP");
   address = `127.0.0.1:${String(bound.port)}`;
   try {
-    vite = await createDevModuleServer(false, server, bound.port, { isolatedCache: true });
+    vite = await createDevModuleServer(false, server, bound.port, {
+      isolatedCache: true,
+      // This custom preview has no workspace HTML entry to scan. Keep Vite's cold-start optimizer
+      // bounded to the runtime's React and CommonJS highlighting entries instead of scanning the workspace.
+      optimizeDeps: {
+        noDiscovery: true,
+        include: ["react", "react-dom/client", "@clarkcant/conversation-client > highlight.js/lib/common"],
+      },
+    });
   } catch (error) {
     await new Promise<void>((done, failed) => server.close((closeError) => closeError === undefined ? done() : failed(closeError)));
     throw error;
