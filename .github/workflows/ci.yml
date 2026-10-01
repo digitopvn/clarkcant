@@ -259,6 +259,9 @@ jobs:
       - name: Widget service simulator browser journey
         run: pnpm run test:widget-browser
 
+      - name: Reference theme preview component journeys
+        run: pnpm run test:reference-theme-browser
+
       - name: Reference theme browser journeys
         run: >-
           pnpm test:e2e apps/web/e2e/reference-theme-composition.spec.ts
