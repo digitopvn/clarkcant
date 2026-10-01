@@ -64,7 +64,7 @@ describe("service simulator in Chromium", () => {
 
     await page.getByLabel("Readiness for com.example.notes.add@1").selectOption("ready");
     await eventually(
-      async () => host.state().serviceReadiness["com.example.notes.add@1"]?.healthy === true,
+      async () => host?.state().serviceReadiness["com.example.notes.add@1"]?.healthy === true,
       "ready service state",
     );
     expect(host.state().serviceReadiness["com.example.notes.add@1"]?.healthy).toBe(true);
