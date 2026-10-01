@@ -14,6 +14,7 @@ import type {
 import type { GatewayClient, Timeline } from "../api.ts";
 import { riskLaneLabel } from "../blocks.tsx";
 import { Modal } from "../Modal.tsx";
+import { PackageReach } from "../package-reach.tsx";
 import { useLocaleState, useT } from "../i18n/locale-context.tsx";
 import {
   UNAVAILABLE_KEYS,
@@ -1276,6 +1277,8 @@ export function InboxPanel({
                                   ? t("inbox.install.asksNothing")
                                   : t("inbox.install.asks").replace("{permissions}", item.permissions.join(", "))}
                               </p>
+                              {/* Each origin, key and browser-token provider approving agrees to; the install refuses anything else. */}
+                              <PackageReach reach={item.reach} />
                               <p style={{ margin: 0 }}>{t("inbox.install.lane").replace("{lane}", riskLaneLabel(t, item.riskTier))}</p>
                               <p className="cc-freshness" style={{ margin: 0 }}>
                                 {t("inbox.install.note")}

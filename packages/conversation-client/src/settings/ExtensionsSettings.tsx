@@ -12,6 +12,7 @@ import type {
   RestorablePackageView,
 } from "../api.ts";
 import { laneLabel } from "../package-provenance.ts";
+import { PackageReach, readReach } from "../package-reach.tsx";
 import { SettingsRow, ToolRow } from "./controls/SettingsRow.tsx";
 
 /**
@@ -445,6 +446,14 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
                 </dd>
                 <dt>{t("settings.extensions.installed.installedAt")}</dt>
                 <dd>{entry.activatedAt}</dd>
+                {readReach(entry.reach) !== undefined && (
+                  <>
+                    <dt>{t("settings.extensions.installed.reach")}</dt>
+                    <dd data-installed-reach="true">
+                      <PackageReach reach={readReach(entry.reach)} />
+                    </dd>
+                  </>
+                )}
                 {entry.resources !== undefined && (
                   <>
                     <dt>{t("settings.extensions.installed.resources")}</dt>

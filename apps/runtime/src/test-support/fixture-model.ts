@@ -9,6 +9,7 @@ import {
   captureSnapshot,
   createInstance,
   createTask,
+  directoryIndexPath,
   markEffectUnknown,
   modelReplyCard,
   prepareEffect,
@@ -48,7 +49,7 @@ import { checkForUpdates } from "../update-checks.ts";
 import { type ModelTurn, createModelTurn } from "../model-turn.ts";
 import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
 import { createAutomationTools } from "../automation-tools.ts";
-import { controlApp, createNodeTools, createRememberTool, type CommandToolDeps } from "../node-tools.ts";
+import { controlApp, createNodeTools, createRememberTool, createSearchDirectoryTool, type CommandToolDeps } from "../node-tools.ts";
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps, indexDirectoryPath } from "../project-finder.ts";
 import { createInvokeCapabilityTool } from "../invoke-capability-tool.ts";
@@ -1658,6 +1659,18 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           createdAt: instantSchema.parse(new Date().toISOString()),
         },
       };
+    }
+
+    /*
+     * The lookup package as the real directory search lists it: from the node's directory index, through the same tool
+     * a model calls, so the card shows what the listing says the package reaches before anybody presses Install.
+     */
+    if (/tìm gói tra từ|find the lookup package/i.test(input.text)) {
+      const tool = createSearchDirectoryTool({ indexPath: directoryIndexPath(process.env), newId: (prefix) => `${prefix}_lookup` });
+      const answer = await tool.execute({ query: "lookup" });
+      // No directory on this node: no card, and the turn is answered the ordinary way.
+      if (answer.hostCard === undefined) return undefined;
+      return { text: answer.text, block: answer.hostCard as unknown as MessageBlock };
     }
 
     /*

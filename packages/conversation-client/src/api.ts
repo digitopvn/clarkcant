@@ -518,6 +518,11 @@ export interface InstalledPackageView {
    * package's manifest, which is not the same as the light profile.
    */
   resources?: PackageResourcesView;
+  /**
+   * The origins, keys and browser-token providers its manifest declares, as install consent covered them. Absent when
+   * it reaches none, or when the node could not read its manifest.
+   */
+  reach?: unknown;
 }
 
 /** The node's resource decision for one package: the bounds its code runs in, or why it does not run. */
