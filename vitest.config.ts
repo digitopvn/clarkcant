@@ -62,7 +62,13 @@ export default defineConfig({
       "examples/*/test/**/*.spec.ts",
       "tools/test/**/*.spec.ts",
     ],
-    exclude: ["**/dist/**", "**/coverage/**", "**/node_modules/**"],
+    exclude: [
+      "**/dist/**",
+      "**/coverage/**",
+      "**/node_modules/**",
+      // These real-browser checks run in an isolated CI job and in verify:full, not alongside the unit-test workers.
+      "packages/widget-cli/test/service-simulator-real-browser.e2e.spec.ts",
+    ],
     environment: "node",
     reporters: ["default"],
     testTimeout: 20_000,

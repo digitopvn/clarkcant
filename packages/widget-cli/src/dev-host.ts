@@ -450,6 +450,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   const bridgeNonce = randomBytes(16).toString("hex");
   const framePrefix = `/dev/frame/${bridgeNonce}`;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
+  let vitePromise: Promise<ViteDevServer> | undefined;
   // Read on every pick, so switching the shell's picker control changes what the next pick returns.
   const artifacts = createDevArtifactBroker({ files: source.files, choosePick: () => state.pickFile });
   let reloadCount = 0;
@@ -461,6 +462,21 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   // Typed as the response itself rather than a structural lookalike: a cast here would be a comment about
   // Node's types instead of a fact about this code.
   const clients = new Set<ServerResponse>();
+
+  const getVite = async (): Promise<ViteDevServer> => {
+    if (vite !== undefined) return vite;
+    vitePromise ??= createDevModuleServer(true, server, port).then(
+      (created) => {
+        vite = created;
+        return created;
+      },
+      (error: unknown) => {
+        vitePromise = undefined;
+        throw error;
+      },
+    );
+    return vitePromise;
+  };
 
   const server: Server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
@@ -633,9 +649,9 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
         response.setHeader("access-control-allow-origin", "null");
         response.setHeader("vary", "Origin");
       }
-      vite ??= await createDevModuleServer(true, server, port);
+      const moduleServer = await getVite();
       request.url = "/src/dev-frame-runtime.ts";
-      vite.middlewares(request, response, () => {
+      moduleServer.middlewares(request, response, () => {
         response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         response.end("widget runtime module not found\n");
       });
@@ -743,8 +759,8 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
        * workspace's sources the way the app's own build does. Handing the request over rather than answering it is
        * what keeps the preview the production renderer instead of a second implementation of it.
        */
-      vite ??= await createDevModuleServer(true, server, port);
-      vite.middlewares(request, response, () => {
+      const moduleServer = await getVite();
+      moduleServer.middlewares(request, response, () => {
         response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         response.end("not found\n");
       });
@@ -756,8 +772,8 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
         response.setHeader("access-control-allow-origin", "null");
         response.setHeader("vary", "Origin");
       }
-      vite ??= await createDevModuleServer(true, server, port);
-      vite.middlewares(request, response, () => {
+      const moduleServer = await getVite();
+      moduleServer.middlewares(request, response, () => {
         response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         response.end("module not found\n");
       });
@@ -848,7 +864,8 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       for (const client of clients) client.end();
       clients.clear();
       lease.close();
-      await vite?.close();
+      const activeVite = await vitePromise?.catch(() => undefined);
+      await activeVite?.close();
       await new Promise<void>((done) => server.close(() => done()));
     },
   };
