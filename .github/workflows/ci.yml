@@ -248,6 +248,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Widget dev-host module integration
+        run: pnpm run test:widget-dev-host
+
       - name: Install Chromium and Linux dependencies
         if: runner.os == 'Linux'
         run: pnpm exec playwright install --with-deps chromium

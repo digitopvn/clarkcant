@@ -69,6 +69,8 @@ export default defineConfig({
       // Real-browser checks run in an isolated CI job and in verify:full, not alongside the unit-test workers.
       "packages/widget-cli/test/service-simulator-real-browser.e2e.spec.ts",
       "packages/widget-cli/test/reference-theme-preview.spec.ts",
+      // The runtime module integration starts a real Vite server and runs separately to avoid worker contention.
+      "packages/widget-cli/test/dev-host.spec.ts",
     ],
     environment: "node",
     reporters: ["default"],
