@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { posix, resolve } from "node:path";
 
+import { DEFAULT_RESOURCE_PROFILE, type EngineCapacity, RESOURCE_PROFILES, type ResourceProfile } from "@clarkcant/contracts";
+
 /**
  * The container a package's service facet runs in.
  *
@@ -194,6 +196,61 @@ async function isRootlessDocker(run: EngineRunner, timeoutMs: number): Promise<b
   }
 }
 
+/**
+ * What the engine says about the machine it runs containers on: its memory, its CPUs, and whether it enforces the
+ * memory and CPU limits a profile sets.
+ *
+ * Asked separately from `detectServiceEngine`, and only when a package asks for more than the light profile, so a node
+ * that runs only light services asks nothing new of its engine. An answer that cannot be read leaves a field undefined,
+ * and `decideResourceProfile` then grants without that check and says so; it never guesses a number.
+ *
+ * Docker reports `MemoryLimit` and `CPUCfsQuota`, which are false where the daemon cannot apply the limits (rootless
+ * without cgroup v2 delegation, or a kernel without the controllers). Podman reports the cgroup controllers its user may
+ * use; without `memory` and `cpu` among them a rootless Podman accepts the flags and does not apply them.
+ */
+export async function readEngineCapacity(
+  engine: ContainerEngineName,
+  options: ContainerControlOptions = {},
+): Promise<EngineCapacity> {
+  const run = options.run ?? runEngine;
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const positive = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+  if (engine === "docker") {
+    const format = "{{json .MemTotal}} {{json .NCPU}} {{json .MemoryLimit}} {{json .CPUCfsQuota}}";
+    const answer = await run(engine, ["info", "--format", format], timeoutMs);
+    if (answer.status !== 0) return {};
+    const [memory, cpus, memoryLimit, cpuQuota] = answer.stdout
+      .trim()
+      .split(/\s+/)
+      .map((field): unknown => {
+        try {
+          return JSON.parse(field);
+        } catch {
+          return undefined;
+        }
+      });
+    return {
+      memoryBytes: positive(memory),
+      cpus: positive(cpus),
+      enforcesLimits: typeof memoryLimit === "boolean" && typeof cpuQuota === "boolean" ? memoryLimit && cpuQuota : undefined,
+    };
+  }
+  const answer = await run(engine, ["info", "--format", "{{json .Host}}"], timeoutMs);
+  if (answer.status !== 0) return {};
+  try {
+    const host = JSON.parse(answer.stdout) as { memTotal?: unknown; cpus?: unknown; cgroupControllers?: unknown };
+    const controllers: unknown[] | undefined = Array.isArray(host.cgroupControllers) ? host.cgroupControllers : undefined;
+    return {
+      memoryBytes: positive(host.memTotal),
+      cpus: positive(host.cpus),
+      enforcesLimits: controllers === undefined ? undefined : controllers.includes("memory") && controllers.includes("cpu"),
+    };
+  } catch {
+    return {};
+  }
+}
+
 /** A container name that is stable for one facet of one generation on one node, and valid for both engines. */
 export function serviceContainerName(input: { nodeId: string; generationId: string; facetId: string }): string {
   const digest = createHash("sha256")
@@ -217,6 +274,8 @@ export interface ServiceContainerSpec {
   user?: { uid: number; gid: number };
   /** The engine is Docker running rootless, as `detectServiceEngine` found it. */
   rootless?: boolean;
+  /** The profile the host granted. Defaults to `interactive-light`, the envelope every service ran in before profiles. */
+  profile?: ResourceProfile;
   image?: string;
 }
 
@@ -272,6 +331,7 @@ export function mountSource(path: string): string {
 export function serviceRunArgs(spec: ServiceContainerSpec): string[] {
   const user = spec.user ?? (spec.engine === "docker" && spec.rootless === true ? ROOTLESS_DOCKER_USER : serviceUser());
   const entry = posix.join("/pkg", spec.entry.replaceAll("\\", "/"));
+  const bounds = (spec.profile ?? RESOURCE_PROFILES[DEFAULT_RESOURCE_PROFILE]).container;
   return [
     "run",
     "-i",
@@ -288,13 +348,13 @@ export function serviceRunArgs(spec: ServiceContainerSpec): string[] {
     "--security-opt",
     "no-new-privileges",
     "--pids-limit",
-    "128",
+    String(bounds.pids),
     "--memory",
-    "256m",
+    `${String(bounds.memoryMib)}m`,
     "--cpus",
-    "1",
+    String(bounds.cpus),
     "--tmpfs",
-    "/tmp:rw,noexec,nosuid,size=16m",
+    `/tmp:rw,noexec,nosuid,size=${String(bounds.tmpfsMib)}m`,
     // Rootless Podman maps the container's ids into the user's own namespace; keeping the id is what lets the private
     // folder stay writable. Docker has no such flag: rootful Docker needs none, and rootless Docker is given the one id
     // that maps back to the person instead (`ROOTLESS_DOCKER_USER`).

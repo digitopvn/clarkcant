@@ -6,10 +6,13 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { RESOURCE_PROFILES, type ResourceProfile } from "@clarkcant/contracts";
+
 import {
   detectServiceEngine,
   ensureServiceImage,
   prepareServiceDataDir,
+  readEngineCapacity,
   removeServiceContainer,
   serviceContainerName,
   serviceRunArgs,
@@ -44,6 +47,30 @@ tried.env = Object.keys(process.env).filter((key) => key.startsWith("CC_") || ke
 process.stdout.write(JSON.stringify(tried));
 `;
 
+/**
+ * What the kernel applies to the container, read from inside it: the cgroup v2 limits and the size of `/tmp`. A
+ * second mode holds memory well past the light profile, page by page, so the limit is shown biting, not only set.
+ */
+const LIMITS_PROBE = `
+import { readFileSync, statfsSync } from "node:fs";
+const read = (path) => { try { return readFileSync(path, "utf8").trim(); } catch { return null; } };
+if (process.argv[2] === "hold") {
+  const held = [];
+  for (let mib = 0; mib < Number(process.argv[3]); mib += 16) held.push(Buffer.alloc(16 * 1024 * 1024, 1));
+  process.stdout.write(JSON.stringify({ held: held.length * 16 }));
+} else {
+  const tmp = statfsSync("/tmp");
+  process.stdout.write(JSON.stringify({
+    memory: read("/sys/fs/cgroup/memory.max"),
+    cpu: read("/sys/fs/cgroup/cpu.max"),
+    pids: read("/sys/fs/cgroup/pids.max"),
+    tmpBytes: tmp.blocks * tmp.bsize,
+  }));
+}
+`;
+
+const capacity = engine.available ? await readEngineCapacity(engine.engine) : {};
+
 let dir: string;
 let name: string;
 
@@ -55,6 +82,7 @@ describe.skipIf(!engine.available)("a service container on a real engine", () =>
     dir = mkdtempSync(join(tmpdir(), "cc-service-engine-"));
     mkdirSync(join(dir, "pkg"));
     writeFileSync(join(dir, "pkg", "probe.mjs"), PROBE);
+    writeFileSync(join(dir, "pkg", "limits.mjs"), LIMITS_PROBE);
     prepareServiceDataDir(join(dir, "data"));
     name = serviceContainerName({ nodeId: "node_test", generationId: `probe-${String(Date.now())}`, facetId: "probe" });
   }, 600_000);
@@ -103,6 +131,64 @@ describe.skipIf(!engine.available)("a service container on a real engine", () =>
     }
     expect(tried.env).toEqual([]);
   }, 180_000);
+
+  /** Runs the limits probe under a profile; settles with the exit status rather than failing, so a kill can be read. */
+  async function underProfile(profile: ResourceProfile, probeArgs: string[]): Promise<{ status: number | null; stdout: string }> {
+    if (!engine.available) throw new Error("unreachable");
+    const probeName = `${name}-${profile.name}-${String(probeArgs.length)}`;
+    const args = serviceRunArgs({
+      engine: engine.engine,
+      nodeId: "node_test",
+      name: probeName,
+      packageRoot: join(dir, "pkg"),
+      dataDir: join(dir, "data"),
+      entry: "limits.mjs",
+      profile,
+      ...(engine.rootless === true ? { rootless: true } : {}),
+    });
+    try {
+      return await new Promise((settle) => {
+        const child = execFile(engine.engine, [...args, ...probeArgs], { encoding: "utf8", timeout: 120_000 }, (error, stdout) =>
+          settle({ status: error === null ? 0 : typeof error.code === "number" ? error.code : null, stdout }),
+        );
+        child.stdin?.end();
+      });
+    } finally {
+      await removeServiceContainer(engine.engine, probeName);
+    }
+  }
+
+  // Only where the engine says it enforces limits: elsewhere (rootless without cgroup v2 delegation) the grant carries a
+  // note instead, which `resource-profiles.spec.ts` covers, and there is nothing in the kernel to read.
+  it.runIf(capacity.enforcesLimits === true)(
+    "applies the granted profile's memory, CPU, process and scratch limits in the kernel",
+    async () => {
+      for (const profile of [RESOURCE_PROFILES["interactive-light"], RESOURCE_PROFILES["interactive-heavy"]]) {
+        const answer = await underProfile(profile, []);
+        expect(answer.status, answer.stdout).toBe(0);
+        const applied = JSON.parse(answer.stdout) as { memory: string | null; cpu: string | null; pids: string | null; tmpBytes: number };
+        const { memoryMib, cpus, pids, tmpfsMib } = profile.container;
+        expect(applied.memory).toBe(String(memoryMib * 1024 * 1024));
+        expect(applied.cpu).toBe(`${String(cpus * 100_000)} 100000`);
+        expect(applied.pids).toBe(String(pids));
+        expect(applied.tmpBytes).toBe(tmpfsMib * 1024 * 1024);
+      }
+    },
+    240_000,
+  );
+
+  it.runIf(capacity.enforcesLimits === true)(
+    "stops a service that holds more memory than its profile, and lets the larger profile hold it",
+    async () => {
+      const light = await underProfile(RESOURCE_PROFILES["interactive-light"], ["hold", "768"]);
+      // The kernel's out-of-memory kill, which the engine reports as 128 + SIGKILL.
+      expect(light.status).toBe(137);
+      const heavy = await underProfile(RESOURCE_PROFILES["interactive-heavy"], ["hold", "768"]);
+      expect(heavy.status).toBe(0);
+      expect(JSON.parse(heavy.stdout)).toEqual({ held: 768 });
+    },
+    240_000,
+  );
 
   it("runs the notes package's service: a note is added, listed, and kept in the private folder", async () => {
     if (!engine.available) throw new Error("unreachable");
