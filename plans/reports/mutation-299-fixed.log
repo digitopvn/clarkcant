@@ -1,0 +1,34 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ❯ packages/conversation-client/test/widget-appearance-disclosure.spec.ts (3 tests | 1 failed) 17ms
+   ❯ fixed appearance disclosure (3)
+     ✓ accepts an explicit mode and keeps legacy definitions adaptive by default 3ms
+     × discloses the widget's own visual system in the gallery, detail and developer Lab 12ms
+     ✓ discloses directory claims without guessing a mode when the index did not provide one 1ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Start at  17:14:56
+   Duration  1.96s (import 66%, transform 33%, tests 1%)
+
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/conversation-client/test/widget-appearance-disclosure.spec.ts > fixed appearance disclosure > discloses the widget's own visual system in the gallery, detail and developer Lab
+AssertionError: expected '<ul class="cc-widget-grid" data-widge…' to contain 'data-widget-appearance="fixed"'
+
+Expected: "data-widget-appearance="fixed""
+Received: "<ul class="cc-widget-grid" data-widget-grid="true"><li class="cc-widget-card"><button type="button" class="cc-widget-card-btn" aria-label="Biểu đồ đường — Line chart over a dataset reference" data-widget-card="canvas.line@1"><span class="cc-widget-card-preview" inert=""><div class="cc-widget-preview" data-widget-preview="canvas.line@1"><figure class="cc-card" data-widget-role="chart" style="margin:0"><figcaption class="cc-card-head"><span class="cc-card-title">Số lần chạy theo tuần</span><span class="cc-freshness cc-badge" data-freshness="sample" data-tone="warn">dữ liệu mẫu</span></figcaption><div class="cc-card-body"><div class="cc-chart-box"><svg class="cc-chart" viewBox="0 0 640 180" role="img" aria-label="Số lần chạy theo tuần: runs"><g aria-hidden="true"><g><line class="grid" x1="36" x2="628" y1="156" y2="156"></line><text class="label" x="30" y="156" text-anchor="end" dominant-baseline="middle">0</text></g><g><line class="grid" x1="36" x2="628" y1="121.5" y2="121.5"></line><text class="label" x="30" y="121.5" text-anchor="end" dominant-baseline="middle">50</text></g><g><line class="grid" x1="36" x2="628" y1="87" y2="87"></line><text class="label" x="30" y="87" text-anchor="end" dominant-baseline="middle">100</text></g><g><line class="grid" x1="36" x2="628" y1="52.5" y2="52.5"></line><text class="label" x="30" y="52.5" text-anchor="end" dominant-baseline="middle">150</text></g><g><line class="grid" x1="36" x2="628" y1="18" y2="18"></line><text class="label" x="30" y="18" text-anchor="end" dominant-baseline="middle">200</text></g><line class="axis" x1="36" y1="156" x2="628" y2="156"></line></g><path class="area" d="M 54 67.67999999999999 L 193 58.71000000000001 L 332 61.47 L 471 42.84 L 610 46.97999999999999 L 610 156 L 54 156 Z"></path><path class="series" d="M 54 67.67999999999999 L 193 58.71000000000001 L 332 61.47 L 471 42.84 L 610 46.97999999999999"></path><g class="datum"><circle class="point" cx="54" cy="67.67999999999999" r="3.5"><title>W36: 128</title></circle><text class="value" x="54" y="58.67999999999999" text-anchor="middle">128</text><text class="label" x="54" y="174" text-anchor="middle">W36</text></g><g class="datum"><circle class="point" cx="193" cy="58.71000000000001" r="3.5"><title>W37: 141</title></circle><text class="value" x="193" y="49.71000000000001" text-anchor="middle">141</text><text class="label" x="193" y="174" text-anchor="middle">W37</text></g><g class="datum"><circle class="point" cx="332" cy="61.47" r="3.5"><title>W38: 137</title></circle><text class="value" x="332" y="52.47" text-anchor="middle">137</text><text class="label" x="332" y="174" text-anchor="middle">W38</text></g><g class="datum"><circle class="point" cx="471" cy="42.84" r="3.5"><title>W39: 164</title></circle><text class="value" x="471" y="33.84" text-anchor="middle">164</text><text class="label" x="471" y="174" text-anchor="middle">W39</text></g><g class="datum"><circle class="point" cx="610" cy="46.97999999999999" r="3.5"><title>W40: 158</title></circle><text class="value" x="610" y="37.97999999999999" text-anchor="middle">158</text><text class="label" x="610" y="174" text-anchor="middle">W40</text></g></svg></div><span class="cc-sr-only" data-chart-summary="true">W36: 128, W37: 141, W38: 137, W39: 164, W40: 158</span><details class="cc-text-alt"><summary>Bảng số liệu</summary><div class="cc-table-scroll" role="region" aria-label="Bảng số liệu" tabindex="0"><table class="cc-table"><thead><tr><th scope="col">week</th><th scope="col">runs</th><th scope="col">failures</th><th scope="col">medianMinutes</th></tr></thead><tbody><tr><td>W36</td><td>128</td><td>6</td><td>4.2</td></tr><tr><td>W37</td><td>141</td><td>4</td><td>3.9</td></tr><tr><td>W38</td><td>137</td><td>9</td><td>4.6</td></tr><tr><td>W39</td><td>164</td><td>3</td><td>3.4</td></tr><tr><td>W40</td><td>158</td><td>5</td><td>3.6</td></tr></tbody></table></div></details></div></figure></div></span><span class="cc-widget-card-meta"><span class="cc-widget-card-name">Biểu đồ đường</span><span class="cc-widget-card-family">trend</span><span class="cc-widget-card-desc">Line chart over a dataset reference</span><span class="cc-widget-card-source">Built-in</span></span></button></li></ul>"
+
+ ❯ packages/conversation-client/test/widget-appearance-disclosure.spec.ts:20:106
+     18|   });
+     19|   it("discloses the widget's own visual system in the gallery, detail …
+     20|     expect(renderToStaticMarkup(createElement(WidgetGallery, { entries…
+       |                                                                                                          ^
+     21|     for (const mode of ["browse", "develop"] as const) {
+     22|       const html = renderToStaticMarkup(createElement(WidgetLibrarySur…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

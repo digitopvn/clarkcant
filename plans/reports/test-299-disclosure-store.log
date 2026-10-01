@@ -1,0 +1,25 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ❯ packages/conversation-client/test/widget-appearance-disclosure.spec.ts (0 test)
+ ✓ packages/conversation-client/test/appearance.spec.ts (13 tests) 166ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/conversation-client/test/widget-appearance-disclosure.spec.ts [ packages/conversation-client/test/widget-appearance-disclosure.spec.ts ]
+Error: Cannot find package 'react-dom/server' imported from D:/wt299/packages/conversation-client/test/widget-appearance-disclosure.spec.ts
+ ❯ packages/conversation-client/test/widget-appearance-disclosure.spec.ts:2:1
+      1| import { createElement } from "react";
+      2| import { renderToStaticMarkup } from "react-dom/server";
+       | ^
+      3| import { describe, expect, it } from "vitest";
+      4| import { libraryEntries } from "@clarkcant/widget-catalog";
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  13 passed (13)
+   Start at  16:53:03
+   Duration  1.37s (import 60%, transform 26%, tests 13%)
+

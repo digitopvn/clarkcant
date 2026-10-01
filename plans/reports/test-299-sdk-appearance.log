@@ -1,0 +1,66 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ❯ packages/widget-sdk/test/runtime.spec.ts (35 tests | 1 failed) 20132ms
+   ❯ read-only widget appearance (3)
+     × publishes init before mount, freezes a copy and changes no semantic or state revision 20009ms
+     ✓ refuses foreign nonce, inconsistent revisions, raw documents and malformed token values 2ms
+     ✓ still handshakes with a v1 host and ignores an unoffered appearance extension 1ms
+   ✓ the widget runtime handshake (5)
+     ✓ sends nothing until init arrives, but can be subscribed to before it 1ms
+     ✓ refuses a second init, so a frame cannot be given two identities 0ms
+     ✓ refuses a host that speaks a different protocol 1ms
+     ✓ ignores a message whose nonce is not this frame's 1ms
+     ✓ forwards props to subscribers and lets them be read 0ms
+   ✓ what the runtime sends (14)
+     ✓ refuses a stale write locally instead of asking the host to arbitrate it 1ms
+     ✓ keeps the state revision apart from the instance revision 0ms
+     ✓ resolves a write only once the host commits it, and rejects with the host's reason 0ms
+     ✓ emits events and publishes a semantic summary 0ms
+     ✓ publishes the named values a widget shows, only when it gives some 0ms
+     ✓ resolves an action only when the host answers it 1ms
+     ✓ resolves an action with what the service answered 0ms
+     ✓ gives each call of the same action its own answer, whichever comes back first 0ms
+     ✓ does not settle a call with an answer that names another action 0ms
+     ✓ tells the widget which service-backed actions can run, and why one cannot 1ms
+     ✓ ignores an availability message from the wrong nonce 0ms
+     ✓ rejects an action the host refused, and says what the host said 0ms
+     ✓ refuses to even ask for a capability the host did not broker 0ms
+     ✓ asks the host for chrome instead of performing it 0ms
+   ✓ the widget lifecycle (3)
+     ✓ suspends, resumes on the next props update, and disposes once 1ms
+     ✓ refuses to send anything after disposal 0ms
+     ✓ rejects a pending action when the host disposes the frame 0ms
+   ✓ the artifacts@1 extension (10)
+     ✓ refuses locally when the host did not offer it, and sends nothing 0ms
+     ✓ resolves a pick the person closed as nothing chosen, not as an error 1ms
+     ✓ reads a range as bytes and reports whether the file ended 0ms
+     ✓ carries a host refusal to the widget with its code 0ms
+     ✓ sends writes in order, each at the offset the previous one left, and finalizes after the last 30ms
+     ✓ refuses a chunk larger than one bridge message before sending it 0ms
+     ✓ offers no filesystem on the author surface 0ms
+     ✓ queues requests past the host's in-flight limit and sends each as an earlier one is answered 47ms
+     ✓ rejects the requests still queued when the host disposes the frame 16ms
+     ✓ discards a file after the writes still on their way, and carries a refusal with its code 15ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/widget-sdk/test/runtime.spec.ts > read-only widget appearance > publishes init before mount, freezes a copy and changes no semantic or state revision
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ packages/widget-sdk/test/runtime.spec.ts:18:3
+     16|
+     17| describe("read-only widget appearance", () => {
+     18|   it("publishes init before mount, freezes a copy and changes no seman…
+       |   ^
+     19|     const bus = channel();
+     20|     const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 34 passed (35)
+   Start at  16:26:47
+   Duration  21.32s (tests 95%, import 4%, transform 2%)
+

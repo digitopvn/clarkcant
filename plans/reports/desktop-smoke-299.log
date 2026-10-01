@@ -1,0 +1,267 @@
+$ electron . --smoke-test
+Downloading Electron binary...
+
+{
+  "mode": "smoke-test",
+  "rendererUrl": "file:///D:/wt299/apps/desktop/src/shell.html",
+  "observed": {
+    "bridgePresent": true,
+    "bridgeMethods": [
+      "attachWidget",
+      "closeWindow",
+      "detachWidget",
+      "focusWindow",
+      "getSession",
+      "minimizeWindow",
+      "notify",
+      "onNotificationClicked",
+      "onWidgetReattached",
+      "onWindowStateChanged",
+      "openExternal",
+      "pickDirectory",
+      "pickFile",
+      "requestCredential",
+      "resizeWindowPreset",
+      "restoreWindow",
+      "saveFile",
+      "setCompactMode",
+      "setFullScreen",
+      "setKeepRunningOnWindowClose",
+      "setWindowMode",
+      "status",
+      "updateAppearance"
+    ],
+    "nodeReachable": false,
+    "status": {
+      "ok": true,
+      "shell": "clarkcant-desktop",
+      "electron": "44.3.0",
+      "chrome": "152.0.7977.78",
+      "node": "24.20.0",
+      "contextIsolation": true,
+      "nodeIntegration": false,
+      "sandboxed": true,
+      "keepRunningOnWindowClose": true,
+      "window": {
+        "mode": "normal",
+        "alwaysOnTop": false,
+        "fullScreen": false
+      },
+      "channels": [
+        "desktop:openExternal",
+        "desktop:notify",
+        "desktop:pickDirectory",
+        "desktop:pickFile",
+        "desktop:saveFile",
+        "desktop:requestCredential",
+        "desktop:setKeepRunning",
+        "desktop:getStatus",
+        "desktop:getSession",
+        "desktop:setCompactMode",
+        "desktop:setWindowMode",
+        "desktop:resizeWindowPreset",
+        "desktop:restoreWindow",
+        "desktop:focusWindow",
+        "desktop:minimizeWindow",
+        "desktop:setFullScreen",
+        "desktop:closeWindow",
+        "desktop:detachWidget",
+        "desktop:attachWidget",
+        "desktop:updateAppearance",
+        "detached:bootstrap",
+        "detached:intent",
+        "detached:release"
+      ]
+    },
+    "refusedHttpScheme": {
+      "ok": false,
+      "refused": "scheme http: is not allowed; only https is opened externally"
+    },
+    "refusedFileScheme": {
+      "ok": false,
+      "refused": "scheme file: is not allowed; only https is opened externally"
+    },
+    "refusedScriptScheme": {
+      "ok": false,
+      "refused": "scheme javascript: is not allowed; only https is opened externally"
+    },
+    "refusedVaguePurpose": {
+      "ok": false,
+      "refused": "purpose must explain what the secret is for, in at least 8 characters"
+    },
+    "refusedNonBoolean": {
+      "ok": false,
+      "refused": "keep must be a boolean"
+    },
+    "compact": {
+      "ok": true,
+      "mode": "compact",
+      "bounds": {
+        "x": 730,
+        "y": 316,
+        "width": 132,
+        "height": 56
+      },
+      "minimumSize": [
+        20,
+        50
+      ],
+      "alwaysOnTop": false
+    },
+    "pinned": {
+      "ok": true,
+      "mode": "compact",
+      "bounds": {
+        "x": 730,
+        "y": 316,
+        "width": 132,
+        "height": 56
+      },
+      "minimumSize": [
+        20,
+        50
+      ],
+      "alwaysOnTop": true
+    },
+    "expanded": {
+      "ok": true,
+      "mode": "normal",
+      "bounds": {
+        "x": 730,
+        "y": 316,
+        "width": 1100,
+        "height": 760
+      },
+      "minimumSize": [
+        20,
+        50
+      ],
+      "alwaysOnTop": true
+    },
+    "refusedUnknownMode": {
+      "ok": false,
+      "refused": "that is not a window mode this build knows"
+    },
+    "refusedNonBooleanFullScreen": {
+      "ok": false,
+      "refused": "full screen must be true or false"
+    }
+  },
+  "detachedObserved": {
+    "verbs": [
+      "bootstrap",
+      "intent",
+      "onAppearance",
+      "release"
+    ],
+    "bootstrapOk": true,
+    "bootstrapKeys": "[\"appearance\",\"instanceRef\",\"live\",\"title\",\"widgetKind\"]"
+  },
+  "checks": [
+    [
+      "the preload bridge is present",
+      true
+    ],
+    [
+      "the bridge exposes exactly the expected named methods",
+      true
+    ],
+    [
+      "the shell bridge cannot reach the detached window's own channels",
+      true
+    ],
+    [
+      "Node is unreachable from the renderer",
+      true
+    ],
+    [
+      "the shell reports its own posture",
+      true
+    ],
+    [
+      "http is refused",
+      true
+    ],
+    [
+      "file: is refused",
+      true
+    ],
+    [
+      "a scheme that executes script is refused",
+      true
+    ],
+    [
+      "a vague credential purpose is refused",
+      true
+    ],
+    [
+      "a non-boolean keep flag is refused",
+      true
+    ],
+    [
+      "compact mode reads back the bounds Electron actually has",
+      true
+    ],
+    [
+      "the minimum size Electron reports is the twenty by fifty floor",
+      true
+    ],
+    [
+      "expanding restores the bounds Electron had before compact",
+      true
+    ],
+    [
+      "always on top is reported by the window, not by the model",
+      true
+    ],
+    [
+      "a window mode this build does not know is refused",
+      true
+    ],
+    [
+      "a full-screen request that is not a boolean is refused",
+      true
+    ],
+    [
+      "the initial detached snapshot is the exact host revision",
+      true
+    ],
+    [
+      "the live relay delivers one checked revision without reopening the window",
+      true
+    ],
+    [
+      "the updated bootstrap retains that same appearance revision",
+      true
+    ],
+    [
+      "a raw theme is refused before reaching the detached window",
+      true
+    ],
+    [
+      "the stand-in node was asked to move the lease to the detached surface",
+      true
+    ],
+    [
+      "a real detached window opened, and the host said so",
+      true
+    ],
+    [
+      "the bootstrap carries the widget and no credential",
+      true
+    ],
+    [
+      "the detached window reaches only its own verbs and read-only appearance subscription",
+      true
+    ],
+    [
+      "closing the window gives the lease back",
+      true
+    ],
+    [
+      "and the shell is told to take the instance back",
+      true
+    ]
+  ],
+  "failed": []
+}

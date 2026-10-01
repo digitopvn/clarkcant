@@ -1,0 +1,141 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ❯ packages/widget-host/test/session.spec.ts (44 tests | 1 failed | 43 skipped) 17ms
+   × initializes with the current appearance and restyles without a semantic/state write or remount 16ms
+   ↓ what the host advertises at init (2)
+     ↓ sends the exact nonce, and only the capabilities it will broker
+     ↓ posts exactly one init for one call, so a caller that only calls it cannot make the frame see two
+   ↓ what the host refuses (9)
+     ↓ refuses a message from a window that is not this instance's frame
+     ↓ refuses a forged nonce, which is the check origin cannot make for an opaque frame
+     ↓ refuses a message that is not in the codec at all
+     ↓ bounds a message before reading it
+     ↓ stops a frame that keeps talking
+     ↓ refuses a write planned against a revision that has moved
+     ↓ refuses an action binding the host never accepted for this instance
+     ↓ refuses a capability it did not broker
+     ↓ refuses anything after disposal
+   ↓ what the host does with an accepted message (12)
+     ↓ applies a state write, bumps the revision, and echoes it back
+     ↓ names the state revision at init apart from the instance revision, and accepts a write against it
+     ↓ answers a write only after the node commits it, keeping view-state keys the node never stored
+     ↓ keeps a write of view-state keys alone in the frame, without a round trip or a new revision
+     ↓ answers a refused write with the committed state and the node's reason
+     ↓ runs an accepted action once and answers it
+     ↓ passes a service's answer to the frame, and only when there is one
+     ↓ names the invocation it answers, and keeps the reason short enough for the frame to accept
+     ↓ answers a repeated invocation id without running it again
+     ↓ routes every host request to the host's own chrome
+     ↓ records a semantic summary for a reader who cannot see the widget
+     ↓ hands what the frame says it shows to the host as a proposal, never with actions
+   ↓ the frame lifecycle from the host side (3)
+     ↓ tells the frame it is suspended, and why
+     ↓ disposes once and says so
+     ↓ keeps a list of what it refused, so a session can be audited
+   ↓ which service-backed actions can run (3)
+     ↓ holds what it is told until init, then tells the frame once
+     ↓ sends a change and nothing for the same answer twice
+     ↓ says nothing for a frame with no service-backed actions, so an older widget runtime never sees the message
+   ↓ the artifacts@1 extension (14)
+     ↓ is advertised only when the host has a broker to hand requests to
+     ↓ refuses a request the host did not offer, and still answers it so the widget is not left waiting
+     ↓ hands the typed request to the broker and posts its answer back under the same id
+     ↓ records the operation and the id, never the name or type the widget asked with
+     ↓ turns a broker failure into a fixed refusal, never the message the broker threw
+     ↓ bounds how many requests may wait at once, and refuses a duplicate id that is still waiting
+     ↓ paces artifact requests at a rate apart from other messages, and answers the one it turns away
+     ↓ spends the rate on every message that claims to be a file request, before checking it
+     ↓ spends nothing on a message from another window, so another widget cannot use up this frame's rate or budget
+     ↓ does not answer a rate-limited message that is not this frame's to answer
+     ↓ keeps only the latest entries of what the frame said, so a frame that keeps asking cannot grow the record
+     ↓ keeps only the latest refusals, so a frame that keeps failing cannot grow the record
+     ↓ lets one chunk through under its own ceiling, and still bounds it
+     ↓ does not answer after the frame is gone
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 43 skipped (44)
+   Start at  17:14:53
+   Duration  1.24s (import 68%, transform 30%, tests 1%)
+
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/widget-host/test/session.spec.ts > initializes with the current appearance and restyles without a semantic/state write or remount
+AssertionError: expected { kind: 'init', …(12) } to match object { kind: 'appearance.changed', …(3) }
+(10 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -1,29 +1,29 @@
+  {
+    "appearance": {
+      "appearanceApi": 2,
+-     "revision": "bf9d3bfc960b8265",
+-     "scheme": "dark",
++     "revision": "07c5b2aac2b4717c",
++     "scheme": "light",
+      "themeRef": "builtin:clark",
+      "tokenContractVersion": 2,
+      "tokens": {
+        "color": {
+-         "accent": "#B8AEDC",
+-         "border": "#27292D",
+-         "canvas": "#111317",
+-         "card": "#17191D",
+-         "code": "#101318",
+-         "danger": "#C8757C",
+-         "elevated": "#1B1D22",
+-         "focus": "#D8D2F0",
+-         "onAccent": "#111317",
+-         "success": "#8EBCA3",
+-         "text": "#E7E7EA",
+-         "textMuted": "#A0A2AB",
+-         "textTertiary": "#858994",
+-         "warning": "#D1AC68",
+-         "window": "#14161A",
++         "accent": "#6B5FA8",
++         "border": "#E5E5E1",
++         "canvas": "#F7F7F5",
++         "card": "#FFFFFF",
++         "code": "#F2F2EF",
++         "danger": "#A33B45",
++         "elevated": "#FFFFFF",
++         "focus": "#5B4FA0",
++         "onAccent": "#FFFFFF",
++         "success": "#3F6B52",
++         "text": "#1A1A1C",
++         "textMuted": "#5C5E66",
++         "textTertiary": "#696C74",
++         "warning": "#7A5B1E",
++         "window": "#FFFFFF",
+        },
+        "identity": {
+          "border": {
+            "style": "solid",
+            "width": 1,
+@@ -154,9 +154,9 @@
+            "size": "0.75rem",
+          },
+        },
+      },
+    },
+-   "kind": "appearance.changed",
++   "kind": "init",
+    "nonce": "nonce-issued-for-this-frame",
+-   "revision": "bf9d3bfc960b8265",
++   "revision": 7,
+  }
+
+ ❯ packages/widget-host/test/session.spec.ts:67:25
+     65|   expect(posted).toHaveLength(1);
+     66|   session.announceAppearance(dark);
+     67|   expect(posted.at(-1)).toMatchObject({ kind: "appearance.changed", no…
+       |                         ^
+     68|   expect(posted.map((message) => message.kind)).toEqual(["init", "appe…
+     69|   expect(ran).toEqual([]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

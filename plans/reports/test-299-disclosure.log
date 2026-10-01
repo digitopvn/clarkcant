@@ -1,0 +1,10 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ✓ packages/conversation-client/test/widget-appearance-disclosure.spec.ts (3 tests) 20ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  16:53:40
+   Duration  2.16s (import 69%, transform 30%, tests 1%)
+

@@ -1,0 +1,14 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ✓ apps/desktop/test/detached-window.spec.ts (17 tests) 19ms
+ ✓ packages/conversation-client/test/appearance.spec.ts (12 tests) 165ms
+ ✓ packages/widget-host/test/session.spec.ts (44 tests) 758ms
+   ✓ the artifacts@1 extension (14)
+     ✓ keeps only the latest entries of what the frame said, so a frame that keeps asking cannot grow the record 623ms
+
+ Test Files  3 passed (3)
+      Tests  73 passed (73)
+   Start at  16:44:54
+   Duration  1.98s (import 51%, transform 26%, tests 22%)
+

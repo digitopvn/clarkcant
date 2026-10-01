@@ -1,0 +1,23 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ✓ packages/design-tokens/test/stylesheet.spec.ts (9 tests) 4ms
+ ✓ packages/widget-sdk/test/dom-appearance.spec.ts (1 test) 11ms
+ ✓ apps/desktop/test/detached-window.spec.ts (17 tests) 20ms
+ ✓ packages/widget-sdk/test/runtime.spec.ts (35 tests) 114ms
+ ✓ packages/conversation-client/test/appearance.spec.ts (14 tests) 204ms
+ ✓ packages/conversation-client/test/widget-appearance-disclosure.spec.ts (3 tests) 21ms
+ ✓ packages/widget-host/test/session.spec.ts (44 tests) 752ms
+   ✓ the artifacts@1 extension (14)
+     ✓ keeps only the latest entries of what the frame said, so a frame that keeps asking cannot grow the record 606ms
+ ✓ apps/runtime/test/directory-appearance.spec.ts (1 test) 9ms
+
+ Test Files  8 passed (8)
+      Tests  124 passed (124)
+   Start at  17:17:52
+   Duration  4.31s (import 61%, transform 31%, tests 8%)
+
+  Transform  transforming modules took 4.25s · 31% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

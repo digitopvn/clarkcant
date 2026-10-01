@@ -1,0 +1,11 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ✓ apps/desktop/test/security.spec.ts (30 tests) 6ms
+ ✓ apps/desktop/test/detached-window.spec.ts (18 tests) 20ms
+
+ Test Files  2 passed (2)
+      Tests  48 passed (48)
+   Start at  17:40:07
+   Duration  1.27s (import 68%, transform 30%, tests 2%)
+

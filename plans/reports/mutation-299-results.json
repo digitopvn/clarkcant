@@ -1,0 +1,26 @@
+[
+  {
+    "name": "initial",
+    "detected": true,
+    "restored": true,
+    "exit": 1
+  },
+  {
+    "name": "live",
+    "detected": true,
+    "restored": true,
+    "exit": 1
+  },
+  {
+    "name": "readonly",
+    "detected": true,
+    "restored": true,
+    "exit": 1
+  },
+  {
+    "name": "fixed",
+    "detected": true,
+    "restored": true,
+    "exit": 1
+  }
+]

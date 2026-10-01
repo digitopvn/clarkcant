@@ -1,0 +1,3 @@
+$ tsc -p tsconfig.json && tsc -p tsconfig.web.json
+packages/widget-sdk/test/dom-appearance.spec.ts(26,78): error TS2339: Property 'fast' does not exist on type '{ easing: string; bounce: string; glow: string; normal: string; orb: string; micro: string; panel: string; enter: string; exit: string; }'.
+[ELIFECYCLE] Command failed with exit code 2.

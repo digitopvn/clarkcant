@@ -1,0 +1,10 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ✓ packages/widget-sdk/test/dom-appearance.spec.ts (1 test) 11ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  16:48:58
+   Duration  1.17s (import 69%, transform 30%, tests 1%)
+

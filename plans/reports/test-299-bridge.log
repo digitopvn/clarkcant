@@ -1,0 +1,13 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ✓ packages/widget-sdk/test/runtime.spec.ts (35 tests) 164ms
+ ✓ packages/widget-host/test/session.spec.ts (43 tests) 728ms
+   ✓ the artifacts@1 extension (14)
+     ✓ keeps only the latest entries of what the frame said, so a frame that keeps asking cannot grow the record 596ms
+
+ Test Files  2 passed (2)
+      Tests  78 passed (78)
+   Start at  16:29:06
+   Duration  1.82s (import 48%, tests 30%, transform 21%)
+

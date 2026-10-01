@@ -1,0 +1,10 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ✓ apps/desktop/test/security.spec.ts (30 tests) 6ms
+
+ Test Files  1 passed (1)
+      Tests  30 passed (30)
+   Start at  17:22:19
+   Duration  152ms (import 50%, transform 37%, tests 9%, worker 4%)
+

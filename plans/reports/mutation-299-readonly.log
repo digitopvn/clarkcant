@@ -1,0 +1,73 @@
+
+ RUN  v5.0.0 D:/wt299
+
+ ❯ packages/widget-sdk/test/runtime.spec.ts (35 tests | 1 failed | 32 skipped) 17ms
+   ❯ read-only widget appearance (3)
+     × publishes init before mount, freezes a copy and changes no semantic or state revision 13ms
+     ✓ refuses foreign nonce, inconsistent revisions, raw documents and malformed token values 2ms
+     ✓ still handshakes with a v1 host and ignores an unoffered appearance extension 0ms
+   ↓ the widget runtime handshake (5)
+     ↓ sends nothing until init arrives, but can be subscribed to before it
+     ↓ refuses a second init, so a frame cannot be given two identities
+     ↓ refuses a host that speaks a different protocol
+     ↓ ignores a message whose nonce is not this frame's
+     ↓ forwards props to subscribers and lets them be read
+   ↓ what the runtime sends (14)
+     ↓ refuses a stale write locally instead of asking the host to arbitrate it
+     ↓ keeps the state revision apart from the instance revision
+     ↓ resolves a write only once the host commits it, and rejects with the host's reason
+     ↓ emits events and publishes a semantic summary
+     ↓ publishes the named values a widget shows, only when it gives some
+     ↓ resolves an action only when the host answers it
+     ↓ resolves an action with what the service answered
+     ↓ gives each call of the same action its own answer, whichever comes back first
+     ↓ does not settle a call with an answer that names another action
+     ↓ tells the widget which service-backed actions can run, and why one cannot
+     ↓ ignores an availability message from the wrong nonce
+     ↓ rejects an action the host refused, and says what the host said
+     ↓ refuses to even ask for a capability the host did not broker
+     ↓ asks the host for chrome instead of performing it
+   ↓ the widget lifecycle (3)
+     ↓ suspends, resumes on the next props update, and disposes once
+     ↓ refuses to send anything after disposal
+     ↓ rejects a pending action when the host disposes the frame
+   ↓ the artifacts@1 extension (10)
+     ↓ refuses locally when the host did not offer it, and sends nothing
+     ↓ resolves a pick the person closed as nothing chosen, not as an error
+     ↓ reads a range as bytes and reports whether the file ended
+     ↓ carries a host refusal to the widget with its code
+     ↓ sends writes in order, each at the offset the previous one left, and finalizes after the last
+     ↓ refuses a chunk larger than one bridge message before sending it
+     ↓ offers no filesystem on the author surface
+     ↓ queues requests past the host's in-flight limit and sends each as an earlier one is answered
+     ↓ rejects the requests still queued when the host disposes the frame
+     ↓ discards a file after the writes still on their way, and carries a refusal with its code
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed | 32 skipped (35)
+   Start at  17:14:55
+   Duration  1.22s (import 68%, transform 30%, tests 1%)
+
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/widget-sdk/test/runtime.spec.ts > read-only widget appearance > publishes init before mount, freezes a copy and changes no semantic or state revision
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ packages/widget-sdk/test/runtime.spec.ts:33:52
+     31|     bus.deliver(initMessage({ appearance: dark, extensions: [APPEARANC…
+     32|     const initial = runtime.api().appearance.current();
+     33|     expect(Object.isFrozen(initial?.tokens.color)).toBe(true);
+       |                                                    ^
+     34|     expect(Reflect.set(initial!.tokens.color, "canvas", "#ffffff")).to…
+     35|     expect(initial?.tokens.color.canvas).toBe(dark.tokens.color.canvas…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
