@@ -63,7 +63,10 @@ describe("service simulator in Chromium", () => {
     await eventually(async () => (await page.locator("body").getAttribute("data-dev-theme")) === "dark", "dark theme");
 
     await page.getByLabel("Readiness for com.example.notes.add@1").selectOption("ready");
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await eventually(
+      async () => host.state().serviceReadiness["com.example.notes.add@1"]?.healthy === true,
+      "ready service state",
+    );
     expect(host.state().serviceReadiness["com.example.notes.add@1"]?.healthy).toBe(true);
     await eventually(async () => !(await add.isDisabled()), "ready add binding");
     await add.click();
