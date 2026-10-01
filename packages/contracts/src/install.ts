@@ -4,6 +4,7 @@ import { effectCategorySchema, instantSchema, platformSchema, principalIdSchema,
 import { capabilityRefSchema } from "./grants.ts";
 import { resourceRequestSchema } from "./resource-profiles.ts";
 import { networkOriginSchema } from "./network-origin.ts";
+import { browserTokensProblems, browserTokensSchema } from "./browser-token.ts";
 import { serviceEgressProblems, serviceEgressSchema } from "./service-egress.ts";
 
 export { networkOriginProblem, networkOriginSchema } from "./network-origin.ts";
@@ -77,6 +78,11 @@ export const uiFacetSchema = z.strictObject({
   entry: packagePathSchema,
   definition: packagePathSchema,
   isolation: z.literal("isolated-ui"),
+  /**
+   * Providers this UI needs a short-lived, scoped browser token from. Absent means the frame is given none: the
+   * exception to "a widget never holds a provider credential" exists only where a package declares it.
+   */
+  browserTokens: browserTokensSchema.optional(),
 });
 
 /**
@@ -278,6 +284,11 @@ export function manifestProblems(manifest: PackageManifest): string[] {
     } else if (RESERVED_CAPABILITY_NAMESPACES.includes(manifest.id.split(".")[0] ?? "")) {
       problems.push(`id: ${manifest.id} is under ${manifest.id.split(".")[0] ?? ""}, which the node's own capabilities use`);
     }
+  }
+
+  for (const facet of manifest.facets) {
+    if (facet.kind !== "ui" || facet.browserTokens === undefined) continue;
+    for (const problem of browserTokensProblems(facet.browserTokens)) problems.push(`facet ${facet.id}: browserTokens ${problem}`);
   }
 
   const refs = new Set<string>();
