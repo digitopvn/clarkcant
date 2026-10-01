@@ -1486,11 +1486,13 @@ nào, kể cả một ref bị chép sang widget khác, đều nhận `JOB_NOT_F
 
 Những gì job báo cáo là của chính service: tiến độ chỉ đến từ `notifications/progress` của MCP mà service gửi cho lời
 gọi đó, và các tệp nó trả về trở thành `ArtifactRef` mà widget đọc được qua `artifacts@1`. Việc đọc job có ngân sách
-riêng cho mỗi phiên frame (tối đa 60 lần dồn, sau đó 2 lần mỗi giây, tối đa 4 lần chờ cùng lúc), tách khỏi ngân sách
+riêng cho mỗi phiên frame (tối đa 60 lần dồn, sau đó 5 lần mỗi giây, tối đa 4 lần chờ cùng lúc), tách khỏi ngân sách
 message, nên widget đang theo dõi job không làm nghẽn các lời gọi bridge khác.
 
-Một job được chạy tối đa 30 phút thay vì hạn 60 giây của một lần bấm. Dừng trong hội thoại, Dừng khẩn cấp và việc tắt
-node đều huỷ nó, và trong lúc chạy nó nằm trong danh sách công việc đang chạy của node. Lệnh huỷ được báo cho service
+Một job được chạy tối đa 30 phút thay vì hạn 60 giây của một lần bấm; quá thời hạn đó nó kết thúc ở trạng thái thất
+bại. Trong lúc chạy, nó nằm trong danh sách công việc đang chạy của node (`GET /work`), và việc dừng nó ở đó
+(`POST /work/{id}/cancel`), Dừng khẩn cấp và việc tắt node đều huỷ nó. Nút Dừng của hội thoại kết thúc câu trả lời và
+một lần bấm còn đang chờ, không kết thúc một job đã chạy, giống như các công việc nền khác. Lệnh huỷ được báo cho service
 qua cơ chế huỷ của MCP; vì service có thể đã làm xong tác động trước khi nhận được, phần kết thúc ghi rằng job "may
 already have completed its effect" thay vì khẳng định không có gì xảy ra. Job còn mở khi node khởi động lại được đánh
 dấu thất bại kèm lời giải thích đó; nó không bao giờ tự chạy lại.

@@ -1484,11 +1484,13 @@ that never existed.
 
 What a job reports is the service's own: progress comes only from MCP `notifications/progress` the service sends for
 the call, and files it returns become `ArtifactRef`s the widget can read through `artifacts@1`. Job reads have their
-own budget per frame session (a burst of 60, then 2 a second, at most 4 waiting at once), separate from the message
+own budget per frame session (a burst of 60, then 5 a second, at most 4 waiting at once), separate from the message
 budget, so a widget following a job does not starve its other bridge calls.
 
-A job may run for up to 30 minutes instead of the 60-second press deadline. Stop in the conversation, emergency Stop
-and node shutdown cancel it, and it is listed with the node's running work while it runs. A cancel tells the service
+A job may run for up to 30 minutes instead of the 60-second press deadline; past that it ends as failed. While it
+runs it is listed with the node's running work (`GET /work`), and stopping it there (`POST /work/{id}/cancel`),
+emergency Stop and node shutdown cancel it. The conversation's Stop ends the reply and a press still waiting, not a
+job that is already running, the same as other background work. A cancel tells the service
 through MCP cancellation; because the service may have finished its effect before it heard, the ending says the job
 "may already have completed its effect" rather than claiming nothing happened. A job still open when the node
 restarts is marked failed with that explanation; it is never run again by itself.
