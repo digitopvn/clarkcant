@@ -258,9 +258,12 @@ export interface ActionInvocationResult {
   approvalRequired?: { approvalId: string };
   /**
    * What the action came to: `done`, `approval-required`, or `background` when the node's background lane took it and
-   * its result will arrive in the conversation. Absent from a node that predates it.
+   * its result will arrive in the conversation, or `job` when a package service started a durable job whose JobRef is
+   * the `output`. Absent from a node that predates it.
    */
-  outcome?: "done" | "approval-required" | "background";
+  outcome?: "done" | "approval-required" | "background" | "job";
+  /** For a `job` outcome: the job the service started, readable only by the widget binding that started it. */
+  job?: { jobId: string };
   /** For a `background` outcome: the run the node started. */
   background?: { workId: string; state: "running" | "queued" };
   /** A sentence the node wrote about the outcome, such as a workflow's summary of its steps. */

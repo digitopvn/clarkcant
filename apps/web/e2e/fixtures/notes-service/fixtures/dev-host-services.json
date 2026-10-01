@@ -19,6 +19,19 @@
       }
     },
     {
+      "actionBindingId": "binding_notes_export",
+      "capabilityRef": "com.example.notes.export@1",
+      "job": {
+        "steps": [
+          { "current": 1, "total": 3, "message": "exported step 1 of 3" },
+          { "current": 2, "total": 3, "message": "exported step 2 of 3" },
+          { "current": 3, "total": 3, "message": "exported step 3 of 3" }
+        ],
+        "output": "Exported 1 note(s).",
+        "error": "the export could not be written"
+      }
+    },
+    {
       "actionBindingId": "binding_notes_malformed",
       "capabilityRef": "com.example.notes.list@1",
       "outcome": {

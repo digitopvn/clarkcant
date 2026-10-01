@@ -36,6 +36,13 @@
           "effectCategory": "local-write"
         },
         {
+          "tool": "export_notes",
+          "ref": "com.example.notes.export@1",
+          "summary": "Export the notes to a text file, step by step, as a job the widget can follow and stop",
+          "effectCategory": "read",
+          "execution": { "kind": "job", "version": 1 }
+        },
+        {
           "tool": "list_notes",
           "ref": "com.example.notes.list@1",
           "summary": "List the notes the service keeps",

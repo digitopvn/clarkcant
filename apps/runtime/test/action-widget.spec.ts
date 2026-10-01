@@ -1612,7 +1612,7 @@ describe("a button whose capability runs as a durable job", () => {
     if (!asked.ok) throw new Error("unreachable");
     const approvalId = (asked.body.approvalRequired as { approvalId: string }).approvalId;
     const card = buildTimeline(services, { conversationId, afterSequence: 0 }).messages
-      .flatMap((message) => message.blocks)
+      .flatMap((message) => (message as { blocks: MessageBlock[] }).blocks)
       .find((block) => block.type === "approval-card" && block.approvalId === approvalId) as
       | Extract<MessageBlock, { type: "approval-card" }>
       | undefined;

@@ -167,6 +167,7 @@ describe("an answered press", () => {
     expect(actionResultMessage(vi, { ...base, outcome: "done", output: "42" })).toBe("42");
     expect(actionResultMessage(vi, { ...base, outcome: "done" })).toBe(MESSAGES_VI["widgets.action.done"]);
     expect(actionResultMessage(vi, { ...base, outcome: "background" })).toBe(MESSAGES_VI["widgets.action.background"]);
+    expect(actionResultMessage(vi, { ...base, outcome: "job", job: { jobId: "job_1" }, output: "job_1" })).toBe(MESSAGES_VI["widgets.action.job"]);
     expect(actionResultMessage(vi, { ...base, outcome: "approval-required", approvalRequired: { approvalId: "ap_1" } })).toBe(
       MESSAGES_VI["widgets.action.awaitingApproval"],
     );

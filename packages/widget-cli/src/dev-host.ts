@@ -18,6 +18,7 @@ import {
   type DevShellState,
 } from "./dev-shell.ts";
 import { createDevArtifactBroker, readFixtureFiles, type DevArtifactEvent, type DevFixtureFile } from "./dev-artifacts.ts";
+import { createDevJobBroker, type DevJobEvent } from "./dev-jobs.ts";
 import { openDevLeaseStore } from "./dev-lease.ts";
 import {
   actionAvailability,
@@ -79,6 +80,8 @@ export interface DevHost {
   reloads: () => number;
   /** What the simulated `artifacts@1` did — picks, creates, finalizes, exports, attaches — by name and size only. */
   artifactEvents: () => readonly DevArtifactEvent[];
+  /** What the simulated `jobs@1` did — starts, steps, endings, cancels — by job id and status. */
+  jobEvents: () => readonly DevJobEvent[];
   close: () => Promise<void>;
 }
 
@@ -340,7 +343,7 @@ function sendInit() {
     stateRevision: 0,
     brokeredCapabilities: Object.entries(state.capabilities).filter(([, decision]) => decision === "granted").map(([ref]) => ref),
     allowedOrigins: [],
-    extensions: ["artifacts@1"],
+    extensions: ["artifacts@1", "jobs@1"],
   }, "*");
 }
 frameElement?.addEventListener("load", sendInit);
@@ -365,6 +368,7 @@ window.addEventListener("message", async (event) => {
   const result = await response.json();
   frameElement.contentWindow?.postMessage(result, "*");
   appendLog("action " + String(data.actionBindingId) + " -> " + String(result.status));
+  void renderJobs();
 });
 
 /*
@@ -388,6 +392,67 @@ window.addEventListener("message", async (event) => {
   frameElement.contentWindow?.postMessage({ kind: "artifact-result", nonce: bridgeNonce, requestId: data.requestId, ...outcome }, "*");
   appendLog("artifacts " + String(data.request?.op) + " -> " + outcome.status + (outcome.code ? " " + outcome.code : ""));
 });
+
+/*
+ * jobs@1, answered by the dev host's simulated broker, and the shell's "Simulated jobs" list, which moves a job along.
+ * A widget reads its job by polling, so a step taken here reaches it on its next read, as a node's progress would.
+ */
+const jobList = document.querySelector("[data-dev-job-list]");
+async function renderJobs() {
+  if (!jobList) return;
+  const body = await (await fetch("/dev/api/jobs")).json();
+  jobList.replaceChildren(...body.jobs.map((job) => {
+    const item = document.createElement("li");
+    item.dataset.devJob = job.jobId;
+    item.dataset.devJobStatus = job.status;
+    const progress = job.progress ? " " + String(job.progress.current) + (job.progress.total ? "/" + String(job.progress.total) : "") + (job.progress.message ? " " + job.progress.message : "") : "";
+    const label = document.createElement("span");
+    label.textContent = job.actionBindingId + " · " + job.status + progress;
+    item.append(label);
+    for (const control of ["advance", "complete", "fail"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = control === "advance" ? "Next step" : control === "complete" ? "Complete" : "Fail";
+      button.dataset.devJobControl = control;
+      button.disabled = !["queued", "running", "waiting"].includes(job.status);
+      button.addEventListener("click", async () => {
+        const response = await fetch("/dev/api/jobs/control", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jobId: job.jobId, control }),
+        });
+        const outcome = await response.json();
+        appendLog("simulated job " + job.jobId + " " + control + " -> " + (outcome.job ? outcome.job.status : outcome.code));
+        await renderJobs();
+      });
+      item.append(button);
+    }
+    return item;
+  }));
+  const empty = document.querySelector("[data-dev-job-empty]");
+  if (empty) empty.hidden = body.jobs.length > 0;
+}
+window.addEventListener("message", async (event) => {
+  const data = event.data;
+  if (event.source !== frameElement?.contentWindow || !data || data.kind !== "job.request" || data.nonce !== bridgeNonce) return;
+  let outcome;
+  try {
+    const response = await fetch("/dev/api/jobs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(data.request),
+    });
+    outcome = await response.json();
+  } catch (error) {
+    outcome = { status: "refused", code: "JOB_UNAVAILABLE", message: "the dev host did not answer: " + error.message };
+  }
+  frameElement.contentWindow?.postMessage({ kind: "job-result", nonce: bridgeNonce, requestId: data.requestId, ...outcome }, "*");
+  if (data.request?.op === "cancel") {
+    appendLog("simulated job " + String(data.request.jobId) + " cancel -> " + (outcome.job ? outcome.job.status : outcome.code));
+    void renderJobs();
+  }
+});
+void renderJobs();
 
 /*
  * The live-owner lease, claimed by this window and released before a detached window claims it — the same
@@ -478,7 +543,9 @@ function packageSource(requested: string): ShellSource {
     throw new Error(`no widget facet is declared in ${root}, so there is nothing to develop`);
   }
   const serviceCapabilities = pkg.manifest.facets.flatMap((item) => item.kind === "tools" ? item.capabilities.map((capability) => capability.ref) : []);
-  const simulator = readServiceSimulator(root, serviceCapabilities);
+  const jobCapabilities = pkg.manifest.facets.flatMap((item) =>
+    item.kind === "tools" ? item.capabilities.filter((capability) => capability.execution?.kind === "job").map((capability) => capability.ref) : []);
+  const simulator = readServiceSimulator(root, serviceCapabilities, jobCapabilities);
   return {
     root,
     packageId: pkg.manifest.id,
@@ -561,6 +628,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   let vitePromise: Promise<ViteDevServer> | undefined;
   // Read on every pick, so switching the shell's picker control changes what the next pick returns.
   const artifacts = createDevArtifactBroker({ files: source.files, choosePick: () => state.pickFile });
+  const jobs = createDevJobBroker();
   let reloadCount = 0;
   /*
    * One lease store per dev host process, over the same claimLiveOwner/releaseLiveOwner the runtime calls
@@ -757,6 +825,44 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       }
     }
 
+    /*
+     * The simulated jobs@1 broker. `POST /dev/api/jobs` answers one frame request as a host would; `GET` lists the held
+     * jobs for the shell; `POST /dev/api/jobs/control` is the shell moving a job along. Nothing here runs a service.
+     */
+    if (path === "/dev/api/jobs" || path === "/dev/api/jobs/control") {
+      if (path === "/dev/api/jobs" && request.method === "GET") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ jobs: jobs.list(), events: jobs.events() }));
+        return;
+      }
+      if (request.method === "POST") {
+        let body = "";
+        request.on("data", (chunk: unknown) => {
+          body += String(chunk);
+          if (body.length > 4_096) request.destroy();
+        });
+        request.on("end", () => {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            response.writeHead(400, { "content-type": "application/json" });
+            response.end(JSON.stringify({ status: "refused", code: "SCHEMA_INVALID", message: "the request must be JSON" }));
+            return;
+          }
+          const control = parsed as { jobId?: unknown; control?: unknown } | null;
+          const outcome = path === "/dev/api/jobs"
+            ? jobs.handle(parsed)
+            : typeof control?.jobId === "string" && (control.control === "advance" || control.control === "complete" || control.control === "fail")
+              ? jobs.control(control.jobId, control.control)
+              : { status: "refused", code: "SCHEMA_INVALID", message: "a control is { jobId, control: advance | complete | fail }" };
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify(outcome));
+        });
+        return;
+      }
+    }
+
     if (path === "/dev/api/action" && request.method === "POST") {
       let body = "";
       request.on("data", (chunk: unknown) => {
@@ -812,9 +918,18 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
         }
         const binding = source.serviceBindings.find((candidate) => candidate.actionBindingId === action.actionBindingId);
         const readiness = binding === undefined ? undefined : state.serviceReadiness[binding.capabilityRef];
-        const outcome = binding === undefined || readiness === undefined || serviceStatus(readiness) !== "ready" || state.offline
+        const available = binding !== undefined && readiness !== undefined && serviceStatus(readiness) === "ready" && !state.offline;
+        // A binding whose capability runs as a job answers with its JobRef, as a node does; the job is the shell's to move.
+        const started = available && binding.job !== undefined
+          ? jobs.start({ actionBindingId: binding.actionBindingId, capabilityRef: binding.capabilityRef, job: binding.job })
+          : undefined;
+        const outcome = !available
           ? { status: "refused", message: state.offline ? "the node is offline" : readiness?.blockedReason ?? "service is unavailable" }
-          : binding.outcome;
+          : binding.job === undefined
+            ? binding.outcome
+            : started === undefined
+              ? { status: "refused", message: "the dev host already holds as many running simulated jobs as it allows" }
+              : { status: "accepted", message: "Simulated job started (clark widget dev)", output: started.jobId };
         const answer = actionResult({ nonce: action.nonce, actionBindingId: action.actionBindingId, invocationId: action.invocationId, outcome });
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(answer));
@@ -1071,6 +1186,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     },
     reloads: () => reloadCount,
     artifactEvents: () => artifacts.events(),
+    jobEvents: () => jobs.events(),
     close: async () => {
       watcher?.close();
       if (restartTimer !== undefined) clearTimeout(restartTimer);

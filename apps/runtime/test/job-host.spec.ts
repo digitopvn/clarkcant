@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { closeDatabase, insertJob, migrate, openDatabase, type Database } from "@clarkcant/storage";
+import { closeDatabase, insertJob, listAuditEvents, migrate, openDatabase, type Database } from "@clarkcant/storage";
+import { performEmergencyStop } from "../src/application/emergency-stop.ts";
 import { createWorkSupervisor } from "../src/work-supervisor.ts";
 import { createPackageJobHost, jobEndNotice } from "../src/job-host.ts";
 
@@ -94,6 +95,34 @@ describe("durable package job host", () => {
     expect(calls).toBe(0);
     expect(outcomes).toMatchObject([{ status: "cancelled", sent: false }]);
     expect(reports[0]).toContain("Nothing ran");
+  });
+
+  it("ends a running job on an emergency Stop, counts it once, and writes the stop down", async () => {
+    const supervisor = createWorkSupervisor();
+    const reports: string[] = [];
+    const host = createPackageJobHost({
+      db, nodeId: "node_1", nodeBootId: "boot_1", newId: () => "job_unused", supervisor,
+      report: (_conversationId, text) => reports.push(text),
+    });
+    let signal: AbortSignal | undefined;
+    host.start({
+      job: job("job_stopped"),
+      run: (nextSignal) => new Promise((_resolve, reject) => {
+        signal = nextSignal;
+        nextSignal.addEventListener("abort", () => reject(nextSignal.reason), { once: true });
+      }),
+    });
+    await flush();
+
+    const report = await performEmergencyStop({ db, ownerPrincipalId: "prin_1", nodeId: "node_1", newId: () => "audit_stop", work: supervisor });
+    await flush();
+
+    expect(report).toMatchObject({ jobs: 1, background: 0 });
+    expect(signal?.aborted).toBe(true);
+    expect(host.get("job_stopped", { ownerPrincipalId: "prin_1", instanceId: "winst_1", actionBindingId: "binding_1", packageGeneration: "generation_1" })?.status).toBe("cancelled");
+    expect(reports[0]).toContain("may have finished its effect");
+    expect(supervisor.list()).toEqual([]);
+    expect(listAuditEvents(db, "prin_1")[0]?.summary).toContain("1 package job");
   });
 
   it("names what a finished job produced and what to do next", () => {

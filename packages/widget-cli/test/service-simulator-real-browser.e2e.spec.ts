@@ -107,11 +107,11 @@ describe("service simulator in Chromium", () => {
 
     await page.locator('input[data-dev-action="offline"]').uncheck();
     await page.locator('[data-dev-action="service-restart"]').click();
-    await eventually(async () => (await page.locator('[data-dev-status="loading"]').count()) === 4, "restart loading state");
+    await eventually(async () => (await page.locator('[data-dev-status="loading"]').count()) === 5, "restart loading state");
     await eventually(async () => await add.isDisabled(), "restart disables the add binding");
     await eventually(async () => await list.isDisabled(), "restart disables the list binding");
     await eventually(async () => !(await list.isDisabled()), "restart recovery");
-    expect(await page.locator('[data-dev-status="ready"]').count()).toBe(4);
+    expect(await page.locator('[data-dev-status="ready"]').count()).toBe(5);
 
     await frame.locator("[data-notes-malformed]").click();
     await eventually(async () => (await frame.locator("[data-notes-output]").textContent())?.includes("malformed response") === true, "malformed fixture refusal");
