@@ -185,7 +185,7 @@ function frameOffscreen(
   return grant.status === "granted" ? grant.profile.offscreen : "suspend";
 }
 
-function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity: { nodeId: string } }, widgetId: string) {
+export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity: { nodeId: string } }, widgetId: string) {
   const index = readDirectoryIndex(directoryIndexPath(process.env));
   /*
    * The version this node is running comes first. A directory lists every version it knows, and after a rollback the
@@ -202,7 +202,7 @@ function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity:
   const otherVersionActive = (entry: DirectoryEntry) =>
     !isActive(entry) && idsOf(entry).some((id) => activePackages.has(id));
   const entries = index.kind === "configured" ? index.entries : [];
-  return findIsolatedFrame({
+  const found = findIsolatedFrame({
     /*
      * While a version of a package is active, only that version's code runs: after a rollback a definition that exists
      * only in the newer version has no code here, rather than the retired version's. With no version active (never
@@ -215,6 +215,13 @@ function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity:
     // cache root here must match the one the install route fetched into.
     cacheRoot: join(runtime.dataDir, "package-cache"),
   });
+  if (!found.ok) return found;
+  /*
+   * Whether the code found is the version this node is running, rather than a listing kept to describe an instance
+   * whose package is gone. A frame is still described either way; only a running package is given anything new.
+   */
+  const running = entries.some((entry) => entry.packageId === found.packageId && entry.version === found.version && isActive(entry));
+  return { ...found, active: running };
 }
 
 /**

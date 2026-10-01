@@ -7,7 +7,7 @@
  * scripted composer, the fake adapter and the session starter into every process, including the ones they would be
  * indistinguishable from real work in.
  *
- * This module holds no fixture code of its own. It reads four environment variables and it is the seam, so the gate
+ * This module holds no fixture code of its own. It reads five environment variables and it is the seam, so the gate
  * can be read, grepped and tested in one place.
  */
 
@@ -20,6 +20,8 @@ export interface FixtureGates {
   voice: boolean;
   /** `CC_FRAME_GRANT_FIXTURE=1`: a frame-grant lifetime a browser journey can shorten, so a kept frame can outlive one. */
   frameGrant: boolean;
+  /** `CC_BROWSER_TOKEN_FIXTURE=1`: in-process browser-token providers that mint fake, random tokens. */
+  browserTokens: boolean;
 }
 
 /**
@@ -34,6 +36,7 @@ export function fixtureGatesFromEnv(env: Record<string, string | undefined>): Fi
     session: env["CC_SESSION_FIXTURE"] === "1",
     voice: env["CC_VOICE_FIXTURE"] === "1",
     frameGrant: env["CC_FRAME_GRANT_FIXTURE"] === "1",
+    browserTokens: env["CC_BROWSER_TOKEN_FIXTURE"] === "1",
   };
 }
 
@@ -47,6 +50,6 @@ export type FixtureComposition = typeof import("../test-support/index.ts");
  * touches a fixture seam, and the modules above are never evaluated.
  */
 export async function loadFixtureComposition(gates: FixtureGates): Promise<FixtureComposition | undefined> {
-  if (!gates.model && !gates.session && !gates.voice && !gates.frameGrant) return undefined;
+  if (!gates.model && !gates.session && !gates.voice && !gates.frameGrant && !gates.browserTokens) return undefined;
   return await import("../test-support/index.ts");
 }

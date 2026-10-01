@@ -31,6 +31,7 @@ import { type RequestSecretDeps } from "../request-secret.ts";
 import { detectServiceEngine, readEngineCapacity } from "../service-container.ts";
 import { createServiceHost, engineContainers, packageRootFrom, resourceProfilePolicy } from "../service-host.ts";
 import { type EgressAuditEvent, egressSecretProblem } from "../service-egress.ts";
+import { type BrowserTokenAuditEvent, createBrowserTokenBroker } from "../browser-token-broker.ts";
 import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import type { NodeWork } from "./work-bootstrap.ts";
@@ -383,6 +384,14 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   void services.serviceHost.reconcile().catch((cause: unknown) => {
     process.stderr.write(`services: not started — ${cause instanceof Error ? cause.message : String(cause)}\n`);
   });
+  /*
+   * Browser tokens for widget frames. No provider adapter ships with the node, so until one is registered every request
+   * is refused as having none; the broker exists anyway so uninstall and frame disposal have one place to revoke.
+   */
+  services.browserTokens = createBrowserTokenBroker({
+    audit: browserTokenAudit(services),
+    log: (line) => process.stderr.write(`${line}\n`),
+  });
 
   if (sessionFixture) {
     process.stderr.write(
@@ -547,6 +556,22 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
  * What package services' egress is made with: the secret broker, whose own use is written to the trail as it is for
  * every other consumer, and a trail row for each request the host made, by package, method, origin and secret name.
  */
+/** What the broker issued, refused or withdrew, by provider and instance: never the token or the provider's id for it. */
+function browserTokenAudit(services: NodeServices): (event: BrowserTokenAuditEvent) => void {
+  const db = services.runtime.db;
+  return (event) =>
+    appendAuditEvent(db, {
+      auditId: services.conductor.newId("audit"),
+      principalId: services.runtime.identity.ownerPrincipalId,
+      nodeId: services.runtime.identity.nodeId,
+      kind: "browser-token",
+      summary: `${event.provider} token ${event.outcome} for ${event.instanceId} (${event.packageId})${event.code === undefined ? "" : `: ${event.code}`}`.slice(0, 500),
+      outcome: event.outcome === "refused" ? "refused" : event.outcome === "issued" ? "done" : "stopped",
+      ref: event.instanceId,
+      at: new Date().toISOString() as Instant,
+    });
+}
+
 function serviceEgressDeps(services: NodeServices) {
   const db = services.runtime.db;
   const principalId = services.runtime.identity.ownerPrincipalId;

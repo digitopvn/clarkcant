@@ -243,6 +243,9 @@ importers:
       '@clarkcant/host-adapters':
         specifier: workspace:*
         version: link:../../packages/host-adapters
+      '@clarkcant/integration-sdk':
+        specifier: workspace:*
+        version: link:../../packages/integration-sdk
       '@clarkcant/mcp-adapters':
         specifier: workspace:*
         version: link:../../packages/mcp-adapters

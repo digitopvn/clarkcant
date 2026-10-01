@@ -77,6 +77,11 @@ export interface PackageInstallDeps {
    * Not awaited: a service's image can take minutes to fetch, and an install is done when its generation is recorded.
    */
   packagesChanged?: () => void;
+  /**
+   * Told when a package's running code goes away — uninstalled, or rolled back to other code — so what was handed to
+   * its widget frames under that code (browser tokens) is withdrawn. Not awaited: the change is done when recorded.
+   */
+  packageCodeEnded?: (packageId: string) => void;
 }
 
 /** The node's own install deps, with its service host told whenever what is installed changes. */
@@ -84,6 +89,7 @@ export function packageInstallDepsOf(services: {
   runtime: PackageInstallDeps["runtime"];
   conductor: PackageInstallDeps["conductor"];
   serviceHost?: { reconcile(): Promise<void> } | undefined;
+  browserTokens?: { endPackage(packageId: string): Promise<number> } | undefined;
 }): PackageInstallDeps {
   return {
     runtime: services.runtime,
@@ -91,6 +97,11 @@ export function packageInstallDepsOf(services: {
     packagesChanged: () => {
       void services.serviceHost?.reconcile().catch((cause: unknown) => {
         process.stderr.write(`services: could not follow the package change: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+      });
+    },
+    packageCodeEnded: (packageId) => {
+      void services.browserTokens?.endPackage(packageId).catch((cause: unknown) => {
+        process.stderr.write(`browser tokens: could not withdraw ${packageId}'s tokens: ${cause instanceof Error ? cause.message : String(cause)}\n`);
       });
     },
   };

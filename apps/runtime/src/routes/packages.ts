@@ -44,6 +44,8 @@ export interface PackageRouteDeps {
     runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string }; dataDir: string };
     conductor: { newId: (prefix: string) => string };
     serviceHost?: (Pick<ServiceHost, "reconcile"> & Partial<Pick<ServiceHost, "resourceGrant">>) | undefined;
+    /** Told when a package's code goes, so the tokens its frames hold go with it. */
+    browserTokens?: { endPackage(packageId: string): Promise<number> } | undefined;
   };
   request: GatewayRequest;
   segments: string[];
