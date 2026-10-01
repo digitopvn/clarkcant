@@ -372,13 +372,29 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
   let halted = false;
   const capacities = new Map<ContainerEngineName, Promise<EngineCapacity>>();
 
-  /** What the engine can hold, asked once per engine; an engine that does not answer reports nothing. */
+  /**
+   * What the engine can hold, kept once the engine has answered. An engine that does not answer reports nothing, and
+   * is asked again at the next start: one slow or failed `info` must not leave every later start unchecked.
+   */
   function engineCapacity(name: ContainerEngineName): Promise<EngineCapacity> | undefined {
     const ask = options.capacity;
     if (ask === undefined) return undefined;
     let known = capacities.get(name);
     if (known === undefined) {
-      known = ask(name).catch((): EngineCapacity => ({}));
+      const forget = (): void => {
+        if (capacities.get(name) === known) capacities.delete(name);
+      };
+      known = ask(name).then(
+        (capacity) => {
+          const reported = capacity.memoryBytes !== undefined || capacity.cpus !== undefined || capacity.enforcesLimits !== undefined;
+          if (!reported) forget();
+          return capacity;
+        },
+        (): EngineCapacity => {
+          forget();
+          return {};
+        },
+      );
       capacities.set(name, known);
     }
     return known;

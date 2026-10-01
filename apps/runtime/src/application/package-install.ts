@@ -656,6 +656,9 @@ export async function installPackage(
 
   if (!outcome.ok) return { kind: "refused", status: 400, code: outcome.code, message: outcome.message };
   deps.packagesChanged?.();
+  // New code is running: tokens its frames were given under the code it replaced, and the declaration that allowed
+  // them, end with it. A first install has none, and joining an install already made changes no code.
+  if (!outcome.joinedExisting) deps.packageCodeEnded?.(entry.packageId);
   return {
     kind: "installed",
     packageId: entry.packageId,

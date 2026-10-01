@@ -179,6 +179,48 @@ describe("the browser-token broker", () => {
     expect(broker.held()).toEqual([]);
   });
 
+  it("withdraws a token minted while its package was removed, and keeps a token per provider when two use one id", async () => {
+    let release: () => void = () => undefined;
+    const provider = fakeProvider();
+    const slow: BrowserTokenAdapter = {
+      ...provider.adapter,
+      issue: async (input) => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return await provider.adapter.issue(input);
+      },
+    };
+    const broker = createBrowserTokenBroker({ adapters: [slow] });
+    const pending = issue(broker);
+    await vi.advanceTimersByTimeAsync(0);
+    await broker.endPackage("com.example.maps");
+    release();
+    expect(await pending).toMatchObject({ ok: false, code: "TOKEN_SESSION_ENDED", message: "the package this token was asked for was removed or changed" });
+    expect(provider.revoked).toEqual(["tok_1"]);
+    expect(broker.held()).toEqual([]);
+
+    // Two providers that number their tokens the same way: each token is held, and revoked, on its own.
+    const maps = fakeProvider();
+    const tiles = fakeProvider({ provider: "example.tiles" });
+    const both = createBrowserTokenBroker({ adapters: [maps.adapter, tiles.adapter] });
+    const declared = [...DECLARED, { provider: "example.tiles", scopes: ["tiles:read"], purpose: "Draw tiles" }];
+    for (const name of ["example.maps", "example.tiles"]) {
+      const outcome = await both.issue({
+        packageId: "com.example.maps",
+        instanceId: "wi_1",
+        session: SESSION,
+        declared,
+        request: { provider: name, scopes: ["tiles:read"] },
+      });
+      expect(outcome.ok).toBe(true);
+    }
+    expect(both.held().map((entry) => `${entry.provider}:${entry.tokenId}`).sort()).toEqual(["example.maps:tok_1", "example.tiles:tok_1"]);
+    expect(await both.endSession("wi_1", SESSION)).toBe(2);
+    expect(maps.revoked).toEqual(["tok_1"]);
+    expect(tiles.revoked).toEqual(["tok_1"]);
+  });
+
   it("revokes every token a package's instances hold when the package goes", async () => {
     const provider = fakeProvider();
     const broker = createBrowserTokenBroker({ adapters: [provider.adapter] });

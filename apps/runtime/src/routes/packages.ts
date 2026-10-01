@@ -75,6 +75,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
   if (segments.length === 1 && segments[0] === "packages" && request.method === "GET") {
     const deps = { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: services.conductor.newId };
     const policy = resourceProfilePolicy({ db: runtime.db, principalId: runtime.identity.ownerPrincipalId, now: nowInstant });
+    const index = readDirectoryIndex(directoryIndexPath(process.env));
     return json(200, {
       /*
        * Each with the resource profile it asked for and what this node granted, so package details show the bounds the
@@ -82,7 +83,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
        * request is not reported as the light profile.
        */
       packages: listInstalledPackages(deps).map((installed) => {
-        const manifest = installedManifest(installed, runtime.dataDir);
+        const manifest = installedManifest(installed, runtime.dataDir, index);
         if (manifest === "unreadable") return installed;
         const grant = packageResourceGrant({
           packageId: installed.packageId,

@@ -13,7 +13,7 @@ import {
   type ResourceProfileName,
   type ResourceRequest,
 } from "@clarkcant/contracts";
-import { directoryIndexPath, readDirectoryIndex, readPackage } from "@clarkcant/core";
+import { type DirectoryIndexState, readPackage } from "@clarkcant/core";
 
 import { packageRootFrom, type ServiceHost } from "./service-host.ts";
 
@@ -90,12 +90,14 @@ export function packageResourcesView(grant: ResourceGrant): PackageResourcesView
 /**
  * The manifest of an installed package, read from the files this node holds for it, or `unreadable` when the node has
  * no directory, no listing for that version and digest, or a manifest it cannot read.
+ *
+ * The caller reads the directory index once and passes it, so listing N packages is not N reads of the index.
  */
 export function installedManifest(
   installed: { packageId: string; version: string; digest: string },
   dataDir: string,
+  index: DirectoryIndexState,
 ): PackageManifest | "unreadable" {
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
   if (index.kind !== "configured") return "unreadable";
   const root = packageRootFrom(index.entries, join(dataDir, "package-cache"))(installed);
   if (root === undefined) return "unreadable";

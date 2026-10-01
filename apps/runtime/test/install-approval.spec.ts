@@ -374,6 +374,20 @@ describe("an approval stays bound to the artifact it was given for", () => {
     expect(installedVersions()).toEqual([]);
   });
 
+  it("ends what the frames were given under the old code when an install replaces it", async () => {
+    writePolicy(DEFAULT_EXECUTION_POLICY_CONFIG);
+    const ended: string[] = [];
+    const installDeps = { ...packageInstallDepsOf(services), packageCodeEnded: (packageId: string) => ended.push(packageId) };
+    expect(await installPackage(installDeps, { packageId: PACKAGE_ID, version: VERSION })).toMatchObject({ kind: "installed" });
+    const next = commit(JSON.stringify({ id: PACKAGE_ID, changed: true }));
+    writeIndex([entry({ version: "1.3.0", source: { kind: "git", url: repo, ref: next.ref }, digest: next.digest })]);
+    ended.length = 0;
+    expect(await installPackage(installDeps, { packageId: PACKAGE_ID, version: "1.3.0" })).toMatchObject({ kind: "installed" });
+    expect(installedVersions().sort()).toEqual([VERSION, "1.3.0"]);
+    // The broker withdraws the tokens the 1.2.0 frames hold, and a mint racing the update is refused.
+    expect(ended).toEqual([PACKAGE_ID]);
+  });
+
   it("still honours a policy that now forbids installing, even after Approve", async () => {
     const approvalId = await askToInstall();
     writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, prohibition: "all" });

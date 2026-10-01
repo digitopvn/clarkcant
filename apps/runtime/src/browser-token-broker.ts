@@ -91,6 +91,14 @@ export function createBrowserTokenBroker(options: {
   const held = new Map<string, Held>();
   const ended = new Set<string>();
   const sessionKey = (instanceId: string, session: string): string => `${instanceId}\u0000${session}`;
+  /** A token's key: two providers may both answer with the same id, and each token must stay revocable on its own. */
+  const heldKey = (entry: { provider: string; tokenId: string }): string => `${entry.provider}\u0000${entry.tokenId}`;
+  /**
+   * How many times each package's code has ended. A mint compares it before and after the provider answers, so a token
+   * minted while its package was uninstalled, rolled back or replaced is withdrawn rather than handed out.
+   */
+  const packageEpochs = new Map<string, number>();
+  const packageEpoch = (packageId: string): number => packageEpochs.get(packageId) ?? 0;
 
   const audit = (event: BrowserTokenAuditEvent): void => {
     try {
@@ -102,8 +110,8 @@ export function createBrowserTokenBroker(options: {
 
   /** Revoke at the provider where it can be, and forget the token either way. */
   const withdraw = async (entry: Held, outcome: "revoked" | "expired"): Promise<void> => {
-    if (held.get(entry.tokenId) !== entry) return;
-    held.delete(entry.tokenId);
+    if (held.get(heldKey(entry)) !== entry) return;
+    held.delete(heldKey(entry));
     clearTimeout(entry.timer);
     if (outcome === "revoked" && entry.adapter.support.revocation === "revocable" && entry.adapter.revoke !== undefined) {
       try {
@@ -146,6 +154,7 @@ export function createBrowserTokenBroker(options: {
       const checked = checkBrowserTokenRequest({ support: adapter?.support, declared: input.declared, request: input.request });
       if (!checked.ok) return refuse(who, checked.code, checked.message);
       if (adapter === undefined) return refuse(who, "TOKEN_PROVIDER_UNAVAILABLE", `this node has no browser-token adapter for ${who.provider}`);
+      const epoch = packageEpoch(input.packageId);
 
       let issued;
       try {
@@ -188,11 +197,14 @@ export function createBrowserTokenBroker(options: {
         ),
       };
       entry.timer.unref?.();
-      held.set(entry.tokenId, entry);
+      // A token with the same provider and id is the provider answering the same token twice; the older entry goes.
+      const previous = held.get(heldKey(entry));
+      if (previous !== undefined) clearTimeout(previous.timer);
+      held.set(heldKey(entry), entry);
 
       if (issued.expiresInSeconds > checked.ttlSeconds && adapter.support.revocation !== "revocable") {
         // A token that outlives what was asked and cannot be withdrawn is one this node cannot hold to its lifetime.
-        held.delete(entry.tokenId);
+        held.delete(heldKey(entry));
         clearTimeout(entry.timer);
         return refuse(who, "TOKEN_ISSUE_FAILED", `${who.provider} issued a token longer-lived than asked, and it cannot be revoked`);
       }
@@ -200,6 +212,11 @@ export function createBrowserTokenBroker(options: {
         // The frame closed while the provider was minting: the token is withdrawn, never handed to anyone.
         await withdraw(entry, "revoked");
         return { ok: false, code: "TOKEN_SESSION_ENDED", message: "the frame this token was asked for has closed" };
+      }
+      if (packageEpoch(input.packageId) !== epoch) {
+        // The package's code ended while the provider was minting: withdrawn the same way, never handed out.
+        await withdraw(entry, "revoked");
+        return { ok: false, code: "TOKEN_SESSION_ENDED", message: "the package this token was asked for was removed or changed" };
       }
       const live = [...held.values()].filter((other) => other.instanceId === input.instanceId && other.session === input.session);
       for (const oldest of live.slice(0, Math.max(0, live.length - MAX_TOKENS_PER_SESSION))) await withdraw(oldest, "revoked");
@@ -216,6 +233,7 @@ export function createBrowserTokenBroker(options: {
     },
 
     async endPackage(packageId) {
+      packageEpochs.set(packageId, packageEpoch(packageId) + 1);
       return await withdrawWhere((entry) => entry.packageId === packageId);
     },
 

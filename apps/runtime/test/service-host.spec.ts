@@ -95,7 +95,7 @@ function start(
     restartBaseMs?: number;
     engineRetryMs?: number;
     packageRoot?: (packageId: string) => string | undefined;
-    capacity?: EngineCapacity;
+    capacity?: EngineCapacity | (() => Promise<EngineCapacity>);
     profilePolicy?: (input: { packageId: string; profile: ResourceProfileName }) => string | undefined;
   } = {},
 ): ServiceHost {
@@ -108,7 +108,9 @@ function start(
       options.packageRoot === undefined ? (generation.packageId === PACKAGE ? root : undefined) : options.packageRoot(generation.packageId),
     launcher: options.launcher ?? plainLauncher(),
     log: (line) => logs.push(line),
-    ...(options.capacity === undefined ? {} : { capacity: async () => options.capacity ?? {} }),
+    ...(options.capacity === undefined
+      ? {}
+      : { capacity: typeof options.capacity === "function" ? options.capacity : async () => (options.capacity as EngineCapacity | undefined) ?? {} }),
     ...(options.profilePolicy === undefined ? {} : { profilePolicy: options.profilePolicy }),
     timings: {
       restartBaseMs: options.restartBaseMs ?? 20,
@@ -297,6 +299,33 @@ describe("the resource profile a service runs in", () => {
     // Asking is not refusing: consent to the declared profile was given at install, and nobody is there to ask at boot.
     writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "ask" });
     expect(policy({ packageId: PACKAGE, profile: "interactive-heavy" })).toBeUndefined();
+  });
+
+  it("asks the engine again at the next start when it did not answer, and keeps an answer once it has one", async () => {
+    requesting("background-compute");
+    activate();
+    const answers: EngineCapacity[] = [{}, roomy];
+    let asked = 0;
+    const serviceHost = start({
+      capacity: async () => {
+        asked += 1;
+        return answers[Math.min(asked - 1, answers.length - 1)] ?? {};
+      },
+    });
+    await running(serviceHost);
+    const unchecked = serviceHost.resourceGrant?.(PACKAGE);
+    expect(unchecked?.status === "granted" && unchecked.notes[0]).toContain("did not report");
+
+    activate("gen_2", "1.0.1");
+    await serviceHost.reconcile();
+    await until(() => {
+      const grant = serviceHost.resourceGrant?.(PACKAGE);
+      return grant?.status === "granted" && grant.notes.length === 0;
+    }, "a grant checked against the engine");
+    activate("gen_3", "1.0.2");
+    await serviceHost.reconcile();
+    await running(serviceHost);
+    expect(asked).toBe(2);
   });
 
   it("grants a larger profile without an engine report, and says the check was not made", async () => {
