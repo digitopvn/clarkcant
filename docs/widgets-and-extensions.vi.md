@@ -2,7 +2,7 @@
 
 > [English](widgets-and-extensions.md) (mặc định) · Tiếng Việt
 
-**Ngày:** 16/09/2026. Đây là contract đề xuất của app, không phải upstream Pi/MCP wire schema.
+**Ngày:** 01/10/2026. Đây là contract đề xuất của app, không phải upstream Pi/MCP wire schema.
 
 ## 1. Định nghĩa lại widget
 
@@ -132,6 +132,7 @@ Ghi rõ phần nào của §4 đã có trong repo và phần nào còn là thi�
 - Định nghĩa catalog + family trong `packs/data-canvas`: `canvas.line/bar/donut/table`, `canvas.metrics`, `canvas.filter`, `canvas.calendar`, `canvas.image`, `canvas.cta` (giữ để lịch sử vẫn hiển thị), nút hành động chung `canvas.action@1`, các widget nhập liệu `canvas.choice@1`, `canvas.input@1`, `canvas.search@1`, `canvas.form@1` và `canvas.list@1` ([Widget development §8.2](widget-development.vi.md#82-biểu-mẫu-danh-sách-ô-tìm-kiếm-và-trường-nhập)), các thẻ chỉ-đọc `canvas.status@1`, `canvas.progress@1` và `canvas.details@1` ([Widget development §8.4](widget-development.vi.md#84-thẻ-trạng-thái-tiến-độ-và-chi-tiết)), và container `canvas.overview@1`.
 - Leaf renderer trong `packages/conversation-client` (donut thật, month grid, KPI tile, image, CTA) cùng text alternative cho mọi vùng.
 - Các thẻ hiển thị một phần công việc: `canvas.code@1` (khối mã có số dòng và nút sao chép), `canvas.diff@1` (bản diff dạng unified, tiêu đề hunk và số đếm được tính từ chính các dòng) và `canvas.file@1` (một tệp được nêu tên và mô tả, không có liên kết, nút mở hay nút tải về). Chúng chỉ hiển thị dạng chữ những gì model viết, và không tải gì. Node từ chối props không khớp trước khi có instance, và chúng không phải lá của layout ([Widget development §8.5](widget-development.vi.md#85-mã-diff-và-tệp)).
+- Các khung nhìn tương tác do host dựng và có giới hạn gồm `canvas.timeline@1`, `canvas.tree@1` và `canvas.board@1`. Chúng chỉ giữ state khung nhìn đã khai báo; di chuyển thẻ khi bảng Kanban không gắn action chỉ đổi thứ tự cục bộ, còn di chuyển dữ liệu ngoài phải có binding `invoke` do host compile và giữ trạng thái chờ cho tới khi biết kết quả ([Widget development §8.10](widget-development.vi.md#810-bảng-kanban)).
 - Vùng **ảnh** của sketch nay thật sự tới được người dùng: `publishMiniAppData` trả ảnh mới nhất đã nhập, template `overview` có slot `image` (fixed, optional theo dữ liệu), và text alternative của vùng mang **alt text người dùng nhập**. Ảnh đi qua `blob:` URL vì token không thể nằm trong `<img src>`, nên CSP của `apps/web/index.html` phải cho `img-src ... blob:` — thiếu điều đó thì mọi ảnh đã nhập render thành "Chưa tải được hình ảnh" dù node trả bytes đúng.
 - **Declarative composition** (trust tier thứ hai trong bảng trên) là tier đang được dùng cho mini-app: spec có version, mỗi section pin `definitionRef.digest`, không có payload thực thi, action chỉ là tham chiếu tới binding do server compile.
 - Snapshot là **bundle bất biến** trong bảng riêng (`presentation_bundles`), không phải `catalog:id` trỏ tới dữ liệu hiện tại; xoá nguồn dữ liệu → tombstone, không đọc lại live.

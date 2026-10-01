@@ -54,6 +54,17 @@ import {
   TREE_ICONS,
   timelineProblems,
   treeProblems,
+  BOARD_ID,
+  BOARD_MOVE_OPERATION,
+  MAX_BOARD_COLUMNS,
+  MAX_BOARD_CARDS,
+  MAX_BOARD_ID,
+  MAX_BOARD_TITLE,
+  MAX_BOARD_DESCRIPTION,
+  MAX_BOARD_ASSIGNEE,
+  MAX_BOARD_LABELS,
+  MAX_BOARD_LABEL,
+  BOARD_LABEL_TONES,
   MAX_CHART_POINTS,
   MAX_CHART_SERIES,
   MAX_FIELD_NAME,
@@ -859,6 +870,46 @@ export const TREE: WidgetDefinition = {
   datasetRefs: [],
 };
 
+/** A bounded board whose view order is local unless an explicit invoke binding is supplied. */
+export const BOARD: WidgetDefinition = {
+  id: BOARD_ID,
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: oneLineProp(MAX_BOARD_TITLE),
+      columns: { type: "array", minItems: 1, maxItems: MAX_BOARD_COLUMNS, items: {
+        type: "object", additionalProperties: false,
+        properties: { id: { type: "string", minLength: 1, maxLength: MAX_BOARD_ID }, title: oneLineProp(MAX_BOARD_TITLE, 1), limit: { type: "integer", minimum: 0, maximum: MAX_BOARD_CARDS } },
+        required: ["id", "title"],
+      } },
+      cards: { type: "array", maxItems: MAX_BOARD_CARDS, items: {
+        type: "object", additionalProperties: false,
+        properties: {
+          id: { type: "string", minLength: 1, maxLength: MAX_BOARD_ID }, columnId: { type: "string", minLength: 1, maxLength: MAX_BOARD_ID },
+          title: oneLineProp(MAX_BOARD_TITLE, 1), description: { type: "string", maxLength: MAX_BOARD_DESCRIPTION },
+          labels: { type: "array", maxItems: MAX_BOARD_LABELS, items: { type: "object", additionalProperties: false, properties: { text: oneLineProp(MAX_BOARD_LABEL, 1), tone: { enum: BOARD_LABEL_TONES } }, required: ["text"] } },
+          assignee: oneLineProp(MAX_BOARD_ASSIGNEE),
+        }, required: ["id", "columnId", "title"],
+      } },
+      action: { type: "object", description: "Optional host-bound action run after a move; the action must be an invoke proposal." },
+    }, required: ["columns", "cards"],
+  },
+  eventSchemas: {
+    [BOARD_MOVE_OPERATION]: { type: "object", additionalProperties: false, properties: { cardId: { type: "string", maxLength: MAX_BOARD_ID }, fromColumnId: { type: "string", maxLength: MAX_BOARD_ID }, toColumnId: { type: "string", maxLength: MAX_BOARD_ID }, position: { type: "integer", minimum: 0, maximum: MAX_BOARD_CARDS } }, required: ["cardId", "fromColumnId", "toColumnId", "position"] },
+  },
+  stateSchema: { type: "object", additionalProperties: false },
+  stateVersion: 1,
+  semanticDescription: "A bounded kanban board with keyboard, pointer and touch card moves",
+  requestedCapabilities: [],
+  sizing: { compact: true, expanded: true, minHeight: 220 },
+  textFallback: "The board appears as a headed list of cards when it cannot be drawn.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
 /*
  * Status cards: a status, the progress of one thing, a few labelled facts.
  *
@@ -1383,6 +1434,7 @@ export const WIDGETS = [
   FORM,
   LIST,
   TREE,
+  BOARD,
   STATUS,
   PROGRESS,
   DETAILS,
@@ -1442,6 +1494,7 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   // surface's state.
   "canvas.timeline@1": "timeline",
   [TREE.id]: "hierarchy",
+  [BOARD.id]: "board",
 };
 
 /**

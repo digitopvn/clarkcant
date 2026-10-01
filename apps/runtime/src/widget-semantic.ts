@@ -30,6 +30,10 @@ import {
   readTree,
   readTreeState,
   treeSemantic,
+  BOARD_ID,
+  readBoard,
+  readBoardState,
+  boardSemantic,
 } from "@clarkcant/contracts";
 import { ARTIFACT_VIEWER_KIND, CALENDAR, STATUS_CARD_KIND, TIMELINE, TREE } from "@clarkcant/data-canvas";
 import { type WidgetDeps, getActionBinding, getInstance, liveStateOf, semanticViewOf } from "@clarkcant/core";
@@ -189,6 +193,12 @@ export function buildWidgetSemantic(
   if (tree !== undefined) {
     const state = readTreeState(liveStateOf(deps, instanceId, TREE)?.body, tree);
     return normalizeSemanticDoc({ instanceId, definitionId, ...treeSemantic(tree, state), availableActions, freshness: "unknown" });
+  }
+
+  const board = definitionId === BOARD_ID ? readBoard(instance.props) : undefined;
+  if (board !== undefined) {
+    const state = readBoardState(liveStateOf(deps, instanceId)?.body, board);
+    return normalizeSemanticDoc({ instanceId, definitionId, ...boardSemantic(board, state), availableActions, freshness: "unknown" });
   }
   return normalizeSemanticDoc({ instanceId, definitionId, summary: `${definitionId} (${instance.lifecycle})`, availableActions });
 }

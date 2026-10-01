@@ -3,7 +3,7 @@
 > English (default) · [Tiếng Việt](widget-development.vi.md)
 
 > Status: canonical authoring target for the widget ecosystem.
-> Updated: 2026-09-19.
+> Updated: 2026-10-01.
 > Applies to the built-in catalog, declarative compositions, isolated widgets and MCP Apps.
 
 ## 1. Goals
@@ -1152,6 +1152,37 @@ locale-aware type-ahead; [tree-schemas.spec.ts](../packages/widget-catalog/test/
 and schema agreement; the browser journey [tree-view.spec.ts](../apps/web/e2e/tree-view.spec.ts) covers the
 conversation, keyboard, persisted state across pin restoration, responsive layout, reduced motion and the Widget
 Library preview.
+
+---
+
+## 8.10 Kanban boards
+
+`canvas.board@1` is a host-rendered board for bounded, already-known work. It has 1–12 columns and at most 120 cards;
+column and card IDs share one unique namespace. Titles are one line (at most 160 characters), descriptions at most
+500, assignees at most 100, and each card has at most 8 plain-text labels. A column may set a card limit. Unknown
+fields, missing columns, duplicate IDs, over-limit columns and hidden control characters are refused before placement.
+The board fetches nothing and does not edit card details.
+
+The node holds the card order and selected card as view state. Without an action binding, moving a card changes only
+that board's saved view. An optional `props.action` must be an `invoke` binding; the node derives whether the board is
+bound from that stored host binding, checks the card and destination against its current props and order, and sends
+only `{ cardId, fromColumnId, toColumnId, position }` through the normal capability path. A bound move remains
+pending until the host reports its result. Success confirms the displayed order; refusal restores the last order and
+shows its reason; a lost answer stays marked uncertain until the person acknowledges it. The board never writes to a
+provider from the page.
+
+Space picks up or drops the focused card, arrows move the pickup preview between positions, and Escape cancels it.
+The drag handle also works with pointer and touch input; keyboard operation does not depend on dragging. Focus stays
+on the card when a preview moves it between columns, a live region announces pickup, position and drop, and the handle
+has a 44 px touch target. Label tone is accompanied by a word, focus is visible, narrow viewports do not overflow, and
+the board follows reduced-motion preferences. The semantic document reports bounded column/card counts, selection
+and pending status; its text alternative lists cards beneath column headings.
+
+Tests: [kanban-board.spec.ts](../packages/contracts/test/kanban-board.spec.ts) checks the bounds, order, refusal and
+semantic/text output; [board-view.spec.ts](../apps/runtime/test/board-view.spec.ts) checks host bindings, persistence,
+the invoke result, approval matching and refusal rollback; the browser journey
+[kanban-board.spec.ts](../apps/web/e2e/kanban-board.spec.ts) exercises keyboard, mouse and touch moves in conversation,
+responsive light/dark and reduced motion, plus the read-only Widget Library preview.
 
 ---
 

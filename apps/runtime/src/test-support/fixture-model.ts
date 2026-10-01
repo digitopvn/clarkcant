@@ -1229,6 +1229,41 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       }
     }
 
+    // The browser journey uses the deterministic model only to place the real board descriptor; moves and saved state
+    // still pass through the production renderer, host binding and revision-checked widget service.
+    const boardRequest = /^(?:đặt|place)\s+bảng kanban(?:\s+(liên kết))?$/iu.exec(input.text.trim());
+    if (boardRequest !== null) {
+      const services = deps.services();
+      const bound = boardRequest[1] !== undefined;
+      const catalog = bound ? buildViewCatalog(services.conductor, undefined, () => ({
+        db: services.runtime.db,
+        nodeId: services.runtime.identity.nodeId,
+        serviceHost: services.serviceHost,
+        now: () => new Date().toISOString(),
+        newId: services.conductor.newId,
+      })) : buildViewCatalog(services.conductor);
+      const view = catalog.find((entry) => entry.id === "canvas.board@1");
+      const fixture = fixturesFor("canvas.board@1").find((entry) => entry.id === "board.normal");
+      if (view === undefined || fixture === undefined) return undefined;
+      const block = await view.build({
+        props: bound ? {
+          ...fixture.props,
+          action: {
+            kind: "invoke",
+            capabilityRef: "com.example.notes.board-move@1",
+            args: {},
+            bindings: ["cardId", "fromColumnId", "toColumnId", "position"].map((target) => ({ target, source: "selected-event" })),
+          },
+        } : fixture.props,
+        caption: "",
+        at: instantSchema.parse(new Date().toISOString()),
+        principal: input.principal as never,
+        messageId: input.messageId,
+        conversationId: input.conversationId,
+      });
+      return { text: `Fixture: đặt bảng kanban${bound ? " liên kết" : ""} (không phải model thật).`, block };
+    }
+
     /*
      * An area or scatter chart over rows written to a dataset the person owns, placed through the same views
      * `show_view` uses. The rows are labelled `sample`, which is what they are. "lớn" draws more rows than a chart

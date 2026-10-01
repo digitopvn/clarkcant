@@ -39,12 +39,12 @@ export interface ActionBindingDeps {
  * What a use of an action sends, for the widgets that send something: a form its values, a list the item picked.
  *
  * `source` is how a field binding names where such a value comes from. `keys` are the names it is sent under — a form's
- * field names; a list's are read from the action itself, because the capability decides which argument takes an item.
+ * field names, a board move's event fields; a list's are read from the action itself, because the capability decides which argument takes an item.
  * `schema` turns those keys into the JSON Schema the binding records as the input it accepts, which the node checks
  * every use against before anything runs.
  */
 export interface ActionInputSpec {
-  source: "user-input" | "selected-row";
+  source: "user-input" | "selected-row" | "selected-event";
   noun: string;
   keys?: readonly string[];
   schema: (keys: readonly string[]) => Record<string, unknown>;

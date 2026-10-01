@@ -40,6 +40,12 @@
           "ref": "com.example.notes.list@1",
           "summary": "List the notes the service keeps",
           "effectCategory": "read"
+        },
+        {
+          "tool": "move_board_card",
+          "ref": "com.example.notes.board-move@1",
+          "summary": "Move a card in the fixture board",
+          "effectCategory": "local-write"
         }
       ]
     }

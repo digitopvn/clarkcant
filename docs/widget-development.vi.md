@@ -3,7 +3,7 @@
 > [English](widget-development.md) (mặc định) · Tiếng Việt
 
 > Trạng thái: canonical authoring target cho widget ecosystem.
-> Cập nhật: 2026-09-19.
+> Cập nhật: 2026-10-01.
 > Áp dụng cho built-in catalog, declarative compositions, isolated widgets và MCP Apps.
 
 ## 1. Mục tiêu
@@ -1152,6 +1152,37 @@ hiện, Home/End và tìm chữ theo locale; [tree-schemas.spec.ts](../packages/
 kiểm tra fixture và sự nhất quán của schema; journey trình duyệt [tree-view.spec.ts](../apps/web/e2e/tree-view.spec.ts)
 bao phủ hội thoại, bàn phím, state được giữ qua khôi phục pin, bố cục thích ứng, giảm chuyển động và bản xem trước
 trong Widget Library.
+
+---
+
+## 8.10 Bảng Kanban
+
+`canvas.board@1` là bảng do host dựng từ công việc đã biết và bị giới hạn kích thước. Bảng có 1–12 cột và tối đa 120
+thẻ; ID cột và ID thẻ dùng chung một namespace duy nhất. Tiêu đề dài tối đa 160 ký tự trên một dòng, mô tả tối đa
+500, người phụ trách tối đa 100, và mỗi thẻ có tối đa 8 nhãn dạng chữ thuần. Một cột có thể đặt giới hạn số thẻ.
+Node từ chối trường lạ, cột không tồn tại, ID trùng, cột vượt giới hạn và ký tự điều khiển ẩn trước khi đặt widget.
+Bảng không tải dữ liệu và không sửa chi tiết thẻ.
+
+Node giữ thứ tự thẻ và thẻ đang chọn dưới dạng trạng thái khung nhìn. Khi không có action binding, di chuyển thẻ chỉ
+đổi khung nhìn đã lưu của riêng bảng. `props.action` tuỳ chọn phải là binding `invoke`; node xác định bảng có gắn binding
+hay không dựa trên binding host đã lưu, kiểm tra thẻ, cột đích theo props và thứ tự hiện tại, rồi chỉ gửi
+`{ cardId, fromColumnId, toColumnId, position }` qua luồng capability chuẩn. Một lần di chuyển có binding ở trạng thái
+đang chờ cho tới khi host báo kết quả. Thành công xác nhận thứ tự đang hiển thị; bị từ chối sẽ khôi phục thứ tự trước
+đó và hiện lý do; mất phản hồi thì giữ trạng thái không chắc chắn cho tới khi người dùng xác nhận đã hiểu. Trang không
+ghi trực tiếp lên provider.
+
+Space chọn hoặc thả thẻ đang focus, các phím mũi tên chuyển vị trí xem trước và Escape huỷ thao tác. Tay nắm kéo cũng
+dùng được bằng pointer và cảm ứng; bàn phím không phụ thuộc vào kéo. Khi thẻ xem trước chuyển giữa các cột, focus vẫn
+ở trên thẻ; live region đọc thông báo khi chọn, từng vị trí và lúc thả; tay nắm có vùng chạm 44 px. Tone nhãn luôn đi
+kèm một từ mô tả, focus nhìn thấy được, viewport hẹp không tràn ngang, và bảng tuân theo tuỳ chọn giảm chuyển động.
+Tài liệu semantic báo số cột/thẻ trong giới hạn, lựa chọn và trạng thái đang chờ; phần dự phòng dạng chữ liệt kê thẻ
+bên dưới tiêu đề từng cột.
+
+Kiểm thử: [kanban-board.spec.ts](../packages/contracts/test/kanban-board.spec.ts) kiểm tra giới hạn, thứ tự, từ chối,
+semantic và văn bản; [board-view.spec.ts](../apps/runtime/test/board-view.spec.ts) kiểm tra binding host, lưu state,
+kết quả invoke, khớp approval và rollback khi bị từ chối; browser journey
+[kanban-board.spec.ts](../apps/web/e2e/kanban-board.spec.ts) chạy thao tác bàn phím, chuột và cảm ứng trong hội thoại,
+theme sáng/tối thích ứng và giảm chuyển động, cùng preview chỉ-đọc trong Widget Library.
 
 ---
 

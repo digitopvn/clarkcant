@@ -463,7 +463,7 @@ export async function runApprovedCapability(
     label: succeeded ? `Đã gọi ${ref}` : `Không gọi được ${ref}`,
     status: succeeded ? "done" : "failed",
     // The approval id travels with the receipt so the card it answered reads as decided, including after a reload.
-    args: { capabilityRef: ref, approvalId: input.approvalId, decision: "granted" },
+    args: { capabilityRef: ref, approvalId: input.approvalId, decision: "granted", outcome: succeeded ? "done" : "refused" },
     result,
     startedAt,
     endedAt: now(),

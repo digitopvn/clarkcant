@@ -531,7 +531,8 @@ describe("what the manifest declares against what the service lists", () => {
 
     expect(readiness(ADD)?.loaded).toBe(true);
     expect(getCapability({ db, nodeId: NODE }, LIST, NODE)).toBeUndefined();
-    expect(logs.some((line) => line.includes("list_notes, which its package does not declare"))).toBe(true);
+    expect(getCapability({ db, nodeId: NODE }, "com.example.notes.board-move@1" as CapabilityRef, NODE)).toBeUndefined();
+    expect(logs.some((line) => line.includes("which its package does not declare"))).toBe(true);
   });
 
   it("registers a declared tool the service does not list as not loaded, with that as the reason", async () => {
