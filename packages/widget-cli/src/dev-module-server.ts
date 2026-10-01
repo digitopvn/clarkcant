@@ -15,7 +15,10 @@ export async function createDevModuleServer(
   opaqueFrame = false,
   wsServer?: HttpServer,
   port?: number,
-  options: { isolatedCache?: boolean } = {},
+  options: {
+    isolatedCache?: boolean;
+    optimizeDeps?: { noDiscovery?: boolean; include?: string[] };
+  } = {},
 ) {
   let sharedServer: { port: number; ws: { server: HttpServer } } | Record<string, never> = {};
   if (wsServer !== undefined) {
@@ -37,6 +40,7 @@ export async function createDevModuleServer(
       appType: "custom",
       logLevel: "error",
       plugins: [react()],
+      ...(options.optimizeDeps === undefined ? {} : { optimizeDeps: options.optimizeDeps }),
       server,
     });
     if (cacheDir !== undefined) cacheDirectories.set(vite, cacheDir);

@@ -465,7 +465,12 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
 
   const getVite = async (): Promise<ViteDevServer> => {
     if (vite !== undefined) return vite;
-    vitePromise ??= createDevModuleServer(true, server, port).then(
+    vitePromise ??= createDevModuleServer(true, server, port, {
+      isolatedCache: true,
+      // This middleware-only catalog server has no HTML entry to scan. Discovering dependencies from the whole
+      // workspace source graph stalls cold-start optimization, so prebundle only React's runtime entry points.
+      optimizeDeps: { noDiscovery: true, include: ["react", "react-dom/client"] },
+    }).then(
       (created) => {
         vite = created;
         return created;
