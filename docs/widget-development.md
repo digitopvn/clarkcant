@@ -1204,14 +1204,18 @@ the first item.
 A composed layout lists a widget only when the node has a real source for it. For media that means an imported image,
 and now a gallery or carousel too: a `canvas.gallery@1` or `canvas.carousel@1` leaf shows the person's own imported
 pictures, newest first, the same references `/images` serves, cut to what the widget holds (48 for a gallery, 24 for a
-carousel). The node fills `imageRefs` and `alts`; a model names only the widget, its title and its wiring, and any
+carousel). The set is the pictures present when the layout is composed: a picture imported later appears only in a
+newly composed layout, and one removed since is no longer drawn. The node fills `imageRefs` and `alts`; a model names only the widget, its title and its wiring, and any
 pictures it names are ignored. A layout that asks for one when the node holds no picture is refused with the reason,
 and a placed set whose pictures were all removed is shown as missing rather than as broken images. A video or a YouTube
 embed still has no source and is refused. Choosing a picture in a composed gallery or carousel emits `media.select`
 with `{ "selectedIndex" }`, the same field the widget stores, so a graph rule such as `select-field` into a declared
 number key keeps the choice on the node. A leaf that picks the same key gets that value back as its own selection: two
-media leaves wired to one key follow each other, and the surface's `semanticState` and `inspect_ui` report it. An
-unwired gallery or carousel in a composed surface keeps its choice on the page only.
+media leaves wired to one key follow each other, and the surface's `semanticState` and `inspect_ui` report it. That
+value is the stored index, counted from 0: the second picture is held and reported as `1`. Only a media widget's own
+semantic summary counts from 1 (`selectedNumber`, "showing picture 2 of 3"); a graph key fed by `media.select` does
+not, so a model reading one must add 1 to name the picture as a person counts it. An unwired gallery or carousel in a
+composed surface keeps its choice on the page only.
 
 `canvas.video@1` stores `status`, `position` and `duration` through the same host binding (state version 2; an old
 version-1 state migrates to paused at 0). Position writes go through one shared playback coalescer
@@ -1220,8 +1224,9 @@ pause, seek and end flush immediately, while continuous playback writes at most 
 `MEDIA_PLAYBACK_WRITE_INTERVAL_MS` (three seconds). Each write is one bound view action, so it also records an action
 invocation and returns the conversation timeline; a lighter state-only path would need a new route and is not part of
 this change. That write amplification, and how long those invocation records are kept, are tracked in [#380](https://github.com/digitopvn/clarkcant/issues/380). When the page is hidden, the player writes where it is; when the page is left or the player is removed, it
-writes itself paused where it stopped. Those writes are best-effort, because an unloading page may not finish the
-request. So the node also stops believing a stored "playing" once it is older than `MEDIA_PLAYING_FRESH_MS` (two
+writes itself paused where it stopped. The write made as the page is left is sent at once with `keepalive`, not behind
+a write still in flight, at the revision that write leads to. All of these writes are best-effort: an unloading page may
+still not finish the request, and a leaving write is refused if the one before it was. So the node also stops believing a stored "playing" once it is older than `MEDIA_PLAYING_FRESH_MS` (two
 intervals plus two seconds of slack, from the state row's `updated_at`): the semantic document then reports the video
 paused at the last stored position. A refused playback write is said beside the player, which is not moved, and the
 next write is sent even if the player has not moved since. A restored player
@@ -1251,7 +1256,7 @@ refusal with no picture), [composition-graph.spec.ts](../apps/runtime/test/compo
 read back, refused when malformed, and missing once the pictures are removed) and the browser journey in
 [composition-graph.spec.ts](../apps/web/e2e/composition-graph.spec.ts), which picks a picture from the keyboard, sees the
 carousel follow, reads the value through the live surface and `inspect_ui`, reloads, and checks both themes at 390 px.
-The same file plays a real local WebM clip in Chromium for about five seconds
+[widget.spec.ts](../apps/web/e2e/widget.spec.ts) also plays a real local WebM clip in Chromium for about five seconds
 and counts the writes against the clock ticks, refuses one write, reads the paused position through `inspect_ui`, and
 reloads after pinning to check that the player reopens at that position without playing.
 
