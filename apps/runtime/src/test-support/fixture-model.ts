@@ -1857,6 +1857,49 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       };
     }
 
+    /*
+     * A frame whose package was granted a profile that lets the person keep it playing out of view. What it does
+     * offscreen is decided by the host from that grant and the person's press, never by the widget.
+     */
+    if (/widget phát|playback widget/i.test(input.text)) {
+      const definition = {
+        id: "com.example.playback.player@1",
+        version: "1.0.0",
+        renderer: "isolated-app" as const,
+        propsSchema: {
+          type: "object",
+          properties: { title: { type: "string", maxLength: 200 } },
+          required: ["title"],
+          additionalProperties: false,
+        },
+        eventSchemas: {},
+        stateSchema: { type: "object", properties: {}, additionalProperties: true },
+        stateVersion: 0,
+        semanticDescription: "A clock that keeps counting while its frame runs.",
+        requestedCapabilities: [],
+        sizing: { compact: true, expanded: true, minHeight: 160 },
+        textFallback: "Đồng hồ phát: đếm khi frame của nó đang chạy.",
+        effectCategories: [],
+        datasetRefs: [],
+      };
+      const instance = createInstance(deps.services().conductor, {
+        definition,
+        packageDigest: definitionDigest(definition),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Đồng hồ phát (fixture)" },
+      });
+      const snapshot = captureSnapshot(deps.services().conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: một widget phát trong frame cách ly (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
     if (/widget cách ly|isolated widget/i.test(input.text)) {
       const definition = {
         id: "com.example.frame-widget.main@1",

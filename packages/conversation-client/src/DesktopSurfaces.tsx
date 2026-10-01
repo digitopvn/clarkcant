@@ -26,6 +26,7 @@ import { useWidgetArtifactHost } from "./widget-artifacts.tsx";
 import type { AppearanceSnapshot, AttachmentRef } from "@clarkcant/contracts";
 import { readAppearanceSnapshot } from "./appearance.ts";
 import { useImageUrls } from "./use-image-urls.ts";
+import { offscreenPlayback } from "./offscreen-playback.ts";
 
 export interface MenuBarPopoverProps {
   nodeLabel: string;
@@ -336,9 +337,12 @@ export function PinnedLiveSurface({
     void load();
   }, [refreshSignal, load]);
 
-  const playbackAllowed = live?.kind === "isolated-frame" && live.frame?.offscreen === "authorized-playback";
-  const playingOffscreen = keepPlaying && playbackAllowed && !inView;
-  const active = inView || (keepPlaying && playbackAllowed);
+  const { playbackAllowed, playingOffscreen, active } = offscreenPlayback({
+    inView,
+    keepPlaying,
+    isolatedFrame: live?.kind === "isolated-frame",
+    offscreen: live?.kind === "isolated-frame" ? live.frame?.offscreen : undefined,
+  });
 
   useEffect(() => {
     /*

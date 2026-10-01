@@ -201,6 +201,45 @@
     "digest": "sha256:notes-service-digest"
   },
   {
+    "packageId": "com.example.playback",
+    "version": "1.0.0",
+    "displayName": "Playback",
+    "description": "A frame that keeps a clock running, under a profile that lets the person keep it playing out of view.",
+    "source": {
+      "kind": "local",
+      "path": "apps/web/e2e/fixtures/playback-widget"
+    },
+    "publisher": {
+      "id": "example",
+      "sourceUrl": "https://example.com",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "ui"
+    ],
+    "isolations": [
+      {
+        "facetKind": "ui",
+        "isolation": "isolated-ui"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "isolated-ui",
+    "sizeBytes": 2048,
+    "digest": "sha256:playback-widget-digest"
+  },
+  {
     "packageId": "com.example.lookup",
     "version": "1.0.0",
     "displayName": "Lookup",
