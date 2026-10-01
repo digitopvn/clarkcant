@@ -458,7 +458,7 @@ binding is compiled it is refused for a file this node does not hold or one anot
 reads each reference again for the person who pressed and bounds each to 4000 characters, cut at a character boundary.
 A file is read as the pressed widget, under the same decision as that widget's own reads: its grant, the principal, and
 the conversation the press happened in, which must be the file's. What the model gets is the file's name, type and
-size and, for a text type (plain text, Markdown, CSV, JSON), the start of its contents — at most 3000 bytes, said to be
+size and, for a text type (plain text, Markdown, CSV, TSV, JSON), the start of its contents — at most 3000 bytes, said to be
 partial when it is. A picture or a PDF is described and never quoted. An unknown, expired or missing file refuses the
 press with `CONTEXT_REF_UNKNOWN`; another principal's file, one the widget was never granted, or a grant that has
 expired or been revoked refuses it with `CONTEXT_REF_FORBIDDEN`. What it reads can be text a widget wrote, so it is data, never guidance: it is not placed in the turn's
@@ -1460,8 +1460,9 @@ What each call does:
   it against `accept`, and applies the attachment rules: allowlisted types, 25 MiB a file, and the principal's quota.
   The type a system gives is only a claim, read under the name the node uses: `application/vnd.ms-excel` for a
   `.csv` on Windows is CSV, and `image/jpg` is JPEG. A missing or generic type (`application/octet-stream`) is
-  taken from the extension for Markdown, CSV and JSON, and otherwise read from the bytes. Characters that reverse how
-  a name reads (bidi controls) are dropped from the file's name.
+  taken from the extension for Markdown, CSV, TSV and JSON, and otherwise read from the bytes. Tab-separated values
+  (`text/tab-separated-values`, saved as `.tsv`, also named `text/tsv` or `.tab`) follow the same rules as CSV.
+  Characters that reverse how a name reads (bidi controls) are dropped from the file's name.
 - `read(ref, { offset, length })` reads one range of at most 256 KiB and says whether it reached the end. A larger
   file takes several reads.
 - `create({ mimeType, name? })` starts a working artifact of a type the attachment pipeline accepts.

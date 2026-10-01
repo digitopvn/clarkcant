@@ -84,6 +84,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   markdown: "text/markdown",
   txt: "text/plain",
   csv: "text/csv",
+  tsv: "text/tab-separated-values",
   json: "application/json",
   xml: "application/xml",
   yaml: "application/yaml",

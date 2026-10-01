@@ -461,7 +461,7 @@ từ chối nếu node này không giữ tệp đó hoặc tệp thuộc về ng
 bấm và giới hạn mỗi cái ở 4000 ký tự, cắt đúng ranh giới ký tự. Một tệp được đọc với tư cách widget vừa được bấm, theo
 đúng quyết định áp dụng cho những lần đọc của chính widget đó: grant của nó, principal, và cuộc trò chuyện nơi nút được
 bấm, vốn phải là cuộc trò chuyện của tệp. Model nhận được tên, kiểu và kích thước của tệp, và với kiểu văn bản (văn bản
-thuần, Markdown, CSV, JSON) thì thêm phần đầu nội dung — tối đa 3000 byte, có ghi rõ là chưa đủ khi đúng như vậy. Ảnh
+thuần, Markdown, CSV, TSV, JSON) thì thêm phần đầu nội dung — tối đa 3000 byte, có ghi rõ là chưa đủ khi đúng như vậy. Ảnh
 hoặc PDF chỉ được mô tả, không bao giờ được trích. Một tệp không rõ, đã hết hạn hoặc mất byte làm lượt bấm bị từ chối với
 `CONTEXT_REF_UNKNOWN`; tệp của principal khác, tệp widget chưa từng được cấp, hoặc grant đã hết hạn hay bị thu hồi làm
 lượt bấm bị từ chối với `CONTEXT_REF_FORBIDDEN`. Những gì host đọc có thể là
@@ -1459,7 +1459,9 @@ Mỗi lời gọi làm gì:
   `accept`, và áp dụng các quy tắc đính kèm: kiểu nằm trong danh sách cho phép, tối đa 25 MiB một tệp, và hạn mức
   của principal. Kiểu mà hệ thống đưa ra chỉ là một lời khai, được đọc theo tên node dùng: `application/vnd.ms-excel`
   cho một tệp `.csv` trên Windows là CSV, và `image/jpg` là JPEG. Một kiểu bị thiếu hoặc chung chung
-  (`application/octet-stream`) được lấy từ phần mở rộng đối với Markdown, CSV và JSON, còn lại thì đọc từ các byte.
+  (`application/octet-stream`) được lấy từ phần mở rộng đối với Markdown, CSV, TSV và JSON, còn lại thì đọc từ các byte.
+  Giá trị phân tách bằng tab (`text/tab-separated-values`, lưu thành `.tsv`, còn được gọi là `text/tsv` hoặc `.tab`)
+  theo cùng các quy tắc như CSV.
   Các ký tự đảo chiều đọc văn bản (ký tự điều khiển bidi) bị bỏ khỏi tên tệp.
 - `read(ref, { offset, length })` đọc một đoạn tối đa 256 KiB và cho biết đã tới cuối tệp chưa. Tệp lớn hơn thì phải
   đọc nhiều lần.
