@@ -83,6 +83,7 @@ const questionId = { name: "questionId", in: "path", required: true, schema: { t
 const instanceId = { name: "instanceId", in: "path", required: true, schema: { type: "string" } };
 const artifactId = { name: "artifactId", in: "path", required: true, schema: { type: "string" } };
 const jobId = { name: "jobId", in: "path", required: true, schema: { type: "string", pattern: "^job_[A-Za-z0-9_-]{1,120}$" } };
+const tokenSession = { name: "session", in: "path", required: true, schema: { type: "string", pattern: "^[A-Za-z0-9_-]{16,128}$" } };
 
 function ok(description: string): Record<string, unknown> {
   return { description, content: { "application/json": { schema: { type: "object" } } } };
@@ -450,6 +451,40 @@ export function openApiDocument(): Record<string, unknown> {
             "and its ending says so. An ended job is 409 JOB_NOT_RUNNING with its saved result still readable.",
           parameters: [conversationId, instanceId, jobId],
           responses: { ...refusals, "202": ok("{ accepted: true, jobId }"), "404": ok("JOB_NOT_FOUND"), "409": ok("JOB_NOT_RUNNING") },
+        },
+      },
+      "/conversations/{conversationId}/widgets/{instanceId}/browser-tokens": {
+        post: {
+          summary: "Issue a short-lived browser token to one mounted frame (tokens@1). Person-only",
+          description:
+            "{ session, request: { provider, scopes, ttlSeconds? } }. session is the random id the host chrome gave this " +
+            "mount of the frame. Issued only for a provider and scopes the widget's package declared in its UI facet's " +
+            "browserTokens, and only when the provider's adapter says it can mint a scoped token for those scopes and that " +
+            "lifetime (at most 3600 s, 900 s when none is asked). The token is bound to this instance and session, never " +
+            "stored by the node, revoked when the session ends where the provider supports it, and audited by provider " +
+            "and outcome only. A request is refused, never narrowed.",
+          parameters: [conversationId, instanceId],
+          requestBody: { content: { "application/json": { schema: { type: "object", required: ["session", "request"] } } } },
+          responses: {
+            ...refusals,
+            "200": ok("{ token: { provider, token, scopes, expiresAt } }"),
+            "403": ok("TOKEN_PROVIDER_NOT_DECLARED, TOKEN_SCOPE_NOT_DECLARED or PERSON_ONLY"),
+            "404": ok("RESOURCE_NOT_FOUND: no such instance in this conversation"),
+            "409": ok("TOKEN_PACKAGE_NOT_ACTIVE or TOKEN_SESSION_ENDED"),
+            "422": ok("TOKEN_PROVIDER_UNSCOPED, TOKEN_SCOPE_NOT_SUPPORTED or TOKEN_TTL_TOO_LONG"),
+            "502": ok("TOKEN_ISSUE_FAILED"),
+            "503": ok("TOKEN_PROVIDER_UNAVAILABLE: no adapter for this provider on this node"),
+          },
+        },
+      },
+      "/conversations/{conversationId}/widgets/{instanceId}/browser-tokens/{session}": {
+        delete: {
+          summary: "End one frame session's browser tokens",
+          description:
+            "Called by host chrome when the frame mounted under session goes. The node revokes what that session was " +
+            "given where the provider supports it, and refuses any later request for the session with TOKEN_SESSION_ENDED.",
+          parameters: [conversationId, instanceId, tokenSession],
+          responses: { ...refusals, "200": ok("{ ended: true, revoked }: how many tokens were withdrawn"), "400": ok("INVALID_SCHEMA"), "404": ok("RESOURCE_NOT_FOUND") },
         },
       },
       "/stop": {
