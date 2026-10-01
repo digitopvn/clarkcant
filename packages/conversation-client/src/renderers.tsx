@@ -83,6 +83,10 @@ import {
   BOARD_ID,
   BOARD_ACKNOWLEDGE_OPERATION,
   BOARD_MOVE_OPERATION,
+  MEDIA_VIEW_OPERATION,
+  readMediaPlayback,
+  readMediaSelection,
+  type MediaPlaybackState,
   boardMoveProblems,
   moveBoardCard,
   readBoard,
@@ -144,6 +148,7 @@ import {
   timelineToggle,
 } from "./timeline-layout.ts";
 import { vendorEmbedUrl } from "./media-embed.ts";
+import { createPlaybackCoalescer } from "./playback-coalescer.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import {
@@ -2179,12 +2184,19 @@ function pictureAlts(value: unknown, count: number): string[] {
 }
 
 /** Several pictures seen one at a time, with the controls a keyboard can reach. */
-function Carousel({ props, imageUrl }: RendererProps): ReactElement {
+function Carousel({ props, imageUrl, state, onAction, onStateChange }: RendererProps): ReactElement {
   const t = useT();
   const refs = pictureRefs(props.imageRefs);
   const alts = pictureAlts(props.alts, refs.length);
-  const [index, setIndex] = useState(0);
+  const savedIndex = readMediaSelection(state, refs.length).selectedIndex;
+  const [index, setIndex] = useState(savedIndex);
+  useEffect(() => setIndex(savedIndex), [savedIndex]);
   const current = refs.length === 0 ? 0 : Math.min(index, refs.length - 1);
+  const select = (next: number) => {
+    setIndex(next);
+    onStateChange?.({ selectedIndex: next });
+    onAction?.("media.select", { index: next });
+  };
   const ref = refs[current];
   const alt = alts[current] ?? "";
   const url = ref === undefined ? undefined : imageUrl?.(ref);
@@ -2206,14 +2218,14 @@ function Carousel({ props, imageUrl }: RendererProps): ReactElement {
             <button
               type="button"
               aria-label={t("widgets.carousel.previous")}
-              onClick={() => setIndex(current <= 0 ? refs.length - 1 : current - 1)}
+              onClick={() => select(current <= 0 ? refs.length - 1 : current - 1)}
             >
               ‹
             </button>
             <span className="cc-freshness" aria-live="polite">
               {current + 1}/{refs.length}
             </span>
-            <button type="button" aria-label={t("widgets.carousel.next")} onClick={() => setIndex((current + 1) % refs.length)}>
+            <button type="button" aria-label={t("widgets.carousel.next")} onClick={() => select((current + 1) % refs.length)}>
               ›
             </button>
           </div>
@@ -2225,10 +2237,13 @@ function Carousel({ props, imageUrl }: RendererProps): ReactElement {
 }
 
 /** The same pictures as a grid, for when seeing them together is the point. */
-function Gallery({ props, imageUrl }: RendererProps): ReactElement {
+function Gallery({ props, imageUrl, state, onAction, onStateChange }: RendererProps): ReactElement {
   const t = useT();
   const refs = pictureRefs(props.imageRefs);
   const alts = pictureAlts(props.alts, refs.length);
+  const savedIndex = readMediaSelection(state, refs.length).selectedIndex;
+  const [selectedIndex, setSelectedIndex] = useState(savedIndex);
+  useEffect(() => setSelectedIndex(savedIndex), [savedIndex]);
   const shown = refs.flatMap((ref, index) => {
     const url = imageUrl?.(ref);
     return url === undefined ? [] : [{ ref, url, alt: alts[index] ?? "" }];
@@ -2242,14 +2257,31 @@ function Gallery({ props, imageUrl }: RendererProps): ReactElement {
         />
       ) : (
         <ul className="cc-gallery" data-gallery-count={shown.length}>
-          {shown.map((picture) => (
+          {shown.map((picture) => {
+            const index = refs.indexOf(picture.ref);
+            const selected = index === selectedIndex;
+            return (
             <li key={picture.ref}>
               <figure className="cc-image">
-                <img src={picture.url} alt={picture.alt} loading="lazy" decoding="async" data-image-ref={picture.ref} />
+                {/* The button holds only the picture: a figure and its caption are not phrasing content. */}
+                <button
+                  type="button"
+                  className="cc-gallery-select"
+                  aria-label={picture.alt || `${index + 1}/${refs.length}`}
+                  aria-pressed={selected}
+                  onClick={() => {
+                    setSelectedIndex(index);
+                    onStateChange?.({ selectedIndex: index });
+                    onAction?.("media.select", { index });
+                  }}
+                >
+                  <img src={picture.url} alt={picture.alt} loading="lazy" decoding="async" data-image-ref={picture.ref} />
+                </button>
                 {picture.alt !== "" && <figcaption className="cc-freshness">{picture.alt}</figcaption>}
               </figure>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </Frame>
@@ -2309,13 +2341,37 @@ function YouTubeEmbed({ props }: RendererProps): ReactElement {
  * host minted, and a video is another thing behind such a reference. A reference the host cannot resolve shows
  * the description instead of an invented address.
  */
-function LocalVideo({ props, imageUrl }: RendererProps): ReactElement {
+function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactElement {
   const t = useT();
   const ref = String(props.videoRef ?? "");
   const alt = String(props.alt ?? "");
   const posterRef = typeof props.posterRef === "string" ? props.posterRef : "";
   const url = ref === "" ? undefined : imageUrl?.(ref);
   const poster = posterRef === "" ? undefined : imageUrl?.(posterRef);
+  const callbackRef = useRef(onAction);
+  callbackRef.current = onAction;
+  // The stored position is applied once, when the player first knows its duration. The seek it causes is the host's
+  // own state coming back, so it is not written again; and nothing here calls `play()`: a restore never starts playback.
+  const restored = useRef(false);
+  const restoringSeek = useRef(false);
+  const playback = readMediaPlayback(state);
+  const coalescer = useRef(createPlaybackCoalescer({
+    write: (next) => callbackRef.current?.(MEDIA_VIEW_OPERATION, { ...next }),
+  })).current;
+  const playbackFrom = (video: HTMLVideoElement, status: MediaPlaybackState["status"]): MediaPlaybackState => ({
+    status,
+    position: Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0,
+    duration: Number.isFinite(video.duration) ? Math.max(0, video.duration) : 0,
+  });
+  const clockStatus = (video: HTMLVideoElement): MediaPlaybackState["status"] => (video.ended ? "ended" : video.paused ? "paused" : "playing");
+  const restorePosition = (video: HTMLVideoElement) => {
+    if (restored.current || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+    restored.current = true;
+    if (playback.position > 0 && Number.isFinite(video.duration)) {
+      restoringSeek.current = true;
+      video.currentTime = Math.min(playback.position, video.duration);
+    }
+  };
 
   return (
     <Frame title={String(props.title ?? t("widgets.video.title"))} dataset={undefined} role="media">
@@ -2326,6 +2382,20 @@ function LocalVideo({ props, imageUrl }: RendererProps): ReactElement {
           <video
             controls
             preload="metadata"
+            onLoadedMetadata={(event) => restorePosition(event.currentTarget)}
+            onPlaying={(event) => coalescer(playbackFrom(event.currentTarget, "playing"), "playing")}
+            onTimeUpdate={(event) => coalescer(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "timeupdate")}
+            onPause={(event) => {
+              if (!event.currentTarget.ended) coalescer(playbackFrom(event.currentTarget, "paused"), "pause");
+            }}
+            onSeeked={(event) => {
+              if (restoringSeek.current) {
+                restoringSeek.current = false;
+                return;
+              }
+              coalescer(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "seek");
+            }}
+            onEnded={(event) => coalescer(playbackFrom(event.currentTarget, "ended"), "ended")}
             src={url}
             {...(poster === undefined ? {} : { poster })}
             aria-label={alt}
