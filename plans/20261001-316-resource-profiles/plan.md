@@ -1,6 +1,6 @@
 ---
 title: "#316 Resource profiles, service egress broker and browser token broker"
-status: in-progress
+status: in-review
 created: 2026-10-01
 issues: [316]
 related: [200, 221, 231, 313, 314, 315, 319, 320, 332]
@@ -50,10 +50,10 @@ container would weaken an isolation default, which needs the person's decision f
 
 | Phase | Status | Detail |
 | --- | --- | --- |
-| A Resource profiles | in-progress | [phase-01-resource-profiles.md](phase-01-resource-profiles.md) |
-| B Service egress broker and real `needs_auth` | pending | [phase-02-service-egress-and-auth.md](phase-02-service-egress-and-auth.md) |
-| C Browser token broker and dev-host simulation | pending | [phase-03-browser-token-and-dev-host.md](phase-03-browser-token-and-dev-host.md) |
-| D E2E fixture with a fake provider, then docs | pending | [phase-04-e2e-and-docs.md](phase-04-e2e-and-docs.md) |
+| A Resource profiles | completed | [phase-01-resource-profiles.md](phase-01-resource-profiles.md) |
+| B Service egress broker and real `needs_auth` | completed | [phase-02-service-egress-and-auth.md](phase-02-service-egress-and-auth.md) |
+| C Browser token broker and dev-host simulation | completed | [phase-03-browser-token-and-dev-host.md](phase-03-browser-token-and-dev-host.md) |
+| D E2E fixture with a fake provider, then docs | completed | [phase-04-e2e-and-docs.md](phase-04-e2e-and-docs.md) |
 
 Phases run in order; each later phase builds on the manifest fields and host wiring of the earlier ones.
 
