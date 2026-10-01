@@ -46,6 +46,8 @@ export interface PackageJobHost {
 
 const MAX_ACTIVE_JOBS = 4;
 const NAMED_RESULTS = 3;
+/** The least time between two progress writes of one job; widgets read it once a second. */
+const PROGRESS_INTERVAL_MS = 250;
 
 /**
  * The note a finished job leaves in its conversation: which capability, what it produced by name, and what to do next.
@@ -154,6 +156,7 @@ export function createPackageJobHost(input: {
       if (running === undefined) throw new Error("the node saved no record for the accepted job");
       const controller = new AbortController();
       let dispatched = false;
+      let lastProgressAt = 0;
       active.set(job.jobId, controller);
       publish(running);
       const reportSettled = (outcome: JobRunOutcome, refs: JobRecord["resultRefs"] = []): void => {
@@ -168,6 +171,11 @@ export function createPackageJobHost(input: {
         if (controller.signal.aborted) throw controller.signal.reason;
         dispatched = true;
         return run(controller.signal, (progress) => {
+          // A service may report as often as it likes; the node keeps at most a few a second, and always the last step.
+          const reportedAt = Date.now();
+          const last = progress.total !== undefined && progress.current >= progress.total;
+          if (!last && reportedAt - lastProgressAt < PROGRESS_INTERVAL_MS) return;
+          lastProgressAt = reportedAt;
           if (!updateJobProgress(input.db, { jobId: job.jobId, progress, at: now() })) return;
           const current = getJob(input.db, job.jobId);
           if (current !== undefined) publish(current);
@@ -236,12 +244,15 @@ export function createPackageJobHost(input: {
       const interrupted = listOpenJobs(input.db, input.nodeId, input.nodeBootId);
       const count = failInterruptedJobs(input.db, { nodeId: input.nodeId, currentBootId: input.nodeBootId, at: now() });
       for (const job of interrupted) {
-        if (job.conversationId !== undefined) {
+        if (job.conversationId === undefined) continue;
+        try {
           input.report?.(
             job.conversationId,
             `The package job for ${job.capabilityRef} was interrupted when the node restarted. Its service may have completed its effect; review it before retrying.`,
             { jobId: job.jobId, status: "failed" },
           );
+        } catch {
+          // The job is already marked failed; one note that cannot be written must not stop the rest of recovery.
         }
       }
       return count;

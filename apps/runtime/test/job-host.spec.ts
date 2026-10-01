@@ -77,6 +77,51 @@ describe("durable package job host", () => {
     expect(reports).toHaveLength(1);
   });
 
+  it("fails every interrupted job even when the note for one of them cannot be written", () => {
+    const supervisor = createWorkSupervisor();
+    const reported: string[] = [];
+    const host = createPackageJobHost({
+      db, nodeId: "node_1", nodeBootId: "boot_2", newId: () => "job_unused", supervisor,
+      report: (_conversationId, _text, ended) => {
+        reported.push(ended.jobId);
+        if (reported.length === 1) throw new Error("the conversation could not be written");
+      },
+    });
+    for (const jobId of ["job_crashed_a", "job_crashed_b"]) {
+      insertJob(db, { ...job(jobId), status: "running", resultRefs: [], createdAt: "2026-10-01T10:00:00.000Z", startedAt: "2026-10-01T10:00:00.000Z", nodeBootId: "boot_1" } as never);
+    }
+
+    expect(host.recover()).toBe(2);
+    expect(reported).toHaveLength(2);
+    const owner = { ownerPrincipalId: "prin_1", instanceId: "winst_1", actionBindingId: "binding_1", packageGeneration: "generation_1" };
+    expect(host.get("job_crashed_a", owner)?.status).toBe("failed");
+    expect(host.get("job_crashed_b", owner)?.status).toBe("failed");
+  });
+
+  it("keeps a chatty service's progress to a few writes a second, and always its last step", async () => {
+    const supervisor = createWorkSupervisor();
+    const host = createPackageJobHost({ db, nodeId: "node_1", nodeBootId: "boot_1", newId: () => "job_unused", supervisor });
+    const owner = { ownerPrincipalId: "prin_1", instanceId: "winst_1", actionBindingId: "binding_1", packageGeneration: "generation_1" };
+    const seen: (number | undefined)[] = [];
+    let finish: (() => void) | undefined;
+    host.start({
+      job: job("job_chatty"),
+      run: (_signal, onProgress) => new Promise((resolve) => {
+        for (let step = 1; step <= 500; step += 1) onProgress({ current: step, total: 500 });
+        finish = () => resolve({ content: "done" });
+      }),
+    });
+    host.subscribe("job_chatty", owner, (snapshot) => seen.push(snapshot.progress?.current));
+    await flush();
+
+    // The first report and the last step are kept; the hundreds in between, sent within one instant, are not written.
+    expect(host.get("job_chatty", owner)?.progress).toMatchObject({ current: 500, total: 500 });
+    expect(seen.filter((current) => current !== undefined).length).toBeLessThanOrEqual(2);
+    finish?.();
+    await flush();
+    expect(host.get("job_chatty", owner)?.status).toBe("completed");
+  });
+
   it("stops a job before dispatch without sending a service request or claiming an uncertain effect", async () => {
     const supervisor = createWorkSupervisor();
     const reports: string[] = [];

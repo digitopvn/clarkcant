@@ -261,7 +261,8 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const maxTranscriptEntries = input.maxTranscriptEntries ?? 500;
   const clock = input.now ?? ((): number => Date.now());
   const jobBurst = input.jobBurst ?? 60;
-  const jobRefillPerSecond = input.jobRefillPerSecond ?? 2;
+  // Above what the SDK spends following the most jobs it waits on at once (4 polls a second), so a cancel still fits.
+  const jobRefillPerSecond = input.jobRefillPerSecond ?? 5;
   /** A request bucket that refills for the time since its last request; `take` spends one, or says it is empty. */
   const bucket = (burst: number, refillPerSecond: number): (() => boolean) => {
     let tokens = burst;
