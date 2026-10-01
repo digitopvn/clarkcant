@@ -284,6 +284,9 @@ export async function invokeCapability(
     );
   }
 
+  // Whether the package's secrets can be used is read now, not at the last ping: a key added or removed a moment ago
+  // decides this call.
+  host.refreshAuthentication?.(served.packageId);
   const descriptor = getCapability({ db: deps.db, nodeId: deps.nodeId }, ref, deps.nodeId);
   if (descriptor === undefined) {
     return refused(404, "CAPABILITY_MISSING", `capability ${request.ref} is not registered on this node yet`);
@@ -312,8 +315,13 @@ export async function invokeCapability(
       );
     }
   }
-  if (!readiness.authenticated) {
-    return refused(409, "CAPABILITY_NOT_AUTHENTICATED", `capability ${request.ref} needs its connection signed in`);
+  // Said only of a capability that is otherwise ready, so the reason is the sign-in's, not a restart's.
+  if (!readiness.authenticated && readiness.installed && readiness.loaded && readiness.healthy) {
+    return refused(
+      409,
+      "CAPABILITY_NOT_AUTHENTICATED",
+      `${descriptor.summary} is not signed in: ${readiness.blockedReason ?? "it needs its connection signed in"}`,
+    );
   }
   if (!(readiness.installed && readiness.loaded && readiness.authorized && readiness.healthy)) {
     return refused(

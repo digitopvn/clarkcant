@@ -30,6 +30,7 @@ import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
 import { detectServiceEngine, readEngineCapacity } from "../service-container.ts";
 import { createServiceHost, engineContainers, packageRootFrom, resourceProfilePolicy } from "../service-host.ts";
+import { type EgressAuditEvent, egressSecretProblem } from "../service-egress.ts";
 import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import type { NodeWork } from "./work-bootstrap.ts";
@@ -377,6 +378,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       principalId: services.runtime.identity.ownerPrincipalId,
       now: () => new Date().toISOString() as Instant,
     }),
+    egress: serviceEgressDeps(services),
   });
   void services.serviceHost.reconcile().catch((cause: unknown) => {
     process.stderr.write(`services: not started — ${cause instanceof Error ? cause.message : String(cause)}\n`);
@@ -539,4 +541,45 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   );
 
   return { stopUpdateChecks: () => updateChecks?.stop() };
+}
+
+/**
+ * What package services' egress is made with: the secret broker, whose own use is written to the trail as it is for
+ * every other consumer, and a trail row for each request the host made, by package, method, origin and secret name.
+ */
+function serviceEgressDeps(services: NodeServices) {
+  const db = services.runtime.db;
+  const principalId = services.runtime.identity.ownerPrincipalId;
+  const nodeId = services.runtime.identity.nodeId;
+  const now = () => new Date().toISOString() as Instant;
+  return {
+    secrets: createSecretBroker({
+      db,
+      principalId,
+      now,
+      audit: (event: { summary: string; ref: string }) =>
+        appendAuditEvent(db, {
+          auditId: services.conductor.newId("audit"),
+          principalId,
+          nodeId,
+          kind: "secret-use",
+          summary: event.summary,
+          outcome: "done",
+          ref: event.ref,
+          at: now(),
+        }),
+    }),
+    secretProblem: (packageId: string, name: string) => egressSecretProblem({ db, principalId }, packageId, name),
+    audit: (event: EgressAuditEvent) =>
+      appendAuditEvent(db, {
+        auditId: services.conductor.newId("audit"),
+        principalId,
+        nodeId,
+        kind: "egress",
+        summary: `${event.packageId} ${event.method} ${event.origin}${event.secret === undefined ? "" : ` with ${event.secret}`}${event.status === undefined ? "" : ` → ${String(event.status)}`}${event.reason === undefined ? "" : `: ${event.reason}`}`.slice(0, 500),
+        outcome: event.outcome,
+        ref: event.packageId,
+        at: now(),
+      }),
+  };
 }

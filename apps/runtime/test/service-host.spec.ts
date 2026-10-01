@@ -1,4 +1,7 @@
+import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -15,7 +18,7 @@ import {
   type ResourceProfileName,
 } from "@clarkcant/contracts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, getCapability, registerCapability, writeRegisteredPreference } from "@clarkcant/core";
-import { migrate, openDatabase, type Database } from "@clarkcant/storage";
+import { deleteCredential, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import {
   type CapabilityInvokeDeps,
@@ -23,7 +26,10 @@ import {
   invokeCapability,
   runApprovedCapability,
 } from "../src/application/capability-invoke.ts";
+import { storeCredentialFields } from "../src/application/credential-vault.ts";
 import { describeCapabilityOutcome } from "../src/invoke-capability-tool.ts";
+import { createSecretBroker } from "../src/secret-broker.ts";
+import { type EgressAuditEvent, egressSecretProblem } from "../src/service-egress.ts";
 import { NEEDS_ENGINE_REASON, type ServiceEngine } from "../src/service-container.ts";
 import {
   createServiceHost,
@@ -926,5 +932,169 @@ describe("a call its caller bounds", () => {
     if (outcome.kind !== "refused") throw new Error("unreachable");
     expect(outcome.message).toContain("nothing was sent");
     expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "widget" })).toMatchObject({ kind: "done", output: "No notes yet." });
+  });
+});
+
+describe("a service that reaches a provider through the host", () => {
+  const LOOKUP = "com.example.lookup";
+  const LOOKUP_GENERATION = `${LOOKUP}@1.0.0:code_1`;
+  const DEFINE = "com.example.lookup.define@1" as CapabilityRef;
+  const LOOKUP_FIXTURE = fileURLToPath(new URL("../../web/e2e/fixtures/egress-service/", import.meta.url));
+
+  let lookupRoot: string;
+  let provider: Server;
+  let secret: string;
+  let seen: IncomingHttpHeaders[];
+  let audit: EgressAuditEvent[];
+  let release: (() => void)[];
+
+  beforeEach(async () => {
+    // Generated here, so nothing in this file could be mistaken for a real key.
+    secret = `fake-${randomBytes(16).toString("hex")}`;
+    seen = [];
+    audit = [];
+    release = [];
+    provider = createServer((request, response) => {
+      seen.push(request.headers);
+      if ((request.url ?? "").includes("word=slow")) {
+        response.writeHead(200);
+        release.push(() => response.end("{}"));
+        return;
+      }
+      // A careless provider that repeats the key it was sent.
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ definition: "a sphere", youSent: request.headers.authorization ?? null }));
+    });
+    await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+    const port = (provider.address() as AddressInfo).port;
+
+    // The fixture E2E installs, with the provider's origin moved to this test's port.
+    lookupRoot = join(dir, "lookup");
+    cpSync(LOOKUP_FIXTURE, lookupRoot, { recursive: true });
+    const path = join(lookupRoot, "clarkcant.json");
+    writeFileSync(path, readFileSync(path, "utf8").replace("http://127.0.0.1:8879", `http://127.0.0.1:${String(port)}`));
+
+    const at = new Date(Date.UTC(2026, 9, 1, 6, 0, counter++)).toISOString();
+    const generation = {
+      generationId: LOOKUP_GENERATION,
+      packageId: LOOKUP,
+      version: "1.0.0",
+      digest: "sha256:lookup-digest",
+      nodeId: NODE,
+      codeGeneration: "code_1",
+      activatedAt: at,
+      uiOnlyFacets: [],
+      grantedCapabilities: [],
+    };
+    db.prepare(
+      `INSERT INTO package_generations
+         (generation_id, package_id, version, digest, node_id, code_generation, activated_at, document)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(LOOKUP_GENERATION, LOOKUP, "1.0.0", generation.digest, NODE, "code_1", at, JSON.stringify(generation));
+  });
+
+  afterEach(async () => {
+    for (const end of release) end();
+    provider.closeAllConnections();
+    await new Promise<void>((resolve) => provider.close(() => resolve()));
+  });
+
+  function startLookup(): ServiceHost {
+    host = createServiceHost({
+      registry: { db, nodeId: NODE },
+      dataDir: dir,
+      engine: async () => RUNNING,
+      packageRoot: (generation) => (generation.packageId === LOOKUP ? lookupRoot : undefined),
+      launcher: plainLauncher(),
+      log: (line) => logs.push(line),
+      timings: { restartBaseMs: 20, pingIntervalMs: 60_000 },
+      egress: {
+        secrets: createSecretBroker({ db, principalId: PRINCIPAL, now: () => new Date().toISOString() as Instant }),
+        secretProblem: (packageId, name) => egressSecretProblem({ db, principalId: PRINCIPAL }, packageId, name),
+        audit: (event) => audit.push(event),
+      },
+    });
+    return host;
+  }
+
+  function storeKey(consumer = `package:${LOOKUP}`): void {
+    const stored = storeCredentialFields(
+      { db, ownerPrincipalId: PRINCIPAL, nodeId: NODE, newId: (prefix) => `${prefix}_${String(++counter)}` },
+      [{ name: "LOOKUP_API_KEY", value: secret, kind: "token", consumer }],
+    );
+    expect(stored.ok).toBe(true);
+  }
+
+  it("reads as not signed in until the key is stored for the package, and is signed in after, without a restart", async () => {
+    const serviceHost = startLookup();
+    await running(serviceHost);
+    expect(getCapability({ db, nodeId: NODE }, DEFINE, NODE)).toMatchObject({
+      requiresConnection: true,
+      readiness: {
+        loaded: true,
+        healthy: true,
+        authenticated: false,
+        blockedReason: "the secret LOOKUP_API_KEY has not been provided on this node",
+      },
+    });
+    const refused = await invokeCapability(invokeDeps(), { ref: DEFINE, args: { word: "orb" }, source: "widget" });
+    expect(refused).toMatchObject({
+      kind: "refused",
+      status: 409,
+      code: "CAPABILITY_NOT_AUTHENTICATED",
+      message: "Look a word up with the provider is not signed in: the secret LOOKUP_API_KEY has not been provided on this node",
+    });
+    expect(seen).toEqual([]);
+
+    // A key any consumer may use is not one the person gave this package.
+    storeKey("");
+    serviceHost.refreshAuthentication?.();
+    expect(readiness(DEFINE)?.blockedReason).toBe("the secret LOOKUP_API_KEY is not stored for this package");
+
+    const pidOf = (): string => readFileSync(findPidFile(join(dir, "services")) ?? join(dir, "missing"), "utf8");
+    const pid = pidOf();
+    storeKey();
+    // The call itself reads the key's state again: no ping or credential route had to run first.
+    const done = await invokeCapability(invokeDeps(), { ref: DEFINE, args: { word: "orb" }, source: "widget" });
+    expect(done).toMatchObject({ kind: "done" });
+    expect(readiness(DEFINE)).toMatchObject({ authenticated: true });
+    expect(readiness(DEFINE)?.blockedReason).toBeUndefined();
+    expect(pidOf()).toBe(pid);
+
+    deleteCredential(db, PRINCIPAL, "LOOKUP_API_KEY");
+    serviceHost.refreshAuthentication?.(LOOKUP);
+    expect(readiness(DEFINE)).toMatchObject({
+      authenticated: false,
+      blockedReason: "the secret LOOKUP_API_KEY has no value on this node",
+    });
+  });
+
+  it("sends the provider the key the host added, and gives the service an answer that no longer holds it", async () => {
+    storeKey();
+    const serviceHost = startLookup();
+    await running(serviceHost);
+    const result = await serviceHost.call(DEFINE, { word: "orb" });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.authorization).toBe(`Bearer ${secret}`);
+    expect(result.content).toBe('Provider answer: {"definition":"a sphere","youSent":"[redacted]"}');
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(audit).toMatchObject([{ packageId: LOOKUP, method: "GET", secret: "LOOKUP_API_KEY", outcome: "done", status: 200 }]);
+    expect(JSON.stringify(audit)).not.toContain(secret);
+    expect(logs.join("\n")).not.toContain(secret);
+  });
+
+  it("stops the provider request when the call that needed it is withdrawn", async () => {
+    storeKey();
+    const serviceHost = startLookup();
+    await running(serviceHost);
+    const controller = new AbortController();
+    const call = serviceHost.call(DEFINE, { word: "slow" }, { signal: controller.signal });
+    const settled = expect(call).rejects.toMatchObject({ code: "SERVICE_CANCELLED" });
+    await until(() => seen.length === 1, "the provider request");
+    controller.abort();
+    await settled;
+    await until(() => audit.length === 1, "the egress outcome");
+    expect(audit[0]).toMatchObject({ outcome: "stopped", secret: "LOOKUP_API_KEY" });
   });
 });

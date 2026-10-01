@@ -56,6 +56,8 @@ import {
   serviceRunArgs,
   sweepServiceContainers,
 } from "./service-container.ts";
+import type { SecretBroker } from "./secret-broker.ts";
+import { EGRESS_EXPERIMENTAL, type EgressAuditEvent, egressRequestHandler } from "./service-egress.ts";
 
 export { engineEnvironment } from "./service-container.ts";
 
@@ -71,7 +73,9 @@ export { engineEnvironment } from "./service-container.ts";
  *
  *   - `installed` — the generation that declares it is active on this node.
  *   - `loaded` — the service started, completed the handshake, and lists the tool under the declared name.
- *   - `authenticated` — true: a service holds no connection of its own yet.
+ *   - `authenticated` — every secret the facet's `egress` declares is stored for the package (`package:<id>`), may be
+ *     sent as a header, and has a value. Rechecked before each call, at each health ping and when credentials change,
+ *     so adding or removing a key changes it without restarting the service. A facet that declares no secret is.
  *   - `authorized` — true: installing the package was the person's consent to what its manifest declares, and every
  *     call is still decided by the execution policy on its own.
  *   - `healthy` — the container is running and answers `ping`.
@@ -189,6 +193,17 @@ export interface ServiceHostOptions {
    * undefined when it does not refuse. Read at each start, so a rule the person changed applies at the next one.
    */
   profilePolicy?: (input: { packageId: string; profile: ResourceProfileName }) => string | undefined;
+  /**
+   * What a service's declared egress is made with (`service-egress.ts`). Absent, no service reaches anything, and a
+   * facet that declares a secret reads as not signed in, with that as the reason.
+   */
+  egress?: {
+    secrets: Pick<SecretBroker, "headersFor">;
+    /** Why a declared secret cannot be used for a package now, or undefined; never reads the value. */
+    secretProblem: (packageId: string, name: string) => string | undefined;
+    audit?: (event: EgressAuditEvent) => void;
+    fetch?: typeof fetch;
+  };
 }
 
 /**
@@ -246,6 +261,11 @@ export interface ServiceHost {
   profile?(ref: CapabilityRef): ResourceProfile | undefined;
   /** The latest resource decision for a package's services on this node; undefined before one was made. */
   resourceGrant?(packageId: string): ResourceGrant | undefined;
+  /**
+   * Read again whether each service's declared secrets can be used, for one package or all, and update its
+   * capabilities' `authenticated` when that changed. Reads metadata only, never a value.
+   */
+  refreshAuthentication?(packageId?: string): void;
   /** Stop every service. With `restart`, they are started again from scratch; without, the host stays stopped. */
   stopAll(options?: { restart?: boolean }): Promise<number>;
   /** What each facet is doing, for diagnostics and tests. */
@@ -283,6 +303,12 @@ interface ServiceEntry {
   epoch: number;
   /** Refs this facet declares that the registry holds for something else, already logged. */
   refused: Set<CapabilityRef>;
+  /** Host calls in flight to this service; egress is answered only while there is one. */
+  calls: number;
+  /** Aborted when the last call in flight ends, so egress made for those calls stops with them. */
+  callScope: AbortController;
+  /** Why the facet's declared secrets cannot be used, as last written to its capabilities. */
+  authReason?: string | undefined;
 }
 
 /**
@@ -419,6 +445,66 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     };
   }
 
+  /** Why the facet's declared secrets cannot be used now, or undefined; the first that cannot, by its name. */
+  function authProblem(entry: Pick<ServiceEntry, "facet" | "generation">): string | undefined {
+    const secrets = entry.facet.egress?.secrets ?? [];
+    if (secrets.length === 0) return undefined;
+    if (options.egress === undefined) {
+      return "this node does not make requests for services, so the secrets this service declares cannot be used";
+    }
+    for (const secret of secrets) {
+      const problem = options.egress.secretProblem(entry.generation.packageId, secret.name);
+      if (problem !== undefined) return problem.slice(0, 500);
+    }
+    return undefined;
+  }
+
+  /**
+   * Write a change in whether the facet's secrets can be used to its capabilities, keeping everything else each row
+   * says. A reason the row gave for the old answer is removed with it; any other reason stays.
+   */
+  function refreshEntryAuthentication(entry: ServiceEntry): void {
+    const previous = entry.authReason;
+    if (authProblem(entry) === previous) return;
+    for (const declaration of entry.facet.capabilities) {
+      if (entry.refused.has(declaration.ref) || !owns(entry, declaration.ref)) continue;
+      const row = getCapability(registry, declaration.ref, registry.nodeId);
+      if (row === undefined) continue;
+      const { blockedReason, ...rest } = row.readiness;
+      register(entry, declaration, {
+        readiness: {
+          ...rest,
+          ...(blockedReason !== undefined && blockedReason !== previous ? { blockedReason } : {}),
+          lastProbeAt: now(),
+        },
+        effectCategory: row.effectCategory,
+        ...(row.inputSchema === undefined ? {} : { inputSchema: row.inputSchema }),
+      });
+    }
+  }
+
+  /** The requests a service may send the host: egress, when its package declares it and this node makes requests. */
+  function serverRequestsFor(entry: ServiceEntry): Pick<StdioMcpTransportOptions, "serverRequests"> {
+    const egress = entry.facet.egress;
+    const deps = options.egress;
+    if (egress === undefined || deps === undefined) return {};
+    const packageId = entry.generation.packageId;
+    return {
+      serverRequests: {
+        experimental: EGRESS_EXPERIMENTAL,
+        handle: egressRequestHandler({
+          packageId,
+          egress,
+          secrets: deps.secrets,
+          secretProblem: (name) => deps.secretProblem(packageId, name),
+          inCall: () => (entry.calls > 0 ? entry.callScope.signal : undefined),
+          ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+          ...(deps.audit === undefined ? {} : { audit: deps.audit }),
+        }),
+      },
+    };
+  }
+
   function providerIdOf(entry: Pick<ServiceEntry, "generation">): string {
     return entry.generation.packageId.slice(0, 160);
   }
@@ -458,6 +544,13 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     state: { readiness: CapabilityReadiness; effectCategory?: EffectCategory; inputSchema?: Record<string, unknown> },
   ): void {
     if (!claim(entry, declaration.ref)) return;
+    const problem = authProblem(entry);
+    entry.authReason = problem;
+    // A capability that is otherwise ready says why it is not signed in; one that is not keeps its own reason.
+    const readinessNow: CapabilityReadiness =
+      problem === undefined
+        ? { ...state.readiness, authenticated: true }
+        : { ...state.readiness, authenticated: false, blockedReason: state.readiness.blockedReason ?? problem };
     const descriptor: CapabilityDescriptor = {
       ref: declaration.ref,
       providedBy: {
@@ -472,8 +565,8 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       resourceKinds: [],
       effectCategory: state.effectCategory ?? declaration.effectCategory,
       supportsCancellation: false,
-      requiresConnection: false,
-      readiness: state.readiness,
+      requiresConnection: (entry.facet.egress?.secrets.length ?? 0) > 0,
+      readiness: readinessNow,
       uiAffordances: [],
     };
     registerCapability(registry, descriptor);
@@ -535,6 +628,9 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
 
   /** Mark every capability of a facet with one readiness change, keeping what was learned about each tool. */
   function markAll(entry: ServiceEntry, change: Partial<CapabilityReadiness>): void {
+    const problem = authProblem(entry);
+    entry.authReason = problem;
+    change = { ...change, authenticated: problem === undefined };
     for (const declaration of entry.facet.capabilities) {
       if (!claim(entry, declaration.ref)) continue;
       if (getCapability(registry, declaration.ref, registry.nodeId) === undefined) {
@@ -624,6 +720,8 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     entry.connection = undefined;
     entry.runName = undefined;
     entry.listed = undefined;
+    entry.callScope.abort(new Error(reason));
+    entry.callScope = new AbortController();
     await connection?.close().catch(() => undefined);
     // Closing the engine's command line does not stop the container on every engine; removing it does.
     await removeContainer(runName);
@@ -764,6 +862,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         inheritEnv: false,
         requestTimeoutMs: HANDSHAKE_TIMEOUT_MS,
         onExit: (reason) => onGone(entry, epoch, runName, reason),
+        ...serverRequestsFor(entry),
       });
       if (!current(entry, epoch)) throw new Error("superseded");
       listed = await connection.listTools();
@@ -797,6 +896,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     }
     entry.pingTimer = setInterval(() => {
       if (!current(entry, epoch) || entry.connection === undefined) return;
+      refreshEntryAuthentication(entry);
       const pinged = entry.connection;
       pinged.ping().catch((cause: unknown) => {
         if (!current(entry, epoch)) return;
@@ -862,6 +962,8 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         fetchFailures: 0,
         epoch: 0,
         refused: new Set(),
+        calls: 0,
+        callScope: new AbortController(),
       };
       entries.set(key, entry);
       // Each service starts on its own: one that takes a minute to fetch its image does not hold the others.
@@ -900,6 +1002,8 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         const reason = entry?.reason ?? "no running service provides it on this node";
         throw new ServiceCallError("SERVICE_NOT_RUNNING", `${ref} cannot run now: ${reason}`);
       }
+      entry.calls += 1;
+      const scope = entry.callScope;
       try {
         // A caller may ask for less time than the granted profile allows, never for more.
         const jobMode = entry.facet.capabilities.some((declaration) => declaration.ref === ref && declaration.execution?.kind === "job");
@@ -932,6 +1036,19 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
                 ? "SERVICE_TOOL_FAILED"
                 : "SERVICE_UNREACHABLE";
         throw new ServiceCallError(code, message.slice(0, 500), true);
+      } finally {
+        entry.calls -= 1;
+        // The last call ended: whatever the service still has the host fetching for it stops now.
+        if (entry.calls === 0 && entry.callScope === scope) {
+          scope.abort(new Error("no call to the service is in flight"));
+          entry.callScope = new AbortController();
+        }
+      }
+    },
+
+    refreshAuthentication(packageId) {
+      for (const entry of entries.values()) {
+        if (packageId === undefined || entry.generation.packageId === packageId) refreshEntryAuthentication(entry);
       }
     },
 
