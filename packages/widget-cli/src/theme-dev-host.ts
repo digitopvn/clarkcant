@@ -6,7 +6,7 @@ import type { ViteDevServer } from "vite";
 import { installedThemes } from "@clarkcant/core";
 import type { ThemeDocument } from "@clarkcant/contracts";
 
-import { createDevModuleServer } from "./dev-module-server.ts";
+import { closeDevModuleServer, createDevModuleServer } from "./dev-module-server.ts";
 import { runThemeConformance } from "./theme-conformance.ts";
 import type { ConformanceReport } from "./conformance.ts";
 
@@ -84,7 +84,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
   if (bound === null || typeof bound === "string") throw new Error("Theme dev host did not bind TCP");
   address = `127.0.0.1:${String(bound.port)}`;
   try {
-    vite = await createDevModuleServer(false, server, bound.port);
+    vite = await createDevModuleServer(false, server, bound.port, { isolatedCache: true });
   } catch (error) {
     await new Promise<void>((done, failed) => server.close((closeError) => closeError === undefined ? done() : failed(closeError)));
     throw error;
@@ -99,7 +99,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
       for (const client of clients) client.write(`data: ${String(reloads)}\n\n`);
     }, 75);
   }); } catch (error) {
-    await vite?.close();
+    await closeDevModuleServer(vite);
     await new Promise<void>((done) => server.close(() => done()));
     throw error;
   }
@@ -112,7 +112,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
         if (timer !== undefined) clearTimeout(timer);
         for (const client of clients) client.end();
         clients.clear();
-        await vite?.close();
+        await closeDevModuleServer(vite);
         await new Promise<void>((done, failed) => server.close((error) => error === undefined ? done() : failed(error)));
       })();
       return closing;

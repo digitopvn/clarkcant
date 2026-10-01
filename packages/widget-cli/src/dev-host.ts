@@ -4,7 +4,7 @@ import { readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 
 import type { ViteDevServer } from "vite";
-import { createDevModuleServer } from "./dev-module-server.ts";
+import { closeDevModuleServer, createDevModuleServer } from "./dev-module-server.ts";
 
 import { readPackage } from "@clarkcant/core";
 import { widgetToHostSchema } from "@clarkcant/widget-sdk";
@@ -865,7 +865,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       clients.clear();
       lease.close();
       const activeVite = await vitePromise?.catch(() => undefined);
-      await activeVite?.close();
+      await closeDevModuleServer(activeVite);
       await new Promise<void>((done) => server.close(() => done()));
     },
   };
