@@ -1,0 +1,127 @@
+{
+  "id": "com.example.spreadsheet.main@1",
+  "version": "0.1.0",
+  "renderer": "isolated-app",
+  "propsSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "maxLength": 200
+      },
+      "locale": {
+        "type": "string",
+        "enum": [
+          "vi",
+          "en"
+        ]
+      },
+      "formatBinding": {
+        "type": "string",
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": false
+  },
+  "eventSchemas": {},
+  "stateSchema": {
+    "type": "object",
+    "properties": {
+      "source": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "sourceKind": {
+        "type": "string",
+        "enum": [
+          "picked",
+          "checkpoint"
+        ]
+      },
+      "delimiter": {
+        "type": "string",
+        "enum": [
+          ",",
+          "\t"
+        ]
+      },
+      "name": {
+        "type": "string",
+        "maxLength": 200
+      },
+      "edits": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "formats": {
+        "type": "array",
+        "maxItems": 32,
+        "items": {
+          "type": "object",
+          "properties": {
+            "range": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "percent",
+                "number",
+                "plain"
+              ]
+            }
+          },
+          "required": [
+            "range",
+            "format"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "truncated": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "boolean"
+          },
+          "columns": {
+            "type": "boolean"
+          },
+          "clipped": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "active": {
+        "type": "string",
+        "maxLength": 12
+      },
+      "anchor": {
+        "type": "string",
+        "maxLength": 12
+      }
+    },
+    "additionalProperties": false
+  },
+  "stateVersion": 0,
+  "semanticDescription": "A spreadsheet: CSV and TSV import and export, editable cells and a closed set of formulas.",
+  "requestedCapabilities": [],
+  "sizing": {
+    "compact": true,
+    "expanded": true,
+    "minHeight": 440
+  },
+  "textFallback": "Bảng tính: nhập và xuất CSV/TSV, sửa ô và công thức; nội dung chưa xem được ở chế độ chỉ có chữ.",
+  "effectCategories": [],
+  "datasetRefs": []
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@clarkcant/reference-apps",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reference apps built on the public package model: a spreadsheet with CSV and TSV import and export, formulas and formatting Clark applies.",
+  "license": "MIT",
+  "type": "module",
+  "clarkcant": {
+    "phase": "P6",
+    "status": "implemented",
+    "blueprint": "docs/widget-development.md"
+  },
+  "scripts": {
+    "test": "clark widget test spreadsheet"
+  },
+  "devDependencies": {
+    "@clarkcant/widget-cli": "workspace:*"
+  }
+}
