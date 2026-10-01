@@ -41,6 +41,45 @@ export type ReadonlyAppearanceSnapshot = DeepReadonly<AppearanceSnapshot>;
 export const ARTIFACTS_EXTENSION = "artifacts@1";
 export const JOBS_EXTENSION = "jobs@1";
 
+/**
+ * Short-lived provider tokens for a frame whose package declared them: `tokens@1`.
+ *
+ * The one exception to "a widget never holds a provider credential", and offered only to a frame whose package's UI
+ * facet declares `browserTokens`. The token is the frame's alone: the host refuses to let it back out — into widget
+ * state, a semantic publish or an action's input — so it reaches neither storage nor the model. The bounds repeat the
+ * host's (`BROWSER_TOKEN_LIMITS` in `@clarkcant/contracts`), which re-checks every one.
+ */
+export const TOKENS_EXTENSION = "tokens@1";
+
+export const TOKEN_BRIDGE_LIMITS = Object.freeze({
+  /** Token requests one frame may have waiting at once. */
+  maxInFlight: 2,
+  scopes: 16,
+  minTtlSeconds: 30,
+  maxTtlSeconds: 3_600,
+  /** The longest token value the bridge carries. */
+  valueChars: 8_192,
+});
+
+export const tokenRequestSchema = z.strictObject({
+  provider: z.string().max(64).regex(/^[a-z][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*$/),
+  scopes: z
+    .array(z.string().max(128).regex(/^[A-Za-z0-9][A-Za-z0-9:._/-]*$/))
+    .min(1)
+    .max(TOKEN_BRIDGE_LIMITS.scopes),
+  ttlSeconds: z.int().min(TOKEN_BRIDGE_LIMITS.minTtlSeconds).max(TOKEN_BRIDGE_LIMITS.maxTtlSeconds).optional(),
+});
+export type TokenRequest = z.infer<typeof tokenRequestSchema>;
+
+/** A token the host gave this frame. `value` is the credential; `expiresAt` is when it stops working. */
+export const browserTokenWireSchema = z.strictObject({
+  provider: z.string().min(1).max(64),
+  value: z.string().min(1).max(TOKEN_BRIDGE_LIMITS.valueChars),
+  scopes: z.array(z.string().min(1).max(128)).max(TOKEN_BRIDGE_LIMITS.scopes),
+  expiresAt: z.string().min(1).max(40),
+});
+export type BrowserToken = z.infer<typeof browserTokenWireSchema>;
+
 export const jobRefWireSchema = z.string().regex(/^job_[A-Za-z0-9_-]{1,120}$/);
 
 export const ARTIFACT_BRIDGE_LIMITS = Object.freeze({
@@ -264,6 +303,16 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
     nonce: z.string().min(16).max(200),
     job: jobSnapshotWireSchema,
   }),
+  /** The answer to one `token.request`: a token, or the host's code and sentence, such as `TOKEN_PROVIDER_UNSCOPED`. */
+  z.strictObject({
+    kind: z.literal("token-result"),
+    nonce: z.string().min(16).max(200),
+    requestId: z.string().min(1).max(128),
+    status: z.enum(["ok", "refused"]),
+    code: z.string().min(1).max(60).optional(),
+    message: z.string().min(1).max(600).optional(),
+    token: browserTokenWireSchema.optional(),
+  }),
 ]);
 export type HostToWidgetMessage = z.infer<typeof hostToWidgetSchema>;
 
@@ -337,6 +386,13 @@ export const widgetToHostSchema = z.discriminatedUnion("kind", [
     nonce: z.string().min(16).max(200),
     requestId: z.string().min(1).max(128),
     request: jobRequestSchema,
+  }),
+  /** One call of the `tokens@1` extension. Answered by a `token-result` with the same `requestId`. */
+  z.strictObject({
+    kind: z.literal("token.request"),
+    nonce: z.string().min(16).max(200),
+    requestId: z.string().min(1).max(128),
+    request: tokenRequestSchema,
   }),
 ]);
 export type WidgetToHostMessage = z.infer<typeof widgetToHostSchema>;
@@ -476,6 +532,15 @@ export interface WidgetAuthorApi {
     cancel(ref: JobRef): Promise<void>;
     /** Resumes from the durable snapshot; polls are serialized and stop on terminal state or unsubscribe. */
     subscribe(ref: JobRef, handler: (job: JobSnapshot) => void): () => void;
+  };
+  /**
+   * Short-lived provider tokens (`tokens@1`), only for a provider and scopes the package declared. Rejects locally when
+   * the host did not offer the extension, and with the host's code first otherwise, such as `TOKEN_SCOPE_NOT_DECLARED`.
+   * A token is for this frame's own use: writing it into state, a semantic publish or an action's input is refused.
+   */
+  tokens: {
+    available(): boolean;
+    request(request: TokenRequest): Promise<BrowserToken>;
   };
   lifecycle: {
     onMount(handler: () => void): void;

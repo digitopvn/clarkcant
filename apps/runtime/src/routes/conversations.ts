@@ -433,6 +433,11 @@ function resolveLiveWidget(
          * person keep it running offscreen, from host chrome; every other answer unmounts it as before.
          */
         offscreen: frameOffscreen(services, isolated.packageId, isolated.resources),
+        /*
+         * The providers this widget's package declared browser tokens from, so host chrome offers `tokens@1` only to a
+         * frame that may use it. Every request is still decided by the node against the declaration.
+         */
+        ...(isolated.browserTokens.length === 0 ? {} : { browserTokens: isolated.browserTokens.map((entry) => entry.provider) }),
       },
       /*
        * The same shape the composition path returns, and for the same reason: an invocation is re-authorized

@@ -59,7 +59,7 @@ import {
   type Suggestion,
   type VoiceCapabilities,
 } from "@clarkcant/contracts";
-import { jobSnapshotWireSchema, type JobSnapshot } from "@clarkcant/widget-sdk";
+import { browserTokenWireSchema, jobSnapshotWireSchema, type BrowserToken, type JobSnapshot, type TokenRequest } from "@clarkcant/widget-sdk";
 
 import {
   type StartVoiceSessionOptions,
@@ -137,6 +137,8 @@ export interface IsolatedFrameLiveResponse {
      * it running offscreen from host chrome; absent or `suspend`, it unmounts when scrolled away.
      */
     offscreen?: "suspend" | "authorized-playback";
+    /** The providers the widget's package declared browser tokens from. Absent: the frame is offered no tokens. */
+    browserTokens?: readonly string[];
   } | null;
   /** Present when `frame` is null: the widget's own text alternative, from its definition. */
   textFallback?: string;
@@ -1776,6 +1778,35 @@ export class GatewayClient {
 
   async cancelWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<void> {
     await this.#call("POST", this.#jobPath(conversationId, instanceId, jobId), {});
+  }
+
+  #browserTokenPath(conversationId: string, instanceId: string, rest = ""): string {
+    return `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/browser-tokens${rest}`;
+  }
+
+  /**
+   * Ask the node for a token for the frame mounted under `session`. Person-only on the node: only the chrome that
+   * mounted the frame asks, and the value goes to that frame and nowhere else.
+   */
+  async requestBrowserToken(conversationId: string, instanceId: string, session: string, request: TokenRequest): Promise<BrowserToken> {
+    const body = await this.#call<{ token?: { provider?: unknown; token?: unknown; scopes?: unknown; expiresAt?: unknown } }>(
+      "POST",
+      this.#browserTokenPath(conversationId, instanceId),
+      { session, request },
+    );
+    const parsed = browserTokenWireSchema.safeParse({
+      provider: body.token?.provider,
+      value: body.token?.token,
+      scopes: body.token?.scopes,
+      expiresAt: body.token?.expiresAt,
+    });
+    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable token");
+    return parsed.data;
+  }
+
+  /** The frame mounted under `session` has gone: the node revokes what it was given. */
+  async endBrowserTokens(conversationId: string, instanceId: string, session: string): Promise<void> {
+    await this.#call("DELETE", this.#browserTokenPath(conversationId, instanceId, `/${encodeURIComponent(session)}`));
   }
 
   #artifactRef(body: { artifactRef?: unknown }): ArtifactRef {

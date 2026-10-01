@@ -2,13 +2,16 @@ import { appearanceSnapshotSchema, type AppearanceSnapshot, type SemanticProposa
 import {
   ARTIFACTS_EXTENSION,
   JOBS_EXTENSION,
+  TOKENS_EXTENSION,
   APPEARANCE_EXTENSION,
   BRIDGE_PROTOCOL,
   BRIDGE_VERSION,
   acceptBridgeMessage,
   type ArtifactRef as WireArtifactRef,
   type ArtifactRequest,
+  type BrowserToken,
   type JobRequest,
+  type TokenRequest,
   type JobSnapshot,
   type HostToWidgetMessage,
   type WidgetToHostMessage,
@@ -52,6 +55,9 @@ export type FrameRefusal =
   | "ARTIFACT_RATE_LIMITED"
   | "JOB_BUSY"
   | "JOB_RATE_LIMITED"
+  | "TOKEN_BUSY"
+  | "TOKEN_RATE_LIMITED"
+  | "TOKEN_NOT_ALLOWED"
   | "DISPOSED";
 
 /**
@@ -71,6 +77,18 @@ export type FrameJobOutcome =
   | { status: "ok"; job: JobSnapshot }
   | { status: "refused"; code: string; message: string };
 export type FrameJobBroker = (request: JobRequest) => Promise<FrameJobOutcome>;
+
+export type FrameTokenOutcome =
+  | { status: "ok"; token: BrowserToken }
+  | { status: "refused"; code: string; message: string };
+/**
+ * The host's side of `tokens@1`. `request` asks the node for one token under this frame's session; `release` is called
+ * once, when the session is disposed, so the node revokes what this frame was given.
+ */
+export interface FrameTokenBroker {
+  request(request: TokenRequest): Promise<FrameTokenOutcome>;
+  release(): void;
+}
 
 export type FrameAcceptance =
   | { ok: true; kind: WidgetToHostMessage["kind"]; detail?: string }
@@ -177,6 +195,11 @@ export interface FrameSessionInput {
   artifacts?: FrameArtifactBroker;
   /** The versioned `jobs@1` bridge. Every request is checked again by the trusted node route. */
   jobs?: FrameJobBroker;
+  /**
+   * The `tokens@1` extension, given only for a frame whose package declared browser tokens. Every request is checked
+   * again by the node against that declaration and the provider's support.
+   */
+  tokens?: FrameTokenBroker;
   /** Overridable so a test can drive the budget without sending thousands of messages. */
   maxMessageBytes?: number;
   maxMessages?: number;
@@ -201,6 +224,12 @@ export interface FrameSessionInput {
    */
   jobBurst?: number;
   jobRefillPerSecond?: number;
+  /**
+   * The rate of token requests: a bucket of `tokenBurst` refilled at `tokenRefillPerSecond`. A frame needs a token when
+   * it starts and again as one nears its expiry, so the default is a handful, not a stream.
+   */
+  tokenBurst?: number;
+  tokenRefillPerSecond?: number;
   /** Refusals kept for `refused()`, newest last. Older ones are dropped, so a frame that keeps failing cannot grow it. */
   maxRecordedRefusals?: number;
   /**
@@ -278,8 +307,29 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   };
   const takeArtifactToken = bucket(artifactBurst, artifactRefillPerSecond);
   const takeJobToken = bucket(jobBurst, jobRefillPerSecond);
+  const tokenBurst = input.tokenBurst ?? 10;
+  const tokenRefillPerSecond = input.tokenRefillPerSecond ?? 0.2;
+  const takeTokenRequest = bucket(tokenBurst, tokenRefillPerSecond);
   const artifactsInFlight = new Set<string>();
   const jobsInFlight = new Set<string>();
+  const tokensInFlight = new Set<string>();
+  /**
+   * Token values this frame was given. A message that carries one back out — into state the node stores, a publish the
+   * model reads, an action's input a service receives — is refused, so the token stays in the frame it was issued to.
+   * Bounded: a frame given more than this many tokens has its oldest forgotten, and those have long expired.
+   */
+  const issuedTokens: string[] = [];
+  const carriesToken = (value: unknown): boolean => {
+    if (issuedTokens.length === 0) return false;
+    let text: string;
+    try {
+      text = JSON.stringify(value) ?? "";
+    } catch {
+      return false;
+    }
+    return issuedTokens.some((token) => text.includes(token));
+  };
+  const TOKEN_LEAK = "a browser token stays in its frame; it may not be saved in state, published, or sent with an action";
   const transcript: { kind: string; detail: string }[] = [];
   /** Record what the frame said, dropping the oldest entries past the bound. */
   const record = (entry: { kind: string; detail: string }): void => {
@@ -311,6 +361,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const initExtensions = [
     ...(input.artifacts === undefined ? [] : [ARTIFACTS_EXTENSION]),
     ...(input.jobs === undefined ? [] : [JOBS_EXTENSION]),
+    ...(input.tokens === undefined ? [] : [TOKENS_EXTENSION]),
     ...(appearance === undefined ? [] : [APPEARANCE_EXTENSION]),
   ];
   const postActions = (): void => {
@@ -392,6 +443,24 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
     });
   };
 
+  const postTokenResult = (requestId: string, outcome: FrameTokenOutcome): void => {
+    if (status === "disposed") return;
+    if (outcome.status === "ok") {
+      issuedTokens.push(outcome.token.value);
+      if (issuedTokens.length > 64) issuedTokens.splice(0, issuedTokens.length - 64);
+      input.post({ kind: "token-result", nonce: input.nonce, requestId, status: "ok", token: outcome.token });
+      return;
+    }
+    input.post({
+      kind: "token-result",
+      nonce: input.nonce,
+      requestId,
+      status: "refused",
+      code: (outcome.code || "TOKEN_REFUSED").slice(0, 60),
+      message: (outcome.message || "token request refused").slice(0, 600),
+    });
+  };
+
   const init = (): Extract<HostToWidgetMessage, { kind: "init" }> => {
     const message: Extract<HostToWidgetMessage, { kind: "init" }> = {
       kind: "init",
@@ -422,6 +491,17 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         return { ok: true, kind: "ready" };
 
       case "state.update": {
+        if (carriesToken(message.patch)) {
+          // Answered with the committed state, so the widget is not left waiting, and nothing of the patch is kept.
+          input.post({
+            kind: "state",
+            nonce: input.nonce,
+            state,
+            revision: stateRevision,
+            refused: { code: "STATE_HOLDS_TOKEN", message: TOKEN_LEAK },
+          });
+          return refuse("TOKEN_NOT_ALLOWED", TOKEN_LEAK);
+        }
         if (writeInFlight || message.expectedRevision !== stateRevision) {
           /*
            * Refused rather than merged: an accepted stale write is two frames editing in arrival order. The frame is
@@ -514,6 +594,10 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
            */
           postResult(message.actionBindingId, message.invocationId, seen);
           return { ok: true, kind: "action.invoke", detail: "duplicate" };
+        }
+        if (carriesToken(message.input)) {
+          postResult(message.actionBindingId, message.invocationId, { status: "refused", message: TOKEN_LEAK });
+          return refuse("TOKEN_NOT_ALLOWED", TOKEN_LEAK);
         }
         if (!input.knownActionBindings.includes(message.actionBindingId)) {
           // An id the host never accepted is refused before anything runs: there is no generic invoke to fall into.
@@ -626,7 +710,35 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         return { ok: true, kind: "job.request", detail: message.request.op };
       }
 
+      case "token.request": {
+        if (input.tokens === undefined) {
+          postTokenResult(message.requestId, { status: "refused", code: "EXTENSION_NOT_OFFERED", message: `the host did not offer ${TOKENS_EXTENSION}` });
+          return refuseAnswered("EXTENSION_NOT_OFFERED", `the host did not offer ${TOKENS_EXTENSION}`);
+        }
+        if (tokensInFlight.has(message.requestId)) return refuse("TOKEN_BUSY", "this token request id is already being answered");
+        if (tokensInFlight.size >= 2) {
+          postTokenResult(message.requestId, { status: "refused", code: "TOKEN_BUSY", message: "at most 2 token requests may wait at once" });
+          return refuseAnswered("TOKEN_BUSY", "at most 2 token requests may wait at once");
+        }
+        tokensInFlight.add(message.requestId);
+        void input.tokens
+          .request(message.request)
+          .then((outcome) => postTokenResult(message.requestId, outcome))
+          .catch(() => {
+            // A fixed sentence: what the broker threw is the host's, and may name things the widget must not learn.
+            postTokenResult(message.requestId, { status: "refused", code: "TOKEN_UNAVAILABLE", message: "the token request could not be completed" });
+          })
+          .finally(() => tokensInFlight.delete(message.requestId));
+        // The provider only: the scopes are the package's own declaration, and the value is never recorded.
+        record({ kind: "token.request", detail: message.request.provider });
+        return { ok: true, kind: "token.request", detail: message.request.provider };
+      }
+
       case "semantic.publish":
+        if (carriesToken({ summary: message.summary, selectedIds: message.selectedIds, values: message.values })) {
+          // Not recorded either: the transcript would otherwise hold the summary that carried it.
+          return refuse("TOKEN_NOT_ALLOWED", TOKEN_LEAK);
+        }
         // Published for a reader who cannot see the widget, and for the next model turn and voice to know what it shows.
         // Handed on as a proposal: the node bounds and cleans it, and adds the actions from its own bindings.
         record({ kind: "semantic.publish", detail: message.summary });
@@ -692,10 +804,19 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         postJobResult(requestId, { status: "refused", code: "JOB_RATE_LIMITED", message: reason });
         return refuseAnswered("JOB_RATE_LIMITED", reason);
       }
+      const claimsToken =
+        typeof event.data === "object" && event.data !== null && (event.data as { kind?: unknown }).kind === "token.request";
+      if (claimsToken && !takeTokenRequest()) {
+        const reason = `at most ${String(tokenBurst)} token requests, then one every ${String(Math.round(1 / tokenRefillPerSecond))} seconds`;
+        const requestId = answerableRequestId(event.data, input.nonce);
+        if (requestId === undefined || tokensInFlight.has(requestId) || input.tokens === undefined) return refuse("TOKEN_RATE_LIMITED", reason);
+        postTokenResult(requestId, { status: "refused", code: "TOKEN_RATE_LIMITED", message: reason });
+        return refuseAnswered("TOKEN_RATE_LIMITED", reason);
+      }
       if (bytes > ceiling) {
         return refuse("TOO_LARGE", `message of ${String(bytes)} bytes exceeds ${String(ceiling)}`);
       }
-      if (!claimsArtifact && !claimsJob) {
+      if (!claimsArtifact && !claimsJob && !claimsToken) {
         messages += 1;
         if (messages > maxMessages) {
           return refuse("MESSAGE_BUDGET_EXCEEDED", `frame sent more than ${String(maxMessages)} messages`);
@@ -739,6 +860,9 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
     dispose() {
       if (status === "disposed") return;
       status = "disposed";
+      // The node revokes what this frame was given; the values are forgotten here at once.
+      issuedTokens.length = 0;
+      input.tokens?.release();
       input.post({ kind: "dispose", nonce: input.nonce });
       record({ kind: "dispose", detail: "" });
     },

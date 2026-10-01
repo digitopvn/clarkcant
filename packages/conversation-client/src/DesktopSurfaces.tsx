@@ -819,6 +819,27 @@ export function PinnedLiveSurface({
               };
             }
           }}
+          tokens={
+            frame.browserTokens === undefined
+              ? undefined
+              : {
+                  request: async (request, session) => {
+                    try {
+                      return { status: "ok", token: await client.requestBrowserToken(conversationId, instanceId, session, request) };
+                    } catch (cause) {
+                      return {
+                        status: "refused",
+                        code: cause instanceof GatewayError ? cause.code : "TOKEN_UNAVAILABLE",
+                        message: cause instanceof Error ? cause.message : "no token is available to this widget",
+                      };
+                    }
+                  },
+                  // The frame is gone either way; a failed revoke still lapses at the token's own expiry.
+                  release: (session) => {
+                    void client.endBrowserTokens(conversationId, instanceId, session).catch(() => undefined);
+                  },
+                }
+          }
         />
         )}
         {frame !== null && artifactHost.chrome}

@@ -368,6 +368,11 @@ describe("the browser-token route", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("tells host chrome which providers the frame may ask, so tokens@1 is offered only there", async () => {
+    const live = await send("GET", `/conversations/conv_1/widgets/${instanceId}/live`);
+    expect(live.body).toMatchObject({ frame: { browserTokens: ["fixture.maps", "fixture.unscoped"] } });
+  });
+
   it("gives the frame a token its package declared, and ends it when the frame closes", async () => {
     const answer = await ask({ provider: "fixture.maps", scopes: ["tiles:read"], ttlSeconds: 120 });
     expect(answer.status).toBe(200);
