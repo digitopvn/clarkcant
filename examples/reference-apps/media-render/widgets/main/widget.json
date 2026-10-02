@@ -1,0 +1,173 @@
+{
+  "id": "com.clarkcant.reference.media-render.main@1",
+  "version": "1.0.0",
+  "renderer": "isolated-app",
+  "propsSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "maxLength": 200
+      },
+      "renderBinding": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": false
+  },
+  "eventSchemas": {},
+  "stateSchema": {
+    "type": "object",
+    "properties": {
+      "source": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "v": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "artifactId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "attachment",
+              "working",
+              "finalized",
+              "external"
+            ]
+          },
+          "mimeType": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "sizeBytes": {
+            "type": "number",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "digest": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "v",
+          "artifactId",
+          "kind",
+          "mimeType",
+          "sizeBytes",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "job": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "maxLength": 128
+      },
+      "output": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "v": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "artifactId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "attachment",
+              "working",
+              "finalized",
+              "external"
+            ]
+          },
+          "mimeType": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "sizeBytes": {
+            "type": "number",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "digest": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "v",
+          "artifactId",
+          "kind",
+          "mimeType",
+          "sizeBytes",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "gainDb": {
+        "type": "number",
+        "minimum": -24,
+        "maximum": 12
+      },
+      "trimStartMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 7200000
+      },
+      "trimEndMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 7200000
+      }
+    },
+    "additionalProperties": false
+  },
+  "stateVersion": 0,
+  "semanticDescription": "A media render tool holding one WAV clip the person picked, the gain and trim to render it with, the render job's status and progress, and the rendered file.",
+  "requestedCapabilities": [],
+  "sizing": {
+    "compact": true,
+    "expanded": true,
+    "minHeight": 360
+  },
+  "textFallback": "Trình dựng âm thanh: chọn một tệp WAV, chỉnh âm lượng và cắt đầu cuối, rồi dựng thành tệp mới; chưa dùng được ở chế độ chỉ có chữ.",
+  "effectCategories": [
+    "read"
+  ],
+  "datasetRefs": []
+}

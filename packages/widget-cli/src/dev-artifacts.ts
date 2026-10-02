@@ -58,6 +58,7 @@ const EXTENSION_TYPES: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".gif": "image/gif",
+  ".wav": "audio/wav",
 };
 
 /**
