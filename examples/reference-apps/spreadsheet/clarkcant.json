@@ -34,7 +34,7 @@
   "publisher": {
     "id": "example",
     "sourceUrl": "https://github.com/digitopvn/clarkcant",
-    "license": "MIT"
+    "license": "Apache-2.0"
   },
   "dependencies": []
 }
