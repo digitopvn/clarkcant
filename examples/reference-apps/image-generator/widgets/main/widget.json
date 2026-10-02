@@ -1,0 +1,45 @@
+{
+  "id": "com.clarkcant.reference.image-generator.main@1",
+  "version": "1.0.0",
+  "renderer": "isolated-app",
+  "propsSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "maxLength": 200
+      },
+      "generateBinding": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": false
+  },
+  "eventSchemas": {},
+  "stateSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string",
+        "maxLength": 500
+      }
+    },
+    "additionalProperties": false
+  },
+  "stateVersion": 0,
+  "semanticDescription": "An image generator: the prompt being written, the image being made and its progress, and the images already made.",
+  "requestedCapabilities": [],
+  "sizing": {
+    "compact": true,
+    "expanded": true,
+    "minHeight": 320
+  },
+  "textFallback": "Trình tạo ảnh: mô tả một bức ảnh, theo dõi tiến độ và xem các ảnh đã tạo; ảnh chưa xem được ở chế độ chỉ có chữ.",
+  "effectCategories": ["read"],
+  "datasetRefs": []
+}

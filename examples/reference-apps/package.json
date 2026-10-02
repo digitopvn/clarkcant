@@ -1,0 +1,19 @@
+{
+  "name": "@clarkcant/reference-apps",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reference widget apps that use only shipped host contracts: an image generator that runs a service job against a fake provider.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "clarkcant": {
+    "phase": "P6",
+    "status": "implemented",
+    "blueprint": "docs/widget-development.md"
+  },
+  "scripts": {
+    "test": "clark widget test image-generator"
+  },
+  "devDependencies": {
+    "@clarkcant/widget-cli": "workspace:*"
+  }
+}
