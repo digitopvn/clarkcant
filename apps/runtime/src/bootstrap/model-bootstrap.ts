@@ -387,6 +387,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
         packages: {
           packages: packageInstallDepsOf(deps.services()),
+          connections: deps.services().connections,
           conversationId: turn.conversationId,
           channel: turn.channel,
         },

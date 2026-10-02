@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { packageInstallDepsOf } from "../src/application/package-install.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
+import { createManagePackageTool } from "../src/manage-package-tool.ts";
 import { createPackageConnectionBroker } from "../src/package-connections.ts";
 import { SURFACE_HEADER } from "../src/routes/http.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -194,6 +196,27 @@ describe("the connection routes", () => {
     expect(html).toContain('data-connection-result="failed"');
     expect(html).not.toContain("fake-code-x");
     expect(html).not.toContain("forged-state");
+  });
+
+  it("forget the account when the model uninstalls the package, as when the person does from Settings", async () => {
+    const started = await call("POST", CONNECTION, { headers: { host: "127.0.0.1:7777" } });
+    const consent = await fetch(String(body(started)["authorizationUrl"]), { redirect: "manual" });
+    const query = Object.fromEntries(new URL(consent.headers.get("location") ?? "").searchParams.entries());
+    expect((await call("GET", "/connections/callback", { query, token: false })).status).toBe(200);
+    expect(state(await call("GET", CONNECTION))).toBe("connected");
+    const rows = (table: string) => services.runtime.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+    expect(rows("package_connection_tokens").n).toBeGreaterThan(0);
+
+    const tool = createManagePackageTool({
+      packages: packageInstallDepsOf(services),
+      connections: services.connections,
+      conversationId: "conv_connection_routes",
+      channel: () => "chat",
+    });
+    const answer = await tool.execute({ action: "uninstall", packageId: PACKAGE_ID });
+    expect(answer.text).toContain(`Đã gỡ ${PACKAGE_ID}`);
+    expect(rows("package_connection_tokens").n).toBe(0);
+    expect(rows("package_connections").n).toBe(0);
   });
 
   it("keep status and revoke behind the node's token", async () => {

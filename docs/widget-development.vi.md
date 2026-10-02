@@ -2058,7 +2058,8 @@ widget thấy một trạng thái. Cả hai không bao giờ giữ access token,
    `CAPABILITY_NOT_AUTHENTICATED` và cùng lý do đó. Capability có đủ scope đã cấp vẫn chạy trên kết nối `partial`.
 5. **Thu hồi.** *Revoke* trong Settings gọi `POST /packages/:id/connection/revoke`. Node gọi revocation endpoint của nhà
    cung cấp nếu có khai báo, xoá token, và trạng thái thành `revoked` trước khi request trả lời. *Reconnect* chạy lại
-   bước 1. Gỡ package qua `POST /packages/:id/uninstall` cũng quên kết nối theo cách đó.
+   bước 1. Gỡ package, từ Settings hoặc bằng cách nhờ Clark (`manage_package`), cũng quên kết nối theo
+   cách đó.
 
 Kết nối không thay đổi cách một capability chạy: binding của widget, `invoke_capability` của Clark và lệnh nói vẫn đi
 tới `invokeCapability`, execution policy của người dùng, approval card do host sở hữu và cùng một audit trail (§4). Một

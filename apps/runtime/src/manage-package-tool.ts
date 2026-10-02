@@ -3,7 +3,9 @@ import { listInstalledPackages, listRestorablePackages } from "@clarkcant/core";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
 import { listPendingCapabilityApprovals, type PackageInstallDeps } from "./application/package-install.ts";
-import { changePackage, type PackageChange, type PackageChangeOutcome } from "./application/package-lifecycle.ts";
+import { changePackageAndConnection } from "./application/package-change.ts";
+import type { PackageChange, PackageChangeOutcome } from "./application/package-lifecycle.ts";
+import type { PackageConnectionBroker } from "./package-connections.ts";
 
 /**
  * Uninstalling, restoring and rolling back a package from the conversation.
@@ -16,6 +18,8 @@ import { changePackage, type PackageChange, type PackageChangeOutcome } from "./
 
 export interface ManagePackageToolDeps {
   packages: PackageInstallDeps;
+  /** Told when a package is uninstalled, so the account it was connected to goes with it, as from Settings. */
+  connections?: Pick<PackageConnectionBroker, "forget"> | undefined;
   conversationId?: string;
   /** Which surface the message came in on, read at call time: the tool list outlives any one message. */
   channel: () => "voice" | "chat";
@@ -100,7 +104,7 @@ export function createManagePackageTool(deps: ManagePackageToolDeps): ToolDefini
       if (action === "list") return { text: describeList(deps.packages) };
       const packageId = typeof params.packageId === "string" ? params.packageId.trim() : "";
       if (packageId === "") return { text: "Cần packageId; gọi action list để lấy đúng id." };
-      const outcome = changePackage(deps.packages, {
+      const outcome = await changePackageAndConnection(deps.packages, deps.connections, {
         action: action as PackageChange,
         packageId,
         source: deps.channel() === "voice" ? "voice" : "agent",

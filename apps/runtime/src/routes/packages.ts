@@ -26,7 +26,7 @@ import {
   packageInstallDepsOf,
 } from "../application/package-install.ts";
 import { decideInstallApproval, isInstallApproval } from "../application/install-approval.ts";
-import { changePackage } from "../application/package-lifecycle.ts";
+import { changePackageAndConnection } from "../application/package-change.ts";
 import { installedConnection, installedManifest, installedReach, packageResourceGrant, packageResourcesView } from "../package-resources.ts";
 import type { PackageConnectionBroker } from "../package-connections.ts";
 import { resourceProfilePolicy, type ServiceHost } from "../service-host.ts";
@@ -63,20 +63,6 @@ export interface PackageRouteDeps {
 function cameThroughMachineSurface(request: GatewayRequest): boolean {
   const marker = request.headers[SURFACE_HEADER];
   return marker === "mcp" || marker === "relay";
-}
-
-/** The connection an installed package declares, read from its manifest, or undefined. */
-function connectionBeforeUninstall(services: PackageRouteDeps["services"], packageId: string) {
-  const { runtime } = services;
-  const installed = listInstalledPackages({
-    db: runtime.db,
-    nodeId: runtime.identity.nodeId,
-    now: nowInstant,
-    newId: services.conductor.newId,
-  }).find((entry) => entry.packageId === packageId);
-  if (installed === undefined) return undefined;
-  const manifest = installedManifest(installed, runtime.dataDir, readDirectoryIndex(directoryIndexPath(process.env)));
-  return manifest === "unreadable" ? undefined : installedConnection(manifest);
 }
 
 export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<GatewayResponse | undefined> {
@@ -144,12 +130,9 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
     } catch {
       return fail(400, "INVALID_SCHEMA", "the package id in the path is not valid percent-encoding");
     }
-    // Read before the change: once uninstalled, the manifest that names the connection is no longer the active one.
-    const connection = segments[2] === "uninstall" ? connectionBeforeUninstall(services, packageId) : undefined;
-    const outcome = changePackage(packageInstallDepsOf(services), { action: segments[2], packageId, source: "click" });
-    if (outcome.kind === "refused") return fail(outcome.status, outcome.code, outcome.message);
     // An uninstalled package keeps no account: its tokens are revoked at the provider and deleted here.
-    if (segments[2] === "uninstall") await services.connections?.forget(packageId, connection);
+    const outcome = await changePackageAndConnection(packageInstallDepsOf(services), services.connections, { action: segments[2], packageId, source: "click" });
+    if (outcome.kind === "refused") return fail(outcome.status, outcome.code, outcome.message);
     const { kind: _kind, ...changed } = outcome;
     return json(200, changed);
   }

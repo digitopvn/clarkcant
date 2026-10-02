@@ -2057,8 +2057,8 @@ the widget sees a status. Neither ever holds an access token, a refresh token or
    connection.
 5. **Revoke.** *Revoke* in Settings calls `POST /packages/:id/connection/revoke`. The node calls the provider's
    revocation endpoint when one is declared, deletes the tokens, and the status reads `revoked` before the request
-   answers. *Reconnect* runs step 1 again. Uninstalling the package through `POST /packages/:id/uninstall` forgets the
-   connection the same way.
+   answers. *Reconnect* runs step 1 again. Uninstalling the package, from Settings or by asking Clark
+   (`manage_package`), forgets the connection the same way.
 
 A connection changes nothing about how a capability runs: the widget's binding, Clark's `invoke_capability` and a
 spoken command still reach `invokeCapability`, the person's execution policy, the host-owned approval card and the
