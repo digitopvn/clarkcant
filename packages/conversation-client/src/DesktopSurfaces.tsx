@@ -809,6 +809,7 @@ export function PinnedLiveSurface({
           artifacts={artifactHost.broker}
           jobs={async (request) => {
             try {
+              if (request.op === "list") return { status: "ok", jobs: await client.listWidgetJobs(conversationId, instanceId) };
               if (request.op === "cancel") await client.cancelWidgetJob(conversationId, instanceId, request.jobId);
               const job = await client.getWidgetJob(conversationId, instanceId, request.jobId);
               return { status: "ok", job };

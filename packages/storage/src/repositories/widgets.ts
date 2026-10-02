@@ -75,6 +75,25 @@ export function instanceIsInConversation(db: Database, input: { conversationId: 
   );
 }
 
+/**
+ * The widget instances a conversation holds, by the same two links `instanceIsInConversation` checks, newest message
+ * first and at most `limit`.
+ */
+export function listConversationInstanceIds(db: Database, conversationId: string, limit: number): string[] {
+  return allRows<{ instance_id: string }>(
+    db,
+    `SELECT instance_id FROM (
+       SELECT s.instance_id AS instance_id, MAX(m.rowid) AS at FROM widget_snapshots s JOIN messages m ON m.message_id = s.message_id
+        WHERE m.conversation_id = ? GROUP BY s.instance_id
+       UNION
+       SELECT instance_id, 0 AS at FROM pins WHERE conversation_id = ?)
+     GROUP BY instance_id ORDER BY MAX(at) DESC, instance_id LIMIT ?`,
+    conversationId,
+    conversationId,
+    Math.max(0, Math.floor(limit)),
+  ).map((row) => row.instance_id);
+}
+
 export function createPin(db: Database, pin: Pin): void {
   db.prepare(
     `INSERT INTO pins (pin_id, conversation_id, instance_id, display_mode, position, refresh_policy, background_grant_id, created_at)

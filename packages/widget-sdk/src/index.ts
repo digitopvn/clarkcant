@@ -40,6 +40,13 @@ export type ReadonlyAppearanceSnapshot = DeepReadonly<AppearanceSnapshot>;
  */
 export const ARTIFACTS_EXTENSION = "artifacts@1";
 export const JOBS_EXTENSION = "jobs@1";
+/**
+ * Listing a widget's own jobs, added after `jobs@1` shipped and so advertised as an extension of its own.
+ *
+ * A host that offers only `jobs@1` refuses `{ op: "list" }` as a request outside its schema and never answers it, so a
+ * widget asks only when this is in `init.extensions` too: `jobs.canList()`.
+ */
+export const JOBS_LIST_EXTENSION = "jobs.list@1";
 
 /**
  * Short-lived provider tokens for a frame whose package declared them: `tokens@1`.
@@ -132,9 +139,13 @@ export const jobSnapshotWireSchema = z.strictObject({
 });
 export type JobRef = z.infer<typeof jobRefWireSchema>;
 export type JobSnapshot = z.infer<typeof jobSnapshotWireSchema>;
+/** The most jobs one `list` answer carries: the frame's newest. */
+export const JOB_LIST_LIMIT = 20;
 export const jobRequestSchema = z.discriminatedUnion("op", [
   z.strictObject({ op: z.literal("get"), jobId: jobRefWireSchema }),
   z.strictObject({ op: z.literal("cancel"), jobId: jobRefWireSchema }),
+  /** The jobs this instance's own bindings started, by any surface, newest first. */
+  z.strictObject({ op: z.literal("list") }),
 ]);
 export type JobRequest = z.infer<typeof jobRequestSchema>;
 
@@ -299,6 +310,8 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
     code: z.string().min(1).max(60).optional(),
     message: z.string().min(1).max(600).optional(),
     job: jobSnapshotWireSchema.optional(),
+    /** The answer to `list`. */
+    jobs: z.array(jobSnapshotWireSchema).max(JOB_LIST_LIMIT).optional(),
   }),
   z.strictObject({
     kind: z.literal("job.changed"),
@@ -532,6 +545,14 @@ export interface WidgetAuthorApi {
     available(): boolean;
     get(ref: JobRef): Promise<JobSnapshot>;
     cancel(ref: JobRef): Promise<void>;
+    /** Whether the host offered `jobs.list@1` beside `jobs@1`, so `list()` can be asked. */
+    canList(): boolean;
+    /**
+     * The jobs this instance's own bindings started — from a click, a spoken command or Clark — newest first, at most
+     * `JOB_LIST_LIMIT`. How a frame finds work it did not start itself, or after a remount without saved state. Rejects
+     * locally when `canList()` is false.
+     */
+    list(): Promise<JobSnapshot[]>;
     /** Resumes from the durable snapshot; polls are serialized and stop on terminal state or unsubscribe. */
     subscribe(ref: JobRef, handler: (job: JobSnapshot) => void): () => void;
   };

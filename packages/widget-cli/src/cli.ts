@@ -21,6 +21,7 @@ import { startDevHost } from "./dev-host.ts";
 import { publishedDefinitions, versionRuleViolations, type PublishedDefinitions } from "./version-rules.ts";
 import { installedThemes, readPackage } from "@clarkcant/core";
 import { packageFiles } from "./package-files.ts";
+import { REFERENCE_TEMPLATES, referenceCopy, type ReferenceTemplate } from "./reference-templates.ts";
 import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
 
 /**
@@ -37,7 +38,7 @@ import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
  * opposite.
  */
 
-const TEMPLATES = ["blank", "form", "dashboard", "pure-ui"] as const;
+const TEMPLATES = ["blank", "form", "dashboard", ...REFERENCE_TEMPLATES] as const;
 type Template = (typeof TEMPLATES)[number];
 
 /**
@@ -49,7 +50,7 @@ type Template = (typeof TEMPLATES)[number];
  * ran). A list both sides read has nothing to disagree with.
  */
 export const WIDGET_COMMANDS = [
-  { name: "init", usage: "clark widget init <dir> [--template blank|form|dashboard|pure-ui]   scaffold a package" },
+  { name: "init", usage: `clark widget init <dir> [--template ${TEMPLATES.join("|")}]   scaffold a package` },
   { name: "test", usage: "clark widget test [dir]                                     run the conformance suite" },
   { name: "pack", usage: "clark widget pack [dir]                                     build the artifact and its digest" },
   {
@@ -134,64 +135,66 @@ function definitionFor(id: string, template: Template): Record<string, unknown> 
   };
 }
 
-/**
- * Where `--template pure-ui` is copied from: the reference text editor, a whole working app with no service.
- *
- * Copied rather than restated, so the template is the app this repository's own tests keep working (open, edit,
- * save through the host, ask Clark) instead of a second copy of it that nobody runs.
- */
-const PURE_UI_SOURCE = fileURLToPath(new URL("../../../examples/reference-apps/text-editor/", import.meta.url));
-
 /** The reference app's own files that describe or test that app rather than the package a person starts from. */
-function skippedFromReference(path: string): boolean {
-  return path.startsWith("test/") || path === "README.md";
+export function skippedFromReference(path: string): boolean {
+  return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "LICENSE";
 }
 
-function initFromReference(root: string, id: string): void {
-  if (!existsSync(join(PURE_UI_SOURCE, "clarkcant.json"))) {
-    throw new Error(`the pure-ui template is copied from ${PURE_UI_SOURCE}, which is missing from this checkout`);
+/** Files whose text can name the reference's id. Anything else is copied byte for byte. */
+const REFERENCE_TEXT = /\.(json|js|mjs|html|css)$/;
+
+const asJson = (document: Record<string, unknown>): string => `${JSON.stringify(document, null, 2)}\n`;
+
+/**
+ * The one copier every reference template goes through (`reference-templates.ts` says what each one copies).
+ *
+ * The reference's id becomes the new package's everywhere its text names it — the manifest, the facets, a capability
+ * ref, the frame code — so the copy is a package of its own and its capabilities are named under its own id.
+ */
+export function initFromReference(root: string, id: string, template: ReferenceTemplate): void {
+  const copy = referenceCopy(template);
+  if (!existsSync(join(copy.source, "clarkcant.json"))) {
+    throw new Error(`the ${template} template is copied from ${copy.source}, which is missing from this checkout`);
   }
-  const facetId = `${id}.main@1`;
-  for (const { path, bytes } of packageFiles(PURE_UI_SOURCE)) {
+  for (const { path, bytes } of packageFiles(copy.source)) {
     if (skippedFromReference(path)) continue;
     const target = join(root, ...path.split("/"));
     mkdirSync(dirname(target), { recursive: true });
-    if (path === "clarkcant.json") {
-      const manifest = JSON.parse(bytes.toString("utf8")) as { facets: Record<string, unknown>[] } & Record<string, unknown>;
-      const copy = {
-        ...manifest,
-        id,
-        version: "0.1.0",
-        displayName: "My Widget",
-        description: "A text editor that opens, edits and saves a file the person picks.",
-        facets: manifest.facets.map((facet) => ({ ...facet, id: facetId })),
-        publisher: { id: "example", sourceUrl: "https://github.com/example/my-widget", license: "MIT" },
-      };
-      writeFileSync(target, `${JSON.stringify(copy, null, 2)}\n`);
-    } else if (path === "widgets/main/widget.json") {
-      const definition = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
-      writeFileSync(target, `${JSON.stringify({ ...definition, id: facetId, version: "0.1.0" }, null, 2)}\n`);
-    } else {
+    if (!REFERENCE_TEXT.test(path)) {
       writeFileSync(target, bytes);
+      continue;
+    }
+    const text = bytes.toString("utf8").split(copy.referenceId).join(id);
+    if (path === "clarkcant.json") {
+      const manifest = {
+        ...(JSON.parse(text) as Record<string, unknown>),
+        version: "0.1.0",
+        displayName: copy.displayName,
+        description: copy.description,
+        publisher: { id: "example", sourceUrl: copy.sourceUrl, license: "MIT" },
+      };
+      writeFileSync(target, asJson(copy.manifest?.(manifest) ?? manifest));
+    } else if (path === "widgets/main/widget.json") {
+      const definition = { ...(JSON.parse(text) as Record<string, unknown>), version: "0.1.0" };
+      writeFileSync(target, asJson(copy.definition?.(definition) ?? definition));
+    } else {
+      writeFileSync(target, text);
     }
   }
   mkdirSync(join(root, "test"), { recursive: true });
-  writeFileSync(
-    join(root, "README.md"),
-    "# My Widget\n\nA copy of the reference text editor: it opens a file through the host, keeps the draft in widget " +
-      "state and saves through the host's export. Its rules are in `widgets/main/editor-core.js`.\n\n" +
-      "Run `clark widget test` then `clark widget pack`.\n",
-  );
+  writeFileSync(join(root, "README.md"), copy.readme);
   writeFileSync(join(root, "LICENSE"), "MIT\n");
 }
+
+const isReferenceTemplate = (template: Template): template is ReferenceTemplate => (REFERENCE_TEMPLATES as readonly string[]).includes(template);
 
 function init(root: string, template: Template): void {
   // Lower-case letters, digits and hyphens, starting with a letter: the shape a capability name's segments take, so a
   // service facet added later can name its capabilities under this id.
   const slug = (root.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z]+/, "");
   const id = `com.example.${slug === "" ? "widget" : slug}`;
-  if (template === "pure-ui") {
-    initFromReference(root, id);
+  if (isReferenceTemplate(template)) {
+    initFromReference(root, id, template);
     return;
   }
   mkdirSync(join(root, "widgets", "main"), { recursive: true });
