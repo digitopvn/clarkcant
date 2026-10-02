@@ -2,6 +2,7 @@ import { appearanceSnapshotSchema, type AppearanceSnapshot, type SemanticProposa
 import {
   ARTIFACTS_EXTENSION,
   JOBS_EXTENSION,
+  JOBS_LIST_EXTENSION,
   JOB_LIST_LIMIT,
   TOKENS_EXTENSION,
   APPEARANCE_EXTENSION,
@@ -375,7 +376,8 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   let appearanceRevision = "";
   const initExtensions = [
     ...(input.artifacts === undefined ? [] : [ARTIFACTS_EXTENSION]),
-    ...(input.jobs === undefined ? [] : [JOBS_EXTENSION]),
+    // `jobs.list@1` is answered by the same broker, so it is offered with `jobs@1`; a widget asks `list` only when it sees it.
+    ...(input.jobs === undefined ? [] : [JOBS_EXTENSION, JOBS_LIST_EXTENSION]),
     ...(input.tokens === undefined ? [] : [TOKENS_EXTENSION]),
     ...(appearance === undefined ? [] : [APPEARANCE_EXTENSION]),
   ];

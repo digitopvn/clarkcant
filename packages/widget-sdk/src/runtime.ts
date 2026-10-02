@@ -3,6 +3,7 @@ import {
   ARTIFACT_BRIDGE_LIMITS,
   ARTIFACTS_EXTENSION,
   JOBS_EXTENSION,
+  JOBS_LIST_EXTENSION,
   TOKEN_BRIDGE_LIMITS,
   TOKENS_EXTENSION,
   BRIDGE_PROTOCOL,
@@ -721,7 +722,11 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
           throw new Error(`${result.code ?? "JOB_REFUSED"}: ${result.message ?? "host refused the job request"}`);
         }
       },
+      canList: () => extensions.has(JOBS_EXTENSION) && extensions.has(JOBS_LIST_EXTENSION),
       list: async () => {
+        // Refused here, because a host without the extension would turn the request away and never answer it.
+        requireReady("liệt kê job");
+        if (!extensions.has(JOBS_LIST_EXTENSION)) throw new Error(`widget runtime: host không mở ${JOBS_LIST_EXTENSION} cho frame này`);
         const result = await jobRequest({ op: "list" });
         if (result.status !== "ok") throw new Error(`${result.code ?? "JOB_REFUSED"}: ${result.message ?? "host refused the job request"}`);
         // Already checked against the bridge schema when the answer arrived, which bounds it to `JOB_LIST_LIMIT`.

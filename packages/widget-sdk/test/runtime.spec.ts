@@ -697,8 +697,20 @@ describe("the jobs@1 extension", () => {
     await expect(cancelling).resolves.toBeUndefined();
   });
 
+  it("asks a host that offers only jobs@1 nothing it cannot answer: list is refused locally", async () => {
+    const { runtime, requests } = ready(["jobs@1"]);
+    expect(runtime.api().jobs.available()).toBe(true);
+    expect(runtime.api().jobs.canList()).toBe(false);
+    await expect(runtime.api().jobs.list()).rejects.toThrow(/jobs\.list@1/);
+    // Nothing reached the bridge, where an older host would have turned it away without an answer.
+    expect(requests()).toHaveLength(0);
+    // jobs.list@1 alone is not a jobs host either.
+    expect(ready(["jobs.list@1"]).runtime.api().jobs.canList()).toBe(false);
+  });
+
   it("lists the instance's jobs through the host, frozen, and turns a refusal into an error", async () => {
-    const { runtime, requests, answer } = ready();
+    const { runtime, requests, answer } = ready(["jobs@1", "jobs.list@1"]);
+    expect(runtime.api().jobs.canList()).toBe(true);
     const listing = runtime.api().jobs.list();
     expect(requests()[0]?.request).toEqual({ op: "list" });
     answer(requests()[0]?.requestId ?? "", { status: "ok", jobs: [snapshot("running"), { ...snapshot("completed"), jobId: "job_older" }] });

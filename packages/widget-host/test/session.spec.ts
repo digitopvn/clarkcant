@@ -649,6 +649,19 @@ describe("the artifacts@1 extension", () => {
     expect(session.accept(read("artreq-d")).ok).toBe(true);
   });
 
+  it("offers jobs.list@1 beside jobs@1, and neither without a job broker", () => {
+    const withJobs = makeSession({ jobs: async () => ({ status: "refused", code: "JOB_NOT_FOUND", message: "none" }) });
+    withJobs.session.init();
+    const offered = withJobs.posted.find((message) => message.kind === "init")?.extensions as string[] | undefined;
+    expect(offered).toEqual(expect.arrayContaining(["jobs@1", "jobs.list@1"]));
+
+    const without = makeSession({});
+    without.session.init();
+    const none = (without.posted.find((message) => message.kind === "init")?.extensions as string[] | undefined) ?? [];
+    expect(none).not.toContain("jobs@1");
+    expect(none).not.toContain("jobs.list@1");
+  });
+
   it("answers a job list with the jobs the host returned, bounded to the bridge limit", async () => {
     const asked: unknown[] = [];
     const listed = Array.from({ length: 25 }, (_, index) => ({ jobId: `job_${index}`, status: "running" as const, resultRefs: [], createdAt: "2026-10-01T00:00:00.000Z" }));
