@@ -103,7 +103,7 @@ function heldArtifact(artifactId: string, bytes: Uint8Array, mimeType: string, o
   } as never);
 }
 
-function heldAttachment(attachmentId: string, bytes: Uint8Array, filename: string, mime: string, kind: "pdf" | "text"): void {
+function heldAttachment(attachmentId: string, bytes: Uint8Array, filename: string, mime: string, kind: "pdf" | "text" | "audio"): void {
   const blob = writeBlob({ dataDir: dir, bytes, extension: filename.split(".").at(-1) ?? "bin" });
   insertAttachment(services.runtime.db, {
     attachmentId,
@@ -284,6 +284,17 @@ describe("placing an audio player from a file the conversation holds", () => {
     heldArtifact("art_tone", toneWav({ seconds: 1 }), "audio/wav");
     await expect(place(AUDIO.id, props)).rejects.toThrow(reason);
     expect(instanceRows()).toBe(0);
+  });
+
+  it("plays a WAV the person sent as an attachment, and a document preview refuses it", async () => {
+    heldAttachment("att_voice", toneWav({ seconds: 2 }), "voice.wav", "audio/wav", "audio");
+    const block = await place(AUDIO.id, { title: "Voice note", attachmentId: "att_voice" });
+    expect(getInstance(services.conductor, block.snapshot.instanceId ?? "")?.props).toMatchObject({
+      audioRef: "attachment:att_voice",
+      mimeType: "audio/wav",
+      durationSeconds: 2,
+    });
+    await expect(place(DOCUMENT.id, { attachmentId: "att_voice" })).rejects.toThrow("(media policy rule: type-not-allowed)");
   });
 
   it("gives one answer for another conversation's, another person's and an absent file", async () => {

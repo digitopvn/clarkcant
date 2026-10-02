@@ -317,6 +317,10 @@ const TEXT_EDITOR_DEFINITION = new URL("../../../../examples/reference-apps/text
 const TEXT_EDITOR_REWRITE_INTENT =
   "Viết lại đoạn văn bản đang được chọn trong trình soạn thảo. Chỉ trả lời bằng đoạn thay thế, trong một khối ``` duy nhất.";
 
+/** The reference media render tool's definition, as its package ships it, and the capability its button calls. */
+const MEDIA_RENDER_DEFINITION = new URL("../../../../examples/reference-apps/media-render/widgets/main/widget.json", import.meta.url);
+const MEDIA_RENDER_CAPABILITY = "com.clarkcant.reference.media-render.render@1";
+
 /**
  * The scripted composer.
  *
@@ -1361,6 +1365,71 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       }
     }
 
+    /*
+     * The diagram fixture places the real catalog descriptor through the same build `show_view` runs. "mermaid" sends a
+     * flowchart the node reads into the model; "chữ như mã" sends labels shaped like markup, which must be drawn as text;
+     * the other variants are each a refusal a browser journey reads back.
+     */
+    const diagramRequest = /^(?:đặt|place)\s+sơ đồ(?:\s+(trùng|thiếu nút|quá lớn|ký tự ẩn|mermaid|mermaid click|mermaid html|chữ như mã))?$/iu.exec(input.text.trim());
+    if (diagramRequest !== null) {
+      const which = (diagramRequest[1] ?? "").toLowerCase();
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.diagram@1");
+      const fixture = fixturesFor("canvas.diagram@1").find((entry) => entry.id === "diagram.normal");
+      if (view === undefined || fixture === undefined) return undefined;
+      const nodes = fixture.props.nodes as Record<string, unknown>[];
+      const edges = fixture.props.edges as Record<string, unknown>[];
+      const flowchart = [
+        "flowchart LR",
+        "  accTitle: Luồng duyệt",
+        "  draft(Bản nháp) --> review{Duyệt?}",
+        "  review -->|đồng ý| publish((Đăng))",
+        "  review -- sửa --> draft",
+      ].join("\n");
+      const props: Record<string, unknown> =
+        which === "trùng"
+          ? { ...fixture.props, nodes: [...nodes, { id: "plan", label: "Lên kế hoạch lần nữa" }] }
+          : which === "thiếu nút"
+            ? { ...fixture.props, edges: [...edges, { from: "docs", to: "archive" }] }
+            : which === "quá lớn"
+              ? { nodes: Array.from({ length: 61 }, (_, index) => ({ id: `n${String(index)}`, label: `Bước ${String(index)}` })) }
+              : which === "ký tự ẩn"
+                ? { ...fixture.props, nodes: [{ ...nodes[0], label: "Lên ‮kế hoạch" }, ...nodes.slice(1)] }
+                : which === "mermaid"
+                  ? { mermaid: flowchart }
+                  : which === "mermaid click"
+                    ? { mermaid: `${flowchart}\n  click draft "https://example.com"` }
+                    : which === "mermaid html"
+                      ? { mermaid: 'flowchart TB\n  a["<img src=x onerror=alert(1)>"] --> b' }
+                      : which === "chữ như mã"
+                        ? {
+                            title: "Nhãn giống mã",
+                            nodes: [
+                              { id: "img", label: "<img src=x onerror=alert(1)>" },
+                              { id: "script", label: "<script>alert(1)</script>", shape: "diamond" },
+                              { id: "link", label: "javascript:alert(1)", shape: "circle" },
+                            ],
+                            edges: [
+                              { from: "img", to: "script", label: "<b>onclick</b>" },
+                              { from: "script", to: "link" },
+                            ],
+                          }
+                        : fixture.props;
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt sơ đồ${which === "" ? "" : ` ${which}`} (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
+
     // The browser journey uses the deterministic model only to place the real board descriptor; moves and saved state
     // still pass through the production renderer, host binding and revision-checked widget service.
     const boardRequest = /^(?:đặt|place)\s+bảng kanban(?:\s+(liên kết))?$/iu.exec(input.text.trim());
@@ -2287,6 +2356,76 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         const reply = `Fixture không đặt được nút: ${cause instanceof Error ? cause.message : String(cause)}`;
         return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
       }
+    }
+
+    /*
+     * The reference media render tool, placed with its own Render button.
+     *
+     * The definition is the package's own `widget.json`, read from disk, so the instance is one the directory entry
+     * serves. The button is an `invoke` binding made here, for the same reason as the notes widget's below: nothing in
+     * the product places a package widget with its own binding yet. Its id reaches the frame through props, because the
+     * frame can only press a binding the instance holds. The widget sends only the clip and the parameters a person
+     * sets; a journey can watch progress and stop a render mid-way because a fixture node answers each read the service
+     * makes a moment late (`FIXTURE_ARTIFACT_READ_DELAY_MS`), not because the package has a pacing argument.
+     */
+    if (/trình dựng âm thanh|media render tool/i.test(input.text)) {
+      const definition = widgetDefinitionSchema.parse(JSON.parse(readFileSync(MEDIA_RENDER_DEFINITION, "utf8")));
+      const conductor = deps.services().conductor;
+      const packageDigest = definitionDigest(definition);
+      const served = deps.services().serviceHost?.serves(MEDIA_RENDER_CAPABILITY);
+      const instance = createInstance(conductor, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Trình dựng âm thanh (fixture)", renderBinding: "binding_media_render" },
+      });
+      saveActionBinding(conductor, {
+        // Fixed, because the fixture's props name it.
+        actionBindingId: "binding_media_render",
+        label: "Dựng",
+        proposal: {
+          kind: "invoke" as const,
+          capabilityRef: MEDIA_RENDER_CAPABILITY,
+          args: {},
+          bindings: [
+            { target: "source", source: "user-input" as const },
+            { target: "gainDb", source: "user-input" as const },
+            { target: "trimStartMs", source: "user-input" as const },
+            { target: "trimEndMs", source: "user-input" as const },
+          ],
+        },
+        inputSchema: {
+          type: "object",
+          properties: {
+            source: { type: "string", pattern: "^art_[A-Za-z0-9_-]{1,120}$" },
+            gainDb: { type: "number", minimum: -24, maximum: 12 },
+            trimStartMs: { type: "integer", minimum: 0, maximum: 7_200_000 },
+            trimEndMs: { type: "integer", minimum: 0, maximum: 7_200_000 },
+          },
+          required: ["source", "gainDb"],
+          additionalProperties: false,
+        },
+        effectCategory: "read" as const,
+        instanceId: instance.instanceId,
+        definitionId: definition.id,
+        packageGeneration: served?.generationId ?? packageDigest,
+        allowedDataRefs: [],
+        fixedConstraints: {},
+        requiresApproval: false,
+        limits: {},
+        bindingDigest: "sha256:binding_media_render",
+        createdAt: instantSchema.parse(new Date().toISOString()),
+      });
+      const snapshot = captureSnapshot(conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: trình dựng âm thanh mẫu, nút Dựng gọi dịch vụ của gói (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
     }
 
     /*

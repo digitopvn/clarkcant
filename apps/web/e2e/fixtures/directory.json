@@ -687,5 +687,49 @@
     "riskTier": "isolated-ui",
     "sizeBytes": 65536,
     "digest": "sha256:text-editor-reference-digest"
+  },
+  {
+    "packageId": "com.clarkcant.reference.media-render",
+    "version": "1.0.0",
+    "displayName": "Media render",
+    "description": "Renders a WAV clip the person picks with a gain change and a trim, as a job the widget follows and can stop.",
+    "source": {
+      "kind": "local",
+      "path": "examples/reference-apps/media-render"
+    },
+    "publisher": {
+      "id": "clarkcant",
+      "sourceUrl": "https://github.com/digitopvn/clarkcant",
+      "license": "Apache-2.0"
+    },
+    "preview": {},
+    "facets": [
+      "ui",
+      "tools"
+    ],
+    "isolations": [
+      {
+        "facetKind": "ui",
+        "isolation": "isolated-ui"
+      },
+      {
+        "facetKind": "tools",
+        "isolation": "service"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "service",
+    "sizeBytes": 65536,
+    "digest": "sha256:media-render-reference-digest"
   }
 ]

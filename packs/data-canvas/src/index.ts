@@ -64,6 +64,21 @@ import {
   TREE_ICONS,
   timelineProblems,
   treeProblems,
+  DIAGRAM_DIRECTIONS,
+  DIAGRAM_EDGE_DIRECTIONS,
+  DIAGRAM_ID,
+  DIAGRAM_ID_PATTERN,
+  DIAGRAM_LAYOUTS,
+  DIAGRAM_SELECT_OPERATION,
+  DIAGRAM_SHAPES,
+  MAX_DIAGRAM_EDGE_LABEL,
+  MAX_DIAGRAM_EDGES,
+  MAX_DIAGRAM_GROUP,
+  MAX_DIAGRAM_ID,
+  MAX_DIAGRAM_LABEL,
+  MAX_DIAGRAM_NODES,
+  MAX_DIAGRAM_TITLE,
+  diagramProblems,
   BOARD_ID,
   BOARD_MOVE_OPERATION,
   MAX_BOARD_COLUMNS,
@@ -992,6 +1007,81 @@ export const TREE: WidgetDefinition = {
   datasetRefs: [],
 };
 
+const diagramIdProp = { type: "string", minLength: 1, maxLength: MAX_DIAGRAM_ID, pattern: DIAGRAM_ID_PATTERN };
+
+/**
+ * A bounded node-and-edge diagram the host lays out and draws as SVG text, never from markup.
+ *
+ * The props are the model only: a Mermaid flowchart given as `{ mermaid }` to `show_view` is read on the node into these
+ * same props first, and its source is not stored. Selecting a node is the one thing a person does here, and it is view
+ * state the node checks against the nodes it holds.
+ */
+export const DIAGRAM: WidgetDefinition = {
+  id: DIAGRAM_ID,
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: oneLineProp(MAX_DIAGRAM_TITLE),
+      layout: { type: "string", enum: DIAGRAM_LAYOUTS },
+      direction: { type: "string", enum: DIAGRAM_DIRECTIONS },
+      nodes: {
+        type: "array",
+        maxItems: MAX_DIAGRAM_NODES,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: diagramIdProp,
+            label: oneLineProp(MAX_DIAGRAM_LABEL, 1),
+            shape: { type: "string", enum: DIAGRAM_SHAPES },
+            group: oneLineProp(MAX_DIAGRAM_GROUP),
+          },
+          required: ["id", "label"],
+        },
+      },
+      edges: {
+        type: "array",
+        maxItems: MAX_DIAGRAM_EDGES,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            from: diagramIdProp,
+            to: diagramIdProp,
+            label: oneLineProp(MAX_DIAGRAM_EDGE_LABEL),
+            direction: { type: "string", enum: DIAGRAM_EDGE_DIRECTIONS },
+          },
+          required: ["from", "to"],
+        },
+      },
+    },
+    required: ["nodes"],
+  },
+  eventSchemas: {
+    [DIAGRAM_SELECT_OPERATION]: {
+      type: "object",
+      additionalProperties: false,
+      properties: { selectedId: { type: "string", maxLength: MAX_DIAGRAM_ID } },
+      required: ["selectedId"],
+    },
+  },
+  stateSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: { selectedId: { type: "string", maxLength: MAX_DIAGRAM_ID } },
+  },
+  stateVersion: 1,
+  semanticDescription: "A bounded diagram of nodes and edges, drawn by the host without running script, whose selected node is preserved",
+  requestedCapabilities: [],
+  sizing: { compact: true, expanded: true, minHeight: 200 },
+  textFallback: "A diagram appears as a list of its nodes and the edges each one starts when it cannot be drawn.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
 /** A bounded board whose view order is local unless an explicit invoke binding is supplied. */
 export const BOARD: WidgetDefinition = {
   id: BOARD_ID,
@@ -1558,6 +1648,7 @@ export const WIDGETS = [
   FORM,
   LIST,
   TREE,
+  DIAGRAM,
   BOARD,
   STATUS,
   PROGRESS,
@@ -1620,6 +1711,8 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   // surface's state.
   "canvas.timeline@1": "timeline",
   [TREE.id]: "hierarchy",
+  // No layout region reads this family yet, so a diagram is placed on its own.
+  [DIAGRAM.id]: "diagram",
   [BOARD.id]: "board",
 };
 
@@ -1656,6 +1749,7 @@ export function primitivePropsProblems(definitionId: string, props: Readonly<Rec
   if (chart !== undefined) return xyChartProblems(chart, props);
   if (definitionId === TIMELINE.id) return timelineProblems(props);
   if (definitionId === TREE.id) return treeProblems(props);
+  if (definitionId === DIAGRAM.id) return diagramProblems(props);
   return [];
 }
 export function familyOf(definitionId: string): string {

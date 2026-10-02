@@ -56,6 +56,9 @@ import { type FixtureGates } from "./fixtures.ts";
  * rather than awaited so the node is listening while it runs.
  */
 
+/** How late a fixture node answers each file read a package service makes (`ServiceHostOptions.timings`). */
+const FIXTURE_ARTIFACT_READ_DELAY_MS = 700;
+
 /** The mutable seams this module fills in, and the model turn reads back through getters. */
 export interface RuntimeWiring {
   session: { index?: NodeServices["sessions"]; principalId?: string };
@@ -381,6 +384,11 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       now: () => new Date().toISOString() as Instant,
     }),
     egress: serviceEgressDeps(services),
+    /*
+     * A fixture node answers each file read a service makes a moment late, so a browser journey can watch a job's
+     * progress and stop it mid-way. The package itself has no pacing knob: a node that is not a fixture never waits.
+     */
+    ...(modelFixture ? { timings: { artifactReadDelayMs: FIXTURE_ARTIFACT_READ_DELAY_MS } } : {}),
   });
   void services.serviceHost.reconcile().catch((cause: unknown) => {
     process.stderr.write(`services: not started — ${cause instanceof Error ? cause.message : String(cause)}\n`);

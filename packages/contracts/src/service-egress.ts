@@ -12,6 +12,10 @@ import type { EffectCategory } from "./primitives.ts";
  * declared, adds the declared credential header itself from the secret broker, and removes the secret from whatever
  * comes back. The service sees a response; it never sees the key, an environment variable holding it, or a socket.
  *
+ * What the service sends is its own: whatever it put in the URL, the headers or the body reaches the declared origin.
+ * That includes the bytes of a file a call let it read (`service-artifacts.ts`), so while such a call is in flight egress
+ * is answered only when the call was decided as an effect the policy's risk gate asks about (`egressInputProblem`).
+ *
  * The declaration below is what consent and the host read. It names origins and secrets, never values: a value is
  * typed by the person into the node's credential store, stored for the consumer `package:<id>`.
  */
@@ -183,6 +187,24 @@ export function egressMethodProblem(method: EgressMethod, effects: readonly Effe
   return `a ${method} egress request changes something at the provider, so it is answered only during a call decided as external-write or higher; the calls in flight are decided as ${decided}`;
 }
 
+/**
+ * Why no egress request at all is answered while calls that hold a person's files are in flight, or `undefined` when
+ * it may be.
+ *
+ * A call that was given files (`inputArtifacts`) lets the service read their bytes, and any request it then sends to a
+ * declared origin can carry them, a `GET` as much as a `POST`: in its URL, in its headers. So while such a call is in
+ * flight, egress is answered only when every one of them was decided as an effect that reaches past this machine
+ * (`EGRESS_WRITE_EFFECTS`), which the execution policy's risk gate asks about. A call decided as `read` or
+ * `local-write` that holds a file makes the service's egress refused until it ends. `inputEffects` holds one entry per
+ * such call; a request cannot say which call it serves, so all of them bound it.
+ */
+export function egressInputProblem(inputEffects: readonly EffectCategory[]): string | undefined {
+  const narrower = inputEffects.filter((effect) => !EGRESS_WRITE_EFFECTS.has(effect));
+  if (narrower.length === 0) return undefined;
+  const decided = [...new Set(narrower)].sort().join(", ");
+  return `a call in flight holds a person's file and is decided as ${decided}, so no egress request is answered until it ends: a request could carry the file's bytes to the provider, and that is answered only during a call decided as external-write or higher`;
+}
+
 export const egressFetchRequestSchema = z.strictObject({
   version: z.literal(SERVICE_EGRESS_VERSION),
   url: z.string().min(1).max(SERVICE_EGRESS_LIMITS.urlChars),
@@ -210,7 +232,8 @@ export interface EgressFetchResult {
  * JSON-RPC error codes the host answers an egress request with, in the range JSON-RPC leaves to applications.
  * Each says what the service can do about it: nothing (not declared, or an origin this node keeps services from),
  * wait for a call (not in a call), ask the person (no credential), send less (too large), try again later (upstream,
- * or too many requests), or declare the capability with the effect it has (a write during a read call).
+ * or too many requests), declare the capability with the effect it has (a write during a read call), or wait until a
+ * call that holds a person's file and was not decided as external-write or higher ends (`inputHeld`).
  */
 export const EGRESS_ERROR_CODES = {
   invalid: -32602,
@@ -223,6 +246,7 @@ export const EGRESS_ERROR_CODES = {
   effectNotAllowed: -32016,
   rateLimited: -32017,
   originNotAllowed: -32018,
+  inputHeld: -32019,
 } as const;
 
 /** How many egress requests one running service may send: a burst, refilled at a steady rate. */

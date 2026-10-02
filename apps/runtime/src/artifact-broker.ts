@@ -54,6 +54,7 @@ import {
   createStagedBlob,
   readBlob,
   readBlobRange,
+  readBlobRangeAsync,
   readStagedBlob,
   removeBlob,
   removeStagedBlob,
@@ -339,14 +340,38 @@ export function createWorkingArtifact(
   return { ok: true, ref: artifactRefFromRecord(record) };
 }
 
-/** What a widget may learn about an artifact it holds: its ref, re-checked. */
+/**
+ * What a widget may learn about an artifact it holds: its ref, re-checked.
+ *
+ * With `conversationId`, the artifact must also belong to that conversation and the instance must be one it holds, as
+ * for `readArtifactForContext`: a file given to a press in one conversation is not one a press in another can use.
+ */
 export function describeArtifact(
   deps: ArtifactBrokerDeps,
-  input: { principalId: string; instanceId: string; artifactId: string },
+  input: { principalId: string; instanceId: string; artifactId: string; conversationId?: string },
 ): BrokerResult<{ ref: ArtifactRef }> {
   const allowed = authorize(deps, { ...input, need: "read" });
   if (!allowed.ok) return allowed;
+  if (input.conversationId !== undefined) {
+    const elsewhere = otherConversation(deps, allowed.record, { conversationId: input.conversationId, instanceId: input.instanceId });
+    if (elsewhere !== undefined) return elsewhere;
+  }
   return { ok: true, ref: artifactRefFromRecord(allowed.record) };
+}
+
+/** The refusal for an artifact or an instance that is not this conversation's, or undefined when both are. */
+function otherConversation(
+  deps: Pick<ArtifactBrokerDeps, "db">,
+  record: BrokerArtifactRecord,
+  input: { conversationId: string; instanceId: string },
+): ArtifactRefusal | undefined {
+  if (
+    record.conversationId !== input.conversationId ||
+    !instanceIsInConversation(deps.db, { conversationId: input.conversationId, instanceId: input.instanceId })
+  ) {
+    return refuse("ARTIFACT_NOT_GRANTED", "that artifact belongs to another conversation");
+  }
+  return undefined;
 }
 
 /** Types whose bytes are text a model can be shown as an excerpt. Everything else is described, never quoted. */
@@ -378,12 +403,8 @@ export function readArtifactForContext(
   const allowed = authorize(deps, { ...input, need: "read" });
   if (!allowed.ok) return allowed;
   const { record } = allowed;
-  if (
-    record.conversationId !== input.conversationId ||
-    !instanceIsInConversation(deps.db, { conversationId: input.conversationId, instanceId: input.instanceId })
-  ) {
-    return refuse("ARTIFACT_NOT_GRANTED", "that artifact belongs to another conversation");
-  }
+  const elsewhere = otherConversation(deps, record, input);
+  if (elsewhere !== undefined) return elsewhere;
   const ref = artifactRefFromRecord(record);
   if (!EXCERPT_TYPES.has(record.mimeType)) return { ok: true, ref };
   if (record.sizeBytes === 0) return { ok: true, ref, excerpt: { text: "", bytes: 0, complete: true } };
@@ -401,6 +422,39 @@ export function readArtifactRange(
   deps: ArtifactBrokerDeps,
   input: { principalId: string; instanceId: string; artifactId: string; offset: unknown; length: unknown },
 ): BrokerResult<{ ref: ArtifactRef; bytes: Uint8Array; offset: number; eof: boolean }> {
+  const planned = planArtifactRange(deps, input);
+  if (!planned.ok) return planned;
+  const read = readBlobRange({ dataDir: deps.dataDir, location: planned.location, offset: planned.offset, length: planned.length });
+  if (!read.ok) return refuse("ARTIFACT_BYTES_MISSING", read.message);
+  return { ok: true, ref: artifactRefFromRecord(planned.record), bytes: read.bytes, offset: planned.offset, eof: planned.eof };
+}
+
+/**
+ * `readArtifactRange` with the disk read off the main thread, for a reader that may be asked many times in a row: a
+ * package service streaming a file through the node. The decision is the same and is made before the read.
+ */
+export async function readArtifactRangeAsync(
+  deps: ArtifactBrokerDeps,
+  input: { principalId: string; instanceId: string; artifactId: string; offset: unknown; length: unknown },
+): Promise<BrokerResult<{ ref: ArtifactRef; bytes: Uint8Array; offset: number; eof: boolean }>> {
+  const planned = planArtifactRange(deps, input);
+  if (!planned.ok) return planned;
+  const read = await readBlobRangeAsync({ dataDir: deps.dataDir, location: planned.location, offset: planned.offset, length: planned.length });
+  if (!read.ok) return refuse("ARTIFACT_BYTES_MISSING", read.message);
+  return { ok: true, ref: artifactRefFromRecord(planned.record), bytes: read.bytes, offset: planned.offset, eof: planned.eof };
+}
+
+/** Whether this instance may read this range, and where its bytes are. */
+function planArtifactRange(
+  deps: ArtifactBrokerDeps,
+  input: { principalId: string; instanceId: string; artifactId: string; offset: unknown; length: unknown },
+): BrokerResult<{
+  record: BrokerArtifactRecord;
+  location: { stagingRef: string } | { blobPath: string };
+  offset: number;
+  length: number;
+  eof: boolean;
+}> {
   const allowed = authorize(deps, { ...input, need: "read" });
   if (!allowed.ok) return allowed;
   const { record } = allowed;
@@ -413,9 +467,7 @@ export function readArtifactRange(
         ? { blobPath: record.blobPath }
         : undefined;
   if (location === undefined) return refuse("ARTIFACT_BYTES_MISSING", "that artifact's bytes are not on this node");
-  const read = readBlobRange({ dataDir: deps.dataDir, location, offset: range.offset, length: range.length });
-  if (!read.ok) return refuse("ARTIFACT_BYTES_MISSING", read.message);
-  return { ok: true, ref: artifactRefFromRecord(record), bytes: read.bytes, offset: range.offset, eof: range.eof };
+  return { ok: true, record, location, offset: range.offset, length: range.length, eof: range.eof };
 }
 
 /**

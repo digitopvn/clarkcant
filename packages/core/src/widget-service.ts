@@ -38,6 +38,10 @@ import {
   readTree,
   readTreeState,
   treeStateProblems,
+  DIAGRAM_ID,
+  DIAGRAM_SELECT_OPERATION,
+  diagramSelectionProblems,
+  readDiagram,
   MAX_CHART_POINTS,
   calendarViewProblems,
   isKnownTimeZone,
@@ -1185,6 +1189,7 @@ export const M1_VIEW_OPERATIONS = [
   BOARD_ACKNOWLEDGE_OPERATION,
   TREE_SELECT_OPERATION,
   TREE_TOGGLE_OPERATION,
+  DIAGRAM_SELECT_OPERATION,
   MEDIA_VIEW_OPERATION,
 ] as const;
 
@@ -1203,6 +1208,8 @@ const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
   "timeline.select": "presentation",
   [TREE_SELECT_OPERATION]: "presentation",
   [TREE_TOGGLE_OPERATION]: "presentation",
+  // Selecting a node changes what the diagram highlights, not the nodes it holds.
+  [DIAGRAM_SELECT_OPERATION]: "presentation",
   [MEDIA_VIEW_OPERATION]: "presentation",
   [BOARD_MOVE_OPERATION]: "presentation",
   [BOARD_APPROVAL_OPERATION]: "presentation",
@@ -1400,7 +1407,9 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
               ? treeToggleInputPatch(instance, request.input)
               : operation === MEDIA_VIEW_OPERATION
                 ? mediaViewPatch(instance, request.input)
-                : validateViewInput(operation, request.input);
+                : operation === DIAGRAM_SELECT_OPERATION
+                  ? diagramSelectPatch(instance, request.input)
+                  : validateViewInput(operation, request.input);
   if (!validation.ok) return { ok: false, code: "INVALID_INPUT", message: validation.message };
 
   const precheck = precheckInvocation(deps, request);
@@ -1479,6 +1488,7 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
     // Chart, calendar, timeline and board operations each produce the widget's whole bounded view state, so each
     // replaces what was stored. This also removes a selection or pending board move that was cleared.
     const replaces = operation === "chart.view" || operation === CALENDAR_VIEW_OPERATION || operation === TIMELINE_SELECT_OPERATION || operation === MEDIA_VIEW_OPERATION ||
+      operation === DIAGRAM_SELECT_OPERATION ||
       operation === BOARD_MOVE_OPERATION || operation === BOARD_APPROVAL_OPERATION || operation === BOARD_RESOLVE_OPERATION || operation === BOARD_ACKNOWLEDGE_OPERATION;
     const body: Record<string, unknown> = replaces ? patch : { ...(current?.body ?? {}), ...patch };
     if (operation === TREE_SELECT_OPERATION && request.input.selectedId === "") delete body.selectedId;
@@ -2070,6 +2080,20 @@ function treeSelectPatch(instance: WidgetInstance, input: Record<string, unknown
   const selectedId = input.selectedId;
   if (typeof selectedId !== "string") return { ok: false, message: "selectedId names a tree node or is empty to clear the selection" };
   return { ok: true, patch: selectedId === "" ? {} : { selectedId } };
+}
+
+/**
+ * A diagram's selected node, checked against the nodes the instance holds now. An empty id clears it, stored as no key,
+ * and the patch is the diagram's whole view state, so it replaces what was stored.
+ */
+function diagramSelectPatch(instance: WidgetInstance, input: Record<string, unknown>): InputValidation {
+  if (instance.definitionRef.id !== DIAGRAM_ID) return { ok: false, message: "only a diagram holds a diagram selection" };
+  const diagram = readDiagram(instance.props);
+  if (diagram === undefined) return { ok: false, message: "the diagram selection was refused: the diagram's props do not describe a diagram" };
+  const problems = diagramSelectionProblems(diagram, input);
+  if (problems.length > 0) return { ok: false, message: `the diagram selection was refused: ${problems.join("; ")}` };
+  const selectedId = input.selectedId;
+  return { ok: true, patch: typeof selectedId === "string" && selectedId !== "" ? { selectedId } : {} };
 }
 
 function treeToggleInputPatch(instance: WidgetInstance, input: Record<string, unknown>): InputValidation {

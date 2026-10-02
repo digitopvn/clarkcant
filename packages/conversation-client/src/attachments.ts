@@ -135,6 +135,7 @@ const PASTED_EXTENSIONS: Record<string, string> = {
   "text/csv": "csv",
   "text/tab-separated-values": "tsv",
   "application/json": "json",
+  "audio/wav": "wav",
 };
 
 /**

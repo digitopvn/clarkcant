@@ -30,6 +30,10 @@ import {
   readTree,
   readTreeState,
   treeSemantic,
+  DIAGRAM_ID,
+  diagramSemantic,
+  readDiagram,
+  readDiagramState,
   BOARD_ID,
   readBoard,
   readBoardState,
@@ -41,7 +45,7 @@ import {
   readDocument,
   readDocumentPage,
 } from "@clarkcant/contracts";
-import { ARTIFACT_VIEWER_KIND, AUDIO, CALENDAR, CAROUSEL, DOCUMENT, GALLERY, IMAGE, STATUS_CARD_KIND, TIMELINE, TREE, VIDEO, YOUTUBE } from "@clarkcant/data-canvas";
+import { ARTIFACT_VIEWER_KIND, AUDIO, CALENDAR, CAROUSEL, DIAGRAM, DOCUMENT, GALLERY, IMAGE, STATUS_CARD_KIND, TIMELINE, TREE, VIDEO, YOUTUBE } from "@clarkcant/data-canvas";
 import { type WidgetDeps, getActionBinding, getInstance, liveStateOf, semanticViewOf } from "@clarkcant/core";
 import {
   findCompositionByInstance,
@@ -200,6 +204,12 @@ export function buildWidgetSemantic(
   if (tree !== undefined) {
     const state = readTreeState(liveStateOf(deps, instanceId, TREE)?.body, tree);
     return normalizeSemanticDoc({ instanceId, definitionId, ...treeSemantic(tree, state), availableActions, freshness: "unknown" });
+  }
+
+  const diagram = definitionId === DIAGRAM_ID ? readDiagram(instance.props) : undefined;
+  if (diagram !== undefined) {
+    const state = readDiagramState(liveStateOf(deps, instanceId, DIAGRAM)?.body, diagram);
+    return normalizeSemanticDoc({ instanceId, definitionId, ...diagramSemantic(diagram, state), availableActions, freshness: "unknown" });
   }
 
   const board = definitionId === BOARD_ID ? readBoard(instance.props) : undefined;

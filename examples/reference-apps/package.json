@@ -2,7 +2,7 @@
   "name": "@clarkcant/reference-apps",
   "version": "1.0.0",
   "private": true,
-  "description": "Reference widget apps that use only shipped host contracts: a text editor that opens and saves a real file, a spreadsheet with CSV and TSV import and export, formulas and formatting Clark applies, and an image generator that runs a service job against a fake provider.",
+  "description": "Reference widget apps that use only shipped host contracts: a text editor that opens and saves a real file, a spreadsheet with CSV and TSV import and export, formulas and formatting Clark applies, an image generator that runs a service job against a fake provider, and a media render tool that renders a picked WAV clip as a job the widget follows and can stop.",
   "license": "Apache-2.0",
   "type": "module",
   "clarkcant": {
@@ -11,7 +11,7 @@
     "blueprint": "docs/widget-development.md"
   },
   "scripts": {
-    "test": "clark widget test text-editor && clark widget test spreadsheet && clark widget test image-generator"
+    "test": "clark widget test text-editor && clark widget test spreadsheet && clark widget test image-generator && clark widget test media-render"
   },
   "devDependencies": {
     "@clarkcant/widget-cli": "workspace:*"

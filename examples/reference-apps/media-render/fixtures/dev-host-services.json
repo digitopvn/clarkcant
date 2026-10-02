@@ -1,0 +1,18 @@
+{
+  "bindings": [
+    {
+      "actionBindingId": "binding_media_render",
+      "capabilityRef": "com.clarkcant.reference.media-render.render@1",
+      "job": {
+        "steps": [
+          { "current": 262144, "total": 1048576, "message": "Rendered 256 KiB of 1024 KiB" },
+          { "current": 524288, "total": 1048576, "message": "Rendered 512 KiB of 1024 KiB" },
+          { "current": 786432, "total": 1048576, "message": "Rendered 768 KiB of 1024 KiB" },
+          { "current": 1048576, "total": 1048576, "message": "Rendered 1024 KiB of 1024 KiB" }
+        ],
+        "output": "Rendered 23.8 s at -6 dB (1 channel, 22050 Hz).",
+        "error": "The clip is 3700.0 s long, over the 3600.0 s this package's resource profile allows. Nothing was rendered."
+      }
+    }
+  ]
+}
