@@ -207,6 +207,8 @@ export interface TaskDispatcherDeps {
     conversationId: string;
     outcome: "succeeded" | "failed" | "uncertain" | "cancelled";
     message: string;
+    /** Whether a worker was started for it; false for a task refused before one existed. Absent means it was. */
+    ran?: boolean;
     outputs?: readonly TaskOutputFile[];
   }) => void;
   /**
@@ -485,13 +487,16 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     }
   };
 
-  /** Fail a task that never got a worker, through the same state machine a finished run goes through. */
-  const refuse = async (job: QueuedRun, refusal: string): Promise<void> => {
+  /**
+   * Fail a task whose run produced nothing to accept, through the same state machine a finished run goes through.
+   * `ran` says whether a worker was started for it: most refusals come before one exists, and those say so.
+   */
+  const refuse = async (job: QueuedRun, refusal: string, ran = false): Promise<void> => {
     const outcome = await runDispatchedTask(deps.conductor, {
       taskId: job.taskId,
       collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
     });
-    settle(job, outcome.outcome, refusal);
+    settle(job, outcome.outcome, refusal, ran);
   };
 
   const pump = (): void => {
@@ -550,7 +555,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         taskId: job.taskId,
         collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
       });
-      settle(job, outcome.outcome, refusal);
+      settle(job, outcome.outcome, refusal, false);
       return;
     }
 
@@ -667,7 +672,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             taskId: job.taskId,
             collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
           });
-          settle(job, outcome.outcome, refusal);
+          settle(job, outcome.outcome, refusal, false);
           return;
         }
 
@@ -932,14 +937,14 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
       if (wallClockExceeded) {
         journal((j) => j.taskEnded(job.taskId, "failed"));
-        await refuse(job, wallClockRefusal());
+        await refuse(job, wallClockRefusal(), true);
         return;
       }
 
       if (stopping.has(job.taskId)) {
         journal((j) => j.taskEnded(job.taskId, "stopped"));
         const refusal = "stopped on request before the worker finished; nothing it did was verified";
-        await refuse(job, refusal);
+        await refuse(job, refusal, true);
         return;
       }
 
@@ -950,7 +955,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       if (maxTokens !== undefined && tokensUsed !== undefined && tokensUsed > maxTokens) {
         journal((j) => j.taskEnded(job.taskId, "failed"));
         const refusal = `the token budget of ${String(maxTokens)} was exceeded (the worker used ${String(tokensUsed)}); the run already happened but is not accepted, and can be retried with a higher budget`;
-        await refuse(job, refusal);
+        await refuse(job, refusal, true);
         return;
       }
 
@@ -965,7 +970,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
       journal((j) => j.taskEnded(job.taskId, outcome.outcome === "succeeded" ? "done" : "failed"));
       const outputs = grantedOutputs(result.outputs ?? [], write);
-      settle(job, outcome.outcome, outcome.message, outputs);
+      settle(job, outcome.outcome, outcome.message, true, outputs);
     } catch (cause) {
       // A worker ended by a signal — a person's stop, the wall-clock budget, a crash — rejects rather than returning,
       // so this is the path most stops actually take. It settles the task through the state machine like every
@@ -981,9 +986,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           ? "stopped on request before the worker finished; nothing it did was verified"
           : `the worker could not run: ${cause instanceof Error ? cause.message : String(cause)}`;
       try {
-        await refuse(job, refusal);
+        await refuse(job, refusal, true);
       } catch {
-        settle(job, "failed", refusal);
+        settle(job, "failed", refusal, true);
       }
     } finally {
       if (wallClockTimer !== undefined) clearTimeout(wallClockTimer);
@@ -1085,6 +1090,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     job: QueuedRun,
     outcome: "succeeded" | "failed" | "uncertain" | "cancelled",
     message: string,
+    ran: boolean,
     outputs?: readonly TaskOutputFile[],
   ): void {
     // Every path reports here straight after `runDispatchedTask` wrote the run's settlement, so from now on nothing this
@@ -1097,6 +1103,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       conversationId: task.conversationId,
       outcome,
       message,
+      ran,
       ...(outputs === undefined || outputs.length === 0 ? {} : { outputs }),
     });
   }
