@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 2,
+  "id": "com.clarkcant.reference.connected-app",
+  "version": "1.0.0",
+  "displayName": "Connected tasks",
+  "description": "Lists and renames tasks in an account you connect; the node holds the account, the package never does.",
+  "hostApi": {
+    "min": 1,
+    "max": 1
+  },
+  "facets": [
+    {
+      "kind": "ui",
+      "id": "com.clarkcant.reference.connected-app.main@1",
+      "entry": "widgets/main/index.html",
+      "definition": "widgets/main/widget.json",
+      "isolation": "isolated-ui"
+    },
+    {
+      "kind": "tools",
+      "id": "com.clarkcant.reference.connected-app.service",
+      "entry": "service/server.mjs",
+      "isolation": "service",
+      "protocol": "mcp-stdio",
+      "capabilities": [
+        {
+          "tool": "list-tasks",
+          "ref": "com.clarkcant.reference.connected-app.list-tasks@1",
+          "summary": "List the tasks in the connected account",
+          "effectCategory": "read",
+          "requiredScopes": ["tasks.read"]
+        },
+        {
+          "tool": "update-task",
+          "ref": "com.clarkcant.reference.connected-app.update-task@1",
+          "summary": "Rename a task in the connected account",
+          "effectCategory": "external-write",
+          "requiredScopes": ["tasks.write"]
+        }
+      ],
+      "connection": {
+        "version": 1,
+        "provider": "fake.tasks",
+        "displayName": "Fake Tasks (test fixture)",
+        "flow": "oauth-pkce",
+        "authorization": {
+          "authorizationEndpoint": "http://127.0.0.1:8880/oauth/authorize",
+          "tokenEndpoint": "http://127.0.0.1:8880/oauth/token",
+          "revocationEndpoint": "http://127.0.0.1:8880/oauth/revoke",
+          "clientId": "connected-app-dev"
+        },
+        "scopes": [
+          { "scope": "tasks.read", "purpose": "Lists your tasks." },
+          { "scope": "tasks.write", "purpose": "Renames a task when you ask." }
+        ],
+        "endpoints": ["http://127.0.0.1:8880"],
+        "probe": { "url": "http://127.0.0.1:8880/api/me" }
+      }
+    },
+    {
+      "kind": "skills",
+      "id": "com.clarkcant.reference.connected-app.skills",
+      "entry": "skills/",
+      "isolation": "declarative"
+    }
+  ],
+  "requestedCapabilities": [],
+  "permissions": {
+    "networkOrigins": [],
+    "filesystem": [],
+    "microphone": false,
+    "camera": false,
+    "lifecycleScripts": []
+  },
+  "platforms": [
+    "darwin-arm64",
+    "linux-x64",
+    "win32-x64",
+    "web"
+  ],
+  "publisher": {
+    "id": "clarkcant",
+    "sourceUrl": "https://github.com/digitopvn/clarkcant",
+    "license": "Apache-2.0"
+  },
+  "dependencies": []
+}

@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import {
   applyStateMigrationOps,
@@ -304,6 +304,38 @@ export function runConformance(root: string, options: { frames?: FrameFacts } = 
         : `declared: ${origins.join(", ")}`
       : `undeclared: ${undeclared.join(", ")}`,
   );
+
+  /*
+   * A package that connects to an account leaves the connecting to the host: the frame never names the provider's
+   * authorization, token or API origins, so it cannot run its own consent screen or call the account around the node.
+   * Read from every file beside the entry, because a frame's code is rarely all in its HTML.
+   */
+  const connections = pkg.manifest.facets.flatMap((item) => (item.kind === "tools" && item.connection !== undefined ? [item.connection] : []));
+  if (connections.length > 0) {
+    const connectionOrigins = new Set(
+      connections.flatMap((connection) =>
+        [
+          connection.authorization.authorizationEndpoint,
+          connection.authorization.tokenEndpoint,
+          ...(connection.authorization.revocationEndpoint === undefined ? [] : [connection.authorization.revocationEndpoint]),
+          ...connection.endpoints,
+        ].map((url) => new URL(url).origin),
+      ),
+    );
+    const widgetDir = dirname(join(root, facet.entryPath));
+    const named = readdirSync(widgetDir, { recursive: true, encoding: "utf8" })
+      .filter((file) => /\.(?:html|m?js|css|json)$/.test(file))
+      .flatMap((file) => originsInEntry(join(widgetDir, file)).filter((origin) => connectionOrigins.has(origin)).map((origin) => `${file}: ${origin}`));
+    add(
+      "security.connectionHostOwned",
+      "security",
+      "the frame leaves connecting to the account to the host",
+      named.length === 0 ? "pass" : "fail",
+      named.length === 0
+        ? `no widget file names the ${connections.map((connection) => connection.displayName).join(", ")} origins; the host connects and the service reaches it through the node`
+        : `the frame names a connection origin, which only the host and the node may reach: ${named.join(", ")}`,
+    );
+  }
 
   /*
    * SAFETY: the cast is the point of the check. `isHostOwnedBlock` takes a `MessageBlock`, and what is being asked
