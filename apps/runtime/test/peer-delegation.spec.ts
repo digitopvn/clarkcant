@@ -474,10 +474,15 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
       allowedEffects: ["read", "local-write"],
     });
     await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+    // B runs the first task and holds its capability until the worker ends, so it would answer a second hand-over at once
+    // ("busy"), and that answer could settle the task before the letters below do. B goes quiet before the second leaves A,
+    // so nothing more is heard from it: the second is a hand-over never answered, the first a task whose stop never is.
     await signal(a, "note-1");
+    await waitUntil(() => tasksOn(b)[0]?.state === "running", "the first task to be running on B");
+    await b.stop();
     await signal(a, "note-2");
-    await waitUntil(() => tasksOn(a).filter((task) => task.state === "running").length === 2, "both tasks to be running on B");
-    const [refused, unanswered] = tasksOn(a);
+    await waitUntil(() => tasksOn(a).filter((task) => task.state === "running").length === 2, "both tasks to be running for A");
+    const [unanswered, refused] = tasksOn(a);
     const settle = settleUndeliveredTasks(a.services, () => new Date().toISOString() as Instant);
     const peerNodeId = identityOf(b).nodeId;
 
