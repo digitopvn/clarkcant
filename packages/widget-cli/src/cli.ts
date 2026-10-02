@@ -137,7 +137,7 @@ function definitionFor(id: string, template: Template): Record<string, unknown> 
 
 /** The reference app's own files that describe or test that app rather than the package a person starts from. */
 export function skippedFromReference(path: string): boolean {
-  return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "LICENSE";
+  return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "README.vi.md" || path === "LICENSE";
 }
 
 /** Files whose text can name the reference's id. Anything else is copied byte for byte. */

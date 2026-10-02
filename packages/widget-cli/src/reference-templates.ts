@@ -13,9 +13,11 @@ import { fileURLToPath } from "node:url";
  *     placeholder (`https://images.example.com`) to replace with the provider's before publishing.
  *   - `ui-with-service` is the same widget and job with no provider: a service that draws the picture itself, so the
  *     capability only reads.
+ *   - `media-tool` is the reference media render tool: a widget and a service whose one capability runs as a job that
+ *     reads a picked file through the host.
  */
 
-export const REFERENCE_TEMPLATES = ["pure-ui", "ai-generator", "ui-with-service"] as const;
+export const REFERENCE_TEMPLATES = ["pure-ui", "ai-generator", "ui-with-service", "media-tool"] as const;
 export type ReferenceTemplate = (typeof REFERENCE_TEMPLATES)[number];
 
 /** A JSON document the copier rewrites: the manifest, or a widget definition. */
@@ -41,6 +43,7 @@ export const PLACEHOLDER_PROVIDER_ORIGIN = "https://images.example.com";
 
 const TEXT_EDITOR = fileURLToPath(new URL("../../../examples/reference-apps/text-editor/", import.meta.url));
 const IMAGE_GENERATOR = fileURLToPath(new URL("../../../examples/reference-apps/image-generator/", import.meta.url));
+const MEDIA_RENDER = fileURLToPath(new URL("../../../examples/reference-apps/media-render/", import.meta.url));
 
 type Facet = JsonDocument & { kind?: unknown; egress?: unknown; capabilities?: unknown };
 
@@ -85,6 +88,20 @@ export function referenceCopy(template: ReferenceTemplate): ReferenceCopy {
       readme:
         "# My Widget\n\nA copy of the reference text editor: it opens a file through the host, keeps the draft in widget " +
         "state and saves through the host's export. Its rules are in `widgets/main/editor-core.js`.\n\n" +
+        "Run `clark widget test` then `clark widget pack`.\n",
+    };
+  }
+  if (template === "media-tool") {
+    return {
+      source: MEDIA_RENDER,
+      referenceId: "com.clarkcant.reference.media-render",
+      displayName: "My Media Tool",
+      description: "Renders a file the person picks as a job the widget follows and can stop.",
+      sourceUrl: "https://github.com/example/my-media-tool",
+      readme:
+        "# My Media Tool\n\nA copy of the reference media render tool: the widget picks a WAV file through the host, and " +
+        "the service renders it as a job, reading the file a chunk at a time through `clarkcant/artifacts.read`. The " +
+        "transform is in `service/wav.mjs`; the widget's rules are in `widgets/main/render-core.js`.\n\n" +
         "Run `clark widget test` then `clark widget pack`.\n",
     };
   }

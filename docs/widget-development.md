@@ -1825,7 +1825,8 @@ profiles existed, value for value, so an existing package runs exactly as it did
 | `media-workstation` | 4 GiB / 4 / 512 / 512 MiB | 300 s | 2 h | 1 | may keep playing |
 | `background-compute` | 2 GiB / 2 / 256 / 256 MiB | 60 s | 4 h | 2 | unmounted |
 
-Every profile has no network (`--network none`) and a `noexec` `/tmp`. Services and jobs keep running whether or not a
+Every profile has no network of its own (`--network none`; a service reaches a provider only through the node, §14.2)
+and a `noexec` `/tmp`. Services and jobs keep running whether or not a
 frame is mounted. The largest result file stays the attachment maximum, because a file a service returns must stay
 attachable to a conversation. The three larger profiles are engineering defaults a reviewer can change in that file.
 The bounds reach the container's `--memory`, `--cpus`, `--pids-limit` and `/tmp` size, the call and job deadlines, and
@@ -1889,6 +1890,9 @@ node makes the HTTP request itself
   only `GET` or `HEAD`. Any other method changes something at the provider and needs a call decided as
   `external-write`, `destructive`, `financial` or `communication`, which the execution policy's risk gate asks about. A
   request does not say which call it serves, so the effects of all calls in flight together bound it;
+- not at all while a call in flight holds a person's file (§14.4), unless each such call was decided as
+  `external-write`, `communication`, `destructive` or `financial`. A request could carry the file's bytes, a `GET` as
+  well as a `POST`, so a call decided as `read` or `local-write` that holds a file gets `-32019` until it ends;
 - at most a burst of 30 requests per running service, refilled at 10 a second;
 - with the declared header added by the node from the secret the person stored for the consumer `package:<id>`. A
   header of that name the service sets is dropped;
@@ -1992,6 +1996,83 @@ Tests: [browser-token.spec.ts](../packages/contracts/test/browser-token.spec.ts)
 details and on the running container. It reaches a fake provider with a key the page, the frame, the bridge, storage
 and the container never hold. It then keeps a minted token inside its frame and revokes it when the frame closes.
 
+### 14.4 Files a service reads
+
+A service never gets a path or a handle to a person's file. It reads the bytes from the node a range at a time, only
+during a call it was given the file for. Its container has no network of its own, and while such a call is in flight
+the node also refuses the service's egress (§14.2), unless that call was decided as `external-write`, `communication`,
+`destructive` or `financial`. Those are the effects the execution policy's risk gate asks about. A `GET` can carry
+bytes in its URL as well as a `POST` can in its body, so a call decided as `read` or `local-write` that holds a file
+gets no egress at all until it ends. The refusal is `-32019` (`EGRESS_ERROR_CODES.inputHeld`) and says why. A
+capability that both reads a person's file and sends it to a provider declares `external-write` (or higher), so the
+person's policy decides that send.
+
+A capability that works on a file a widget holds names the argument fields that carry artifact ids:
+
+    { "tool": "render_audio", "ref": "com.example.media.render@1", "effectCategory": "read",
+      "execution": { "kind": "job", "version": 1 },
+      "inputArtifacts": { "version": 1, "fields": ["source"] } }
+
+A call that names a file in one of those fields can only come from the button of the widget instance that holds the
+file. The same call from Clark, voice, MCP or the CLI is refused with `ARTIFACT_INPUT_REFUSED`, because none of them
+holds the widget's grant. Before the call is sent the node
+checks each named id ([capability-invoke.ts](../apps/runtime/src/application/capability-invoke.ts)):
+
+- the pressing widget instance holds a grant on the file, and the file is finalized, not still being written
+  (`403 ARTIFACT_INPUT_REFUSED`);
+- the file belongs to the conversation the press happened in, and that conversation still holds the widget, the same
+  check an agent button's `artifact:` context read makes (`403 ARTIFACT_INPUT_REFUSED`);
+- the node can name the profile the package was granted; a node that cannot is refused rather than trusted with no
+  cap (`403 ARTIFACT_INPUT_REFUSED`);
+- the file fits the input cap of that profile (`413 ARTIFACT_INPUT_TOO_LARGE`).
+
+A refused call sends nothing to the service.
+
+When the execution policy asks before such a call, the approval card names the press it came from (the widget instance
+and its action binding), and the digest the person approves covers it. Approving runs the call as that press: the node
+checks again that the conversation still holds the widget and the binding still invokes this capability, and then
+makes every check above. A card whose widget is gone is refused with `APPROVAL_STALE`. This holds for a capability
+that answers at once as much as for a job.
+
+The node offers file reads in MCP `initialize` (`capabilities.experimental["clarkcant/artifacts"]`,
+[service-artifacts.ts](../packages/contracts/src/service-artifacts.ts)):
+
+    { "version": 1, "methods": ["clarkcant/artifacts.read"], "chunkBytes": 262144,
+      "maxInputBytes": …, "maxMediaSeconds": …, "maxResultBytes": … }
+
+During the call, and only then, the service sends `clarkcant/artifacts.read` with
+`{ version: 1, artifactId, offset, length }`, at most one chunk (256 KiB) at a time. The answer is
+`{ artifactId, offset, bytes (base64), eof, sizeBytes, mimeType }`. The node checks the grant again on every read, and
+reads the disk off its main thread. A longer range is refused with `-32602`. An id the call did not name in a declared
+field is refused with `-32020`, and so is a read whose answer arrives after the call has ended: its bytes are not
+handed over. A read the node refuses for another reason is refused with `-32021`: the grant was revoked, the file is
+gone, or the call has spent its read budget.
+
+The read budget bounds what one call reads in all: four passes over its files (`passes × size` bytes), in at most four
+reads per 256 KiB chunk plus 16 more for headers and seeks
+([`serviceArtifactReadBudget`](../packages/contracts/src/service-artifacts.ts)). A service that streams its input once
+or twice stays well inside it; one that loops on the same bytes is refused once it is spent.
+
+The caps come from the granted profile, never from the manifest. A manifest names fields, not sizes, so it cannot raise
+either cap:
+
+| Profile | Input file | Media length |
+|---|---|---|
+| `interactive-light` | 8 MiB | 2 min |
+| `interactive-heavy` | 16 MiB | 10 min |
+| `media-workstation` | 25 MiB | 2 h |
+| `background-compute` | 25 MiB | 1 h |
+
+Only the service can read a clip's length, so `maxMediaSeconds` is the service's to enforce. It refuses a longer clip
+before it renders anything. `maxResultBytes` is the largest file one result may carry (about 2.95 MiB, the stdio
+message limit after base64). A file the service returns becomes an artifact only when the job completes, so a
+cancelled or failed job leaves no file presented as finished.
+
+Tests: [service-artifact-input.spec.ts](../apps/runtime/test/service-artifact-input.spec.ts) for the node with a real
+service process: the egress refusal, Clark and voice refused, a read after the call, a grant revoked mid-call, an
+over-long read, a file still being written, the read budget, a node with no profile, another conversation's file, and
+the approval replay. The reference app is in §24.4.
+
 ---
 
 ## 15. State & migration
@@ -2046,14 +2127,16 @@ Templates:
 - form;
 - pure-ui: a copy of the reference text editor ([§24.1](#241-text-editor)), under the new
   package's own id, facet id and name, without the editor's tests;
+- media-tool: a copy of the reference media render tool ([§24.4](#244-media-render)), a widget and a service
+  under the new package's own id, without the tool's tests;
 - editor;
 - media;
 - MCP App adapter;
 - `ai-generator` and `ui-with-service`, copied from the reference image generator
   ([§24.3](#243-image-generator)); `ai-generator` starts with a placeholder provider origin to replace.
 
-`clark widget init --template` accepts `blank`, `form`, `dashboard`, `pure-ui`, `ai-generator` and `ui-with-service`
-today. `editor`, `media` and the MCP
+`clark widget init --template` accepts `blank`, `form`, `dashboard`, `pure-ui`, `ai-generator`, `ui-with-service`
+and `media-tool` today. `editor`, `media` and the MCP
 App adapter are not implemented yet.
 
 ### dev
@@ -2872,3 +2955,50 @@ journey covers the key-less refusal, progress across a reload, the gallery, two 
 failure that echoes the key, attach and export, Clark, voice, an approval on the host's card, a host without
 `jobs.list@1`, keyboard, both themes, 390 px and reduced motion. After each journey it searches for the key in the
 page, the bridge, the node's files and tables, and the service's container.
+
+### 24.4 Media render
+
+`examples/reference-apps/media-render` ([#320](https://github.com/digitopvn/clarkcant/issues/320), part of
+[#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with an isolated UI facet and a
+service. It renders a WAV clip the person picks, with a gain change and a trim, as a job the widget follows and can
+stop. `clark widget init --template media-tool` starts a new package from it.
+
+- **Files by reference.** The widget picks the clip through `api.artifacts.pick` ([§10.1](#101-files-by-reference-artifacts1))
+  and keeps only its `ArtifactRef`. Its `render` binding sends the service the clip's artifact id, and the service
+  reads the bytes from the node a chunk at a time ([§14.4](#144-files-a-service-reads)). The widget never sees a path,
+  and the service gets no path or handle. The service declares no egress, and a `read` call that holds a file could
+  not use any.
+- **Profile.** The package asks for `background-compute` by name ([§14.1](#141-resource-profiles)). The node refuses a
+  clip over the profile's 25 MiB input cap before the call is sent. The service refuses a clip longer than the
+  profile's hour before it renders anything, and a render larger than one result may carry.
+- **Job.** The press answers with a JobRef ([§10.2](#102-long-running-jobs-jobs1)), which the widget keeps in its state.
+  Progress is the service's own MCP progress, in bytes rendered. Stop, or Escape, cancels the job; the service stops
+  reading and does not answer, so no partial file is kept. A stop the node refuses says so and offers Stop and Escape
+  again. A reloaded frame follows the same job from its state. A new press replaces the shown render only once the node
+  accepts it, so a refused press keeps the earlier file with Attach and Save. A render that completed but whose file the
+  node could not keep says what failed and that the source file is still there.
+- **Touch.** The gain field asks for a text keyboard (`inputmode="text"`), because a decimal keypad on iOS has no minus
+  key and most of the range is a cut. It accepts a typographic minus and a decimal comma. Every button and field is at
+  least 44 px tall.
+- **Preview.** The finished file is a finalized `ArtifactRef`. The widget reads it back and draws a waveform on a
+  canvas, with the duration, the format and the node's sha256 digest. The frame policy has no media source, so there is
+  no audio player. Attach puts the file in the composer; Save goes through the host's export prompt.
+- **Unavailable profile.** When the node cannot grant `background-compute`, because a policy rule refuses it or the
+  container engine is too small, the service is not started. Render is disabled, and the host's reason is shown in its
+  place.
+- **Fixture pacing.** A node started with `CC_MODEL_FIXTURE=1` holds each answer to a service's file read back 700 ms
+  (`timings.artifactReadDelayMs` on the service host), so the journey can watch progress and stop a render mid-way. The
+  service's tool has no pacing argument, and neither does the `media-tool` template.
+- **Placement.** Only the repository's scripted fixture model places the widget with its `renderBinding` today. No
+  product path yet places an installed package's widget with a binding
+  ([#382](https://github.com/digitopvn/clarkcant/issues/382)), so in a real installation Render shows that reason.
+
+Tests: [wav.spec.ts](../examples/reference-apps/media-render/test/wav.spec.ts) for the transform and its pinned digest,
+[service.spec.ts](../examples/reference-apps/media-render/test/service.spec.ts) for the service process (progress,
+cancel, the caps, a refused read), [package.spec.ts](../examples/reference-apps/media-render/test/package.spec.ts) for
+conformance and the manifest,
+[media-tool-template.spec.ts](../packages/widget-cli/test/media-tool-template.spec.ts) for the template, and the
+browser journey [media-render.spec.ts](../apps/web/e2e/media-render.spec.ts). The journey renders a clip of twelve
+chunks with progress and a preview, keeps that preview through a refused press, stops one mid-way after a refused stop,
+follows one across a reload, shows the refused profile's reason, and runs keyboard-only at 390 px in dark with reduced
+motion, with 44 px controls and a negative gain. It needs a container engine that runs Linux containers.

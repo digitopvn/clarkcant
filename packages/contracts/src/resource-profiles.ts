@@ -37,6 +37,13 @@ export interface ResourceProfile {
    * attachable to a conversation, so no profile raises it; a profile may only lower it.
    */
   artifactMaxBytes: number;
+  /**
+   * The largest input the host streams to one call. `maxBytes` is enforced by the host before the call is sent: an
+   * artifact larger than it is refused and no byte of it reaches the service. `maxMediaSeconds` is offered to the
+   * service, which is the only side that reads a media file's duration, and a service that reads a longer clip refuses
+   * it. Neither may be above an attachable file (`ARTIFACT_LIMITS.maxBytes`).
+   */
+  input: { maxBytes: number; maxMediaSeconds: number };
   /** Services and jobs keep running by policy, whether or not a widget frame is mounted. */
   background: "continue";
   /**
@@ -56,6 +63,7 @@ export const RESOURCE_PROFILES: Readonly<Record<ResourceProfileName, ResourcePro
     jobDeadlineMs: 30 * 60_000,
     maxActiveJobs: 4,
     artifactMaxBytes: ARTIFACT_LIMITS.maxBytes,
+    input: Object.freeze({ maxBytes: 8 * MIB, maxMediaSeconds: 120 }),
     background: "continue",
     offscreen: "suspend",
     network: "none",
@@ -67,6 +75,7 @@ export const RESOURCE_PROFILES: Readonly<Record<ResourceProfileName, ResourcePro
     jobDeadlineMs: 30 * 60_000,
     maxActiveJobs: 2,
     artifactMaxBytes: ARTIFACT_LIMITS.maxBytes,
+    input: Object.freeze({ maxBytes: 16 * MIB, maxMediaSeconds: 600 }),
     background: "continue",
     offscreen: "suspend",
     network: "none",
@@ -78,6 +87,7 @@ export const RESOURCE_PROFILES: Readonly<Record<ResourceProfileName, ResourcePro
     jobDeadlineMs: 2 * 60 * 60_000,
     maxActiveJobs: 1,
     artifactMaxBytes: ARTIFACT_LIMITS.maxBytes,
+    input: Object.freeze({ maxBytes: ARTIFACT_LIMITS.maxBytes, maxMediaSeconds: 2 * 60 * 60 }),
     background: "continue",
     offscreen: "authorized-playback",
     network: "none",
@@ -89,6 +99,7 @@ export const RESOURCE_PROFILES: Readonly<Record<ResourceProfileName, ResourcePro
     jobDeadlineMs: 4 * 60 * 60_000,
     maxActiveJobs: 2,
     artifactMaxBytes: ARTIFACT_LIMITS.maxBytes,
+    input: Object.freeze({ maxBytes: ARTIFACT_LIMITS.maxBytes, maxMediaSeconds: 60 * 60 }),
     background: "continue",
     offscreen: "suspend",
     network: "none",
@@ -206,6 +217,8 @@ export function describeResourceProfile(profile: ResourceProfile): string {
     `${String(profile.callDeadlineMs / 1000)} s per call`,
     `${minutes(profile.jobDeadlineMs)} per job`,
     `${String(profile.maxActiveJobs)} job${profile.maxActiveJobs === 1 ? "" : "s"} at once`,
+    `${String(profile.input.maxBytes / MIB)} MiB input`,
+    `${minutes(profile.input.maxMediaSeconds * 1000)} of media`,
     "no network",
   ].join(", ");
 }

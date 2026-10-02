@@ -6,6 +6,7 @@ import { resourceRequestSchema } from "./resource-profiles.ts";
 import { networkOriginSchema } from "./network-origin.ts";
 import { browserTokensProblems, browserTokensSchema } from "./browser-token.ts";
 import { serviceEgressProblems, serviceEgressSchema } from "./service-egress.ts";
+import { inputArtifactsDeclarationSchema } from "./service-artifacts.ts";
 
 export { networkOriginProblem, networkOriginSchema } from "./network-origin.ts";
 
@@ -101,6 +102,11 @@ export const serviceCapabilityDeclarationSchema = z.strictObject({
   effectCategory: effectCategorySchema,
   /** Absent means the capability remains an ordinary request/response call. */
   execution: z.strictObject({ kind: z.literal("job"), version: z.literal(1) }).optional(),
+  /**
+   * The arguments that carry ids of files a widget holds, which the host checks and then lets the service read for
+   * that call only (`service-artifacts.ts`). Absent, the service is never offered a byte of any artifact.
+   */
+  inputArtifacts: inputArtifactsDeclarationSchema.optional(),
 });
 export type ServiceCapabilityDeclaration = z.infer<typeof serviceCapabilityDeclarationSchema>;
 
