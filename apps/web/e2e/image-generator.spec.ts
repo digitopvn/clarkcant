@@ -241,6 +241,17 @@ async function expectKeyNowhere(page: Page, widget: FrameLocator, request: APIRe
   for (const id of containers) expect(execFileSync("docker", ["exec", id, "env"], { encoding: "utf8" })).not.toContain(KEY);
 }
 
+/** Inbox notices asking whether an effect took effect, with the effect each one offers an answer for. */
+async function reconcileQuestions(request: APIRequestContext): Promise<{ noticeId: string; effectId: string }[]> {
+  const inbox = (await (await request.get(`${GATEWAY}/inbox`, { headers: auth() })).json()) as {
+    notices: { noticeId: string; actions?: { id: string; effectId?: string }[] }[];
+  };
+  return inbox.notices.flatMap((notice) => {
+    const effectId = notice.actions?.find((action) => action.id === "reconcile-failed")?.effectId;
+    return effectId === undefined ? [] : [{ noticeId: notice.noticeId, effectId }];
+  });
+}
+
 const POLICY_KEY = "execution.policy";
 
 async function storedPolicy(request: APIRequestContext): Promise<Record<string, unknown>> {
@@ -372,6 +383,7 @@ test("every running job keeps its own Stop, a stopped job asks the provider noth
   test.setTimeout(300_000);
   const widget = await reopen(page);
   const before = await imageCount(widget);
+  const waitingBefore = new Set((await reconcileQuestions(request)).map((question) => question.noticeId));
 
   fake().holdAt(1);
   try {
@@ -414,6 +426,17 @@ test("every running job keeps its own Stop, a stopped job asks the provider noth
   await expect(panel).not.toContainText(KEY);
   expect(await imageCount(widget)).toBe(before);
   expectProviderRequestsSigned();
+
+  // Each of the three was sent to the service, so whether it took effect is the person's to say: the inbox asks about
+  // the two stopped jobs and the failed one. The provider made no image for any of them, so the honest answer is that
+  // none took effect. Answering also leaves nothing waiting for the journeys after this one.
+  const askedAbout = async () => (await reconcileQuestions(request)).filter((question) => !waitingBefore.has(question.noticeId));
+  await expect.poll(async () => (await askedAbout()).length, { timeout: 30_000 }).toBe(3);
+  for (const question of await askedAbout()) {
+    const answered = await request.post(`${GATEWAY}/effects/${question.effectId}/reconcile`, { headers: auth(), data: { outcome: "failed" } });
+    expect(answered.ok(), `reconcile answered ${String(answered.status())}: ${await answered.text()}`).toBe(true);
+  }
+  await expect.poll(async () => (await askedAbout()).length, { timeout: 10_000 }).toBe(0);
 
   await expectKeyNowhere(page, widget, request);
 });
