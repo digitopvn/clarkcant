@@ -21,6 +21,7 @@ import {
   askableSelection,
   chunksOf,
   clampSelection,
+  createLoadOrder,
   decodeText,
   extractReplacement,
   isDirty,
@@ -140,6 +141,8 @@ function start() {
   let writeAgain = false;
   /** This view's write the host has not answered yet, so its commit is recognized as this view's own. */
   let pendingWrite;
+  /** Holds state committed during the first restore, and drops a load a newer one has overtaken. */
+  const loads = createLoadOrder();
   let lastPublished = "";
   let disposed = false;
 
@@ -320,12 +323,16 @@ function start() {
     return text;
   }
 
-  /** Rebuild the document from persisted state: read the saved bytes again, then lay the unsaved draft over them. */
+  /**
+   * Rebuild the document from persisted state: read the saved bytes again, then lay the unsaved draft over them.
+   * Resolves `false`, having changed nothing, when a newer load or an opened file overtook it while it read.
+   */
   async function load(persisted) {
+    const current = loads.begin();
     if (persisted.file === null || persisted.base === null) {
       doc = undefined;
       textarea.value = "";
-      return;
+      return true;
     }
     let text;
     let failure;
@@ -334,6 +341,7 @@ function start() {
     } catch (error) {
       failure = reasonOf(error);
     }
+    if (!current()) return false;
     doc = restoreDocument(persisted, text);
     textarea.value = doc === undefined ? "" : doc.draft;
     if (failure !== undefined) {
@@ -345,15 +353,18 @@ function start() {
           ? `Không đọc lại được “${persisted.file.name}”: ${failure}. Hãy mở lại tệp.`
           : `Không đọc lại được tệp đã lưu: ${failure}. Bản nháp của bạn vẫn ở đây.`,
       );
-      return;
+      return true;
     }
     if (persisted.draftTooLarge) {
       say("draft-lost", "Bản nháp chưa lưu lần trước quá lớn để giữ lại khi tải lại; đây là bản đã lưu gần nhất.");
     }
+    return true;
   }
 
   async function onState(state, revision) {
     if (disposed) return;
+    // Still restoring is not "no document": what arrives now is reconciled once the restore has finished.
+    if (!loads.offer({ state, revision })) return;
     const incoming = readPersistedState(state);
     const decision = reconcileState({
       local: persistedState(doc),
@@ -371,7 +382,8 @@ function start() {
     if (decision === "keep") return;
     if (decision === "adopt") {
       synced = incoming;
-      await load(incoming);
+      // Overtaken by a newer load: that one shows its state and says so.
+      if (!(await load(incoming))) return;
       selection = { start: 0, end: 0 };
       render();
       publish();
@@ -432,6 +444,8 @@ function start() {
       const previous = doc;
       const text = await readAll(ref);
       if (previous !== undefined && previous.base.artifactId !== previous.file.artifactId) release(previous.base);
+      // The picked file replaces the document: a load still reading an older state must not land over it.
+      loads.begin();
       doc = openDocument(ref, text);
       textarea.value = text;
       selection = { start: 0, end: 0 };
@@ -604,7 +618,8 @@ function start() {
     incomingConflict = undefined;
     if (incoming === undefined) return;
     synced = incoming;
-    void load(incoming).then(() => {
+    void load(incoming).then((applied) => {
+      if (!applied) return;
       selection = { start: 0, end: 0 };
       render();
       publish();
@@ -661,12 +676,17 @@ function start() {
   void (async () => {
     const restored = readPersistedState(api.state.get());
     if (restored.file !== null) say("working", `Đang mở lại “${restored.file.name}”…`);
-    await load(restored);
-    render();
-    publish();
-    if (restored.file !== null && status.getAttribute("data-editor-status") === "working") {
-      say("restored", isDirty(doc) ? "Đã mở lại tệp cùng bản nháp chưa lưu." : "Đã mở lại tệp.");
+    // Overtaken only when the person opened a file meanwhile, which then shows itself.
+    if (await load(restored)) {
+      render();
+      publish();
+      if (restored.file !== null && status.getAttribute("data-editor-status") === "working") {
+        say("restored", isDirty(doc) ? "Đã mở lại tệp cùng bản nháp chưa lưu." : "Đã mở lại tệp.");
+      }
     }
+    // State another view committed while this one restored is reconciled against what the restore produced.
+    const held = loads.finishRestore();
+    if (held !== undefined) await onState(held.state, held.revision);
     fit();
     root.setAttribute("data-editor-ready", "true");
   })();

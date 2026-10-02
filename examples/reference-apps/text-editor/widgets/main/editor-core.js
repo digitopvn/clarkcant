@@ -247,6 +247,51 @@ export function reconcileState({ local, synced, incoming, revision, pending, doc
   return "conflict";
 }
 
+/**
+ * The order in which a view takes in persisted state, since loading it reads the saved copy and takes a while.
+ *
+ * - **Restoring is not restore-failed.** While the first restore is still reading, the view has no document yet, but it
+ *   is about to. State committed meanwhile is not adopted then — that would start a second load racing the first — but
+ *   held, newest only, and handed back by `finishRestore` to be reconciled against what the restore produced. Only a
+ *   restore that finished without a document leaves a view that always adopts.
+ * - **The newest load wins.** Each load takes a generation from `begin`; a load that finishes after a newer one began
+ *   is stale, and is dropped before it touches the document, so an older saved copy can never replace a newer one.
+ *
+ * @template T
+ */
+export function createLoadOrder() {
+  let restoring = true;
+  /** @type {T | undefined} */
+  let held;
+  let generation = 0;
+  return {
+    /** Whether the first restore is still running. */
+    restoring: () => restoring,
+    /**
+     * Incoming state: `true` to reconcile it now, `false` when it is held until the first restore finishes.
+     * @param {T} incoming
+     */
+    offer(incoming) {
+      if (!restoring) return true;
+      held = incoming;
+      return false;
+    },
+    /** The first restore finished: the newest state held while it ran, to reconcile now, if any. */
+    finishRestore() {
+      restoring = false;
+      const next = held;
+      held = undefined;
+      return next;
+    },
+    /** A load (or anything else that replaces the document) starts. The check says whether it is still the newest. */
+    begin() {
+      generation += 1;
+      const mine = generation;
+      return () => mine === generation;
+    },
+  };
+}
+
 function clipChars(text, max) {
   const points = Array.from(text);
   return points.length <= max ? text : `${points.slice(0, max - 1).join("")}…`;

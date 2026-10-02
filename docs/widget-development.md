@@ -1308,8 +1308,9 @@ Who writes the document:
   action it was not bound to.
 
   A press can read what the frame published: an `agent` binding's `contextRefs` (`selection:…`, `widget:…`). Before
-  such a press runs, the host sends any publish still settling and waits until the node has answered every publish
-  still on its way, so the press never reads an older description than the one published before it. Any other press
+  such a press runs, the host sends any publish still settling and waits until the node holds the description published
+  before the press, or a newer one, so the press never reads an older description. Publishes made after the press are
+  sent as usual but not waited for, so a widget that keeps publishing cannot hold a press. Any other press
   waits only for a publish still settling, or for one the node refused last. The wait is bounded: each send is given
   up after 5 seconds and the whole wait after 8. A description the node refused is sent once more; if that fails too,
   or the wait runs out, `actions.invoke` rejects with the host's refusal ("What the widget shows did not reach Clark in
@@ -1634,7 +1635,9 @@ presented, or saved, as the file.
 unsent. If both changed, it shows *Keep mine* and *Use theirs* and throws neither away. The question does not take the
 keyboard from someone typing; the status line announces it. A view with no document open, such as one that could not
 read the saved copy back, has no draft of its own: it always takes committed state, never asks, and never writes
-state until the person opens a file, so it cannot erase another view's draft.
+state until the person opens a file, so it cannot erase another view's draft. A view still reopening the file after a
+reload is not such a view: state committed meanwhile is held and taken once the reopening has finished, and a read
+of the saved copy that a newer one overtook is dropped, so older text never replaces newer.
 
 **Saving.** The editor writes a `working` artifact of the opened file's type and name, in chunks, finalizes it and
 calls `export(ref, { suggestedName })`. The host decides what that means. On the desktop it offers *Replace original*
@@ -1670,7 +1673,8 @@ person presses *Nhờ Clark viết lại đoạn chọn*:
    cleaning is checked against the host's own in the package's tests.
 2. The editor publishes its semantic document, makes the text area read-only and holds the published selection until
    the answer. Because the binding reads the selection, the host sends any publish still settling and waits until
-   the node holds the newest one before it runs the press. The wait is bounded (8 seconds); when the description
+   the node holds the description published before the press, or a newer one, before it runs the press. The wait is
+   bounded (8 seconds); when the description
    cannot be delivered in that time, the press is refused, nothing is asked, the text area is editable again and the
    status line says to try again in a moment.
 3. `actions.invoke(rewriteBinding, {}, invocationId)` starts one turn. The host reads the selection and the widget's

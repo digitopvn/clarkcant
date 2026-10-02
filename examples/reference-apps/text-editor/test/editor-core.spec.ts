@@ -152,6 +152,83 @@ describe("reopening after a reload", () => {
     expect(editor.restoreDocument(persisted, undefined)).toBeUndefined();
     expect(editor.restoreDocument({ file: null, base: null, draft: null, draftTooLarge: false }, "x")).toBeUndefined();
   });
+
+  /**
+   * A view as `main.js` drives it: loads read the saved copy and may finish in any order, and committed state is offered
+   * to the load order before it is reconciled. Each read waits until the test answers it.
+   */
+  function reloadedView(restored: typeof persisted) {
+    const loads = editor.createLoadOrder<{ state: typeof persisted; revision: number }>();
+    const reads: { base: string; answer: (text: string) => void }[] = [];
+    let doc: ReturnType<typeof editor.restoreDocument>;
+    let synced = restored;
+    const load = async (state: typeof persisted) => {
+      const current = loads.begin();
+      const text = await new Promise<string>((answer) => reads.push({ base: state.base?.artifactId ?? "", answer }));
+      if (!current()) return false;
+      doc = editor.restoreDocument(state, text);
+      return true;
+    };
+    const onState = async (state: typeof persisted, revision: number) => {
+      if (!loads.offer({ state, revision })) return;
+      const decision = editor.reconcileState({ local: editor.persistedState(doc), synced, incoming: state, revision, documentOpen: doc !== undefined });
+      if (decision === "adopt") {
+        synced = state;
+        await load(state);
+      }
+    };
+    const restore = (async () => {
+      await load(restored);
+      const held = loads.finishRestore();
+      if (held !== undefined) await onState(held.state, held.revision);
+    })();
+    return { reads, onState, restore, doc: () => doc, restoring: () => loads.restoring() };
+  }
+
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const newerCopy: FileRef = { ...copy, artifactId: "art_copy_2", digest: "sha256:bb" };
+
+  it("holds what another view commits during the first restore, and takes it once the restore has finished", async () => {
+    const view = reloadedView(persisted);
+    expect(view.restoring()).toBe(true);
+    // Another view saves while this one is still reading its saved copy.
+    void view.onState({ ...persisted, base: newerCopy }, 2);
+    await tick();
+    // Held, not loaded alongside: only the restore is reading.
+    expect(view.reads.map((read) => read.base)).toEqual(["art_copy"]);
+
+    view.reads[0]?.answer("old text");
+    await tick();
+    expect(view.restoring()).toBe(false);
+    expect(view.reads.map((read) => read.base)).toEqual(["art_copy", "art_copy_2"]);
+    view.reads[1]?.answer("new text");
+    await view.restore;
+    expect(view.doc()?.base).toEqual(newerCopy);
+    expect(view.doc()?.draft).toBe("new text");
+  });
+
+  it("drops a load that finishes after a newer one began, so older text never replaces newer", () => {
+    const loads = editor.createLoadOrder();
+    const older = loads.begin();
+    const newer = loads.begin();
+    // The newer, shorter read finished first and was applied; the older one finishing later is stale.
+    expect(newer()).toBe(true);
+    expect(older()).toBe(false);
+    // Opening a file is a newer document too.
+    loads.begin();
+    expect(newer()).toBe(false);
+  });
+
+  it("takes committed state at once after the restore has finished", async () => {
+    const view = reloadedView(persisted);
+    await tick();
+    view.reads[0]?.answer("saved");
+    await view.restore;
+    expect(view.restoring()).toBe(false);
+    void view.onState({ ...persisted, base: newerCopy }, 3);
+    await tick();
+    expect(view.reads.map((read) => read.base)).toEqual(["art_copy", "art_copy_2"]);
+  });
 });
 
 describe("what Clark is shown", () => {
