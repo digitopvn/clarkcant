@@ -50,14 +50,38 @@ function headers(): Record<string, string> {
   return { authorization: `Bearer ${identity().token}` };
 }
 
-async function install(request: APIRequestContext): Promise<void> {
-  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers: headers() })).json()) as { packages: { packageId: string }[] };
-  if (listed.packages.some((entry) => entry.packageId === PACKAGE)) return;
-  const installed = await request.post(`${GATEWAY}/packages/install`, {
+/** Whether this node has the package installed, uninstalled but restorable, or neither. */
+async function packageState(request: APIRequestContext): Promise<"installed" | "restorable" | "absent"> {
+  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers: headers() })).json()) as {
+    packages: { packageId: string }[];
+    restorable?: { packageId: string }[];
+  };
+  if (listed.packages.some((entry) => entry.packageId === PACKAGE)) return "installed";
+  return listed.restorable?.some((entry) => entry.packageId === PACKAGE) === true ? "restorable" : "absent";
+}
+
+/** Uninstall or restore the package; an uninstall forgets its account too. */
+async function change(request: APIRequestContext, action: "uninstall" | "restore"): Promise<void> {
+  const answer = await request.post(`${GATEWAY}/packages/${encodeURIComponent(PACKAGE)}/${action}`, { headers: headers() });
+  expect(answer.ok(), `${action} answered ${String(answer.status())}: ${await answer.text()}`).toBe(true);
+}
+
+/**
+ * The package installed with no account connected. A package this node uninstalled is restored rather than installed
+ * again, and one an earlier attempt left installed — perhaps connected — is uninstalled first, which forgets its account.
+ */
+async function freshInstall(request: APIRequestContext): Promise<void> {
+  const state = await packageState(request);
+  if (state === "installed") await change(request, "uninstall");
+  if (state !== "absent") {
+    await change(request, "restore");
+    return;
+  }
+  const answer = await request.post(`${GATEWAY}/packages/install`, {
     headers: headers(),
     data: { packageId: PACKAGE, version: "1.0.0", localDigest: "sha256:connected-app-reference-digest" },
   });
-  expect(installed.ok(), `install answered ${String(installed.status())}: ${await installed.text()}`).toBe(true);
+  expect(answer.ok(), `install answered ${String(answer.status())}: ${await answer.text()}`).toBe(true);
 }
 
 async function setPolicy(request: APIRequestContext, mode: "guarded" | "autonomous"): Promise<void> {
@@ -169,13 +193,23 @@ function serviceContainer(): { networkMode: string; env: string[] } | undefined 
 
 test.describe.configure({ mode: "serial" });
 
+/*
+ * The journeys run in order on one node, and a retry runs this hook again in a new worker after an earlier journey has
+ * already connected the account. Starting from a fresh install, which keeps no account, is what lets the first journey
+ * find the account not connected on a retry too.
+ */
 test.beforeAll(async ({ request }) => {
   connector = await startFakeConnector({ port: CONNECTOR_PORT, adminPort: CONNECTOR_ADMIN_PORT });
-  await install(request);
+  await freshInstall(request);
 });
 
+/*
+ * Left as the suite found it: no package, no account and no service container of this journey's running while the
+ * specs after it do, and the default policy back in place.
+ */
 test.afterAll(async ({ request }) => {
   await setPolicy(request, "autonomous");
+  if ((await packageState(request)) === "installed") await change(request, "uninstall");
   await connector.close();
 });
 
