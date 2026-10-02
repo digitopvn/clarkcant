@@ -34,6 +34,7 @@ import { useTheme } from "./use-theme.ts";
 import { useLocale } from "./i18n/use-locale.ts";
 import { LocaleProvider } from "./i18n/locale-context.tsx";
 import { useConnectionStatus } from "./use-connection-status.ts";
+import { ConnectionNotice } from "./connection-notice.tsx";
 import { useModelAlias } from "./use-model-alias.ts";
 import { useDynamicSuggestions } from "./use-dynamic-suggestions.ts";
 import { useInputModalityState } from "./use-input-modality-state.ts";
@@ -489,7 +490,7 @@ export function Conversation({
     >
       <ConversationHeader
         client={client}
-        connection={connection}
+        connection={connection.state}
         backgroundTick={backgroundTick}
         // A new message may be an approval card or a question, which is what the mark counts first.
         inboxRefreshKey={`${inboxTick}:${blocks.length}`}
@@ -499,9 +500,20 @@ export function Conversation({
         onOpenSettings={() => appIntents.clickIntent("settings.open")}
         onOpenInbox={() => appIntents.clickIntent("inbox.open")}
       />
+      <ConnectionNotice
+        status={connection}
+        onCheckNow={connection.checkNow}
+        // "Try now" goes away with the notice once the node answers: the person was about to write, so focus goes to
+        // the composer, or to the conversation when the composer cannot take it (the microphone is open).
+        onFocusLost={() => {
+          const input = composerInput.current;
+          input?.focus();
+          if (input === null || input.ownerDocument.activeElement !== input) scroller.current?.focus();
+        }}
+      />
 
-      {/* Focusable as a fallback target: when the control that opened the live view is gone from the
-          document, focus has to land somewhere meaningful rather than on the body. */}
+      {/* Focusable as a fallback target: when the control that opened the live view, or "Try now", is gone from
+          the document, focus has to land somewhere meaningful rather than on the body. */}
       <div className="cc-body">
         <div className="cc-scroll" ref={scroller} tabIndex={-1}>
           <ConversationHeroEmptyState
