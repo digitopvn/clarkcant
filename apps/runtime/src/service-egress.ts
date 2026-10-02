@@ -36,6 +36,10 @@ import type { SecretBroker } from "./secret-broker.ts";
  *   - at a bounded rate per running service (`SERVICE_EGRESS_RATE`);
  *   - with the declared credential header added by the host from the secret broker, for the consumer
  *     `package:<id>`, which the secret must name explicitly; a header the service sets with that name is dropped;
+ *   - for an endpoint of the facet's `connection`, with `authorization: Bearer <access token>` added by the host from
+ *     the node's connection broker, fetched for this one request; an `authorization` header the service sets is
+ *     dropped, and a 401 from the provider is reported to the broker, which refreshes once or marks the connection
+ *     ended. The request itself is never retried;
  *   - with framing, cookie, proxy, forwarding and encoding headers stripped, an uncompressed answer asked for, and
  *     bounded request and response bodies;
  *   - without following redirects: a redirect comes back as it is, so a credential never travels to another origin;
@@ -83,6 +87,8 @@ export interface EgressAuditEvent {
   method: string;
   origin: string;
   secret?: string;
+  /** The provider whose connection's credential was added, by id. */
+  connection?: string;
   status?: number;
   outcome: "done" | "failed" | "refused" | "stopped";
   reason?: string;
@@ -132,9 +138,22 @@ export function isPrivateNetworkHost(url: URL): boolean {
   return dotted !== null && privateIPv4(dotted[1] ?? "");
 }
 
+/** A facet's connection, as the egress handler uses it: where its credential may go, and how to get one. */
+export interface EgressConnection {
+  provider: string;
+  /** The declared API origins. The credential is added for these and no others. */
+  endpoints: readonly string[];
+  /** The access token for this one request, or why there is none. */
+  credential: () => Promise<{ ok: true; token: string } | { ok: false; reason: string }>;
+  /** The provider answered 401 to a request that carried the credential. */
+  rejected?: () => Promise<void>;
+}
+
 export interface EgressHandlerDeps {
   packageId: string;
-  egress: ServiceEgress;
+  /** Absent when the facet declares only a connection. */
+  egress?: ServiceEgress;
+  connection?: EgressConnection;
   secrets: Pick<SecretBroker, "headersFor">;
   /** The explicit-consumer check in `egressSecretProblem`, bound to the node's store. */
   secretProblem: (name: string) => string | undefined;
@@ -335,8 +354,9 @@ export function egressRequestHandler(deps: EgressHandlerDeps): EgressRequestHand
     if (url.username !== "" || url.password !== "") {
       throw refuse(EGRESS_ERROR_CODES.invalid, "an egress url may not carry credentials", url.origin);
     }
-    const declared = deps.egress.origins.find((entry) => entry.origin === url.origin);
-    if (declared === undefined) {
+    const declared = deps.egress?.origins.find((entry) => entry.origin === url.origin);
+    const connection = deps.connection?.endpoints.includes(url.origin) === true ? deps.connection : undefined;
+    if (declared === undefined && connection === undefined) {
       throw refuse(EGRESS_ERROR_CODES.originNotDeclared, `${url.origin} is not an origin this package declared`, url.origin);
     }
     if (deps.allowPrivateNetwork !== true && isPrivateNetworkHost(url)) {
@@ -346,7 +366,7 @@ export function egressRequestHandler(deps: EgressHandlerDeps): EgressRequestHand
         url.origin,
       );
     }
-    const credential = declared.credential;
+    const credential = declared?.credential;
     const calls = deps.inCall();
     if (calls === undefined || calls.signal.aborted) {
       throw refuse(EGRESS_ERROR_CODES.notInCall, "egress is answered only while the host is calling this service", url.origin, credential?.secret);
@@ -367,6 +387,7 @@ export function egressRequestHandler(deps: EgressHandlerDeps): EgressRequestHand
       }
       if (egressHeaderProblem(name) !== undefined) continue;
       if (credential !== undefined && name.toLowerCase() === credential.header.toLowerCase()) continue;
+      if (connection !== undefined && name.toLowerCase() === "authorization") continue;
       headers[name.toLowerCase()] = value;
     }
     // Uncompressed, so the answer can be searched for the secret before the service sees it.
@@ -403,6 +424,13 @@ export function egressRequestHandler(deps: EgressHandlerDeps): EgressRequestHand
       headers[credential.header.toLowerCase()] = sent;
       redacted.push(...secretForms(sent), ...secretForms(value));
     }
+    if (connection !== undefined) {
+      const found = await connection.credential();
+      if (!found.ok) throw refuse(EGRESS_ERROR_CODES.credentialUnavailable, found.reason.slice(0, 300), url.origin);
+      const sent = `Bearer ${found.token}`;
+      headers["authorization"] = sent;
+      redacted.push(...secretForms(sent), ...secretForms(found.token));
+    }
 
     const signal = AbortSignal.any([request.signal, callSignal, AbortSignal.timeout(timeoutMs)]);
     const settle = (event: Omit<EgressAuditEvent, "packageId" | "method" | "origin" | "secret">): void => {
@@ -411,6 +439,7 @@ export function egressRequestHandler(deps: EgressHandlerDeps): EgressRequestHand
         method: params.method,
         origin: url.origin,
         ...(credential === undefined ? {} : { secret: credential.secret }),
+        ...(connection === undefined ? {} : { connection: connection.provider }),
         ...event,
       });
     };
@@ -455,6 +484,9 @@ export function egressRequestHandler(deps: EgressHandlerDeps): EgressRequestHand
       returned[name] = redactText(value, redacted);
     });
     settle({ outcome: "done", status: response.status });
+    // The provider no longer accepts the credential. The broker refreshes once or ends the connection; this request is
+    // answered as it came, and not retried: whether a write sent with it took effect is not this handler's to guess.
+    if (connection !== undefined && response.status === 401) await connection.rejected?.().catch(() => undefined);
     return {
       version: SERVICE_EGRESS_VERSION,
       status: response.status,

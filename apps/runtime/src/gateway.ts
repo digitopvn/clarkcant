@@ -29,6 +29,7 @@ import { handleAttachmentRoutes } from "./routes/attachments.ts";
 import { handlePreviewRoutes } from "./routes/previews.ts";
 import { handlePreferenceRoutes } from "./routes/preferences.ts";
 import { handlePackageRoutes } from "./routes/packages.ts";
+import { handleConnectionCallback, handleConnectionRoutes } from "./routes/package-connections.ts";
 import { handleThemeRoutes } from "./routes/themes.ts";
 import { handleComposerRoutes } from "./routes/composer.ts";
 import { handleInboxRoutes } from "./routes/inbox.ts";
@@ -197,6 +198,17 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   // Any other signed webhook, the same way: the shared secret stands in for the token the sender never holds.
   const webhookResponse = handleWebhookSignalRoute({ services, request, at });
   if (webhookResponse !== undefined) return webhookResponse;
+  /*
+   * A provider sending the person's browser back after they connected a package's account, also before the token
+   * check: a browser following a redirect holds no token. The single-use state this node issued for that authorization
+   * is what the route checks, before the code goes anywhere.
+   */
+  const connectionCallback = await handleConnectionCallback({
+    services,
+    request,
+    segments: request.path.split("/").filter((segment) => segment.length > 0),
+  });
+  if (connectionCallback !== undefined) return connectionCallback;
 
   if (!grantCovers && !tokenMatches(runtime.identity.localToken, bearer(request.headers))) {
     // Identical for a missing and a wrong token: distinguishing them would tell an
@@ -322,6 +334,8 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   const credentialResponse = handleCredentialRoutes({ services, request, segments });
   if (credentialResponse !== undefined) return credentialResponse;
 
+  const connectionResponse = await handleConnectionRoutes({ services, request, segments });
+  if (connectionResponse !== undefined) return connectionResponse;
   const packageResponse = await handlePackageRoutes({ services, request, segments });
   if (packageResponse !== undefined) return packageResponse;
 
