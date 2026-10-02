@@ -55,7 +55,9 @@ package service to read a file a widget holds.
   - gain is a text field (`inputmode="text"`) that accepts a minus sign (also U+2212) and a decimal comma, so
     negative gain can be typed on the iOS keyboard; primary controls are at least 44 px tall.
 - The service refuses a WAV `fmt` chunk shorter than 16 bytes.
-- `clark widget init --template media-tool` copies the app under a new id and passes conformance as scaffolded.
+- `clark widget init --template media-tool` copies the app under a new id and passes conformance as scaffolded. It is
+  one more entry in `packages/widget-cli/src/reference-templates.ts`, so it goes through the same copier as `pure-ui`,
+  `ai-generator` and `ui-with-service`. That copier now also leaves a reference's `README.vi.md` behind.
 - Shared files carry minimal additions:
   - the vitest and tsconfig includes;
   - `examples/reference-apps/package.json`;
@@ -64,7 +66,8 @@ package service to read a file a widget holds.
     each artifact read back by `artifactReadDelayMs: 700`, so a journey can watch progress and stop mid-way. The tool
     schema and the template take only `source`, `gainDb`, `trimStartMs` and `trimEndMs`.
 - Docs, in English and Vietnamese:
-  - `docs/widget-development{,.vi}.md`: §14.4 "Files a service reads" and §24 "Reference apps" with §24.4;
+  - `docs/widget-development{,.vi}.md`: §14.4 "Files a service reads" and §24 "Reference apps" with §24.4 (after the image
+    generator's §24.3), and `media-tool` in the §16 template list;
   - `docs/widgets-and-extensions{,.vi}.md`: the status;
   - `docs/conformance-traceability.md`: the V12 row;
   - `docs/manifest.json`: regenerated.
@@ -123,17 +126,19 @@ All runs are on Windows 11 with Docker 29.8.0 (Linux containers).
 - A press refused once keeps the earlier render. An Escape refused once says why, and the next Escape stops the
   render.
 
-**Repository checks**
+**Repository checks**, on the tree merged with main at #392 (0ba94fa0):
 
-- `pnpm verify`: exit 0, 411 test files passed and 1 skipped, 5233 tests passed and 34 skipped.
+- `pnpm verify`: exit 0, 423 test files passed and 1 skipped, 5388 tests passed and 34 skipped.
 - `pnpm invariants`: all 12 checks passed.
-- `pnpm verify:full`, on the revision before the review fixes (c2450420), not rerun since:
-  - verify passed again (411 files, 5219 tests), and `test:widget-dev-host` (42) and `test:widget-browser` (4) passed;
-  - `test:reference-theme-browser` failed one test, "pixel-arcade … at 390 light", on a browser
-    `net::ERR_NO_BUFFER_SPACE` console error (Windows socket exhaustion, outside this change). Rerun alone: 8/8
-    passed;
-  - the remaining stage, `test:e2e`, run on its own: 367 passed, 3 skipped, 0 failed (370 tests, 17.5 m).
-
+- `pnpm verify:full`: exit 0. Verify as above, `test:widget-dev-host` 42 passed, `test:widget-browser` 4 passed,
+  `test:reference-theme-browser` 8 passed, and `test:e2e` 385 passed, 3 skipped, 0 failed (17.9 m).
+- Focused: `packages/widget-cli`, the reference apps and `service-artifact-input.spec.ts`, 33 files and 299 tests
+  passed. That includes the shared reference-template copier test, which now covers `media-tool` too.
+- `pnpm --filter @clarkcant/reference-apps test`: text editor 22, spreadsheet 22, image generator 23 and media render
+  23 passed, 0 failed.
+- `playwright test media-render.spec.ts image-generator.spec.ts`: 11 passed.
+- Media render followed by the inbox journeys in one node with one worker: 23 passed. The render journeys leave no open
+  inbox question that changes the inbox counts.
 ## Not in this PR
 
 - No product path places an installed package's widget with a binding (#382). Only the fixture model gives this widget
@@ -145,12 +150,6 @@ All runs are on Windows 11 with Docker 29.8.0 (Linux containers).
 
 - **Overlap with #324.** This PR adds `audio/wav` as an attachment and artifact type. If #324 adds an audio kind too,
   one of the two should rebase onto the other.
-- **Conflicts with #317, #318 and #319.** They will add/add conflict in the shared files. Each change is a
-  self-contained addition, so resolving means keeping both sides:
-  - `examples/reference-apps/package.json`;
-  - the `clark widget init` template list in `packages/widget-cli/src/cli.ts`;
-  - `fixture-model.ts`, `directory.json`, and the vitest and tsconfig includes;
-  - §24 numbering. This PR uses §24.4 for app D and writes the §24 intro the same way #318 does.
 - **The over-cap refusal has no browser journey.** Under `background-compute` the input cap equals the largest
   artifact a person can pick (25 MiB), so a browser cannot pick a file over it. The 413 refusal is covered in
   `service-artifact-input.spec.ts` under `interactive-light` instead.
