@@ -486,7 +486,12 @@ now. The person decides it with `POST /packages/approvals/:id/decision`
 `{ "decision": "granted" | "denied", "digest": "<operationDigest>" }`, the same person-only route that decides a
 package capability. `denied` answers `200` `{ decision, packageId, version }` and installs nothing. `granted` runs the
 same install again, with every check it makes, bound to that digest: a listing whose digest changed since the question
-is refused with `409 DIGEST_MISMATCH` before anything is decided, and the approval stays pending; a policy that now
+is refused with `409 DIGEST_MISMATCH` before anything is decided, and the approval stays pending. For a package listed
+by a path on this machine the question also pins the content of its files when it was asked (`digestOfDirectory`, the
+digest a git or npm fetch computes); if those files change afterwards the question is no longer listed, and Approve is
+refused with the same `409 DIGEST_MISMATCH` and a reason saying so, installing nothing; installing it again asks about
+the files as they are now, and a path whose files cannot be read is refused when asked (`400 LOCAL_SOURCE_UNREADABLE`).
+A policy that now
 forbids installing still refuses (`403 POLICY_REFUSED`); success answers `200` with
 `{ decision: "granted", installed: { packageId, version }, generationId, state, pendingCapabilities,
 deniedCapabilities }`. A decision on another digest is `409 APPROVAL_FORGED`, a second decision

@@ -403,6 +403,94 @@ describe("an approval stays bound to the artifact it was given for", () => {
   });
 });
 
+describe("a package listed by a path on this machine", () => {
+  /** What the listing says the artifact is. A local listing's digest is the publisher's, not a hash this node made. */
+  const LISTED_DIGEST = "sha256:local-calendar-listing";
+  let localDir: string;
+
+  /** The content digest an approval pins: the one a git or npm fetch computes over the bytes it holds. */
+  const onDisk = (): string => {
+    const digest = digestOfDirectory(localDir, { exclude: [".git"] });
+    if (!digest.ok) throw new Error(digest.message);
+    return digest.digest;
+  };
+
+  const generationDigests = (): string[] =>
+    allRows<{ digest: string }>(services.runtime.db, "SELECT digest FROM package_generations WHERE package_id = ?", PACKAGE_ID).map(
+      (row) => row.digest,
+    );
+
+  beforeEach(() => {
+    localDir = join(dir, "local-calendar");
+    mkdirSync(localDir, { recursive: true });
+    writeFileSync(join(localDir, "widget.json"), JSON.stringify({ id: PACKAGE_ID }));
+    writeIndex([entry({ source: { kind: "local", path: localDir }, digest: LISTED_DIGEST })]);
+  });
+
+  it("installs on Approve, and records the bytes the question was asked about", async () => {
+    const approvalId = await askToInstall();
+    expect(await waiting()).toEqual([expect.objectContaining({ approvalId, operationDigest: LISTED_DIGEST })]);
+    expect(audit()).toEqual([expect.objectContaining({ approvalId, result: "asked", digest: LISTED_DIGEST, localDigest: onDisk() })]);
+
+    const approved = await decide(approvalId, "granted", LISTED_DIGEST);
+    expect(approved.status).toBe(200);
+    expect(approved.body).toMatchObject({ decision: "granted", installed: { packageId: PACKAGE_ID, version: VERSION }, state: "active" });
+    expect(installedVersions()).toEqual([VERSION]);
+    // The generation carries the listing's digest, as a local install that sent it does, so everything that finds a
+    // package by its listing (its files, its themes, its capability approvals) finds this one.
+    expect(generationDigests()).toEqual([LISTED_DIGEST]);
+    expect(approvalDecision(approvalId)).toBe("granted");
+    expect(audit().map((event) => event.result)).toEqual(["asked", "installed"]);
+  });
+
+  it("refuses Approve when the files changed after the question, and asks again about what they are now", async () => {
+    const approvalId = await askToInstall();
+    writeFileSync(join(localDir, "widget.json"), JSON.stringify({ id: PACKAGE_ID, changed: true }));
+
+    // Approve could only be refused now, so the question is no longer offered.
+    expect(await waiting()).toEqual([]);
+    const refused = await decide(approvalId, "granted", LISTED_DIGEST);
+    expect(refused.status).toBe(409);
+    expect(codeOf(refused)).toBe("DIGEST_MISMATCH");
+    expect((refused.body as { message: string }).message).toContain("files on this machine changed after you were asked");
+    expect(installedVersions()).toEqual([]);
+    expect(approvalDecision(approvalId)).toBe("pending");
+
+    // Installing it again is a new question about the files as they are, not the stale one.
+    const askedAgain = await askToInstall();
+    expect(askedAgain).not.toBe(approvalId);
+    expect((await decide(askedAgain, "granted", LISTED_DIGEST)).status).toBe(200);
+    expect(installedVersions()).toEqual([VERSION]);
+    expect(audit().map((event) => [event.approvalId === approvalId ? "first" : "again", event.result, event.code])).toEqual([
+      ["first", "asked", undefined],
+      ["first", "refused", "DIGEST_MISMATCH"],
+      ["again", "asked", undefined],
+      ["again", "installed", undefined],
+    ]);
+  });
+
+  it("has the install itself refuse an approval pinned to other files", async () => {
+    const approvalId = await askToInstall();
+    const pinned = onDisk();
+    writeFileSync(join(localDir, "extra.txt"), "added after the question");
+
+    const outcome = await installPackage(
+      packageInstallDepsOf(services),
+      { packageId: PACKAGE_ID, version: VERSION },
+      { approved: { approvalId, digest: LISTED_DIGEST, localDigest: pinned } },
+    );
+    expect(outcome).toMatchObject({ kind: "refused", status: 409, code: "DIGEST_MISMATCH" });
+    // An approval that pinned no files at all is not an approval for whatever is there now either.
+    const unpinned = await installPackage(
+      packageInstallDepsOf(services),
+      { packageId: PACKAGE_ID, version: VERSION },
+      { approved: { approvalId, digest: LISTED_DIGEST } },
+    );
+    expect(unpinned).toMatchObject({ kind: "refused", status: 409, code: "DIGEST_MISMATCH" });
+    expect(installedVersions()).toEqual([]);
+  });
+});
+
 describe("machine surfaces cannot install or decide an install", () => {
   it("lists both routes as person-only, matching the raw segments", () => {
     expect(isPersonOnlyRoute("POST", "/packages/install")).toBe(true);

@@ -490,7 +490,11 @@ Người dùng quyết định bằng `POST /packages/approvals/:id/decision`
 `{ "decision": "granted" | "denied", "digest": "<operationDigest>" }`, cùng route chỉ dành cho người dùng dùng để quyết
 định capability của gói. `denied` trả `200` `{ decision, packageId, version }` và không cài gì. `granted` chạy lại
 đúng lần cài đó, với mọi kiểm tra của nó, gắn với digest đó: một listing có digest đã đổi kể từ lúc hỏi bị từ chối với
-`409 DIGEST_MISMATCH` trước khi quyết định bất cứ điều gì, và approval vẫn ở trạng thái chờ; một chính sách giờ cấm cài
+`409 DIGEST_MISMATCH` trước khi quyết định bất cứ điều gì, và approval vẫn ở trạng thái chờ. Với một gói được liệt kê
+bằng đường dẫn trên máy này, câu hỏi còn ghim nội dung các tệp của nó lúc hỏi (`digestOfDirectory`, cùng digest mà một
+lần fetch git hay npm tính); nếu các tệp đó đổi sau khi hỏi thì câu hỏi không còn được liệt kê, và Duyệt bị từ chối với
+cùng `409 DIGEST_MISMATCH` kèm lý do, không cài gì; cài lại sẽ hỏi về các tệp như hiện tại, và một đường dẫn không đọc
+được tệp bị từ chối ngay lúc hỏi (`400 LOCAL_SOURCE_UNREADABLE`). Một chính sách giờ cấm cài
 vẫn từ chối (`403 POLICY_REFUSED`); thành công trả `200` với `{ decision: "granted", installed: { packageId, version },
 generationId, state, pendingCapabilities, deniedCapabilities }`. Quyết định trên một digest khác là
 `409 APPROVAL_FORGED`, quyết định lần hai là `409 APPROVAL_ALREADY_DECIDED`, và quyết định sau hạn mười phút là

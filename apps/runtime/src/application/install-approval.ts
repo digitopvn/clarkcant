@@ -13,6 +13,8 @@ import {
   auditInstallApproval,
   findInstallApprovalRequest,
   installPackage,
+  localFilesChangedMessage,
+  localFilesUnchanged,
   type PackageInstallDeps,
 } from "./package-install.ts";
 
@@ -67,6 +69,8 @@ export function listPendingInstallApprovals(
     if (asked === undefined || asked.digest !== row.operation_digest) return [];
     const entry = listedEntry(asked.packageId, asked.version);
     if (entry === undefined || entry.digest !== row.operation_digest) return [];
+    // A listing by a path on this machine whose files changed since the question is left out the same way.
+    if (!localFilesUnchanged(entry, asked.localDigest)) return [];
     return [
       {
         kind: "install-approval",
@@ -115,7 +119,8 @@ export type InstallApprovalDecisionOutcome =
  * 1. The digest the person was shown must be the one the question was asked about (`APPROVAL_FORGED` otherwise).
  * 2. Approving checks the listing still names that artifact before anything is decided: a package or version that
  *    changed since the ask is refused (`DIGEST_MISMATCH`) and the approval is left as it was, so nothing is installed
- *    on an approval given for other bytes.
+ *    on an approval given for other bytes. A listing by a path on this machine is also checked against the content of
+ *    its files when the question was asked, refused the same way when they changed.
  * 3. The approval is claimed through `decideApproval`, the one decide routine every approval goes through: only a user
  *    principal may decide, an expired one becomes `expired` (`APPROVAL_EXPIRED`) and one already decided is not
  *    decided twice (`APPROVAL_ALREADY_DECIDED`) - which is also what keeps a double press from installing twice.
@@ -173,6 +178,10 @@ export async function decideInstallApproval(
         message: `${asked.packageId}@${asked.version} changed in the directory after you were asked, so nothing was installed; install it again to be asked about what it is now`,
       };
     }
+    if (!localFilesUnchanged(entry, asked.localDigest)) {
+      audit("refused", { code: "DIGEST_MISMATCH" });
+      return { ok: false, status: 409, code: "DIGEST_MISMATCH", message: localFilesChangedMessage(asked.packageId, asked.version) };
+    }
   }
 
   const decided = decideApproval(
@@ -197,7 +206,13 @@ export async function decideInstallApproval(
   const installed = await installPackage(
     deps,
     { packageId: asked.packageId, version: asked.version },
-    { approved: { approvalId: input.approvalId, digest: asked.digest } },
+    {
+      approved: {
+        approvalId: input.approvalId,
+        digest: asked.digest,
+        ...(asked.localDigest === undefined ? {} : { localDigest: asked.localDigest }),
+      },
+    },
   );
   if (installed.kind === "installed") {
     audit("installed", { generationId: installed.generationId });
