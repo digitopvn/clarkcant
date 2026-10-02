@@ -1,6 +1,6 @@
 ---
 title: "#200 và phần còn lại của #198: tách widget platform thành sub-issue có thứ tự"
-status: pending
+status: completed
 created: 2026-09-30
 issues: [200, 198, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 332, 333, 334, 335]
 related: [195, 226, 280, 281, 282, 283]
@@ -44,8 +44,8 @@ vào cuối body), issue [#198](https://github.com/digitopvn/clarkcant/issues/19
 
 | Phase | Trạng thái | Phụ thuộc | Chi tiết |
 | --- | --- | --- | --- |
-| 01 Primitive nền tảng và mini app (#200) | chờ | — | [phase-01-widget-platform-primitives-and-apps.md](phase-01-widget-platform-primitives-and-apps.md) |
-| 02 Widget còn lại của #198: P1 timeline, tree, kanban, media semantic; P2 map, diagram, media | chờ | #282, #283 merge; #324 cần #313 và #329 | [phase-02-198-remaining-widgets.md](phase-02-198-remaining-widgets.md) |
+| 01 Primitive nền tảng và mini app (#200) | done (#313–#320, #332, #334, #335 đóng; #321, #333 gated) | — | [phase-01-widget-platform-primitives-and-apps.md](phase-01-widget-platform-primitives-and-apps.md) |
+| 02 Widget còn lại của #198: P1 timeline, tree, kanban, media semantic; P2 map, diagram, media | done (#322, #324–#329 đóng; #323 gated) | #282, #283 merge; #324 cần #313 và #329 | [phase-02-198-remaining-widgets.md](phase-02-198-remaining-widgets.md) |
 
 Hai phase chạy song song được, trừ các điểm chung trong mục "Ghi chú xung đột file".
 

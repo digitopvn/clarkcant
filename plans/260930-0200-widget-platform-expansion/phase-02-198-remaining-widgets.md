@@ -1,6 +1,7 @@
 # Phase 02 — Widget còn lại của #198: P1 timeline, tree, kanban, media semantic; P2 map, diagram, media
 
-Trạng thái: chờ #282 và #283 merge. Plan: [plan.md](plan.md).
+Trạng thái: done (#326 qua #353, #327 qua #372, #328 qua #373, #329 qua #378, #322 qua #398, #325 qua #396, #324 qua
+#399; #323 còn gated). Plan: [plan.md](plan.md).
 
 ## Phạm vi
 

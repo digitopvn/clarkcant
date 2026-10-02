@@ -1,6 +1,7 @@
 # Phase 01 — Primitive nền tảng và mini app (#200)
 
-Trạng thái: chờ. Plan: [plan.md](plan.md).
+Trạng thái: done (#313 qua #345, #314 qua #338, #315 qua #377, #316 qua #381, #317 qua #383, #318 qua #384, #319 qua
+#392, #320 qua #390, #332 qua #394, #334 qua #375, #335 qua #376; #321, #333 còn gated). Plan: [plan.md](plan.md).
 
 ## Phạm vi
 

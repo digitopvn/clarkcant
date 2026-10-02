@@ -1,7 +1,7 @@
 ---
 phase: 10
 title: "#198 P1/P2 và #200 (đã khử trùng lặp)"
-status: pending
+status: completed
 issues: [198, 200]
 ---
 

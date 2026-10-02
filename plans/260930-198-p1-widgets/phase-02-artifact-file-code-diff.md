@@ -1,6 +1,6 @@
 # Phase 02 (I) — Trình xem artifact, file, code và diff
 
-Trạng thái: chờ. Plan: [plan.md](plan.md).
+Trạng thái: done (#281 qua PR #288). Plan: [plan.md](plan.md).
 
 ## Thiết kế dự kiến
 
