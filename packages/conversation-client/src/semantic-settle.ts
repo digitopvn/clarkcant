@@ -37,7 +37,10 @@ export interface SemanticSettler<T> {
   owes(): boolean;
   /** Whether a send is on its way to the node, or waiting behind one that is. */
   pending(): boolean;
-  /** Send what is still settling now, and resolve once the node holds the newest description. */
+  /**
+   * Send what is still settling now, and resolve once the node holds the description that was newest when `flush` was
+   * called, or a newer one. Descriptions published after that are sent as usual but not waited for.
+   */
   flush(): Promise<void>;
   /** Drop anything still settling or waiting, and abort the send in flight. */
   dispose(): void;
@@ -72,15 +75,14 @@ export function createSemanticSettler<T>(options: SemanticSettlerOptions<T>): Se
   let queued: Entry<T> | undefined;
   /** The answer for the newest description sent so far. Older answers never overwrite it. */
   let answered: { entry: Entry<T>; ok: boolean; error?: unknown } | undefined;
-  let idleWaiters: (() => void)[] = [];
+  let answerWaiters: (() => void)[] = [];
   let disposed = false;
 
   const idle = (): boolean => inFlight === undefined && queued === undefined;
 
-  const notifyIdle = (): void => {
-    if (!idle()) return;
-    const waiters = idleWaiters;
-    idleWaiters = [];
+  const notifyAnswered = (): void => {
+    const waiters = answerWaiters;
+    answerWaiters = [];
     for (const wake of waiters) wake();
   };
 
@@ -108,7 +110,7 @@ export function createSemanticSettler<T>(options: SemanticSettlerOptions<T>): Se
         const next = queued;
         queued = undefined;
         if (next !== undefined && !disposed) start(next);
-        else notifyIdle();
+        notifyAnswered();
       });
   };
 
@@ -127,28 +129,41 @@ export function createSemanticSettler<T>(options: SemanticSettlerOptions<T>): Se
     if (next !== undefined) enqueue(next);
   };
 
-  const untilIdle = (): Promise<void> =>
-    idle() ? Promise.resolve() : new Promise<void>((resolve) => idleWaiters.push(resolve));
+  const nextAnswer = (): Promise<void> => new Promise<void>((resolve) => answerWaiters.push(resolve));
 
   /** The newest description failed, and nothing newer exists: the one case worth a retry. */
   const newestFailed = (): Entry<T> | undefined =>
     answered !== undefined && !answered.ok && answered.entry.seq === seq ? answered.entry : undefined;
 
-  const drain = async (): Promise<void> => {
+  /**
+   * Wait until the node holds description `target` or a newer one. Publishes made after the flush began are not waited
+   * for: they only count when they happen to be what answers `target`, so a widget that keeps publishing cannot keep a
+   * press waiting.
+   */
+  const drain = async (target: number): Promise<void> => {
     let retried = false;
     for (;;) {
-      sendSettling();
-      await untilIdle();
-      // Published while this flush waited: send that rather than judge, or retry, an older one.
-      if (settling !== undefined) continue;
-      const failed = newestFailed();
-      if (failed === undefined) return;
-      if (retried || disposed) {
-        const error = answered?.error;
+      if (answered !== undefined && answered.ok && answered.entry.seq >= target) return;
+      if (disposed) throw new Error("the frame went away");
+      const onItsWay =
+        (inFlight !== undefined && inFlight.entry.seq >= target) || (queued !== undefined && queued.seq >= target);
+      if (onItsWay) {
+        await nextAnswer();
+        continue;
+      }
+      // Still settling: `target` itself, or a newer description that replaced it before it was sent.
+      if (settling !== undefined) {
+        sendSettling();
+        continue;
+      }
+      // Nothing at or after `target` is on its way, so the newest answer for it failed (or nothing was published).
+      if (answered === undefined || answered.entry.seq < target) return;
+      if (retried) {
+        const error = answered.error;
         throw error instanceof Error ? error : new Error(String(error));
       }
       retried = true;
-      enqueue(failed);
+      enqueue(answered.entry);
     }
   };
 
@@ -171,7 +186,7 @@ export function createSemanticSettler<T>(options: SemanticSettlerOptions<T>): Se
       const timedOut = new Promise<never>((_, reject) => {
         deadline = setTimer(() => reject(new SemanticFlushTimeout()), flushTimeoutMs);
       });
-      return Promise.race([drain(), timedOut]).finally(() => clearTimer(deadline));
+      return Promise.race([drain(seq), timedOut]).finally(() => clearTimer(deadline));
     },
     dispose() {
       disposed = true;

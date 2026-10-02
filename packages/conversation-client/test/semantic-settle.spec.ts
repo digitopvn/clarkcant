@@ -170,6 +170,35 @@ describe("what a widget says it shows, before a press", () => {
     expect(calls.map((call) => call.proposal)).toEqual(["B", "C"]);
   });
 
+  it("lets a press through once its own description is answered, while the widget keeps publishing over a slow link", async () => {
+    const timers = manualTimers();
+    const { calls, send } = controlledSend();
+    const settler = createSemanticSettler<string>({ settleMs: SETTLE_MS, send, ...timers });
+    settler.publish("position 0");
+
+    let outcome: string | undefined;
+    void gatePress(settler, false, () => Promise.resolve("ran"), () => "refused").then((result) => {
+      outcome = result;
+    });
+    await tick();
+    expect(calls.map((call) => call.proposal)).toEqual(["position 0"]);
+
+    // A publish every settle period, each settling while the previous send is still on its way.
+    for (let i = 1; i <= 12; i += 1) {
+      settler.publish(`position ${i}`);
+      timers.fire();
+      calls[i - 1]?.resolve();
+      await tick();
+    }
+    expect(outcome).toBe("ran");
+    // The publishes after the press were still sent; the press just did not wait for them.
+    expect(calls.length).toBe(13);
+
+    timers.fire(SEMANTIC_FLUSH_TIMEOUT_MS);
+    await tick();
+    expect(outcome).toBe("ran");
+  });
+
   it("gives up on a send that never answers, and later sends still go through", async () => {
     const timers = manualTimers();
     const proposals: string[] = [];
