@@ -502,6 +502,57 @@ label.cc-list-main { cursor: pointer; }
 .cc-diagram-clear { margin-inline-start: auto; min-height: 44px; }
 .cc-diagram-text { font-size: var(--cc-text-body-sm); color: var(--cc-text-muted); }
 .cc-diagram-text ul { margin: var(--cc-space-xs) 0 0; padding-inline-start: 1.25em; overflow-wrap: anywhere; }
+/* Map. Every colour is a theme token, so light, dark and a package theme each draw their own basemap. */
+.cc-map { display: flex; flex-direction: column; gap: var(--cc-space-sm); min-width: 0; container-type: inline-size; }
+.cc-map-viewport {
+  position: relative; min-width: 0; overflow: hidden;
+  border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-sm, 6px);
+}
+.cc-map-viewport:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* A swipe across a map that has not been tapped scrolls the conversation; once tapped (focused), a drag pans it. */
+.cc-map-svg { display: block; width: 100%; height: auto; touch-action: pan-y pinch-zoom; cursor: grab; user-select: none; }
+.cc-map-viewport:focus-within .cc-map-svg { touch-action: none; }
+.cc-map-svg:active { cursor: grabbing; }
+.cc-map-ocean { fill: color-mix(in oklab, var(--cc-accent) 9%, var(--cc-elevated)); }
+.cc-map-land { fill: color-mix(in oklab, var(--cc-text) 9%, var(--cc-card)); stroke: color-mix(in oklab, var(--cc-text) 28%, transparent); stroke-width: 0.6; }
+.cc-map-graticule { fill: none; stroke: color-mix(in oklab, var(--cc-text) 12%, transparent); stroke-width: 0.5; }
+.cc-map-line { fill: none; stroke: var(--cc-accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; cursor: pointer; }
+.cc-map-area { fill: color-mix(in oklab, var(--cc-accent) 22%, transparent); fill-rule: evenodd; stroke: var(--cc-accent); stroke-width: 2; cursor: pointer; }
+.cc-map-point { cursor: pointer; }
+.cc-map-point circle { fill: var(--cc-accent); stroke: var(--cc-card); stroke-width: 2; }
+.cc-map-line[data-selected="true"], .cc-map-area[data-selected="true"] { stroke: var(--cc-text); stroke-width: 4; }
+.cc-map-point[data-selected="true"] circle { stroke: var(--cc-text); stroke-width: 3; }
+.cc-map-label {
+  font-size: 12px; font-family: var(--cc-font-body, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); fill: var(--cc-text);
+  paint-order: stroke; stroke: var(--cc-card); stroke-width: 3px; stroke-linejoin: round; pointer-events: none;
+}
+.cc-map-controls { position: absolute; top: var(--cc-space-xs); inset-inline-end: var(--cc-space-xs); display: flex; flex-direction: column; gap: 4px; }
+.cc-map-control {
+  display: inline-grid; place-items: center; width: 44px; height: 44px; padding: 0; font: inherit; font-size: 18px; line-height: 1;
+  color: var(--cc-text); background: var(--cc-card); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-sm, 6px); cursor: pointer;
+}
+.cc-map-control:hover:not(:disabled) { background: var(--cc-elevated); }
+.cc-map-control:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-map-control:disabled { opacity: 0.5; cursor: not-allowed; }
+.cc-map-attribution { display: flex; flex-wrap: wrap; gap: 0 var(--cc-space-sm); font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-map-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--cc-text-body-sm); }
+.cc-map-table th, .cc-map-table td { padding: var(--cc-space-xs); text-align: start; vertical-align: middle; overflow-wrap: anywhere; border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
+.cc-map-table thead th { font-size: var(--cc-text-label); color: var(--cc-text-muted); font-weight: 600; }
+.cc-map-table th:last-child, .cc-map-table td:last-child { width: 88px; text-align: end; }
+.cc-map-table tbody th { font-weight: 400; }
+/* A narrow map draws its fixed 640-wide picture smaller, so labels and markers are drawn larger to read the same, and the
+   controls sit in a row under the picture rather than covering half of it. */
+@container (max-width: 480px) {
+  .cc-map-label { font-size: 22px; stroke-width: 5px; }
+  .cc-map-point circle { r: 10px; }
+  .cc-map-point[data-selected="true"] circle { r: 14px; }
+  .cc-map-line { stroke-width: 5; }
+  .cc-map-controls { position: static; flex-direction: row; justify-content: flex-end; padding: var(--cc-space-xs); border-top: var(--cc-line, 1px solid) var(--cc-border); }
+}
+.cc-map-table tr[data-selected="true"] { background: color-mix(in oklab, var(--cc-accent) 12%, transparent); }
+.cc-map-feature-name { display: block; }
+.cc-map-feature-kind { display: block; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-map-table .cc-action[aria-pressed="true"] { border-color: var(--cc-accent); }
 
 /* Status, progress and details cards. Tone is said in words and a symbol; the colour only repeats it. */
 .cc-badge[data-tone="info"] { color: var(--cc-accent); border-color: color-mix(in oklab, var(--cc-accent) 45%, transparent); }

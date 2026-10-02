@@ -300,6 +300,28 @@ export function openApiDocument(): Record<string, unknown> {
           responses: { "200": ok("{ trigger, query, suggestions: [{ key, trigger, kind, label, note?, disabledReason?, ref }] }"), ...refusals },
         },
       },
+      "/map-tiles": {
+        get: {
+          summary: "Whether maps on this node show raster tiles, and whose",
+          description:
+            "{ provider: { origin, attribution, maxZoom } | null } from the person-only maps.tilePolicy preference. " +
+            "Never the provider's path template or key. null, the default, means maps draw their offline basemap only.",
+          responses: { "200": ok("{ provider }"), ...refusals },
+        },
+      },
+      "/map-tiles/{z}/{x}/{y}": {
+        get: {
+          summary: "One raster tile from the tile policy's provider, fetched by the node",
+          description:
+            "Only the provider the policy names, on its own path template; z up to its maxZoom (at most 19), x and y on " +
+            "that zoom's grid. Redirects are not followed. Served only as image/png or image/webp, checked by the " +
+            "provider's type and the bytes, at most 512 KiB, with nosniff. A key the policy names is added by the node " +
+            "and never returned. 404 MAP_TILES_OFF with no policy, 400 MAP_TILE_OUT_OF_BOUNDS, 429 MAP_TILES_RATE_LIMITED, " +
+            "502 MAP_TILE_FAILED or MAP_TILE_REFUSED, 503 MAP_TILE_KEY_UNAVAILABLE.",
+          parameters: ["z", "x", "y"].map((name) => ({ name, in: "path", required: true, schema: { type: "integer", minimum: 0 } })),
+          responses: { "200": { description: "The tile, as image/png or image/webp" }, ...refusals },
+        },
+      },
       "/artifacts/{artifactId}": {
         get: {
           summary: "Describe an artifact",

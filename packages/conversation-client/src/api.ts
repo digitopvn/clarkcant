@@ -12,6 +12,7 @@ import type {
   CompositionGraph,
   GraphSemanticState,
   LayoutNode,
+  MapTilePolicyView,
   ModelPool,
   SseEvent,
   TableFilterValue,
@@ -1967,6 +1968,33 @@ export class GatewayClient {
       // The type the node sent the bytes as, which a save names the file by; empty when it sent none.
       mimeType: (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "",
     };
+  }
+
+  /**
+   * Whether this node shows map tiles, and whose: the provider's origin, attribution and maximum zoom, or `null`.
+   *
+   * Only what the node's tile policy says to show. Never a path template or a key.
+   */
+  async mapTilePolicy(): Promise<MapTilePolicyView> {
+    const body = (await this.#call("GET", "/map-tiles")) as { provider?: unknown };
+    const provider = body.provider;
+    if (typeof provider !== "object" || provider === null) return { provider: null };
+    const { origin, attribution, maxZoom } = provider as Record<string, unknown>;
+    if (typeof origin !== "string" || typeof attribution !== "string" || typeof maxZoom !== "number") return { provider: null };
+    return { provider: { origin, attribution, maxZoom } };
+  }
+
+  /**
+   * One map tile, read through the node's own tile route with the bearer token. The page names a tile by `z/x/y` only;
+   * where it comes from is the node's tile policy.
+   */
+  async mapTile(z: number, x: number, y: number, signal?: AbortSignal): Promise<Blob> {
+    const response = await this.#fetch(`${this.#baseUrl}/map-tiles/${String(z)}/${String(x)}/${String(y)}`, {
+      headers: { authorization: `Bearer ${this.#token}` },
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (!response.ok) throw await this.#binaryRefusal(response, "MAP_TILE_FAILED", "that map tile could not be read");
+    return response.blob();
   }
 
   async #binaryRefusal(response: Response, fallbackCode: string, fallbackMessage: string): Promise<GatewayError> {
