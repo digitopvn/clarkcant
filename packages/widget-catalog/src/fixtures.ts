@@ -540,6 +540,53 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       mode: "read-only",
     },
   ],
+  "canvas.audio@1": [
+    {
+      id: "audio.normal",
+      label: "Âm thanh có bản ghi lời",
+      props: {
+        title: "Bản tin buổi sáng",
+        audioRef: "artifact:fixture_audio",
+        mimeType: "audio/mpeg",
+        durationSeconds: 95.4,
+        sizeBytes: 1_526_400,
+        transcript: "Chào buổi sáng. Hôm nay có ba việc cần làm: gửi báo cáo, họp nhóm lúc mười giờ và xem lại bản nháp.",
+      },
+      mode: "read-only",
+    },
+  ],
+  "canvas.document@1": [
+    {
+      id: "document.normal",
+      label: "Xem trước PDF nhiều trang",
+      props: {
+        name: "ke-hoach-quy-4.pdf",
+        mimeType: "application/pdf",
+        documentRef: "attachment:fixture_document",
+        pages: [
+          "Kế hoạch quý 4\n\nMục tiêu: hoàn thiện bản phát hành, giảm thời gian phản hồi và mở rộng thư viện widget.",
+          "Lịch trình\n\nTháng 10: chốt phạm vi. Tháng 11: kiểm thử trên ba hệ điều hành. Tháng 12: phát hành.",
+        ],
+        sourcePages: 2,
+        totalChars: 200,
+        truncated: false,
+      },
+      mode: "read-only",
+    },
+    {
+      id: "document.truncated",
+      label: "Tệp văn bản bị cắt bớt",
+      props: {
+        name: "nhat-ky.txt",
+        mimeType: "text/plain",
+        documentRef: "attachment:fixture_log",
+        pages: ["Dòng 1: khởi động\nDòng 2: đọc cấu hình\nDòng 3: sẵn sàng"],
+        totalChars: 48_000,
+        truncated: true,
+      },
+      mode: "read-only",
+    },
+  ],
   "canvas.cta@1": [
     {
       id: "cta.normal",

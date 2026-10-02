@@ -454,6 +454,10 @@ function slotFor(definitionId: string, family: string, wired: boolean, where: st
     problems.push(
       `${where} names "${definitionId}", which sends its value nowhere on its own; give it an "on" rule that writes the surface's state, or make it a field of a canvas.form@1`,
     );
+  } else if (definitionId === "canvas.audio@1" || definitionId === "canvas.document@1") {
+    problems.push(
+      `${where} names "${definitionId}"; it is placed with its own show_view, where the node checks its source under the media content policy, not inside a layout`,
+    );
   } else if (family === "media") {
     problems.push(
       `${where} names "${definitionId}", and this node has no source for it yet; only an imported image, or a gallery or carousel of imported pictures, can be placed`,

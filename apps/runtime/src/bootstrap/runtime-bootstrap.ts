@@ -39,6 +39,7 @@ import { removeIdleTaskProfiles } from "../task-browser.ts";
 import { createTaskDispatcher } from "../task-dispatch.ts";
 import { startUpdateCheckTimer } from "../update-checks.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
+import { mediaPolicyFromEnv } from "../media-views.ts";
 import { nodeWorkerModel } from "../worker-model.ts";
 import { type FixtureGates } from "./fixtures.ts";
 
@@ -440,14 +441,20 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   // The model may now ask for these views. When there are none the `show_view` tool is not
   // registered at all, which is why this is reported rather than left to be discovered: a node
   // that cannot show anything should say so once at startup, not fail a turn later.
+  const mediaPolicy = mediaPolicyFromEnv(process.env, (line) => process.stderr.write(line));
   deps.viewCatalog.push(
-    ...buildViewCatalog(deps.services.conductor, deps.services.compose, () => ({
-      db: deps.services.runtime.db,
-      nodeId: deps.services.runtime.identity.nodeId,
-      serviceHost: deps.services.serviceHost,
-      now: () => new Date().toISOString(),
-      newId: deps.services.conductor.newId,
-    })),
+    ...buildViewCatalog(
+      deps.services.conductor,
+      deps.services.compose,
+      () => ({
+        db: deps.services.runtime.db,
+        nodeId: deps.services.runtime.identity.nodeId,
+        serviceHost: deps.services.serviceHost,
+        now: () => new Date().toISOString(),
+        newId: deps.services.conductor.newId,
+      }),
+      { dataDir: deps.services.runtime.dataDir, policy: () => mediaPolicy },
+    ),
   );
   // Said out loud because it is a capability with a privacy shape: the model may search this machine's
   // files, the walk is read-only and bounded, and the lines it finds go to the provider as the tool's

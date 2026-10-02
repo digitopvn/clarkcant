@@ -2013,17 +2013,27 @@ function mediaViewPatch(instance: WidgetInstance, input: Record<string, unknown>
     }
     return { ok: true, patch: { selectedIndex: index } };
   }
-  if (definitionId === "canvas.video@1") {
+  if (definitionId === "canvas.video@1" || definitionId === "canvas.audio@1") {
     const { status, position, duration } = input;
+    const noun = definitionId === "canvas.video@1" ? "video" : "audio";
     if ((status !== "playing" && status !== "paused" && status !== "ended") ||
       typeof position !== "number" || !Number.isFinite(position) || position < 0 ||
       typeof duration !== "number" || !Number.isFinite(duration) || duration < 0 ||
       (duration > 0 && position > duration)) {
-      return { ok: false, message: "the video playback state is incomplete or outside the media duration" };
+      return { ok: false, message: `the ${noun} playback state is incomplete or outside the media duration` };
     }
     return { ok: true, patch: { status, position, duration } };
   }
-  return { ok: false, message: "only a gallery, carousel or local video holds media view state" };
+  if (definitionId === "canvas.document@1") {
+    const pages = instance.props.pages;
+    const count = Array.isArray(pages) ? pages.length : 0;
+    const page = input.page;
+    if (count < 1 || typeof page !== "number" || !Number.isSafeInteger(page) || page < 0 || page >= count) {
+      return { ok: false, message: "the page is outside this document's preview" };
+    }
+    return { ok: true, patch: { page } };
+  }
+  return { ok: false, message: "only a gallery, carousel, local video, audio player or document preview holds media view state" };
 }
 
 /**
