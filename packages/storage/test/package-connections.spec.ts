@@ -26,6 +26,7 @@ function connect(ref = "conn_1", overrides: Record<string, unknown> = {}): void 
     principalId: "prin_1",
     packageId: "com.example.tasks",
     provider: "example.tasks",
+    declarationDigest: "sha256:declared",
     state: "connected",
     grantedScopes: ["tasks.read", "tasks.write"],
     accessExpiresAt: LATER,
@@ -54,6 +55,7 @@ describe("package connections", () => {
       principalId: "prin_1",
       packageId: "com.example.tasks",
       provider: "example.tasks",
+      declarationDigest: "sha256:declared",
       state: "connected",
       grantedScopes: ["tasks.read", "tasks.write"],
       accessExpiresAt: LATER,
@@ -76,15 +78,29 @@ describe("package connections", () => {
 
   it("stores a refreshed token and the scopes the refresh came back with", () => {
     connect();
-    refreshPackageConnectionTokens(db, {
+    const kept = refreshPackageConnectionTokens(db, {
       connectionRef: "conn_1",
       accessToken: "fresh-access",
       grantedScopes: ["tasks.read"],
       state: "partial",
       at: LATER,
     });
+    expect(kept).toBe(true);
     expect(packageConnectionTokens(db, "conn_1")).toEqual({ accessToken: "fresh-access", refreshToken: "refresh-value" });
     expect(getPackageConnection(db, "prin_1", "com.example.tasks")).toMatchObject({ state: "partial", grantedScopes: ["tasks.read"], updatedAt: LATER });
+  });
+
+  it("keeps no refreshed token for a connection that ended or went while the refresh was in flight", () => {
+    const fresh = { accessToken: "late-access", refreshToken: "late-refresh", grantedScopes: ["tasks.read"], state: "connected" as const, at: LATER };
+    connect();
+    endPackageConnection(db, { connectionRef: "conn_1", state: "revoked", reason: "you revoked it in Settings", at: LATER });
+    expect(refreshPackageConnectionTokens(db, { connectionRef: "conn_1", ...fresh })).toBe(false);
+    expect(getPackageConnection(db, "prin_1", "com.example.tasks")).toMatchObject({ state: "revoked" });
+    expect(packageConnectionTokens(db, "conn_1")).toEqual({});
+
+    deletePackageConnection(db, "prin_1", "com.example.tasks");
+    expect(refreshPackageConnectionTokens(db, { connectionRef: "conn_1", ...fresh })).toBe(false);
+    expect(packageConnectionTokens(db, "conn_1")).toEqual({});
   });
 
   it("deletes the tokens in the same step that marks a connection revoked or expired", () => {

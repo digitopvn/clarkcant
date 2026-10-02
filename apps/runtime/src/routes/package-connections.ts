@@ -14,7 +14,7 @@ import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json }
  *   POST /packages/:id/connection         start connecting: answers the provider's authorization URL, which the client
  *                                         opens in the system browser. Person-only (`isPersonOnlyRoute`).
  *   POST /packages/:id/connection/revoke  end it at the provider and on this node, at once.
- *   GET  /connections/callback            where the provider sends the browser back. Public, before the gateway's token
+ *   GET  /connections/callback/:id        where the provider sends the browser back. Public, before the gateway's token
  *                                         check, because a browser following a redirect carries no token: the single-use
  *                                         `state` the node issued is what authenticates it. Answers a page that never
  *                                         repeats the code.
@@ -68,14 +68,18 @@ function declaredConnection(
  * Where the provider sends the browser back: this node, over loopback, on the port the request came in on. A node
  * reached under any other name — through a relay, a tunnel or a LAN address — is refused, because the redirect has to
  * land on the machine whose browser is being sent, and a provider must never be told to send a code across a network.
+ *
+ * Each package gets its own callback path. A provider that sends a code back to one package's path cannot have been
+ * asked by another package's authorization server pretending to be it (the OAuth mix-up attack): the node checks that
+ * the authorization the state names was started for the package the path names, before the code goes anywhere.
  */
-function loopbackRedirect(request: GatewayRequest): string | undefined {
+function loopbackRedirect(request: GatewayRequest, packageId: string): string | undefined {
   const raw = request.headers.host;
   const host = Array.isArray(raw) ? raw[0] : raw;
   if (host === undefined) return undefined;
   const match = /^(127\.0\.0\.1|localhost|\[::1\]):(\d{1,5})$/.exec(host);
   if (match === null) return undefined;
-  return `http://${match[1] ?? "127.0.0.1"}:${match[2] ?? ""}/connections/callback`;
+  return `http://${match[1] ?? "127.0.0.1"}:${match[2] ?? ""}/connections/callback/${encodeURIComponent(packageId)}`;
 }
 
 function escapeHtml(text: string): string {
@@ -107,13 +111,18 @@ function callbackPage(status: number, title: string, message: string): GatewayRe
 /** The public callback. Called before the gateway's token check. */
 export async function handleConnectionCallback(deps: ConnectionRouteDeps): Promise<GatewayResponse | undefined> {
   const { request, segments, services } = deps;
-  if (!(segments.length === 2 && segments[0] === "connections" && segments[1] === "callback" && request.method === "GET")) {
-    return undefined;
+  if (!(segments[0] === "connections" && segments[1] === "callback" && request.method === "GET")) return undefined;
+  if (segments.length !== 3) return callbackPage(400, "Not connected", "This is not a connection this node started. Start it again from Settings.");
+  let packageId: string;
+  try {
+    packageId = decodeURIComponent(segments[2] ?? "");
+  } catch {
+    return callbackPage(400, "Not connected", "This is not a connection this node started. Start it again from Settings.");
   }
   if (services.connections === undefined) {
     return callbackPage(503, "Not connected", "This node does not connect accounts for packages.");
   }
-  const result = await services.connections.complete(request.query);
+  const result = await services.connections.complete(packageId, request.query);
   if (result.packageId !== undefined) services.serviceHost?.refreshAuthentication?.(result.packageId);
   if (!result.ok) return callbackPage(400, "Not connected", result.message);
   const scopes = result.status.state === "partial" ? ` It did not grant ${result.status.missingScopes.join(", ")}, so what needs that is unavailable.` : "";
@@ -146,7 +155,7 @@ export async function handleConnectionRoutes(deps: ConnectionRouteDeps): Promise
     const declared = declaredConnection(services, packageId);
     if (!declared.ok) return declared.response;
     if (broker === undefined) return fail(503, "CONNECTIONS_UNAVAILABLE", "this node does not connect accounts for packages");
-    const redirectUri = loopbackRedirect(request);
+    const redirectUri = loopbackRedirect(request, packageId);
     if (redirectUri === undefined) {
       return fail(
         409,

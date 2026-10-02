@@ -226,8 +226,11 @@ export interface ServiceConnectionBroker {
   prepare(packageId: string, connection: ServiceConnectionRequirement): Promise<void>;
   /** The access token for one egress request, or why there is none. */
   credential(packageId: string, connection: ServiceConnectionRequirement): Promise<{ ok: true; token: string } | { ok: false; reason: string }>;
-  /** The provider answered 401 to a request carrying the credential: refresh once, or mark the connection ended. */
-  rejected(packageId: string, connection: ServiceConnectionRequirement): Promise<void>;
+  /**
+   * The provider answered 401 to a request carrying `sentToken`: refresh once, or mark the connection ended. Ignored
+   * when that token is no longer the connection's, so a late answer to an old token cannot end a newer connection.
+   */
+  rejected(packageId: string, connection: ServiceConnectionRequirement, sentToken: string): Promise<void>;
 }
 
 /**
@@ -576,8 +579,8 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
               provider: connection.provider,
               endpoints: connection.endpoints,
               credential: () => broker.credential(packageId, connection),
-              rejected: async () => {
-                await broker.rejected(packageId, connection);
+              rejected: async (sentToken) => {
+                await broker.rejected(packageId, connection, sentToken);
                 refreshEntryAuthentication(entry);
               },
             },

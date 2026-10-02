@@ -18,6 +18,8 @@ export interface StoredConnection {
   principalId: string;
   packageId: string;
   provider: string;
+  /** A fingerprint of the declaration the account was connected under: where its tokens may go. */
+  declarationDigest: string;
   state: StoredConnectionState;
   grantedScopes: string[];
   accessExpiresAt?: Instant;
@@ -31,6 +33,7 @@ interface ConnectionRow {
   principal_id: string;
   package_id: string;
   provider: string;
+  declaration_digest: string;
   state: StoredConnectionState;
   granted_scopes: string;
   access_expires_at: string | null;
@@ -46,6 +49,7 @@ function fromRow(row: ConnectionRow): StoredConnection {
     principalId: row.principal_id,
     packageId: row.package_id,
     provider: row.provider,
+    declarationDigest: row.declaration_digest,
     state: row.state,
     grantedScopes: Array.isArray(scopes) ? scopes.filter((scope): scope is string => typeof scope === "string") : [],
     ...(row.access_expires_at === null ? {} : { accessExpiresAt: row.access_expires_at as Instant }),
@@ -85,13 +89,14 @@ export function savePackageConnection(
     db.prepare("DELETE FROM package_connections WHERE principal_id = ? AND package_id = ?").run(input.principalId, input.packageId);
     db.prepare(
       `INSERT INTO package_connections
-         (connection_ref, principal_id, package_id, provider, state, granted_scopes, access_expires_at, reason, connected_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (connection_ref, principal_id, package_id, provider, declaration_digest, state, granted_scopes, access_expires_at, reason, connected_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       input.connectionRef,
       input.principalId,
       input.packageId,
       input.provider,
+      input.declarationDigest,
       input.state,
       JSON.stringify(input.grantedScopes),
       input.accessExpiresAt ?? null,
@@ -112,7 +117,12 @@ function writeTokens(db: Database, connectionRef: string, accessToken: string, r
   if (refreshToken !== undefined) put.run(connectionRef, "refresh", refreshToken);
 }
 
-/** Store a refreshed access token (and the rotated refresh token, when the provider rotated it). */
+/**
+ * Store a refreshed access token (and the rotated refresh token, when the provider rotated it).
+ *
+ * Only onto a connection that is still usable: a refresh that was in flight while the person revoked, reconnected or
+ * uninstalled must not bring the old connection back. Answers whether the tokens were kept.
+ */
 export function refreshPackageConnectionTokens(
   db: Database,
   input: {
@@ -124,12 +134,17 @@ export function refreshPackageConnectionTokens(
     state: StoredConnectionState;
     at: Instant;
   },
-): void {
-  transaction(db, () => {
-    db.prepare(
-      "UPDATE package_connections SET access_expires_at = ?, granted_scopes = ?, state = ?, reason = NULL, updated_at = ? WHERE connection_ref = ?",
-    ).run(input.accessExpiresAt ?? null, JSON.stringify(input.grantedScopes), input.state, input.at, input.connectionRef);
+): boolean {
+  return transaction(db, () => {
+    const result = db
+      .prepare(
+        `UPDATE package_connections SET access_expires_at = ?, granted_scopes = ?, state = ?, reason = NULL, updated_at = ?
+         WHERE connection_ref = ? AND state IN ('connected', 'partial')`,
+      )
+      .run(input.accessExpiresAt ?? null, JSON.stringify(input.grantedScopes), input.state, input.at, input.connectionRef);
+    if (Number(result.changes) !== 1) return false;
     writeTokens(db, input.connectionRef, input.accessToken, input.refreshToken);
+    return true;
   });
 }
 

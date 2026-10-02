@@ -339,6 +339,25 @@ test("a rename whose answer never comes back is recorded as unknown and not sent
     // Long enough for any retry to have reached the provider; none does.
     await page.waitForTimeout(17_000);
     expect(connector.stats().writes).toBe(before + 1);
+
+    // The ledger holds it as unknown until the person says what they saw. The fake did apply it, so answer that, as the
+    // inbox's own button would; the journeys after this one share the node and expect no question left over.
+    const db = new DatabaseSync(join(DATA_DIR, "node.sqlite"), { readOnly: true });
+    let unknown: string[];
+    try {
+      unknown = (
+        db
+          .prepare("SELECT effect_id FROM effects WHERE capability_ref = ? AND state = 'unknown'")
+          .all("com.clarkcant.reference.connected-app.update-task@1") as Array<{ effect_id: string }>
+      ).map((row) => row.effect_id);
+    } finally {
+      db.close();
+    }
+    expect(unknown).toHaveLength(1);
+    for (const effectId of unknown) {
+      const answered = await page.request.post(`${GATEWAY}/effects/${effectId}/reconcile`, { headers: headers(), data: { outcome: "confirmed" } });
+      expect(answered.status()).toBe(200);
+    }
   } finally {
     connector.setMode({ writeDelayMs: 0 });
   }

@@ -34,7 +34,7 @@ const GENERATION = `${PACKAGE}@1.0.0:code_1`;
 const LIST = `${PACKAGE}.list-tasks@1` as CapabilityRef;
 const UPDATE = `${PACKAGE}.update-task@1` as CapabilityRef;
 const REFERENCE = fileURLToPath(new URL("../../../examples/reference-apps/connected-app/", import.meta.url));
-const REDIRECT = "http://127.0.0.1:4100/connections/callback";
+const REDIRECT = `http://127.0.0.1:4100/connections/callback/${encodeURIComponent(PACKAGE)}`;
 
 type Connector = Awaited<ReturnType<typeof startFakeConnector>>;
 
@@ -71,7 +71,7 @@ function requirement(overrides: Partial<ServiceConnectionRequirement> = {}): Ser
   return { ...declared, ...overrides };
 }
 
-function broker(options: { allowPrivateNetwork?: boolean } = {}): PackageConnectionBroker {
+function broker(options: { allowPrivateNetwork?: boolean; fetch?: typeof fetch } = {}): PackageConnectionBroker {
   return createPackageConnectionBroker({
     db,
     principalId: PRINCIPAL,
@@ -79,7 +79,17 @@ function broker(options: { allowPrivateNetwork?: boolean } = {}): PackageConnect
     now: () => clock,
     allowPrivateNetwork: options.allowPrivateNetwork ?? true,
     audit: (event) => audit.push(event),
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   });
+}
+
+/** A fetch that lets a test step in when the node asks the provider to renew a token. */
+function onRefresh(step: (forward: () => Promise<Response>) => Promise<Response>): typeof fetch {
+  return async (input, init) => {
+    const body = typeof init?.body === "string" ? init.body : "";
+    const forward = () => fetch(input, init);
+    return body.includes("grant_type=refresh_token") ? await step(forward) : await forward();
+  };
 }
 
 /** Start an authorization, follow the provider's consent as the system browser would, and complete it. */
@@ -89,7 +99,7 @@ async function connect(nodeBroker: PackageConnectionBroker, connection = require
   const consent = await fetch(started.authorizationUrl, { redirect: "manual" });
   const back = new URL(consent.headers.get("location") ?? "");
   const query = Object.fromEntries(back.searchParams.entries());
-  return { query, result: await nodeBroker.complete(query) };
+  return { query, result: await nodeBroker.complete(PACKAGE, query) };
 }
 
 function tokens(): { accessToken?: string; refreshToken?: string } {
@@ -116,13 +126,13 @@ describe("connecting a package to an account", () => {
 
     const consent = await fetch(started.authorizationUrl, { redirect: "manual" });
     const query = Object.fromEntries(new URL(consent.headers.get("location") ?? "").searchParams.entries());
-    const result = await nodeBroker.complete(query);
+    const result = await nodeBroker.complete(PACKAGE, query);
     expect(result).toMatchObject({ ok: true, packageId: PACKAGE, status: { state: "connected", missingScopes: [] } });
     expect(tokens().accessToken).toMatch(/^fake-access-/);
     expect(tokens().refreshToken).toMatch(/^fake-refresh-/);
 
     // The state was used: the same redirect again completes nothing.
-    expect(await nodeBroker.complete(query)).toMatchObject({ ok: false });
+    expect(await nodeBroker.complete(PACKAGE, query)).toMatchObject({ ok: false });
     // Nothing a person, a widget or the trail sees holds a code or a token.
     const seen = JSON.stringify([result, nodeBroker.status(PACKAGE, connection), audit]);
     for (const secret of connector.secrets()) expect(seen).not.toContain(secret);
@@ -130,9 +140,26 @@ describe("connecting a package to an account", () => {
 
   it("refuses a redirect carrying a state it never issued, before the code goes anywhere", async () => {
     const nodeBroker = broker();
-    const outcome = await nodeBroker.complete({ state: "forged", code: "fake-code-x" });
+    const outcome = await nodeBroker.complete(PACKAGE, { state: "forged", code: "fake-code-x" });
     expect(outcome).toMatchObject({ ok: false });
     expect(outcome).not.toHaveProperty("packageId");
+    expect(getPackageConnection(db, PRINCIPAL, PACKAGE)).toBeUndefined();
+  });
+
+  it("sends no code to the token endpoint when the answer comes back to another package's callback", async () => {
+    let exchanged = 0;
+    const nodeBroker = broker({
+      fetch: async (input, init) => {
+        if (typeof init?.body === "string" && init.body.includes("grant_type=authorization_code")) exchanged += 1;
+        return await fetch(input, init);
+      },
+    });
+    const started = nodeBroker.start({ packageId: PACKAGE, connection: requirement(), redirectUri: REDIRECT });
+    if (!started.ok) throw new Error(started.message);
+    const consent = await fetch(started.authorizationUrl, { redirect: "manual" });
+    const query = Object.fromEntries(new URL(consent.headers.get("location") ?? "").searchParams.entries());
+    expect(await nodeBroker.complete("com.example.other", query)).toMatchObject({ ok: false, packageId: PACKAGE });
+    expect(exchanged).toBe(0);
     expect(getPackageConnection(db, PRINCIPAL, PACKAGE)).toBeUndefined();
   });
 
@@ -192,7 +219,7 @@ describe("a connection over time", () => {
     const nodeBroker = broker();
     await connect(nodeBroker);
     connector.revokeAll();
-    await nodeBroker.rejected(PACKAGE, requirement());
+    await nodeBroker.rejected(PACKAGE, requirement(), String(tokens().accessToken));
     expect(nodeBroker.status(PACKAGE, requirement())).toMatchObject({ state: "revoked", reason: "the provider no longer accepts the connection" });
     expect(nodeBroker.problem(PACKAGE, requirement(), ["tasks.read"])).toBe(
       "the Fake Tasks (test fixture) connection was revoked; reconnect it in Settings",
@@ -219,6 +246,107 @@ describe("a connection over time", () => {
     await nodeBroker.forget(PACKAGE, requirement());
     expect(getPackageConnection(db, PRINCIPAL, PACKAGE)).toBeUndefined();
     expect(nodeBroker.status(PACKAGE, requirement()).state).toBe("not-connected");
+  });
+
+  it("lets no authorization started before an uninstall finish into a connection afterwards", async () => {
+    const nodeBroker = broker();
+    const started = nodeBroker.start({ packageId: PACKAGE, connection: requirement(), redirectUri: REDIRECT });
+    if (!started.ok) throw new Error(started.message);
+    const consent = await fetch(started.authorizationUrl, { redirect: "manual" });
+    const query = Object.fromEntries(new URL(consent.headers.get("location") ?? "").searchParams.entries());
+    await nodeBroker.forget(PACKAGE, requirement());
+    expect(await nodeBroker.complete(PACKAGE, query)).toMatchObject({ ok: false });
+    expect(getPackageConnection(db, PRINCIPAL, PACKAGE)).toBeUndefined();
+  });
+
+  it("ends the connection, sending nothing anywhere, when a new version points its tokens elsewhere", async () => {
+    let sent = 0;
+    const nodeBroker = broker({
+      fetch: async (input, init) => {
+        if (new URL(input instanceof Request ? input.url : String(input)).hostname === "tokens.example.net") sent += 1;
+        return await fetch(input, init);
+      },
+    });
+    await connect(nodeBroker);
+    const moved = requirement();
+    const elsewhere = {
+      ...moved,
+      authorization: { ...moved.authorization, tokenEndpoint: "https://tokens.example.net/token", revocationEndpoint: "https://tokens.example.net/revoke" },
+    };
+    clock += 3_600_000;
+    expect(await nodeBroker.credential(PACKAGE, elsewhere)).toEqual({
+      ok: false,
+      reason: "the Fake Tasks (test fixture) connection was revoked; reconnect it in Settings",
+    });
+    expect(nodeBroker.status(PACKAGE, elsewhere)).toMatchObject({
+      state: "revoked",
+      reason: "this version of the package changed where the Fake Tasks (test fixture) connection goes; connect it again in Settings",
+    });
+    await nodeBroker.revoke(PACKAGE, elsewhere);
+    await nodeBroker.forget(PACKAGE, elsewhere);
+    expect(sent).toBe(0);
+    expect(tokens()).toEqual({});
+  });
+
+  it("does not bring a connection back when a renewal in flight finishes after the person revoked it", async () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: () => void = () => undefined;
+    const renewing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const nodeBroker = broker({
+      fetch: onRefresh(async (forward) => {
+        entered();
+        await held;
+        return await forward();
+      }),
+    });
+    await connect(nodeBroker);
+    clock += 3_600_000;
+    const credential = nodeBroker.credential(PACKAGE, requirement());
+    await renewing;
+    const revoked = nodeBroker.revoke(PACKAGE, requirement());
+    release();
+    await credential;
+    expect(await revoked).toMatchObject({ state: "revoked", reason: "you revoked it in Settings" });
+    expect(nodeBroker.status(PACKAGE, requirement()).state).toBe("revoked");
+    expect(tokens()).toEqual({});
+  });
+
+  it("ignores a 401 to a token the connection no longer uses", async () => {
+    const nodeBroker = broker();
+    await connect(nodeBroker);
+    connector.revokeAll();
+    await nodeBroker.rejected(PACKAGE, requirement(), "fake-access-from-before");
+    expect(nodeBroker.status(PACKAGE, requirement()).state).toBe("connected");
+  });
+
+  it("keeps the connection when the provider is only busy renewing it", async () => {
+    const nodeBroker = broker({ fetch: onRefresh(async () => new Response("slow down", { status: 429 })) });
+    await connect(nodeBroker);
+    clock += 3_600_000;
+    await nodeBroker.credential(PACKAGE, requirement());
+    expect(nodeBroker.status(PACKAGE, requirement()).state).toBe("connected");
+    expect(tokens().refreshToken).toMatch(/^fake-refresh-/);
+  });
+
+  it("keeps a partial grant partial when a renewal does not repeat the scopes", async () => {
+    connector.setMode({ grantScopes: ["tasks.read"] });
+    const nodeBroker = broker({
+      fetch: onRefresh(async (forward) => {
+        const answer = (await (await forward()).json()) as Record<string, unknown>;
+        const { scope: _scope, ...withoutScope } = answer;
+        return Response.json(withoutScope);
+      }),
+    });
+    await connect(nodeBroker);
+    clock += 3_600_000;
+    const credential = await nodeBroker.credential(PACKAGE, requirement());
+    expect(credential.ok).toBe(true);
+    expect(nodeBroker.status(PACKAGE, requirement())).toMatchObject({ state: "partial", grantedScopes: ["tasks.read"], missingScopes: ["tasks.write"] });
   });
 });
 

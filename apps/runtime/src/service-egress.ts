@@ -145,8 +145,8 @@ export interface EgressConnection {
   endpoints: readonly string[];
   /** The access token for this one request, or why there is none. */
   credential: () => Promise<{ ok: true; token: string } | { ok: false; reason: string }>;
-  /** The provider answered 401 to a request that carried the credential. */
-  rejected?: () => Promise<void>;
+  /** The provider answered 401 to a request that carried this access token. */
+  rejected?: (sentToken: string) => Promise<void>;
 }
 
 export interface EgressHandlerDeps {
@@ -424,9 +424,11 @@ export function egressRequestHandler(deps: EgressHandlerDeps): EgressRequestHand
       headers[credential.header.toLowerCase()] = sent;
       redacted.push(...secretForms(sent), ...secretForms(value));
     }
+    let connectionToken: string | undefined;
     if (connection !== undefined) {
       const found = await connection.credential();
       if (!found.ok) throw refuse(EGRESS_ERROR_CODES.credentialUnavailable, found.reason.slice(0, 300), url.origin);
+      connectionToken = found.token;
       const sent = `Bearer ${found.token}`;
       headers["authorization"] = sent;
       redacted.push(...secretForms(sent), ...secretForms(found.token));
@@ -486,7 +488,7 @@ export function egressRequestHandler(deps: EgressHandlerDeps): EgressRequestHand
     settle({ outcome: "done", status: response.status });
     // The provider no longer accepts the credential. The broker refreshes once or ends the connection; this request is
     // answered as it came, and not retried: whether a write sent with it took effect is not this handler's to guess.
-    if (connection !== undefined && response.status === 401) await connection.rejected?.().catch(() => undefined);
+    if (connectionToken !== undefined && response.status === 401) await connection?.rejected?.(connectionToken).catch(() => undefined);
     return {
       version: SERVICE_EGRESS_VERSION,
       status: response.status,

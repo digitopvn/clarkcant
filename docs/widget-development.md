@@ -2037,17 +2037,21 @@ the widget sees a status. Neither ever holds an access token, a refresh token or
    and answers the provider's authorization URL. The client opens it in the system browser. The route is person-only:
    a request through MCP or the relay is refused with `403 PERSON_ONLY`, so an AI client cannot start a connection for
    itself. It answers `409 CONNECT_ON_THIS_MACHINE` unless the request reached the node over loopback, because the
-   provider redirects the browser back to `http://127.0.0.1:<port>/connections/callback`.
-2. **Come back.** `GET /connections/callback` is public, because a browser following a redirect carries no gateway
-   token: the single-use `state` authenticates it. The node checks the state before sending the code anywhere,
-   exchanges the code at the declared token endpoint, compares the granted scopes with the declared ones, and calls the
+   provider redirects the browser back to `http://127.0.0.1:<port>/connections/callback/<package id>`. Each package
+   has its own callback path, so a code sent back to one package's path is never exchanged for another's (the OAuth
+   mix-up attack).
+2. **Come back.** `GET /connections/callback/:id` is public, because a browser following a redirect carries no gateway
+   token: the single-use `state` authenticates it. The node checks the state, and that it was issued for the package
+   the path names, before sending the code anywhere. It exchanges the code at the declared token endpoint, compares the granted scopes with the declared ones, and calls the
    declared probe. Only then does it keep the connection. Tokens live in their own table on the node
    (`package_connection_tokens`). The page the browser lands on never repeats the code or the state, sends no referrer,
    and a replayed or forged callback is refused.
 3. **Sign.** The service runs with no network, as before (§14.2). When it asks for a URL on one of the connection's
    endpoints with `clarkcant/egress.fetch`, the node adds `authorization: Bearer …` itself, only while one of the
-   service's calls runs, and redacts it from any answer it hands back to the service. A token about to lapse is refreshed first. A
-   provider's `401` gets one refresh; if that is refused too, the connection is revoked. A request is never retried.
+   service's calls runs, and redacts it from any answer it hands back to the service. A token about to lapse is
+   refreshed first; a renewal keeps the scopes granted at consent unless the provider says otherwise. A provider's
+   `401` to the token in use gets one refresh; if the token endpoint refuses that with `400` or `401`, the connection
+   is revoked, while a `408`, `429` or `5xx` leaves it as it is. A request is never retried.
 4. **Readiness.** `GET /packages/:id/connection` answers the `ConnectionStatus`: `not-connected`, `connected`,
    `partial`, `expired` or `revoked`, the requested, granted and missing scopes, and a reason. A capability is not ready
    while the connection is missing, expired or revoked, or did not grant one of its `requiredScopes`, and the reason
@@ -2057,8 +2061,13 @@ the widget sees a status. Neither ever holds an access token, a refresh token or
    connection.
 5. **Revoke.** *Revoke* in Settings calls `POST /packages/:id/connection/revoke`. The node calls the provider's
    revocation endpoint when one is declared, deletes the tokens, and the status reads `revoked` before the request
-   answers. *Reconnect* runs step 1 again. Uninstalling the package, from Settings or by asking Clark
-   (`manage_package`), forgets the connection the same way.
+   answers, even when a renewal was in flight. *Reconnect* runs step 1 again. Uninstalling the package, from Settings
+   or by asking Clark (`manage_package`), forgets the connection the same way, and an authorization still waiting for
+   its callback can no longer finish.
+6. **A new version.** The node keeps a fingerprint of where the declaration let the account's tokens go: the provider,
+   client id, authorization, token and revocation endpoints, the endpoints and the probe. If an update or a rollback
+   changes any of them, the connection reads `revoked`, its tokens are deleted without being sent to the new
+   addresses, and the person connects again under the new declaration.
 
 A connection changes nothing about how a capability runs: the widget's binding, Clark's `invoke_capability` and a
 spoken command still reach `invokeCapability`, the person's execution policy, the host-owned approval card and the

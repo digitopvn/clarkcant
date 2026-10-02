@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   connectionCapabilityProblem,
   type ConnectionStatus,
@@ -66,8 +68,11 @@ export interface PackageConnectionBroker extends ServiceConnectionBroker {
     connection: ServiceConnectionRequirement;
     redirectUri: string;
   }): { ok: true; authorizationUrl: string } | { ok: false; code: "ENDPOINT_REFUSED"; message: string };
-  /** Finish one from the provider's redirect. The answer names the package, never the code. */
-  complete(query: Record<string, string>): Promise<
+  /**
+   * Finish one from the provider's redirect to the callback path of `packageId`. The authorization the state names must
+   * have been started for that package. The answer names the package, never the code.
+   */
+  complete(packageId: string, query: Record<string, string>): Promise<
     | { ok: true; packageId: string; status: ConnectionStatus }
     | { ok: false; packageId?: string; message: string }
   >;
@@ -102,6 +107,29 @@ function originOf(url: string): string {
 
 function iso(ms: number): Instant {
   return new Date(ms).toISOString() as Instant;
+}
+
+/**
+ * Where a declaration lets the account's codes and tokens go. A connection is kept against this fingerprint, so a later
+ * version of the package that points them anywhere else — another token endpoint, other endpoints, another client —
+ * does not inherit the tokens: the connection ends and the person connects again, seeing the new declaration.
+ */
+export function connectionDeclarationDigest(connection: ServiceConnectionRequirement): string {
+  const { authorization } = connection;
+  const fingerprint = JSON.stringify({
+    provider: connection.provider,
+    clientId: authorization.clientId,
+    authorizationEndpoint: authorization.authorizationEndpoint,
+    tokenEndpoint: authorization.tokenEndpoint,
+    revocationEndpoint: authorization.revocationEndpoint ?? null,
+    endpoints: [...connection.endpoints].sort(),
+    probe: connection.probe.url,
+  });
+  return `sha256:${createHash("sha256").update(fingerprint).digest("hex")}`;
+}
+
+function usable(stored: StoredConnection | undefined): stored is StoredConnection {
+  return stored !== undefined && (stored.state === "connected" || stored.state === "partial");
 }
 
 /** An OAuth error code is a short token; anything else a provider puts in the redirect is not repeated. */
@@ -169,8 +197,25 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
     };
   }
 
+  /**
+   * The package's stored connection, ended first when the package now declares somewhere else for its tokens to go
+   * than it did when the person connected it. Nothing is sent to the new declaration's endpoints with the old tokens,
+   * not even a revocation.
+   */
+  function current(packageId: string, connection: ServiceConnectionRequirement): StoredConnection | undefined {
+    const stored = getPackageConnection(db, principalId, packageId);
+    if (!usable(stored) || stored.declarationDigest === connectionDeclarationDigest(connection)) return stored;
+    end(stored, packageId, "revoked", `this version of the package changed where the ${connection.displayName} connection goes; connect it again in Settings`);
+    return getPackageConnection(db, principalId, packageId);
+  }
+
   function status(packageId: string, connection: ServiceConnectionRequirement): ConnectionStatus {
-    return statusOf(getPackageConnection(db, principalId, packageId), connection);
+    return statusOf(current(packageId, connection), connection);
+  }
+
+  /** Let a renewal in flight for this package finish, so what follows acts on the state it leaves. */
+  async function settled(packageId: string): Promise<void> {
+    await refreshing.get(packageId)?.catch(() => undefined);
   }
 
   function stateFor(connection: ServiceConnectionRequirement, granted: readonly string[]): "connected" | "partial" {
@@ -182,9 +227,12 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
     audit({ packageId, provider: stored.provider, outcome: "done", summary: `the ${stored.provider} connection is ${state}: ${reason}` });
   }
 
-  /** Whether a refresh failure means the grant is gone, rather than the provider being briefly unreachable. */
+  /**
+   * Whether a refresh failure means the grant is gone, rather than the provider being briefly unavailable. Only 400
+   * (`invalid_grant`, `invalid_client`) and 401 say that; a 408, 429 or 5xx leaves the connection as it is.
+   */
   function refusedByProvider(result: Extract<TokenExchangeResult, { ok: false }>): boolean {
-    return result.code === "EXCHANGE_FAILED" && /answered 4\d\d/.test(result.message);
+    return result.code === "EXCHANGE_FAILED" && /answered 40[01]\b/.test(result.message);
   }
 
   /**
@@ -196,15 +244,18 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
     const running = refreshing.get(key);
     if (running !== undefined) return await running;
     const work = (async (): Promise<void> => {
-      const stored = getPackageConnection(db, principalId, packageId);
-      if (stored === undefined || (stored.state !== "connected" && stored.state !== "partial")) return;
+      const stored = current(packageId, connection);
+      if (!usable(stored)) return;
       const tokens = packageConnectionTokens(db, stored.connectionRef);
       if (tokens.refreshToken === undefined) {
         end(stored, packageId, ended, ended === "revoked" ? "the provider no longer accepts the connection" : "the access token expired and the provider gave no way to renew it");
         return;
       }
       const problem = endpointProblem(connection.authorization.tokenEndpoint);
-      if (problem !== undefined) return;
+      if (problem !== undefined) {
+        audit({ packageId, provider: stored.provider, outcome: "refused", summary: `renewing the ${stored.provider} connection was refused: ${problem}` });
+        return;
+      }
       const result = await refreshAccessToken({
         endpoint: connection.authorization.tokenEndpoint,
         allowedOrigins: [originOf(connection.authorization.tokenEndpoint)],
@@ -212,7 +263,9 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
         fetchImpl: doFetch,
         timeoutMs: PROVIDER_TIMEOUT_MS,
         refreshToken: tokens.refreshToken,
-        descriptor: { requestedScopes: declaredScopes(connection), optionalScopes: [] },
+        // A renewal keeps what was granted (RFC 6749 §6): a provider that does not repeat the scopes has not granted
+        // the ones it refused at consent.
+        descriptor: { requestedScopes: stored.grantedScopes, optionalScopes: [] },
       });
       if (!result.ok) {
         if (refusedByProvider(result)) {
@@ -227,8 +280,10 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
         }
         return;
       }
-      const granted = result.grant.scopes.granted;
-      refreshPackageConnectionTokens(db, {
+      const granted = result.grant.scopes.granted.filter((scope) => declaredScopes(connection).includes(scope));
+      // Kept only if the connection is still the one this renewal started from: a revoke, reconnect or uninstall that
+      // landed meanwhile wins.
+      const kept = refreshPackageConnectionTokens(db, {
         connectionRef: stored.connectionRef,
         accessToken: result.grant.accessToken,
         ...(result.grant.refreshToken === undefined ? {} : { refreshToken: result.grant.refreshToken }),
@@ -237,7 +292,7 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
         state: stateFor(connection, granted),
         at: iso(clock()),
       });
-      audit({ packageId, provider: stored.provider, outcome: "done", summary: `the ${stored.provider} connection was renewed` });
+      if (kept) audit({ packageId, provider: stored.provider, outcome: "done", summary: `the ${stored.provider} connection was renewed` });
     })().finally(() => {
       refreshing.delete(key);
     });
@@ -271,8 +326,8 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
 
   /** Renew a token that has lapsed or is about to, before anything is checked against it or sent with it. */
   async function prepare(packageId: string, connection: ServiceConnectionRequirement): Promise<void> {
-    const stored = getPackageConnection(db, principalId, packageId);
-    if (stored === undefined || (stored.state !== "connected" && stored.state !== "partial")) return;
+    const stored = current(packageId, connection);
+    if (!usable(stored)) return;
     if (stored.accessExpiresAt === undefined || Date.parse(stored.accessExpiresAt) - EXPIRY_MARGIN_MS > clock()) return;
     await refresh(packageId, connection, "expired");
   }
@@ -296,7 +351,12 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
       return token === undefined ? { ok: false, reason: `${connection.displayName} is not connected` } : { ok: true, token };
     },
 
-    async rejected(packageId, connection) {
+    async rejected(packageId, connection, sentToken) {
+      // A 401 to a token this connection no longer uses — renewed since, or from before a reconnect — says nothing
+      // about the connection as it is now.
+      await settled(packageId);
+      const stored = current(packageId, connection);
+      if (!usable(stored) || packageConnectionTokens(db, stored.connectionRef).accessToken !== sentToken) return;
       await refresh(packageId, connection, "revoked");
     },
 
@@ -327,7 +387,7 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
       return { ok: true, authorizationUrl: url.toString() };
     },
 
-    async complete(query) {
+    async complete(callbackPackageId, query) {
       const state = query["state"] ?? "";
       const waiting = pending.get(state);
       // Single use: whatever happens next, this state cannot complete a second authorization.
@@ -336,6 +396,12 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
         return { ok: false, message: "This connection request is not one this node started, or it has expired. Start it again from Settings." };
       }
       const { packageId, connection } = waiting;
+      if (callbackPackageId !== packageId) {
+        // A code sent back to another package's callback was not asked for by this package's provider: the mix-up
+        // attack. It goes nowhere, least of all to this package's token endpoint.
+        audit({ packageId, provider: connection.provider, outcome: "refused", summary: `a ${connection.provider} answer came back to another package's callback` });
+        return { ok: false, packageId, message: `${connection.displayName} answered on the wrong callback, so nothing was connected. Start it again from Settings.` };
+      }
       if (query["error"] !== undefined || query["code"] === undefined) {
         audit({ packageId, provider: connection.provider, outcome: "refused", summary: `${connection.provider} answered ${oauthError(query["error"])} instead of a grant` });
         return { ok: false, packageId, message: `${connection.displayName} did not grant access (${oauthError(query["error"])}). Nothing was connected.` };
@@ -387,6 +453,7 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
         principalId,
         packageId,
         provider: connection.provider,
+        declarationDigest: connectionDeclarationDigest(connection),
         state: stateFor(connection, granted),
         grantedScopes: granted,
         ...(exchanged.grant.expiresInSeconds === undefined ? {} : { accessExpiresAt: iso(at + exchanged.grant.expiresInSeconds * 1000) }),
@@ -405,8 +472,9 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
     },
 
     async revoke(packageId, connection) {
-      const stored = getPackageConnection(db, principalId, packageId);
-      if (stored !== undefined && (stored.state === "connected" || stored.state === "partial")) {
+      await settled(packageId);
+      const stored = current(packageId, connection);
+      if (usable(stored)) {
         const atProvider = await revokeAtProvider(connection, stored);
         end(stored, packageId, "revoked", atProvider ? "you revoked it in Settings" : "you revoked it in Settings; the provider could not be told");
       }
@@ -414,9 +482,12 @@ export function createPackageConnectionBroker(options: PackageConnectionBrokerOp
     },
 
     async forget(packageId, connection) {
-      const stored = getPackageConnection(db, principalId, packageId);
+      // An authorization started before the uninstall must not finish into a connection for a package that is gone.
+      for (const [state, entry] of pending) if (entry.packageId === packageId) pending.delete(state);
+      await settled(packageId);
+      const stored = connection === undefined ? getPackageConnection(db, principalId, packageId) : current(packageId, connection);
       if (stored === undefined) return;
-      if (connection !== undefined && (stored.state === "connected" || stored.state === "partial")) await revokeAtProvider(connection, stored);
+      if (connection !== undefined && usable(stored)) await revokeAtProvider(connection, stored);
       deletePackageConnection(db, principalId, packageId);
       audit({ packageId, provider: stored.provider, outcome: "done", summary: `the ${stored.provider} connection was removed with its package` });
     },

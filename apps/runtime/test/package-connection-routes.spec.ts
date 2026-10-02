@@ -114,6 +114,7 @@ function call(method: string, path: string, options: { headers?: Record<string, 
 }
 
 const CONNECTION = `/packages/${encodeURIComponent(PACKAGE_ID)}/connection`;
+const CALLBACK = `/connections/callback/${encodeURIComponent(PACKAGE_ID)}`;
 
 function page(response: GatewayResponse): string {
   return response.binary === undefined ? "" : Buffer.from(response.binary.bytes).toString("utf8");
@@ -145,7 +146,7 @@ describe("the connection routes", () => {
     expect(local.status).toBe(200);
     const url = new URL(String(body(local)["authorizationUrl"]));
     expect(url.origin).toBe(connector.origin);
-    expect(url.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:7777/connections/callback");
+    expect(url.searchParams.get("redirect_uri")).toBe(`http://127.0.0.1:7777${CALLBACK}`);
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("scope")).toBe("tasks.read tasks.write");
   });
@@ -166,7 +167,7 @@ describe("the connection routes", () => {
     expect(query["code"]).toBeTruthy();
 
     // A browser following the redirect carries no token; the single-use state is what authenticates it.
-    const landed = await call("GET", "/connections/callback", { query, token: false });
+    const landed = await call("GET", CALLBACK, { query, token: false });
     expect(landed.status).toBe(200);
     const html = page(landed);
     expect(html).toContain('data-connection-result="connected"');
@@ -175,7 +176,7 @@ describe("the connection routes", () => {
     expect(landed.binary?.headers?.["referrer-policy"]).toBe("no-referrer");
 
     // The same state cannot be used twice.
-    const replayed = await call("GET", "/connections/callback", { query, token: false });
+    const replayed = await call("GET", CALLBACK, { query, token: false });
     expect(replayed.status).toBe(400);
 
     const status = await call("GET", CONNECTION);
@@ -190,7 +191,7 @@ describe("the connection routes", () => {
   });
 
   it("answer a forged callback with a page that never repeats the code", async () => {
-    const response = await call("GET", "/connections/callback", { query: { state: "forged-state", code: "fake-code-x" }, token: false });
+    const response = await call("GET", CALLBACK, { query: { state: "forged-state", code: "fake-code-x" }, token: false });
     expect(response.status).toBe(400);
     const html = page(response);
     expect(html).toContain('data-connection-result="failed"');
@@ -202,7 +203,7 @@ describe("the connection routes", () => {
     const started = await call("POST", CONNECTION, { headers: { host: "127.0.0.1:7777" } });
     const consent = await fetch(String(body(started)["authorizationUrl"]), { redirect: "manual" });
     const query = Object.fromEntries(new URL(consent.headers.get("location") ?? "").searchParams.entries());
-    expect((await call("GET", "/connections/callback", { query, token: false })).status).toBe(200);
+    expect((await call("GET", CALLBACK, { query, token: false })).status).toBe(200);
     expect(state(await call("GET", CONNECTION))).toBe("connected");
     const rows = (table: string) => services.runtime.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
     expect(rows("package_connection_tokens").n).toBeGreaterThan(0);

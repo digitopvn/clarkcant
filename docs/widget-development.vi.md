@@ -2040,16 +2040,20 @@ widget thấy một trạng thái. Cả hai không bao giờ giữ access token,
    phút, rồi trả về URL uỷ quyền của nhà cung cấp. Client mở URL đó trong trình duyệt hệ thống. Route này chỉ dành cho
    người dùng: request đi qua MCP hay relay bị từ chối với `403 PERSON_ONLY`, nên một AI client không thể tự bắt đầu
    kết nối cho chính nó. Route trả `409 CONNECT_ON_THIS_MACHINE` nếu request không tới node qua loopback, vì nhà cung
-   cấp chuyển trình duyệt về `http://127.0.0.1:<port>/connections/callback`.
-2. **Quay về.** `GET /connections/callback` là công khai, vì trình duyệt đi theo một lần chuyển hướng không mang token
-   của gateway: `state` dùng một lần mới là thứ xác thực nó. Node kiểm tra state trước khi gửi code đi bất cứ đâu, đổi
-   code tại token endpoint đã khai báo, so scope được cấp với scope đã khai báo, và gọi probe đã khai báo. Chỉ khi đó
+   cấp chuyển trình duyệt về `http://127.0.0.1:<port>/connections/callback/<package id>`. Mỗi package có đường dẫn
+   callback riêng, nên code gửi về đường dẫn của package này không bao giờ được đổi cho package khác (tấn công OAuth
+   mix-up).
+2. **Quay về.** `GET /connections/callback/:id` là công khai, vì trình duyệt đi theo một lần chuyển hướng không mang
+   token của gateway: `state` dùng một lần mới là thứ xác thực nó. Node kiểm tra state, và rằng state đó được cấp cho
+   đúng package mà đường dẫn nêu, trước khi gửi code đi bất cứ đâu. Node đổi code tại token endpoint đã khai báo, so scope được cấp với scope đã khai báo, và gọi probe đã khai báo. Chỉ khi đó
    node mới giữ kết nối. Token nằm trong bảng riêng trên node (`package_connection_tokens`). Trang mà trình duyệt mở ra
    không bao giờ lặp lại code hay state, không gửi referrer, và một callback bị phát lại hoặc giả mạo bị từ chối.
 3. **Ký.** Service vẫn chạy không có mạng, như trước (§14.2). Khi nó xin một URL trên một endpoint của connection bằng
    `clarkcant/egress.fetch`, node tự thêm `authorization: Bearer …`, chỉ trong lúc một lời gọi của service đang chạy, và
-   che token khỏi mọi câu trả lời trả lại cho service. Token sắp hết hạn được làm mới trước. Khi nhà cung cấp trả `401`,
-   node làm mới một lần; nếu vẫn bị từ chối, kết nối bị thu hồi. Request không bao giờ được thử lại.
+   che token khỏi mọi câu trả lời trả lại cho service. Token sắp hết hạn được làm mới trước; lần làm mới giữ nguyên các
+   scope đã cấp lúc đồng ý trừ khi nhà cung cấp nói khác. Khi nhà cung cấp trả `401` cho token đang dùng, node làm mới
+   một lần; nếu token endpoint từ chối bằng `400` hoặc `401`, kết nối bị thu hồi, còn `408`, `429` hay `5xx` thì để
+   nguyên kết nối. Request không bao giờ được thử lại.
 4. **Sẵn sàng.** `GET /packages/:id/connection` trả về `ConnectionStatus`: `not-connected`, `connected`, `partial`,
    `expired` hoặc `revoked`, các scope đã xin, đã cấp và còn thiếu, kèm lý do. Capability không sẵn sàng khi kết nối
    chưa có, đã hết hạn hoặc bị thu hồi, hoặc không cấp một scope trong `requiredScopes` của nó, và lý do nói rõ là cái
@@ -2057,9 +2061,13 @@ widget thấy một trạng thái. Cả hai không bao giờ giữ access token,
    Widget đọc lý do từ `actions.availability()` (§10); một lần bấm, agent và giọng nói bị từ chối với
    `CAPABILITY_NOT_AUTHENTICATED` và cùng lý do đó. Capability có đủ scope đã cấp vẫn chạy trên kết nối `partial`.
 5. **Thu hồi.** *Revoke* trong Settings gọi `POST /packages/:id/connection/revoke`. Node gọi revocation endpoint của nhà
-   cung cấp nếu có khai báo, xoá token, và trạng thái thành `revoked` trước khi request trả lời. *Reconnect* chạy lại
-   bước 1. Gỡ package, từ Settings hoặc bằng cách nhờ Clark (`manage_package`), cũng quên kết nối theo
-   cách đó.
+   cung cấp nếu có khai báo, xoá token, và trạng thái thành `revoked` trước khi request trả lời, kể cả khi một lần làm
+   mới đang chạy. *Reconnect* chạy lại bước 1. Gỡ package, từ Settings hoặc bằng cách nhờ Clark (`manage_package`),
+   cũng quên kết nối theo cách đó, và một lần uỷ quyền còn đang chờ callback không thể hoàn tất nữa.
+6. **Phiên bản mới.** Node giữ một dấu vân tay về nơi mà khai báo cho phép token của tài khoản đi tới: nhà cung cấp,
+   client id, các endpoint uỷ quyền, token và thu hồi, các endpoint và probe. Nếu một lần cập nhật hay quay về phiên bản
+   cũ thay đổi bất kỳ mục nào, kết nối thành `revoked`, token bị xoá mà không được gửi tới địa chỉ mới, và người dùng
+   kết nối lại theo khai báo mới.
 
 Kết nối không thay đổi cách một capability chạy: binding của widget, `invoke_capability` của Clark và lệnh nói vẫn đi
 tới `invokeCapability`, execution policy của người dùng, approval card do host sở hữu và cùng một audit trail (§4). Một
