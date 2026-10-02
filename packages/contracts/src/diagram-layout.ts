@@ -14,10 +14,12 @@ import type { Diagram, DiagramNode, DiagramShape } from "./diagram-view.ts";
 export const DIAGRAM_LINE_HEIGHT = 18;
 const PADDING = 24;
 const SIBLING_GAP = 28;
-/** Room between layers for an edge and its label. */
+/** Room between layers for an edge; a gap an edge label sits in is widened to hold the label. */
 const LAYER_GAP: Record<Diagram["direction"], number> = { TB: 64, LR: 96 };
 /** How wide a bend point of a long edge is when laid out beside the nodes of a layer it crosses. */
 const BEND_SIZE = 20;
+/** How far apart, across the flow, two edges joining the same two nodes are drawn. */
+const PARALLEL_OFFSET = 10;
 /** Fixed ordering passes: enough to untangle a bounded graph, and a known cost whatever the graph. */
 const ORDERING_PASSES = 8;
 
@@ -185,16 +187,26 @@ function placeAcross(layers: Vertex[][]): number {
   return widest;
 }
 
-/** Where each layer starts along the diagram, and how thick it is: the thickest node in it. */
-function placeAlong(layers: Vertex[][], gap: number): { start: number[]; thickness: number[]; length: number } {
+/**
+ * How much room an edge label takes along the flow, with a margin on each side: its height when layers stack top to
+ * bottom, its width when they run left to right. The width is counted from characters, as the page draws the box.
+ */
+export function diagramEdgeLabelWidth(label: string): number {
+  return Array.from(label).length * 7 + 12;
+}
+const EDGE_LABEL_HEIGHT = 20;
+const EDGE_LABEL_MARGIN = 8;
+
+/** Where each layer starts along the diagram, and how thick it is: the thickest node in it. `gaps[i]` follows layer i. */
+function placeAlong(layers: Vertex[][], gaps: number[]): { start: number[]; thickness: number[]; length: number } {
   const thickness = layers.map((vertices) => Math.max(BEND_SIZE, ...vertices.filter((vertex) => vertex.node >= 0).map((vertex) => vertex.along)));
   const start: number[] = [];
   let at = PADDING;
-  for (const size of thickness) {
+  thickness.forEach((size, index) => {
     start.push(at);
-    at += size + gap;
-  }
-  return { start, thickness, length: layers.length === 0 ? 0 : at - gap - PADDING };
+    at += size + (index + 1 < thickness.length ? (gaps[index] ?? 0) : 0);
+  });
+  return { start, thickness, length: layers.length === 0 ? 0 : at - PADDING };
 }
 
 function finish(
@@ -204,9 +216,23 @@ function finish(
   chains: { edge: number; vertices: Vertex[]; reversed: boolean }[],
 ): DiagramLayout {
   const tb = diagram.direction === "TB";
-  const gap = LAYER_GAP[diagram.direction];
+  // A label sits in the gap after the upper end of its edge's middle segment; that gap is widened to hold it whole, so a
+  // node never covers it.
+  const labelled = chains.map(({ edge, vertices, reversed }) => {
+    const label = diagram.edges[edge]?.label;
+    if (label === undefined) return undefined;
+    const middle = Math.max(0, Math.floor((vertices.length - 1) / 2));
+    const upper = reversed ? vertices.length - 2 - middle : middle;
+    return { upper, room: (tb ? EDGE_LABEL_HEIGHT : diagramEdgeLabelWidth(label)) + EDGE_LABEL_MARGIN * 2 };
+  });
+  const gaps = layers.map(() => LAYER_GAP[diagram.direction]);
+  chains.forEach(({ vertices }, index) => {
+    const placed = labelled[index];
+    const layer = placed === undefined ? undefined : vertices[Math.max(0, placed.upper)]?.layer;
+    if (placed !== undefined && layer !== undefined) gaps[layer] = Math.max(gaps[layer] ?? 0, placed.room);
+  });
   const widest = placeAcross(layers);
-  const along = placeAlong(layers, gap);
+  const along = placeAlong(layers, gaps);
   const byNode = new Map<number, Vertex>();
   for (const vertices of layers) for (const vertex of vertices) if (vertex.node >= 0) byNode.set(vertex.node, vertex);
 
@@ -233,32 +259,43 @@ function finish(
     };
   });
 
-  const edges: PlacedDiagramEdge[] = chains.map(({ edge, vertices, reversed }) => {
+  // Edges joining the same two nodes — one each way, or several without a direction — are drawn apart, not on one line.
+  const seen = new Map<string, number>();
+  const edges: PlacedDiagramEdge[] = chains.map(({ edge, vertices, reversed }, chainIndex) => {
     const first = vertices[0];
     const last = vertices.at(-1);
     if (first === undefined || last === undefined) throw new Error("every edge has two ends");
+    const source = diagram.edges[edge];
+    if (source === undefined) throw new Error("every chain is an edge");
+    const pair = [source.from, source.to].sort().join("\u0000");
+    const repeat = seen.get(pair) ?? 0;
+    seen.set(pair, repeat + 1);
+    const offset = repeat === 0 ? 0 : (repeat % 2 === 1 ? 1 : -1) * PARALLEL_OFFSET * Math.ceil(repeat / 2);
     const half = (vertex: Vertex): number => vertex.along / 2;
     // Leaves the upper node at its far side and enters the lower one at its near side, through each bend's centre.
     const points = [
-      point(alongCenter(first) + half(first), first.center),
-      ...vertices.slice(1, -1).map((vertex) => point(alongCenter(vertex), vertex.center)),
-      point(alongCenter(last) - half(last), last.center),
+      point(alongCenter(first) + half(first), first.center + offset),
+      ...vertices.slice(1, -1).map((vertex) => point(alongCenter(vertex), vertex.center + offset)),
+      point(alongCenter(last) - half(last), last.center + offset),
     ];
     if (reversed) points.reverse();
-    const source = diagram.edges[edge];
-    if (source === undefined) throw new Error("every chain is an edge");
-    const middle = Math.max(0, Math.floor((points.length - 1) / 2));
-    const a = points[middle];
-    const b = points[middle + 1] ?? a;
-    return {
-      index: edge,
-      from: source.from,
-      to: source.to,
-      points,
-      ...(source.label === undefined || a === undefined || b === undefined
-        ? {}
-        : { labelAt: { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) } }),
-    };
+    const placed = labelled[chainIndex];
+    let labelAt: DiagramPoint | undefined;
+    if (placed !== undefined) {
+      // Centred in its gap along the flow, where the middle segment crosses that line.
+      const upper = vertices[Math.max(0, placed.upper)];
+      const lower = vertices[Math.max(0, placed.upper) + 1] ?? upper;
+      if (upper !== undefined && lower !== undefined) {
+        const gapStart = (along.start[upper.layer] ?? 0) + (along.thickness[upper.layer] ?? 0);
+        const gapCenter = gapStart + (gaps[upper.layer] ?? 0) / 2;
+        const from = point(upper === first ? alongCenter(first) + half(first) : alongCenter(upper), upper.center + offset);
+        const to = point(lower === last ? alongCenter(last) - half(last) : alongCenter(lower), lower.center + offset);
+        const [fromAlong, fromCross, toAlong, toCross] = tb ? [from.y, from.x, to.y, to.x] : [from.x, from.y, to.x, to.y];
+        const t = toAlong === fromAlong ? 0.5 : Math.min(1, Math.max(0, (gapCenter - fromAlong) / (toAlong - fromAlong)));
+        labelAt = point(Math.round(fromAlong + (toAlong - fromAlong) * t), Math.round(fromCross + (toCross - fromCross) * t));
+      }
+    }
+    return { index: edge, from: source.from, to: source.to, points, ...(labelAt === undefined ? {} : { labelAt }) };
   });
 
   const across = widest + PADDING * 2;
@@ -406,11 +443,14 @@ function tree(diagram: Diagram, sizes: ReturnType<typeof sized>[]): DiagramLayou
     const points = tb
       ? [{ x: a.x + shift(from), y: a.y }, { x: b.x + shift(to), y: b.y }]
       : [{ x: a.x, y: a.y + shift(from) }, { x: b.x, y: b.y + shift(to) }];
-    return {
-      ...edge,
-      points,
-      ...(edge.labelAt === undefined ? {} : { labelAt: { x: Math.round((points[0]!.x + points[1]!.x) / 2), y: Math.round((points[0]!.y + points[1]!.y) / 2) } }),
-    };
+    if (edge.labelAt === undefined) return { ...edge, points };
+    // The label keeps its place along the flow, in the middle of its gap, and moves across with the line it labels.
+    const [start, end] = points as [DiagramPoint, DiagramPoint];
+    const t = tb ? (end.y === start.y ? 0.5 : (edge.labelAt.y - start.y) / (end.y - start.y)) : end.x === start.x ? 0.5 : (edge.labelAt.x - start.x) / (end.x - start.x);
+    const labelAt = tb
+      ? { x: Math.round(start.x + (end.x - start.x) * t), y: edge.labelAt.y }
+      : { x: edge.labelAt.x, y: Math.round(start.y + (end.y - start.y) * t) };
+    return { ...edge, points, labelAt };
   });
   const across = Math.max(0, start - SIBLING_GAP - PADDING) + PADDING * 2;
   return {

@@ -1285,7 +1285,8 @@ hidden characters, each with the host's own sentence.
 `layout` is `layered` (the default) or `tree`, and `direction` is `TB` or `LR`. The layered layout breaks cycles at
 the edge the props close them with, layers by longest path, bends long edges through the layers they cross and orders
 each layer with a fixed number of barycenter passes; the tree layout centres children under their parent and refuses a
-graph that is not a forest. Both are deterministic: the same props always give the same drawing, in the node and in
+graph that is not a forest. A gap an edge label sits in is widened to hold the label, and edges joining the same two
+nodes (one each way, say) are drawn apart. Both are deterministic: the same props always give the same drawing, in the node and in
 every client, and the largest accepted graph is laid out in bounded time
 ([diagram-layout.ts](../packages/contracts/src/diagram-layout.ts)).
 
@@ -1293,7 +1294,10 @@ A model can also hand `show_view` a Mermaid flowchart: `{ "mermaid": "flowchart 
 node reads a documented subset of the flowchart syntax on the host and stores only the resulting diagram model; the
 Mermaid source is never stored and Mermaid's renderer is never loaded. The subset is `flowchart`/`graph` with `TB`, `TD`
 or `LR`; nodes as `id`, `id[box]`, `id(round)`, `id{diamond}` and `id((circle))`; links `-->`, `---`, `<-->`,
-`-->|label|` and `-- label -->`; one level of `subgraph` as the node's group; `accTitle` as the title; `%%` comments.
+`-->|label|` and `-- label -->`; one level of `subgraph` as the node's group (a node named outside first joins the
+subgraph that names it later, as in Mermaid, and one named in two subgraphs is refused); `accTitle` as the title. `%%`
+comments and a one-line `accDescr` are passed over, since neither draws anything. A source naming more than 60 nodes or
+120 links is refused as soon as it passes the limit.
 Everything that configures or extends Mermaid's renderer is refused by line with the reason: `click`, `href`, `call`,
 `style`, `classDef`, `class`, `:::`, `linkStyle`, `%%{init}%%` directives, front matter, HTML or entity codes in
 labels, Markdown strings, `fa:` icons, other node shapes, other link styles, `&` chains, nested subgraphs and other
@@ -1301,13 +1305,15 @@ diagram types ([diagram-mermaid.ts](../packages/contracts/src/diagram-mermaid.ts
 
 `diagram.select` carries `{ selectedId }`; the node checks it against the current props and keeps it in widget state,
 so the selection survives a reload, and a restored state ignores an ID the props no longer hold. Each node is a button
-whose accessible name says its label, shape, group and the nodes it leads to, comes from and is linked with. One node
+whose accessible name says its label, shape, group and the nodes it leads to, comes from and is linked with, each with
+the label of the edge joining them ("leads to Ship (yes)"), so a decision's branches are heard as well as seen. One node
 is in the tab order; the key along the flow (Down for `TB`, Right for `LR`) follows an edge forward, the opposite key
-follows one back, the cross keys step within a layer, Home/End go to the first and last node, Enter/Space select and
-Escape clears. The selected node lights its edges and neighbours with stroke width and dashes as well as colour, and a
+follows one back, the cross keys step within a layer, Home/End go to the first and last node, Enter/Space select the
+focused node or, on the selected one, clear it, and Escape clears. The selected node lights its edges and neighbours with stroke width and dashes as well as colour, and a
 live region announces the change. A wide drawing keeps its size and scrolls inside its card, so the page never
 scrolls sideways; the diagram has no motion of its own and follows both themes. The semantic document reports the node
-and edge counts, the layout and direction, and the selected node with its in/out/linked counts; the text alternative,
+and edge counts, the layout and direction, and the selected node with its in/out/linked counts and neighbours, each
+with its edge label; the text alternative,
 also shown under the drawing, lists every node with its outgoing edges.
 
 Tests: [diagram-view.spec.ts](../packages/contracts/test/diagram-view.spec.ts) checks bounds, malformed graphs, state,

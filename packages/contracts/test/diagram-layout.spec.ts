@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_DIAGRAM_EDGES, MAX_DIAGRAM_NODES, layoutDiagram, readDiagram, wrapDiagramLabel, type Diagram } from "../src/index.ts";
+import { MAX_DIAGRAM_EDGES, MAX_DIAGRAM_NODES, diagramEdgeLabelWidth, layoutDiagram, readDiagram, wrapDiagramLabel, type Diagram } from "../src/index.ts";
 
 function diagram(props: unknown): Diagram {
   const read = readDiagram(props);
@@ -82,6 +82,26 @@ describe("the diagram layout", () => {
         for (const edge of layout.edges) for (const point of edge.points) expect(Number.isInteger(point.x) && Number.isInteger(point.y)).toBe(true);
       }
     }
+  });
+
+  it("widens the gap an edge label sits in, so no node covers it, in both directions", () => {
+    const label = "a forty character label for the edge ok";
+    for (const direction of ["TB", "LR"] as const) {
+      const layout = layoutDiagram(diagram({ direction, nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }, { id: "c", label: "C" }], edges: [{ from: "a", to: "b", label }, { from: "a", to: "c" }] }));
+      const edge = layout.edges.find((candidate) => candidate.to === "b");
+      if (edge?.labelAt === undefined) throw new Error("the labelled edge has a label position");
+      // The box the page draws behind a label: its character width across, 20 high.
+      const half = { x: diagramEdgeLabelWidth(label) / 2, y: 10 };
+      const box = { x: edge.labelAt.x - half.x, y: edge.labelAt.y - half.y, width: half.x * 2, height: half.y * 2 };
+      for (const node of layout.nodes) expect(overlaps(box, node), `the label overlaps ${node.id} (${direction})`).toBe(false);
+    }
+  });
+
+  it("draws two edges between the same nodes, one each way, on separate lines", () => {
+    const layout = layoutDiagram(diagram({ nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }], edges: [{ from: "a", to: "b", label: "go" }, { from: "b", to: "a", label: "back" }] }));
+    const [there, back] = layout.edges;
+    expect(there?.points[0]?.x).not.toBe(back?.points.at(-1)?.x);
+    expect(there?.labelAt).not.toEqual(back?.labelAt);
   });
 
   it("places a tree's children under their parent", () => {

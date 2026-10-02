@@ -125,7 +125,7 @@ describe("the bounded diagram contract", () => {
     if (diagram === undefined) throw new Error("valid");
     const semantic = diagramSemantic(diagram, { selectedId: "test" });
     expect(semantic.summary).toBe("Diagram: 5 nodes, 6 edges, layered top to bottom; selected Tests pass? (1 in, 2 out, 0 linked)");
-    expect(semantic.values).toMatchObject({ selectedLabel: "Tests pass?", selectedGroup: "CI", previous: ["Build"], next: ["Ship", "Build"] });
+    expect(semantic.values).toMatchObject({ selectedLabel: "Tests pass?", selectedGroup: "CI", previous: ["Build"], next: ["Ship (yes)", "Build (no)"] });
     expect(semantic.selectedIds).toEqual(["test"]);
     const big = readDiagram(chain(MAX_DIAGRAM_NODES));
     if (big === undefined) throw new Error("valid");

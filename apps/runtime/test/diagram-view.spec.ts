@@ -157,7 +157,7 @@ describe("the selected node", () => {
       title: "Phát hành",
       summary: "Diagram: 4 nodes, 4 edges, layered top to bottom; selected Kiểm thử đạt? (1 in, 2 out, 0 linked)",
       selectedIds: ["test"],
-      values: { nodeCount: 4, edgeCount: 4, selectedLabel: "Kiểm thử đạt?", selectedGroup: "CI", previous: ["Xây dựng"], next: ["Phát hành", "Xây dựng"] },
+      values: { nodeCount: 4, edgeCount: 4, selectedLabel: "Kiểm thử đạt?", selectedGroup: "CI", previous: ["Xây dựng"], next: ["Phát hành (đạt)", "Xây dựng (chưa)"] },
       freshness: "unknown",
     });
     if (document === undefined) throw new Error("no semantic document");

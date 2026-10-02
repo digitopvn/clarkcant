@@ -97,11 +97,12 @@ import {
   readTreeState,
   DIAGRAM_ID,
   DIAGRAM_SELECT_OPERATION,
-  type Diagram,
   type DiagramNode,
   type PlacedDiagramNode,
   DIAGRAM_LINE_HEIGHT,
+  diagramEdgeLabelWidth,
   diagramNeighbours,
+  diagramTextLine,
   layoutDiagram,
   readDiagram,
   readDiagramState,
@@ -4779,8 +4780,6 @@ const DIAGRAM_SHAPE_WORD: Record<DiagramNode["shape"], MessageKey> = {
   circle: "widgets.diagram.shape.circle",
 };
 
-const DIAGRAM_ARROW: Record<Diagram["edges"][number]["direction"], string> = { forward: "→", both: "↔", none: "—" };
-
 /** One shape, in the node's own box: every coordinate is a number the layout computed, never markup from the props. */
 function DiagramShape({ node }: { node: PlacedDiagramNode }): ReactElement {
   const { width, height } = node;
@@ -4831,15 +4830,14 @@ function DiagramView({ props, state, onAction, onStateChange, statedAt, sample }
   }
 
   const byId = new Map(diagram.nodes.map((node) => [node.id, node]));
-  const names = (nodes: readonly DiagramNode[]): string => nodes.map((node) => node.label).join(", ");
   const describe = (node: DiagramNode): string => {
-    const near = diagramNeighbours(diagram, node.id);
+    const near = diagramNeighbours(diagram, node.id).named;
     const parts = [node.label, t(DIAGRAM_SHAPE_WORD[node.shape])];
     if (node.group !== undefined) parts.push(fillMessage(t("widgets.diagram.inGroup"), { group: node.group }));
-    if (near.next.length > 0) parts.push(fillMessage(t("widgets.diagram.leadsTo"), { nodes: names(near.next) }));
-    if (near.previous.length > 0) parts.push(fillMessage(t("widgets.diagram.comesFrom"), { nodes: names(near.previous) }));
-    if (near.linked.length > 0) parts.push(fillMessage(t("widgets.diagram.linkedWith"), { nodes: names(near.linked) }));
-    if (near.edges.length === 0) parts.push(t("widgets.diagram.noEdges"));
+    if (near.next.length > 0) parts.push(fillMessage(t("widgets.diagram.leadsTo"), { nodes: near.next.join(", ") }));
+    if (near.previous.length > 0) parts.push(fillMessage(t("widgets.diagram.comesFrom"), { nodes: near.previous.join(", ") }));
+    if (near.linked.length > 0) parts.push(fillMessage(t("widgets.diagram.linkedWith"), { nodes: near.linked.join(", ") }));
+    if (near.next.length + near.previous.length + near.linked.length === 0) parts.push(t("widgets.diagram.noEdges"));
     return parts.join(", ");
   };
 
@@ -4866,7 +4864,7 @@ function DiagramView({ props, state, onAction, onStateChange, statedAt, sample }
     const lit = litEdges.has(edge.index);
     const marker = `url(#${markerBase}-${lit ? "lit" : "plain"})`;
     const path = edge.points.map((point, index) => `${index === 0 ? "M" : "L"} ${String(point.x)} ${String(point.y)}`).join(" ");
-    const labelWidth = source?.label === undefined ? 0 : Array.from(source.label).length * 7 + 12;
+    const labelWidth = source?.label === undefined ? 0 : diagramEdgeLabelWidth(source.label);
     return (
       <g key={edge.index} className="cc-diagram-edge" data-diagram-edge={`${edge.from}>${edge.to}`} data-lit={lit ? "true" : undefined}>
         <path
@@ -5026,17 +5024,11 @@ function DiagramView({ props, state, onAction, onStateChange, statedAt, sample }
           <details className="cc-diagram-text" data-diagram-text="">
             <summary>{t("widgets.diagram.asText")}</summary>
             <ul>
-              {diagram.nodes.map((node) => {
-                const out = diagram.edges
-                  .filter((edge) => edge.from === node.id)
-                  .map((edge) => `${DIAGRAM_ARROW[edge.direction]} ${byId.get(edge.to)?.label ?? edge.to}${edge.label === undefined ? "" : ` (${edge.label})`}`);
-                const name = `${node.label}${node.group === undefined ? "" : ` [${node.group}]`}`;
-                return (
-                  <li key={node.id} data-diagram-text-node={node.id}>
-                    {out.length === 0 ? name : `${name}: ${out.join(", ")}`}
-                  </li>
-                );
-              })}
+              {diagram.nodes.map((node) => (
+                <li key={node.id} data-diagram-text-node={node.id}>
+                  {diagramTextLine(diagram, node)}
+                </li>
+              ))}
             </ul>
           </details>
         )}

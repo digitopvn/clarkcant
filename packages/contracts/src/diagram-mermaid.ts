@@ -1,3 +1,4 @@
+import { MAX_DIAGRAM_EDGES, MAX_DIAGRAM_NODES } from "./diagram-view.ts";
 import { hiddenCharacterProblem } from "./text-rules.ts";
 
 /**
@@ -7,7 +8,9 @@ import { hiddenCharacterProblem } from "./text-rules.ts";
  * configuration and styles, and fetches icons, which is everything a model-supplied diagram must not do. Instead the host
  * reads the plain part of the syntax — nodes, their four shapes, links and their labels, one level of `subgraph` as a
  * group — into the same props a diagram is drawn from, and refuses everything else by name rather than dropping it, so a
- * diagram is never drawn differently from what was written. The source itself is never stored.
+ * diagram is never drawn differently from what was written. The one statement passed over is a one-line `accDescr`: it
+ * describes the diagram for a screen reader and draws nothing, and the drawn diagram is described from its own nodes and
+ * edges. Comments (`%%`) are passed over too. The source itself is never stored.
  */
 
 export const MAX_MERMAID_SOURCE = 8000;
@@ -69,7 +72,7 @@ function statements(line: string): string[] {
   let current = "";
   for (const character of line) {
     if (character === '"') quoted = !quoted;
-    else if (!quoted && character === "|") piped = !piped;
+    else if (!quoted && depth === 0 && character === "|") piped = !piped;
     else if (!quoted && "[({".includes(character)) depth += 1;
     else if (!quoted && "])}".includes(character)) depth = Math.max(0, depth - 1);
     if (character === ";" && !quoted && !piped && depth === 0) {
@@ -210,6 +213,8 @@ export function parseMermaidFlowchart(source: unknown): MermaidReading {
     if (subgraphIds.has(found.id)) refuse(`${found.id} is a subgraph; links to a subgraph are not read`);
     const known = nodes.get(found.id);
     if (known === undefined) {
+      // Past the limit the diagram is refused anyway; stopping here keeps a long source from being read in full first.
+      if (nodes.size >= MAX_DIAGRAM_NODES) refuse(`the flowchart has more than ${String(MAX_DIAGRAM_NODES)} nodes; at most ${String(MAX_DIAGRAM_NODES)} are drawn`);
       nodes.set(found.id, {
         id: found.id,
         ...(found.label === undefined ? {} : { label: found.label }),
@@ -218,6 +223,9 @@ export function parseMermaidFlowchart(source: unknown): MermaidReading {
       });
       return;
     }
+    // As in Mermaid, a node named outside every subgraph and then inside one belongs to that subgraph.
+    if (group !== undefined && known.group === undefined) known.group = group;
+    else if (group !== undefined && known.group !== group) refuse(`node ${found.id} is placed in two subgraphs, ${known.group ?? ""} and ${group}`);
     if (found.label === undefined) return;
     if (known.label !== undefined && (known.label !== found.label || known.shape !== found.shape)) {
       refuse(`node ${found.id} is given two different labels or shapes`);
@@ -286,6 +294,7 @@ export function parseMermaidFlowchart(source: unknown): MermaidReading {
           at = skipSpace(statement, link.end);
           const to = readNode(statement, at);
           meet(to);
+          if (edges.length >= MAX_DIAGRAM_EDGES) refuse(`the flowchart has more than ${String(MAX_DIAGRAM_EDGES)} links; at most ${String(MAX_DIAGRAM_EDGES)} are drawn`);
           edges.push({
             from: from.id,
             to: to.id,

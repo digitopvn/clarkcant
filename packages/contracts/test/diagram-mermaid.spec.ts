@@ -60,6 +60,31 @@ describe("the Mermaid flowchart subset", () => {
     expect(read.ok && read.props.nodes[2]).not.toHaveProperty("group");
   });
 
+  it("puts a node named first outside every subgraph into the subgraph that names it later, as Mermaid does", () => {
+    const read = parseMermaidFlowchart(
+      ["flowchart TB", "  c1 --> a2", "  subgraph one", "    a1 --> a2", "  end", "  subgraph three", "    c1 --> c2", "  end"].join("\n"),
+    );
+    expect(read.ok && read.props.nodes).toEqual([
+      { id: "c1", label: "c1", group: "three" },
+      { id: "a2", label: "a2", group: "one" },
+      { id: "a1", label: "a1", group: "one" },
+      { id: "c2", label: "c2", group: "three" },
+    ]);
+    expect(problem("flowchart TB\nsubgraph one\n  a\nend\nsubgraph two\n  a --> b\nend")).toMatch(/line 6: node a is placed in two subgraphs, one and two/u);
+  });
+
+  it("reads a | inside a node's brackets as part of its label, so a ; after it still ends the statement", () => {
+    const read = parseMermaidFlowchart("flowchart TB\na[left | right]; b --> a");
+    expect(read.ok && read.props).toMatchObject({ nodes: [{ id: "a", label: "left | right" }, { id: "b" }], edges: [{ from: "b", to: "a" }] });
+  });
+
+  it("stops reading once a source names more nodes or links than a diagram draws", () => {
+    const nodes = Array.from({ length: 61 }, (_, index) => `n${String(index)}`).join("\n");
+    expect(problem(`flowchart TB\n${nodes}`)).toMatch(/line 62: the flowchart has more than 60 nodes; at most 60 are drawn/u);
+    const links = Array.from({ length: 121 }, (_, index) => `n${String(index % 40)} --> n${String((index * 7 + 1) % 40)}`).join("\n");
+    expect(problem(`flowchart TB\n${links}`)).toMatch(/line 122: the flowchart has more than 120 links; at most 120 are drawn/u);
+  });
+
   it.each([
     ["an HTML label", 'flowchart TB\na["<b>bold</b>"]', /HTML/u],
     ["an unquoted HTML label", "flowchart TB\na[<img src=x onerror=alert(1)>]", /HTML/u],

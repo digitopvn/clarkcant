@@ -83,7 +83,9 @@ describe("the diagram renderer", () => {
     expect(html.match(/tabindex="0"/gu)).toHaveLength(1);
     expect(html).toContain('aria-label="Build, hộp, thuộc nhóm CI, dẫn tới Tests pass?, đến từ Plan"');
     expect(html).toContain('aria-label="Notes, hộp, nối với Ship"');
-    expect(html).toContain('aria-label="Tests pass?, hình thoi, dẫn tới Ship, đến từ Build, Lint"');
+    // An edge's label is said with the node it leads to, so the branch a decision takes is heard, not only seen.
+    expect(html).toContain('aria-label="Tests pass?, hình thoi, dẫn tới Ship (yes), đến từ Build, Lint"');
+    expect(html).toContain('aria-label="Ship, hình tròn, đến từ Tests pass? (yes), nối với Notes"');
     expect(html).toContain("Nút: 6 · Cạnh: 6");
   });
 

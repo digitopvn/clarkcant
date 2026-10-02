@@ -1282,14 +1282,18 @@ của chính host.
 `layout` là `layered` (mặc định) hoặc `tree`, còn `direction` là `TB` hoặc `LR`. Bố cục phân lớp phá vòng tại cạnh mà
 props dùng để khép vòng, chia lớp theo đường dài nhất, bẻ các cạnh dài qua những lớp chúng đi ngang và sắp thứ tự mỗi lớp
 bằng một số lượt barycenter cố định; bố cục cây đặt node con cân giữa dưới node cha và từ chối đồ thị không phải là
-rừng. Cả hai đều tất định: cùng props luôn cho cùng một hình vẽ, trên node và trên mọi client, và đồ thị lớn nhất được
+rừng. Khoảng trống chứa nhãn của một cạnh được nới rộng để chứa trọn nhãn, và các cạnh nối cùng hai node (ví dụ mỗi
+chiều một cạnh) được vẽ tách nhau. Cả hai đều tất định: cùng props luôn cho cùng một hình vẽ, trên node và trên mọi client, và đồ thị lớn nhất được
 chấp nhận được dàn trong thời gian có giới hạn ([diagram-layout.ts](../packages/contracts/src/diagram-layout.ts)).
 
 Model cũng có thể đưa cho `show_view` một lưu đồ Mermaid: `{ "mermaid": "flowchart LR ...", "title"?, "layout"? }`.
 Node đọc một tập con được tài liệu hóa của cú pháp flowchart ngay trên host và chỉ lưu mô hình sơ đồ thu được; mã nguồn
 Mermaid không bao giờ được lưu và renderer của Mermaid không bao giờ được tải. Tập con gồm `flowchart`/`graph` với `TB`,
 `TD` hoặc `LR`; node dạng `id`, `id[box]`, `id(round)`, `id{diamond}` và `id((circle))`; liên kết `-->`, `---`,
-`<-->`, `-->|nhãn|` và `-- nhãn -->`; một cấp `subgraph` làm nhóm của node; `accTitle` làm tiêu đề; chú thích `%%`. Mọi
+`<-->`, `-->|nhãn|` và `-- nhãn -->`; một cấp `subgraph` làm nhóm của node (node được nêu bên ngoài trước sẽ vào
+subgraph nêu nó sau đó, giống Mermaid, còn node được nêu trong hai subgraph bị từ chối); `accTitle` làm tiêu đề. Chú
+thích `%%` và `accDescr` một dòng được bỏ qua vì không vẽ gì. Mã nguồn nêu quá 60 node hoặc 120 liên kết bị từ chối
+ngay khi vượt giới hạn. Mọi
 thứ cấu hình hoặc mở rộng renderer của Mermaid đều bị từ chối theo dòng kèm lý do: `click`, `href`, `call`, `style`,
 `classDef`, `class`, `:::`, `linkStyle`, directive `%%{init}%%`, front matter, HTML hoặc mã entity trong nhãn, chuỗi
 Markdown, icon `fa:`, các hình node khác, các kiểu liên kết khác, chuỗi `&`, subgraph lồng nhau và các loại sơ đồ khác
@@ -1297,12 +1301,13 @@ Markdown, icon `fa:`, các hình node khác, các kiểu liên kết khác, chu�
 
 `diagram.select` mang `{ selectedId }`; node kiểm tra nó với props hiện tại và giữ trong trạng thái widget, nên lựa chọn
 vẫn còn sau khi tải lại, và state đã khôi phục bỏ qua ID mà props không còn chứa. Mỗi node là một nút có tên truy cập nói
-rõ nhãn, hình, nhóm và các node nó dẫn tới, đến từ và nối với. Chỉ một node nằm trong thứ tự tab; phím theo chiều luồng
+rõ nhãn, hình, nhóm và các node nó dẫn tới, đến từ và nối với, mỗi node kèm nhãn của cạnh nối chúng ("dẫn tới Ship
+(yes)"), nên các nhánh của một quyết định được nghe thấy chứ không chỉ được nhìn thấy. Chỉ một node nằm trong thứ tự tab; phím theo chiều luồng
 (Xuống với `TB`, Phải với `LR`) đi theo một cạnh về phía trước, phím ngược lại đi theo cạnh quay về, các phím ngang đi
-trong cùng một lớp, Home/End tới node đầu và cuối, Enter/Space để chọn và Escape để bỏ chọn. Node được chọn làm nổi các
+trong cùng một lớp, Home/End tới node đầu và cuối, Enter/Space chọn node đang có tiêu điểm hoặc bỏ chọn nếu node đó đã được chọn, và Escape để bỏ chọn. Node được chọn làm nổi các
 cạnh và node kề bằng độ dày nét và nét đứt chứ không chỉ bằng màu, và một vùng live thông báo thay đổi. Hình vẽ rộng giữ
 nguyên kích thước và cuộn bên trong thẻ, nên trang không bao giờ cuộn ngang; sơ đồ không tự tạo chuyển động và theo cả
-hai theme. Tài liệu semantic báo số node và cạnh, bố cục và hướng, cùng node được chọn với số cạnh vào/ra/nối; phần thay
+hai theme. Tài liệu semantic báo số node và cạnh, bố cục và hướng, cùng node được chọn với số cạnh vào/ra/nối và các node kề, mỗi node kèm nhãn cạnh; phần thay
 thế dạng chữ, cũng hiện dưới hình vẽ, liệt kê mọi node cùng các cạnh đi ra của nó.
 
 Kiểm thử: [diagram-view.spec.ts](../packages/contracts/test/diagram-view.spec.ts) kiểm tra giới hạn, đồ thị lỗi, state,

@@ -211,27 +211,43 @@ export interface DiagramNeighbours {
   linked: DiagramNode[];
   /** Every edge touching this node, by index. */
   edges: number[];
+  /**
+   * The same neighbours as words: each label followed by the labels of the edges joining it, as in "Retry (no)", so a
+   * reader who cannot see the drawing hears which branch leads where.
+   */
+  named: { next: string[]; previous: string[]; linked: string[] };
 }
 
 export function diagramNeighbours(diagram: Diagram, id: string): DiagramNeighbours {
   const byId = new Map(diagram.nodes.map((node) => [node.id, node]));
-  const next = new Map<string, DiagramNode>();
-  const previous = new Map<string, DiagramNode>();
-  const linked = new Map<string, DiagramNode>();
+  const sides = { next: new Map<string, Set<string>>(), previous: new Map<string, Set<string>>(), linked: new Map<string, Set<string>>() };
   const edges: number[] = [];
+  const add = (side: keyof typeof sides, other: string, label: string | undefined): void => {
+    const labels = sides[side].get(other) ?? new Set<string>();
+    if (label !== undefined) labels.add(label);
+    sides[side].set(other, labels);
+  };
   for (const edge of diagram.edges) {
     if (edge.from !== id && edge.to !== id) continue;
     edges.push(edge.index);
-    const other = byId.get(edge.from === id ? edge.to : edge.from);
-    if (other === undefined) continue;
-    if (edge.direction === "none") linked.set(other.id, other);
+    const other = edge.from === id ? edge.to : edge.from;
+    if (!byId.has(other)) continue;
+    if (edge.direction === "none") add("linked", other, edge.label);
     else if (edge.direction === "both") {
-      next.set(other.id, other);
-      previous.set(other.id, other);
-    } else if (edge.from === id) next.set(other.id, other);
-    else previous.set(other.id, other);
+      add("next", other, edge.label);
+      add("previous", other, edge.label);
+    } else add(edge.from === id ? "next" : "previous", other, edge.label);
   }
-  return { next: [...next.values()], previous: [...previous.values()], linked: [...linked.values()], edges };
+  const nodes = (side: keyof typeof sides): DiagramNode[] => [...sides[side].keys()].flatMap((other) => byId.get(other) ?? []);
+  const named = (side: keyof typeof sides): string[] =>
+    [...sides[side].entries()].map(([other, labels]) => `${byId.get(other)?.label ?? other}${labels.size === 0 ? "" : ` (${[...labels].join(", ")})`}`);
+  return {
+    next: nodes("next"),
+    previous: nodes("previous"),
+    linked: nodes("linked"),
+    edges,
+    named: { next: named("next"), previous: named("previous"), linked: named("linked") },
+  };
 }
 
 export interface DiagramState {
@@ -258,6 +274,15 @@ export function diagramSelectionProblems(diagram: Pick<Diagram, "nodes">, input:
 
 const ARROW: Record<DiagramEdgeDirection, string> = { forward: "→", both: "↔", none: "—" };
 
+/** One node of the adjacency list, as the text alternative and the list under the drawing both write it: "Label [group]: → Next (label)". */
+export function diagramTextLine(diagram: Pick<Diagram, "nodes" | "edges">, node: DiagramNode): string {
+  const name = `${node.label}${node.group === undefined ? "" : ` [${node.group}]`}`;
+  const out = diagram.edges
+    .filter((edge) => edge.from === node.id)
+    .map((edge) => `${ARROW[edge.direction]} ${diagram.nodes.find((other) => other.id === edge.to)?.label ?? edge.to}${edge.label === undefined ? "" : ` (${edge.label})`}`);
+  return out.length === 0 ? name : `${name}: ${out.join(", ")}`;
+}
+
 /**
  * The diagram as an adjacency list: each node with the edges it starts, then the nodes nothing starts from.
  *
@@ -265,20 +290,13 @@ const ARROW: Record<DiagramEdgeDirection, string> = { forward: "→", both: "↔
  * edge once, by label, in the order the props gave them.
  */
 export function diagramText(diagram: Diagram, limit: number = SNAPSHOT_TEXT_LIMIT): string {
-  const byId = new Map(diagram.nodes.map((node) => [node.id, node]));
-  const lines = diagram.nodes.map((node) => {
-    const name = `${node.label}${node.group === undefined ? "" : ` [${node.group}]`}`;
-    const out = diagram.edges
-      .filter((edge) => edge.from === node.id)
-      .map((edge) => `${ARROW[edge.direction]} ${byId.get(edge.to)?.label ?? edge.to}${edge.label === undefined ? "" : ` (${edge.label})`}`);
-    return out.length === 0 ? `- ${name}` : `- ${name}: ${out.join(", ")}`;
-  });
+  const lines = diagram.nodes.map((node) => `- ${diagramTextLine(diagram, node)}`);
   const head = `${diagram.title ?? "Diagram"}: ${String(diagram.nodes.length)} node${diagram.nodes.length === 1 ? "" : "s"}, ${String(diagram.edges.length)} edge${diagram.edges.length === 1 ? "" : "s"}`;
   return clipWithMarker(lines.length === 0 ? `${head}\nno nodes` : `${head}\n${lines.join("\n")}`, limit);
 }
 
-function labels(nodes: readonly DiagramNode[]): string[] {
-  return nodes.slice(0, SEMANTIC_LIMITS.list).map((node) => clipWithMarker(node.label, SEMANTIC_LIMITS.listEntry, "…"));
+function labels(names: readonly string[]): string[] {
+  return names.slice(0, SEMANTIC_LIMITS.list).map((name) => clipWithMarker(name, SEMANTIC_LIMITS.listEntry, "…"));
 }
 
 /** What voice and the next turn read: the counts, how it is laid out, and the selected node with its neighbours. */
@@ -306,9 +324,9 @@ export function diagramSemantic(diagram: Diagram, state: DiagramState): {
       : {
           selectedLabel: selected.label,
           ...(selected.group === undefined ? {} : { selectedGroup: selected.group }),
-          previous: labels(neighbours.previous),
-          next: labels(neighbours.next),
-          linked: labels(neighbours.linked),
+          previous: labels(neighbours.named.previous),
+          next: labels(neighbours.named.next),
+          linked: labels(neighbours.named.linked),
         }),
   };
   return {
