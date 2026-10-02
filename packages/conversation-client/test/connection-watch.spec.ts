@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { GatewayClient, GatewayError } from "../src/api.ts";
 import {
@@ -268,8 +268,8 @@ describe("watching whether the node answers", () => {
         fetchImpl: (async () => new Response("<!doctype html><title>Welcome</title>", { status, headers: { "content-type": "text/html" } })) as typeof fetch,
       });
       const { last, time } = start({ check: (signal) => client.health({ signal }) });
-      await settle();
-      expect(last()).toMatchObject({ state: "offline", failure: { kind: "notNode" } });
+      // Reading a real Response body takes more than a few microtasks on some Node versions.
+      await vi.waitFor(() => expect(last()).toMatchObject({ state: "offline", failure: { kind: "notNode" } }));
       // Something else may be answering while the node starts behind it, so checking goes on.
       expect(time.pending()).toEqual([RETRY_DELAYS_MS[0]]);
     }
