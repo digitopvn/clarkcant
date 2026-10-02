@@ -34,6 +34,7 @@ import { useTheme } from "./use-theme.ts";
 import { useLocale } from "./i18n/use-locale.ts";
 import { LocaleProvider } from "./i18n/locale-context.tsx";
 import { useConnectionStatus } from "./use-connection-status.ts";
+import { ConnectionNotice } from "./connection-notice.tsx";
 import { useModelAlias } from "./use-model-alias.ts";
 import { useDynamicSuggestions } from "./use-dynamic-suggestions.ts";
 import { useInputModalityState } from "./use-input-modality-state.ts";
@@ -489,7 +490,7 @@ export function Conversation({
     >
       <ConversationHeader
         client={client}
-        connection={connection}
+        connection={connection.state}
         backgroundTick={backgroundTick}
         // A new message may be an approval card or a question, which is what the mark counts first.
         inboxRefreshKey={`${inboxTick}:${blocks.length}`}
@@ -499,6 +500,7 @@ export function Conversation({
         onOpenSettings={() => appIntents.clickIntent("settings.open")}
         onOpenInbox={() => appIntents.clickIntent("inbox.open")}
       />
+      <ConnectionNotice status={connection} onCheckNow={connection.checkNow} />
 
       {/* Focusable as a fallback target: when the control that opened the live view is gone from the
           document, focus has to land somewhere meaningful rather than on the body. */}

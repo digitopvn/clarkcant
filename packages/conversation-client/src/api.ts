@@ -818,8 +818,9 @@ export class GatewayClient {
     return parsed as T;
   }
 
-  health(): Promise<{ status: string; runtime: { node: string; platform: string; arch: string } }> {
-    return this.#call("GET", "/health");
+  /** Whether the node answers. `signal` lets a caller that stops waiting cancel the request. */
+  health(init: { signal?: AbortSignal } = {}): Promise<{ status: string; runtime: { node: string; platform: string; arch: string } }> {
+    return this.#call("GET", "/health", undefined, init.signal === undefined ? {} : { signal: init.signal });
   }
 
   /**

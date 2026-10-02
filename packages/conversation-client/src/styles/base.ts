@@ -292,6 +292,17 @@ body {
 .cc-dot[data-state="offline"] { background: var(--cc-danger); }
 .cc-dot[data-state="connecting"] { background: var(--cc-warning); }
 .cc-dot[data-state="waiting"] { background: var(--cc-warning); }
+/* Why the node is disconnected and when it is checked again, under the header and out of the content's way. */
+.cc-connection-notice {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--cc-space-sm);
+  margin: 0 var(--cc-space-lg); padding: var(--cc-space-xs) var(--cc-space-sm);
+  border: 1px solid color-mix(in oklab, var(--cc-danger) 40%, transparent); border-radius: var(--cc-radius-card);
+  color: var(--cc-text-muted); font-size: var(--cc-text-label);
+  position: relative; z-index: 3;
+}
+.cc-connection-notice p { margin: 0; min-width: 0; }
+.cc-connection-notice button { cursor: pointer; font: inherit; min-height: 32px; }
+.cc-connection-notice button:disabled { cursor: default; opacity: 0.6; }
 
 /*
  * The inbox mark and the inbox panel.
