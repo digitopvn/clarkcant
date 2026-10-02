@@ -5,9 +5,10 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runCli } from "../src/cli.ts";
+import { initFromReference, runCli } from "../src/cli.ts";
 import { runConformance } from "../src/conformance.ts";
 import { packageFiles } from "../src/package-files.ts";
+import { PLACEHOLDER_PROVIDER_ORIGIN, REFERENCE_TEMPLATES, referenceCopy } from "../src/reference-templates.ts";
 
 /**
  * `clark widget init --template ai-generator | ui-with-service`: a working copy of the reference image generator,
@@ -74,9 +75,17 @@ describe("the reference image generator templates", () => {
     const tools = (manifest.facets as Record<string, unknown>[])[1];
     expect(tools).toMatchObject({
       id: "com.example.my-images.service",
-      capabilities: [{ ref: "com.example.my-images.image.generate@1", execution: { kind: "job", version: 1 } }],
+      // Asking a provider to draw writes to it, which is also what lets the node send the start as a POST.
+      capabilities: [{ ref: "com.example.my-images.image.generate@1", effectCategory: "external-write", execution: { kind: "job", version: 1 } }],
       egress: { secrets: [{ name: "IMAGE_PROVIDER_KEY" }], origins: [{ credential: { secret: "IMAGE_PROVIDER_KEY", scheme: "bearer" } }] },
     });
+    // A placeholder that reaches no provider, never the loopback port the reference app's tests use.
+    const origins = (tools?.egress as { origins: { origin: string }[] }).origins.map((entry) => entry.origin);
+    expect(origins).toEqual([PLACEHOLDER_PROVIDER_ORIGIN]);
+    expect(PLACEHOLDER_PROVIDER_ORIGIN).toMatch(/^https:\/\/[a-z.]+\.example\.com$/);
+    expect(readFileSync(join(root, "clarkcant.json"), "utf8")).not.toMatch(/127\.0\.0\.1|localhost/);
+    expect(readFileSync(join(root, "README.md"), "utf8")).toContain(`Replace the provider origin before you publish.** \`clarkcant.json\` declares \`${PLACEHOLDER_PROVIDER_ORIGIN}\``);
+    expect(json(root, "widgets/main/widget.json").effectCategories).toEqual(["read", "external-write"]);
     expect(json(root, "widgets/main/widget.json")).toMatchObject({ id: "com.example.my-images.main@1", version: "0.1.0" });
     // Nothing still names the reference package, and none of its tests came along.
     for (const { path, bytes } of packageFiles(root)) {
@@ -93,11 +102,37 @@ describe("the reference image generator templates", () => {
     expect(runConformance(root).ok).toBe(true);
     const tools = (json(root, "clarkcant.json").facets as Record<string, unknown>[])[1];
     expect(tools).not.toHaveProperty("egress");
-    expect(tools).toMatchObject({ capabilities: [{ ref: "com.example.my-images.image.generate@1" }] });
+    // Drawing locally reaches nothing outside, so the capability and the widget only read.
+    expect(tools).toMatchObject({ capabilities: [{ ref: "com.example.my-images.image.generate@1", effectCategory: "read" }] });
+    expect(json(root, "widgets/main/widget.json").effectCategories).toEqual(["read"]);
 
     const answer = await callService(root, "a red kite");
     expect(answer.progress).toEqual([1, 2, 3, 4]);
     expect(answer.result).toMatchObject({ content: [{ type: "text" }, { type: "image", mimeType: "image/png" }] });
     expect(answer.result).not.toHaveProperty("isError");
+  });
+
+  it("every reference template goes through the one copier, which renames, leaves the app's tests behind and resets the version", () => {
+    for (const template of REFERENCE_TEMPLATES) {
+      const parent = mkdtempSync(join(tmpdir(), "clark-reference-copier-"));
+      created.push(parent);
+      const root = join(parent, "copy");
+      initFromReference(root, "com.example.copy", template);
+
+      const copy = referenceCopy(template);
+      const files = packageFiles(root).map((file) => file.path);
+      expect(files, template).toContain("clarkcant.json");
+      expect(files.some((path) => /^(test|dist)\//.test(path)), template).toBe(false);
+      for (const { path, bytes } of packageFiles(root)) expect(bytes.toString("utf8"), `${template}: ${path}`).not.toContain(copy.referenceId);
+      expect(json(root, "clarkcant.json"), template).toMatchObject({
+        id: "com.example.copy",
+        version: "0.1.0",
+        displayName: copy.displayName,
+        publisher: { id: "example", sourceUrl: copy.sourceUrl, license: "MIT" },
+      });
+      expect(json(root, "widgets/main/widget.json"), template).toMatchObject({ id: "com.example.copy.main@1", version: "0.1.0" });
+      expect(readFileSync(join(root, "README.md"), "utf8"), template).toBe(copy.readme);
+      expect(readFileSync(join(root, "LICENSE"), "utf8"), template).toBe("MIT\n");
+    }
   });
 });
