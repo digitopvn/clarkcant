@@ -40,6 +40,17 @@ Review fixes (`plans/reports/review-261002-384-spreadsheet.md`):
   - `.tab` maps to TSV in delegated artifacts. That mapping lives in `apps/runtime/src/delegated-artifacts.ts`, not `packages/*`.
   - The docs list the accepted formats.
 
+Round-2 review changes (`plans/reports/review-261002-384-spreadsheet-round2.md`):
+- **N1, nothing saved before the sheet has loaded.** The store saves and checkpoints nothing until `load()` has rebuilt the sheet, or an import has replaced it. Until then the grid takes no edits (`aria-readonly`), Import, Export and "Ask Clark" are disabled, and the status says "Đang mở bảng tính…" / "Opening the sheet…". A source that cannot be read leaves the store closed: the status says what failed, that the saved sheet is kept, and what to do next, and the grid stays read-only, so an empty sheet can never replace the saved one. An import starts over from the new file.
+- **N2.** When an import supersedes a running checkpoint, the loop goes on to the save queued for the new sheet instead of stopping.
+- **N3.** The first option: straight after an import, the sheet is checkpointed into the widget's own finalized file, so it no longer depends on the picked file's 24 h grant. The broker's expiry policy is unchanged. If that write fails, the status says so and the next edit retries. The docs state the 24 h grant in EN and VI.
+- **N4.** Once a checkpoint's commit lands, the checkpoint it replaced is discarded, even when an import landed during the commit.
+- **N5.** A refused write restores `saved` from the host plus the writes still queued behind it, rather than dropping their record.
+- **N6.** A read that stops at the 8 MiB limit is flagged as cut, also when the limit falls on `\n` or between `\r` and `\n`.
+- **N7.** A failed checkpoint now says that the sheet could not be written to a file, that the changes are in the frame but not saved, and that the next edit tries again. It no longer says "The sheet is unchanged".
+- **N8.** `load()` reports `superseded` when an import replaced the sheet while it loaded, and the widget does not show that result. Import is also disabled while the sheet loads.
+- **Docs.** EN and VI §24.1 and both READMEs now say when a replaced checkpoint is discarded and what happens when a discard is refused. They also describe the import checkpoint with the 24 h grant, the loading and unreadable states, and the cut flag at a line end. The V12 ledger row now reads 56 unit tests and 4 browser tests. `docs/manifest.json` was regenerated.
+
 Known gaps, tracked in #382:
 - Nothing in the product places a package widget with a bound action yet; only the fixture node does here.
 - A request typed in the composer reaches Clark through the semantic note but cannot change the frame.
@@ -51,7 +62,33 @@ Coordination with #317:
 
 ## Validation
 
-After the review fixes:
+After the round-2 changes (commit 386d9ed5):
+- `pnpm typecheck`: passed.
+- `pnpm exec vitest run examples/reference-apps/spreadsheet apps/runtime/test/delegated-artifacts.spec.ts apps/runtime/test/artifact-broker.spec.ts`: 6 files and **107 tests passed**.
+  - The spreadsheet package has 56 tests: store 20, formula 13, csv 12 and sheet 11.
+  - `delegated-artifacts.spec.ts` has 19 and `artifact-broker.spec.ts` has 32.
+- **Each round-2 store test fails with its fix reverted.** Each fix was reverted alone and `store.spec.ts` was run again:
+  - N1: 2 tests fail (nothing saved before load, and nothing saved after an unreadable source).
+  - N2: 1 fails.
+  - N3: 5 fail.
+  - N4: 1 fails.
+  - N5: 1 fails.
+  - N6: 1 fails.
+  - N8: 1 fails.
+  - With every fix in place, all 20 pass.
+- **`apps/web/e2e/spreadsheet.spec.ts` alone** (`CC_E2E_NODE_PORT=9476 CC_E2E_WEB_PORT=4773 CC_E2E_NPM_REGISTRY_PORT=9478`, `pnpm test:e2e`): 4 passed, in 22.4 s and 24.8 s on two runs. The new test does three things:
+  - It refuses the artifact reads on a reload. The widget says why, takes no edits, and the next mount shows the saved sheet whole.
+  - It holds the reads on another reload. The widget shows the loading state, the grid is read-only and Import is disabled until the sheet is back.
+  - It refuses the import's checkpoint file. The message is the new one, and the next edit saves the checkpoint.
+- **The new E2E test fails with each widget-side fix reverted:**
+  - `main.js` at the previous commit fails on the restore message.
+  - Without the edit guards, the editor opens on an unreadable sheet.
+  - With the old failure text, it shows "Bảng tính giữ nguyên".
+- `clark widget test examples/reference-apps/spreadsheet`: 22 passed, 0 failed, 12 need the dev host.
+- **`pnpm verify`** passed: 410 test files passed and 1 skipped, and 5,240 tests passed and 34 skipped.
+- **Not run on this tree:** the `verify:full` stages after `verify`, and `clark widget pack`.
+
+After the round-1 review fixes:
 - **Unit tests for the package: 47 passed** (store 11, formula 13, csv 12, sheet 11). `store.spec.ts` runs the checkpoint and restore path against a fake host that drops ephemeral keys and refuses past 16 KiB.
   - The new csv, formula and store tests were checked to fail against the code before the fix: the store tests under a mutation that removes serialization.
   - `apps/runtime/test/delegated-artifacts.spec.ts`: 19 passed, including `.tab`.
