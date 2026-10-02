@@ -50,6 +50,8 @@ Yêu cầu người dùng mới nhất → scope-lock → system-architecture �
 
 Workflow [CI](../.github/workflows/ci.yml) giữ các gate verify, secret scan, browser E2E và desktop smoke. [Bộ phân loại](../tools/ci-test-scope.mjs) chỉ rút gọn các bước của job verify khi toàn bộ diff thuộc danh sách văn xuôi được phép hoặc `docs/manifest.json`; invariants vẫn chạy. Những gate còn lại không bị bộ phân loại này bỏ qua. Diff có code, đường dẫn chưa biết, thiếu base hoặc lỗi phân loại vẫn chạy đầy đủ.
 
+Một lần chạy workflow thủ công (`gh workflow run ci.yml -f e2e_specs="apps/web/e2e/connected-app.spec.ts" -f e2e_repeat=5`) có thể giới hạn job browser E2E vào các spec được chọn, mỗi spec là một đường dẫn hoặc `path:line`, và lặp lại từng test được chọn với retry bị tắt. Khi cả hai input để trống, job chạy toàn bộ bộ test một lần, giống như khi push.
+
 Các thay đổi có code vẫn chạy toàn bộ Vitest trên cả hai phiên bản Node; không chọn test theo package vì nhiều ràng buộc an toàn đi xuyên package. Lệnh kiểm tra hành trình và yêu cầu hoàn tất thay đổi UI nằm trong [AGENTS.md](../AGENTS.md); CI đã có browser E2E và desktop smoke, nhưng fixture không chứng minh provider thật hoạt động. Kết quả BLOCKED phải được đọc cùng điều kiện còn thiếu.
 
 Các suite live chỉ chạy khi bật opt-in. Khi đã bật mà thiếu credential/model hoặc không nhận được bằng chứng từ provider, smoke/calibration thất bại với lý do `BLOCKED`, không chuyển sang PASS nhờ fallback. [Live smoke](../apps/runtime/test/jev-live.spec.ts) và [calibration](../apps/runtime/test/jev-calibration-live.spec.ts) sở hữu điều kiện thực thi; một HTTP lỗi chung không chứng minh từ chối đúng model.

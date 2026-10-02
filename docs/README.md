@@ -50,6 +50,8 @@ Latest user request → scope-lock → system-architecture → topic documents �
 
 The [CI](../.github/workflows/ci.yml) workflow keeps the verify, secret scan, browser E2E and desktop smoke gates. The [classifier](../tools/ci-test-scope.mjs) only trims the steps of the verify job when the entire diff belongs to the allowed prose list or `docs/manifest.json`; invariants still run. The remaining gates are not skipped by this classifier. A diff with code, an unknown path, a missing base or a classification error still runs in full.
 
+A manual run of the workflow (`gh workflow run ci.yml -f e2e_specs="apps/web/e2e/connected-app.spec.ts" -f e2e_repeat=5`) can limit the browser E2E job to chosen specs, each a path or `path:line`, and repeat each selected test with retries off. With both inputs empty it runs the whole suite once, as a push does.
+
 Changes that include code still run the full Vitest suite on both Node versions; tests are not selected per package because many safety constraints cut across packages. The journey check commands and the completion requirements for UI changes are in [AGENTS.md](../AGENTS.md); CI already has browser E2E and desktop smoke, but fixtures do not prove that a real provider works. A BLOCKED result must be read together with the missing condition.
 
 Live suites only run when opted in. Once enabled, if a credential/model is missing or no evidence is received from the provider, the smoke/calibration fails with reason `BLOCKED`; it does not turn into PASS through a fallback. [Live smoke](../apps/runtime/test/jev-live.spec.ts) and [calibration](../apps/runtime/test/jev-calibration-live.spec.ts) own the execution conditions; a generic HTTP error does not prove a correct model rejection.
