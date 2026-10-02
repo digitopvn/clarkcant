@@ -430,11 +430,17 @@ capability. Mọi trường hợp khác, kể cả một ref không tồn tại,
 
 | Method | Path | Body / câu trả lời |
 |---|---|---|
+| GET | `/conversations/{id}/widgets/{instanceId}/jobs` | – `{ jobs: [...] }`, mới nhất trước và tối đa 20: các job mà chính các invoke binding của widget này đã khởi chạy, để widget được mount lại tìm thấy job đang chạy. Mỗi mục có cùng các trường như `job` của route một job và qua cùng phép kiểm tra chủ sở hữu; instance không thuộc cuộc trò chuyện là `404 INSTANCE_UNKNOWN`. Trong frame, đây là `jobs.list()`, được mở như một extension riêng của bridge, `jobs.list@1`, bên cạnh `jobs@1` |
 | GET | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – `{ job: { jobId, status, progress?, resultRefs, output?, error?, createdAt, startedAt?, endedAt? } }`; tệp là `ArtifactRef`, không bao giờ là đường dẫn |
 | POST | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – huỷ request tới service, `202 { accepted, jobId }`; job đã kết thúc là `409 JOB_NOT_RUNNING` và vẫn đọc được |
 
 Node không có job host trả lời `503 JOB_UNAVAILABLE`. `POST /stop` cũng huỷ các job package đang chạy và đếm chúng
 trong `stopped.jobs`.
+
+Route liệt kê không bị giới hạn trong các bề mặt của riêng người dùng, theo thiết kế, giống các route một job bên cạnh
+nó (`packages/contracts/src/machine-surfaces.ts` không nêu route nào trong số đó). Một client máy, như client MCP hoặc
+relay, có thể liệt kê các job của một instance, output và các `ArtifactRef` của chúng mà không cần biết trước JobRef.
+Nó không biết thêm gì mà nó không đọc được từng job một, và không đọc được byte của tệp qua các route này.
 
 Token trình duyệt mà frame yêu cầu (`tokens@1`, [widget-development.vi.md §14.3](widget-development.vi.md#143-token-trình-duyệt-tokens1))
 có trong `/openapi.json`. Chrome của host yêu cầu token thay cho frame mà nó đã mount, kèm session id ngẫu nhiên nó cấp

@@ -350,6 +350,66 @@
     "digest": "sha256:lookup-service-digest"
   },
   {
+    "packageId": "com.clarkcant.reference.image-generator",
+    "version": "1.0.0",
+    "displayName": "Image generator",
+    "description": "Turns a prompt into an image with a provider the node reaches for it, adding the key you gave it, and keeps the results in a gallery.",
+    "source": {
+      "kind": "local",
+      "path": "examples/reference-apps/image-generator"
+    },
+    "publisher": {
+      "id": "clarkcant",
+      "sourceUrl": "https://github.com/digitopvn/clarkcant",
+      "license": "Apache-2.0"
+    },
+    "preview": {},
+    "facets": [
+      "ui",
+      "tools"
+    ],
+    "isolations": [
+      {
+        "facetKind": "ui",
+        "isolation": "isolated-ui"
+      },
+      {
+        "facetKind": "tools",
+        "isolation": "service"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "declaredReach": {
+      "origins": [
+        {
+          "origin": "http://127.0.0.1:8881",
+          "purpose": "Draws the images you describe.",
+          "secret": "IMAGE_PROVIDER_KEY"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "IMAGE_PROVIDER_KEY",
+          "purpose": "Signs the image requests in with the provider."
+        }
+      ],
+      "browserTokens": []
+    },
+    "riskTier": "service",
+    "sizeBytes": 65536,
+    "digest": "sha256:image-generator-reference-digest"
+  },
+  {
     "packageId": "com.example.theme-dusk",
     "version": "1.0.0",
     "displayName": "Dusk theme",

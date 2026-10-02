@@ -1571,7 +1571,24 @@ not. `jobs.get(ref)` reads one snapshot: status (`queued`, `running`, `waiting`,
 progress, output, error, result files and times. `jobs.subscribe(ref, handler)` starts from that snapshot, polls once a
 second, hands the handler only snapshots that changed, and stops by itself at an ending, on `JOB_NOT_FOUND` or
 `EXTENSION_NOT_OFFERED`, or after 30 refused reads in a row. `jobs.cancel(ref)` asks the node to stop the job; one that
-already ended is refused with `JOB_NOT_RUNNING`. The contract is [jobs.ts](../packages/contracts/src/jobs.ts).
+already ended is refused with `JOB_NOT_RUNNING`. `jobs.list()` returns the jobs this widget's own bindings started,
+newest first and at most 20, including ones started by voice or by Clark for this widget, so a widget can show work it
+did not start from a click. The contract is [jobs.ts](../packages/contracts/src/jobs.ts).
+
+**Listing is its own extension, `jobs.list@1`.** It came after `jobs@1`, and a host that offers only `jobs@1` would
+refuse `{ op: "list" }` as outside its schema and never answer it. So a host that answers it also offers `jobs.list@1`
+in `init.extensions`, and `jobs.canList()` says whether it did; `jobs.list()` rejects locally, without sending anything,
+when it did not. A widget that lists checks first and degrades: without a list, it shows the jobs started while it is
+open (the JobRefs `actions.invoke` returned, followed with `jobs.subscribe`) and says that earlier ones are not shown.
+The SDK constant is `JOBS_LIST_EXTENSION`. A listed job has the same fields as one read with `jobs.get`.
+
+**A failed job's `error` may carry the service's own words.** When the service's tool reports an error, the node keeps
+its text, quoted, inside a sentence of its own: `The package service reported an error: “…”. Its effect may have
+happened; review before retrying.` The quoted part is the service's, which may be the provider's: control and
+invisible formatting characters (bidi overrides included) are removed and it is cut at 400 characters, but it is not
+otherwise vouched for. Show it as what the service said, inside text of your own, not as the widget's or the host's
+sentence. The node removes a provider key from what the provider sends back before the service reads it, so a
+provider that echoes the key leaves `[redacted]` in its place.
 
 **A JobRef is a pointer, not a permission.** The node re-checks every read and cancel against the job's owner: the
 principal, the widget instance, its binding and the package generation that binding was authorized under, and the
@@ -1957,7 +1974,7 @@ cancelled or failed job leaves no file presented as finished.
 Tests: [service-artifact-input.spec.ts](../apps/runtime/test/service-artifact-input.spec.ts) for the node with a real
 service process: the egress refusal, Clark and voice refused, a read after the call, a grant revoked mid-call, an
 over-long read, a file still being written, the read budget, a node with no profile, another conversation's file, and
-the approval replay. The reference app is in §24.3.
+the approval replay. The reference app is in §24.4.
 
 ---
 
@@ -2013,13 +2030,16 @@ Templates:
 - form;
 - pure-ui: a copy of the reference text editor ([§24.1](#241-text-editor)), under the new
   package's own id, facet id and name, without the editor's tests;
-- media-tool: a copy of the reference media render tool ([§24.3](#243-media-render)), a widget and a service
+- media-tool: a copy of the reference media render tool ([§24.4](#244-media-render)), a widget and a service
   under the new package's own id, without the tool's tests;
 - editor;
 - media;
-- MCP App adapter.
+- MCP App adapter;
+- `ai-generator` and `ui-with-service`, copied from the reference image generator
+  ([§24.3](#243-image-generator)); `ai-generator` starts with a placeholder provider origin to replace.
 
-`clark widget init --template` accepts `blank`, `form`, `dashboard`, `pure-ui` and `media-tool` today. `editor`, `media` and the MCP
+`clark widget init --template` accepts `blank`, `form`, `dashboard`, `pure-ui`, `ai-generator`, `ui-with-service`
+and `media-tool` today. `editor`, `media` and the MCP
 App adapter are not implemented yet.
 
 ### dev
@@ -2776,7 +2796,70 @@ has loaded or after its source could not be read. `clark widget test` passes 22 
 - a sheet still loading or whose source cannot be read taking no edits and keeping the saved sheet, and a failed
   checkpoint saying what was kept and saving with the next edit.
 
-### 24.3 Media render
+### 24.3 Image generator
+
+[`examples/reference-apps/image-generator`](../examples/reference-apps/image-generator)
+([#319](https://github.com/digitopvn/clarkcant/issues/319), part of
+[#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with an isolated UI facet and a
+service facet. It shows a widget that starts long work on a service, follows it, and gets a file back, while the
+service reaches a provider with a key it never holds.
+
+- **Capability.** The service offers `com.clarkcant.reference.image-generator.image.generate@1` (a capability ref is
+  named under its package's id), with `effectCategory: "external-write"` and `execution: { kind: "job", version: 1 }`.
+  A press answers at once with a JobRef ([§10.2](#102-long-running-jobs-jobs1)).
+- **Why `external-write`.** Asking a provider to draw is a write to someone else's service: it does work there and
+  spends the person's quota. It is also what lets the service start the image with a POST whose prompt is in a JSON
+  body: the node sends a service's request with any method but GET or HEAD only for a capability decided as
+  `external-write` or above ([§14.2](#142-reaching-a-provider-from-a-service)), and a prompt in a URL ends up in more
+  logs than a body does. Under the default autonomous policy a press just runs; a person whose policy asks before
+  external writes sees the host's approval card first, and the widget is told the press is waiting.
+- **Provider.** The tools facet declares one origin and one secret, `IMAGE_PROVIDER_KEY`. The service starts an image
+  with a POST, reads its status once per step and fetches the PNG with GET, all through `clarkcant/egress.fetch`; the
+  node adds the key as a bearer header. Until the person stores the key, the button is off with the node's reason. The
+  provider in this repository is a fake one in the package's tests: it answers only requests carrying the key, refuses
+  a prompt in the URL, and returns a deterministic image. A real provider is
+  [#321](https://github.com/digitopvn/clarkcant/issues/321).
+- **Progress and result.** Each finished step is MCP progress, which the job records and the widget shows; the widget
+  estimates nothing. The PNG comes back as an image part, which the node stores as the job's result artifact. A
+  service error is kept on the failed job in the service's words ([§10.2](#102-long-running-jobs-jobs1)), and the
+  widget shows them quoted as the service's, inside its own sentence. Every running job has its own panel with its
+  progress and its own Stop, which cancels that job; the service stops reading the provider.
+- **Gallery.** When the host offers `jobs.list@1`, the widget lists its own jobs, follows the open ones, and reads
+  finished images as `ArtifactRef`s in 256 KiB chunks; a reload or another device shows the same jobs, because they
+  are the node's. On a host without it, the gallery holds the jobs started while the widget is open and says so. Each
+  image can be attached to the conversation or exported through the host ([§10.1](#101-files-by-reference-artifacts1)).
+- **Widget, Clark and voice.** The button is an `invoke` action binding named in props as `generateBinding`. It fills
+  `prompt` from the draft in widget state, and from the press's input when there is one. Saying the button's label
+  with the widget open presses it with the draft, and the reply says the job started. Clark's `invoke_capability` tool
+  starts a job capability through the conversation's widget that has a binding to it, so that widget follows the job.
+  With none, nothing runs and Clark says so; with several, Clark is told the `instanceId` and `actionBindingId` of each
+  and names one. Clark is refused a binding that asks Clark itself, because that press would be sent as the person's
+  own message.
+- **Language.** Like the text editor ([§24.1](#241-text-editor)), the frame's own text is Vietnamese
+  only: DESIGN §11.1 translates the host's default chrome, not a widget's text.
+- **Templates.** `clark widget init --template ai-generator` copies this app under the new package's ids, provider
+  and all, with the placeholder origin `https://images.example.com` in place of the test provider's: replace it, and
+  the paths in `service/server.mjs`, with your provider's before you publish. `--template ui-with-service` copies the
+  same widget and job with a service that draws the image itself, declares no provider, and so only reads. Both pass
+  `clark widget test` and `pack` as created. `pure-ui` and both of these go through one copier in the CLI.
+
+Only the repository's scripted fixture model places the widget with `generateBinding` today. No product path places
+an installed package widget with a binding yet ([#382](https://github.com/digitopvn/clarkcant/issues/382)), so in a
+real installation the widget says it is not connected to the service.
+
+Tests: [service-job.spec.ts](../examples/reference-apps/image-generator/test/service-job.spec.ts) for the service
+against the fake provider through the job host, the egress broker and the artifact broker (completion, progress,
+the POST that starts an image, failure, a refused key, cancel, a provider error that echoes the key, and the key absent
+from the service's launch, the job, the database, logs, audit, notices and files);
+[package.spec.ts](../examples/reference-apps/image-generator/test/package.spec.ts) for conformance and the manifest;
+[reference-templates.spec.ts](../packages/widget-cli/test/reference-templates.spec.ts) for the templates and the
+shared copier; and the browser journey [image-generator.spec.ts](../apps/web/e2e/image-generator.spec.ts). The
+journey covers the key-less refusal, progress across a reload, the gallery, two jobs each with its own Stop, a provider
+failure that echoes the key, attach and export, Clark, voice, an approval on the host's card, a host without
+`jobs.list@1`, keyboard, both themes, 390 px and reduced motion. After each journey it searches for the key in the
+page, the bridge, the node's files and tables, and the service's container.
+
+### 24.4 Media render
 
 `examples/reference-apps/media-render` ([#320](https://github.com/digitopvn/clarkcant/issues/320), part of
 [#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with an isolated UI facet and a

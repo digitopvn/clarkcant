@@ -2,6 +2,8 @@ import { appearanceSnapshotSchema, type AppearanceSnapshot, type SemanticProposa
 import {
   ARTIFACTS_EXTENSION,
   JOBS_EXTENSION,
+  JOBS_LIST_EXTENSION,
+  JOB_LIST_LIMIT,
   TOKENS_EXTENSION,
   APPEARANCE_EXTENSION,
   BRIDGE_PROTOCOL,
@@ -75,6 +77,8 @@ export type FrameArtifactBroker = (request: ArtifactRequest) => Promise<FrameArt
 
 export type FrameJobOutcome =
   | { status: "ok"; job: JobSnapshot }
+  /** The answer to `list`: this frame's jobs, newest first. */
+  | { status: "ok"; jobs: JobSnapshot[] }
   | { status: "refused"; code: string; message: string };
 export type FrameJobBroker = (request: JobRequest) => Promise<FrameJobOutcome>;
 
@@ -372,7 +376,8 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   let appearanceRevision = "";
   const initExtensions = [
     ...(input.artifacts === undefined ? [] : [ARTIFACTS_EXTENSION]),
-    ...(input.jobs === undefined ? [] : [JOBS_EXTENSION]),
+    // `jobs.list@1` is answered by the same broker, so it is offered with `jobs@1`; a widget asks `list` only when it sees it.
+    ...(input.jobs === undefined ? [] : [JOBS_EXTENSION, JOBS_LIST_EXTENSION]),
     ...(input.tokens === undefined ? [] : [TOKENS_EXTENSION]),
     ...(appearance === undefined ? [] : [APPEARANCE_EXTENSION]),
   ];
@@ -442,7 +447,11 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const postJobResult = (requestId: string, outcome: FrameJobOutcome): void => {
     if (status === "disposed") return;
     if (outcome.status === "ok") {
-      input.post({ kind: "job-result", nonce: input.nonce, requestId, status: "ok", job: outcome.job });
+      input.post(
+        "jobs" in outcome
+          ? { kind: "job-result", nonce: input.nonce, requestId, status: "ok", jobs: outcome.jobs.slice(0, JOB_LIST_LIMIT) }
+          : { kind: "job-result", nonce: input.nonce, requestId, status: "ok", job: outcome.job },
+      );
       return;
     }
     input.post({

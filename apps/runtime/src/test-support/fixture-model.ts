@@ -73,6 +73,10 @@ import { createTaskBrowserBroker, taskProfileDir } from "../task-browser.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
 
+/** The reference image generator's definition, as its package ships it, and the job capability its button calls. */
+const IMAGE_GENERATOR_DEFINITION = new URL("../../../../examples/reference-apps/image-generator/widgets/main/widget.json", import.meta.url);
+const IMAGE_GENERATE = "com.clarkcant.reference.image-generator.image.generate@1" as CapabilityRef;
+
 /**
  * The deterministic composer, and the preconditions it needs to be reachable.
  *
@@ -2495,6 +2499,85 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * The reference image generator, placed with its "Tạo ảnh" button bound to the package's job capability.
+     *
+     * The definition is the package's own `widget.json`, read from disk, so the instance is one the directory entry
+     * serves. The binding takes the prompt from the widget's state (the draft the frame keeps there), or from what the
+     * press sends, which wins: a spoken "tạo ảnh" runs the draft, a click or Clark sends the prompt. Its id reaches the
+     * frame through props, because the frame can only press a binding the instance holds.
+     */
+    if (/trình tạo ảnh|image generator/i.test(input.text)) {
+      const definition = widgetDefinitionSchema.parse(JSON.parse(readFileSync(IMAGE_GENERATOR_DEFINITION, "utf8")));
+      const conductor = deps.services().conductor;
+      const served = deps.services().serviceHost?.serves(IMAGE_GENERATE);
+      const generateBinding = conductor.newId("binding_image");
+      const instance = createInstance(conductor, {
+        definition,
+        packageDigest: definitionDigest(definition),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Trình tạo ảnh (fixture)", generateBinding },
+      });
+      saveActionBinding(conductor, {
+        actionBindingId: generateBinding,
+        label: "Tạo ảnh",
+        proposal: {
+          kind: "invoke" as const,
+          capabilityRef: IMAGE_GENERATE,
+          args: {},
+          bindings: [
+            { target: "prompt", source: "widget-state" as const },
+            { target: "prompt", source: "user-input" as const },
+          ],
+        },
+        inputSchema: {
+          type: "object",
+          properties: { prompt: { type: "string", minLength: 1, maxLength: 500 } },
+          additionalProperties: false,
+        },
+        // As the package declares it: asking a provider to draw writes to someone else's service.
+        effectCategory: "external-write" as const,
+        instanceId: instance.instanceId,
+        definitionId: definition.id,
+        packageGeneration: served?.generationId ?? definitionDigest(definition),
+        allowedDataRefs: [],
+        fixedConstraints: {},
+        requiresApproval: false,
+        limits: {},
+        bindingDigest: `sha256:${generateBinding}`,
+        createdAt: instantSchema.parse(new Date().toISOString()),
+      });
+      const snapshot = captureSnapshot(conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: trình tạo ảnh mẫu, nút gọi dịch vụ của gói như một job (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
+    /*
+     * Clark starting the image generator's job. The decision to call `invoke_capability` is scripted; the tool is the
+     * real one, which starts the job through the conversation's image generator widget so that widget follows it.
+     */
+    const imagined = /^(?:tạo ảnh giúp tui|generate an image)\s*:\s*(.+)$/iu.exec(input.text.trim());
+    if (imagined !== null) {
+      const tool = createInvokeCapabilityTool({
+        deps: () => capabilityInvokeDeps(deps.services()),
+        conversationId: input.conversationId,
+        channel: () => input.channel ?? "chat",
+        widgets: () => deps.services(),
+      });
+      const answer = await tool.execute({ action: "invoke", ref: IMAGE_GENERATE, args: { prompt: (imagined[1] ?? "").trim() } });
+      return {
+        text: "Fixture: tui gọi invoke_capability (không phải model thật).",
+        block: { type: "text", format: "plain", content: answer.text, streaming: false },
+      };
+    }
+
+    /*
      * The agent calling the same capability the notes widget's button calls.
      *
      * The decision to call `invoke_capability` is scripted; the tool is the real one, so the gate, the policy card and
@@ -2506,6 +2589,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         deps: () => capabilityInvokeDeps(deps.services()),
         conversationId: input.conversationId,
         channel: () => input.channel ?? "chat",
+        widgets: () => deps.services(),
       });
       const answer = await tool.execute(
         noted === null

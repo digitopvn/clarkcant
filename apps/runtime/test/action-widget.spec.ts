@@ -10,6 +10,7 @@ import {
   getActionBinding,
   getInstance,
   registerCapability,
+  saveActionBinding,
   writeRegisteredPreference,
 } from "@clarkcant/core";
 import { ACTION, DETAILS } from "@clarkcant/data-canvas";
@@ -36,6 +37,7 @@ import { recoverUnfinishedWork } from "../src/work-recovery.ts";
 import { stopTurnOnNode } from "../src/application/stop-turn.ts";
 import { runApprovedCapability, capabilityInvokeDeps } from "../src/application/capability-invoke.ts";
 import { createPackageJobHost } from "../src/job-host.ts";
+import { createInvokeCapabilityTool } from "../src/invoke-capability-tool.ts";
 import { handleRequest } from "../src/gateway.ts";
 import { decideApprovalForNode } from "../src/routes/conversations.ts";
 import { createWorkSupervisor } from "../src/work-supervisor.ts";
@@ -526,6 +528,36 @@ describe("placing a button through the model's view", () => {
       intent: "Tóm tắt lại",
       contextRefs: [],
     });
+  });
+
+  it("refuses Clark pressing a button that asks Clark, rather than recording it as the person's click", async () => {
+    const instanceId = await place({ label: "Tóm tắt", action: { kind: "agent", intent: "Tóm tắt lại" } });
+    const instance = getInstance(services.conductor, instanceId);
+    const bindingId = instance?.actionBindingIds[0] ?? "";
+    const binding = getActionBinding(services.conductor, bindingId);
+    const messages = () => (services.runtime.db.prepare("SELECT COUNT(*) AS n FROM messages").get() as { n: number }).n;
+    const before = messages();
+
+    const refused = await invokeWidgetAction(
+      services,
+      {
+        conversationId,
+        principalId: services.runtime.identity.ownerPrincipalId,
+        instanceId,
+        actionBindingId: bindingId,
+        expectedRevision: instance?.revision ?? 0,
+        expectedBindingDigest: binding?.bindingDigest ?? "",
+        input: {},
+        invocationId: "inv_agent_presses_agent",
+      },
+      "agent",
+    );
+
+    expect(refused).toMatchObject({ ok: false, status: 403, code: "NOT_AUTHORIZED" });
+    if (refused.ok) throw new Error("unreachable");
+    expect(refused.message).toContain("Nothing was sent");
+    // No message was written as the person's, and no turn ran.
+    expect(messages()).toBe(before);
   });
 
   it("refuses a proposal before anything is stored, so no button without an action is left behind", async () => {
@@ -1777,5 +1809,122 @@ describe("a button whose capability runs as a durable job", () => {
     const ended = ((await jobRoute("GET", button, jobId)).body as { job: Record<string, string> });
     expect(ended.job).toMatchObject({ status: "cancelled" });
     expect(ended.job.error).toContain("may already have completed");
+  });
+
+  it("starts a job Clark asks for through the conversation's widget binding to it, which then follows the job", async () => {
+    serveJob();
+    answer = neverAnswers;
+    const tool = (channel: "chat" | "voice" = "chat") =>
+      createInvokeCapabilityTool({ deps: () => capabilityInvokeDeps(services), conversationId, channel: () => channel, widgets: () => services });
+
+    // No widget offers it yet: refused, nothing sent, rather than a job no widget follows.
+    const orphan = await tool().execute({ action: "invoke", ref: JOB, args: { text: "x" } });
+    expect(orphan.text).toContain("chưa có widget nào");
+    expect(calls).toHaveLength(0);
+
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+    const started = await tool().execute({ action: "invoke", ref: JOB, args: {} });
+    expect(started.text).toContain("Đã bắt đầu job");
+    expect(started.text).toContain("chưa xong");
+    const jobId = /job_[A-Za-z0-9_-]+/.exec(started.text)?.[0] ?? "";
+    expect(jobRow(jobId)).toMatchObject({ instance_id: button, action_binding_id: getInstance(services.conductor, button)?.actionBindingIds[0] });
+    await until(() => calls.length === 1);
+    // The widget that follows it finds it in its own list.
+    const listed = await handleRequest({ services, now: () => AT }, {
+      method: "GET",
+      path: `/conversations/${conversationId}/widgets/${button}/jobs`,
+      query: {},
+      headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+      body: "",
+    });
+    expect((listed.body as { jobs: { jobId: string }[] }).jobs.map((job) => job.jobId)).toEqual([jobId]);
+
+    // Two widgets could take it: the model is asked to choose, and nothing runs until it does.
+    const second = await place({ label: "Render too", action: { kind: "invoke", capabilityRef: JOB, args: { text: "y" } } });
+    const ambiguous = await tool("voice").execute({ action: "invoke", ref: JOB, args: {} });
+    expect(ambiguous.text).toContain(second);
+    expect(ambiguous.text).toContain("Chưa có gì được chạy");
+    expect(calls).toHaveLength(1);
+    const chosen = await tool("voice").execute({ action: "invoke", ref: JOB, args: {}, instanceId: second });
+    expect(chosen.text).toContain(`widget ${second}`);
+    await until(() => calls.length === 2);
+    expect(calls[1]?.args).toEqual({ text: "y" });
+  });
+
+  it("lets Clark choose between two buttons of one widget that start the same job, by binding id", async () => {
+    serveJob();
+    answer = neverAnswers;
+    const tool = createInvokeCapabilityTool({ deps: () => capabilityInvokeDeps(services), conversationId, channel: () => "chat", widgets: () => services });
+    const widget = await place({ label: "Generate", action: { kind: "invoke", capabilityRef: JOB, args: { text: "standard" } } });
+    const standard = getInstance(services.conductor, widget)?.actionBindingIds[0] ?? "";
+    const first = getActionBinding(services.conductor, standard);
+    if (first === undefined) throw new Error("no binding was stored");
+    // A second button on the same widget, calling the same capability with other fixed arguments.
+    const hd = "binding_render_hd";
+    saveActionBinding(services.conductor, {
+      ...first,
+      actionBindingId: hd,
+      label: "Generate HD",
+      proposal: { kind: "invoke", capabilityRef: JOB, args: { text: "hd" } },
+      bindingDigest: `sha256:${hd}`,
+    });
+    expect(getInstance(services.conductor, widget)?.actionBindingIds).toEqual([standard, hd]);
+
+    // Naming the widget is not enough: both buttons are listed with their ids, and nothing runs.
+    const ambiguous = await tool.execute({ action: "invoke", ref: JOB, args: {}, instanceId: widget });
+    expect(ambiguous.text).toContain(`actionBindingId ${standard}`);
+    expect(ambiguous.text).toContain(`actionBindingId ${hd}`);
+    expect(ambiguous.text).toContain("Chưa có gì được chạy");
+    expect(calls).toHaveLength(0);
+
+    // An id that is not one of them is refused with the ids that exist.
+    const unknown = await tool.execute({ action: "invoke", ref: JOB, args: {}, actionBindingId: "binding_nope" });
+    expect(unknown.text).toContain("binding_nope");
+    expect(unknown.text).toContain(`actionBindingId ${standard}`);
+    expect(unknown.text).toContain(`actionBindingId ${hd}`);
+    expect(unknown.text).toContain("Không có gì được chạy");
+    expect(calls).toHaveLength(0);
+
+    const chosen = await tool.execute({ action: "invoke", ref: JOB, args: {}, instanceId: widget, actionBindingId: hd });
+    expect(chosen.text).toContain("Đã bắt đầu job");
+    expect(chosen.text).toContain("“Generate HD”");
+    const jobId = /job_[A-Za-z0-9_-]+/.exec(chosen.text)?.[0] ?? "";
+    expect(jobRow(jobId)).toMatchObject({ instance_id: widget, action_binding_id: hd });
+    await until(() => calls.length === 1);
+    expect(calls[0]?.args).toEqual({ text: "hd" });
+  });
+
+  it("lists only the jobs this widget's own bindings started, newest first, with the same owner checks", async () => {
+    serveJob();
+    answer = neverAnswers;
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+    const other = await place({ label: "Render too", action: { kind: "invoke", capabilityRef: JOB, args: { text: "y" } } });
+    const first = await press(button, "inv_job_list_1");
+    const second = await press(button, "inv_job_list_2");
+    const elsewhere = await press(other, "inv_job_list_other");
+    if (!first.ok || !second.ok || !elsewhere.ok) throw new Error("a job did not start");
+    const ids = [first, second].map((started) => (started.body.job as { jobId: string }).jobId);
+    // Two presses in the same millisecond keep their insertion order.
+    services.runtime.db.prepare("UPDATE jobs SET created_at = ? WHERE job_id = ?").run("2026-10-01T00:00:00.000Z", ids[0] ?? "");
+
+    const list = (instanceId: string, conversation = conversationId, authorized = true) =>
+      handleRequest({ services, now: () => AT }, {
+        method: "GET",
+        path: `/conversations/${conversation}/widgets/${instanceId}/jobs`,
+        query: {},
+        headers: authorized ? { authorization: `Bearer ${services.runtime.identity.localToken}` } : {},
+        body: "",
+      });
+    expect((await list(button, conversationId, false)).status).toBe(401);
+    const listed = await list(button);
+    expect(listed.status).toBe(200);
+    const jobs = (listed.body as { jobs: Record<string, unknown>[] }).jobs;
+    expect(jobs.map((job) => job.jobId)).toEqual([ids[1], ids[0]]);
+    expect(jobs[0]).not.toHaveProperty("ownerPrincipalId");
+    expect(jobs[0]).not.toHaveProperty("actionBindingId");
+    expect((await list(button, "conv_elsewhere")).status).toBe(404);
+    expect((await list("winst_unknown")).status).toBe(404);
+    const otherJobs = ((await list(other)).body as { jobs: { jobId: string }[] }).jobs;
+    expect(otherJobs.map((job) => job.jobId)).toEqual([(elsewhere.body.job as { jobId: string }).jobId]);
   });
 });

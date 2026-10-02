@@ -349,7 +349,7 @@ function sendInit() {
     stateRevision: 0,
     brokeredCapabilities: Object.entries(state.capabilities).filter(([, decision]) => decision === "granted").map(([ref]) => ref),
     allowedOrigins: [],
-    extensions: ["artifacts@1", "jobs@1", ...(state.browserTokens.length > 0 ? ["tokens@1"] : [])],
+    extensions: ["artifacts@1", "jobs@1", "jobs.list@1", ...(state.browserTokens.length > 0 ? ["tokens@1"] : [])],
   }, "*");
 }
 frameElement?.addEventListener("load", sendInit);

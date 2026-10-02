@@ -100,8 +100,16 @@ export function spokenActionRefusal(label: string, refusal: SpokenRefusal, local
     : `“${label}” could not be done.${why} Nothing was changed.`;
 }
 
-/** The sentence voice says for an action that started in the background, or waits on an approval card. */
-export function spokenActionWaiting(label: string, waiting: "background" | "approval", locale: SpeechLocale): string {
+/**
+ * The sentence voice says for an action that started in the background, started a package job, or waits on an approval
+ * card. A job has only started: its widget follows the progress and the conversation says when it ended.
+ */
+export function spokenActionWaiting(label: string, waiting: "background" | "job" | "approval", locale: SpeechLocale): string {
+  if (waiting === "job") {
+    return locale === "vi"
+      ? `Đã bắt đầu “${label}”. Widget hiện tiến độ, và cuộc trò chuyện sẽ báo khi xong.`
+      : `“${label}” has started. Its widget shows the progress, and the conversation says when it is done.`;
+  }
   if (waiting === "background") {
     return locale === "vi"
       ? `Tôi đang làm “${label}” ở nền. Kết quả sẽ có trong cuộc trò chuyện khi xong.`
