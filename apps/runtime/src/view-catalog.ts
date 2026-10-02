@@ -67,6 +67,16 @@ import {
   readTimeline,
   timelineProblems,
   timelineText,
+  MAP_ID,
+  MAP_SELECT_OPERATION,
+  MAP_VIEW_OPERATION,
+  MAX_MAP_FEATURES,
+  MAX_MAP_LABEL,
+  MAX_MAP_VERTICES,
+  MAP_MAX_ZOOM,
+  mapProblems,
+  mapText,
+  readMap,
   TREE_ID,
   TREE_SELECT_OPERATION,
   TREE_TOGGLE_OPERATION,
@@ -129,6 +139,7 @@ import {
   TREE,
   DIAGRAM,
   BOARD,
+  MAP,
   CAROUSEL,
   GALLERY,
   VIDEO,
@@ -198,6 +209,7 @@ export function buildViewCatalog(
     TREE.id,
     DIAGRAM.id,
     BOARD.id,
+    MAP.id,
     CAROUSEL.id,
     GALLERY.id,
     VIDEO.id,
@@ -252,6 +264,7 @@ export function buildViewCatalog(
     timelineView(deps, () => compose?.timezone() ?? nodeTimeZone()),
     treeView(deps),
     diagramView(deps),
+    mapView(deps),
     ...[CAROUSEL, GALLERY, VIDEO].map((definition) => mediaView(deps, definition)),
     boardView(deps, actions),
   );
@@ -275,7 +288,7 @@ export function buildViewCatalog(
         `To connect widgets, declare props.state as {"<key>":{"type":"string"|"number"|"boolean"|"string-list","initial":...}} ` +
         `(at most ${String(MAX_GRAPH_KEYS)} keys) and give leaves "on" and "feed" lists. "on" entries are {"event":"...","steps":[...]}: ` +
         `canvas.search@1 emits query.change {query}, canvas.choice@1 choice.change {value}, canvas.input@1 input.change {value}, ` +
-        `canvas.list@1 selection.change {selected}, canvas.table@1 row.select {rowIds}, canvas.calendar@1 date.select {date}, canvas.timeline@1 timeline.select {selectedId}, canvas.tree@1 tree.select {selectedId} and tree.toggle {nodeId, expanded}, canvas.diagram@1 diagram.select {selectedId}. ` +
+        `canvas.list@1 selection.change {selected}, canvas.table@1 row.select {rowIds}, canvas.calendar@1 date.select {date}, canvas.timeline@1 timeline.select {selectedId}, canvas.tree@1 tree.select {selectedId} and tree.toggle {nodeId, expanded}, canvas.diagram@1 diagram.select {selectedId}, canvas.map@1 map.select {selectedId}. ` +
         `Steps: {"op":"select-field","key","field"}, {"op":"set","key","value"}, {"op":"toggle","key","field"?}, {"op":"copy","key","from"}, ` +
         `{"op":"append"|"remove","key","field"}, {"op":"map-field","key","field","map":{...},"fallback"?}, {"op":"take","key","field","count"}, {"op":"count","key","field"}. ` +
         `"feed" entries are {"op":"query","key"} for a table or list, or {"op":"filter-equals","field","key"} for a table column, ` +
@@ -1005,6 +1018,81 @@ function diagramView(deps: WidgetDeps): ViewDescriptor {
           });
           if (!select.ok) throw new Error(select.message);
           return [select.binding];
+        },
+      });
+      return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
+    },
+  };
+}
+
+/**
+ * A map of the places the model names, drawn by the host over its offline basemap.
+ *
+ * The props are checked for what the schema cannot say before anything else — a URL anywhere, an unknown geometry, more
+ * features or vertices than a map holds, a hidden character — so the model reads the specific reason rather than a
+ * schema's "additional property". It is placed with two view bindings, the selection and the view a person pans to;
+ * both are view operations, so neither can cause an effect. Tiles are never named here: whether any are shown is the
+ * node's own tile policy, which a person sets.
+ */
+function mapView(deps: WidgetDeps): ViewDescriptor {
+  const definition = MAP;
+  return {
+    id: definition.id,
+    label: definition.semanticDescription,
+    notes:
+      `props.features is at most ${String(MAX_MAP_FEATURES)} features with ${String(MAX_MAP_VERTICES)} positions in all; ` +
+      `each is {"id","label" (one line, at most ${String(MAX_MAP_LABEL)} characters),"description"?,"geometry"} where geometry is ` +
+      `{"type":"Point","coordinates":[lon,lat]}, {"type":"LineString","coordinates":[[lon,lat],...]} or ` +
+      `{"type":"Polygon","coordinates":[[[lon,lat],...,the first position again]]} in WGS84 degrees, longitude first. ` +
+      `Optional props.title and props.view {"center":[lon,lat],"zoom":0-${String(MAP_MAX_ZOOM)}}; without a view the map fits every feature. ` +
+      `Props carry no URL of any kind: the basemap is offline and any tiles come only from the node's own tile policy. ` +
+      `A person can pan, zoom and select one feature; those are view state. It reads no files and changes no data.`,
+    shownText: `Shown: ${MAP_ID}, the features you gave over an offline basemap. Selection and the map view are view state.`,
+    build: (request) => {
+      const problems = mapProblems(request.props);
+      if (problems.length > 0) throw new Error(`${definition.id} cannot be shown: ${problems.join("; ")}`);
+      const schema = validateProps(definition, request.props);
+      if (!schema.ok) throw new Error(`${definition.id} has props that do not fit its schema: ${schema.problems.join(", ")}`);
+      const map = readMap(request.props);
+      if (map === undefined) throw new Error(`${definition.id} cannot be shown: its props do not describe a map`);
+      const packageDigest = definitionDigest(definition);
+      const { snapshot } = placeInstance(deps, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: request.principal.principalId,
+        props: request.props,
+        messageId: request.messageId,
+        // The map's own words — every feature with where it is — rather than the caption, so a reader without the
+        // drawing still has the places.
+        textAlternative: keptText(definition.id, "", mapText(map, SNAPSHOT_TEXT_LIMIT)),
+        presentationRef: `catalog:${definition.id}`,
+        bind: (instanceId) => {
+          const compile = (operation: string, label: string) => compileActionBinding({
+            bindingId: deps.newId("act"),
+            instance: {
+              instanceId,
+              ownerNodeId: deps.nodeId,
+              definitionRef: { id: definition.id, version: definition.version, packageDigest },
+              actionBindingRevision: 1,
+            },
+            packageGeneration: packageDigest,
+            label,
+            proposal: { kind: "view", operation, args: {} },
+            inputSchema: { type: "object" },
+            allowedDataRefs: [],
+            fixedConstraints: {},
+            effectCategory: "read",
+            requiresApproval: false,
+            limits: {},
+            bindingDigest: `sha256:${operation}:${instanceId}`,
+            at: deps.now(),
+            knownCapabilities: new Set(),
+          });
+          const select = compile(MAP_SELECT_OPERATION, "Map selection");
+          const view = compile(MAP_VIEW_OPERATION, "Map view");
+          if (!select.ok) throw new Error(select.message);
+          if (!view.ok) throw new Error(view.message);
+          return [select.binding, view.binding];
         },
       });
       return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };

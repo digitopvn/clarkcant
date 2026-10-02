@@ -1,3 +1,5 @@
+import { MAP_TILE_POLICY_PREFERENCE } from "./map-view.ts";
+
 /**
  * Routes a machine surface must not relay.
  *
@@ -16,7 +18,8 @@
  * one writes onto their machine, the other grants a widget bytes it could not otherwise reach. A widget's browser token
  * is asked for only by the host chrome showing that widget: through a machine surface it would be a provider credential
  * handed to whoever relayed the request. Connecting a package's service to an account is the person's for the same
- * reason: it is the consent that lets the package act on that account.
+ * reason: it is the consent that lets the package act on that account. Naming the node's map tile provider, or undoing
+ * that choice, is the person's too: it decides which host learns what every map shows.
  *
  * Segments are split the way the gateway splits them (on `/`, empty segments dropped, no decoding), so a path this
  * lets through cannot reach one of these routes under another spelling. A route guarded here must not decode the
@@ -24,9 +27,15 @@
  * a plain action id, so `/actions/%75pdate` is refused rather than read as `update`.
  */
 export function isPersonOnlyRoute(method: string, path: string): boolean {
-  if (method.toUpperCase() !== "POST") return false;
+  const verb = method.toUpperCase();
   const segments = (path.split("?")[0] ?? "").split("/").filter((segment) => segment !== "");
   const [first, second, third, fourth, fifth, sixth] = segments;
+  // PUT /preferences/maps.tilePolicy and POST /preferences/maps.tilePolicy/undo: which host every map on the node may
+  // fetch tiles from, and so tell what it shows. An AI client that could name that host could widen the node's reach.
+  if (first === "preferences" && second === MAP_TILE_POLICY_PREFERENCE) {
+    return (verb === "PUT" && segments.length === 2) || (verb === "POST" && segments.length === 3 && third === "undo");
+  }
+  if (verb !== "POST") return false;
   switch (segments.length) {
     case 1:
       // POST /grants
@@ -81,5 +90,5 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile provider, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });

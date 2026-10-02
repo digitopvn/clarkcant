@@ -1373,6 +1373,42 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       }
     }
 
+    /*
+     * The map fixture places the catalog's own map through the same descriptor show_view uses. The malformed variants
+     * — a tile URL in the props, a geometry type a map does not draw, a hidden character in a label — let a browser
+     * journey read the host's refusal as a model would.
+     */
+    const mapRequest = /^(?:đặt|place)\s+bản đồ(?:\s+(có url|hình lạ|ký tự ẩn))?$/iu.exec(input.text.trim());
+    if (mapRequest !== null) {
+      const which = (mapRequest[1] ?? "").toLowerCase();
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.map@1");
+      const fixture = fixturesFor("canvas.map@1").find((entry) => entry.id === "map.normal");
+      if (view === undefined || fixture === undefined) return undefined;
+      const features = fixture.props.features as Record<string, unknown>[];
+      const props: Record<string, unknown> =
+        which === "có url"
+          ? { ...fixture.props, tileUrl: "https://tiles.example.com/{z}/{x}/{y}.png" }
+          : which === "hình lạ"
+            ? { ...fixture.props, features: [...features, { id: "circle", label: "Vòng", geometry: { type: "Circle", coordinates: [105.8, 21] } }] }
+            : which === "ký tự ẩn"
+              ? { ...fixture.props, features: [{ ...features[0], label: "Hà Nội \u202engược" }, ...features.slice(1)] }
+              : fixture.props;
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt bản đồ${which === "" ? "" : ` ${which}`} (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
+
     // The browser journey uses the deterministic model only to place the real board descriptor; moves and saved state
     // still pass through the production renderer, host binding and revision-checked widget service.
     const boardRequest = /^(?:đặt|place)\s+bảng kanban(?:\s+(liên kết))?$/iu.exec(input.text.trim());
