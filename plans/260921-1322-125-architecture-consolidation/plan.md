@@ -1,7 +1,7 @@
 ---
 title: "Architecture consolidation: hợp nhất policy, khoanh vùng Pi worker, khoá cài đặt, gọn hoá runtime"
 description: "Sáu PR tuần tự cho issue #125: một execution policy chuẩn, projectRoots được host cưỡng chế, dependency closure đóng băng trước build, tách runtime composition, một nguồn sự thật cho implementation status, và các internal real-path proof."
-status: in-progress
+status: completed
 priority: P1
 effort: "~6 PR tuần tự; mỗi PR độc lập xanh và review được"
 issue: 125
@@ -10,7 +10,7 @@ tags: [refactor, backend, security, tech-debt, critical, infra]
 blockedBy: []
 blocks: []
 created: 2026-09-21
-updated: 2026-09-21
+updated: 2026-10-02
 ---
 
 # Architecture consolidation (issue #125)
@@ -67,12 +67,12 @@ Các dữ kiện đã kiểm tra trực tiếp trên cây hiện tại (`026d981
 
 | Phase | Name | Status |
 | --- | --- | --- |
-| 1 | [Canonical execution policy](./phase-01-unify-execution-policy.md) | Pending |
-| 2 | [Pi projectRoots confinement](./phase-02-pi-project-roots-confinement.md) | Pending |
-| 3 | [Deterministic install dependency lock](./phase-03-install-dependency-lock.md) | Pending |
-| 4 | [Runtime composition decomposition](./phase-04-runtime-decomposition.md) | Pending |
-| 5 | [Implementation-status source of truth](./phase-05-status-source-of-truth.md) | Pending |
-| 6 | [Internal real-path proofs](./phase-06-internal-real-path-proofs.md) | Pending |
+| 1 | [Canonical execution policy](./phase-01-unify-execution-policy.md) | Done |
+| 2 | [Pi projectRoots confinement](./phase-02-pi-project-roots-confinement.md) | Done |
+| 3 | [Deterministic install dependency lock](./phase-03-install-dependency-lock.md) | Done |
+| 4 | [Runtime composition decomposition](./phase-04-runtime-decomposition.md) | Done |
+| 5 | [Implementation-status source of truth](./phase-05-status-source-of-truth.md) | Done |
+| 6 | [Internal real-path proofs](./phase-06-internal-real-path-proofs.md) | Done |
 
 Số PR tương ứng: phase *N* = PR *N*.
 

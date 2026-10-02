@@ -1,12 +1,14 @@
 ---
 title: "#298 Theme Platform M3: chiều sâu giao diện do host sở hữu"
-status: in-review
+status: completed
 created: 2026-09-30
 issues: [298]
 related: [201, 192, 129, 299, 300, 302, 304, 305]
 ---
 
 # Theme Platform M3: chiều sâu giao diện (#298)
+
+Pull request: [#347](https://github.com/digitopvn/clarkcant/pull/347).
 
 Nguồn: issue [#298](https://github.com/digitopvn/clarkcant/issues/298), epic #201. Nền M1/M2 đã có trên `main`
 (PR #304 contract + compiler, PR #305 theme từ package, đổi giao diện tại chỗ).

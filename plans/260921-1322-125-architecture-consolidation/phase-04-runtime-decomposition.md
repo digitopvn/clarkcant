@@ -1,7 +1,7 @@
 ---
 phase: 4
 title: "Tách runtime composition, không redesign domain"
-status: pending
+status: done
 priority: P2
 effort: "2-3 ngày"
 dependencies: [3]

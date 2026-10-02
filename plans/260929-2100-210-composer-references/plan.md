@@ -1,12 +1,14 @@
 ---
 title: "#210 A–D và #196 phase 1–2: một hợp đồng reference cho composer và inbox"
-status: in-progress
+status: completed
 created: 2026-09-29
 issues: [210, 196]
 related: [5, 209, 198, 200, 129, 137]
 ---
 
 # #210 A–D và #196 phase 1–2
+
+Pull requests: [#257](https://github.com/digitopvn/clarkcant/pull/257), [#258](https://github.com/digitopvn/clarkcant/pull/258), [#259](https://github.com/digitopvn/clarkcant/pull/259).
 
 Nguồn: [#210](https://github.com/digitopvn/clarkcant/issues/210), [#196](https://github.com/digitopvn/clarkcant/issues/196),
 phase 07 của [lộ trình](../260929-0002-open-issues-roadmap/plan.md).

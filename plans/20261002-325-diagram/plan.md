@@ -1,12 +1,14 @@
 ---
 title: "Diagram and graph widget"
-status: in-progress
+status: completed
 created: 2026-10-02
 issues: [325]
 related: [198, 326, 327, 282, 283]
 ---
 
 # Diagram and graph widget (#325)
+
+Pull request: [#396](https://github.com/digitopvn/clarkcant/pull/396).
 
 ## Outcome
 Ship a host-rendered `canvas.diagram@1` primitive that draws a bounded node-and-edge graph as SVG text nodes with no script run, lays it out deterministically, reads a documented Mermaid flowchart subset on the host into the same model, and supports keyboard navigation along edges, persisted selection, and truthful semantic and text representations.

@@ -1,12 +1,14 @@
 ---
 title: "#335: dev-host semantic inspector and composition event simulator"
-status: in-progress
+status: completed
 created: 2026-10-01
 issues: [335]
 related: [195, 226, 334]
 ---
 
 # Dev-host semantic inspector and composition event simulator
+
+Pull request: [#376](https://github.com/digitopvn/clarkcant/pull/376).
 
 ## Outcome
 
