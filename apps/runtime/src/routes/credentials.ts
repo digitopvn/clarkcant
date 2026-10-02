@@ -15,7 +15,7 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  * branches lived in the gateway.
  */
 export interface CredentialRouteDeps {
-  services: Pick<NodeServices, "runtime" | "conductor">;
+  services: Pick<NodeServices, "runtime" | "conductor"> & Partial<Pick<NodeServices, "serviceHost">>;
   request: GatewayRequest;
   segments: string[];
 }
@@ -47,6 +47,8 @@ export function handleCredentialRoutes(deps: CredentialRouteDeps): GatewayRespon
       parsed.value.fields,
     );
     if (!stored.ok) return fail(400, stored.code, stored.message);
+    // A package service waiting for this key is signed in now, without a restart.
+    deps.services.serviceHost?.refreshAuthentication?.();
     return json(201, { ok: true, names: stored.names });
   }
 
@@ -64,6 +66,8 @@ export function handleCredentialRoutes(deps: CredentialRouteDeps): GatewayRespon
     // 404 rather than a cheerful 200 for a name that was not there: "I removed it" and "there was nothing to remove"
     // are different answers, and a surface that cannot tell them apart cannot say why nothing changed.
     if (!removed) return fail(404, "RESOURCE_NOT_FOUND", `no credential named ${name}`);
+    // A package service that used it reads as not signed in from now on.
+    deps.services.serviceHost?.refreshAuthentication?.();
     return json(200, { ok: true, names: credentialNames(runtime.db, owner) });
   }
 

@@ -284,12 +284,22 @@ export async function invokeCapability(
     );
   }
 
+  // Whether the package's secrets can be used is read now, not at the last ping: a key added or removed a moment ago
+  // decides this call.
+  host.refreshAuthentication?.(served.packageId);
   const descriptor = getCapability({ db: deps.db, nodeId: deps.nodeId }, ref, deps.nodeId);
   if (descriptor === undefined) {
     return refused(404, "CAPABILITY_MISSING", `capability ${request.ref} is not registered on this node yet`);
   }
   const { readiness } = descriptor;
   const execution = host.execution?.(ref);
+  // The granted profile bounds this package's own jobs and the files they keep, inside the node's own limits.
+  const granted = host.profile?.(ref);
+  const jobScope = {
+    packageId: served.packageId,
+    maxActive: granted?.maxActiveJobs ?? Number.POSITIVE_INFINITY,
+    ...(granted === undefined ? {} : { artifactMaxBytes: granted.artifactMaxBytes }),
+  };
   if (execution?.kind === "job") {
     if (deps.packageJobs === undefined || request.jobOrigin === undefined || request.bindingGeneration === undefined) {
       return refused(503, "JOB_HOST_UNAVAILABLE", "this long-running capability needs its originating widget binding and node job host");
@@ -297,9 +307,21 @@ export async function invokeCapability(
     if (!deps.packageJobs.canAdmit()) {
       return refused(429, "JOB_LIMIT_REACHED", "the node is at its active package job limit; this job was not sent");
     }
+    if (!deps.packageJobs.canAdmit(jobScope)) {
+      return refused(
+        429,
+        "JOB_LIMIT_REACHED",
+        `this package runs at most ${String(jobScope.maxActive)} job${jobScope.maxActive === 1 ? "" : "s"} at once in its resource profile; this job was not sent`,
+      );
+    }
   }
-  if (!readiness.authenticated) {
-    return refused(409, "CAPABILITY_NOT_AUTHENTICATED", `capability ${request.ref} needs its connection signed in`);
+  // Said only of a capability that is otherwise ready, so the reason is the sign-in's, not a restart's.
+  if (!readiness.authenticated && readiness.installed && readiness.loaded && readiness.healthy) {
+    return refused(
+      409,
+      "CAPABILITY_NOT_AUTHENTICATED",
+      `${descriptor.summary} is not signed in: ${readiness.blockedReason ?? "it needs its connection signed in"}`,
+    );
   }
   if (!(readiness.installed && readiness.loaded && readiness.authorized && readiness.healthy)) {
     return refused(
@@ -443,9 +465,10 @@ export async function invokeCapability(
           capabilityRef: ref,
           effectCategory: descriptor.effectCategory,
         },
+        scope: jobScope,
         // A press's deadline bounds how long the press waits for an answer, and a job answers at once with its ref; the
         // job itself runs under the service host's job ceiling, and Stop, emergency Stop and shutdown still end it.
-        run: (signal, onProgress) => host.call(ref, request.args, { signal, onProgress }),
+        run: (signal, onProgress) => host.call(ref, request.args, { signal, onProgress, effectCategory: descriptor.effectCategory }),
         ...(request.onJobSettled === undefined ? {} : { onSettled: request.onJobSettled }),
         });
       } catch (cause) {
@@ -459,6 +482,8 @@ export async function invokeCapability(
       return { kind: "job", ref, effectCategory: descriptor.effectCategory, job, description };
     }
     const result = await host.call(ref, request.args, {
+      // What the policy decided on above, which bounds the egress the service may make during this call.
+      effectCategory: descriptor.effectCategory,
       ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     });

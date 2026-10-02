@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { declaredReachSchema } from "./declared-reach.ts";
 import { facetKindSchema, isolationClassSchema } from "./install.ts";
 import { platformSchema, semverSchema, type Platform } from "./primitives.ts";
 
@@ -94,6 +95,12 @@ export const directoryEntrySchema = z.strictObject({
   hostApi: z.strictObject({ min: z.int().nonnegative(), max: z.int().nonnegative() }),
   /** Summarised for the listing; the authoritative list is the manifest inside the artifact. */
   permissionsSummary: z.array(z.string().min(1).max(200)).max(64),
+  /**
+   * The origins, secrets and browser-token providers the package reaches (`declared-reach.ts`), so a listing and an
+   * install question show them before anything is fetched. Absent means it reaches none. Unlike the other claims here
+   * it is binding: the install refuses an artifact whose manifest declares a different reach.
+   */
+  declaredReach: declaredReachSchema.optional(),
   riskTier: riskLaneSchema,
   sizeBytes: z.int().nonnegative(),
   /** The digest the publisher published. An install that resolves to anything else is refused. */

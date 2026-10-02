@@ -162,6 +162,10 @@ export function changePackage(
   }
   // An uninstalled package's services stop, a restored or rolled-back one's start from the generation now active.
   deps.packagesChanged?.();
+  // Tokens its frames hold were issued under code that is no longer running, so they are withdrawn with it.
+  if (input.action !== "restore") {
+    for (const packageId of new Set([input.packageId, outcome.packageId])) deps.packageCodeEnded?.(packageId);
+  }
   recordEffectExecution(
     { db: deps.runtime.db, nodeId: deps.runtime.identity.nodeId, now: nowInstant, newId: deps.conductor.newId },
     {

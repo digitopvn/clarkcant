@@ -433,6 +433,29 @@ generation and capability. Anything else, including a ref that does not exist, i
 A node without a job host answers `503 JOB_UNAVAILABLE`. `POST /stop` also cancels running package jobs and counts them
 in `stopped.jobs`.
 
+Browser tokens a frame asks for (`tokens@1`, [widget-development.md §14.3](widget-development.md#143-browser-tokens-tokens1))
+are in `/openapi.json`. Host chrome asks for them on behalf of the frame it mounted, with the random session id it gave
+that mount. A token is issued only for a provider and scopes the widget's package declared in its UI facet's
+`browserTokens`, and only when the node has an adapter that mints a scoped token for those scopes and that lifetime
+(30–3600 s, 900 s when none is asked). A request is refused, never narrowed. The node keeps only the provider's token
+id and audits the provider and outcome as `browser-token`, never the value
+(`packages/contracts/src/browser-token.ts`).
+
+| Method | Path | Body / answer |
+|---|---|---|
+| POST | `/conversations/{id}/widgets/{instanceId}/browser-tokens` | `{ session, request: { provider, scopes, ttlSeconds? } }` — `{ token: { provider, token, scopes, expiresAt } }`. Person-only |
+| DELETE | `/conversations/{id}/widgets/{instanceId}/browser-tokens/{session}` | – `{ ended: true, revoked }`; the session's tokens are revoked where the provider supports it, and a later request for it is `409 TOKEN_SESSION_ENDED` |
+
+Refusals: `403 TOKEN_PROVIDER_NOT_DECLARED` or `TOKEN_SCOPE_NOT_DECLARED`, `409 TOKEN_PACKAGE_NOT_ACTIVE` or
+`TOKEN_SESSION_ENDED`, `422 TOKEN_PROVIDER_UNSCOPED`, `TOKEN_SCOPE_NOT_SUPPORTED` or `TOKEN_TTL_TOO_LONG`,
+`502 TOKEN_ISSUE_FAILED`, and `503 TOKEN_PROVIDER_UNAVAILABLE` on a node without an adapter for the provider. No
+provider adapter ships yet. A node started with `CC_BROWSER_TOKEN_FIXTURE=1` registers in-process fixture providers for
+the browser suite and answers `GET /browser-token-fixture/issued`; without it, that route is `404`.
+
+The bridge side (`tokens@1`) is offered in `init.extensions` only to a frame whose package declared browser tokens.
+`token.request` is answered with `token-result`; the SDK and the host's frame session refuse a `state.update`,
+`semantic.publish` or `actions.invoke` that carries an issued token with `TOKEN_NOT_ALLOWED`.
+
 
 Every instance route is checked again against that instance's grant. A ref is a pointer, not a permission, so an
 expired (`403 ARTIFACT_GRANT_EXPIRED`) or revoked (`403 ARTIFACT_GRANT_REVOKED`) grant stops the next call. Sizes,
@@ -494,7 +517,9 @@ the generic relays (a WebSocket `request` frame, `clarkcant api`) and MCP refuse
 decision with `403 PERSON_ONLY` for the same reason: approving a guarded action (on a card, or one a running task
 raised), deciding a package capability, installing a package (`POST /packages/install`) or deciding an install the
 person's execution mode asked about, confirming an app intent, reporting what the page did with an action the agent asked for, trusting a paired peer,
-issuing a grant, and recording whether an action whose outcome nobody saw took effect
+issuing a grant, asking for a browser token for a frame
+(`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; only the host chrome that mounted the frame asks, and a
+machine client would be asking for a credential to keep), and recording whether an action whose outcome nobody saw took effect
 (`POST /effects/{effectId}/reconcile`; an AI client that could say "that push landed" could clear its own task's
 uncertainty and then report its own success). Exporting a table as a CSV file
 (`POST /conversations/{id}/widgets/{instanceId}/export`) is refused on the same relays too: the file is written for
@@ -508,6 +533,18 @@ available, and so does `act_on_notice`: it never offers the person's answer abou
 notice's update (`403 PERSON_ONLY` for both, the update route refused as above). `read_inbox` marks every notice's
 title and body as data reported by other work, never instructions, and keeps each on one line. The discovery document
 lists this under `personDecisions`.
+
+**A package service's own MCP connection.** The node is the MCP client of each package service it runs over stdio.
+When the service's `tools` facet declares `egress`, the node's `initialize` request offers
+`capabilities.experimental["clarkcant/egress"]` (`version: 1`), and the service may send the node the request
+`clarkcant/egress.fetch` with `{ version: 1, url, method?, headers?, body? }`. The node makes the HTTP request to a
+declared origin only, adds the declared credential header from the secret stored for `package:<id>`, follows no
+redirect, and replaces the secret with `[redacted]` in what it returns as a best-effort guard. It answers only `GET` and
+`HEAD` unless a call in flight was decided as `external-write` or riskier, rate-limits each service, and refuses
+loopback and private origins unless the node runs with `CC_EGRESS_ALLOW_PRIVATE_NETWORK=1`. Refusals are JSON-RPC
+errors `-32010` to `-32018`
+(`packages/contracts/src/service-egress.ts`, [widget-development.md §14.2](widget-development.md#142-reaching-a-provider-from-a-service)).
+This method is not on `POST /mcp`.
 
 WebMCP (a page exposing tools to a browser's own agent) was considered for the same notice actions and is not offered:
 the proposal is still a draft without a shipped browser API, and ClarkCant's page has no tool surface of its own to

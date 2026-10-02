@@ -7,7 +7,9 @@ import {
   ORB_PROFILE_NAMES,
   appIntentSchema,
   attachmentIdSchema,
+  canonicalReach,
   colorSchemeSchema,
+  declaredReachIsEmpty,
   describeAppIntent,
   memoryKindSchema,
   memoryScopeSchema,
@@ -1409,6 +1411,10 @@ export function createSearchDirectoryTool(input: {
             digest: entry.digest,
             riskTier: entry.riskTier,
             ...(entry.widgetAppearance === undefined ? {} : { widgetAppearance: entry.widgetAppearance }),
+            // What installing lets it reach, shown before the Install press; the install refuses an artifact that differs.
+            ...(entry.declaredReach === undefined || declaredReachIsEmpty(entry.declaredReach)
+              ? {}
+              : { declaredReach: canonicalReach(entry.declaredReach) }),
             facets: entry.facets,
             platforms: entry.platforms,
           })),

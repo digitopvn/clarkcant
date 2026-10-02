@@ -41,11 +41,17 @@ export function consumersOf(value: unknown): string[] {
  *
  * A command can receive a secret in one way only, as a variable in its own environment, so a secret asked for a
  * `command:` consumer is stored as `process-env`: without that, the only thing the person typed it for could never
- * use it. Every other consumer is served by a callback that runs and returns, which is `tool-only`. Nothing here can
- * produce `agent-context`, the one exposure that puts a value where it cannot be taken back from.
+ * use it. A `package:` consumer is a package's service, which never receives the value at all: the host adds it as
+ * the header the package declared to a request it makes on the service's behalf, so it is stored as `http-header`.
+ * A secret asked for both a command and a package keeps `process-env`, and the package's service reads as not signed
+ * in until it has one of its own. Every other consumer is served by a callback that runs and returns, which is
+ * `tool-only`. Nothing here can produce `agent-context`, the one exposure that puts a value where it cannot be taken
+ * back from.
  */
-export function injectionPolicyFor(consumers: readonly string[]): "tool-only" | "process-env" {
-  return consumers.some((consumer) => consumer.startsWith("command:")) ? "process-env" : "tool-only";
+export function injectionPolicyFor(consumers: readonly string[]): "tool-only" | "process-env" | "http-header" {
+  if (consumers.some((consumer) => consumer.startsWith("command:"))) return "process-env";
+  if (consumers.some((consumer) => consumer.startsWith("package:"))) return "http-header";
+  return "tool-only";
 }
 
 /**

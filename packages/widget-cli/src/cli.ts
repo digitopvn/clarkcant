@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { definitionDigest } from "@clarkcant/widget-host";
 import {
   PACKAGE_MANIFEST_SCHEMA_VERSION,
+  declaredReachIsEmpty,
+  declaredReachOf,
   directoryEntrySchema,
   riskLaneFor,
   type DirectoryEntry,
@@ -415,6 +417,7 @@ function publish(root: string): number {
     process.stderr.write("clarkcant.json declares no publisher, and a directory entry has to say who a package comes from.");
     return 1;
   }
+  const reach = declaredReachOf(pkg.manifest);
   const entry: DirectoryEntry = {
     packageId: pkg.manifest.id,
     version: pkg.manifest.version,
@@ -435,6 +438,8 @@ function publish(root: string): number {
     platforms: pkg.manifest.platforms,
     hostApi: pkg.manifest.hostApi,
     permissionsSummary: requestedSummary(pkg.manifest.permissions),
+    // What it reaches beyond its sandbox, shown before install. Binding: an install refuses an artifact that differs.
+    ...(declaredReachIsEmpty(reach) ? {} : { declaredReach: reach }),
     // From the isolation the facets declare, never from what the publisher says about their own package.
     riskTier: riskLaneFor(pkg.manifest.facets.map((facet) => facet.isolation)),
     sizeBytes: (artifact.files ?? []).reduce((sum, file) => sum + file.bytes, 0),

@@ -2,8 +2,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { connectStdio } from "../src/stdio.ts";
-import type { StdioMcpTransport } from "../src/stdio.ts";
+import { connectStdio, JSON_RPC_SERVER_BUSY, MAX_SERVER_REQUESTS, McpServerRequestError } from "../src/stdio.ts";
+import type { StdioMcpTransport, StdioMcpTransportOptions } from "../src/stdio.ts";
 import { normalizeMcpTool, toolSetDigest } from "../src/index.ts";
 
 /**
@@ -218,5 +218,123 @@ describe("liveness", () => {
     await transport.close();
     expect(reasons).toEqual([]);
     expect(transport.running).toBe(false);
+  });
+});
+
+describe("requests the server sends to the host", () => {
+  type Handle = NonNullable<StdioMcpTransportOptions["serverRequests"]>["handle"];
+
+  function connectAsking(handle?: Handle): Promise<StdioMcpTransport> {
+    return connectStdio({
+      serverId: "reference",
+      command: process.execPath,
+      args: [SERVER],
+      env: { MCP_FIXTURE_MODE: "asks" },
+      requestTimeoutMs: 5_000,
+      ...(handle === undefined ? {} : { serverRequests: { experimental: { "example/fetch": { version: 1 } }, handle } }),
+    }).then((transport) => {
+      open.push(transport);
+      return transport;
+    });
+  }
+
+  interface Reply {
+    advertised: unknown;
+    answers: unknown[];
+  }
+
+  async function ask(transport: StdioMcpTransport, requests: Record<string, unknown>[]): Promise<Reply> {
+    const result = await transport.callTool("ask", { requests });
+    return JSON.parse(result.content) as Reply;
+  }
+
+  it("answers method-not-found when the host takes no requests, and advertises nothing", async () => {
+    const transport = await connectAsking();
+    const reply = await ask(transport, [{ method: "example/fetch", params: { url: "x" } }]);
+    expect(reply.advertised).toBeNull();
+    expect(reply.answers).toEqual([{ error: { code: -32601, message: "the host does not answer example/fetch" } }]);
+  });
+
+  it("advertises what it answers and returns the handler's result or its JSON-RPC error", async () => {
+    const seen: string[] = [];
+    const transport = await connectAsking(({ method, params }) => {
+      seen.push(method);
+      if (method !== "example/fetch") return Promise.reject(new McpServerRequestError(-32601, `no ${method}`));
+      const url = (params as { url?: unknown }).url;
+      if (url === "bad") return Promise.reject(new McpServerRequestError(-32602, "that url is not declared"));
+      if (url === "boom") return Promise.reject(new Error("internal detail that must not reach the server"));
+      return Promise.resolve({ status: 200 });
+    });
+    const reply = await ask(transport, [
+      { method: "example/fetch", params: { url: "ok" } },
+      { method: "example/fetch", params: { url: "bad" } },
+      { method: "example/fetch", params: { url: "boom" } },
+      { method: "example/other" },
+    ]);
+    expect(reply.advertised).toEqual({ "example/fetch": { version: 1 } });
+    expect(reply.answers).toEqual([
+      { result: { status: 200 } },
+      { error: { code: -32602, message: "that url is not declared" } },
+      { error: { code: JSON_RPC_SERVER_BUSY, message: "the host could not answer this request" } },
+      { error: { code: -32601, message: "no example/other" } },
+    ]);
+    expect(seen).toEqual(["example/fetch", "example/fetch", "example/fetch", "example/other"]);
+  });
+
+  it("never settles the host's own request with a server request that reuses its id", async () => {
+    const transport = await connectAsking(() => Promise.resolve({ answered: "by the host" }));
+    // The server's request carries the very id of the host's pending tools/call. Were it read as the answer to that
+    // call, the call would settle with no content; instead the call waits for its real answer.
+    const reply = await ask(transport, [{ method: "example/fetch", sameIdAsCall: true }]);
+    expect(reply.answers).toEqual([{ result: { answered: "by the host" } }]);
+  });
+
+  it("refuses more than its limit of requests at once instead of queueing them", async () => {
+    const releases: (() => void)[] = [];
+    const transport = await connectAsking(
+      () =>
+        new Promise((resolve) => {
+          releases.push(() => resolve({ held: true }));
+          // Every slot is taken: the next request is refused while these are held, then they are let go.
+          if (releases.length === MAX_SERVER_REQUESTS) setTimeout(() => releases.forEach((release) => release()), 250);
+        }),
+    );
+    const reply = await ask(
+      transport,
+      Array.from({ length: MAX_SERVER_REQUESTS + 1 }, () => ({ method: "example/fetch" })),
+    );
+    expect(reply.answers.slice(0, MAX_SERVER_REQUESTS)).toEqual(
+      Array.from({ length: MAX_SERVER_REQUESTS }, () => ({ result: { held: true } })),
+    );
+    expect(reply.answers[MAX_SERVER_REQUESTS]).toMatchObject({ error: { code: JSON_RPC_SERVER_BUSY } });
+  });
+
+  it("stops what it does for a request the server withdraws", async () => {
+    let signal: AbortSignal | undefined;
+    const transport = await connectAsking(
+      (request) =>
+        new Promise((_resolve, reject) => {
+          signal = request.signal;
+          request.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+    );
+    const reply = await ask(transport, [{ method: "example/fetch", cancel: true }]);
+    expect(reply.answers).toEqual([{ cancelled: true }]);
+    await expect.poll(() => signal?.aborted).toBe(true);
+  });
+
+  it("stops what it does for the server when the server is closed", async () => {
+    let signal: AbortSignal | undefined;
+    const transport = await connectAsking((request) => {
+      signal = request.signal;
+      return new Promise(() => undefined);
+    });
+    const call = transport.callTool("ask", { requests: [{ method: "example/fetch" }] });
+    await expect.poll(() => signal).toBeDefined();
+    expect(signal?.aborted).toBe(false);
+    const settled = expect(call).rejects.toThrow(/was closed/);
+    await transport.close();
+    await settled;
+    expect(signal?.aborted).toBe(true);
   });
 });

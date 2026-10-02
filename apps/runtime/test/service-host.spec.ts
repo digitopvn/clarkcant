@@ -1,4 +1,7 @@
+import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,11 +11,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type CapabilityRef,
   DEFAULT_EXECUTION_POLICY_CONFIG,
+  type EngineCapacity,
   type ExecutionPolicyConfig,
   type Instant,
+  RESOURCE_PROFILES,
+  type ResourceProfileName,
 } from "@clarkcant/contracts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, getCapability, registerCapability, writeRegisteredPreference } from "@clarkcant/core";
-import { migrate, openDatabase, type Database } from "@clarkcant/storage";
+import { deleteCredential, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import {
   type CapabilityInvokeDeps,
@@ -20,9 +26,18 @@ import {
   invokeCapability,
   runApprovedCapability,
 } from "../src/application/capability-invoke.ts";
+import { storeCredentialFields } from "../src/application/credential-vault.ts";
 import { describeCapabilityOutcome } from "../src/invoke-capability-tool.ts";
+import { createSecretBroker } from "../src/secret-broker.ts";
+import { type EgressAuditEvent, egressSecretProblem } from "../src/service-egress.ts";
 import { NEEDS_ENGINE_REASON, type ServiceEngine } from "../src/service-container.ts";
-import { createServiceHost, serviceEffectCategory, type ServiceHost, type ServiceLauncher } from "../src/service-host.ts";
+import {
+  createServiceHost,
+  resourceProfilePolicy,
+  serviceEffectCategory,
+  type ServiceHost,
+  type ServiceLauncher,
+} from "../src/service-host.ts";
 
 /**
  * The service host and the one gate every caller goes through, against the notes package's real service.
@@ -80,6 +95,8 @@ function start(
     restartBaseMs?: number;
     engineRetryMs?: number;
     packageRoot?: (packageId: string) => string | undefined;
+    capacity?: EngineCapacity | (() => Promise<EngineCapacity>);
+    profilePolicy?: (input: { packageId: string; profile: ResourceProfileName }) => string | undefined;
   } = {},
 ): ServiceHost {
   const engine = options.engine;
@@ -91,6 +108,10 @@ function start(
       options.packageRoot === undefined ? (generation.packageId === PACKAGE ? root : undefined) : options.packageRoot(generation.packageId),
     launcher: options.launcher ?? plainLauncher(),
     log: (line) => logs.push(line),
+    ...(options.capacity === undefined
+      ? {}
+      : { capacity: typeof options.capacity === "function" ? options.capacity : async () => (options.capacity as EngineCapacity | undefined) ?? {} }),
+    ...(options.profilePolicy === undefined ? {} : { profilePolicy: options.profilePolicy }),
     timings: {
       restartBaseMs: options.restartBaseMs ?? 20,
       pingIntervalMs: 60_000,
@@ -202,6 +223,120 @@ afterEach(async () => {
   host = undefined;
   db.close();
   rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
+describe("the resource profile a service runs in", () => {
+  const GIB = 1024 * 1024 * 1024;
+  const roomy: EngineCapacity = { memoryBytes: 64 * GIB, cpus: 16, enforcesLimits: true };
+
+  function requesting(profile: ResourceProfileName): void {
+    const path = join(root, "clarkcant.json");
+    const manifest = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    writeFileSync(path, JSON.stringify({ ...manifest, resources: { version: 1, profile } }, null, 2));
+  }
+
+  /** The plain launcher, keeping what it was asked to launch, so the profile the container would get can be read. */
+  function recording(): { launcher: ServiceLauncher; profiles: string[] } {
+    const plain = plainLauncher();
+    const profiles: string[] = [];
+    return {
+      profiles,
+      launcher: (spec) => {
+        profiles.push(spec.profile.name);
+        return plain(spec);
+      },
+    };
+  }
+
+  it("runs a package that asks for nothing in the light profile, the envelope it always had", async () => {
+    activate();
+    const seen = recording();
+    const serviceHost = start({ launcher: seen.launcher, capacity: roomy });
+    await running(serviceHost);
+    expect(seen.profiles).toEqual(["interactive-light"]);
+    expect(serviceHost.profile?.(ADD)).toBe(RESOURCE_PROFILES["interactive-light"]);
+    expect(serviceHost.resourceGrant?.(PACKAGE)).toMatchObject({ status: "granted", requested: "interactive-light", notes: [] });
+  });
+
+  it("starts a package in the larger profile it asked for when the engine can hold it", async () => {
+    requesting("interactive-heavy");
+    activate();
+    const seen = recording();
+    const serviceHost = start({ launcher: seen.launcher, capacity: roomy, profilePolicy: () => undefined });
+    await running(serviceHost);
+    expect(seen.profiles).toEqual(["interactive-heavy"]);
+    expect(serviceHost.profile?.(ADD)?.callDeadlineMs).toBe(RESOURCE_PROFILES["interactive-heavy"].callDeadlineMs);
+    expect(serviceHost.status()[0]?.grant).toMatchObject({ status: "granted", requested: "interactive-heavy" });
+  });
+
+  it("does not start a profile the engine cannot hold, and says why on every capability, never running it smaller", async () => {
+    requesting("media-workstation");
+    activate();
+    const seen = recording();
+    const serviceHost = start({ launcher: seen.launcher, capacity: { memoryBytes: 64 * GIB, cpus: 2, enforcesLimits: true } });
+    await serviceHost.reconcile();
+    const reason = "media-workstation needs 4 CPUs, and the container engine here has 2";
+    await until(() => readiness(ADD)?.blockedReason === reason, "the degraded reason");
+    expect(readiness(LIST)).toMatchObject({ loaded: false, healthy: false, blockedReason: reason });
+    expect(seen.profiles).toEqual([]);
+    expect(serviceHost.status()[0]).toMatchObject({ state: "stopped", reason, grant: { status: "degraded", requested: "media-workstation" } });
+    const outcome = await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "widget" });
+    expect(outcome).toMatchObject({ kind: "refused", code: "CAPABILITY_NOT_READY" });
+    if (outcome.kind === "refused") expect(outcome.message).toContain(reason);
+  });
+
+  it("lets a rule the person set refuse a larger profile, through the same execution policy every effect asks", async () => {
+    requesting("interactive-heavy");
+    activate();
+    writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, rules: [{ effectCategory: "local-write", decision: "deny" }] });
+    const policy = resourceProfilePolicy({ db, principalId: PRINCIPAL, now: () => new Date().toISOString() as Instant });
+    const seen = recording();
+    const serviceHost = start({ launcher: seen.launcher, capacity: roomy, profilePolicy: policy });
+    await serviceHost.reconcile();
+    await until(() => readiness(ADD)?.blockedReason?.startsWith("interactive-heavy is not granted"), "the policy refusal");
+    expect(readiness(ADD)?.blockedReason).toBe("interactive-heavy is not granted: a rule refuses local-write effects on this machine");
+    expect(seen.profiles).toEqual([]);
+    // Asking is not refusing: consent to the declared profile was given at install, and nobody is there to ask at boot.
+    writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "ask" });
+    expect(policy({ packageId: PACKAGE, profile: "interactive-heavy" })).toBeUndefined();
+  });
+
+  it("asks the engine again at the next start when it did not answer, and keeps an answer once it has one", async () => {
+    requesting("background-compute");
+    activate();
+    const answers: EngineCapacity[] = [{}, roomy];
+    let asked = 0;
+    const serviceHost = start({
+      capacity: async () => {
+        asked += 1;
+        return answers[Math.min(asked - 1, answers.length - 1)] ?? {};
+      },
+    });
+    await running(serviceHost);
+    const unchecked = serviceHost.resourceGrant?.(PACKAGE);
+    expect(unchecked?.status === "granted" && unchecked.notes[0]).toContain("did not report");
+
+    activate("gen_2", "1.0.1");
+    await serviceHost.reconcile();
+    await until(() => {
+      const grant = serviceHost.resourceGrant?.(PACKAGE);
+      return grant?.status === "granted" && grant.notes.length === 0;
+    }, "a grant checked against the engine");
+    activate("gen_3", "1.0.2");
+    await serviceHost.reconcile();
+    await running(serviceHost);
+    expect(asked).toBe(2);
+  });
+
+  it("grants a larger profile without an engine report, and says the check was not made", async () => {
+    requesting("background-compute");
+    activate();
+    const serviceHost = start({ capacity: {} });
+    await running(serviceHost);
+    const grant = serviceHost.resourceGrant?.(PACKAGE);
+    expect(grant?.status === "granted" && grant.notes[0]).toContain("did not report");
+    expect(logs.some((line) => line.includes("did not report"))).toBe(true);
+  });
 });
 
 describe("the effect a service call is decided under", () => {
@@ -826,5 +961,195 @@ describe("a call its caller bounds", () => {
     if (outcome.kind !== "refused") throw new Error("unreachable");
     expect(outcome.message).toContain("nothing was sent");
     expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "widget" })).toMatchObject({ kind: "done", output: "No notes yet." });
+  });
+});
+
+describe("a service that reaches a provider through the host", () => {
+  const LOOKUP = "com.example.lookup";
+  const LOOKUP_GENERATION = `${LOOKUP}@1.0.0:code_1`;
+  const DEFINE = "com.example.lookup.define@1" as CapabilityRef;
+  const LOOKUP_FIXTURE = fileURLToPath(new URL("../../web/e2e/fixtures/egress-service/", import.meta.url));
+
+  let lookupRoot: string;
+  let provider: Server;
+  let secret: string;
+  let seen: IncomingHttpHeaders[];
+  let audit: EgressAuditEvent[];
+  let release: (() => void)[];
+
+  beforeEach(async () => {
+    // Generated here, so nothing in this file could be mistaken for a real key.
+    secret = `fake-${randomBytes(16).toString("hex")}`;
+    seen = [];
+    audit = [];
+    release = [];
+    provider = createServer((request, response) => {
+      seen.push(request.headers);
+      if ((request.url ?? "").includes("word=slow")) {
+        response.writeHead(200);
+        release.push(() => response.end("{}"));
+        return;
+      }
+      // A careless provider that repeats the key it was sent.
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ definition: "a sphere", youSent: request.headers.authorization ?? null }));
+    });
+    await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+    const port = (provider.address() as AddressInfo).port;
+
+    // The fixture E2E installs, with the provider's origin moved to this test's port.
+    lookupRoot = join(dir, "lookup");
+    cpSync(LOOKUP_FIXTURE, lookupRoot, { recursive: true });
+    const path = join(lookupRoot, "clarkcant.json");
+    writeFileSync(path, readFileSync(path, "utf8").replace("http://127.0.0.1:8879", `http://127.0.0.1:${String(port)}`));
+    // This copy's service sends its lookup as a POST when asked to look up "post": a write, to a capability declared read.
+    const server = join(lookupRoot, "service", "server.mjs");
+    const code = readFileSync(server, "utf8");
+    const ask = "    url: `${ORIGIN}/define?word=${encodeURIComponent(word)}`,\n";
+    expect(code).toContain(ask);
+    writeFileSync(server, code.replace(ask, `${ask}    ...(word === "post" ? { method: "POST" } : {}),\n`));
+
+    const at = new Date(Date.UTC(2026, 9, 1, 6, 0, counter++)).toISOString();
+    const generation = {
+      generationId: LOOKUP_GENERATION,
+      packageId: LOOKUP,
+      version: "1.0.0",
+      digest: "sha256:lookup-digest",
+      nodeId: NODE,
+      codeGeneration: "code_1",
+      activatedAt: at,
+      uiOnlyFacets: [],
+      grantedCapabilities: [],
+    };
+    db.prepare(
+      `INSERT INTO package_generations
+         (generation_id, package_id, version, digest, node_id, code_generation, activated_at, document)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(LOOKUP_GENERATION, LOOKUP, "1.0.0", generation.digest, NODE, "code_1", at, JSON.stringify(generation));
+  });
+
+  afterEach(async () => {
+    for (const end of release) end();
+    provider.closeAllConnections();
+    await new Promise<void>((resolve) => provider.close(() => resolve()));
+  });
+
+  function startLookup(): ServiceHost {
+    host = createServiceHost({
+      registry: { db, nodeId: NODE },
+      dataDir: dir,
+      engine: async () => RUNNING,
+      packageRoot: (generation) => (generation.packageId === LOOKUP ? lookupRoot : undefined),
+      launcher: plainLauncher(),
+      log: (line) => logs.push(line),
+      timings: { restartBaseMs: 20, pingIntervalMs: 60_000 },
+      egress: {
+        secrets: createSecretBroker({ db, principalId: PRINCIPAL, now: () => new Date().toISOString() as Instant }),
+        secretProblem: (packageId, name) => egressSecretProblem({ db, principalId: PRINCIPAL }, packageId, name),
+        audit: (event) => audit.push(event),
+        // The fake provider is on loopback, which a node reaches for services only when it is started saying so.
+        allowPrivateNetwork: true,
+      },
+    });
+    return host;
+  }
+
+  function storeKey(consumer = `package:${LOOKUP}`): void {
+    const stored = storeCredentialFields(
+      { db, ownerPrincipalId: PRINCIPAL, nodeId: NODE, newId: (prefix) => `${prefix}_${String(++counter)}` },
+      [{ name: "LOOKUP_API_KEY", value: secret, kind: "token", consumer }],
+    );
+    expect(stored.ok).toBe(true);
+  }
+
+  it("reads as not signed in until the key is stored for the package, and is signed in after, without a restart", async () => {
+    const serviceHost = startLookup();
+    await running(serviceHost);
+    expect(getCapability({ db, nodeId: NODE }, DEFINE, NODE)).toMatchObject({
+      requiresConnection: true,
+      readiness: {
+        loaded: true,
+        healthy: true,
+        authenticated: false,
+        blockedReason: "the secret LOOKUP_API_KEY has not been provided on this node",
+      },
+    });
+    const refused = await invokeCapability(invokeDeps(), { ref: DEFINE, args: { word: "orb" }, source: "widget" });
+    expect(refused).toMatchObject({
+      kind: "refused",
+      status: 409,
+      code: "CAPABILITY_NOT_AUTHENTICATED",
+      message: "Look a word up with the provider is not signed in: the secret LOOKUP_API_KEY has not been provided on this node",
+    });
+    expect(seen).toEqual([]);
+
+    // A key any consumer may use is not one the person gave this package.
+    storeKey("");
+    serviceHost.refreshAuthentication?.();
+    expect(readiness(DEFINE)?.blockedReason).toBe("the secret LOOKUP_API_KEY is not stored for this package");
+
+    const pidOf = (): string => readFileSync(findPidFile(join(dir, "services")) ?? join(dir, "missing"), "utf8");
+    const pid = pidOf();
+    storeKey();
+    // The call itself reads the key's state again: no ping or credential route had to run first.
+    const done = await invokeCapability(invokeDeps(), { ref: DEFINE, args: { word: "orb" }, source: "widget" });
+    expect(done).toMatchObject({ kind: "done" });
+    expect(readiness(DEFINE)).toMatchObject({ authenticated: true });
+    expect(readiness(DEFINE)?.blockedReason).toBeUndefined();
+    expect(pidOf()).toBe(pid);
+
+    deleteCredential(db, PRINCIPAL, "LOOKUP_API_KEY");
+    serviceHost.refreshAuthentication?.(LOOKUP);
+    expect(readiness(DEFINE)).toMatchObject({
+      authenticated: false,
+      blockedReason: "the secret LOOKUP_API_KEY has no value on this node",
+    });
+  });
+
+  it("sends the provider the key the host added, and gives the service an answer that no longer holds it", async () => {
+    storeKey();
+    const serviceHost = startLookup();
+    await running(serviceHost);
+    const result = await serviceHost.call(DEFINE, { word: "orb" });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.authorization).toBe(`Bearer ${secret}`);
+    expect(result.content).toBe('Provider answer: {"definition":"a sphere","youSent":"[redacted]"}');
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(audit).toMatchObject([{ packageId: LOOKUP, method: "GET", secret: "LOOKUP_API_KEY", outcome: "done", status: 200 }]);
+    expect(JSON.stringify(audit)).not.toContain(secret);
+    expect(logs.join("\n")).not.toContain(secret);
+  });
+
+  it("refuses a write to the provider during a call decided as a read, and makes it during one decided as external-write", async () => {
+    storeKey();
+    const serviceHost = startLookup();
+    await running(serviceHost);
+    expect(getCapability({ db, nodeId: NODE }, DEFINE, NODE)?.effectCategory).toBe("read");
+
+    // Through the capability path, which decides the call as what the capability declares: a read.
+    const refused = await invokeCapability(invokeDeps(), { ref: DEFINE, args: { word: "post" }, source: "widget" });
+    expect(JSON.stringify(refused)).toContain("a POST egress request changes something at the provider");
+    expect(seen).toEqual([]);
+    expect(audit).toMatchObject([{ method: "POST", outcome: "refused", secret: "LOOKUP_API_KEY" }]);
+
+    const written = await serviceHost.call(DEFINE, { word: "post" }, { effectCategory: "external-write" });
+    expect(written.content).toContain("a sphere");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.authorization).toBe(`Bearer ${secret}`);
+  });
+
+  it("stops the provider request when the call that needed it is withdrawn", async () => {
+    storeKey();
+    const serviceHost = startLookup();
+    await running(serviceHost);
+    const controller = new AbortController();
+    const call = serviceHost.call(DEFINE, { word: "slow" }, { signal: controller.signal });
+    const settled = expect(call).rejects.toMatchObject({ code: "SERVICE_CANCELLED" });
+    await until(() => seen.length === 1, "the provider request");
+    controller.abort();
+    await settled;
+    await until(() => audit.length === 1, "the egress outcome");
+    expect(audit[0]).toMatchObject({ outcome: "stopped", secret: "LOOKUP_API_KEY" });
   });
 });

@@ -13,7 +13,9 @@
  * client must not be able to widen for itself. Installing a package at all is the person's for the same reason, and so
  * is deciding an install their execution policy asked about: that decision runs the install.
  * Saving a widget's artifact to a file (Save As) and handing a widget a file the person picked are the person's too:
- * one writes onto their machine, the other grants a widget bytes it could not otherwise reach.
+ * one writes onto their machine, the other grants a widget bytes it could not otherwise reach. A widget's browser token
+ * is asked for only by the host chrome showing that widget: through a machine surface it would be a provider credential
+ * handed to whoever relayed the request.
  *
  * Segments are split the way the gateway splits them (on `/`, empty segments dropped, no decoding), so a path this
  * lets through cannot reach one of these routes under another spelling. A route guarded here must not decode the
@@ -56,6 +58,10 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
       // download. A machine surface reads the conversation instead; a whole dataset handed over as a file is not a read
       // an AI client should be able to make on the person's behalf.
       if (first === "conversations" && third === "widgets" && fifth === "export") return true;
+      // POST /conversations/:id/widgets/:instanceId/browser-tokens: a provider token handed to the frame the person is
+      // looking at. Only the host chrome that mounted the frame asks for one; a machine surface would be asking for a
+      // credential to keep.
+      if (first === "conversations" && third === "widgets" && fifth === "browser-tokens") return true;
       // POST /inbox/notices/:id/actions/update: installing the version an update notice names.
       return first === "inbox" && second === "notices" && fourth === "actions" && fifth === "update";
     case 6:
@@ -71,5 +77,5 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust, file exports, deleting conversations, installing packages and updates, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });

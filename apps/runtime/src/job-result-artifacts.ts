@@ -14,13 +14,16 @@ export function storeJobResultArtifacts(
   broker: ArtifactBrokerDeps,
   job: Pick<JobRecord, "ownerPrincipalId" | "conversationId" | "instanceId">,
   files: readonly McpToolFile[],
+  /** The granted profile's ceiling. A profile may lower the attachable maximum, never raise it. */
+  maxBytes: number = ARTIFACT_LIMITS.maxBytes,
 ): { refs: JobRecord["resultRefs"]; omitted: boolean } {
+  const ceiling = Math.min(maxBytes, ARTIFACT_LIMITS.maxBytes);
   const refs: JobRecord["resultRefs"] = [];
   if (job.conversationId === undefined) return { refs, omitted: files.length > 0 };
   const scope = { principalId: job.ownerPrincipalId, instanceId: job.instanceId };
   let omitted = files.length > JOB_LIMITS.resultRefs;
   for (const file of files.slice(0, JOB_LIMITS.resultRefs)) {
-    if (file.bytes.byteLength > ARTIFACT_LIMITS.maxBytes) {
+    if (file.bytes.byteLength > ceiling) {
       omitted = true;
       continue;
     }
