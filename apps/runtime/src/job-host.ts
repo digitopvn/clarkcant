@@ -58,6 +58,12 @@ export interface PackageJobHost {
 }
 
 const MAX_ACTIVE_JOBS = 4;
+
+/** What a service said when its tool answered with an error, without the transport's prefix, as one bounded sentence. */
+function serviceVerdict(message: string): string {
+  const said = message.replace(/^mcp tool \S+ reported an error: /, "").replace(/\s+/g, " ").trim().slice(0, 400);
+  return /[.!?]$/.test(said) ? said : `${said}.`;
+}
 const NAMED_RESULTS = 3;
 /** The least time between two progress writes of one job; widgets read it once a second. */
 const PROGRESS_INTERVAL_MS = 250;
@@ -230,6 +236,9 @@ export function createPackageJobHost(input: {
             ? "The service request was not sent. Nothing ran; this job can be tried again."
             : cancelled
             ? "The service was told to cancel, but it may already have completed its effect; review before retrying."
+            : cause instanceof ServiceCallError && cause.code === "SERVICE_TOOL_FAILED"
+            // The service's own verdict, so the widget can say what failed; bounded like the rest of the record.
+            ? `The package service reported an error: ${serviceVerdict(cause.message)} Its effect may have happened; review before retrying.`
             : "The package service did not complete the job. Its effect may have happened; review before retrying.",
         };
         reportSettled(outcome);
