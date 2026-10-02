@@ -11,7 +11,17 @@ import {
   renderPlan,
   wavHeader,
 } from "../service/wav.mjs";
-import { createPeaks, jobView, outputHeader, readParameters, readPersistedState, renderedName } from "../widgets/main/render-core.js";
+import {
+  GAIN_INPUT,
+  NO_FILE_KEPT,
+  createPeaks,
+  jobView,
+  outputHeader,
+  readParameters,
+  readPersistedState,
+  renderedName,
+  statusText,
+} from "../widgets/main/render-core.js";
 
 /**
  * The render's own transform, on the fixture clip the journeys pick: gain, trim, the header it writes and the bytes it
@@ -82,6 +92,23 @@ describe("parseWavHeader", () => {
     const cut = parseWavHeader(clip.subarray(0, WAV_HEADER_BYTES), 44 + 1001);
     expect(cut).toMatchObject({ ok: true, dataBytes: 1000, frames: 500 });
   });
+
+  it("refuses a format chunk shorter than PCM's 16 bytes before reading a field of it", () => {
+    // RIFF, WAVE, an 8-byte "fmt " chunk, then the samples: a 16-byte read would take its fields from the data header.
+    const clip = fixtureClip({ seconds: 1 });
+    const short = new Uint8Array(12 + 8 + 8 + clip.byteLength - 36);
+    short.set(clip.subarray(0, 12), 0);
+    short.set(new TextEncoder().encode("fmt "), 12);
+    new DataView(short.buffer).setUint32(16, 8, true);
+    short.set(clip.subarray(20, 28), 20);
+    short.set(clip.subarray(36), 28);
+    expect(parseWavHeader(short.subarray(0, WAV_HEADER_BYTES), short.byteLength)).toEqual({
+      ok: false,
+      reason: "the WAV file's format chunk is shorter than the 16 bytes PCM needs",
+    });
+    // A full-size chunk the first bytes stop in the middle of is cut off, not read past.
+    expect(parseWavHeader(clip.subarray(0, 30), clip.byteLength)).toEqual({ ok: false, reason: "the WAV file's format chunk is cut off" });
+  });
 });
 
 describe("the render", () => {
@@ -136,6 +163,13 @@ describe("the widget's rules", () => {
     expect(readParameters({ gainDb: "-6", trimStartMs: "", trimEndMs: "250" })).toEqual({ ok: true, value: { gainDb: -6, trimStartMs: 0, trimEndMs: 250 } });
     expect(readParameters({ gainDb: "20", trimStartMs: "0", trimEndMs: "0" }).ok).toBe(false);
     expect(readParameters({ gainDb: "0", trimStartMs: "1.5", trimEndMs: "0" }).ok).toBe(false);
+    // A cut in gain, however a touch keyboard writes the minus or the decimal point; never a number in another notation.
+    for (const [typed, gainDb] of [["−6", -6], [" -6,5 ", -6.5], ["-24", -24], ["3.5", 3.5]] as const) {
+      expect(readParameters({ gainDb: typed, trimStartMs: "", trimEndMs: "" })).toEqual({ ok: true, value: { gainDb, trimStartMs: 0, trimEndMs: 0 } });
+    }
+    for (const typed of ["0x10", "1e1", "-", "6-", "--6"]) {
+      expect(readParameters({ gainDb: typed, trimStartMs: "", trimEndMs: "" }).ok).toBe(false);
+    }
     expect(readPersistedState({ job: "not-a-job", source: "art_x", gainDb: "loud", extra: true })).toEqual({
       source: null,
       job: null,
@@ -145,6 +179,22 @@ describe("the widget's rules", () => {
       trimEndMs: 0,
     });
     expect(renderedName("Bài hát.WAV")).toBe("Bài hát-render.wav");
+  });
+
+  it("asks for a keyboard with a minus key for the gain, since most of its range is negative", () => {
+    // iOS's decimal pad has no minus key, and a number field shows no stepper on touch.
+    expect(GAIN_INPUT).toMatchObject({ type: "text", inputmode: "text" });
+    expect(new RegExp(`^(?:${GAIN_INPUT.pattern})$`, "v").test("−6,5")).toBe(true);
+  });
+
+  it("says what failed when a completed render left no file, rather than that it was rendered", () => {
+    const ref = { v: 1, artifactId: "art_out", kind: "finalized", mimeType: "audio/wav", sizeBytes: 100, name: "untitled.wav" };
+    const base = { jobId: "job_x", createdAt: "2026-10-02T00:00:00.000Z" };
+    expect(statusText(jobView({ ...base, status: "completed", resultRefs: [ref] }))).toBe("Đã dựng xong.");
+    const unkept = statusText(jobView({ ...base, status: "completed", resultRefs: [] }));
+    expect(unkept).toBe(NO_FILE_KEPT);
+    expect(unkept).toContain("Tệp gốc vẫn còn");
+    expect(statusText(jobView({ ...base, status: "cancelled", resultRefs: [] }))).toBe("Đã dừng; không có tệp kết quả nào.");
   });
 
   it("folds a rendered file into a waveform one chunk at a time, the same however it is split", () => {

@@ -13,6 +13,7 @@
 
 import {
   ACCEPTED_TYPES,
+  GAIN_INPUT,
   RENDER_LIMITS,
   createPeaks,
   endedWithoutOutput,
@@ -23,6 +24,7 @@ import {
   readParameters,
   readPersistedState,
   renderedName,
+  statusText,
 } from "./render-core.js";
 
 const TEXT = {
@@ -36,14 +38,6 @@ const TEXT = {
   trimStart: "Cắt đầu (ms)",
   trimEnd: "Cắt cuối (ms)",
   noBinding: "Dịch vụ dựng chưa được gắn vào widget này, nên chưa dựng được.",
-  status: {
-    queued: "Đang xếp hàng…",
-    running: "Đang dựng…",
-    waiting: "Đang chờ…",
-    completed: "Đã dựng xong.",
-    failed: "Không dựng được.",
-    cancelled: "Đã dừng; không có tệp kết quả nào.",
-  },
 };
 
 const root = document.getElementById("root");
@@ -118,12 +112,8 @@ function start() {
     wrap.append(input);
     return { wrap, input };
   };
-  const gain = field("media-gain", TEXT.gain, {
-    min: String(RENDER_LIMITS.gainDbMin),
-    max: String(RENDER_LIMITS.gainDbMax),
-    step: "0.5",
-    "data-media-gain": "",
-  });
+  // Text, not a number field: see GAIN_INPUT. The range is said in the error next to it, and checked again on press.
+  const gain = field("media-gain", TEXT.gain, { ...GAIN_INPUT, "data-media-gain": "" });
   const trimStart = field("media-trim-start", TEXT.trimStart, { min: "0", step: "100", "data-media-trim-start": "" });
   const trimEnd = field("media-trim-end", TEXT.trimEnd, { min: "0", step: "100", "data-media-trim-end": "" });
   const params = element("fieldset", { class: "params" });
@@ -330,13 +320,15 @@ function start() {
     else progress.value = view.fraction;
     progress.setAttribute("data-media-progress", view.fraction === undefined ? "" : String(Math.round(view.fraction * 100)));
     const ending = view.status === "failed" || view.status === "cancelled" ? view.error ?? "" : view.note ?? "";
-    jobMessage.textContent = [TEXT.status[view.status] ?? view.status, view.open ? view.message : ending].filter((part) => part !== "").join(" ");
+    // A completed job that kept no file says what failed in the widget's own words, not the host's note.
+    const keptNothing = view.status === "completed" && view.output === undefined;
+    jobMessage.textContent = [statusText(view), view.open ? view.message : keptNothing ? "" : ending].filter((part) => part !== "").join(" ");
     if (view.output !== undefined && saved.output?.artifactId !== view.output.artifactId) {
       void keep({ output: view.output });
       showPreview(view.output, wasOpen);
       say("completed", `Đã dựng xong “${view.output.name}”.`);
     } else if (endedWithoutOutput(view)) {
-      say(view.status, TEXT.status[view.status] ?? view.status);
+      say(view.status === "completed" ? "unkept" : view.status, statusText(view));
     }
     render();
     publish();
@@ -396,14 +388,16 @@ function start() {
     const source = saved.source;
     void run(async () => {
       say("working", "Đang gửi yêu cầu dựng…");
-      // The output of an earlier render stays a file of its own, but it is not this render's and is no longer shown.
+      // The earlier render stays on screen, with Attach and Save, until this press is accepted: a refused press keeps it.
+      const jobId = await api.actions.invoke(binding, { source: source.artifactId, ...parameters.value }, window.crypto.randomUUID());
+      if (typeof jobId !== "string" || !/^job_/.test(jobId)) throw new Error("Host trả lời mà không có việc dựng nào.");
+      // Accepted: the earlier output stays a file of its own, but it is not this render's and is no longer shown.
+      unfollow();
+      following = undefined;
       hidePreview();
       current = undefined;
       job.hidden = true;
-      await keep({ ...parameters.value, output: null, job: null });
-      const jobId = await api.actions.invoke(binding, { source: source.artifactId, ...parameters.value }, window.crypto.randomUUID());
-      if (typeof jobId !== "string" || !/^job_/.test(jobId)) throw new Error("Host trả lời mà không có việc dựng nào.");
-      await keep({ job: jobId });
+      await keep({ ...parameters.value, output: null, job: jobId });
       follow(jobId);
       say("started", "Đã bắt đầu dựng.");
     });
@@ -413,7 +407,11 @@ function start() {
     if (following === undefined) return;
     cancelButton.disabled = true;
     say("working", "Đang dừng…");
-    void api.jobs.cancel(following).catch((error) => say("refused", reasonOf(error)));
+    void api.jobs.cancel(following).catch((error) => {
+      // Refused: the render goes on, so Stop and Escape are offered again.
+      say("refused", `Chưa dừng được: ${reasonOf(error)}. Bản dựng vẫn đang chạy; bấm Dừng dựng để thử lại.`);
+      render();
+    });
   });
 
   attachButton.addEventListener("click", () => {

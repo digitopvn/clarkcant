@@ -50,8 +50,9 @@ p { margin: 0; overflow-wrap: anywhere; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .source { color: var(--mr-muted); min-width: 0; flex: 1 1 160px; }
 
+/* 44 px, the touch target DESIGN.md asks of primary controls; Render and Stop are those. */
 button {
-  min-height: 36px;
+  min-height: 44px;
   padding: 4px 12px;
   border: 1px solid var(--mr-line);
   border-radius: 6px;
@@ -83,7 +84,7 @@ button:focus-visible, input:focus-visible, [tabindex="-1"]:focus-visible {
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; min-width: 0; }
 input {
   width: 100%;
-  min-height: 36px;
+  min-height: 44px;
   padding: 4px 8px;
   border: 1px solid var(--mr-line);
   border-radius: 6px;
@@ -110,7 +111,7 @@ canvas { display: block; width: 100%; height: 96px; border-radius: 6px; backgrou
 .error { color: var(--mr-danger); font-size: 13px; }
 .notice { color: var(--mr-warning); }
 .error:empty, .notice:empty, .digest:empty, [role="status"]:empty { display: none; }
-[data-media-status="refused"], [data-media-status="failed"] { color: var(--mr-danger); }
+[data-media-status="refused"], [data-media-status="failed"], [data-media-status="unkept"] { color: var(--mr-danger); }
 [data-media-status="completed"], [data-media-status="exported"], [data-media-status="attached"] { color: var(--mr-success); }
 [data-media-job-status="cancelled"] .muted, [data-media-job-status="failed"] .muted { color: var(--mr-danger); }
 [hidden] { display: none !important; }

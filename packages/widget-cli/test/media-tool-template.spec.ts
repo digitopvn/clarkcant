@@ -74,7 +74,10 @@ describe("the media-tool template", () => {
     const frame = readFileSync(join(root, "widgets", "main", "main.js"), "utf8");
     expect(frame).toContain("api.jobs.subscribe");
     expect(frame).toContain("api.jobs.cancel");
-    expect(readFileSync(join(root, "service", "server.mjs"), "utf8")).toContain("clarkcant/artifacts.read");
+    const service = readFileSync(join(root, "service", "server.mjs"), "utf8");
+    expect(service).toContain("clarkcant/artifacts.read");
+    // A test knob is not part of what a person starts from: a slow render for a journey is the fixture node's doing.
+    expect(service).not.toContain("paceMs");
     expect(existsSync(join(root, "test", "service.spec.ts"))).toBe(false);
     expect(existsSync(join(root, "README.vi.md"))).toBe(false);
     expect(readFileSync(join(root, "README.md"), "utf8")).toContain("# My Media Tool");

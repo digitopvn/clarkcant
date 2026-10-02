@@ -1,8 +1,10 @@
 # Trình dựng âm thanh (ứng dụng mẫu)
 
 Một widget và một dịch vụ dựng lại tệp WAV người dùng chọn, với mức âm lượng mới và phần cắt ở đầu, cuối. Việc dựng
-chạy thành một job mà widget theo dõi được và dừng được. Widget không biết tệp nằm ở đâu. Dịch vụ cũng không giữ tệp:
-nó đọc tệp từ host theo từng đoạn và không có mạng. Đây là gói mà `clark widget init --template media-tool` sao chép.
+chạy thành một job mà widget theo dõi được và dừng được. Widget không biết tệp nằm ở đâu, và dịch vụ không nhận đường
+dẫn hay handle nào: nó đọc tệp từ host theo từng đoạn, chỉ trong lời gọi được giao tệp đó. Dịch vụ không khai báo
+egress, và lời gọi giữ tệp được quyết định là `read` cũng không dùng được egress. Đây là gói mà
+`clark widget init --template media-tool` sao chép.
 
 Tiếng Anh: [README.md](README.md).
 

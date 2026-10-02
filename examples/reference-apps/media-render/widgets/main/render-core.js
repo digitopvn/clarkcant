@@ -16,6 +16,45 @@ export const RENDER_LIMITS = Object.freeze({
 
 const OPEN_STATUSES = new Set(["queued", "running", "waiting"]);
 
+/**
+ * The gain field's attributes. A text keyboard, not a numeric one: the decimal keypad on iOS has no minus key and a
+ * number field shows no stepper on touch, so a cut in gain (−24 to 0 dB, most of the range) could not be typed by touch.
+ * The value is checked by `readParameters` instead.
+ */
+export const GAIN_INPUT = Object.freeze({
+  type: "text",
+  inputmode: "text",
+  autocomplete: "off",
+  spellcheck: "false",
+  pattern: "[\\-\\u2212]?[0-9]+([.,][0-9]+)?",
+});
+
+/** What each job status reads as, when it has nothing more specific to say. */
+export const STATUS_TEXT = Object.freeze({
+  queued: "Đang xếp hàng…",
+  running: "Đang dựng…",
+  waiting: "Đang chờ…",
+  completed: "Đã dựng xong.",
+  failed: "Không dựng được.",
+  cancelled: "Đã dừng; không có tệp kết quả nào.",
+});
+
+/** A render that completed but whose file the host could not keep: what failed, what is safe, what to do next. */
+export const NO_FILE_KEPT =
+  "Dịch vụ đã dựng xong nhưng host không giữ được tệp kết quả, thường vì đã hết dung lượng lưu tệp. Tệp gốc vẫn còn; hãy xoá bớt tệp đính kèm rồi dựng lại.";
+
+/** The sentence a job's status reads as on screen. A completed job with no file says so rather than "rendered". */
+export function statusText(view) {
+  if (view.status === "completed" && view.output === undefined) return NO_FILE_KEPT;
+  return STATUS_TEXT[view.status] ?? view.status;
+}
+
+/** A number as a person may type it on any keyboard: a typographic minus, a decimal comma, spaces around it. */
+function typedNumber(value) {
+  const text = String(value).trim().replace(/^−/, "-").replace(",", ".");
+  return /^-?\d+(\.\d+)?$/.test(text) ? Number(text) : Number.NaN;
+}
+
 /** The state the widget keeps, read defensively: anything the schema did not promise is dropped. */
 export function readPersistedState(state) {
   const value = state !== null && typeof state === "object" ? state : {};
@@ -37,10 +76,10 @@ export function readPersistedState(state) {
  * number is said next to the field; the service checks them again, because the widget is not what it trusts.
  */
 export function readParameters(fields) {
-  const gainDb = Number(fields.gainDb);
+  const gainDb = typedNumber(fields.gainDb);
   const trimStartMs = Number(fields.trimStartMs === "" ? 0 : fields.trimStartMs);
   const trimEndMs = Number(fields.trimEndMs === "" ? 0 : fields.trimEndMs);
-  if (fields.gainDb === "" || !Number.isFinite(gainDb) || gainDb < RENDER_LIMITS.gainDbMin || gainDb > RENDER_LIMITS.gainDbMax) {
+  if (String(fields.gainDb).trim() === "" || !Number.isFinite(gainDb) || gainDb < RENDER_LIMITS.gainDbMin || gainDb > RENDER_LIMITS.gainDbMax) {
     return { ok: false, reason: `Âm lượng phải từ ${String(RENDER_LIMITS.gainDbMin)} đến ${String(RENDER_LIMITS.gainDbMax)} dB.` };
   }
   for (const value of [trimStartMs, trimEndMs]) {

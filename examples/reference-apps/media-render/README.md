@@ -1,8 +1,9 @@
 # Media render (reference app)
 
 A widget and a service that render a WAV clip the person picks with a gain change and a trim. The render runs as a
-job the widget follows and can stop. The widget never sees where the file lives. The service never holds it: it reads
-the clip from the host a chunk at a time and has no network. This is the package that
+job the widget follows and can stop. The widget never sees where the file lives, and the service gets no path or
+handle: it reads the clip from the host a chunk at a time, only during the call it was given the clip for. The service
+declares no egress, and a call that holds a file and is decided as `read` could not use any. This is the package that
 `clark widget init --template media-tool` starts from.
 
 Vietnamese: [README.vi.md](README.vi.md).

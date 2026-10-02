@@ -1,13 +1,14 @@
 /*
  * The media render service: a Model Context Protocol server over standard streams.
  *
- * One tool, `render_audio`, that applies gain and trim to a WAV file a widget holds. The service never holds the file:
- * the call names it by artifact id, and the host — which checked the widget's grant and the profile's input cap before
+ * One tool, `render_audio`, that applies gain and trim to a WAV file a widget holds. The service gets no path or handle:
+ * the call names the file by artifact id, and the host — which checked the widget's grant and the profile's input cap before
  * sending the call — streams its bytes on request, one bounded range at a time (`clarkcant/artifacts.read`). The
  * rendered file goes back in the answer, and the host keeps it as an artifact only if the job completes; a cancelled
  * render answers nothing, so nothing half-rendered is ever presented as finished.
  *
- * No dependencies and no network: the container mounts this folder read-only and has none. What it may read and how
+ * No dependencies and no egress: the container mounts this folder read-only and has no network of its own, and the
+ * package declares no origin; a call decided as `read` that holds a file would have its egress refused anyway. What it may read and how
  * much is what the host offered in `initialize`, from the resource profile it granted; a manifest cannot raise it.
  */
 
@@ -27,7 +28,6 @@ const TOOLS = [
         gainDb: { type: "number", minimum: -24, maximum: 12 },
         trimStartMs: { type: "integer", minimum: 0, maximum: 7200000 },
         trimEndMs: { type: "integer", minimum: 0, maximum: 7200000 },
-        paceMs: { type: "integer", minimum: 0, maximum: 2000 },
       },
       required: ["source", "gainDb"],
       additionalProperties: false,
@@ -112,7 +112,6 @@ async function render(id, args, progressToken) {
     output.set(wavHeader(header.format, plan.end - plan.start), 0);
     const total = plan.end - plan.start;
     let done = 0;
-    const pace = Number.isInteger(args.paceMs) ? args.paceMs : 0;
     while (done < total) {
       const length = Math.min(chunk, total - done);
       const read = await readRange(args.source, plan.start + done, length);
@@ -130,8 +129,6 @@ async function render(id, args, progressToken) {
           params: { progressToken, progress: done, total, message: `Rendered ${kib(done)} of ${kib(total)}` },
         });
       }
-      if (pace > 0) await new Promise((resolve) => setTimeout(resolve, pace));
-      if (state.cancelled) return;
     }
 
     send({

@@ -84,10 +84,16 @@ async function openApp(page: Page): Promise<void> {
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
 }
 
-/** The newest media render widget, live, once it has drawn itself. */
-async function openLive(page: Page): Promise<FrameLocator> {
+/**
+ * The newest media render widget, live, once it has drawn itself. After a reload the live frame the page had open is
+ * mounted again by the page itself; `restored` waits for that rather than pressing the transcript's open button, which
+ * the restored frame may already cover.
+ */
+async function openLive(page: Page, options: { restored?: boolean } = {}): Promise<FrameLocator> {
   const frame = page.locator(FRAME);
-  if ((await frame.count()) === 0 || (await frame.getAttribute("data-frame-status")) !== "ready") {
+  if (options.restored === true) await frame.waitFor({ state: "attached", timeout: 15_000 }).catch(() => undefined);
+  const mounted = (await frame.count()) > 0;
+  if (!mounted || (options.restored !== true && (await frame.getAttribute("data-frame-status")) !== "ready")) {
     const open = page.locator("[data-open-live]").last();
     await expect(open).toBeVisible({ timeout: 20_000 });
     await open.click();
@@ -129,6 +135,31 @@ async function startRender(widget: FrameLocator): Promise<string> {
   const job = widget.locator("[data-media-job]");
   await expect(job).toHaveAttribute("data-media-job-id", /^job_/, { timeout: 30_000 });
   return (await job.getAttribute("data-media-job-id")) ?? "";
+}
+
+type FrameApi = { jobs: { cancel: (id: string) => Promise<unknown> }; actions: { invoke: (...args: unknown[]) => Promise<unknown> } };
+
+/**
+ * Make the frame's next call to `method` refused with `reason`, as the host refuses one, and every later call go through.
+ * The widget holds the same API object the frame's runtime hands out, so this is the refusal it would receive.
+ */
+async function refuseOnce(widget: FrameLocator, method: "cancel" | "invoke", reason: string): Promise<void> {
+  await widget.locator("body").evaluate(
+    (_body, input) => {
+      const api = (window as unknown as { clarkcantWidget: { api: () => FrameApi } }).clarkcantWidget.api();
+      const owner = (input.method === "cancel" ? api.jobs : api.actions) as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+      const name = input.method;
+      const real = owner[name]?.bind(owner);
+      if (real === undefined) throw new Error(`the frame has no ${name}`);
+      let refused = false;
+      owner[name] = (...args: unknown[]) => {
+        if (refused) return real(...args);
+        refused = true;
+        return Promise.reject(new Error(input.reason));
+      };
+    },
+    { method, reason },
+  );
 }
 
 async function horizontalOverflow(page: Page): Promise<number> {
@@ -209,6 +240,16 @@ test("a clip larger than one chunk renders with the service's progress, and its 
   const chip = page.locator("[data-attachment-chip]").last();
   await expect(chip).toHaveAttribute("data-attachment-state", "ready", { timeout: 20_000 });
 
+  // A press the host refuses starts nothing, so the finished render stays on screen with its actions.
+  await refuseOnce(widget, "invoke", "the node is restarting its services");
+  await widget.locator("[data-media-render]").click();
+  await expect(widget.locator("[data-media-status='refused']")).toContainText("the node is restarting its services", { timeout: 20_000 });
+  await expect(preview).toHaveAttribute("data-media-preview", "ready");
+  await expect(widget.locator("[data-media-digest]")).toHaveAttribute("data-media-digest", digest);
+  await expect(job).toHaveAttribute("data-media-job-status", "completed");
+  await expect(widget.locator("[data-media-attach]")).toBeEnabled();
+  await expect(widget.locator("[data-media-export]")).toBeEnabled();
+
   expect(await horizontalOverflow(page)).toBe(0);
 });
 
@@ -223,7 +264,17 @@ test("Escape stops a render mid-way, and the stopped render leaves no file", asy
   const job = widget.locator("[data-media-job]");
   await expect(widget.locator("[data-media-progress]")).toHaveAttribute("data-media-progress", /^[1-9]\d?$/, { timeout: 30_000 });
 
+  // A stop the host refuses leaves the render running, says so, and offers Stop and Escape again.
+  await refuseOnce(widget, "cancel", "the node could not reach the job");
   await widget.locator("[data-media-cancel]").focus();
+  await widget.locator("[data-media-cancel]").press("Escape");
+  await expect(widget.locator("[data-media-status='refused']")).toContainText(
+    "Chưa dừng được: the node could not reach the job. Bản dựng vẫn đang chạy; bấm Dừng dựng để thử lại.",
+    { timeout: 20_000 },
+  );
+  await expect(job).toHaveAttribute("data-media-job-status", "running");
+  await expect(widget.locator("[data-media-cancel]")).toBeEnabled();
+
   await widget.locator("[data-media-cancel]").press("Escape");
   await expect(job).toHaveAttribute("data-media-job-status", "cancelled", { timeout: 30_000 });
   await expect(job).toHaveAttribute("data-media-job-id", jobId);
@@ -247,7 +298,7 @@ test("Escape stops a render mid-way, and the stopped render leaves no file", asy
   // And after a reload the stopped render is still a stopped render, with no file shown as finished.
   await page.reload();
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
-  const remounted = await openLive(page);
+  const remounted = await openLive(page, { restored: true });
   await expect(remounted.locator("[data-media-job]")).toHaveAttribute("data-media-job-status", "cancelled", { timeout: 30_000 });
   await expect(remounted.locator("[data-media-preview]")).toBeHidden();
 });
@@ -266,7 +317,7 @@ test("a remounted frame follows the same render to its file", async ({ page }) =
 
   await page.reload();
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
-  widget = await openLive(page);
+  widget = await openLive(page, { restored: true });
   const job = widget.locator("[data-media-job]");
   await expect(job).toHaveAttribute("data-media-job-id", jobId, { timeout: 30_000 });
   await expect(job).toHaveAttribute("data-media-job-status", "completed", { timeout: 60_000 });
@@ -276,7 +327,7 @@ test("a remounted frame follows the same render to its file", async ({ page }) =
   // Another reload shows the finished file again from widget state, without rendering anything new.
   await page.reload();
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
-  widget = await openLive(page);
+  widget = await openLive(page, { restored: true });
   await expect(widget.locator("[data-media-job]")).toHaveAttribute("data-media-job-id", jobId, { timeout: 30_000 });
   await expect(widget.locator("[data-media-preview]")).toHaveAttribute("data-media-preview", "ready", { timeout: 30_000 });
 });
@@ -309,8 +360,10 @@ test("keyboard only, at 390 px, in dark with reduced motion: pick, set, render a
   await widget.locator("[data-media-pick]").focus();
   await page.keyboard.press("Tab");
   await expect(widget.locator("[data-media-gain]")).toBeFocused();
+  // A keyboard with a minus key, so a cut in gain can be typed by touch; the typographic minus a phone may insert counts.
+  await expect(widget.locator("[data-media-gain]")).toHaveAttribute("inputmode", "text");
   await page.keyboard.press("ControlOrMeta+a");
-  await page.keyboard.type("3");
+  await page.keyboard.type("−3");
   await page.keyboard.press("Tab");
   await expect(widget.locator("[data-media-trim-start]")).toBeFocused();
   await page.keyboard.press("Tab");
@@ -323,7 +376,7 @@ test("keyboard only, at 390 px, in dark with reduced motion: pick, set, render a
 
   const job = widget.locator("[data-media-job]");
   await expect(job).toHaveAttribute("data-media-job-status", "completed", { timeout: 60_000 });
-  await expect(widget.locator("[data-media-job-message]")).toContainText("Rendered 10.0 s at 3 dB");
+  await expect(widget.locator("[data-media-job-message]")).toContainText("Rendered 10.0 s at -3 dB");
   await expect(widget.locator("[data-media-preview]")).toHaveAttribute("data-media-preview", "ready", { timeout: 30_000 });
   // The finished render is announced by moving focus to its heading, and its actions are next in the tab order.
   await expect(widget.locator("#media-preview-title")).toBeFocused();
@@ -331,6 +384,12 @@ test("keyboard only, at 390 px, in dark with reduced motion: pick, set, render a
   await expect(widget.locator("[data-media-attach]")).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(widget.locator("[data-media-export]")).toBeFocused();
+
+  // Every control is a 44 px touch target at phone width.
+  for (const control of ["[data-media-pick]", "[data-media-gain]", "[data-media-render]", "[data-media-cancel]", "[data-media-attach]", "[data-media-export]"]) {
+    const box = await widget.locator(control).boundingBox();
+    expect(box?.height ?? 0, control).toBeGreaterThanOrEqual(44);
+  }
 
   // The waveform is drawn in the dark field colour, not the light fallback.
   const field = await widget.locator("html").evaluate((html) => window.getComputedStyle(html).getPropertyValue("--mr-field").trim());

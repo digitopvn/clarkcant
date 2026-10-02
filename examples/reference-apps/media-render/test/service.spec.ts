@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 /** Start the service and a host that serves `files` by artifact id, recording every read and every message. */
-function host(files: Record<string, Uint8Array>, options: { refuseReads?: string } = {}) {
+function host(files: Record<string, Uint8Array>, options: { refuseReads?: string; readDelayMs?: number } = {}) {
   const child = spawn(process.execPath, [SERVER], { stdio: ["pipe", "pipe", "pipe"] });
   running.push(child);
   const messages: Message[] = [];
@@ -70,21 +70,26 @@ function host(files: Record<string, Uint8Array>, options: { refuseReads?: string
         const params = message.params as { artifactId: string; offset: number; length: number };
         reads.push(params);
         const file = files[params.artifactId];
+        const id = message.id;
         if (options.refuseReads !== undefined || file === undefined) {
-          send({ id: message.id, error: { code: -32021, message: options.refuseReads ?? "not an input of this call" } });
+          send({ id, error: { code: -32021, message: options.refuseReads ?? "not an input of this call" } });
         } else {
           const bytes = file.subarray(params.offset, params.offset + params.length);
-          send({
-            id: message.id,
-            result: {
-              artifactId: params.artifactId,
-              offset: params.offset,
-              bytes: Buffer.from(bytes).toString("base64"),
-              eof: params.offset + bytes.byteLength >= file.byteLength,
-              sizeBytes: file.byteLength,
-              mimeType: "audio/wav",
-            },
-          });
+          // A slow disk, or a node holding reads back as a fixture node does: the service waits for each answer.
+          const answer = () =>
+            send({
+              id,
+              result: {
+                artifactId: params.artifactId,
+                offset: params.offset,
+                bytes: Buffer.from(bytes).toString("base64"),
+                eof: params.offset + bytes.byteLength >= file.byteLength,
+                sizeBytes: file.byteLength,
+                mimeType: "audio/wav",
+              },
+            });
+          if (options.readDelayMs === undefined) answer();
+          else setTimeout(answer, options.readDelayMs);
         }
       }
       for (const waiter of waiters.splice(0)) {
@@ -123,14 +128,14 @@ function fileOf(result: Record<string, unknown> | undefined): Uint8Array {
 }
 
 describe("the render service", () => {
-  it("lists one tool that names the file by artifact id and takes only gain, trims and pace", async () => {
+  it("lists one tool that names the file by artifact id and takes only gain and trims", async () => {
     const service = host({});
     await service.initialize(OFFER);
     service.send({ id: 2, method: "tools/list" });
     const listed = await service.next((message) => message.id === 2);
     const tools = (listed.result?.tools ?? []) as { name: string; inputSchema: { properties: Record<string, unknown>; required: string[] } }[];
     expect(tools.map((tool) => tool.name)).toEqual(["render_audio"]);
-    expect(Object.keys(tools[0]?.inputSchema.properties ?? {}).sort()).toEqual(["gainDb", "paceMs", "source", "trimEndMs", "trimStartMs"]);
+    expect(Object.keys(tools[0]?.inputSchema.properties ?? {}).sort()).toEqual(["gainDb", "source", "trimEndMs", "trimStartMs"]);
     expect(tools[0]?.inputSchema.required).toEqual(["source", "gainDb"]);
   });
 
@@ -176,9 +181,9 @@ describe("the render service", () => {
 
   it("stops mid-render when the host cancels, and answers nothing, so no partial file is sent", async () => {
     const clip = fixtureClip({ seconds: 24 });
-    const service = host({ art_clip: clip });
+    const service = host({ art_clip: clip }, { readDelayMs: 150 });
     await service.initialize(OFFER);
-    void service.call(9, { source: "art_clip", gainDb: 0, paceMs: 150 });
+    void service.call(9, { source: "art_clip", gainDb: 0 });
     await service.next((message) => message.method === "notifications/progress");
     service.send({ method: "notifications/cancelled", params: { requestId: 9, reason: "the person stopped it" } });
     const readsAtCancel = service.reads.length;

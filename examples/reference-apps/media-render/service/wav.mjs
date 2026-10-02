@@ -34,7 +34,11 @@ export function parseWavHeader(head, totalBytes) {
     const size = view.getUint32(offset + 4, true);
     const body = offset + 8;
     if (id === "fmt ") {
-      if (body + 16 > head.byteLength) break;
+      // Checked before a field is read: a shorter chunk would have its fields read out of the bytes after it.
+      if (size < 16) return { ok: false, reason: "the WAV file's format chunk is shorter than the 16 bytes PCM needs" };
+      if (body + 16 > head.byteLength) {
+        return { ok: false, reason: "the WAV file's format chunk is cut off" };
+      }
       format = {
         audioFormat: view.getUint16(body, true),
         channels: view.getUint16(body + 2, true),
