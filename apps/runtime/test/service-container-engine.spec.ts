@@ -1,15 +1,28 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { type CapabilityRef, type Instant, RESOURCE_PROFILES, type ResourceProfile } from "@clarkcant/contracts";
+import { StdioMcpTransport } from "@clarkcant/mcp-adapters";
+import { migrate, openDatabase } from "@clarkcant/storage";
+
+import { storeCredentialFields } from "../src/application/credential-vault.ts";
+import { createSecretBroker } from "../src/secret-broker.ts";
+import { egressSecretProblem } from "../src/service-egress.ts";
+import { containerLauncher, createServiceHost, engineContainers } from "../src/service-host.ts";
+
 import {
   detectServiceEngine,
   ensureServiceImage,
   prepareServiceDataDir,
+  readEngineCapacity,
   removeServiceContainer,
   serviceContainerName,
   serviceRunArgs,
@@ -44,6 +57,30 @@ tried.env = Object.keys(process.env).filter((key) => key.startsWith("CC_") || ke
 process.stdout.write(JSON.stringify(tried));
 `;
 
+/**
+ * What the kernel applies to the container, read from inside it: the cgroup v2 limits and the size of `/tmp`. A
+ * second mode holds memory well past the light profile, page by page, so the limit is shown biting, not only set.
+ */
+const LIMITS_PROBE = `
+import { readFileSync, statfsSync } from "node:fs";
+const read = (path) => { try { return readFileSync(path, "utf8").trim(); } catch { return null; } };
+if (process.argv[2] === "hold") {
+  const held = [];
+  for (let mib = 0; mib < Number(process.argv[3]); mib += 16) held.push(Buffer.alloc(16 * 1024 * 1024, 1));
+  process.stdout.write(JSON.stringify({ held: held.length * 16 }));
+} else {
+  const tmp = statfsSync("/tmp");
+  process.stdout.write(JSON.stringify({
+    memory: read("/sys/fs/cgroup/memory.max"),
+    cpu: read("/sys/fs/cgroup/cpu.max"),
+    pids: read("/sys/fs/cgroup/pids.max"),
+    tmpBytes: tmp.blocks * tmp.bsize,
+  }));
+}
+`;
+
+const capacity = engine.available ? await readEngineCapacity(engine.engine) : {};
+
 let dir: string;
 let name: string;
 
@@ -55,6 +92,7 @@ describe.skipIf(!engine.available)("a service container on a real engine", () =>
     dir = mkdtempSync(join(tmpdir(), "cc-service-engine-"));
     mkdirSync(join(dir, "pkg"));
     writeFileSync(join(dir, "pkg", "probe.mjs"), PROBE);
+    writeFileSync(join(dir, "pkg", "limits.mjs"), LIMITS_PROBE);
     prepareServiceDataDir(join(dir, "data"));
     name = serviceContainerName({ nodeId: "node_test", generationId: `probe-${String(Date.now())}`, facetId: "probe" });
   }, 600_000);
@@ -103,6 +141,64 @@ describe.skipIf(!engine.available)("a service container on a real engine", () =>
     }
     expect(tried.env).toEqual([]);
   }, 180_000);
+
+  /** Runs the limits probe under a profile; settles with the exit status rather than failing, so a kill can be read. */
+  async function underProfile(profile: ResourceProfile, probeArgs: string[]): Promise<{ status: number | null; stdout: string }> {
+    if (!engine.available) throw new Error("unreachable");
+    const probeName = `${name}-${profile.name}-${String(probeArgs.length)}`;
+    const args = serviceRunArgs({
+      engine: engine.engine,
+      nodeId: "node_test",
+      name: probeName,
+      packageRoot: join(dir, "pkg"),
+      dataDir: join(dir, "data"),
+      entry: "limits.mjs",
+      profile,
+      ...(engine.rootless === true ? { rootless: true } : {}),
+    });
+    try {
+      return await new Promise((settle) => {
+        const child = execFile(engine.engine, [...args, ...probeArgs], { encoding: "utf8", timeout: 120_000 }, (error, stdout) =>
+          settle({ status: error === null ? 0 : typeof error.code === "number" ? error.code : null, stdout }),
+        );
+        child.stdin?.end();
+      });
+    } finally {
+      await removeServiceContainer(engine.engine, probeName);
+    }
+  }
+
+  // Only where the engine says it enforces limits: elsewhere (rootless without cgroup v2 delegation) the grant carries a
+  // note instead, which `resource-profiles.spec.ts` covers, and there is nothing in the kernel to read.
+  it.runIf(capacity.enforcesLimits === true)(
+    "applies the granted profile's memory, CPU, process and scratch limits in the kernel",
+    async () => {
+      for (const profile of [RESOURCE_PROFILES["interactive-light"], RESOURCE_PROFILES["interactive-heavy"]]) {
+        const answer = await underProfile(profile, []);
+        expect(answer.status, answer.stdout).toBe(0);
+        const applied = JSON.parse(answer.stdout) as { memory: string | null; cpu: string | null; pids: string | null; tmpBytes: number };
+        const { memoryMib, cpus, pids, tmpfsMib } = profile.container;
+        expect(applied.memory).toBe(String(memoryMib * 1024 * 1024));
+        expect(applied.cpu).toBe(`${String(cpus * 100_000)} 100000`);
+        expect(applied.pids).toBe(String(pids));
+        expect(applied.tmpBytes).toBe(tmpfsMib * 1024 * 1024);
+      }
+    },
+    240_000,
+  );
+
+  it.runIf(capacity.enforcesLimits === true)(
+    "stops a service that holds more memory than its profile, and lets the larger profile hold it",
+    async () => {
+      const light = await underProfile(RESOURCE_PROFILES["interactive-light"], ["hold", "768"]);
+      // The kernel's out-of-memory kill, which the engine reports as 128 + SIGKILL.
+      expect(light.status).toBe(137);
+      const heavy = await underProfile(RESOURCE_PROFILES["interactive-heavy"], ["hold", "768"]);
+      expect(heavy.status).toBe(0);
+      expect(JSON.parse(heavy.stdout)).toEqual({ held: 768 });
+    },
+    240_000,
+  );
 
   it("runs the notes package's service: a note is added, listed, and kept in the private folder", async () => {
     if (!engine.available) throw new Error("unreachable");
@@ -157,4 +253,164 @@ describe.runIf(process.env.CC_EXPECT_ROOTLESS_DOCKER === "1")("the rootless Dock
   it("is the engine a service runs on", () => {
     expect(engine).toMatchObject({ available: true, engine: "docker", rootless: true });
   });
+});
+
+/**
+ * A service that reaches a provider, in a real container, through a real host: the key it is given is used on the
+ * wire to the provider and is nowhere the service's own code could read it.
+ *
+ * What is searched, after the provider was called with the key: the environment and command line of the service's
+ * process, everything it can write (`/data`, `/tmp`) and the package it runs, the engine's record of the container, the
+ * service's stderr as the host keeps it, the host's log, and the service's private folder on this machine. The rest
+ * of the container's filesystem is read-only, so nothing can have been written there.
+ */
+const SCAN = `
+const fs = require("node:fs");
+const path = require("node:path");
+let needle = "";
+process.stdin.on("data", (chunk) => (needle += chunk)).on("end", () => {
+  const found = [];
+  const has = (file) => fs.readFileSync(file).includes(needle);
+  for (const file of ["/proc/1/environ", "/proc/1/cmdline"]) {
+    try { if (has(file)) found.push(file); } catch (error) { found.push(file + " unreadable: " + error.code); }
+  }
+  const walk = (folder) => {
+    let entries = [];
+    try { entries = fs.readdirSync(folder, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const file = path.join(folder, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.isFile()) { try { if (has(file)) found.push(file); } catch {} }
+    }
+  };
+  for (const root of ["/data", "/tmp", "/pkg"]) walk(root);
+  process.stdout.write(JSON.stringify(found));
+});
+`;
+
+describe.skipIf(!engine.available)("a service's provider key on a real engine", () => {
+  const LOOKUP = "com.example.lookup";
+  const LOOKUP_FIXTURE = fileURLToPath(new URL("../../web/e2e/fixtures/egress-service/", import.meta.url));
+  const NODE_ID = `node_egress_${String(Date.now())}`;
+
+  it("is sent to the provider and is in none of the container's environment, files or output", async () => {
+    if (!engine.available) throw new Error("unreachable");
+    const work = mkdtempSync(join(tmpdir(), "cc-service-egress-"));
+    const db = openDatabase({ path: ":memory:" });
+    migrate(db);
+    // Generated here, so nothing in this file could be mistaken for a real key.
+    const secret = `fake-${randomBytes(16).toString("hex")}`;
+    const seen: string[] = [];
+    const provider = createServer((request, response) => {
+      seen.push(String(request.headers.authorization ?? ""));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ definition: "a sphere", youSent: request.headers.authorization ?? null }));
+    });
+    await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+    const port = (provider.address() as AddressInfo).port;
+
+    const packageRoot = join(work, "lookup");
+    cpSync(LOOKUP_FIXTURE, packageRoot, { recursive: true });
+    const manifestPath = join(packageRoot, "clarkcant.json");
+    writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace("http://127.0.0.1:8879", `http://127.0.0.1:${String(port)}`));
+    const generationId = `${LOOKUP}@1.0.0:code_1`;
+    const at = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO package_generations
+         (generation_id, package_id, version, digest, node_id, code_generation, activated_at, document)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      generationId,
+      LOOKUP,
+      "1.0.0",
+      "sha256:lookup-digest",
+      NODE_ID,
+      "code_1",
+      at,
+      JSON.stringify({ generationId, packageId: LOOKUP, version: "1.0.0", digest: "sha256:lookup-digest", nodeId: NODE_ID, codeGeneration: "code_1", activatedAt: at, uiOnlyFacets: [], grantedCapabilities: [] }),
+    );
+    const stored = storeCredentialFields(
+      { db, ownerPrincipalId: "owner_1", nodeId: NODE_ID, newId: (prefix) => `${prefix}_${randomBytes(4).toString("hex")}` },
+      [{ name: "LOOKUP_API_KEY", value: secret, kind: "token", consumer: `package:${LOOKUP}` }],
+    );
+    expect(stored.ok).toBe(true);
+
+    const names: string[] = [];
+    const logs: string[] = [];
+    let connection: StdioMcpTransport | undefined;
+    const dataDir = join(work, "node-data");
+    const host = createServiceHost({
+      registry: { db, nodeId: NODE_ID },
+      dataDir,
+      engine: async () => engine,
+      packageRoot: (generation) => (generation.packageId === LOOKUP ? packageRoot : undefined),
+      launcher: (spec) => {
+        names.push(spec.name);
+        return containerLauncher(spec);
+      },
+      connect: async (options) => {
+        const transport = new StdioMcpTransport(options);
+        await transport.start();
+        connection = transport;
+        return transport;
+      },
+      containers: engineContainers,
+      log: (line) => logs.push(line),
+      egress: {
+        secrets: createSecretBroker({ db, principalId: "owner_1", now: () => new Date().toISOString() as Instant }),
+        secretProblem: (packageId, name) => egressSecretProblem({ db, principalId: "owner_1" }, packageId, name),
+        // The fake provider is on loopback, which a node reaches for services only when it is started saying so.
+        allowPrivateNetwork: true,
+      },
+    });
+    try {
+      await host.reconcile();
+      const started = Date.now();
+      while (!host.status().some((entry) => entry.state === "running")) {
+        if (Date.now() - started > 240_000) throw new Error(`the service did not start: ${logs.join(" | ")}`);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      const result = await host.call("com.example.lookup.define@1" as CapabilityRef, { word: "orb" });
+
+      // Used where it belongs: on the wire to the provider.
+      expect(seen).toEqual([`Bearer ${secret}`]);
+      expect(result.content).toBe('Provider answer: {"definition":"a sphere","youSent":"[redacted]"}');
+
+      const name = names.at(-1) ?? "";
+      const scanFor = (needle: string): Promise<string[]> =>
+        new Promise((settle, fail) => {
+          // The needle reaches the scan on its standard input, so not even the scan's own command line holds it.
+          const child = execFile(engine.engine, ["exec", "-i", name, "node", "-e", SCAN], { encoding: "utf8", timeout: 60_000 }, (error, stdout, stderr) =>
+            error === null ? settle(JSON.parse(stdout) as string[]) : fail(new Error(`${error.message}\n${stderr}`)),
+          );
+          child.stdin?.end(needle);
+        });
+      // The scan finds what is there: the service's own environment, and the secret's name in the package's manifest.
+      expect(await scanFor("NODE_ENV=production")).toEqual(["/proc/1/environ"]);
+      expect(await scanFor("LOOKUP_API_KEY")).toEqual(["/pkg/clarkcant.json"]);
+      expect(await scanFor(secret)).toEqual([]);
+      const inspected = await new Promise<string>((settle, fail) => {
+        execFile(engine.engine, ["inspect", "--format", "{{json .Config}}", name], { encoding: "utf8", timeout: 30_000 }, (error, stdout, stderr) =>
+          error === null ? settle(stdout) : fail(new Error(`${error.message}\n${stderr}`)),
+        );
+      });
+      expect(inspected).not.toContain(secret);
+      expect(inspected).not.toContain("LOOKUP_API_KEY");
+      expect(connection?.stderrTail ?? "").not.toContain(secret);
+      expect(logs.join("\n")).not.toContain(secret);
+      const onDisk = (folder: string): string[] =>
+        readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+          const file = join(folder, entry.name);
+          if (entry.isDirectory()) return onDisk(file);
+          return readFileSync(file).includes(secret) ? [file] : [];
+        });
+      expect(onDisk(dataDir)).toEqual([]);
+    } finally {
+      await host.stopAll();
+      provider.closeAllConnections();
+      await new Promise<void>((resolve) => provider.close(() => resolve()));
+      db.close();
+      rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+  }, 600_000);
 });

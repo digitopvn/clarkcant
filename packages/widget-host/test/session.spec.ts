@@ -832,3 +832,172 @@ describe("the artifacts@1 extension", () => {
     expect(posted.length).toBe(before);
   });
 });
+
+describe("tokens@1", () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  // Generated here, so nothing in this file could be mistaken for a provider's token.
+  const VALUE = `fake-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  const TOKEN = { provider: "example.maps", value: VALUE, scopes: ["tiles:read"], expiresAt: "2026-10-01T06:10:00.000Z" };
+  const ask = (requestId: string) =>
+    fromFrame({ kind: "token.request", requestId, request: { provider: "example.maps", scopes: ["tiles:read"] } });
+
+  function withTokens(overrides: Partial<FrameSessionInput> = {}) {
+    const released: number[] = [];
+    const published: unknown[] = [];
+    const persisted: unknown[] = [];
+    const made = makeSession({
+      tokens: {
+        request: async () => ({ status: "ok", token: TOKEN }),
+        release: () => released.push(1),
+      },
+      publishSemantic: (proposal) => published.push(proposal),
+      persistState: async ({ patch }) => {
+        persisted.push(patch);
+        return { ok: true, stateRevision: 1, state: patch };
+      },
+      ...overrides,
+    });
+    return { ...made, released, published, persisted };
+  }
+
+  it("is advertised only to a frame the host gives a token broker", () => {
+    expect(makeSession().session.init().extensions).toBeUndefined();
+    expect(withTokens().session.init().extensions).toEqual(["tokens@1"]);
+  });
+
+  it("answers a request with the token, and records the provider and never the value", async () => {
+    const { session, posted } = withTokens();
+    session.init();
+    expect(session.accept(ask("tokreq-1"))).toMatchObject({ ok: true, kind: "token.request", detail: "example.maps" });
+    await flush();
+    expect(posted.at(-1)).toEqual({ kind: "token-result", nonce: NONCE, requestId: "tokreq-1", status: "ok", token: TOKEN });
+    expect(JSON.stringify(session.transcript())).not.toContain(VALUE);
+  });
+
+  it("refuses to let an issued token out of the frame: not into state, a publish, or an action", async () => {
+    const { session, posted, published, persisted, ran } = withTokens();
+    session.init();
+    session.accept(ask("tokreq-1"));
+    await flush();
+
+    expect(session.accept(fromFrame({ kind: "state.update", expectedRevision: 0, patch: { key: `Bearer ${VALUE}` } }))).toMatchObject({
+      ok: false,
+      code: "TOKEN_NOT_ALLOWED",
+    });
+    // The widget is told, with the committed state, so it is not left waiting on its write.
+    expect(posted.at(-1)).toMatchObject({ kind: "state", state: {}, revision: 0, refused: { code: "STATE_HOLDS_TOKEN" } });
+
+    expect(session.accept(fromFrame({ kind: "semantic.publish", summary: `map with ${VALUE}`, selectedIds: [] }))).toMatchObject({
+      ok: false,
+      code: "TOKEN_NOT_ALLOWED",
+    });
+    expect(
+      session.accept(fromFrame({ kind: "semantic.publish", summary: "a map", selectedIds: [], values: { key: VALUE } })),
+    ).toMatchObject({ ok: false, code: "TOKEN_NOT_ALLOWED" });
+
+    expect(
+      session.accept(
+        fromFrame({ kind: "action.invoke", actionBindingId: "act_1", expectedRevision: 0, input: { token: VALUE }, invocationId: "inv_1" }),
+      ),
+    ).toMatchObject({ ok: false, code: "TOKEN_NOT_ALLOWED" });
+    expect(posted.at(-1)).toMatchObject({ kind: "action-result", invocationId: "inv_1", status: "refused" });
+    await flush();
+
+    expect(persisted).toEqual([]);
+    expect(published).toEqual([]);
+    expect(ran).toEqual([]);
+    expect(JSON.stringify(session.transcript())).not.toContain(VALUE);
+
+    // Everything else still goes through.
+    expect(session.accept(fromFrame({ kind: "state.update", expectedRevision: 0, patch: { zoom: 4 } })).ok).toBe(true);
+    await flush();
+    expect(persisted).toEqual([{ zoom: 4 }]);
+  });
+
+  it("refuses a file write or a link that carries an issued token, and lets the others through", async () => {
+    const written: unknown[] = [];
+    const { session, posted, chrome } = withTokens({
+      artifacts: async (request) => {
+        written.push(request);
+        return { status: "ok" };
+      },
+    });
+    session.init();
+    session.accept(ask("tokreq-1"));
+    await flush();
+
+    // In a file's bytes, where it would be read back from and could be attached to the conversation.
+    const chunkBase64 = Buffer.from(`token=${VALUE}\n`).toString("base64");
+    expect(
+      session.accept(fromFrame({ kind: "artifact.request", requestId: "artreq-1", request: { op: "write", artifactId: "art_one", offset: 0, chunkBase64 } })),
+    ).toMatchObject({ ok: false, code: "TOKEN_NOT_ALLOWED" });
+    // Answered, so the widget's promise is not left waiting.
+    expect(posted.at(-1)).toMatchObject({ kind: "artifact-result", requestId: "artreq-1", status: "refused", code: "TOKEN_NOT_ALLOWED" });
+    // In a name the person would see on a file it saves.
+    expect(
+      session.accept(
+        fromFrame({ kind: "artifact.request", requestId: "artreq-2", request: { op: "export", artifactId: "art_one", suggestedName: `${VALUE}.txt` } }),
+      ),
+    ).toMatchObject({ ok: false, code: "TOKEN_NOT_ALLOWED" });
+    // In a link the host would open in the person's browser, handing the token to the site it names.
+    expect(
+      session.accept(fromFrame({ kind: "host.request", request: "open-external", argument: `https://example.test/?t=${VALUE}` })),
+    ).toMatchObject({ ok: false, code: "TOKEN_NOT_ALLOWED" });
+    await flush();
+    expect(written).toEqual([]);
+    expect(chrome.external).toEqual([]);
+
+    const plain = Buffer.from("just a map\n").toString("base64");
+    expect(
+      session.accept(fromFrame({ kind: "artifact.request", requestId: "artreq-3", request: { op: "write", artifactId: "art_one", offset: 0, chunkBase64: plain } })).ok,
+    ).toBe(true);
+    expect(session.accept(fromFrame({ kind: "host.request", request: "open-external", argument: "https://example.test/map" })).ok).toBe(true);
+    await flush();
+    expect(written).toHaveLength(1);
+    expect(chrome.external).toEqual(["https://example.test/map"]);
+  });
+
+  it("releases the tokens of a disposed frame once", () => {
+    const { session, released } = withTokens();
+    session.init();
+    session.dispose();
+    session.dispose();
+    expect(released).toEqual([1]);
+  });
+
+  it("answers a frame that was not offered the extension, and paces requests at their own rate", async () => {
+    const plain = makeSession();
+    plain.session.init();
+    expect(plain.session.accept(ask("tokreq-1"))).toMatchObject({ ok: false, code: "EXTENSION_NOT_OFFERED", answered: true });
+    expect(plain.posted.at(-1)).toMatchObject({ kind: "token-result", requestId: "tokreq-1", status: "refused", code: "EXTENSION_NOT_OFFERED" });
+
+    let now = 1_000_000;
+    const { session, posted } = withTokens({ maxMessages: 1, tokenBurst: 1, tokenRefillPerSecond: 0.5, now: () => now });
+    session.init();
+    expect(session.accept(ask("tokreq-1")).ok).toBe(true);
+    await flush();
+    expect(session.accept(ask("tokreq-2"))).toMatchObject({ ok: false, code: "TOKEN_RATE_LIMITED", answered: true });
+    expect(posted.at(-1)).toMatchObject({ kind: "token-result", requestId: "tokreq-2", code: "TOKEN_RATE_LIMITED" });
+    // Token requests do not spend the ordinary message budget.
+    expect(session.accept(fromFrame({ kind: "event", name: "x", payload: {} })).ok).toBe(true);
+    now += 2_000;
+    expect(session.accept(ask("tokreq-3")).ok).toBe(true);
+  });
+
+  it("answers a broker failure with a fixed sentence", async () => {
+    const { session, posted } = withTokens({
+      tokens: { request: () => Promise.reject(new Error("internal detail")), release: () => undefined },
+    });
+    session.init();
+    session.accept(ask("tokreq-1"));
+    await flush();
+    expect(posted.at(-1)).toEqual({
+      kind: "token-result",
+      nonce: NONCE,
+      requestId: "tokreq-1",
+      status: "refused",
+      code: "TOKEN_UNAVAILABLE",
+      message: "the token request could not be completed",
+    });
+  });
+});

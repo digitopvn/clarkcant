@@ -15,6 +15,7 @@ import { handlePublicRoutes } from "./routes/public.ts";
 import { handleNodeRoutes } from "./routes/node.ts";
 import { handleVoiceRoutes } from "./routes/voice.ts";
 import { handleFrameGrantFixtureRoutes } from "./routes/frame-grant-fixture.ts";
+import { handleBrowserTokenFixtureRoutes, handleBrowserTokenRoutes } from "./routes/browser-tokens.ts";
 import { handleControlRoutes } from "./routes/control.ts";
 import { handleTerminalRoutes } from "./routes/terminals.ts";
 import { handleCredentialRoutes } from "./routes/credentials.ts";
@@ -246,6 +247,8 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   const frameGrantFixtureResponse = handleFrameGrantFixtureRoutes({ services, request, segments });
   if (frameGrantFixtureResponse !== undefined) return frameGrantFixtureResponse;
+  const browserTokenFixtureResponse = handleBrowserTokenFixtureRoutes({ services, request, segments });
+  if (browserTokenFixtureResponse !== undefined) return browserTokenFixtureResponse;
 
   const controlResponse = await handleControlRoutes({ services, request, segments, at });
   if (controlResponse !== undefined) return controlResponse;
@@ -272,6 +275,8 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   if (artifactResponse !== undefined) return artifactResponse;
   const jobResponse = handleJobRoutes({ services, request, segments });
   if (jobResponse !== undefined) return jobResponse;
+  const browserTokenResponse = await handleBrowserTokenRoutes({ services, request, segments });
+  if (browserTokenResponse !== undefined) return browserTokenResponse;
 
   if (segments[0] === "previews") {
     return handlePreviewRoutes({ services, request, segments });

@@ -285,7 +285,7 @@ export function invocationPreflight(
     return {
       ready: false,
       code: "CAPABILITY_NOT_AUTHENTICATED",
-      message: `${ref} needs a connection before it can run`,
+      message: readiness.blockedReason ?? `${ref} needs a connection before it can run`,
     };
   }
   if (!readiness.authorized || !readiness.healthy) {

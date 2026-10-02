@@ -13,6 +13,8 @@ import {
   type MessageSurface,
   type Principal,
   type ReferenceBlock,
+  type ResourceProfile,
+  type ResourceRequest,
   COMPOSER_SURFACE_HEADER,
   capabilityRefSchema,
   conversationDeleteRequestSchema,
@@ -82,6 +84,8 @@ import { resolveAttachmentRefs } from "../attachments.ts";
 import { resolveComposerReferences } from "../composer-references.ts";
 import { type InteractionDeps, answerQuestion, askQuestionAgain, cancelQuestion } from "../interactions.ts";
 import { resolveLiveSections } from "../mini-app-data.ts";
+import { packageResourceGrant } from "../package-resources.ts";
+import { resourceProfilePolicy } from "../service-host.ts";
 import { WorkAbort, nodeWork } from "../work-supervisor.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "../jev-decider.ts";
 import { type OwnedResources, ownedResources } from "../preflight.ts";
@@ -162,7 +166,26 @@ const STATE_REFUSAL_STATUS = {
  * Shared by the live route and the state route so both hold the widget to the same definition: the one the frame
  * the user is looking at was mounted from.
  */
-function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity: { nodeId: string } }, widgetId: string) {
+/** The granted profile's offscreen behaviour for a frame; anything not granted keeps the default, which suspends. */
+function frameOffscreen(
+  services: Pick<NodeServices, "runtime" | "serviceHost">,
+  packageId: string,
+  request: ResourceRequest | undefined,
+): ResourceProfile["offscreen"] {
+  const grant = packageResourceGrant({
+    packageId,
+    request,
+    serviceHost: services.serviceHost,
+    policy: resourceProfilePolicy({
+      db: services.runtime.db,
+      principalId: services.runtime.identity.ownerPrincipalId,
+      now: nowInstant,
+    }),
+  });
+  return grant.status === "granted" ? grant.profile.offscreen : "suspend";
+}
+
+export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity: { nodeId: string } }, widgetId: string) {
   const index = readDirectoryIndex(directoryIndexPath(process.env));
   /*
    * The version this node is running comes first. A directory lists every version it knows, and after a rollback the
@@ -179,7 +202,7 @@ function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity:
   const otherVersionActive = (entry: DirectoryEntry) =>
     !isActive(entry) && idsOf(entry).some((id) => activePackages.has(id));
   const entries = index.kind === "configured" ? index.entries : [];
-  return findIsolatedFrame({
+  const found = findIsolatedFrame({
     /*
      * While a version of a package is active, only that version's code runs: after a rollback a definition that exists
      * only in the newer version has no code here, rather than the retired version's. With no version active (never
@@ -192,6 +215,13 @@ function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity:
     // cache root here must match the one the install route fetched into.
     cacheRoot: join(runtime.dataDir, "package-cache"),
   });
+  if (!found.ok) return found;
+  /*
+   * Whether the code found is the version this node is running, rather than a listing kept to describe an instance
+   * whose package is gone. A frame is still described either way; only a running package is given anything new.
+   */
+  const running = entries.some((entry) => entry.packageId === found.packageId && entry.version === found.version && isActive(entry));
+  return { ...found, active: running };
 }
 
 /**
@@ -398,6 +428,16 @@ function resolveLiveWidget(
         grantedCapabilities: capabilities.ready,
         unavailableCapabilities,
         allowedOrigins: isolated.allowedOrigins,
+        /*
+         * What the frame does out of view under its package's granted profile. Only `authorized-playback` lets the
+         * person keep it running offscreen, from host chrome; every other answer unmounts it as before.
+         */
+        offscreen: frameOffscreen(services, isolated.packageId, isolated.resources),
+        /*
+         * The providers this widget's package declared browser tokens from, so host chrome offers `tokens@1` only to a
+         * frame that may use it. Every request is still decided by the node against the declaration.
+         */
+        ...(isolated.browserTokens.length === 0 ? {} : { browserTokens: isolated.browserTokens.map((entry) => entry.provider) }),
       },
       /*
        * The same shape the composition path returns, and for the same reason: an invocation is re-authorized

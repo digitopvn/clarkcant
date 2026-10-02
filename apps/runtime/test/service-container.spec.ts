@@ -2,6 +2,8 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { RESOURCE_PROFILES } from "@clarkcant/contracts";
+
 import {
   detectServiceEngine,
   type EngineAnswer,
@@ -9,6 +11,7 @@ import {
   type EngineRunner,
   mountSource,
   NEEDS_ENGINE_REASON,
+  readEngineCapacity,
   ROOTLESS_DOCKER_USER,
   SERVICE_IMAGE,
   serviceContainerName,
@@ -119,6 +122,31 @@ describe("the service container's command line", () => {
     }
   });
 
+  it("keeps the light profile, and a service that names no profile, at exactly the bounds services always had", () => {
+    const pinned = ["--pids-limit", "128", "--memory", "256m", "--cpus", "1", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m"];
+    const unnamed = serviceRunArgs(SPEC);
+    const light = serviceRunArgs({ ...SPEC, profile: RESOURCE_PROFILES["interactive-light"] });
+    expect(light).toEqual(unnamed);
+    const start = unnamed.indexOf("--pids-limit");
+    expect(unnamed.slice(start, start + pinned.length)).toEqual(pinned);
+  });
+
+  it("sizes the container from the granted profile and changes nothing else about the boundary", () => {
+    const light = serviceRunArgs(SPEC);
+    for (const profile of Object.values(RESOURCE_PROFILES)) {
+      const args = serviceRunArgs({ ...SPEC, profile });
+      const { memoryMib, cpus, pids, tmpfsMib } = profile.container;
+      expect(flag(args, "--memory")).toBe(`${String(memoryMib)}m`);
+      expect(flag(args, "--cpus")).toBe(String(cpus));
+      expect(flag(args, "--pids-limit")).toBe(String(pids));
+      expect(flag(args, "--tmpfs")).toBe(`/tmp:rw,noexec,nosuid,size=${String(tmpfsMib)}m`);
+      const sizing = new Set(["--memory", "--cpus", "--pids-limit", "--tmpfs"]);
+      const rest = (all: string[]) => all.filter((_, index) => !sizing.has(all[index] ?? "") && !sizing.has(all[index - 1] ?? ""));
+      expect(rest(args)).toEqual(rest(light));
+      expect(flag(args, "--network")).toBe("none");
+    }
+  });
+
   it("names a container stably per node, generation and facet", () => {
     const one = serviceContainerName({ nodeId: "node_a", generationId: "g1", facetId: "svc" });
     expect(one).toMatch(/^clarkcant-svc-[0-9a-f]{24}$/);
@@ -191,6 +219,37 @@ describe("finding an engine that can run a service", () => {
     if (engine.available) throw new Error("unreachable");
     expect(engine.detail).toContain("docker");
     expect(engine.detail).toContain("podman");
+  });
+});
+
+describe("reading what the engine can hold", () => {
+  it("reads Docker's memory, CPUs and whether it enforces limits", async () => {
+    const run = answering({ docker: { status: 0, stdout: "50387320832 28 true true\n", stderr: "" } });
+    expect(await readEngineCapacity("docker", { run })).toEqual({ memoryBytes: 50387320832, cpus: 28, enforcesLimits: true });
+    expect(run.calls[0]).toBe("docker info --format {{json .MemTotal}} {{json .NCPU}} {{json .MemoryLimit}} {{json .CPUCfsQuota}}");
+    const unenforced = answering({ docker: { status: 0, stdout: "8000000000 4 false true", stderr: "" } });
+    expect(await readEngineCapacity("docker", { run: unenforced })).toMatchObject({ enforcesLimits: false });
+  });
+
+  it("reads Podman's host, and says limits are not enforced without the memory and cpu controllers", async () => {
+    const host = (controllers: string[]) =>
+      answering({ podman: { status: 0, stdout: JSON.stringify({ memTotal: 16e9, cpus: 8, cgroupControllers: controllers }), stderr: "" } });
+    expect(await readEngineCapacity("podman", { run: host(["cpu", "memory", "pids"]) })).toEqual({
+      memoryBytes: 16e9,
+      cpus: 8,
+      enforcesLimits: true,
+    });
+    expect(await readEngineCapacity("podman", { run: host(["pids"]) })).toMatchObject({ enforcesLimits: false });
+  });
+
+  it("leaves what it could not read undefined rather than guessing", async () => {
+    expect(await readEngineCapacity("docker", { run: answering({}) })).toEqual({});
+    expect(await readEngineCapacity("docker", { run: answering({ docker: { status: 0, stdout: "<no value> x", stderr: "" } }) })).toEqual({
+      memoryBytes: undefined,
+      cpus: undefined,
+      enforcesLimits: undefined,
+    });
+    expect(await readEngineCapacity("podman", { run: answering({ podman: { status: 0, stdout: "not json", stderr: "" } }) })).toEqual({});
   });
 });
 

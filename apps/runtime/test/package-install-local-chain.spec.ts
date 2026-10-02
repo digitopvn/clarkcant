@@ -160,3 +160,86 @@ describe("a local package install, end to end over the HTTP API", () => {
     if (!preflight.ready) expect(preflight.code).toBe("CAPABILITY_MISSING");
   });
 });
+
+describe("what a package reaches outside its sandbox, as the listing showed it", () => {
+  const MAPS = { provider: "example.maps", scopes: ["tiles:read", "geocode:read"], purpose: "Draws the map tiles." };
+
+  /** A manifest whose UI facet asks for a browser token, which is what the listing has to show before install. */
+  function declareBrowserTokens(scopes: readonly string[] = MAPS.scopes): void {
+    writeFileSync(
+      join(packageRoot, "clarkcant.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        id: PACKAGE_ID,
+        version: VERSION,
+        displayName: "Local chain fixture",
+        description: "A local package installed end to end over the HTTP API.",
+        hostApi: { min: 1, max: 1 },
+        facets: [
+          {
+            kind: "ui",
+            id: "com.example.local-chain.map@1",
+            entry: "widgets/map/index.html",
+            definition: "widgets/map/widget.json",
+            isolation: "isolated-ui",
+            browserTokens: { version: 1, providers: [{ ...MAPS, scopes }] },
+          },
+        ],
+        requestedCapabilities: [],
+        permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
+        platforms: ["linux-x64", "darwin-arm64", "darwin-x64", "win32-x64"],
+      }),
+    );
+  }
+
+  const install = () =>
+    request({ method: "POST", path: "/packages/install", body: { packageId: PACKAGE_ID, version: VERSION, localDigest: DIGEST } });
+  const listed = async () => (await request({ method: "GET", path: "/packages" })).body as { packages: Record<string, unknown>[] };
+
+  it("refuses an artifact that asks for a browser token its listing did not show, and installs nothing", async () => {
+    declareBrowserTokens();
+    writeIndex([directoryEntry()]);
+
+    const refused = await install();
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ code: "DECLARED_REACH_MISMATCH" });
+    expect((refused.body as { message: string }).message).toContain("the browser tokens it asks for");
+    expect((await listed()).packages).toEqual([]);
+  });
+
+  it("refuses a listing that showed fewer scopes than the artifact asks for", async () => {
+    declareBrowserTokens();
+    writeIndex([
+      directoryEntry({ declaredReach: { origins: [], secrets: [], browserTokens: [{ ...MAPS, scopes: ["tiles:read"] }] } }),
+    ]);
+
+    expect((await install()).body).toMatchObject({ code: "DECLARED_REACH_MISMATCH" });
+    expect((await listed()).packages).toEqual([]);
+  });
+
+  it("installs when the listing showed what the artifact declares, in any order, and package details list it", async () => {
+    declareBrowserTokens();
+    writeIndex([
+      directoryEntry({
+        declaredReach: { origins: [], secrets: [], browserTokens: [{ ...MAPS, scopes: [...MAPS.scopes].reverse() }] },
+      }),
+    ]);
+
+    const installed = await install();
+    expect(installed.status, JSON.stringify(installed.body)).toBe(200);
+    const [entry] = (await listed()).packages;
+    expect(entry?.packageId).toBe(PACKAGE_ID);
+    // From the installed manifest, in one order, with the scopes it declares.
+    expect(entry?.reach).toEqual({
+      origins: [],
+      secrets: [],
+      browserTokens: [{ provider: "example.maps", scopes: ["geocode:read", "tiles:read"], purpose: "Draws the map tiles." }],
+    });
+  });
+
+  it("says nothing about reach for a package that reaches nothing", async () => {
+    writeIndex([directoryEntry()]);
+    expect((await install()).status).toBe(200);
+    expect((await listed()).packages[0]).not.toHaveProperty("reach");
+  });
+});

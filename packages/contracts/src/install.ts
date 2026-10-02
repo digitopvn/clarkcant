@@ -2,6 +2,12 @@ import { z } from "zod";
 
 import { effectCategorySchema, instantSchema, platformSchema, principalIdSchema, semverSchema } from "./primitives.ts";
 import { capabilityRefSchema } from "./grants.ts";
+import { resourceRequestSchema } from "./resource-profiles.ts";
+import { networkOriginSchema } from "./network-origin.ts";
+import { browserTokensProblems, browserTokensSchema } from "./browser-token.ts";
+import { serviceEgressProblems, serviceEgressSchema } from "./service-egress.ts";
+
+export { networkOriginProblem, networkOriginSchema } from "./network-origin.ts";
 
 /**
  * Capability packages and their install lifecycle.
@@ -72,6 +78,11 @@ export const uiFacetSchema = z.strictObject({
   entry: packagePathSchema,
   definition: packagePathSchema,
   isolation: z.literal("isolated-ui"),
+  /**
+   * Providers this UI needs a short-lived, scoped browser token from. Absent means the frame is given none: the
+   * exception to "a widget never holds a provider credential" exists only where a package declares it.
+   */
+  browserTokens: browserTokensSchema.optional(),
 });
 
 /**
@@ -107,6 +118,11 @@ export const toolsFacetSchema = z.strictObject({
   isolation: z.literal("service"),
   protocol: z.literal("mcp-stdio"),
   capabilities: z.array(serviceCapabilityDeclarationSchema).min(1).max(64),
+  /**
+   * The origins the service may reach through the host, and the secrets the host adds on its behalf. Absent means
+   * the service reaches nothing, as before: its container has no network either way (`service-egress.ts`).
+   */
+  egress: serviceEgressSchema.optional(),
 });
 export type ToolsFacet = z.infer<typeof toolsFacetSchema>;
 
@@ -143,46 +159,6 @@ export const facetDeclarationSchema = z.discriminatedUnion("kind", [
   nativeFacetSchema,
 ]);
 export type FacetDeclaration = z.infer<typeof facetDeclarationSchema>;
-
-/**
- * Why a declared network origin is not one a package may reach, or `undefined` when it is.
- *
- * A declared origin ends up verbatim in the widget document's `connect-src`, so anything that is not exactly one
- * origin is a way to rewrite the policy: `https://a *` widens it to everything, `https://a; report-uri …` adds a
- * directive, and `https://*.a` is a wildcard by another name. The shape check comes first and is deliberately
- * narrower than a URL parser, because `URL` accepts `;` inside a host and the policy separator is exactly `;`.
- *
- * Plain `http:` and `ws:` are refused except on loopback: a widget talking to a remote host in clear text is a
- * request nobody should have to consent to.
- */
-export function networkOriginProblem(value: string): string | undefined {
-  const label = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
-  const shape = new RegExp(`^(?:https|wss|http|ws)://(?:\\[[0-9a-f:.]+\\]|${label}(?:\\.${label})*)(?::[0-9]{1,5})?$`);
-  if (!shape.test(value)) {
-    return "must be exactly scheme://host[:port]: no wildcard, path, query, credentials, whitespace or separators";
-  }
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return "is not a URL";
-  }
-  if (url.origin !== value) return `must be written in its canonical form, ${url.origin}`;
-  const encrypted = url.protocol === "https:" || url.protocol === "wss:";
-  if (!encrypted && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
-    return "must use https or wss unless it is a loopback address";
-  }
-  return undefined;
-}
-
-/** One origin a package may reach, in the exact form a CSP source expression takes. */
-export const networkOriginSchema = z
-  .string()
-  .min(1)
-  .max(300)
-  .refine((value) => networkOriginProblem(value) === undefined, {
-    error: (issue) => `network origin ${JSON.stringify(issue.input)} ${networkOriginProblem(String(issue.input)) ?? "is invalid"}`,
-  });
 
 /**
  * The version of the manifest format this file describes.
@@ -236,6 +212,11 @@ export const packageManifestSchema = z.strictObject({
     lifecycleScripts: z.array(z.string().min(1).max(300)).max(32),
   }),
   platforms: z.array(platformSchema).min(1),
+  /**
+   * The resource profile the package asks for, by name (`resource-profiles.ts`). A request: the host decides what it
+   * grants, and a package that asks for nothing runs as `interactive-light`.
+   */
+  resources: resourceRequestSchema.optional(),
   /** Declared by the publisher; verified against the actual artifact, never trusted alone. */
   publisher: z
     .strictObject({
@@ -305,6 +286,11 @@ export function manifestProblems(manifest: PackageManifest): string[] {
     }
   }
 
+  for (const facet of manifest.facets) {
+    if (facet.kind !== "ui" || facet.browserTokens === undefined) continue;
+    for (const problem of browserTokensProblems(facet.browserTokens)) problems.push(`facet ${facet.id}: browserTokens ${problem}`);
+  }
+
   const refs = new Set<string>();
   for (const facet of manifest.facets) {
     if (facet.kind !== "tools") continue;
@@ -321,6 +307,9 @@ export function manifestProblems(manifest: PackageManifest): string[] {
       refs.add(capability.ref);
       if (tools.has(capability.tool)) problems.push(`facet ${facet.id}: tool ${capability.tool} is declared twice`);
       tools.add(capability.tool);
+    }
+    if (facet.egress !== undefined) {
+      for (const problem of serviceEgressProblems(facet.egress)) problems.push(`facet ${facet.id}: egress ${problem}`);
     }
   }
 

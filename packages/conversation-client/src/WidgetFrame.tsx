@@ -1,6 +1,7 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
 
 import type { SemanticProposal } from "@clarkcant/contracts";
+import type { TokenRequest } from "@clarkcant/widget-sdk";
 
 /*
  * The session entry, not the package root.
@@ -15,6 +16,7 @@ import {
   createFrameSession,
   type FrameArtifactBroker,
   type FrameJobBroker,
+  type FrameTokenOutcome,
   type FrameActionAvailability,
   type FrameActionOutcome,
   type FrameSession,
@@ -105,6 +107,17 @@ export interface WidgetFrameProps {
    */
   artifacts?: FrameArtifactBroker | undefined;
   jobs?: FrameJobBroker | undefined;
+  /**
+   * The host's side of `tokens@1`, given only when the package declared browser tokens. Each mount of the document is
+   * its own session: `request` names it, and `release` is called with it when the document goes, so the node revokes
+   * what that mount was given.
+   */
+  tokens?:
+    | {
+        request: (request: TokenRequest, session: string) => Promise<FrameTokenOutcome>;
+        release: (session: string) => void;
+      }
+    | undefined;
 }
 
 /**
@@ -264,6 +277,8 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
     const frame = element.current;
     if (frame === null) return;
 
+    // This mount's own session for browser tokens: random, never the frame's nonce, and ended when the document goes.
+    const tokenSession = newNonce();
     const live = createFrameSession({
       instanceId: input.instanceId,
       nonce: nonce.current,
@@ -318,6 +333,16 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
             jobs: (request) =>
               latest.current.jobs?.(request) ??
               Promise.resolve({ status: "refused" as const, code: "JOB_UNAVAILABLE", message: "the host stopped answering job requests" }),
+          }),
+      ...(latest.current.tokens === undefined
+        ? {}
+        : {
+            tokens: {
+              request: (request: TokenRequest) =>
+                latest.current.tokens?.request(request, tokenSession) ??
+                Promise.resolve({ status: "refused" as const, code: "TOKEN_UNAVAILABLE", message: "the host stopped answering token requests" }),
+              release: () => latest.current.tokens?.release(tokenSession),
+            },
           }),
       // The frame is reached only this way: an opaque origin has no address to call, so `postMessage` is the whole
       // transport and `"*"` is correct — the session checks the window the message came from, not the target.

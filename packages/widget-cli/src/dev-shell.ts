@@ -25,6 +25,8 @@ import {
   type ServiceStatus,
 } from "./service-simulator.ts";
 import type { DeclaredCompositionEvent } from "./dev-composition.ts";
+import { describeSimulatedGrant, simulateResourceGrant, type DevProfileMode, type DevTokenMode } from "./dev-resources.ts";
+import type { ResourceRequest } from "@clarkcant/contracts";
 
 export const DEV_VIEWPORTS = ["narrow-320", "conversation", "compact", "expanded"] as const;
 export type DevViewport = (typeof DEV_VIEWPORTS)[number];
@@ -62,10 +64,29 @@ export interface DevShellState {
    * `""` for a person who closes the picker. Both are real paths a widget has to handle, so both are a click away.
    */
   pickFile: string;
+  /**
+   * Whether the simulated execution policy grants the package's resource profile. Granted by default, as a node with
+   * room does; "refused" shows what the package does when its services are not started.
+   */
+  profile: DevProfileMode;
+  /** What the simulated provider answers a declared browser-token request with. */
+  tokens: DevTokenMode;
 }
 
 export interface DevShellAction {
-  kind: "fixture" | "viewport" | "theme" | "reduced-motion" | "offline" | "read-only" | "capability" | "pick-file" | "service-readiness" | "service-restart";
+  kind:
+    | "fixture"
+    | "viewport"
+    | "theme"
+    | "reduced-motion"
+    | "offline"
+    | "read-only"
+    | "capability"
+    | "pick-file"
+    | "service-readiness"
+    | "service-restart"
+    | "resource-profile"
+    | "browser-token";
   value: string | boolean;
   capabilityRef?: string;
   status?: ServiceStatus;
@@ -94,6 +115,8 @@ export function initialState(input: {
     capabilities: Object.fromEntries(input.requestedCapabilities.map((ref) => [ref, "denied" as const])),
     serviceReadiness: initialServiceState(input.serviceCapabilities ?? []),
     pickFile: input.files?.[0] ?? "",
+    profile: "granted",
+    tokens: "grant",
   };
 }
 
@@ -180,6 +203,10 @@ export function applyShellAction(
       const name = typeof action.value === "string" ? action.value : "";
       return name === "" || (known.files ?? []).includes(name) ? { ...state, pickFile: name } : state;
     }
+    case "resource-profile":
+      return action.value === "granted" || action.value === "refused" ? { ...state, profile: action.value } : state;
+    case "browser-token":
+      return action.value === "grant" || action.value === "refuse" ? { ...state, tokens: action.value } : state;
   }
 }
 
@@ -194,6 +221,8 @@ export function shellAttributes(state: DevShellState): Record<string, string> {
     "data-dev-offline": String(state.offline),
     "data-dev-read-only": String(state.readOnly),
     "data-dev-pick-file": state.pickFile,
+    "data-dev-profile": state.profile,
+    "data-dev-tokens": state.tokens,
   };
 }
 
@@ -385,6 +414,11 @@ export interface ShellInput {
   compositionInputs?: readonly string[];
   /** Fixture files the simulated picker offers, by name. Absent for a catalog widget, which has no package. */
   files?: readonly string[];
+  /**
+   * The package's resource request and the providers its UI declared browser tokens from. Absent for a catalog
+   * widget, which has no package to ask for either.
+   */
+  resources?: { request: ResourceRequest | undefined; browserTokenProviders: readonly string[] };
 }
 
 /**
@@ -508,6 +542,38 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
       ? "<p>No fixture files. Put files in <code>fixtures/files/</code> and a pick returns the one chosen here.</p>"
       : "<p>The next pick returns the file chosen here. Exports and attaches are logged, never written to disk.</p>";
 
+  const modeButtons = (kind: DevShellAction["kind"], values: readonly (readonly [string, string])[], current: string): string =>
+    values
+      .map(
+        ([value, label]) =>
+          `<button type="button" data-dev-action="${kind}" data-dev-value="${value}"` +
+          `${current === value ? ' data-dev-selected="true"' : ""}>${label}</button>`,
+      )
+      .join("\n          ");
+  const resources = input.resources;
+  const tokenPanel =
+    resources === undefined || resources.browserTokenProviders.length === 0
+      ? ""
+      : `<section data-dev-browser-tokens>
+          <h2>Browser tokens · simulated</h2>
+          <p>Declared: ${resources.browserTokenProviders.map((provider) => `<code>${escapeHtml(provider)}</code>`).join(", ")}. A simulated token is random and opens nothing; its value is never logged.</p>
+          <div class="row">
+          ${modeButtons("browser-token", [["grant", "Provider issues"], ["refuse", "Provider unavailable"]], state.tokens)}
+          </div>
+        </section>`;
+  const resourcePanel =
+    resources === undefined
+      ? ""
+      : `<section data-dev-resources>
+          <h2>Resource profile · simulated</h2>
+          <p>Requested: <code>${escapeHtml(resources.request?.profile ?? "interactive-light")}</code>${resources.request === undefined ? " (nothing declared)" : ""}</p>
+          <div class="row">
+          ${modeButtons("resource-profile", [["granted", "Policy grants"], ["refused", "Policy refuses"]], state.profile)}
+          </div>
+          <p data-dev-resource-grant role="status">${escapeHtml(describeSimulatedGrant(simulateResourceGrant({ request: resources.request, mode: state.profile })))}</p>
+        </section>
+        ${tokenPanel}`;
+
   return `<!doctype html>
 <html lang="vi">
   <head>
@@ -606,6 +672,7 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
           <h2>Capability simulator</h2>
           ${capabilityRows}
         </section>
+        ${resourcePanel}
         <section data-dev-jobs>
           <h2>Simulated jobs</h2>
           <p data-dev-job-empty>A press on a binding with a <code>job</code> in <code>fixtures/dev-host-services.json</code> starts one here. Nothing runs: each step is the fixture's, and every ending says it was simulated.</p>

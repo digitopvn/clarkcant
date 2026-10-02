@@ -753,3 +753,80 @@ describe("the jobs@1 extension", () => {
     expect(requests()).toHaveLength(2);
   });
 });
+
+describe("the tokens@1 extension", () => {
+  // Generated here, so nothing in this file could be mistaken for a provider's token.
+  const VALUE = `fake-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  const TOKEN = { provider: "example.maps", value: VALUE, scopes: ["tiles:read"], expiresAt: "2026-10-01T06:10:00.000Z" };
+  type Sent = { kind?: string; requestId?: string; request?: unknown };
+
+  function ready(extensions: string[] = ["tokens@1"]) {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    bus.deliver(initMessage({ extensions }));
+    const requests = () => (bus.sent as Sent[]).filter((message) => message.kind === "token.request");
+    const answer = (requestId: string, result: Record<string, unknown>) =>
+      bus.deliver({ kind: "token-result", nonce: NONCE, requestId, ...result });
+    return { bus, runtime, requests, answer };
+  }
+
+  it("refuses locally when the host did not offer it, or the request is malformed", async () => {
+    const plain = ready([]);
+    expect(plain.runtime.api().tokens.available()).toBe(false);
+    await expect(plain.runtime.api().tokens.request({ provider: "example.maps", scopes: ["tiles:read"] })).rejects.toThrow(/tokens@1/);
+    expect(plain.requests()).toHaveLength(0);
+
+    const { runtime, requests } = ready();
+    await expect(runtime.api().tokens.request({ provider: "Example Maps", scopes: ["tiles:read"] })).rejects.toThrow(/token/);
+    await expect(runtime.api().tokens.request({ provider: "example.maps", scopes: ["tiles:read"], ttlSeconds: 86_400 })).rejects.toThrow();
+    expect(requests()).toHaveLength(0);
+  });
+
+  it("resolves with the token the host gave, and rejects with the host's code when it refused", async () => {
+    const { runtime, requests, answer } = ready();
+    expect(runtime.api().tokens.available()).toBe(true);
+    const asking = runtime.api().tokens.request({ provider: "example.maps", scopes: ["tiles:read"] });
+    expect(requests()[0]?.request).toEqual({ provider: "example.maps", scopes: ["tiles:read"] });
+    answer(requests()[0]?.requestId ?? "", { status: "ok", token: TOKEN });
+    await expect(asking).resolves.toEqual(TOKEN);
+
+    const refused = runtime.api().tokens.request({ provider: "example.maps", scopes: ["geocode:read"] });
+    answer(requests()[1]?.requestId ?? "", { status: "refused", code: "TOKEN_SCOPE_NOT_DECLARED", message: "not declared" });
+    await expect(refused).rejects.toThrow("TOKEN_SCOPE_NOT_DECLARED: not declared");
+  });
+
+  it("will not send a token it was given into state, a publish or an action", async () => {
+    const { bus, runtime, requests, answer } = ready();
+    const asking = runtime.api().tokens.request({ provider: "example.maps", scopes: ["tiles:read"] });
+    answer(requests()[0]?.requestId ?? "", { status: "ok", token: TOKEN });
+    await asking;
+    const before = bus.sent.length;
+
+    await expect(runtime.api().state.update(0, { key: VALUE })).rejects.toThrow(/TOKEN_NOT_ALLOWED/);
+    expect(() => runtime.api().semantic.publish(`tiles for ${VALUE}`, [])).toThrow(/TOKEN_NOT_ALLOWED/);
+    await expect(runtime.api().actions.invoke("act_1", { auth: `Bearer ${VALUE}` }, "inv_1")).rejects.toThrow(/TOKEN_NOT_ALLOWED/);
+    expect(bus.sent.length).toBe(before);
+    expect(JSON.stringify(bus.sent)).not.toContain(VALUE);
+  });
+
+  it("will not write a token it was given into a file, or ask the host to open a link carrying it", async () => {
+    const { bus, runtime, requests, answer } = ready(["tokens@1", "artifacts@1"]);
+    const asking = runtime.api().tokens.request({ provider: "example.maps", scopes: ["tiles:read"] });
+    answer(requests()[0]?.requestId ?? "", { status: "ok", token: TOKEN });
+    await asking;
+    const before = bus.sent.length;
+    const file = { v: 1 as const, artifactId: "art_one", kind: "working" as const, name: "map.txt", mimeType: "text/plain", sizeBytes: 0 };
+
+    await expect(runtime.api().artifacts.write(file, new TextEncoder().encode(`token=${VALUE}`))).rejects.toThrow(/TOKEN_NOT_ALLOWED/);
+    expect(() => runtime.api().host.openExternal(`https://example.test/?t=${VALUE}`)).toThrow(/TOKEN_NOT_ALLOWED/);
+    expect(bus.sent.length).toBe(before);
+    expect(JSON.stringify(bus.sent)).not.toContain(VALUE);
+  });
+
+  it("rejects what is waiting when the frame is disposed", async () => {
+    const { bus, runtime } = ready();
+    const asking = runtime.api().tokens.request({ provider: "example.maps", scopes: ["tiles:read"] });
+    bus.deliver({ kind: "dispose", nonce: NONCE });
+    await expect(asking).rejects.toThrow(/disposed/);
+  });
+});

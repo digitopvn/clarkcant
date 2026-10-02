@@ -3,17 +3,23 @@ import {
   ARTIFACT_BRIDGE_LIMITS,
   ARTIFACTS_EXTENSION,
   JOBS_EXTENSION,
+  TOKEN_BRIDGE_LIMITS,
+  TOKENS_EXTENSION,
   BRIDGE_PROTOCOL,
   BRIDGE_VERSION,
   artifactRequestSchema,
   jobRefWireSchema,
   jobRequestSchema,
   jobSnapshotWireSchema,
+  browserTokenWireSchema,
+  tokenRequestSchema,
   hostToWidgetSchema,
   widgetToHostSchema,
   type ActionAvailability,
   type ArtifactRef,
   type ArtifactRequest,
+  type BrowserToken,
+  type TokenRequest,
   type JobRef,
   type JobRequest,
   type JobSnapshot,
@@ -144,6 +150,34 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
   const jobWaiters = new Map<string, { resolve: (result: JobResult) => void; reject: (error: Error) => void }>();
   const jobSubscriptions = new Set<JobSubscription>();
   let jobRequests = 0;
+  const tokenWaiters = new Map<string, { resolve: (result: TokenResult) => void; reject: (error: Error) => void }>();
+  let tokenRequests = 0;
+  /**
+   * Token values this frame was given, so the runtime can refuse to send one back out. The host refuses it as well;
+   * this is the widget hearing about its own mistake where it made it rather than as a refusal out of sight.
+   */
+  const heldTokens = new Set<string>();
+  const carriesToken = (value: unknown): boolean => {
+    if (heldTokens.size === 0) return false;
+    let text: string;
+    try {
+      text = JSON.stringify(value) ?? "";
+    } catch {
+      return false;
+    }
+    for (const token of heldTokens) if (text.includes(token)) return true;
+    return false;
+  };
+  const TOKEN_LEAK =
+    "TOKEN_NOT_ALLOWED: a browser token stays in the frame; it cannot be saved in state, published, sent with an action, written to a file or opened as a link";
+  /** Whether bytes about to be written to a file hold a token, read as the text they would be read back as. */
+  const chunkCarriesToken = (chunk: Uint8Array): boolean => {
+    if (heldTokens.size === 0) return false;
+    let text = "";
+    for (const byte of chunk) text += String.fromCharCode(byte);
+    for (const token of heldTokens) if (text.includes(token)) return true;
+    return false;
+  };
 
   const send = (message: unknown): void => {
     deps.endpoint.postMessage(message);
@@ -286,6 +320,11 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         if (subscription.timer !== undefined) clearTimeout(subscription.timer);
       }
       jobSubscriptions.clear();
+      for (const waiter of tokenWaiters.values()) {
+        waiter.reject(new Error("widget runtime: the host disposed the frame before the token request answered"));
+      }
+      tokenWaiters.clear();
+      heldTokens.clear();
       appearanceHandlers.clear();
       deps.endpoint.removeEventListener("message", handleMessage);
       return;
@@ -310,6 +349,14 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       const waiter = jobWaiters.get(message.requestId);
       if (waiter === undefined) return;
       jobWaiters.delete(message.requestId);
+      waiter.resolve(message);
+      return;
+    }
+
+    if (message.kind === "token-result") {
+      const waiter = tokenWaiters.get(message.requestId);
+      if (waiter === undefined) return;
+      tokenWaiters.delete(message.requestId);
       waiter.resolve(message);
       return;
     }
@@ -429,6 +476,29 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     }
   };
 
+  const tokenRequest = async (request: TokenRequest): Promise<BrowserToken> => {
+    requireReady("xin token");
+    if (!extensions.has(TOKENS_EXTENSION)) throw new Error(`widget runtime: host không mở ${TOKENS_EXTENSION} cho frame này`);
+    const parsed = tokenRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      throw new Error(`widget runtime: yêu cầu token không hợp lệ: ${parsed.error.issues[0]?.message ?? "sai dạng"}`);
+    }
+    if (tokenWaiters.size >= TOKEN_BRIDGE_LIMITS.maxInFlight) {
+      throw new Error(`TOKEN_BUSY: at most ${String(TOKEN_BRIDGE_LIMITS.maxInFlight)} token requests may wait at once`);
+    }
+    tokenRequests += 1;
+    const requestId = `tokreq-${String(tokenRequests)}`;
+    const result = await new Promise<TokenResult>((resolve, reject) => {
+      tokenWaiters.set(requestId, { resolve, reject });
+      send({ kind: "token.request", nonce: speakingNonce(), requestId, request: parsed.data });
+    });
+    if (result.status !== "ok") throw new Error(`${result.code ?? "TOKEN_REFUSED"}: ${result.message ?? "host refused the token request"}`);
+    const token = browserTokenWireSchema.safeParse(result.token);
+    if (!token.success) throw new Error("widget runtime: host returned an invalid token");
+    heldTokens.add(token.data.value);
+    return token.data;
+  };
+
   /** An answer that must be `ok`, with a ref. A refusal becomes an error that names the host's code first. */
   const expectRef = (result: ArtifactResult): ArtifactRef => {
     if (result.status !== "ok") throw artifactError(result);
@@ -469,6 +539,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
             new Error("widget runtime: lần ghi state trước chưa được host xác nhận; chờ nó xong rồi ghi tiếp"),
           );
         }
+        if (carriesToken(patch)) return Promise.reject(new Error(TOKEN_LEAK));
         /*
          * Shown locally at once, confirmed by the host later. The promise resolves only when the host has committed
          * the write, so a widget that says "đã lưu" on resolve is saying something true; a refusal replaces this
@@ -497,6 +568,10 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
             requireReady("gọi action");
           } catch (error) {
             reject(error instanceof Error ? error : new Error(String(error)));
+            return;
+          }
+          if (carriesToken(input)) {
+            reject(new Error(TOKEN_LEAK));
             return;
           }
           actionWaiters.set(invocationId, { actionBindingId, resolve, reject });
@@ -546,6 +621,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       },
       openExternal: (approvedUrl) => {
         requireReady("mở link");
+        if (carriesToken(approvedUrl)) throw new Error(TOKEN_LEAK);
         // A request, never an open: the host decides, and shows its own chrome when it does.
         send({ kind: "host.request", nonce: speakingNonce(), request: "open-external", argument: approvedUrl });
       },
@@ -553,6 +629,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     semantic: {
       publish: (summary, selectedIds, values) => {
         requireReady("publish semantic");
+        if (carriesToken({ summary, selectedIds, values })) throw new Error(TOKEN_LEAK);
         send({
           kind: "semantic.publish",
           nonce: speakingNonce(),
@@ -584,6 +661,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
           }),
         ),
       write: (ref, chunk) => {
+        if (chunkCarriesToken(chunk)) return Promise.reject(new Error(TOKEN_LEAK));
         if (chunk.byteLength > ARTIFACT_BRIDGE_LIMITS.chunkBytes) {
           return Promise.reject(
             new Error(`widget runtime: một lần ghi tối đa ${String(ARTIFACT_BRIDGE_LIMITS.chunkBytes)} byte; hãy chia nhỏ`),
@@ -629,6 +707,10 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         writeChains.delete(ref.artifactId);
         knownSizes.delete(ref.artifactId);
       },
+    },
+    tokens: {
+      available: () => extensions.has(TOKENS_EXTENSION),
+      request: (request) => tokenRequest(request),
     },
     jobs: {
       available: () => extensions.has(JOBS_EXTENSION),
@@ -682,6 +764,7 @@ export function readyMessage(nonce: string): Extract<WidgetToHostMessage, { kind
 
 type ArtifactResult = Extract<HostToWidgetMessage, { kind: "artifact-result" }>;
 type JobResult = Extract<HostToWidgetMessage, { kind: "job-result" }>;
+type TokenResult = Extract<HostToWidgetMessage, { kind: "token-result" }>;
 interface JobSubscription {
   jobId: JobRef;
   handler: (job: JobSnapshot) => void;

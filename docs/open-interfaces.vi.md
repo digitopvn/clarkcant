@@ -436,6 +436,30 @@ capability. Mọi trường hợp khác, kể cả một ref không tồn tại,
 Node không có job host trả lời `503 JOB_UNAVAILABLE`. `POST /stop` cũng huỷ các job package đang chạy và đếm chúng
 trong `stopped.jobs`.
 
+Token trình duyệt mà frame yêu cầu (`tokens@1`, [widget-development.vi.md §14.3](widget-development.vi.md#143-token-trình-duyệt-tokens1))
+có trong `/openapi.json`. Chrome của host yêu cầu token thay cho frame mà nó đã mount, kèm session id ngẫu nhiên nó cấp
+cho lần mount đó. Token chỉ được cấp cho nhà cung cấp và scope mà package của widget đã khai báo trong `browserTokens`
+của facet UI, và chỉ khi node có adapter cấp được token có phạm vi cho các scope và thời hạn đó (30–3600 giây, 900 giây
+khi request không nêu thời hạn). Request bị từ chối chứ không bao giờ bị thu hẹp. Node chỉ giữ token id của nhà cung
+cấp và ghi audit nhà cung cấp cùng kết quả với loại `browser-token`, không bao giờ ghi giá trị
+(`packages/contracts/src/browser-token.ts`).
+
+| Method | Path | Body / câu trả lời |
+|---|---|---|
+| POST | `/conversations/{id}/widgets/{instanceId}/browser-tokens` | `{ session, request: { provider, scopes, ttlSeconds? } }` — `{ token: { provider, token, scopes, expiresAt } }`. Chỉ người dùng gọi được |
+| DELETE | `/conversations/{id}/widgets/{instanceId}/browser-tokens/{session}` | – `{ ended: true, revoked }`; token của phiên được thu hồi nếu nhà cung cấp hỗ trợ, và request sau đó cho phiên này là `409 TOKEN_SESSION_ENDED` |
+
+Các lời từ chối: `403 TOKEN_PROVIDER_NOT_DECLARED` hoặc `TOKEN_SCOPE_NOT_DECLARED`, `409 TOKEN_PACKAGE_NOT_ACTIVE`
+hoặc `TOKEN_SESSION_ENDED`, `422 TOKEN_PROVIDER_UNSCOPED`, `TOKEN_SCOPE_NOT_SUPPORTED` hoặc `TOKEN_TTL_TOO_LONG`,
+`502 TOKEN_ISSUE_FAILED`, và `503 TOKEN_PROVIDER_UNAVAILABLE` trên node không có adapter cho nhà cung cấp đó. ClarkCant
+chưa kèm adapter cho nhà cung cấp nào. Node khởi động với `CC_BROWSER_TOKEN_FIXTURE=1` đăng ký các nhà cung cấp fixture
+chạy trong tiến trình cho bộ test trình duyệt và trả lời `GET /browser-token-fixture/issued`; không có biến này, route
+đó trả `404`.
+
+Phía bridge (`tokens@1`) chỉ được đề nghị trong `init.extensions` cho frame có package đã khai báo token trình duyệt.
+`token.request` được trả lời bằng `token-result`; SDK và phiên frame của host từ chối `state.update`,
+`semantic.publish` hoặc `actions.invoke` có chứa token đã cấp với `TOKEN_NOT_ALLOWED`.
+
 
 Mọi route của instance đều được kiểm tra lại theo grant của instance đó. Ref là con trỏ, không phải quyền, nên một
 grant đã hết hạn (`403 ARTIFACT_GRANT_EXPIRED`) hoặc bị thu hồi (`403 ARTIFACT_GRANT_REVOKED`) sẽ chặn ngay lời gọi
@@ -496,7 +520,8 @@ các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng M
 của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard (trên thẻ, hoặc do một task đang
 chạy raise ra), quyết định capability của package, cài một gói (`POST /packages/install`) hoặc quyết định một lần
 cài mà chế độ thực thi của người dùng đã hỏi, xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, tin cậy một peer đã ghép cặp, cấp
-grant, và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
+grant, xin token trình duyệt cho một frame (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; chỉ chrome
+của host đã mount frame mới xin, và một client máy xin tức là xin một credential để giữ), và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
 một client AI nói được "lần push đó đã thành công" thì có thể tự gỡ trạng thái chưa rõ của task của chính nó rồi tự
 báo là đã xong). Xuất một bảng ra file CSV
 (`POST /conversations/{id}/widgets/{instanceId}/export`) cũng bị các relay đó từ chối: file được viết cho người đang
@@ -510,6 +535,18 @@ nó không bao giờ đưa ra câu trả lời của người dùng về một t
 thông báo (`403 PERSON_ONLY` cho cả hai, route cập nhật bị từ chối như trên). `read_inbox` đánh dấu tiêu đề và nội
 dung của mọi thông báo là dữ liệu do việc khác báo lại, không bao giờ là chỉ dẫn, và giữ mỗi thông báo trên một dòng.
 Discovery document ghi điều này ở mục `personDecisions`.
+
+**Kết nối MCP riêng của service trong package.** Node là MCP client của mỗi service trong package mà nó chạy qua
+stdio. Khi facet `tools` của service khai báo `egress`, request `initialize` của node đề nghị
+`capabilities.experimental["clarkcant/egress"]` (`version: 1`), và service có thể gửi cho node request
+`clarkcant/egress.fetch` với `{ version: 1, url, method?, headers?, body? }`. Node chỉ thực hiện HTTP request tới
+origin đã khai báo, gắn header credential đã khai báo từ secret được lưu cho `package:<id>`, không đi theo redirect, và
+thay secret bằng `[redacted]` trong kết quả trả về như một lớp bảo vệ ở mức cố gắng tối đa. Node chỉ trả lời `GET` và
+`HEAD` trừ khi một lần gọi đang chạy được quyết định là `external-write` hoặc rủi ro hơn, giới hạn tốc độ cho từng
+service, và từ chối origin loopback và mạng riêng trừ khi node chạy với `CC_EGRESS_ALLOW_PRIVATE_NETWORK=1`. Lời từ chối
+là các lỗi JSON-RPC từ `-32010` tới `-32018`
+(`packages/contracts/src/service-egress.ts`, [widget-development.vi.md §14.2](widget-development.vi.md#142-service-gọi-tới-nhà-cung-cấp)).
+Method này không có trên `POST /mcp`.
 
 WebMCP (trang web đưa tool cho agent của chính trình duyệt) đã được cân nhắc cho cùng các thao tác thông báo và chưa
 được đưa ra: đề xuất này vẫn là bản nháp, chưa có API trình duyệt nào ship, và trang của ClarkCant không có bề mặt

@@ -250,6 +250,11 @@ export {
   McpRequestCancelled,
   McpRequestNotSent,
   McpRequestTimeout,
+  McpServerRequestError,
+  JSON_RPC_METHOD_NOT_FOUND,
+  JSON_RPC_INVALID_PARAMS,
+  JSON_RPC_SERVER_BUSY,
+  MAX_SERVER_REQUESTS,
   type StdioMcpTransportOptions,
   type ServerHandshake,
 } from "./stdio.ts";

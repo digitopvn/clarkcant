@@ -1,6 +1,6 @@
 ---
 title: "#315 JobRef for long-running package capabilities"
-status: in-progress
+status: completed
 created: 2026-10-01
 issues: [315]
 related: [200, 313, 314, 316]

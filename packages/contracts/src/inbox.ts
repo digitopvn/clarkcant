@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { declaredReachSchema } from "./declared-reach.ts";
 import { riskLaneSchema } from "./directory.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 
@@ -413,6 +414,11 @@ export const waitingItemSchema = z.discriminatedUnion("kind", [
     riskTier: riskLaneSchema,
     /** The listing's own summary of what the package asks for; the manifest inside the artifact is the authority. */
     permissions: z.array(z.string()),
+    /**
+     * The origins, secrets and browser-token providers the listing says it reaches. Absent when it reaches none. The
+     * install refuses an artifact that declares anything else, so this is what approving agrees to.
+     */
+    reach: declaredReachSchema.optional(),
     description: z.string(),
     operationDigest: z.string().min(1),
     requestedAt: instantSchema,

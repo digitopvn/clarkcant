@@ -59,6 +59,27 @@ describe("durable package job host", () => {
     expect(settled).toBe(1);
   });
 
+  it("holds a package to its profile's own job limit inside the node's, and counts only that package's jobs", async () => {
+    const supervisor = createWorkSupervisor();
+    const host = createPackageJobHost({ db, nodeId: "node_1", nodeBootId: "boot_1", newId: () => "job_unused", supervisor, maxActiveJobs: 4 });
+    const scope = { packageId: "pkg_1", maxActive: 1 };
+    const pending = (signal: AbortSignal) =>
+      new Promise<never>((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+    host.start({ job: job("job_first"), scope, run: pending });
+    await flush();
+    expect(host.canAdmit()).toBe(true);
+    expect(host.canAdmit(scope)).toBe(false);
+    expect(() => host.start({ job: job("job_second"), scope, run: async () => ({ content: "must not run" }) })).toThrow(/package is at its active job limit/);
+    // Another package has its own count.
+    expect(host.canAdmit({ packageId: "pkg_2", maxActive: 1 })).toBe(true);
+    host.start({ job: { ...job("job_other"), packageId: "pkg_2" as never }, scope: { packageId: "pkg_2", maxActive: 1 }, run: pending });
+    await flush();
+    expect(host.canAdmit({ packageId: "pkg_2", maxActive: 1 })).toBe(false);
+    expect(supervisor.cancel("job_first")).toBe("stopped");
+    await flush();
+    expect(host.canAdmit(scope)).toBe(true);
+  });
+
   it("reports a restart interruption and never calls the old service again", () => {
     const supervisor = createWorkSupervisor();
     const reports: string[] = [];

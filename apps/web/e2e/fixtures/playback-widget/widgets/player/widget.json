@@ -1,0 +1,35 @@
+{
+  "id": "com.example.playback.player@1",
+  "version": "1.0.0",
+  "renderer": "isolated-app",
+  "propsSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "maxLength": 200
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": false
+  },
+  "eventSchemas": {},
+  "stateSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": true
+  },
+  "stateVersion": 0,
+  "semanticDescription": "A clock that keeps counting while its frame runs.",
+  "requestedCapabilities": [],
+  "sizing": {
+    "compact": true,
+    "expanded": true,
+    "minHeight": 160
+  },
+  "textFallback": "Đồng hồ phát: đếm khi frame của nó đang chạy.",
+  "effectCategories": [],
+  "datasetRefs": []
+}

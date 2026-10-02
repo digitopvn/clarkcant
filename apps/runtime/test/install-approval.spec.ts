@@ -203,6 +203,39 @@ describe("an install the policy asks about waits in the inbox", () => {
     expect(audit()).toEqual([expect.objectContaining({ approvalId, result: "asked", digest: gitDigest })]);
   });
 
+  it("shows the origins, keys and browser-token providers the listing says the package reaches", async () => {
+    const reach = {
+      browserTokens: [{ provider: "example.maps", scopes: ["tiles:read"], purpose: "Draws the map tiles." }],
+      secrets: [{ name: "CALENDAR_API_KEY", purpose: "Signs the agenda requests in." }],
+      origins: [{ origin: "https://api.example.com", purpose: "Reads your agenda.", secret: "CALENDAR_API_KEY" }],
+    };
+    writeIndex([entry({ declaredReach: reach })]);
+    const approvalId = await askToInstall();
+
+    const [item] = await waiting();
+    expect(item).toMatchObject({ approvalId, reach });
+    // Names and purposes only: there is nothing in the question that could be a key's value.
+    expect(Object.keys(item?.kind === "install-approval" ? (item.reach?.secrets[0] ?? {}) : {})).toEqual(["name", "purpose"]);
+  });
+
+  it("installs nothing on approval when the artifact declares a reach other than the question showed", async () => {
+    // The question shows a browser token; the artifact (one widget file, no manifest) declares none.
+    writeIndex([
+      entry({
+        declaredReach: {
+          origins: [],
+          secrets: [],
+          browserTokens: [{ provider: "example.maps", scopes: ["tiles:read"], purpose: "Draws the map tiles." }],
+        },
+      }),
+    ]);
+    const approvalId = await askToInstall();
+
+    const decided = await decide(approvalId, "granted");
+    expect(codeOf(decided)).toBe("DECLARED_REACH_MISMATCH");
+    expect(installedVersions()).toEqual([]);
+  });
+
   it("is not listed once the directory no longer lists the artifact it asked about", async () => {
     await askToInstall();
     const republished = commit(JSON.stringify({ id: PACKAGE_ID, changed: true }));
@@ -339,6 +372,20 @@ describe("an approval stays bound to the artifact it was given for", () => {
     );
     expect(outcome).toMatchObject({ kind: "refused", status: 409, code: "DIGEST_MISMATCH" });
     expect(installedVersions()).toEqual([]);
+  });
+
+  it("ends what the frames were given under the old code when an install replaces it", async () => {
+    writePolicy(DEFAULT_EXECUTION_POLICY_CONFIG);
+    const ended: string[] = [];
+    const installDeps = { ...packageInstallDepsOf(services), packageCodeEnded: (packageId: string) => ended.push(packageId) };
+    expect(await installPackage(installDeps, { packageId: PACKAGE_ID, version: VERSION })).toMatchObject({ kind: "installed" });
+    const next = commit(JSON.stringify({ id: PACKAGE_ID, changed: true }));
+    writeIndex([entry({ version: "1.3.0", source: { kind: "git", url: repo, ref: next.ref }, digest: next.digest })]);
+    ended.length = 0;
+    expect(await installPackage(installDeps, { packageId: PACKAGE_ID, version: "1.3.0" })).toMatchObject({ kind: "installed" });
+    expect(installedVersions().sort()).toEqual([VERSION, "1.3.0"]);
+    // The broker withdraws the tokens the 1.2.0 frames hold, and a mint racing the update is refused.
+    expect(ended).toEqual([PACKAGE_ID]);
   });
 
   it("still honours a policy that now forbids installing, even after Approve", async () => {

@@ -28,8 +28,10 @@ import { resumeArtifactIntake } from "../delegated-artifacts.ts";
 import { taskDispatchReports } from "../task-reporting.ts";
 import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
-import { detectServiceEngine } from "../service-container.ts";
-import { createServiceHost, engineContainers, packageRootFrom } from "../service-host.ts";
+import { detectServiceEngine, readEngineCapacity } from "../service-container.ts";
+import { createServiceHost, engineContainers, packageRootFrom, resourceProfilePolicy } from "../service-host.ts";
+import { type EgressAuditEvent, egressAllowsPrivateNetwork, egressSecretProblem } from "../service-egress.ts";
+import { type BrowserTokenAuditEvent, createBrowserTokenBroker } from "../browser-token-broker.ts";
 import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import type { NodeWork } from "./work-bootstrap.ts";
@@ -371,9 +373,24 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       return packageRootFrom(index.entries, join(services.runtime.dataDir, "package-cache"))(generation);
     },
     containers: engineContainers,
+    capacity: (engine) => readEngineCapacity(engine),
+    profilePolicy: resourceProfilePolicy({
+      db: services.runtime.db,
+      principalId: services.runtime.identity.ownerPrincipalId,
+      now: () => new Date().toISOString() as Instant,
+    }),
+    egress: serviceEgressDeps(services),
   });
   void services.serviceHost.reconcile().catch((cause: unknown) => {
     process.stderr.write(`services: not started — ${cause instanceof Error ? cause.message : String(cause)}\n`);
+  });
+  /*
+   * Browser tokens for widget frames. No provider adapter ships with the node, so until one is registered every request
+   * is refused as having none; the broker exists anyway so uninstall and frame disposal have one place to revoke.
+   */
+  services.browserTokens = createBrowserTokenBroker({
+    audit: browserTokenAudit(services),
+    log: (line) => process.stderr.write(`${line}\n`),
   });
 
   if (sessionFixture) {
@@ -533,4 +550,63 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   );
 
   return { stopUpdateChecks: () => updateChecks?.stop() };
+}
+
+/**
+ * What package services' egress is made with: the secret broker, whose own use is written to the trail as it is for
+ * every other consumer, and a trail row for each request the host made, by package, method, origin and secret name.
+ */
+/** What the broker issued, refused or withdrew, by provider and instance: never the token or the provider's id for it. */
+function browserTokenAudit(services: NodeServices): (event: BrowserTokenAuditEvent) => void {
+  const db = services.runtime.db;
+  return (event) =>
+    appendAuditEvent(db, {
+      auditId: services.conductor.newId("audit"),
+      principalId: services.runtime.identity.ownerPrincipalId,
+      nodeId: services.runtime.identity.nodeId,
+      kind: "browser-token",
+      summary: `${event.provider} token ${event.outcome} for ${event.instanceId} (${event.packageId})${event.code === undefined ? "" : `: ${event.code}`}`.slice(0, 500),
+      outcome: event.outcome === "refused" ? "refused" : event.outcome === "issued" ? "done" : "stopped",
+      ref: event.instanceId,
+      at: new Date().toISOString() as Instant,
+    });
+}
+
+function serviceEgressDeps(services: NodeServices) {
+  const db = services.runtime.db;
+  const principalId = services.runtime.identity.ownerPrincipalId;
+  const nodeId = services.runtime.identity.nodeId;
+  const now = () => new Date().toISOString() as Instant;
+  return {
+    secrets: createSecretBroker({
+      db,
+      principalId,
+      now,
+      audit: (event: { summary: string; ref: string }) =>
+        appendAuditEvent(db, {
+          auditId: services.conductor.newId("audit"),
+          principalId,
+          nodeId,
+          kind: "secret-use",
+          summary: event.summary,
+          outcome: "done",
+          ref: event.ref,
+          at: now(),
+        }),
+    }),
+    secretProblem: (packageId: string, name: string) => egressSecretProblem({ db, principalId }, packageId, name),
+    // Loopback, private and link-local origins only when the person started the node saying so.
+    allowPrivateNetwork: egressAllowsPrivateNetwork(process.env),
+    audit: (event: EgressAuditEvent) =>
+      appendAuditEvent(db, {
+        auditId: services.conductor.newId("audit"),
+        principalId,
+        nodeId,
+        kind: "egress",
+        summary: `${event.packageId} ${event.method} ${event.origin}${event.secret === undefined ? "" : ` with ${event.secret}`}${event.status === undefined ? "" : ` → ${String(event.status)}`}${event.count === undefined ? "" : ` (×${String(event.count)})`}${event.reason === undefined ? "" : `: ${event.reason}`}`.slice(0, 500),
+        outcome: event.outcome,
+        ref: event.packageId,
+        at: now(),
+      }),
+  };
 }

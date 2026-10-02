@@ -28,6 +28,7 @@
     "@clarkcant/design-tokens": "workspace:*",
     "@clarkcant/execution-supervisor": "workspace:*",
     "@clarkcant/host-adapters": "workspace:*",
+    "@clarkcant/integration-sdk": "workspace:*",
     "@clarkcant/mcp-adapters": "workspace:*",
     "@clarkcant/node-link": "workspace:*",
     "@clarkcant/pi-adapter": "workspace:*",
