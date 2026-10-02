@@ -272,6 +272,36 @@ package ngay trong cuộc trò chuyện bằng cách đặt nút hành động c
 [`service-facet.spec.ts`](../apps/web/e2e/service-facet.spec.ts) vẫn tạo widget riêng của package kèm binding `invoke`
 qua một fixture model.
 
+**Kết nối tài khoản.** Một facet `tools` có thể khai báo `connection` khi service của nó làm việc trên tài khoản của một
+người tại một nhà cung cấp ([service-connection.ts](../packages/contracts/src/service-connection.ts)):
+
+```json
+"connection": {
+  "version": 1,
+  "provider": "fake.tasks",
+  "displayName": "Fake Tasks (test fixture)",
+  "flow": "oauth-pkce",
+  "authorization": {
+    "authorizationEndpoint": "http://127.0.0.1:8880/oauth/authorize",
+    "tokenEndpoint": "http://127.0.0.1:8880/oauth/token",
+    "revocationEndpoint": "http://127.0.0.1:8880/oauth/revoke",
+    "clientId": "connected-app-dev"
+  },
+  "scopes": [
+    { "scope": "tasks.read", "purpose": "Lists your tasks." },
+    { "scope": "tasks.write", "purpose": "Renames a task when you ask." }
+  ],
+  "endpoints": ["http://127.0.0.1:8880"],
+  "probe": { "url": "http://127.0.0.1:8880/api/me" }
+}
+```
+
+Luồng duy nhất là authorization code với PKCE, nên package không bao giờ mang client secret, và client id là công khai.
+Mọi URL phải dùng HTTPS trừ khi là địa chỉ loopback. Probe phải nằm trên một endpoint đã khai báo. Một package khai báo
+nhiều nhất một connection, và một endpoint không thể đồng thời là origin của `egress`, nên mỗi origin chỉ có một
+credential. Capability nêu các scope nó cần trong `requiredScopes`; mỗi scope phải là scope mà connection có xin. Host
+kết nối tài khoản và ký request của service ra sao nằm ở §14.4.
+
 `publisher` là tuỳ chọn trong manifest. `clark widget publish` thì bắt buộc phải có, vì một directory entry phải
 cho biết package đến từ ai. `dependencies` mặc định là `[]`.
 
@@ -1922,10 +1952,11 @@ service mà không cần khởi động lại, và xóa key thì đăng xuất. 
 đưa vào lệnh đó dưới dạng biến môi trường. Egress không dùng loại secret này, nên hãy lưu một secret riêng cho package.
 
 **Sự đồng ý khi cài hiện những gì.** Một mục trong thư mục nêu phạm vi tiếp cận của package trong `declaredReach`
-(`{ origins, secrets, browserTokens }`, [declared-reach.ts](../packages/contracts/src/declared-reach.ts)); mục không có
+(`{ origins, secrets, browserTokens, connections }`, [declared-reach.ts](../packages/contracts/src/declared-reach.ts)); mục không có
 trường này nghĩa là package không tiếp cận gì. Thẻ thư mục trong cuộc trò chuyện, câu hỏi cài đặt trong hộp thư, và chi
 tiết package trong Settings → Extensions liệt kê từng origin kèm mục đích, từng key theo tên kèm mục đích (không bao giờ
-hiện giá trị), và từng nhà cung cấp token trình duyệt kèm scope và mục đích, trước khi cấp bất cứ thứ gì. Artifact có
+hiện giá trị), từng nhà cung cấp token trình duyệt kèm scope và mục đích, và từng kết nối tài khoản kèm nhà cung cấp,
+scope và endpoint (§14.4), trước khi cấp bất cứ thứ gì. Artifact có
 manifest khai báo phạm vi khác với mục trong thư mục bị từ chối với `409 DECLARED_REACH_MISMATCH` trước khi ghi lại bất cứ
 thứ gì, nên sự đồng ý bao gồm đúng những gì đã hiện. Thông báo cập nhật chưa liệt kê phạm vi này.
 
@@ -1997,6 +2028,59 @@ Test: [browser-token.spec.ts](../packages/contracts/test/browser-token.spec.ts) 
 và trên container đang chạy. Nó gọi tới một nhà cung cấp giả bằng key mà trang, frame, bridge, storage và container đều
 không giữ. Sau đó nó giữ một token vừa cấp trong frame và thu hồi token khi frame đóng.
 
+### 14.4 Kết nối tài khoản
+
+Một service làm việc trên tài khoản của một người tại một nhà cung cấp, chẳng hạn danh sách công việc hay lịch của họ,
+khai báo một `connection` trên facet tools của nó (§4). Host làm mọi việc chạm tới credential của tài khoản
+([package-connections.ts](../apps/runtime/src/package-connections.ts)); service thấy câu trả lời của nhà cung cấp và
+widget thấy một trạng thái. Cả hai không bao giờ giữ access token, refresh token hay authorization code.
+
+1. **Kết nối.** Người dùng bấm *Connect* trên package trong Settings → Extensions. Đây là UI của host, không phải của
+   widget. `POST /packages/:id/connection` tạo một cặp PKCE (S256) và một `state` dùng một lần, giữ trong bộ nhớ mười
+   phút, rồi trả về URL uỷ quyền của nhà cung cấp. Client mở URL đó trong trình duyệt hệ thống. Route này chỉ dành cho
+   người dùng: request đi qua MCP hay relay bị từ chối với `403 PERSON_ONLY`, nên một AI client không thể tự bắt đầu
+   kết nối cho chính nó. Route trả `409 CONNECT_ON_THIS_MACHINE` nếu request không tới node qua loopback, vì nhà cung
+   cấp chuyển trình duyệt về `http://127.0.0.1:<port>/connections/callback`.
+2. **Quay về.** `GET /connections/callback` là công khai, vì trình duyệt đi theo một lần chuyển hướng không mang token
+   của gateway: `state` dùng một lần mới là thứ xác thực nó. Node kiểm tra state trước khi gửi code đi bất cứ đâu, đổi
+   code tại token endpoint đã khai báo, so scope được cấp với scope đã khai báo, và gọi probe đã khai báo. Chỉ khi đó
+   node mới giữ kết nối. Token nằm trong bảng riêng trên node (`package_connection_tokens`). Trang mà trình duyệt mở ra
+   không bao giờ lặp lại code hay state, không gửi referrer, và một callback bị phát lại hoặc giả mạo bị từ chối.
+3. **Ký.** Service vẫn chạy không có mạng, như trước (§14.2). Khi nó xin một URL trên một endpoint của connection bằng
+   `clarkcant/egress.fetch`, node tự thêm `authorization: Bearer …`, chỉ trong lúc một lời gọi của service đang chạy, và
+   che token khỏi mọi câu trả lời trả lại cho service. Token sắp hết hạn được làm mới trước. Khi nhà cung cấp trả `401`,
+   node làm mới một lần; nếu vẫn bị từ chối, kết nối bị thu hồi. Request không bao giờ được thử lại.
+4. **Sẵn sàng.** `GET /packages/:id/connection` trả về `ConnectionStatus`: `not-connected`, `connected`, `partial`,
+   `expired` hoặc `revoked`, các scope đã xin, đã cấp và còn thiếu, kèm lý do. Capability không sẵn sàng khi kết nối
+   chưa có, đã hết hạn hoặc bị thu hồi, hoặc không cấp một scope trong `requiredScopes` của nó, và lý do nói rõ là cái
+   nào, ví dụ "the Fake Tasks (test fixture) account did not grant tasks.write; reconnect it in Settings and allow it".
+   Widget đọc lý do từ `actions.availability()` (§10); một lần bấm, agent và giọng nói bị từ chối với
+   `CAPABILITY_NOT_AUTHENTICATED` và cùng lý do đó. Capability có đủ scope đã cấp vẫn chạy trên kết nối `partial`.
+5. **Thu hồi.** *Revoke* trong Settings gọi `POST /packages/:id/connection/revoke`. Node gọi revocation endpoint của nhà
+   cung cấp nếu có khai báo, xoá token, và trạng thái thành `revoked` trước khi request trả lời. *Reconnect* chạy lại
+   bước 1. Gỡ package qua `POST /packages/:id/uninstall` cũng quên kết nối theo cách đó.
+
+Kết nối không thay đổi cách một capability chạy: binding của widget, `invoke_capability` của Clark và lệnh nói vẫn đi
+tới `invokeCapability`, execution policy của người dùng, approval card do host sở hữu và cùng một audit trail (§4). Một
+lần ghi không nhận được câu trả lời trước hạn chót được ghi nhận là không rõ kết quả và không được thử lại.
+
+Desktop shell chỉ mở địa chỉ HTTPS trong trình duyệt hệ thống, nên nhà cung cấp trên địa chỉ `http` loopback (fake
+connector bên dưới) được kết nối từ client trình duyệt. Nhà cung cấp thật dùng HTTPS. Mới chỉ có luồng authorization
+code với PKCE. Nhiều tài khoản cho một package, và một kết nối dùng chung giữa các package, chưa được xây.
+
+**Ứng dụng mẫu và template.** [examples/reference-apps/connected-app](../examples/reference-apps/connected-app/) liệt kê
+và đổi tên công việc qua một kết nối như vậy, và `clark widget init --template connected-app` sao chép nó (§16). Nhà cung
+cấp của nó là một **fake connector**, `dev/fake-connector.mjs`: fixture cho kiểm thử và phát triển, gồm một máy chủ
+OAuth và một API công việc tí hon trên loopback, không có tài khoản thật, và các giá trị kiểm thử ngẫu nhiên chỉ nằm trong
+bộ nhớ. Node chỉ gọi tới endpoint loopback của nó khi có `CC_EGRESS_ALLOW_PRIVATE_NETWORK=1`. Nhà cung cấp thật sẽ đến
+sau [#333](https://github.com/digitopvn/clarkcant/issues/333). Các kiểm thử là
+[package-connections.spec.ts](../apps/runtime/test/package-connections.spec.ts) cho broker,
+[package-connection-routes.spec.ts](../apps/runtime/test/package-connection-routes.spec.ts) cho các route, và journey
+trình duyệt [connected-app.spec.ts](../apps/web/e2e/connected-app.spec.ts). Journey kết nối, đọc và đổi tên từ widget,
+gọi cùng capability từ Clark và bằng giọng nói với một audit trail, thu hồi rồi kết nối lại, chỉ cấp một phần scope, để
+một lần đổi tên quá hạn, và kiểm tra rằng không token, code hay secret nào tới được frame, trang, bản ghi của node, file
+của node hay container của service.
+
 ---
 
 ## 15. State & migration
@@ -2051,11 +2135,15 @@ Templates:
 - form;
 - pure-ui: bản sao của trình soạn thảo văn bản mẫu ([§10.3](#103-ứng-dụng-mẫu-trình-soạn-thảo-văn-bản)), mang id,
   facet id và tên riêng của package mới, không kèm các kiểm thử của trình soạn thảo;
+- connected-app: bản sao của ứng dụng kết nối mẫu ([§14.4](#144-kết-nối-tài-khoản)) mang id và tên riêng của package
+  mới: một widget, một service có các capability nêu scope chúng cần trên một connection đã khai báo, skills, fake
+  connector mà nó được kiểm thử, và `test/service.test.mjs` di động của service. Hãy thay nhà cung cấp, client id, scope
+  và endpoint bằng của nhà cung cấp thật trước khi phát hành;
 - editor;
 - media;
 - MCP App adapter.
 
-Hiện tại `clark widget init --template` nhận `blank`, `form`, `dashboard` và `pure-ui`. `editor`, `media` và MCP App
+Hiện tại `clark widget init --template` nhận `blank`, `form`, `dashboard`, `pure-ui` và `connected-app`. `editor`, `media` và MCP App
 adapter chưa được triển khai.
 
 ### dev

@@ -155,6 +155,10 @@ CredentialRequest là host-owned surface riêng, không model-supplied form. Fie
 
 Model không được chọn token endpoint/base URL tùy ý để exfiltrate key. Endpoint discovery phải verify provider/resource identity, allowed schemes/redirects, TLS và no credential forwarding to unapproved origin.
 
+### 5.4 Những gì đã xây cho kết nối của package
+
+Kết nối tài khoản của service trong package đi theo đường OAuth native ở trên: package khai báo nhà cung cấp, client id công khai, các scope kèm mục đích, các endpoint và một probe; endpoint đến từ manifest của package, thứ mà sự đồng ý khi cài hiện ra, không bao giờ từ model. Người dùng bắt đầu từ Settings, không bao giờ từ widget hay AI client (`403 PERSON_ONLY`); node mở trình duyệt hệ thống với PKCE và một state dùng một lần, nhận callback qua loopback, kiểm tra scope được trả về và probe, rồi ghi `connected` hoặc `partial` kèm các scope còn thiếu. Token ở lại trên node đã chạy bước uỷ quyền. `expired` và `revoked` làm các capability cần kết nối đó không sẵn sàng, kèm lý do bảo người dùng kết nối lại trong Settings. Một lần ghi quá hạn được ghi nhận là không rõ kết quả và không được lặp lại. Hôm nay chỉ fake connector trong repository, một fixture kiểm thử, chạy luồng này; nhà cung cấp thật sẽ đến sau #333. Đường server OAuth cho node headless (§5.2) chưa được xây: việc kết nối trả `409 CONNECT_ON_THIS_MACHINE` nếu request không tới node qua loopback. Chi tiết: [widget development §14.4](widget-development.vi.md#144-kết-nối-tài-khoản).
+
 ## 6. Reference journey: Google Calendar
 
 Chọn connector API trực tiếp làm first-party reference để không phụ thuộc một MCP community server chưa xác minh. App vẫn discover/cài MCP/Pi alternative khi thật sự phù hợp. Đây là product decision, không claim Google không có MCP.
