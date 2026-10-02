@@ -21,7 +21,9 @@ import {
   markEffectUnknown,
   modelReplyCard,
   prepareEffect,
+  readDirectoryIndex,
   readExecutionPolicy,
+  readPackage,
   requestApproval,
   listInstalledPackages,
   saveActionBinding,
@@ -290,6 +292,18 @@ export function controlAppFixtureCalls(text: string): Record<string, unknown>[] 
   return calls;
 }
 
+/** The reference spreadsheet package, served from the browser suite's directory like the other fixture packages. */
+const SPREADSHEET_PACKAGE_ID = "com.example.spreadsheet";
+
+/**
+ * What the spreadsheet's format button asks Clark for. The spreadsheet applies only a reply that is exactly one line in
+ * this shape for the range it had selected, so the request names the shape and nothing else.
+ */
+const SPREADSHEET_FORMAT_INTENT =
+  "Format the cells selected in this spreadsheet as percentages. Reply with exactly one line and nothing else: " +
+  "format: percent <range>, where <range> is the selected A1 range the host read from the spreadsheet. " +
+  "The spreadsheet applies only that line.";
+
 /** The reference text editor's definition, as its package ships it. */
 const TEXT_EDITOR_DEFINITION = new URL("../../../../examples/reference-apps/text-editor/widgets/main/widget.json", import.meta.url);
 
@@ -324,6 +338,20 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * the host read context for the button, the reply quotes it too — from the turn's data section, which is where the
      * host puts it, never from the guidance note: what reached the model is what the host read.
      */
+    /*
+     * The spreadsheet's format button, answered the way its intent asks: one line naming the range. The range is taken
+     * from the turn's data section, where the host put the selection it read from the widget's semantic document, so
+     * the line the widget receives shows which range reached the model. Without a selection there is nothing to name.
+     */
+    if (input.note?.includes(SPREADSHEET_FORMAT_INTENT) === true) {
+      const selected = /selected: ［"([A-Z]{1,3}[1-9]\d{0,6}(?::[A-Z]{1,3}[1-9]\d{0,6})?)"］/u.exec(input.data ?? "");
+      const reply =
+        selected === null
+          ? "Fixture: the host read no selection from the spreadsheet, so there is nothing to format."
+          : `format: percent ${selected[1] ?? ""}`;
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
     const pressed = input.note === undefined ? null : /You offered it for: (.+?)\nDo that now\.$/su.exec(input.note);
     /*
      * The reference text editor's "rewrite the selection" button, answered with a replacement.
@@ -1905,6 +1933,62 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * A widget that holds files by reference, in its own frame: the journey for `artifacts@1`. Like the frame widget
      * above, its definition agrees with the fixture package on disk (`apps/web/e2e/fixtures/artifact-widget`).
      */
+    /*
+     * The reference spreadsheet, in its own frame, with the one action it offers: asking Clark to format the selection.
+     *
+     * The definition is the package's own `widget.json`, read through the directory the node serves frames from, so the
+     * instance resolves to exactly the code on disk. The action is compiled by the host, as a model's would be, and its
+     * id reaches the widget as a prop: the widget cannot know a generated id any other way.
+     */
+    if (/bảng tính tham chiếu|reference spreadsheet/iu.test(input.text)) {
+      const services = deps.services();
+      const index = readDirectoryIndex(directoryIndexPath(process.env));
+      const entry = index.kind === "configured" ? index.entries.find((candidate) => candidate.packageId === SPREADSHEET_PACKAGE_ID) : undefined;
+      const definition = entry?.source.kind === "local" ? readPackage(entry.source.path).facets[0]?.definition : undefined;
+      if (definition === undefined) {
+        const reply = "Fixture: the reference spreadsheet is not in this node's directory, so it cannot be placed.";
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+      const packageDigest = definitionDigest(definition);
+      const compiled = compileWidgetAction(
+        {
+          db: services.runtime.db,
+          nodeId: services.runtime.identity.nodeId,
+          serviceHost: services.serviceHost,
+          now: () => new Date().toISOString(),
+          newId: services.conductor.newId,
+        },
+        {
+          definitionRef: { id: definition.id, version: definition.version, packageDigest },
+          label: "Định dạng vùng chọn thành phần trăm",
+          action: { kind: "agent", intent: SPREADSHEET_FORMAT_INTENT, contextRefs: ["selection", "widget"] },
+          ownerPrincipalId: input.principal.principalId,
+        },
+      );
+      if (!compiled.ok) {
+        const reply = `Fixture: the host refused the spreadsheet's action: ${compiled.message}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+      const formatBinding = compiled.bindTo("pending").actionBindingId;
+      const instance = createInstance(services.conductor, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Bảng tính tham chiếu (fixture)", locale: "vi", formatBinding },
+      });
+      saveActionBinding(services.conductor, compiled.bindTo(instance.instanceId));
+      const snapshot = captureSnapshot(services.conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: bảng tính tham chiếu trong frame cách ly (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
     if (/widget tệp|file widget/i.test(input.text)) {
       const definition = {
         id: "com.example.artifact-widget.main@1",
