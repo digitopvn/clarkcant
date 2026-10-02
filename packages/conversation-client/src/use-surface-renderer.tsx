@@ -9,6 +9,8 @@ import {
   TREE_ID,
   TREE_SELECT_OPERATION,
   TREE_TOGGLE_OPERATION,
+  DIAGRAM_ID,
+  DIAGRAM_SELECT_OPERATION,
   BOARD_ID,
   BOARD_MOVE_OPERATION,
   BOARD_APPROVAL_OPERATION,
@@ -107,6 +109,7 @@ const VIEW_REFUSED: Record<string, MessageKey> = {
   [TIMELINE_SELECT_OPERATION]: "widgets.timeline.selectRefused",
   [TREE_SELECT_OPERATION]: "widgets.tree.actionRefused",
   [TREE_TOGGLE_OPERATION]: "widgets.tree.actionRefused",
+  [DIAGRAM_SELECT_OPERATION]: "widgets.diagram.selectRefused",
   [MEDIA_VIEW_OPERATION]: "widgets.action.refusedGeneric",
 };
 /** The argument an agent-bound list item is sent under when the binding names none. */
@@ -505,7 +508,9 @@ export function useSurfaceRenderer({
             ? CALENDAR_VIEW_OPERATION
               : definitionId === TIMELINE_ID
                 ? TIMELINE_SELECT_OPERATION
-                : undefined;
+                : definitionId === DIAGRAM_ID
+                  ? DIAGRAM_SELECT_OPERATION
+                  : undefined;
       const viewOperations = definitionId === TREE_ID
         ? [TREE_SELECT_OPERATION, TREE_TOGGLE_OPERATION]
         : definitionId === BOARD_ID

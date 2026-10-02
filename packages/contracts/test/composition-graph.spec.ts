@@ -32,6 +32,7 @@ const SECTIONS = [
   { sectionId: "calendar-1", definitionId: "canvas.calendar@1" },
   { sectionId: "tree-1", definitionId: "canvas.tree@1" },
   { sectionId: "gallery-1", definitionId: "canvas.gallery@1" },
+  { sectionId: "diagram-1", definitionId: "canvas.diagram@1" },
 ];
 
 const GRAPH: CompositionGraph = {
@@ -48,6 +49,7 @@ const GRAPH: CompositionGraph = {
     toggledNode: { type: "string", initial: "" },
     branchOpen: { type: "boolean", initial: false },
     galleryIndex: { type: "number", initial: 0 },
+    diagramNode: { type: "string", initial: "" },
   },
   on: [
     { sectionId: "search-1", event: "query.change", steps: [{ op: "select-field", key: "query", field: "query" }] },
@@ -88,6 +90,7 @@ const GRAPH: CompositionGraph = {
       ],
     },
     { sectionId: "gallery-1", event: "media.select", steps: [{ op: "select-field", key: "galleryIndex", field: "selectedIndex" }] },
+    { sectionId: "diagram-1", event: "diagram.select", steps: [{ op: "select-field", key: "diagramNode", field: "selectedId" }] },
   ],
   feed: [
     { sectionId: "table-1", op: "query", key: "query" },
@@ -282,6 +285,16 @@ describe("applying an event", () => {
     expect(selected).toMatchObject({ ok: true, values: { selectedNode: "node-1" } });
     const toggled = run("tree-1", "tree.toggle", { nodeId: "node-1", expanded: true }, selected.ok ? selected.values : undefined);
     expect(toggled).toMatchObject({ ok: true, values: { toggledNode: "node-1", branchOpen: true } });
+  });
+
+  it("accepts a diagram's selected node and refuses a field the event does not carry", () => {
+    expect(run("diagram-1", "diagram.select", { selectedId: "build" })).toMatchObject({ ok: true, values: { diagramNode: "build" } });
+    expect(run("diagram-1", "diagram.select", { selectedId: 3 }).ok).toBe(false);
+    const wrongField = checkCompositionGraph(
+      { ...GRAPH, on: [{ sectionId: "diagram-1", event: "diagram.select", steps: [{ op: "select-field", key: "diagramNode", field: "nodeId" }] }] },
+      SECTIONS,
+    );
+    expect(wrongField.length).toBeGreaterThan(0);
   });
 });
 
