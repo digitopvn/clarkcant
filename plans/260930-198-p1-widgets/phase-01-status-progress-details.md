@@ -1,6 +1,6 @@
 # Phase 01 (H) — Thẻ status, progress và details
 
-Trạng thái: đã triển khai, PR chờ review. Plan: [plan.md](plan.md).
+Trạng thái: done (#280 qua PR #286). Plan: [plan.md](plan.md).
 
 ## Thiết kế
 

@@ -1,6 +1,6 @@
 ---
 title: "#198 Widgets v2: manifest hợp nhất, service facet và catalog P0"
-status: in-progress
+status: completed
 created: 2026-09-29
 issues: [198]
 related: [195, 200, 201, 209, 210]
@@ -48,13 +48,13 @@ Sau plan này:
 
 | # | Phase | Phụ thuộc | Trạng thái |
 |---|---|---|---|
-| A | [Manifest chuẩn v2 cùng tương thích v1](phase-a-canonical-manifest.md) | — | done (#220, PR #227) |
-| B | [Service facet runtime và capability](phase-b-service-facet-runtime.md) | A | done (#221, PR #234) |
-| C | [Hợp đồng đầy đủ của `canvas.table@1`](phase-c-table-contract.md) | — | done (#222, PR #228) |
-| D | [Action tổng quát `canvas.action@1`](phase-d-generic-action.md) | B (với invoke) | done (#223) |
-| E | [Layout primitive và cây composition có giới hạn](phase-e-layout-composition-tree.md) | — | done (#224) |
-| F | [Primitive input, choice, search, form và list](phase-f-input-primitives.md) | E | done (#225) |
-| G | [State/event graph của composition](phase-g-composition-state-graph.md) | E, F | done (#226, PR #238) |
+| A | [Manifest chuẩn v2 cùng tương thích v1](phase-01-canonical-manifest.md) | — | done (#220, PR #227) |
+| B | [Service facet runtime và capability](phase-02-service-facet-runtime.md) | A | done (#221, PR #234) |
+| C | [Hợp đồng đầy đủ của `canvas.table@1`](phase-03-table-contract.md) | — | done (#222, PR #228) |
+| D | [Action tổng quát `canvas.action@1`](phase-04-generic-action.md) | B (với invoke) | done (#223) |
+| E | [Layout primitive và cây composition có giới hạn](phase-05-layout-composition-tree.md) | — | done (#224) |
+| F | [Primitive input, choice, search, form và list](phase-06-input-primitives.md) | E | done (#225) |
+| G | [State/event graph của composition](phase-07-composition-state-graph.md) | E, F | done (#226, PR #238) |
 
 A và C độc lập với nhau, có thể làm song song. E, F và G nối tiếp nhau.
 

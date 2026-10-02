@@ -1,7 +1,7 @@
 ---
 phase: 12
 title: "#201 nền tảng theme"
-status: pending
+status: completed
 issues: [201]
 ---
 

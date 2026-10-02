@@ -1,6 +1,6 @@
 ---
 title: "#198 P1 widget: status, artifact, chart area/scatter, calendar week/agenda"
-status: in-progress
+status: completed
 created: 2026-09-30
 issues: [198, 280, 281, 282, 283]
 related: [200, 195, 226]
@@ -31,10 +31,10 @@ Mỗi phase là một sub-issue của #198 và một PR riêng.
 
 | Phase | Trạng thái | Phụ thuộc | Chi tiết |
 | --- | --- | --- | --- |
-| 01 (H) #280 Status, progress, details | đã triển khai, PR chờ review | — | [phase-01-status-progress-details.md](phase-01-status-progress-details.md) |
-| 02 (I) #281 Artifact, file, code, diff | chờ | — (ref artifact thật chờ #200 M1) | [phase-02-artifact-file-code-diff.md](phase-02-artifact-file-code-diff.md) |
-| 03 (J) #282 Chart area và scatter | chờ | — | [phase-03-area-scatter-charts.md](phase-03-area-scatter-charts.md) |
-| 04 (K) #283 Calendar tuần và agenda | chờ | — | [phase-04-calendar-week-agenda.md](phase-04-calendar-week-agenda.md) |
+| 01 (H) #280 Status, progress, details | done (PR #286) | — | [phase-01-status-progress-details.md](phase-01-status-progress-details.md) |
+| 02 (I) #281 Artifact, file, code, diff | done (PR #288) | — (ref artifact thật chờ #200 M1) | [phase-02-artifact-file-code-diff.md](phase-02-artifact-file-code-diff.md) |
+| 03 (J) #282 Chart area và scatter | done (PR #331) | — | [phase-03-area-scatter-charts.md](phase-03-area-scatter-charts.md) |
+| 04 (K) #283 Calendar tuần và agenda | done (PR #339) | — | [phase-04-calendar-week-agenda.md](phase-04-calendar-week-agenda.md) |
 
 Thứ tự an toàn: H trước (nhỏ nhất, dựng khuôn cho widget chỉ-hiển-thị có semantic theo props), rồi I, J, K. J và K
 sửa widget sẵn có nên đi sau để không xung đột với H/I trong `renderers.tsx`.

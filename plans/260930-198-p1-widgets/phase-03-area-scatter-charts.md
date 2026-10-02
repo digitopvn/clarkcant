@@ -1,6 +1,6 @@
 # Phase 03 (J) — Chart area và scatter
 
-Trạng thái: chờ. Plan: [plan.md](plan.md).
+Trạng thái: done (#282 qua PR #331). Plan: [plan.md](plan.md).
 
 ## Thiết kế dự kiến
 

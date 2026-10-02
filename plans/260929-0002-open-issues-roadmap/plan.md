@@ -1,6 +1,6 @@
 ---
 title: Lộ trình ưu tiên và hoàn thiện mọi issue mở không bị gate
-status: in-progress
+status: completed
 created: 2026-09-29
 branch: claude/clarkcant-issues-priority-7d4f7d
 issues: [93, 129, 137, 169, 170, 171, 172, 173, 174, 190, 192, 195, 196, 197, 198, 200, 201, 210]
@@ -70,12 +70,12 @@ issues: [93, 129, 137, 169, 170, 171, 172, 173, 174, 190, 192, 195, 196, 197, 19
 | 05 | [#195 semantic state của widget](phase-05-widget-semantic-state.md) | 2 | 04 (hợp đồng composition) | done (#195) |
 | 06 | [#197 phase 1–2: provenance, resource theo task, Signal/Intent](phase-06-reactive-automation-core.md) | 2 | 03 | done (#240 #245, #241 #247) |
 | 07 | [#210 A–D cùng #196 phase 1–2: hợp đồng reference chung](phase-07-composer-refs-actionable-inbox.md) | 2 | 01 | done (#210 A–D đóng, E tách #255; #196 phase 1–2 qua #258; [kế hoạch con](../260929-2100-210-composer-references/plan.md)) |
-| 08 | [#196 phase 3–5, #170, #172 phần còn lại](phase-08-inbox-completion.md) | 3 | 06, 07 | in progress (#172 đóng; #170 đóng qua #276, tiêu chí 2 tách #274; #196 phase 4 qua #272, #268; #273 đóng qua #303, phần trình duyệt chạy thật tách #311; #196 phase 3 PR #307 đang review; còn #196 phase 5) |
+| 08 | [#196 phase 3–5, #170, #172 phần còn lại](phase-08-inbox-completion.md) | 3 | 06, 07 | done (#172 đóng; #170 đóng qua #276, tiêu chí 2 tách #274 (gated); #196 đóng: phase 3 qua #307, phase 4 qua #272, #268, phase 5 qua #342; #273 đóng qua #303; #311 đóng qua #344) |
 | 09 | [#192 cá nhân hoá Orb](phase-09-orb-personalization.md) | 3 | 01 | done (#192 qua #271; #269 qua #278) |
-| 10 | [#198 P1/P2 và #200 (đã khử trùng lặp)](phase-10-widget-platform-expansion.md) | 4 | 04, 05 | in progress (#198 P1: H #280 qua #286, I #281 qua #288 đã đóng; J #282, K #283 đang làm; P1 còn lại và P2 tách #322–#329; #200 tách #313–#321, #332–#335, #313 và #314 đang làm; [kế hoạch con](../260930-0200-widget-platform-expansion/plan.md)) |
+| 10 | [#198 P1/P2 và #200 (đã khử trùng lặp)](phase-10-widget-platform-expansion.md) | 4 | 04, 05 | done (#198 P1: H #280 qua #286, I #281 qua #288, J #282 qua #331, K #283 qua #339, O #326 qua #353, P #327 qua #372, Q #328 qua #373, R #329 qua #378; #198 P2: L #322 qua #398, M #325 qua #396, N #324 qua #399. #200: M1 #313 qua #345, M2 #314 qua #338, M4 #315 qua #377, M7 #316 qua #381, app A #317 qua #383, app B #318 qua #384, app C #319 qua #392, app D #320 qua #390, connected app #332 qua #394, dev host #334 qua #375, #335 qua #376. Còn gated: #321, #323, #333; [kế hoạch con](../260930-0200-widget-platform-expansion/plan.md)) |
 | 11 | [#197 phase 3–5 (fixture, tách live journey)](phase-11-reactive-automation-adapters.md) | 4 | 06 | done (#242 #249, #243 #252, #244 #254); follow-up: #251 (PR #260), #246 (PR #261), #248 (polling theo lịch), #253; #250 gated |
-| 12 | [#201 nền tảng theme](phase-12-theme-platform.md) | 4 | 04, 09 | in progress (sub-issue #296–#302, M6 #301 gated; M1 PR #304, M2 PR #305 đang sửa theo review) |
-| 13 | [Đối soát cuối và bàn giao](phase-13-final-reconciliation.md) | — | tất cả | pending |
+| 12 | [#201 nền tảng theme](phase-12-theme-platform.md) | 4 | 04, 09 | done (M1 #296 qua #304, M2 #297 qua #305, M3 #298 qua #347, M4 #299 qua #367, M5 #300 qua #368, M7 #302 qua #371; M6 #301 gated trên #194; epic #201 đã đóng) |
+| 13 | [Đối soát cuối và bàn giao](phase-13-final-reconciliation.md) | — | tất cả | done (2026-10-02, `main` @ 79d7927f: `pnpm invariants` 12/12; `pnpm verify:full` xanh: unit 5661 pass, 34 skip (444 file pass, 1 skip), E2E 407 pass, 3 skip, 0 fail; còn gated: #274, #301, #321, #323, #333) |
 
 Có thể chạy song song khi quyền sở hữu file tách bạch: 05 ∥ 06 ∥ 07 ∥ 09 sau 04 hoặc 03. Không chạy song song
 hai phase cùng thêm migration storage; phải xếp hàng migration theo thứ tự merge.

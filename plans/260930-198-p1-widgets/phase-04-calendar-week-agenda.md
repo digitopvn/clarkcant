@@ -1,6 +1,6 @@
 # Phase 04 (K) — Calendar dạng tuần và agenda
 
-Trạng thái: chờ. Plan: [plan.md](plan.md).
+Trạng thái: done (#283 qua PR #339). Plan: [plan.md](plan.md).
 
 ## Thiết kế dự kiến
 
