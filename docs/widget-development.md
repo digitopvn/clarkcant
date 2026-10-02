@@ -1599,11 +1599,10 @@ opens a text file, edits it, saves it and asks Clark to rewrite a selection, and
 lives. `clark widget init --template pure-ui` starts a new package from a copy of it ([§16](#16-developer-cli-target)).
 
 **The package.** `clarkcant.json` is a schema-version-2 manifest for every platform and the web. `widget.json` takes
-two props: `title`, and `rewriteBinding`, the id of the `agent` binding the host placed for the editor. Its
-`stateSchema` admits only `file`, `base` (two `ArtifactRef`s), `draft` and `draftTooLarge`, with
-`additionalProperties: false`. The rules are pure functions in
-[`editor-core.js`](../examples/reference-apps/text-editor/widgets/main/editor-core.js), tested without a browser;
-`main.js` is the DOM and the SDK calls.
+two props: `title`, and `rewriteBinding`, the id of the `agent` binding the editor may press. Its `stateSchema` admits
+only `file`, `base` (two `ArtifactRef`s), `draft` and `draftTooLarge`, with `additionalProperties: false`. The rules
+are pure functions in [`editor-core.js`](../examples/reference-apps/text-editor/widgets/main/editor-core.js), tested
+without a browser; `main.js` is the DOM and the SDK calls.
 
 **Opening.** `artifacts.pick({ accept: ["text/plain", "text/markdown", "text/csv", "application/json"] })` asks the
 host, which draws the prompt outside the frame. The editor refuses a file over 1 MiB before reading a byte. It reads
@@ -1611,63 +1610,94 @@ the rest in 256 KiB ranges and decodes them as strict UTF-8: bytes that are not 
 rather than shown with replacement characters a save would write back.
 
 **Editing and keeping the draft.** The unsaved draft is written to widget state 400 ms after typing pauses, one write
-at a time. A refused write is answered by the host's committed state. A reload, a pinned copy or another device
-therefore shows the same draft. Widget state holds 16 KiB, so a draft whose JSON is over 12 KiB is not kept and is never
-cut. The editor says it will not survive a reload, and the flag survives so the next load says so too. On load the
-editor reads the saved bytes again through `base`. If they cannot be read (a picked file's grant lasts 24 hours), the
-draft is still shown, marked unsaved, with the reason.
+at a time. The editor remembers the write it has not had answered, with the revision it was written against, so when
+the host's commit of that write arrives after the person has typed on, it is recognized as the editor's own and not
+shown as a change from another window. A refused write is answered by the host's committed state. A reload, a pinned
+copy or another device therefore shows the same draft. Widget state holds 16 KiB, so a draft whose JSON is over
+12 KiB is not kept and is never cut. The editor says it will not survive a reload, and the flag survives so the next
+load says so too. On load the editor reads the saved bytes again through `base`. If they cannot be read (a picked
+file's grant lasts 24 hours), an unsaved draft is still shown, marked unsaved, with the reason. Without a draft there
+is nothing to show: the editor opens no document, says why and offers *Open*, so an empty text area is never
+presented, or saved, as the file.
 
 **Two views of one editor.** When committed state arrives from another view, the editor takes it if it has nothing
-unsent. If both changed, it shows *Keep mine* and *Use theirs* and throws neither away.
+unsent. If both changed, it shows *Keep mine* and *Use theirs* and throws neither away. The question does not take the
+keyboard from someone typing; the status line announces it.
 
 **Saving.** The editor writes a `working` artifact of the opened file's type and name, in chunks, finalizes it and
 calls `export(ref, { suggestedName })`. The host decides what that means. On the desktop it offers *Replace original*
 for the file picked in this frame, because the type matches; on the web it starts a download and says replacing the
-original is a desktop feature. The editor learns only `true` or `false`. On `true` the copy becomes the new `base` and
-the previous copy the editor made is discarded; on `false` the unused copy is discarded. The editor never discards the
-file the person picked. Ctrl+S (Cmd+S on macOS) saves. *Attach* finalizes a copy and calls `attachToConversation`.
+original is a desktop feature. The editor learns only `true` or `false`, so on `true` it says it handed the copy to
+the app and leaves where it went to the host's own notice: on the web a download has only started. On `true` the copy
+becomes the new `base` and the previous copy the editor made is discarded; on `false` the unused copy is discarded.
+The editor never discards the file the person picked. Ctrl+S (Cmd+S on macOS) saves. *Attach* finalizes a copy and
+calls `attachToConversation`.
+
+*Replace original* is offered only in the frame where the file was picked, and only until it is reloaded: the host
+keeps the desktop's handle for the picked file in memory beside that one frame and never persists it. After a reload,
+in a pinned copy or in a detached window, the desktop offers Save As.
 
 **What Clark is shown.** The editor publishes a summary ("Editing notes.txt: 3 lines, with unsaved changes.") and the
 values `open`, `file`, `lines`, `dirty`, `selectionStart`, `selectionEnd`, `selectedChars` and `selectedText`. The
-excerpt is cut at 200 characters, the host's limit for one value, and the cut is marked. The selected range is also a
-selected id (`chars:6-11`). The host bounds, redacts and marks all of it as the widget's own words.
+excerpt is cut at 200 UTF-16 units, the host's limit for one value, and the cut is marked. The selected range is also
+a selected id (`chars:6-11`). The host bounds, redacts and marks all of it as the widget's own words.
 
-**Asking Clark to change the selection.** The host places the editor with an `agent` binding whose `contextRefs` are
-`["selection", "widget"]` and passes its id in props. When the person presses *Nhờ Clark viết lại đoạn chọn*:
+**Asking Clark to change the selection.** The editor presses an `agent` binding whose `contextRefs` are
+`["selection", "widget"]`, named by its `rewriteBinding` prop. Today only the repository's scripted fixture model
+places the editor with that binding; no product path places an installed package widget with a binding yet. In a
+real installation the button therefore stays disabled, with its reason shown ("Clark chưa được gắn vào trình soạn
+thảo này…"), until [#382](https://github.com/digitopvn/clarkcant/issues/382) lands. When the binding is there and the
+person presses *Nhờ Clark viết lại đoạn chọn*:
 
-1. The editor publishes its semantic document and waits 450 ms, past the host's 250 ms settle, so the host reads this
-   selection and not the one before it. A selection over 200 characters is refused in the editor, because Clark would
-   read it cut.
-2. `actions.invoke(rewriteBinding, {}, invocationId)` starts one turn. The host reads the selection and the widget's
+1. The editor asks only about a selection the host passes to Clark unchanged. The host flattens line breaks, tabs and
+   runs of spaces, removes invisible characters, redacts secret-shaped text and cuts a value at 200 UTF-16 units, so a
+   selection it would change is refused in the editor with the reason (too long, more than one line, or hidden text).
+   Spaces at the ends are left out of the range, because the host trims them. The editor's copy of the host's
+   cleaning is checked against the host's own in the package's tests.
+2. The editor publishes its semantic document, makes the text area read-only and holds the published selection until
+   the answer. The host sends any semantic publish still settling, and waits until the node holds it, before it runs
+   any press a frame makes; if that publish cannot be sent, the press is refused and nothing is asked.
+3. `actions.invoke(rewriteBinding, {}, invocationId)` starts one turn. The host reads the selection and the widget's
    document into the turn's data section, which is marked as data and not instructions.
-3. The reply comes back as the press's output, at most 2,000 characters. The editor treats it as untrusted text: it takes
-   the first fenced block or else the whole reply, and removes control and invisible characters except line breaks and
-   tabs.
-4. The proposal is shown for review and takes the keyboard at its title. *Thay đoạn đã chọn* applies it only if the
-   selected range still holds the text Clark was shown; Escape or *Bỏ qua* dismisses it. The applied change is an
-   unsaved edit like any other.
+4. The reply comes back as the press's output, at most 2,000 characters. The editor treats it as untrusted text and
+   takes it as a proposal only when it holds exactly one closed fenced (```) block within that bound; the block is the
+   replacement, with control and invisible characters other than line breaks and tabs removed. Any other reply is
+   shown as Clark's message, with nothing to apply.
+5. The proposal shows the replacement and the text it would replace, and takes the keyboard at its title. *Thay đoạn
+   đã chọn* applies it only if the selected range still holds the text Clark read; Escape or *Bỏ qua* dismisses it.
+   The change goes in through the browser's editing, so Ctrl+Z undoes it like anything typed; where the browser
+   refuses that, the text is set directly and the editor does not offer Undo. The applied change is an unsaved edit
+   like any other.
 
 Clark never writes into the frame, and no model approves a save: export stays the person's act in the host's prompt.
 
-**Known gap.** Typing a request in the composer ("make the second line shorter") cannot change the editor today. No
-agent tool can perform an isolated widget's own action, so the change reaches the frame only through the editor's own
-button. Clark can still read the editor through the next-turn note and `inspect_ui`. This is tracked in
-[#382](https://github.com/digitopvn/clarkcant/issues/382).
+**Known gap.** Typing a request in the composer ("make the second line shorter") cannot change the editor today, and
+no product path places the editor with its rewrite binding. No agent tool can perform an isolated widget's own
+action, so a change reaches the frame only through the editor's own button. Clark can still read the editor through
+the next-turn note and `inspect_ui`. Both are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382).
 
 **Accessibility.** Every control is a native button or the text area, in a fixed tab order, with a visible focus ring.
-The host's prompts and the proposal take the keyboard at their titles. Colours come from the host's appearance tokens
+The host's prompts and the editor's panels take the keyboard at their titles, except that the two-views question
+leaves it with someone typing. Escape closes whichever panel is open: it dismisses a proposal, cancels opening
+another file, and keeps this view's draft in the two-views question. Colours come from the host's appearance tokens
 (`appearance@1`), falling back to the system's light or dark preference. Reduced motion removes every transition. The
 toolbar wraps at 390 px, and the frame asks the host for its content's height.
 
 Tests: [editor-core.spec.ts](../examples/reference-apps/text-editor/test/editor-core.spec.ts) for the rules,
-[package.spec.ts](../examples/reference-apps/text-editor/test/package.spec.ts) for conformance and the manifest,
-[pure-ui-template.spec.ts](../packages/widget-cli/test/pure-ui-template.spec.ts) for the template, and the browser
-journey [text-editor.spec.ts](../apps/web/e2e/text-editor.spec.ts). The journey opens, edits, reloads, saves as a
-download and reopens on the web. It replaces the original and reopens it against a simulated desktop preload; the
-shell's own dialogs are covered by [file-bridge.spec.ts](../apps/desktop/test/file-bridge.spec.ts). It asks Clark
-through the scripted model, which quotes the selection from the data section, then applies the reply, and refuses
-one whose range changed. It runs by keyboard alone, at 390 px in both themes under reduced motion, and checks that no
-place on disk or file handle crosses the bridge.
+[package.spec.ts](../examples/reference-apps/text-editor/test/package.spec.ts) for conformance, the manifest and the
+copy of the host's cleaning, [pure-ui-template.spec.ts](../packages/widget-cli/test/pure-ui-template.spec.ts) for the
+template, [semantic-settle.spec.ts](../packages/conversation-client/test/semantic-settle.spec.ts) for sending a
+settling publish before a press, and the browser journey
+[text-editor.spec.ts](../apps/web/e2e/text-editor.spec.ts). The journey opens, edits, reloads, saves as a download
+and reopens on the web. It keeps typing while a draft write is held on its way to the node and checks that no conflict
+appears and nothing typed is lost. Its desktop test is the page's half only: it replaces the original and reopens it
+against a simulated preload with the shell's contract. The shell's helpers (handle to path, keeping the type, the
+atomic write) are unit-tested in [file-bridge.spec.ts](../apps/desktop/test/file-bridge.spec.ts); the shell's IPC
+handler and its confirm dialog are not exercised by either, and a real-shell journey is still to come. The journey
+asks Clark through the scripted model, which quotes the selection from the data section, shows the text it would
+replace, applies the reply and undoes it, refuses a multi-line selection, and refuses a reply whose range changed. It
+runs by keyboard alone, at 390 px in both themes under reduced motion, and checks, with messages recorded in both
+directions, that no place on disk or file handle crosses the bridge.
 
 ---
 
