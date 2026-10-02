@@ -2079,8 +2079,9 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * The definition is the package's own `widget.json`, read from disk, so the instance is one the directory entry
      * serves. The button is an `invoke` binding made here, for the same reason as the notes widget's below: nothing in
      * the product places a package widget with its own binding yet. Its id reaches the frame through props, because the
-     * frame can only press a binding the instance holds. The binding fixes `paceMs`, so a journey can watch progress
-     * and stop a render mid-way; the widget sends only the clip and the parameters a person sets.
+     * frame can only press a binding the instance holds. The widget sends only the clip and the parameters a person
+     * sets; a journey can watch progress and stop a render mid-way because a fixture node answers each read the service
+     * makes a moment late (`FIXTURE_ARTIFACT_READ_DELAY_MS`), not because the package has a pacing argument.
      */
     if (/trình dựng âm thanh|media render tool/i.test(input.text)) {
       const definition = widgetDefinitionSchema.parse(JSON.parse(readFileSync(MEDIA_RENDER_DEFINITION, "utf8")));
@@ -2100,7 +2101,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         proposal: {
           kind: "invoke" as const,
           capabilityRef: MEDIA_RENDER_CAPABILITY,
-          args: { paceMs: 700 },
+          args: {},
           bindings: [
             { target: "source", source: "user-input" as const },
             { target: "gainDb", source: "user-input" as const },

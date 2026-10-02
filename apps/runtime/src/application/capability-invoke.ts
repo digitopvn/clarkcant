@@ -9,6 +9,8 @@ import {
   type JobRecord,
   nowInstant,
   overlongPatternInput,
+  SERVICE_ARTIFACT_READ_BUDGET,
+  serviceArtifactReadBudget,
   unsafeSchemaPattern,
 } from "@clarkcant/contracts";
 import {
@@ -22,7 +24,7 @@ import {
 import { asJsonValue, type Database, oneRow, payloadDigest } from "@clarkcant/storage";
 import { z } from "zod";
 
-import { describeArtifact, readArtifactRange } from "../artifact-broker.ts";
+import { describeArtifact, readArtifactRangeAsync } from "../artifact-broker.ts";
 import { ServiceCallError, type ServiceArtifactInput, type ServiceHost } from "../service-host.ts";
 import type { NodeServices } from "../services.ts";
 import type { PackageJobHost, JobRunOutcome } from "../job-host.ts";
@@ -340,14 +342,17 @@ export async function invokeCapability(
   const checked = validateArgs(descriptor.inputSchema, request.args);
   if (!checked.ok) return refused(400, "INVALID_INPUT", `${request.ref} does not accept that input: ${checked.message}`);
 
-  const inputs = checkInputArtifacts(deps, request, host.inputArtifacts?.(ref)?.fields, granted?.input.maxBytes);
+  const inputFields = host.inputArtifacts?.(ref)?.fields;
+  const inputs = checkInputArtifacts(deps, request, inputFields, granted?.input.maxBytes);
   if (!inputs.ok) return inputs.outcome;
   const artifactInput = inputs.input;
 
   const context: CapabilityApprovalContext = {
     generation: served.generationId,
     effectCategory: descriptor.effectCategory,
-    ...(execution?.kind === "job" && request.jobOrigin !== undefined ? { jobOrigin: request.jobOrigin } : {}),
+    // A job belongs to the press that started it, and a call that reads a widget's files may only come from that
+    // widget's press: an approval for either is bound to the press too, and its replay is that press, checked again.
+    ...((execution?.kind === "job" || inputFields !== undefined) && request.jobOrigin !== undefined ? { jobOrigin: request.jobOrigin } : {}),
   };
   const approvedBy = request.approvedBy;
   if (
@@ -539,9 +544,11 @@ export async function invokeCapability(
  * The files a call names in the arguments its capability declares as input artifacts, checked before anything is sent.
  *
  * Only a widget press can name one, because a file is held by a widget instance: the instance must hold a grant on
- * each, the bytes must be sealed so the service reads what was checked, and each must fit the input cap of the profile
- * the host granted the package. The reader handed to the call re-authorizes every range against the same instance and
- * principal, so a grant revoked or expired mid-call stops the next read.
+ * each, the file must belong to the conversation the press happened in, the bytes must be sealed so the service reads
+ * what was checked, and each must fit the input cap of the profile the host granted the package. A host that cannot
+ * name that profile is refused rather than trusted with no cap. The reader handed to the call re-authorizes every range
+ * against the same instance and principal, so a grant revoked or expired mid-call stops the next read; it reads off the
+ * main thread, and only within the call's read budget (`serviceArtifactReadBudget`).
  */
 function checkInputArtifacts(
   deps: CapabilityInvokeDeps,
@@ -553,11 +560,23 @@ function checkInputArtifacts(
   const named = fields.map((field) => request.args[field]).filter((value) => value !== undefined);
   if (named.length === 0) return { ok: true };
   const instanceId = request.jobOrigin?.instanceId;
+  const conversationId = request.conversationId;
   const dataDir = deps.dataDir;
-  if (instanceId === undefined || dataDir === undefined) {
+  if (instanceId === undefined || conversationId === undefined || dataDir === undefined) {
     return {
       ok: false,
       outcome: refused(403, "ARTIFACT_INPUT_REFUSED", `${request.ref} reads a file a widget holds, so only that widget's button can start it; nothing was sent`),
+    };
+  }
+  // No profile, no cap: a host that cannot say what the package was granted is not trusted with a size at all.
+  if (maxBytes === undefined) {
+    return {
+      ok: false,
+      outcome: refused(
+        403,
+        "ARTIFACT_INPUT_REFUSED",
+        `this node cannot tell which resource profile ${request.ref} runs in, so it cannot bound the files it reads; nothing was sent`,
+      ),
     };
   }
   const broker = {
@@ -568,11 +587,12 @@ function checkInputArtifacts(
     now: () => new Date((deps.now ?? nowInstant)()),
   };
   const ids = new Set<string>();
+  const sizes: number[] = [];
   for (const value of named) {
     if (typeof value !== "string") {
       return { ok: false, outcome: refused(400, "INVALID_INPUT", `${request.ref} takes an artifact id where it reads a file`) };
     }
-    const described = describeArtifact(broker, { principalId: deps.principalId, instanceId, artifactId: value });
+    const described = describeArtifact(broker, { principalId: deps.principalId, instanceId, artifactId: value, conversationId });
     if (!described.ok) {
       return { ok: false, outcome: refused(403, "ARTIFACT_INPUT_REFUSED", `${described.message}; nothing was sent`) };
     }
@@ -582,7 +602,7 @@ function checkInputArtifacts(
         outcome: refused(403, "ARTIFACT_INPUT_REFUSED", "that file is still being written; finalize it before a service reads it; nothing was sent"),
       };
     }
-    if (maxBytes !== undefined && described.ref.sizeBytes > maxBytes) {
+    if (described.ref.sizeBytes > maxBytes) {
       return {
         ok: false,
         outcome: refused(
@@ -592,15 +612,29 @@ function checkInputArtifacts(
         ),
       };
     }
+    if (!ids.has(value)) sizes.push(described.ref.sizeBytes);
     ids.add(value);
   }
+  // What this call may read in all: each file a few times over, in a bounded number of reads, so a service cannot keep
+  // the node's disk busy for the length of its deadline re-reading the same bytes.
+  const budget = serviceArtifactReadBudget(sizes);
+  let reads = 0;
+  let bytesRead = 0;
   return {
     ok: true,
     input: {
       ids,
-      read: ({ artifactId, offset, length }) => {
-        const read = readArtifactRange(broker, { principalId: deps.principalId, instanceId, artifactId, offset, length });
+      read: async ({ artifactId, offset, length }) => {
+        if (reads >= budget.reads || bytesRead >= budget.bytes) {
+          return {
+            ok: false,
+            message: `this call has used its read budget (${String(budget.reads)} reads or ${String(budget.bytes)} bytes, ${String(SERVICE_ARTIFACT_READ_BUDGET.passes)} times its files); nothing more is read`,
+          };
+        }
+        reads += 1;
+        const read = await readArtifactRangeAsync(broker, { principalId: deps.principalId, instanceId, artifactId, offset, length });
         if (!read.ok) return { ok: false, message: read.message };
+        bytesRead += read.bytes.byteLength;
         return { ok: true, bytes: read.bytes, offset: read.offset, eof: read.eof, sizeBytes: read.ref.sizeBytes, mimeType: read.ref.mimeType };
       },
     },

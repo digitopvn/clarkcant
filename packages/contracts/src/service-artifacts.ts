@@ -4,14 +4,19 @@ import { ARTIFACT_LIMITS } from "./artifacts.ts";
 import { artifactIdSchema } from "./primitives.ts";
 
 /**
- * Service artifact input: how a package service reads a file a widget holds, without ever holding the file.
+ * Service artifact input: how a package service reads a file a widget holds, a range at a time, without a path or a
+ * handle to it.
  *
- * A service container has no network and sees no host path. When a capability declares `inputArtifacts`, the fields it
- * names carry artifact ids, and the host checks each one before the call is sent: the widget instance that pressed the
- * button must hold a grant on it, its bytes must be sealed, and it must fit the input cap of the resource profile the
- * host granted the package. Only then is the call sent, and only for that call may the service ask for the bytes, a
- * bounded range at a time, by sending `clarkcant/artifacts.read` over the stdio connection the host already speaks MCP
- * on. Every read is authorized again against the same instance and principal, so a grant revoked mid-call stops it.
+ * A service container has no network of its own and sees no host path. Egress (`service-egress.ts`) is the one way
+ * out, and while a call that holds files is in flight it is refused unless that call was decided as external-write or
+ * higher (`egressInputProblem`), because a request could carry the bytes it read. When a capability declares
+ * `inputArtifacts`, the fields it names carry artifact ids, and the host checks each one before the call is sent: the
+ * widget instance that pressed the button must hold a grant on it, the file must belong to the conversation of the
+ * press, its bytes must be sealed, and it must fit the input cap of the resource profile the host granted the package.
+ * Only then is the call sent, and only for that call may the service ask for the bytes, a bounded range at a time and
+ * within the call's read budget, by sending `clarkcant/artifacts.read` over the stdio connection the host already
+ * speaks MCP on. Every read is authorized again against the same instance and principal, so a grant revoked mid-call
+ * stops it.
  *
  * The service never receives an id it was not given in a declared field of a call in flight, a path, or a handle. A
  * manifest cannot raise the cap: it names fields, never sizes, and the size is the granted profile's.
@@ -76,9 +81,30 @@ export interface ServiceArtifactsOffer {
 }
 
 /**
+ * How much one call may read of the files it was given: every file `passes` times over, in at most `passes` reads per
+ * whole chunk of each file plus `extraReads` for headers and seeks. A service that streams its input once, or twice,
+ * stays well inside it; one that loops on the same bytes is refused once it is spent, rather than keeping the node's
+ * disk busy for the length of its deadline.
+ */
+export const SERVICE_ARTIFACT_READ_BUDGET = { passes: 4, extraReads: 16 } as const;
+
+/** The read budget of one call given files of these sizes. Checked before each read; the read that crosses it is the last. */
+export function serviceArtifactReadBudget(sizes: readonly number[]): { reads: number; bytes: number } {
+  const { passes, extraReads } = SERVICE_ARTIFACT_READ_BUDGET;
+  let chunks = 0;
+  let bytes = 0;
+  for (const size of sizes) {
+    chunks += Math.max(1, Math.ceil(size / ARTIFACT_LIMITS.chunkBytes));
+    // An empty file still gets a read: it is answered with no bytes and `eof`.
+    bytes += Math.max(1, size);
+  }
+  return { reads: passes * chunks + extraReads, bytes: passes * bytes };
+}
+
+/**
  * JSON-RPC error codes the host answers a read with, in the range JSON-RPC leaves to applications and after the egress
  * codes. Each says what the service can do: fix the request, stop asking for an id it was not given, or give up on a
- * file the host no longer lets this call read (a grant revoked or expired, bytes gone).
+ * file the host no longer lets this call read (a grant revoked or expired, bytes gone, the read budget spent).
  */
 export const SERVICE_ARTIFACT_ERROR_CODES = {
   invalid: -32602,
