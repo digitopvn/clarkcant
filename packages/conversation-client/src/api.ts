@@ -10,6 +10,7 @@ import type {
   AppearanceResponse,
   AutonomySettings,
   CompositionGraph,
+  ConnectionStatus,
   GraphSemanticState,
   LayoutNode,
   ModelPool,
@@ -528,6 +529,11 @@ export interface InstalledPackageView {
    * it reaches none, or when the node could not read its manifest.
    */
   reach?: unknown;
+  /**
+   * Its account connection's status, when its service declares one: state, scopes and why it is not usable. Never a
+   * token; the node keeps those.
+   */
+  connection?: ConnectionStatus;
 }
 
 /** The node's resource decision for one package: the bounds its code runs in, or why it does not run. */
@@ -1570,6 +1576,25 @@ export class GatewayClient {
    */
   changePackage(packageId: string, action: PackageChangeResponse["action"]): Promise<PackageChangeResponse> {
     return this.#changedPackages(this.#call("POST", `/packages/${encodeURIComponent(packageId)}/${action}`));
+  }
+
+  /**
+   * Start connecting a package's account. Answers the provider's authorization URL, which the caller opens in the system
+   * browser; the provider sends that browser back to the node, which finishes the connection itself. Only from this
+   * node's own machine, because the browser has to come back over loopback.
+   */
+  connectPackage(packageId: string): Promise<{ authorizationUrl: string }> {
+    return this.#call("POST", `/packages/${encodeURIComponent(packageId)}/connection`, {});
+  }
+
+  /** A package's account connection, as the node holds it now. */
+  packageConnection(packageId: string): Promise<{ connection: ConnectionStatus }> {
+    return this.#call("GET", `/packages/${encodeURIComponent(packageId)}/connection`);
+  }
+
+  /** End a package's account connection, at the provider and on the node. What needs it stops being ready at once. */
+  revokePackageConnection(packageId: string): Promise<{ connection: ConnectionStatus }> {
+    return this.#call("POST", `/packages/${encodeURIComponent(packageId)}/connection/revoke`, {});
   }
 
   /**

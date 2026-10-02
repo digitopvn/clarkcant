@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 
+import type { ConnectionStatus } from "@clarkcant/contracts";
+
 import { useT } from "../i18n/locale-context.tsx";
 import { ToolLists } from "../tool-lists.tsx";
 import type {
@@ -11,6 +13,7 @@ import type {
   PendingCapabilityApprovalView,
   RestorablePackageView,
 } from "../api.ts";
+import { openInSystemBrowser } from "../desktop-compact.ts";
 import { laneLabel } from "../package-provenance.ts";
 import { PackageReach, readReach } from "../package-reach.tsx";
 import { SettingsRow, ToolRow } from "./controls/SettingsRow.tsx";
@@ -317,6 +320,141 @@ export function PackageResources({ resources }: { resources: PackageResourcesVie
   );
 }
 
+/** How often, and for how long, a started connection is read back while the person is in the provider's page. */
+const CONNECT_POLL_MS = 1_500;
+const CONNECT_WAIT_MS = 5 * 60_000;
+
+/**
+ * A package's account connection, driven by the host: its state and scopes, the reason it is not usable, Connect or
+ * Reconnect, and Revoke.
+ *
+ * Connecting opens the provider in the system browser — never in this window or a widget — and the provider sends that
+ * browser back to the node, which finishes on its own. This row only reads the status back until it changes. Nothing it
+ * holds is a credential: the node answers state, scopes and a reason, and keeps the tokens.
+ */
+function PackageConnection({
+  client,
+  packageId,
+  initial,
+}: {
+  client: GatewayClient;
+  packageId: string;
+  initial: ConnectionStatus;
+}): ReactElement {
+  const t = useT();
+  const [connection, setConnection] = useState<ConnectionStatus>(initial);
+  const [busy, setBusy] = useState<"connect" | "revoke" | undefined>(undefined);
+  const [waiting, setWaiting] = useState(false);
+  const [failure, setFailure] = useState<string | undefined>(undefined);
+  const poll = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+
+  useEffect(() => setConnection(initial), [initial]);
+  useEffect(
+    () => () => {
+      if (poll.current !== undefined) clearInterval(poll.current);
+    },
+    [],
+  );
+
+  const stopWaiting = (): void => {
+    if (poll.current !== undefined) clearInterval(poll.current);
+    poll.current = undefined;
+    setWaiting(false);
+  };
+
+  const connect = (): void => {
+    if (busy !== undefined) return;
+    setBusy("connect");
+    setFailure(undefined);
+    const before = `${connection.state}:${connection.connectedAt ?? ""}`;
+    void client
+      .connectPackage(packageId)
+      .then(({ authorizationUrl }) => {
+        openInSystemBrowser(authorizationUrl);
+        setWaiting(true);
+        const started = Date.now();
+        if (poll.current !== undefined) clearInterval(poll.current);
+        poll.current = setInterval(() => {
+          if (Date.now() - started > CONNECT_WAIT_MS) {
+            stopWaiting();
+            return;
+          }
+          void client
+            .packageConnection(packageId)
+            .then((answer) => {
+              setConnection(answer.connection);
+              if (`${answer.connection.state}:${answer.connection.connectedAt ?? ""}` !== before) stopWaiting();
+            })
+            .catch(() => undefined);
+        }, CONNECT_POLL_MS);
+      })
+      .catch((cause: unknown) => setFailure(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setBusy(undefined));
+  };
+
+  const revoke = (): void => {
+    if (busy !== undefined) return;
+    setBusy("revoke");
+    setFailure(undefined);
+    stopWaiting();
+    void client
+      .revokePackageConnection(packageId)
+      .then((answer) => setConnection(answer.connection))
+      .catch((cause: unknown) => setFailure(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setBusy(undefined));
+  };
+
+  const summary = t(`settings.extensions.connection.state.${connection.state}`)
+    .replace("{provider}", connection.displayName)
+    .replace("{missing}", connection.missingScopes.join(", "));
+  const usable = connection.state === "connected" || connection.state === "partial";
+  return (
+    <dd
+      data-package-connection={packageId}
+      data-connection-state={connection.state}
+      data-connection-waiting={waiting ? "true" : "false"}
+    >
+      <span style={{ display: "block" }}>{summary}</span>
+      {connection.reason !== undefined && (
+        <span style={{ display: "block" }} data-connection-reason="true">
+          {connection.reason}
+        </span>
+      )}
+      {connection.grantedScopes.length > 0 && usable && (
+        <span style={{ display: "block" }} data-connection-scopes="true">
+          {t("settings.extensions.connection.scopes").replace("{scopes}", connection.grantedScopes.join(", "))}
+        </span>
+      )}
+      {waiting && (
+        <span style={{ display: "block" }} role="status">
+          {t("settings.extensions.connection.waiting")}
+        </span>
+      )}
+      {failure !== undefined && (
+        <span style={{ display: "block" }} role="alert" data-connection-failed="true">
+          {t("settings.extensions.connection.failed").replace("{reason}", failure)}
+        </span>
+      )}
+      <span className="cc-package-actions">
+        {connection.state !== "connected" && (
+          <button type="button" data-connection-connect={packageId} disabled={busy !== undefined} onClick={connect}>
+            {busy === "connect"
+              ? t("settings.extensions.installed.working")
+              : connection.state === "not-connected"
+                ? t("settings.extensions.connection.connect")
+                : t("settings.extensions.connection.reconnect")}
+          </button>
+        )}
+        {usable && (
+          <button type="button" data-connection-revoke={packageId} disabled={busy !== undefined} onClick={revoke}>
+            {busy === "revoke" ? t("settings.extensions.installed.working") : t("settings.extensions.connection.revoke")}
+          </button>
+        )}
+      </span>
+    </dd>
+  );
+}
+
 /**
  * What is installed, and where each package came from.
  *
@@ -458,6 +596,12 @@ function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient
                   <>
                     <dt>{t("settings.extensions.installed.resources")}</dt>
                     <PackageResources resources={entry.resources} />
+                  </>
+                )}
+                {entry.connection !== undefined && (
+                  <>
+                    <dt>{t("settings.extensions.connection.label")}</dt>
+                    <PackageConnection client={client} packageId={entry.packageId} initial={entry.connection} />
                   </>
                 )}
               </dl>
