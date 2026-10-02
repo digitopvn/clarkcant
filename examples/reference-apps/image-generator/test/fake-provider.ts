@@ -64,7 +64,7 @@ export async function startFakeProvider(input: { key: string; port?: number; hos
   const start = (request: IncomingMessage, response: ServerResponse, url: URL, body: Buffer): void => {
     if (url.search !== "") return send(response, 400, { error: "the prompt goes in the body, not the URL" });
     if (!/^application\/json\b/i.test(request.headers["content-type"] ?? "")) return send(response, 415, { error: "a JSON body is required" });
-    let prompt = "";
+    let prompt: string;
     try {
       const parsed = JSON.parse(body.toString("utf8")) as { prompt?: unknown };
       prompt = typeof parsed.prompt === "string" ? parsed.prompt : "";
