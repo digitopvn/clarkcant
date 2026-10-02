@@ -57,13 +57,14 @@ describe("moving the camera", () => {
     expect(y).toBeCloseTo(MAP_VIEWPORT.height / 2, 6);
   });
 
-  it("pans by pixels, wraps longitude and stops latitude at the projection's edge", () => {
+  it("pans by pixels and stops at the antimeridian and the projection's edge, so the one world never repeats", () => {
     const camera = { center: [106, 16] as const, zoom: 6 };
     const east = panCamera(camera, MAP_PAN_STEP, 0);
     expect(east.center[0]).toBeGreaterThan(106);
     expect(east.center[1]).toBeCloseTo(16, 4);
     expect(toScreen(camera.center, east)[0]).toBeCloseTo(MAP_VIEWPORT.width / 2 - MAP_PAN_STEP, 3);
-    expect(panCamera({ center: [179, 0], zoom: 2 }, 100, 0).center[0]).toBeLessThan(0);
+    expect(panCamera({ center: [179, 0], zoom: 2 }, 100, 0).center[0]).toBe(180);
+    expect(panCamera({ center: [-179, 0], zoom: 2 }, -100, 0).center[0]).toBe(-180);
     expect(panCamera({ center: [0, 80], zoom: 1 }, 0, -10_000).center[1]).toBeCloseTo(85.051_128_78, 4);
   });
 
@@ -73,10 +74,11 @@ describe("moving the camera", () => {
     expect(zoomCamera({ center: [1, 2], zoom: 0 }, -1).zoom).toBe(0);
   });
 
-  it("slides the short way, and not at all across a zoom", () => {
+  it("slides by the pixels between two views, and not at all across a zoom", () => {
     expect(cameraShift({ center: [0, 0], zoom: 2 }, { center: [0, 0], zoom: 3 })).toBeUndefined();
-    const [dx] = cameraShift({ center: [179, 0], zoom: 2 }, { center: [-179, 0], zoom: 2 }) ?? [0, 0];
-    expect(Math.abs(dx)).toBeLessThan(10);
+    const [dx, dy] = cameraShift({ center: [0, 0], zoom: 2 }, { center: [90, 0], zoom: 2 }) ?? [0, 0];
+    expect(dx).toBeCloseTo(256, 6);
+    expect(dy).toBeCloseTo(0, 6);
     expect(sameCamera({ center: [1, 2], zoom: 3 }, { center: [1, 2], zoom: 3 })).toBe(true);
     expect(sameCamera({ center: [1, 2], zoom: 3 }, { center: [1, 2], zoom: 4 })).toBe(false);
   });
@@ -113,8 +115,11 @@ describe("features and tiles", () => {
     const deep = visibleTiles({ center: [106, 16], zoom: 12 }, 10);
     expect(deep.every((tile) => tile.z === 10 && tile.size === 1024)).toBe(true);
     const world = visibleTiles({ center: [0, 0], zoom: 0 }, 17);
-    // The one zoom-0 tile appears at each wrapped column the 640-pixel view crosses, with its own placement key.
-    expect(new Set(world.map((tile) => `${String(tile.z)}/${String(tile.x)}/${String(tile.y)}`))).toEqual(new Set(["0/0/0"]));
-    expect(new Set(world.map((tile) => tile.key)).size).toBe(world.length);
+    // The world is drawn once, like the basemap: the one zoom-0 tile, centred, not repeated across the 640-pixel view.
+    expect(world).toEqual([{ key: "0/0/0", z: 0, x: 0, y: 0, left: 192, top: 72, size: 256 }]);
+    // At the antimeridian nothing past the last column is asked for.
+    const edge = visibleTiles({ center: [180, 0], zoom: 3 }, 17);
+    expect(edge.length).toBeGreaterThan(0);
+    expect(edge.every((tile) => tile.x <= 7 && tile.left < MAP_VIEWPORT.width / 2)).toBe(true);
   });
 });

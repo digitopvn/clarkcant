@@ -293,6 +293,7 @@ export interface RendererProps {
  */
 export interface MapTileHost {
   policy(): Promise<MapTilePolicyView>;
+  /** Rejects with an error whose `status` is 404 when the provider has no tile there; anything else may be tried again. */
   tile(z: number, x: number, y: number, signal?: AbortSignal): Promise<Blob>;
 }
 
@@ -4156,9 +4157,22 @@ function motionReduced(element: Element | null): boolean {
 const MAP_VIEW_WRITE_DELAY_MS = 400;
 /** Point labels are drawn on the map up to this many points; past it the table names them and the map would be noise. */
 const MAP_POINT_LABELS = 12;
-/** Tile pictures one map keeps; the oldest is let go past this. */
+/** Tile pictures one map keeps; past this the least recently drawn that are not on screen are let go. */
 const MAP_TILE_PICTURES = 96;
+/** How long the view must stay still before its tiles are asked for, so a run of zooms asks only for where it stops. */
+const MAP_TILE_SETTLE_MS = 150;
+/** How long a tile the node could not give (busy, or the provider failed) waits before it is asked for again. */
+const MAP_TILE_RETRY_MS = 4_000;
 
+/** A value that follows another once it has stayed the same for a while. */
+function useSettled<T>(value: T, delayMs: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return settled;
+}
 function MapWidgetView(rendererProps: RendererProps): ReactElement {
   const t = useT();
   const map = useMemo(() => readMap(rendererProps.props), [rendererProps.props]);
@@ -4173,17 +4187,36 @@ function MapWidgetView(rendererProps: RendererProps): ReactElement {
   return <MapCanvas {...rendererProps} map={map} title={title} />;
 }
 
-/** The tiles the node's policy allows for this view, as picture URLs, and whether any failed to load. */
+function tileAddress(placement: MapTilePlacement): string {
+  return `${String(placement.z)}/${String(placement.x)}/${String(placement.y)}`;
+}
+
+/** A tile the provider does not have: asking again will not help. Anything else (busy, failed) is asked again later. */
+function tileMissing(cause: unknown): boolean {
+  return typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404;
+}
+
+/**
+ * The tiles the node's policy allows for this view, as picture URLs, and whether any could not be loaded.
+ *
+ * Tiles already held are drawn at once; new ones are asked for only once the view has settled, a request for a tile the
+ * view has left is stopped, and a tile that failed for a passing reason is asked for again after a pause.
+ */
 function useMapTiles(host: MapTileHost | undefined, camera: MapCamera): {
   provider: MapTilePolicyView["provider"];
   tiles: { placement: MapTilePlacement; url: string }[];
   failed: boolean;
 } {
   const [provider, setProvider] = useState<MapTilePolicyView["provider"]>(null);
-  const [pictures, setPictures] = useState<ReadonlyMap<string, string | "failed">>(new Map());
-  const loading = useRef(new Set<string>());
+  // Held pictures, least recently drawn first.
+  const [pictures, setPictures] = useState<ReadonlyMap<string, string>>(new Map());
+  // When a failed tile may be asked for again; never, for a tile the provider does not have.
+  const [failures, setFailures] = useState<ReadonlyMap<string, number>>(new Map());
+  const [retryTick, setRetryTick] = useState(0);
+  const loading = useRef(new Map<string, AbortController>());
   const owned = useRef(new Map<string, string>());
-  const controller = useRef<AbortController | undefined>(undefined);
+  const visible = useRef(new Set<string>());
+  const settled = useSettled(camera, MAP_TILE_SETTLE_MS);
 
   useEffect(() => {
     if (host === undefined) return undefined;
@@ -4194,64 +4227,101 @@ function useMapTiles(host: MapTileHost | undefined, camera: MapCamera): {
   }, [host]);
 
   useEffect(() => {
-    const current = new AbortController();
-    controller.current = current;
+    const requests = loading.current;
     const urls = owned.current;
     return () => {
-      current.abort();
+      for (const request of requests.values()) request.abort();
+      requests.clear();
       for (const url of urls.values()) URL.revokeObjectURL(url);
       urls.clear();
     };
   }, []);
 
   const placements = useMemo(() => (provider === null ? [] : visibleTiles(camera, provider.maxZoom)), [camera, provider]);
+  const wanted = useMemo(() => (provider === null ? [] : visibleTiles(settled, provider.maxZoom)), [settled, provider]);
+  visible.current = new Set([...placements, ...wanted].map(tileAddress));
+
+  // What is on screen moves to the recent end, so the pictures let go first are ones the view left longest ago.
+  useEffect(() => {
+    setPictures((previous) => {
+      const shown = wanted.map(tileAddress).filter((address) => previous.has(address));
+      if (shown.length === 0) return previous;
+      const next = new Map(previous);
+      for (const address of shown) {
+        const url = next.get(address);
+        if (url === undefined) continue;
+        next.delete(address);
+        next.set(address, url);
+      }
+      return next;
+    });
+  }, [wanted]);
 
   useEffect(() => {
-    if (host === undefined || provider === null) return;
-    for (const placement of placements) {
-      const address = `${String(placement.z)}/${String(placement.x)}/${String(placement.y)}`;
+    if (host === undefined || provider === null) return undefined;
+    const addresses = new Set(wanted.map(tileAddress));
+    for (const [address, request] of loading.current) {
+      if (addresses.has(address)) continue;
+      request.abort();
+      loading.current.delete(address);
+    }
+    const now = Date.now();
+    let nextRetry = Infinity;
+    for (const placement of wanted) {
+      const address = tileAddress(placement);
       if (pictures.has(address) || loading.current.has(address)) continue;
-      loading.current.add(address);
-      const signal = controller.current?.signal;
-      host.tile(placement.z, placement.x, placement.y, signal).then(
+      const retryAt = failures.get(address);
+      if (retryAt !== undefined && retryAt > now) {
+        nextRetry = Math.min(nextRetry, retryAt);
+        continue;
+      }
+      const request = new AbortController();
+      loading.current.set(address, request);
+      host.tile(placement.z, placement.x, placement.y, request.signal).then(
         (blob) => {
+          // Stopped, because the view left this tile: nothing to draw.
+          if (loading.current.get(address) !== request) return;
           loading.current.delete(address);
-          if (signal?.aborted === true) return;
           const url = URL.createObjectURL(blob);
           owned.current.set(address, url);
+          setFailures((previous) => {
+            if (!previous.has(address)) return previous;
+            const next = new Map(previous);
+            next.delete(address);
+            return next;
+          });
           setPictures((previous) => {
             const next = new Map(previous);
             next.set(address, url);
-            while (next.size > MAP_TILE_PICTURES) {
-              const oldest = next.keys().next().value;
-              if (oldest === undefined) break;
-              const stale = next.get(oldest);
-              next.delete(oldest);
-              if (stale !== undefined && stale !== "failed") {
-                URL.revokeObjectURL(stale);
-                owned.current.delete(oldest);
-              }
+            for (const [held, heldUrl] of next) {
+              if (next.size <= MAP_TILE_PICTURES) break;
+              if (visible.current.has(held)) continue;
+              next.delete(held);
+              URL.revokeObjectURL(heldUrl);
+              owned.current.delete(held);
             }
             return next;
           });
         },
-        () => {
+        (cause: unknown) => {
+          if (loading.current.get(address) !== request) return;
           loading.current.delete(address);
-          if (signal?.aborted === true) return;
-          setPictures((previous) => new Map(previous).set(address, "failed"));
+          setFailures((previous) => new Map(previous).set(address, tileMissing(cause) ? Infinity : Date.now() + MAP_TILE_RETRY_MS));
         },
       );
     }
-  }, [host, pictures, placements, provider]);
+    if (nextRetry === Infinity) return undefined;
+    const timer = setTimeout(() => setRetryTick((tick) => tick + 1), Math.max(0, nextRetry - now));
+    return () => clearTimeout(timer);
+  }, [failures, host, pictures, provider, retryTick, wanted]);
 
   const tiles = placements.flatMap((placement) => {
-    const url = pictures.get(`${String(placement.z)}/${String(placement.x)}/${String(placement.y)}`);
-    return url === undefined || url === "failed" ? [] : [{ placement, url }];
+    const url = pictures.get(tileAddress(placement));
+    return url === undefined ? [] : [{ placement, url }];
   });
-  const failed = placements.some((placement) => pictures.get(`${String(placement.z)}/${String(placement.x)}/${String(placement.y)}`) === "failed");
+  const failed = placements.some((placement) => !pictures.has(tileAddress(placement)) && failures.has(tileAddress(placement)));
   return { provider, tiles, failed };
 }
-
 function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: RendererProps & { map: MapView; title: string }): ReactElement {
   const t = useT();
   const helpId = useId();
@@ -4266,10 +4336,17 @@ function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: Ren
   const [camera, setCamera] = useState<MapCamera>(storedCamera);
   const [selectedId, setSelectedId] = useState<string | undefined>(stored.selectedId);
   const pendingView = useRef<MapCamera | undefined>(undefined);
+  const viewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   if (syncedKey !== storedKey) {
     setSyncedKey(storedKey);
-    // A view the person moved to and has not written yet stays drawn; a refusal always puts the node's view back.
-    if (!syncedKey.endsWith(`#${resets}`) || pendingView.current === undefined) setCamera(storedCamera);
+    // A view the person moved to and has not written yet stays drawn. A refusal always puts the node's view back, and
+    // drops a move still waiting to be written, which the page no longer shows.
+    const refused = !syncedKey.endsWith(`#${resets}`);
+    if (refused) {
+      clearTimeout(viewTimer.current);
+      pendingView.current = undefined;
+    }
+    if (refused || pendingView.current === undefined) setCamera(storedCamera);
     setSelectedId(stored.selectedId);
   }
 
@@ -4277,10 +4354,11 @@ function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: Ren
   const content = useRef<SVGGElement>(null);
   const drawnCamera = useRef(camera);
   const [reduced, setReduced] = useState(false);
-  const viewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const drag = useRef<{ pointerId: number; x: number; y: number; camera: MapCamera; moved: boolean } | undefined>(undefined);
   const dragged = useRef(false);
   const { provider, tiles, failed } = useMapTiles(mapTiles, camera);
+  // What the live region says follows the view once it settles, not every frame of a drag or every repeated key.
+  const announced = useSettled(camera, MAP_VIEW_WRITE_DELAY_MS);
 
   // Slide the drawing from where it was to where it is now. Not under reduced motion: the view moves at once.
   useLayoutEffect(() => {
@@ -4289,7 +4367,11 @@ function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: Ren
     const group = content.current;
     const isReduced = motionReduced(viewport.current);
     if (isReduced !== reduced) setReduced(isReduced);
-    if (group === null || isReduced) return undefined;
+    if (group === null) return undefined;
+    // Whatever slide was under way ends where it is going, so no run that does not slide leaves the drawing shifted.
+    group.style.transition = "";
+    group.style.transform = "";
+    if (isReduced) return undefined;
     const shift = cameraShift(from, camera);
     if (shift === undefined || (shift[0] === 0 && shift[1] === 0) || Math.abs(shift[0]) > MAP_VIEWPORT.width || Math.abs(shift[1]) > MAP_VIEWPORT.height) {
       return undefined;
@@ -4301,7 +4383,11 @@ function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: Ren
       group.style.transition = "transform 160ms ease-out";
       group.style.transform = "";
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      group.style.transition = "";
+      group.style.transform = "";
+    };
   }, [camera, reduced]);
 
   // The system setting can change while the map is open; what the map says about its motion follows it.
@@ -4499,7 +4585,7 @@ function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: Ren
           </div>
         </div>
         <p className="cc-sr-only" role="status" aria-live="polite" data-map-status="true">
-          {fillMessage(t("widgets.map.status"), { center: position(camera.center), zoom: camera.zoom })}{" "}
+          {fillMessage(t("widgets.map.status"), { center: position(announced.center), zoom: announced.zoom })}{" "}
           {selected === undefined ? t("widgets.map.noneSelected") : fillMessage(t("widgets.map.selected"), { label: selected.label, where: where(selected) })}
         </p>
         <ViewMessage state={state} name="map" />

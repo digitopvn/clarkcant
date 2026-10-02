@@ -117,6 +117,17 @@ describe("the tile proxy", () => {
     expect(seen).toHaveLength(3);
   });
 
+  it("asks the provider once for a tile two maps want at the same moment", async () => {
+    const { fetch, seen } = fakeFetch(png);
+    const proxy = createMapTileProxy({ fetch, limits: { rate: { burst: 1, refillPerSecond: 0 } } });
+    const request = { provider: PROVIDER, z: 4, x: 2, y: 2, credential: noKey };
+    const [first, second] = await Promise.all([proxy.tile(request), proxy.tile(request)]);
+    expect(first).toMatchObject({ ok: true });
+    // The second waited for the first rather than spending the rate's last request on the same tile.
+    expect(second).toMatchObject({ ok: true });
+    expect(seen).toHaveLength(1);
+  });
+
   it("keeps the cache within its entry bound, dropping the least recently used", async () => {
     const { fetch, seen } = fakeFetch(png);
     const proxy = createMapTileProxy({ fetch, limits: { cacheEntries: 2 } });
@@ -277,6 +288,17 @@ describe("the tile routes on a node", () => {
     // The key is used through the broker, which leaves no value in the node's audit rows either.
     const rows = services.runtime.db.prepare("SELECT * FROM audit_log").all();
     expect(JSON.stringify(rows)).not.toContain(KEY);
+  });
+
+  it("stops a cached tile as soon as its key is taken off maps:tiles, without waiting for the cache", async () => {
+    storeKey([MAP_TILE_SECRET_CONSUMER]);
+    setPolicy({ ...PROVIDER, credential: { secret: "tiles", header: "x-api-key" } });
+    const { fetch, seen } = fakeFetch(png);
+    const proxy = createMapTileProxy({ fetch });
+    expect((await route("/map-tiles/1/0/0", "GET", proxy))?.status).toBe(200);
+    storeKey(["command:git"]);
+    expect(await route("/map-tiles/1/0/0", "GET", proxy)).toMatchObject({ status: 503, body: { code: "MAP_TILE_KEY_UNAVAILABLE" } });
+    expect(seen).toHaveLength(1);
   });
 
   it("is turned off again by setting the policy back to none", async () => {

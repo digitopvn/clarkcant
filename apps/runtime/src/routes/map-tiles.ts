@@ -1,6 +1,6 @@
 import { type Instant, mapTilePolicyView, mapTileProblem } from "@clarkcant/contracts";
 
-import { type MapTileProxy, mapTileCredential, mapTileProxyFor, readMapTilePolicy } from "../map-tiles.ts";
+import { type MapTileProxy, mapTileCredential, mapTileCredentialProblem, mapTileProxyFor, readMapTilePolicy } from "../map-tiles.ts";
 import type { NodeServices } from "../services.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json } from "./http.ts";
 
@@ -22,7 +22,8 @@ function coordinate(segment: string | undefined): number | undefined {
  * The map tile routes.
  *
  * `GET /map-tiles` says whether the node shows tiles and whose: the provider's origin, attribution and maximum zoom, or
- * `null`. Never its path template or key. `GET /map-tiles/:z/:x/:y` is one tile from that provider, through the proxy in
+ * `null`; this route never returns the path template or anything of the key (the person's own preference read shows the
+ * policy, which names the secret but never holds its value). `GET /map-tiles/:z/:x/:y` is one tile from that provider, through the proxy in
  * `map-tiles.ts`. With no policy — the default — every tile request is refused with 404 and the node asks nobody.
  */
 export async function handleMapTileRoutes(deps: MapTileRouteDeps): Promise<GatewayResponse | undefined> {
@@ -48,6 +49,8 @@ export async function handleMapTileRoutes(deps: MapTileRouteDeps): Promise<Gatew
   const proxy = deps.proxy ?? mapTileProxyFor(runtime.db);
   // No trail row per tile: a pan asks for a dozen at once and would bury every other row. The secret's own metadata
   // still records when it was last used, and the policy that names it is the person's own recorded choice.
+  const keyProblem = mapTileCredentialProblem({ db: runtime.db, principalId }, policy);
+  if (keyProblem !== undefined) return fail(503, "MAP_TILE_KEY_UNAVAILABLE", keyProblem);
   const credential = mapTileCredential({ db: runtime.db, principalId, now }, policy);
   const outcome = await proxy.tile({ provider: policy, z, x, y, credential });
   if (!outcome.ok) return fail(outcome.status, outcome.code, outcome.message);

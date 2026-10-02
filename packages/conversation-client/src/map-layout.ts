@@ -9,7 +9,6 @@ import {
   type MapPosition,
   projectPosition,
   unprojectPoint,
-  worldSize,
 } from "@clarkcant/contracts";
 
 import { landRings } from "./map-basemap.ts";
@@ -36,9 +35,12 @@ export function toScreen(position: MapPosition, camera: MapCamera): [number, num
   return [x - left, y - top];
 }
 
-function wrapLongitude(longitude: number): number {
-  const wrapped = ((((longitude + 180) % 360) + 360) % 360) - 180;
-  return wrapped === -180 && longitude > 0 ? 180 : wrapped;
+/**
+ * The map is one world that does not repeat: the basemap, the features and the tiles are each drawn once, so the view
+ * stops at the antimeridian rather than wrapping, and what is drawn always agrees.
+ */
+function clampLongitude(longitude: number): number {
+  return Math.max(-180, Math.min(180, longitude));
 }
 
 function clampLatitude(latitude: number): number {
@@ -49,11 +51,11 @@ function rounded(value: number): number {
   return Math.round(value * 1e6) / 1e6;
 }
 
-/** The camera moved by a number of viewport pixels: longitude wraps, latitude stops at the projection's edge. */
+/** The camera moved by a number of viewport pixels: it stops at the antimeridian and at the projection's edge. */
 export function panCamera(camera: MapCamera, dx: number, dy: number): MapCamera {
   const [x, y] = projectPosition(camera.center, camera.zoom);
   const [longitude, latitude] = unprojectPoint(x + dx, y + dy, camera.zoom);
-  return { center: [rounded(wrapLongitude(longitude)), rounded(clampLatitude(latitude))], zoom: camera.zoom };
+  return { center: [rounded(clampLongitude(longitude)), rounded(clampLatitude(latitude))], zoom: camera.zoom };
 }
 
 /** The camera one or more whole zoom levels in or out, kept in bounds; the center stays where it is. */
@@ -141,7 +143,8 @@ export interface MapTilePlacement {
 
 /**
  * The tiles that cover the viewport. Past the provider's maximum zoom the deepest tiles it has are drawn larger rather
- * than asking for tiles it does not serve. Columns wrap around the antimeridian; rows past the poles are left out.
+ * than asking for tiles it does not serve. Like the basemap, the world is drawn once: columns and rows outside it are
+ * left out.
  */
 export function visibleTiles(camera: MapCamera, maxZoom: number): MapTilePlacement[] {
   const z = Math.max(MAP_MIN_ZOOM, Math.min(camera.zoom, maxZoom));
@@ -149,18 +152,13 @@ export function visibleTiles(camera: MapCamera, maxZoom: number): MapTilePlaceme
   const [left, top] = origin(camera);
   const span = 2 ** z;
   const placements: MapTilePlacement[] = [];
-  const firstColumn = Math.floor(left / size);
-  const lastColumn = Math.floor((left + MAP_VIEWPORT.width - 1) / size);
+  const firstColumn = Math.max(0, Math.floor(left / size));
+  const lastColumn = Math.min(span - 1, Math.floor((left + MAP_VIEWPORT.width - 1) / size));
   const firstRow = Math.max(0, Math.floor(top / size));
   const lastRow = Math.min(span - 1, Math.floor((top + MAP_VIEWPORT.height - 1) / size));
-  const seen = new Set<string>();
   for (let row = firstRow; row <= lastRow; row += 1) {
     for (let column = firstColumn; column <= lastColumn; column += 1) {
-      const x = ((column % span) + span) % span;
-      const placementKey = `${String(z)}/${String(x)}/${String(row)}@${String(column)}`;
-      if (seen.has(placementKey)) continue;
-      seen.add(placementKey);
-      placements.push({ key: placementKey, z, x, y: row, left: column * size - left, top: row * size - top, size });
+      placements.push({ key: `${String(z)}/${String(column)}/${String(row)}`, z, x: column, y: row, left: column * size - left, top: row * size - top, size });
     }
   }
   return placements;
@@ -184,10 +182,5 @@ export function cameraShift(from: MapCamera, to: MapCamera): [number, number] | 
   if (from.zoom !== to.zoom) return undefined;
   const [ax, ay] = projectPosition(from.center, from.zoom);
   const [bx, by] = projectPosition(to.center, to.zoom);
-  const size = worldSize(to.zoom);
-  // The short way round when the view crosses the antimeridian.
-  let dx = bx - ax;
-  if (dx > size / 2) dx -= size;
-  if (dx < -size / 2) dx += size;
-  return [dx, by - ay];
+  return [bx - ax, by - ay];
 }

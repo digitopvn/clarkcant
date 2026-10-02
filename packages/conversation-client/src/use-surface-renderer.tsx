@@ -290,24 +290,35 @@ export function useSurfaceRenderer({
         return;
       }
       if (queue?.inFlight === true) {
-        // The page is going away: what waited is older than this write, and nothing after it will run.
-        viewQueues.current.set(instanceId, { inFlight: true, revision: plan.expectedRevision });
-        void client
-          .invokeAction(
-            conversation,
-            instanceId,
-            {
-              actionBindingId: action.actionBindingId,
-              expectedRevision: plan.expectedRevision,
-              expectedBindingDigest: action.bindingDigest,
-              input: view,
-              invocationId: newInvocationId(),
-            },
-            { keepalive: true },
-          )
-          .then((result) => applyTimeline(result.timeline))
-          // Best-effort on a page that is unloading; the node stops believing an old "playing" on its own.
-          .catch(() => undefined);
+        // The widget is going away: a change waiting for this binding is older than this write and is replaced by it, but
+        // one waiting for another binding (a map's selection behind its view) is not covered by it, so it goes first, in
+        // order, each at the revision the one before it produces.
+        const others = (queue.queued ?? []).filter((entry) => (entry.action ?? action).actionBindingId !== action.actionBindingId);
+        const writes = [...others.map((entry) => ({ action: entry.action ?? action, view: entry.view })), { action, view }];
+        viewQueues.current.set(instanceId, { inFlight: true, revision: plan.expectedRevision + writes.length - 1 });
+        const send = (index: number): Promise<void> => {
+          const write = writes[index];
+          if (write === undefined) return Promise.resolve();
+          return client
+            .invokeAction(
+              conversation,
+              instanceId,
+              {
+                actionBindingId: write.action.actionBindingId,
+                expectedRevision: plan.expectedRevision + index,
+                expectedBindingDigest: write.action.bindingDigest,
+                input: write.view,
+                invocationId: newInvocationId(),
+              },
+              { keepalive: true },
+            )
+            .then((result) => {
+              applyTimeline(result.timeline);
+              return send(index + 1);
+            });
+        };
+        // Best-effort on a page that is unloading; the node stops believing an old "playing" on its own.
+        send(0).catch(() => undefined);
         return;
       }
       viewQueues.current.set(instanceId, { inFlight: true, revision: plan.expectedRevision, ...(queue?.queued === undefined ? {} : { queued: queue.queued }) });

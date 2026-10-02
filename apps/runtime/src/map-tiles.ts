@@ -63,16 +63,28 @@ export function mapTileCredential(deps: { db: Database; principalId: string; now
   return (use) => {
     const credential = provider.credential;
     if (credential === undefined) return { ok: true, result: use(undefined) };
-    const metadata = getSecretMetadata(deps.db, deps.principalId, credential.secret);
-    if (metadata === undefined) return { ok: false, message: `the secret ${credential.secret} the tile policy names has not been provided on this node` };
-    if (!metadata.allowedConsumers.includes(MAP_TILE_SECRET_CONSUMER)) {
-      return { ok: false, message: `the secret ${credential.secret} is not stored for ${MAP_TILE_SECRET_CONSUMER}` };
-    }
-    const backend = secretBackendFor(deps.db, deps.principalId, metadata.backend);
-    if (backend === undefined || !backend.has(metadata.backendRef)) return { ok: false, message: `the secret ${credential.secret} has no value on this node` };
+    const problem = mapTileCredentialProblem(deps, provider);
+    if (problem !== undefined) return { ok: false, message: problem };
+    // Recorded as `http-header` whether the policy puts the key in a header or in the query: either way it leaves only in
+    // the node's own request to the policy's origin, and neither the URL nor the key is ever logged or returned.
     const used = createSecretBroker(deps).withSecret({ name: credential.secret, consumer: MAP_TILE_SECRET_CONSUMER, exposure: "http-header" }, (value) => use(value));
     return used.ok ? used : { ok: false, message: `the tile provider's key could not be used (${used.code})` };
   };
+}
+
+/**
+ * Why the key a provider's policy names cannot be used now, or nothing. Checked before a cached tile is served too, so a
+ * key the person removed, or took `maps:tiles` off, stops its provider's tiles at once rather than when the cache expires.
+ */
+export function mapTileCredentialProblem(deps: { db: Database; principalId: string }, provider: MapTileProvider): string | undefined {
+  const credential = provider.credential;
+  if (credential === undefined) return undefined;
+  const metadata = getSecretMetadata(deps.db, deps.principalId, credential.secret);
+  if (metadata === undefined) return `the secret ${credential.secret} the tile policy names has not been provided on this node`;
+  if (!metadata.allowedConsumers.includes(MAP_TILE_SECRET_CONSUMER)) return `the secret ${credential.secret} is not stored for ${MAP_TILE_SECRET_CONSUMER}`;
+  const backend = secretBackendFor(deps.db, deps.principalId, metadata.backend);
+  if (backend === undefined || !backend.has(metadata.backendRef)) return `the secret ${credential.secret} has no value on this node`;
+  return undefined;
 }
 
 export type MapTileOutcome =
@@ -134,6 +146,8 @@ export function createMapTileProxy(deps: MapTileProxyDeps = {}): MapTileProxy {
   const now = deps.now ?? Date.now;
   // A Map keeps insertion order, so the first key is the least recently used once a hit re-inserts its entry.
   const cache = new Map<string, CachedTile>();
+  // The same tile asked for again while it is on its way (two maps, two tabs) waits for that one request.
+  const inFlight = new Map<string, Promise<MapTileOutcome>>();
   let cachedBytes = 0;
   let tokens: number = limits.rate.burst;
   let refilledAt = now();
@@ -179,63 +193,75 @@ export function createMapTileProxy(deps: MapTileProxyDeps = {}): MapTileProxy {
         }
         evict(key);
       }
-
-      if (!take()) return { ok: false, status: 429, code: "MAP_TILES_RATE_LIMITED", message: "too many tile requests; the map asks again shortly" };
-
-      const url = mapTileUrl(provider, z, x, y);
-      if (url === undefined) return { ok: false, status: 502, code: "MAP_TILE_FAILED", message: "the tile policy's template does not stay on its origin" };
-
-      const fetched = request.credential(async (value): Promise<MapTileOutcome> => {
-        const headers: Record<string, string> = { accept: MAP_TILE_CONTENT_TYPES.join(", "), "user-agent": "ClarkCant map tiles" };
-        const target = new URL(url);
-        if (value !== undefined && provider.credential?.header !== undefined) headers[provider.credential.header] = value;
-        if (value !== undefined && provider.credential?.query !== undefined) target.searchParams.set(provider.credential.query, value);
-        const signal = AbortSignal.timeout(limits.timeoutMs);
-        let response: Response;
-        try {
-          response = await doFetch(target, { method: "GET", headers, redirect: "manual", signal });
-        } catch {
-          // The error is not passed on: a fetch error can carry the URL, and with a query credential that holds the key.
-          return { ok: false, status: 502, code: "MAP_TILE_FAILED", message: `the tile provider ${provider.origin} could not be reached` };
-        }
-        if (response.status >= 300 && response.status < 400) {
-          await response.body?.cancel().catch(() => undefined);
-          return { ok: false, status: 502, code: "MAP_TILE_FAILED", message: `the tile provider ${provider.origin} redirected; tiles are not followed to another address` };
-        }
-        if (response.status === 404) {
-          await response.body?.cancel().catch(() => undefined);
-          return { ok: false, status: 404, code: "MAP_TILE_MISSING", message: "the tile provider has no tile at that address" };
-        }
-        if (!response.ok) {
-          await response.body?.cancel().catch(() => undefined);
-          return { ok: false, status: 502, code: "MAP_TILE_FAILED", message: `the tile provider ${provider.origin} answered ${String(response.status)}` };
-        }
-        const declared = (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
-        if (!(MAP_TILE_CONTENT_TYPES as readonly string[]).includes(declared)) {
-          await response.body?.cancel().catch(() => undefined);
-          return { ok: false, status: 502, code: "MAP_TILE_REFUSED", message: `the tile provider sent ${declared === "" ? "no content type" : declared}; only ${MAP_TILE_CONTENT_TYPES.join(" or ")} is shown` };
-        }
-        let bytes: Buffer | "too-large";
-        try {
-          bytes = await readBounded(response, limits.maxBytes, signal);
-        } catch {
-          return { ok: false, status: 502, code: "MAP_TILE_FAILED", message: `the tile from ${provider.origin} did not arrive in time` };
-        }
-        if (bytes === "too-large") {
-          return { ok: false, status: 502, code: "MAP_TILE_REFUSED", message: `the tile is larger than ${String(Math.round(limits.maxBytes / 1024))} KiB` };
-        }
-        const sniffed = sniffTileType(bytes);
-        if (sniffed !== declared) {
-          return { ok: false, status: 502, code: "MAP_TILE_REFUSED", message: `the tile's bytes are not the ${declared} its provider said` };
-        }
-        const tile: CachedTile = { bytes: new Uint8Array(bytes), contentType: sniffed, at: now() };
-        remember(key, tile);
-        return { ok: true, bytes: tile.bytes, contentType: tile.contentType, cached: false };
-      });
-      if (!fetched.ok) return { ok: false, status: 503, code: "MAP_TILE_KEY_UNAVAILABLE", message: fetched.message };
-      return fetched.result;
+      const pending = inFlight.get(key);
+      if (pending !== undefined) return pending;
+      const loading = load(request, key);
+      inFlight.set(key, loading);
+      try {
+        return await loading;
+      } finally {
+        inFlight.delete(key);
+      }
     },
   };
+
+  async function load(request: MapTileRequest, key: string): Promise<MapTileOutcome> {
+    const { provider, z, x, y } = request;
+    if (!take()) return { ok: false, status: 429, code: "MAP_TILES_RATE_LIMITED", message: "too many tile requests; the map asks again shortly" };
+
+    const url = mapTileUrl(provider, z, x, y);
+    if (url === undefined) return { ok: false, status: 502, code: "MAP_TILE_FAILED", message: "the tile policy's template does not stay on its origin" };
+
+    const fetched = request.credential(async (value): Promise<MapTileOutcome> => {
+      const headers: Record<string, string> = { accept: MAP_TILE_CONTENT_TYPES.join(", "), "user-agent": "ClarkCant map tiles" };
+      const target = new URL(url);
+      if (value !== undefined && provider.credential?.header !== undefined) headers[provider.credential.header] = value;
+      if (value !== undefined && provider.credential?.query !== undefined) target.searchParams.set(provider.credential.query, value);
+      const signal = AbortSignal.timeout(limits.timeoutMs);
+      let response: Response;
+      try {
+        response = await doFetch(target, { method: "GET", headers, redirect: "manual", signal });
+      } catch {
+        // The error is not passed on: a fetch error can carry the URL, and with a query credential that holds the key.
+        return { ok: false, status: 502, code: "MAP_TILE_FAILED", message: `the tile provider ${provider.origin} could not be reached` };
+      }
+      if (response.status >= 300 && response.status < 400) {
+        await response.body?.cancel().catch(() => undefined);
+        return { ok: false, status: 502, code: "MAP_TILE_FAILED", message: `the tile provider ${provider.origin} redirected; tiles are not followed to another address` };
+      }
+      if (response.status === 404) {
+        await response.body?.cancel().catch(() => undefined);
+        return { ok: false, status: 404, code: "MAP_TILE_MISSING", message: "the tile provider has no tile at that address" };
+      }
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        return { ok: false, status: 502, code: "MAP_TILE_FAILED", message: `the tile provider ${provider.origin} answered ${String(response.status)}` };
+      }
+      const declared = (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+      if (!(MAP_TILE_CONTENT_TYPES as readonly string[]).includes(declared)) {
+        await response.body?.cancel().catch(() => undefined);
+        return { ok: false, status: 502, code: "MAP_TILE_REFUSED", message: `the tile provider sent ${declared === "" ? "no content type" : declared}; only ${MAP_TILE_CONTENT_TYPES.join(" or ")} is shown` };
+      }
+      let bytes: Buffer | "too-large";
+      try {
+        bytes = await readBounded(response, limits.maxBytes, signal);
+      } catch {
+        return { ok: false, status: 502, code: "MAP_TILE_FAILED", message: `the tile from ${provider.origin} did not arrive in time` };
+      }
+      if (bytes === "too-large") {
+        return { ok: false, status: 502, code: "MAP_TILE_REFUSED", message: `the tile is larger than ${String(Math.round(limits.maxBytes / 1024))} KiB` };
+      }
+      const sniffed = sniffTileType(bytes);
+      if (sniffed !== declared) {
+        return { ok: false, status: 502, code: "MAP_TILE_REFUSED", message: `the tile's bytes are not the ${declared} its provider said` };
+      }
+      const tile: CachedTile = { bytes: new Uint8Array(bytes), contentType: sniffed, at: now() };
+      remember(key, tile);
+      return { ok: true, bytes: tile.bytes, contentType: tile.contentType, cached: false };
+    });
+    if (!fetched.ok) return { ok: false, status: 503, code: "MAP_TILE_KEY_UNAVAILABLE", message: fetched.message };
+    return fetched.result;
+  }
 }
 
 /** One proxy per node, so its rate and cache are the node's: keyed by the node's database handle. */

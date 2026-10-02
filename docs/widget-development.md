@@ -1333,8 +1333,11 @@ The map region is focusable and works by keyboard:
 - `+` and `-` zoom, and `0` resets the view;
 - `N` and `P` step through the features, and Escape clears the selection.
 
-Pointer drag pans too. Zoom-in, zoom-out and reset buttons are 44 px. A live region states the view and the
-selection. Below the map, a table lists every feature with its kind and position. Its Select button selects the
+Pointer drag pans too. On a touch screen, a swipe over a map that has not been tapped scrolls the conversation; once
+the map is tapped, a drag pans it. The map is one world that does not repeat: the view stops at the antimeridian, and
+the basemap, features and tiles are each drawn once. Zoom-in, zoom-out and reset buttons are 44 px. A live region
+states the view once it settles, and the selection. Tiles are asked for once the view settles; one that failed for a
+passing reason is asked for again after a pause. Below the map, a table lists every feature with its kind and position. Its Select button selects the
 feature on the map and brings it into view, and selecting on the map highlights its row. A pan slides only when motion
 is allowed; under reduced motion the view moves at once. Every colour is a theme token. A narrow map moves its controls
 under the picture and draws its labels larger, and nothing overflows at 390 px.

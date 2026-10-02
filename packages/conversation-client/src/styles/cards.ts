@@ -484,7 +484,9 @@ label.cc-list-main { cursor: pointer; }
   border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-sm, 6px);
 }
 .cc-map-viewport:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
-.cc-map-svg { display: block; width: 100%; height: auto; touch-action: none; cursor: grab; user-select: none; }
+/* A swipe across a map that has not been tapped scrolls the conversation; once tapped (focused), a drag pans it. */
+.cc-map-svg { display: block; width: 100%; height: auto; touch-action: pan-y pinch-zoom; cursor: grab; user-select: none; }
+.cc-map-viewport:focus-within .cc-map-svg { touch-action: none; }
 .cc-map-svg:active { cursor: grabbing; }
 .cc-map-ocean { fill: color-mix(in oklab, var(--cc-accent) 9%, var(--cc-elevated)); }
 .cc-map-land { fill: color-mix(in oklab, var(--cc-text) 9%, var(--cc-card)); stroke: color-mix(in oklab, var(--cc-text) 28%, transparent); stroke-width: 0.6; }

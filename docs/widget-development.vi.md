@@ -1331,8 +1331,11 @@ Vùng bản đồ nhận focus và dùng được bằng bàn phím:
 - `+` và `-` để phóng to, thu nhỏ, `0` để về khung nhìn ban đầu;
 - `N` và `P` để đi qua các đối tượng, Escape để bỏ chọn.
 
-Kéo bằng con trỏ cũng được. Các nút phóng to, thu nhỏ và về ban đầu rộng 44 px. Một live region đọc khung nhìn và
-lựa chọn. Bên dưới bản đồ, một bảng liệt kê mọi đối tượng cùng loại và vị trí. Nút Chọn trong bảng chọn đối tượng trên
+Kéo bằng con trỏ cũng được. Trên màn hình cảm ứng, vuốt qua một bản đồ chưa được chạm sẽ cuộn cuộc trò chuyện; sau khi
+chạm vào bản đồ, kéo sẽ di chuyển nó. Bản đồ là một thế giới không lặp lại: khung nhìn dừng ở kinh tuyến 180, và bản đồ
+nền, các đối tượng cùng các ô đều chỉ được vẽ một lần. Các nút phóng to, thu nhỏ và về ban đầu rộng 44 px. Một live
+region đọc khung nhìn khi nó đã dừng, và lựa chọn. Các ô chỉ được xin khi khung nhìn đã dừng; một ô lỗi vì lý do tạm
+thời được xin lại sau một lúc. Bên dưới bản đồ, một bảng liệt kê mọi đối tượng cùng loại và vị trí. Nút Chọn trong bảng chọn đối tượng trên
 bản đồ và đưa nó vào khung nhìn; chọn trên bản đồ thì tô sáng dòng tương ứng. Bản đồ chỉ trượt khi được phép chuyển
 động; với giảm chuyển động, khung nhìn đổi ngay. Mọi màu đều là theme token. Bản đồ hẹp đưa các nút điều khiển xuống
 dưới hình và vẽ nhãn lớn hơn, và không có gì tràn ở 390 px.
