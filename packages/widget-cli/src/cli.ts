@@ -20,6 +20,7 @@ import { startDevHost } from "./dev-host.ts";
 import { publishedDefinitions, versionRuleViolations, type PublishedDefinitions } from "./version-rules.ts";
 import { installedThemes, readPackage } from "@clarkcant/core";
 import { packageFiles } from "./package-files.ts";
+import { REFERENCE_TEMPLATES, initFromReferenceTemplate } from "./reference-templates.ts";
 import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
 
 /**
@@ -36,7 +37,7 @@ import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
  * opposite.
  */
 
-const TEMPLATES = ["blank", "form", "dashboard"] as const;
+const TEMPLATES = ["blank", "form", "dashboard", ...REFERENCE_TEMPLATES] as const;
 type Template = (typeof TEMPLATES)[number];
 
 /**
@@ -48,7 +49,7 @@ type Template = (typeof TEMPLATES)[number];
  * ran). A list both sides read has nothing to disagree with.
  */
 export const WIDGET_COMMANDS = [
-  { name: "init", usage: "clark widget init <dir> [--template blank|form|dashboard]   scaffold a package" },
+  { name: "init", usage: `clark widget init <dir> [--template ${TEMPLATES.join("|")}]   scaffold a package` },
   { name: "test", usage: "clark widget test [dir]                                     run the conformance suite" },
   { name: "pack", usage: "clark widget pack [dir]                                     build the artifact and its digest" },
   {
@@ -138,6 +139,10 @@ function init(root: string, template: Template): void {
   // service facet added later can name its capabilities under this id.
   const slug = (root.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z]+/, "");
   const id = `com.example.${slug === "" ? "widget" : slug}`;
+  if (template === "ai-generator" || template === "ui-with-service") {
+    initFromReferenceTemplate(root, id, template);
+    return;
+  }
   mkdirSync(join(root, "widgets", "main"), { recursive: true });
   mkdirSync(join(root, "fixtures"), { recursive: true });
   mkdirSync(join(root, "previews"), { recursive: true });
