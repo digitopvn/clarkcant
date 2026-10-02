@@ -1921,7 +1921,8 @@ Templates:
 - form;
 - editor;
 - media;
-- MCP App adapter.
+- MCP App adapter;
+- `ai-generator` và `ui-with-service`, sao chép từ ứng dụng tham chiếu tạo ảnh ([§24.1](#241-trình-tạo-ảnh)).
 
 ### dev
 
@@ -2461,3 +2462,57 @@ một package sẵn sàng dùng. Không có flow dev thực nào phụ thuộc h
 dùng dev host riêng của nó, không đi qua route này. Một dev DB cũ thấy generation của mình biến mất khỏi route
 này sau khi nâng cấp nên chạy lại `POST /packages/install` cho package đó, hoặc `node
 tools/check-invariants.mjs --fix-manifest` nếu chỉ cần đồng bộ lại `docs/manifest.json` sau khi sửa file này.
+
+---
+
+## 24. Ứng dụng tham chiếu
+
+Ứng dụng tham chiếu là các package hoàn chỉnh cho thấy các phần của nền tảng ghép lại với nhau trong một widget thật.
+Chúng nằm trong `examples/reference-apps/` và được kiểm thử như mọi package khác, cộng thêm một hành trình trình duyệt
+qua một node thật.
+
+### 24.1 Trình tạo ảnh
+
+`examples/reference-apps/image-generator` ([#319](https://github.com/digitopvn/clarkcant/issues/319), thuộc
+[#200](https://github.com/digitopvn/clarkcant/issues/200)) là một package manifest v2 có một facet giao diện cách ly và
+một facet service. Package cho thấy một widget khởi động việc dài trên service, theo dõi nó và nhận lại một tệp, trong
+khi service gọi tới nhà cung cấp bằng một key mà nó không bao giờ giữ.
+
+- **Capability.** Service cung cấp `com.clarkcant.reference.image-generator.image.generate@1` (ref của capability được
+  đặt dưới id của package), với `effectCategory: "read"` và `execution: { kind: "job", version: 1 }`. Một lần bấm trả
+  về ngay một JobRef ([§10.2](#102-job-chạy-lâu-jobs1)).
+- **Nhà cung cấp.** Facet tools khai báo một origin và một secret, `IMAGE_PROVIDER_KEY`
+  ([§14.2](#142-service-gọi-tới-nhà-cung-cấp)). Service bắt đầu một ảnh, đọc trạng thái mỗi bước một lần và lấy tệp
+  PNG, tất cả qua `clarkcant/egress.fetch`; node thêm key vào như một header bearer. Capability `read` chỉ được dùng
+  GET và HEAD, nên nhà cung cấp ở đây được đọc bằng GET. Cho tới khi người dùng lưu key, nút bị tắt kèm lý do của node.
+  Nhà cung cấp trong repository này là một bản giả trong phần kiểm thử của package: nó chỉ trả lời request có key và
+  trả về một ảnh tất định. Nhà cung cấp thật là [#321](https://github.com/digitopvn/clarkcant/issues/321).
+- **Tiến độ và kết quả.** Mỗi bước xong là một progress của MCP, được job ghi lại và widget hiển thị; widget không ước
+  đoán gì. Tệp PNG trả về dưới dạng một phần ảnh, được node lưu làm artifact kết quả của job. Lỗi của service được giữ
+  trên job thất bại bằng chính lời của service, để widget nói được nhà cung cấp đã nói gì. Nút Dừng huỷ job và service
+  ngừng đọc nhà cung cấp.
+- **Thư viện ảnh.** Widget liệt kê các job của chính nó bằng `jobs.list()`, theo dõi những job đang mở, và đọc ảnh đã
+  xong dưới dạng `ArtifactRef` theo từng đoạn 256 KiB. Tải lại trang hay mở trên thiết bị khác vẫn thấy cùng các job,
+  vì chúng thuộc về node. Mỗi ảnh có thể được đính kèm vào cuộc trò chuyện hoặc xuất ra qua host
+  ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)).
+- **Widget, Clark và giọng nói.** Nút là một action binding `invoke` có tên trong props là `generateBinding`. Binding
+  lấy `prompt` từ bản nháp trong widget state, và từ input của lần bấm khi có. Nói nhãn của nút khi widget đang mở sẽ
+  bấm nó với bản nháp, và câu trả lời nói job đã bắt đầu. Công cụ `invoke_capability` của Clark khởi động một capability
+  dạng job qua widget trong cuộc trò chuyện có binding tới nó, để widget đó theo dõi job; nếu không có widget nào thì
+  không có gì chạy và Clark nói rõ, còn nếu có nhiều widget thì Clark được yêu cầu chọn một.
+- **Template.** `clark widget init --template ai-generator` sao chép ứng dụng này dưới id của package mới, kể cả nhà
+  cung cấp; `--template ui-with-service` sao chép cùng widget và job với một service tự vẽ ảnh và không khai báo nhà
+  cung cấp nào. Cả hai vượt qua `clark widget test` và `pack` ngay khi được tạo.
+
+Hiện chỉ có model fixture có kịch bản của repository đặt widget kèm `generateBinding`. Chưa có đường đi nào của sản
+phẩm đặt một widget của package đã cài kèm binding ([#382](https://github.com/digitopvn/clarkcant/issues/382)), nên
+trong một bản cài thật widget sẽ nói nó chưa được gắn với service.
+
+Kiểm thử: [service-job.spec.ts](../examples/reference-apps/image-generator/test/service-job.spec.ts) cho service với
+nhà cung cấp giả qua job host, egress broker và artifact broker (hoàn tất, tiến độ, thất bại, key bị từ chối, huỷ, và
+key không có trong lệnh khởi chạy service, job, cơ sở dữ liệu, log, audit, thông báo và tệp);
+[package.spec.ts](../examples/reference-apps/image-generator/test/package.spec.ts) cho conformance và manifest;
+[reference-templates.spec.ts](../packages/widget-cli/test/reference-templates.spec.ts) cho các template; và hành trình
+trình duyệt [image-generator.spec.ts](../apps/web/e2e/image-generator.spec.ts) (từ chối khi chưa có key, tiến độ qua
+một lần tải lại, thư viện ảnh, Dừng, nhà cung cấp báo lỗi, đính kèm và xuất, Clark, giọng nói, bàn phím, hai theme,
+390 px và giảm chuyển động, với key được tìm trong trang, bridge, tệp và bảng của node, và container của service).

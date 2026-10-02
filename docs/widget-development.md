@@ -1923,7 +1923,8 @@ Templates:
 - form;
 - editor;
 - media;
-- MCP App adapter.
+- MCP App adapter;
+- `ai-generator` and `ui-with-service`, copied from the reference image generator ([§24.1](#241-image-generator)).
 
 ### dev
 
@@ -2464,3 +2465,57 @@ a package that is ready to use. No real dev flow depends on the old behavior ("l
 uses its own dev host and does not go through this route. An old dev DB that sees its generation disappear from this
 route after upgrading should re-run `POST /packages/install` for that package, or `node
 tools/check-invariants.mjs --fix-manifest` if it only needs to resync `docs/manifest.json` after editing this file.
+
+---
+
+## 24. Reference apps
+
+Reference apps are complete packages that show how the platform's pieces fit together in one real widget. They live
+in `examples/reference-apps/` and are tested like any other package, plus a browser journey through a real node.
+
+### 24.1 Image generator
+
+`examples/reference-apps/image-generator` ([#319](https://github.com/digitopvn/clarkcant/issues/319), part of
+[#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with an isolated UI facet and a
+service facet. It shows a widget that starts long work on a service, follows it, and gets a file back, while the
+service reaches a provider with a key it never holds.
+
+- **Capability.** The service offers `com.clarkcant.reference.image-generator.image.generate@1` (a capability ref is
+  named under its package's id), with `effectCategory: "read"` and `execution: { kind: "job", version: 1 }`. A press
+  answers at once with a JobRef ([§10.2](#102-long-running-jobs-jobs1)).
+- **Provider.** The tools facet declares one origin and one secret, `IMAGE_PROVIDER_KEY`
+  ([§14.2](#142-reaching-a-provider-from-a-service)). The service starts an image, reads its status once per step, and
+  fetches the PNG, all through `clarkcant/egress.fetch`; the node adds the key as a bearer header. A `read` capability
+  may use GET and HEAD only, so the provider here is read with GET. Until the person stores the key, the button is off
+  with the node's reason. The provider in this repository is a fake one in the package's tests: it answers only
+  requests carrying the key and returns a deterministic image. A real provider is
+  [#321](https://github.com/digitopvn/clarkcant/issues/321).
+- **Progress and result.** Each finished step is MCP progress, which the job records and the widget shows; the widget
+  estimates nothing. The PNG comes back as an image part, which the node stores as the job's result artifact. A
+  service error is kept on the failed job in the service's words, so the widget can say what the provider said. Stop
+  cancels the job and the service stops reading the provider.
+- **Gallery.** The widget lists its own jobs with `jobs.list()`, follows the open ones, and reads finished images as
+  `ArtifactRef`s in 256 KiB chunks. A reload or another device shows the same jobs, because they are the node's.
+  Each image can be attached to the conversation or exported through the host ([§10.1](#101-files-by-reference-artifacts1)).
+- **Widget, Clark and voice.** The button is an `invoke` action binding named in props as `generateBinding`. It fills
+  `prompt` from the draft in widget state, and from the press's input when there is one. Saying the button's label
+  with the widget open presses it with the draft, and the reply says the job started. Clark's `invoke_capability` tool
+  starts a job capability through the conversation's widget that has a binding to it, so that widget follows the job;
+  with none, nothing runs and Clark says so, and with several, Clark is asked to name one.
+- **Templates.** `clark widget init --template ai-generator` copies this app under the new package's ids, provider
+  and all; `--template ui-with-service` copies the same widget and job with a service that draws the image itself and
+  declares no provider. Both pass `clark widget test` and `pack` as created.
+
+Only the repository's scripted fixture model places the widget with `generateBinding` today. No product path places
+an installed package widget with a binding yet ([#382](https://github.com/digitopvn/clarkcant/issues/382)), so in a
+real installation the widget says it is not connected to the service.
+
+Tests: [service-job.spec.ts](../examples/reference-apps/image-generator/test/service-job.spec.ts) for the service
+against the fake provider through the job host, the egress broker and the artifact broker (completion, progress,
+failure, a refused key, cancel, and the key absent from the service's launch, the job, the database, logs, audit,
+notices and files); [package.spec.ts](../examples/reference-apps/image-generator/test/package.spec.ts) for
+conformance and the manifest; [reference-templates.spec.ts](../packages/widget-cli/test/reference-templates.spec.ts)
+for the templates; and the browser journey [image-generator.spec.ts](../apps/web/e2e/image-generator.spec.ts) (the
+key-less refusal, progress across a reload, the gallery, Stop, a provider failure, attach and export, Clark, voice,
+keyboard, both themes, 390 px and reduced motion, with the key searched for in the page, the bridge, the node's files
+and tables, and the service's container).
