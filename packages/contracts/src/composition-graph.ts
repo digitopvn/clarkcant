@@ -69,6 +69,7 @@ export const GRAPH_EVENTS: Readonly<Record<string, Readonly<Record<string, Graph
     "tree.select": { fields: { selectedId: "string" } },
     "tree.toggle": { fields: { nodeId: "string", expanded: "value" } },
   },
+  "canvas.diagram@1": { "diagram.select": { fields: { selectedId: "string" } } },
   // The picture chosen, counted from 0: the same `selectedIndex` the widget stores and draws, so a surface that holds it
   // gives the gallery or carousel its choice back.
   "canvas.carousel@1": { "media.select": { fields: { selectedIndex: "value" }, echo: "selectedIndex" } },

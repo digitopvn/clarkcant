@@ -132,7 +132,7 @@ export const STATE_EVENT_OPERATION = "state.event";
  * on the node answers them; forwarding one would reach the action route as if a person had pressed something. A calendar's selected day is still
  * sent as `date.select`, which the surface itself answers.
  */
-const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change", "calendar.view", "timeline.select", "tree.select", "tree.toggle", "media.select"]);
+const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change", "calendar.view", "timeline.select", "tree.select", "tree.toggle", "diagram.select", "media.select"]);
 
 /**
  * The binding an intent goes to: a section's `state.event` binding for a graph event, and its other binding for

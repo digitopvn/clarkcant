@@ -76,6 +76,16 @@ import {
   readTree,
   treeProblems,
   treeText,
+  DIAGRAM_ID,
+  DIAGRAM_LAYOUTS,
+  DIAGRAM_SELECT_OPERATION,
+  DIAGRAM_SHAPES,
+  MAX_DIAGRAM_EDGES,
+  MAX_DIAGRAM_NODES,
+  diagramProblems,
+  diagramPropsFromInput,
+  diagramText,
+  readDiagram,
   BOARD_MOVE_OPERATION,
   BOARD_APPROVAL_OPERATION,
   BOARD_RESOLVE_OPERATION,
@@ -117,6 +127,7 @@ import {
   STATUS_CARD_KIND,
   TIMELINE,
   TREE,
+  DIAGRAM,
   BOARD,
   CAROUSEL,
   GALLERY,
@@ -185,6 +196,7 @@ export function buildViewCatalog(
     CALENDAR.id,
     TIMELINE.id,
     TREE.id,
+    DIAGRAM.id,
     BOARD.id,
     CAROUSEL.id,
     GALLERY.id,
@@ -239,6 +251,7 @@ export function buildViewCatalog(
     calendarView(deps),
     timelineView(deps, () => compose?.timezone() ?? nodeTimeZone()),
     treeView(deps),
+    diagramView(deps),
     ...[CAROUSEL, GALLERY, VIDEO].map((definition) => mediaView(deps, definition)),
     boardView(deps, actions),
   );
@@ -262,7 +275,7 @@ export function buildViewCatalog(
         `To connect widgets, declare props.state as {"<key>":{"type":"string"|"number"|"boolean"|"string-list","initial":...}} ` +
         `(at most ${String(MAX_GRAPH_KEYS)} keys) and give leaves "on" and "feed" lists. "on" entries are {"event":"...","steps":[...]}: ` +
         `canvas.search@1 emits query.change {query}, canvas.choice@1 choice.change {value}, canvas.input@1 input.change {value}, ` +
-        `canvas.list@1 selection.change {selected}, canvas.table@1 row.select {rowIds}, canvas.calendar@1 date.select {date}, canvas.timeline@1 timeline.select {selectedId}, canvas.tree@1 tree.select {selectedId} and tree.toggle {nodeId, expanded}. ` +
+        `canvas.list@1 selection.change {selected}, canvas.table@1 row.select {rowIds}, canvas.calendar@1 date.select {date}, canvas.timeline@1 timeline.select {selectedId}, canvas.tree@1 tree.select {selectedId} and tree.toggle {nodeId, expanded}, canvas.diagram@1 diagram.select {selectedId}. ` +
         `Steps: {"op":"select-field","key","field"}, {"op":"set","key","value"}, {"op":"toggle","key","field"?}, {"op":"copy","key","from"}, ` +
         `{"op":"append"|"remove","key","field"}, {"op":"map-field","key","field","map":{...},"fallback"?}, {"op":"take","key","field","count"}, {"op":"count","key","field"}. ` +
         `"feed" entries are {"op":"query","key"} for a table or list, or {"op":"filter-equals","field","key"} for a table column, ` +
@@ -922,6 +935,76 @@ function treeView(deps: WidgetDeps): ViewDescriptor {
           if (!select.ok) throw new Error(select.message);
           if (!toggle.ok) throw new Error(toggle.message);
           return [select.binding, toggle.binding];
+        },
+      });
+      return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
+    },
+  };
+}
+
+/**
+ * A diagram from nodes and edges, or from a Mermaid flowchart read on the node into the same nodes and edges.
+ *
+ * What is stored is the model either way: the Mermaid source is read here, refused by name when it uses anything the
+ * subset does not read, and dropped, so the page never sees it and Mermaid's renderer is never involved.
+ */
+function diagramView(deps: WidgetDeps): ViewDescriptor {
+  const definition = DIAGRAM;
+  return {
+    id: definition.id,
+    label: definition.semanticDescription,
+    notes:
+      `props.nodes is at most ${String(MAX_DIAGRAM_NODES)} nodes, each {"id","label","shape"?,"group"?} with shape one of ${DIAGRAM_SHAPES.join(", ")}; ` +
+      `props.edges is at most ${String(MAX_DIAGRAM_EDGES)} edges {"from","to","label"?,"direction"?: "forward"|"both"|"none"}. ` +
+      `Optional props.title, props.layout (${DIAGRAM_LAYOUTS.join(" or ")}; a tree gives each node one parent) and props.direction ("TB" or "LR"). ` +
+      `Instead of nodes and edges you may pass props.mermaid, a Mermaid flowchart: only nodes as A[box], A(round), A{diamond}, A((circle)), ` +
+      `links -->, --- and <--> with |labels|, one level of subgraph, and accTitle are read; HTML labels, click, style, classDef, %%{init}%% and other diagram types are refused. ` +
+      `Labels are plain one-line text. A person can select a node; the selection is kept in widget state. It reads no files and changes no data.`,
+    shownText: `Shown: ${DIAGRAM_ID}, a diagram drawn by the host from the nodes and edges you gave. The selected node is view state.`,
+    build: (request) => {
+      const input = diagramPropsFromInput(request.props);
+      if (!input.ok) throw new Error(`${definition.id} cannot be shown: ${input.problems.join("; ")}`);
+      const props = input.props as Record<string, unknown>;
+      // The diagram's own checks first: they name the count, the node or the character, where the schema says less.
+      const problems = diagramProblems(props);
+      if (problems.length > 0) throw new Error(`${definition.id} cannot be shown: ${problems.join("; ")}`);
+      const schema = validateProps(definition, props);
+      if (!schema.ok) throw new Error(`${definition.id} has props that do not fit its schema: ${schema.problems.join(", ")}`);
+      const diagram = readDiagram(props);
+      if (diagram === undefined) throw new Error(`${definition.id} cannot be shown: its props do not describe a diagram`);
+      const packageDigest = definitionDigest(definition);
+      const { snapshot } = placeInstance(deps, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: request.principal.principalId,
+        props,
+        messageId: request.messageId,
+        textAlternative: keptText(definition.id, "", diagramText(diagram, SNAPSHOT_TEXT_LIMIT)),
+        presentationRef: `catalog:${definition.id}`,
+        bind: (instanceId) => {
+          const select = compileActionBinding({
+            bindingId: deps.newId("act"),
+            instance: {
+              instanceId,
+              ownerNodeId: deps.nodeId,
+              definitionRef: { id: definition.id, version: definition.version, packageDigest },
+              actionBindingRevision: 1,
+            },
+            packageGeneration: packageDigest,
+            label: "Diagram selection",
+            proposal: { kind: "view", operation: DIAGRAM_SELECT_OPERATION, args: {} },
+            inputSchema: { type: "object" },
+            allowedDataRefs: [],
+            fixedConstraints: {},
+            effectCategory: "read",
+            requiresApproval: false,
+            limits: {},
+            bindingDigest: `sha256:${DIAGRAM_SELECT_OPERATION}:${instanceId}`,
+            at: deps.now(),
+            knownCapabilities: new Set(),
+          });
+          if (!select.ok) throw new Error(select.message);
+          return [select.binding];
         },
       });
       return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
