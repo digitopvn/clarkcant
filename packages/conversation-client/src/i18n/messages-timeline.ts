@@ -567,6 +567,7 @@ export const MESSAGES_TIMELINE_VI = {
     "Không tải lại được widget này: liên kết truy cập đã hết hạn và liên kết mới cũng không dùng được. Những gì widget đã lưu vẫn được giữ trên node này. Hãy thử lại, hoặc đóng rồi mở lại widget.",
   "widgets.frame.reloadFailedReason": "Lý do: {reason}",
   "widgets.frame.retry": "Thử lại",
+  "widgets.frame.semanticNotSent": "Chưa gửi được điều widget đang hiển thị, nên chưa chạy hành động này: {reason}",
 
   // widget-artifacts.tsx — host chrome for a widget's file request
   "widgets.artifacts.pickTitle": "Widget này xin một tệp",
@@ -1402,6 +1403,7 @@ export const MESSAGES_TIMELINE_EN = {
     "This widget could not load again: its access link had expired, and a fresh one did not work. What it saved is kept on this node. Try again, or close and reopen the widget.",
   "widgets.frame.reloadFailedReason": "Reason: {reason}",
   "widgets.frame.retry": "Try again",
+  "widgets.frame.semanticNotSent": "What the widget shows could not be sent, so this action did not run: {reason}",
 
   "widgets.artifacts.pickTitle": "This widget asks for a file",
   "widgets.artifacts.pickBody":

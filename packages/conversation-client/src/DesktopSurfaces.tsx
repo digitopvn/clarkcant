@@ -665,11 +665,12 @@ export function PinnedLiveSurface({
             }
           }}
           /*
-           * What the widget says it shows, for the next turn and for voice. Nothing waits on it: a publish that does not
-           * arrive leaves the widget out of the next turn's note, and changes nothing on screen.
+           * What the widget says it shows, for the next turn and for voice. The frame waits on it only before a press
+           * the widget makes, which may read it; otherwise a publish that does not arrive leaves the widget out of the
+           * next turn's note, and changes nothing on screen.
            */
-          publishSemantic={(proposal) => {
-            client.publishWidgetSemantic(conversationId, instanceId, proposal).catch(() => undefined);
+          publishSemantic={async (proposal) => {
+            await client.publishWidgetSemantic(conversationId, instanceId, proposal);
           }}
           brokeredCapabilities={frame.grantedCapabilities}
           allowedOrigins={frame.allowedOrigins}
