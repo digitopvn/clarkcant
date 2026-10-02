@@ -114,6 +114,16 @@ describe("the stored media props", () => {
     expect(preview.pages.join("")).toBe(text);
   });
 
+  it("counts past the kept prefix by code point, and takes a whole document's length when given only its start", () => {
+    const text = "😀".repeat(MEDIA_CONTENT_LIMITS.maxDocumentChars + 7);
+    const preview = paginateDocumentText(text);
+    expect(preview.totalChars).toBe(MEDIA_CONTENT_LIMITS.maxDocumentChars + 7);
+    expect(preview.truncated).toBe(true);
+    expect(Array.from(preview.pages.join("")).length).toBeLessThanOrEqual(MEDIA_CONTENT_LIMITS.maxDocumentChars);
+    const start = paginateDocumentText("short start", 1_000_000);
+    expect(start).toMatchObject({ totalChars: 1_000_000, truncated: true, pages: ["short start"] });
+  });
+
   it("reads a stored preview and the page it is on, clamped to the pages it has", () => {
     const props = { name: "a.txt", mimeType: "text/plain", documentRef: "attachment:a", pages: ["one", "two"], totalChars: 6, truncated: false };
     expect(readDocument(props)).toMatchObject({ name: "a.txt", pages: ["one", "two"] });

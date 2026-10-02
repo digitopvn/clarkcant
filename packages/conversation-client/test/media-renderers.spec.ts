@@ -115,7 +115,8 @@ describe("media renderers", () => {
     expect(first).toContain('data-document-page="0"');
     expect(first).toContain("&lt;script&gt;");
     expect(first).not.toContain("<script");
-    expect(first).toMatch(/data-document-turn="previous"[^>]*disabled|disabled=""[^>]*data-document-turn="previous"/);
+    expect(first).toMatch(/aria-disabled="true"[^>]*data-document-turn="previous"/);
+    expect(first).toMatch(/aria-disabled="false"[^>]*data-document-turn="next"/);
     expect(first).toMatch(/role="region"[^>]*tabindex="0"|tabindex="0"[^>]*role="region"/i);
     expect(first).not.toContain("data-document-truncated");
 

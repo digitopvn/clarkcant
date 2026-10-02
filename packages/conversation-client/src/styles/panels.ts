@@ -475,6 +475,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 }
 .cc-document-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); }
 .cc-document-nav [data-document-position] { font-variant-numeric: tabular-nums; }
+.cc-document-nav button[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
 
 .cc-cta {
   display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md);

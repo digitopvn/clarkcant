@@ -279,10 +279,15 @@ test("a text document previews in pages a keyboard turns, marks hidden character
   await expect(position).toHaveAttribute("aria-live", "polite");
   const count = Number(/\/(\d+)$/u.exec((await position.textContent()) ?? "")?.[1] ?? "0");
   expect(count).toBeGreaterThan(2);
-  await expect(card.locator("[data-document-turn='previous']")).toBeDisabled();
+  await expect(card.locator("[data-document-turn='previous']")).toHaveAttribute("aria-disabled", "true");
 
   // Tab from the page's text reaches the paging controls; Enter turns the page.
+  // An unavailable control stays in the tab order (aria-disabled), so it is announced as unavailable rather than skipped.
   await region.focus();
+  await page.keyboard.press("Tab");
+  await expect(card.locator("[data-document-turn='previous']")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(region).toHaveAttribute("data-document-page", "0");
   await page.keyboard.press("Tab");
   await expect(card.locator("[data-document-turn='next']")).toBeFocused();
   await page.keyboard.press("Enter");
@@ -306,6 +311,23 @@ test("a text document previews in pages a keyboard turns, marks hidden character
   await reloaded.scrollIntoViewIfNeeded();
   await settled(reloaded);
   await page.screenshot({ path: testInfo.outputPath("document-1280-light.png") });
+
+  // Turning to the last page keeps the keyboard on the control that is now unavailable, and pressing it again does
+  // nothing: focus never falls back to the page because a button switched off under it.
+  const next = reloaded.locator("[data-document-turn='next']");
+  const reloadedPage = reloaded.locator("[data-document-page]");
+  await next.focus();
+  for (let turned = 3; turned < count; turned += 1) {
+    await page.keyboard.press("Enter");
+    await expect(reloadedPage).toHaveAttribute("data-document-page", String(turned));
+  }
+  await expect(next).toHaveAttribute("aria-disabled", "true");
+  await expect(next).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(reloadedPage).toHaveAttribute("data-document-page", String(count - 1));
+  await expect(next).toBeFocused();
+  // A new page opens at its top.
+  expect(await reloadedPage.evaluate((element) => element.scrollTop)).toBe(0);
   expectOnlyOwnOrigins(urls);
 });
 

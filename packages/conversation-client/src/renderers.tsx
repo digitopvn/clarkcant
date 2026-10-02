@@ -2545,7 +2545,8 @@ function LocalAudio({ props, imageUrl, state, onAction }: RendererProps): ReactE
       {audio?.transcript !== undefined && (
         <details className="cc-audio-transcript">
           <summary>{t("widgets.audio.transcript")}</summary>
-          <p className="cc-audio-transcript-text" data-audio-transcript="">
+          {/* A region a keyboard can reach and scroll, named for what it holds. */}
+          <p className="cc-audio-transcript-text" data-audio-transcript="" tabIndex={0} role="region" aria-label={t("widgets.audio.transcript")}>
             {withHiddenMarkers(audio.transcript, describe)}
           </p>
         </details>
@@ -2582,6 +2583,11 @@ function DocumentPreview({ props, state, onAction, onStateChange }: RendererProp
   const text = preview?.pages[current] ?? "";
   const body = useMemo(() => withHiddenMarkers(text, describe), [text, describe]);
   const hidden = useMemo(() => hiddenCharacterSegments(text).filter((segment) => !("text" in segment)).length, [text]);
+  const pageRef = useRef<HTMLDivElement | null>(null);
+  // A new page starts at its top, not where the last one was scrolled to.
+  useEffect(() => {
+    if (pageRef.current !== null) pageRef.current.scrollTop = 0;
+  }, [current]);
   if (preview === undefined) {
     return <ViewerUnreadable title={t("widgets.document.title")} role="document" message={t("widgets.document.unreadable")} />;
   }
@@ -2607,6 +2613,7 @@ function DocumentPreview({ props, state, onAction, onStateChange }: RendererProp
         </p>
       )}
       <div
+        ref={pageRef}
         className="cc-viewer-scroll cc-document-page"
         // Reachable without a pointer: a long page that only a mouse can scroll hides its end from a keyboard.
         tabIndex={0}
@@ -2623,13 +2630,14 @@ function DocumentPreview({ props, state, onAction, onStateChange }: RendererProp
       )}
       {pageCount > 1 && (
         <nav className="cc-document-nav" aria-label={t("widgets.document.paging")}>
-          <button type="button" className="cc-action" disabled={current === 0} onClick={() => turn(current - 1)} data-document-turn="previous">
+          {/* aria-disabled rather than disabled: a button that becomes disabled under the keyboard would drop focus to the page. */}
+          <button type="button" className="cc-action" aria-disabled={current === 0} onClick={() => { if (current > 0) turn(current - 1); }} data-document-turn="previous">
             {t("widgets.document.previous")}
           </button>
           <span className="cc-freshness" aria-live="polite" data-document-position="">
             {position}
           </span>
-          <button type="button" className="cc-action" disabled={current >= pageCount - 1} onClick={() => turn(current + 1)} data-document-turn="next">
+          <button type="button" className="cc-action" aria-disabled={current >= pageCount - 1} onClick={() => { if (current < pageCount - 1) turn(current + 1); }} data-document-turn="next">
             {t("widgets.document.next")}
           </button>
         </nav>

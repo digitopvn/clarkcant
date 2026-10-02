@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MEDIA_CONTENT_LIMITS, type MediaPolicy } from "@clarkcant/contracts";
 
 import { audioDurationSeconds, sniffAudio } from "../src/audio-content.ts";
-import { checkAudioBytes, fetchAudio } from "../src/media-fetch.ts";
+import { checkAudioBytes, fetchAudio, privateAddress } from "../src/media-fetch.ts";
 import { selfSignedCertificate, toneWav } from "../src/test-support/media-fixtures.ts";
 
 /**
@@ -128,6 +128,16 @@ describe("fetching audio under the media policy", () => {
     },
     "/gone.wav": (response) => response.writeHead(404).end(),
     "/slow.wav": () => undefined,
+    // Headers and the start of the body arrive, then nothing more.
+    "/stalls.wav": (response) => {
+      response.writeHead(200, { "content-type": "audio/wav", "content-length": String(tone.byteLength) });
+      response.write(tone.subarray(0, 64));
+    },
+    // The connection drops partway through the body.
+    "/cut.wav": (response) => {
+      response.writeHead(200, { "content-type": "audio/wav", "content-length": String(tone.byteLength) });
+      response.write(tone.subarray(0, 64), () => response.socket?.destroy());
+    },
   };
 
   beforeAll(async () => {
@@ -214,5 +224,48 @@ describe("fetching audio under the media policy", () => {
   it("names a missing file and a fetch that ran out of time", async () => {
     expect(await fetchFrom("/gone.wav")).toMatchObject({ ok: false, rule: "not-found" });
     expect(await fetchFrom("/slow.wav", { timeoutMs: 300 })).toMatchObject({ ok: false, rule: "timeout" });
+  });
+
+  it("settles a fetch whose body stalls or is cut short, and says why in fixed words", async () => {
+    expect(await fetchFrom("/stalls.wav", { timeoutMs: 400 })).toMatchObject({ ok: false, rule: "timeout" });
+    const cut = await fetchFrom("/cut.wav");
+    expect(cut).toMatchObject({ ok: false, rule: "fetch-failed" });
+    expect(!cut.ok && cut.message).toMatch(/could not be reached: (the connection was cut|the connection closed|the connection failed)/);
+    // A stopped turn ends the read too.
+    const stop = new AbortController();
+    const pending = fetchAudio(`${origin}/stalls.wav`, { policy, ca: tls.cert, timeoutMs: 10_000 }, stop.signal);
+    setTimeout(() => stop.abort(), 150);
+    expect(await pending).toMatchObject({ ok: false, rule: "fetch-failed" });
+  });
+
+  it("refuses the other address ranges no public media origin uses", () => {
+    for (const address of ["100.64.0.1", "198.18.0.1", "224.0.0.1", "240.0.0.1", "64:ff9b::a00:1", "2002:a00:1::1", "fec0::1", "ff02::1", "::ffff:100.64.0.1"]) {
+      expect(privateAddress(address), address).toBe(true);
+    }
+    for (const address of ["93.184.216.34", "2606:2800:220:1::1"]) expect(privateAddress(address), address).toBe(false);
+  });
+});
+
+describe("reading malformed audio headers", () => {
+  it("reports a header that points past its own bytes as an unknown length, never as a crash", () => {
+    const wav = toneWav({ seconds: 1 });
+    // A fmt chunk cut before its byte rate.
+    const shortFmt = wav.slice(0, 30);
+    expect(() => checkAudioBytes(shortFmt, "audio/wav", "node")).not.toThrow();
+    expect(checkAudioBytes(shortFmt, "audio/wav", "node")).toMatchObject({ ok: false, rule: "duration-unknown" });
+    // Each container cut at every length through its header.
+    const samples: [Uint8Array, "audio/wav" | "audio/ogg" | "audio/webm" | "audio/mpeg"][] = [
+      [wav, "audio/wav"],
+      [oggOpus(2), "audio/ogg"],
+      [webm(2_000), "audio/webm"],
+      [mp3({ bytes: 4_000, xingFrames: 40 }), "audio/mpeg"],
+    ];
+    for (const [bytes, mime] of samples) {
+      for (let length = 0; length <= Math.min(bytes.byteLength, 160); length += 1) {
+        const cut = bytes.slice(0, length);
+        expect(() => audioDurationSeconds(cut, mime), `${mime} cut at ${String(length)}`).not.toThrow();
+        expect(() => checkAudioBytes(cut, mime, "node"), `${mime} cut at ${String(length)}`).not.toThrow();
+      }
+    }
   });
 });

@@ -141,6 +141,19 @@ function heldSource(db: Database, dataDir: string, request: ViewRequest, source:
   return { ref: hostFileRef("attachment", record.attachmentId), name: record.filename, mimeType: record.mime, bytes: blob.bytes };
 }
 
+/** Code points in UTF-8 bytes, counted without decoding: every byte that does not continue a sequence starts one. */
+function utf8CodePoints(bytes: Uint8Array): number {
+  let count = 0;
+  for (const byte of bytes) if ((byte & 0xc0) !== 0x80) count += 1;
+  const bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 1 : 0;
+  return count - bom;
+}
+
+/** Bounds the media props schemas set, checked before work that would only be refused afterwards. */
+const MAX_AUDIO_TITLE = 200;
+const MAX_DOCUMENT_NAME = 255;
+const MAX_SOURCE_PAGES = 100_000;
+
 function formatDuration(seconds: number): string {
   const whole = Math.max(0, Math.round(seconds));
   const minutes = Math.floor(whole / 60);
@@ -169,6 +182,11 @@ export function audioView(deps: WidgetDeps, media: MediaViewDeps): ViewDescripto
       if (title === "") refuse(AUDIO.id, "props.title names the audio and is required");
       const transcript = props.transcript;
       if (transcript !== undefined && typeof transcript !== "string") refuse(AUDIO.id, "props.transcript must be text");
+      // Props the fetch cannot change are checked before anything is fetched.
+      if (Array.from(title).length > MAX_AUDIO_TITLE) refuse(AUDIO.id, `props.title is longer than ${String(MAX_AUDIO_TITLE)} characters`);
+      if (typeof transcript === "string" && transcript.length > MEDIA_CONTENT_LIMITS.maxTranscriptChars) {
+        refuse(AUDIO.id, `props.transcript is longer than ${String(MEDIA_CONTENT_LIMITS.maxTranscriptChars)} characters`);
+      }
       const source = oneSource(AUDIO.id, props, ["artifactId", "attachmentId", "url"]);
 
       let audio: FetchedAudio;
@@ -311,19 +329,25 @@ export function documentView(deps: WidgetDeps, media: MediaViewDeps): ViewDescri
       }
 
       let text: string;
+      let knownTotalChars: number | undefined;
       let sourcePages: number | undefined;
       if (held.mimeType === "application/pdf") {
         const extracted = extractPdfText(held.bytes);
         if (!extracted.ok) refuse(DOCUMENT.id, `its text could not be read: ${extracted.reason}`);
         text = extracted.text;
-        sourcePages = countPdfPages(held.bytes);
+        const counted = countPdfPages(held.bytes);
+        sourcePages = counted === undefined || counted < 1 ? undefined : Math.min(counted, MAX_SOURCE_PAGES);
       } else {
-        text = new TextDecoder("utf-8", { fatal: false }).decode(held.bytes);
+        // Only the beginning a preview can show is decoded (a code point is at most four bytes); the rest is counted.
+        const head = held.bytes.subarray(0, MEDIA_CONTENT_LIMITS.maxDocumentChars * 4);
+        text = new TextDecoder("utf-8", { fatal: false }).decode(head, { stream: true });
+        if (head.byteLength < held.bytes.byteLength) knownTotalChars = utf8CodePoints(held.bytes);
       }
-      const preview = paginateDocumentText(text);
+      const preview = paginateDocumentText(text, knownTotalChars);
       const stored: Record<string, unknown> = {
         ...(typeof title === "string" && title.trim() !== "" ? { title: title.trim() } : {}),
-        name: held.name,
+        // A name a schema can hold: long names are clipped by code point, never mid-character.
+        name: Array.from(held.name).slice(0, MAX_DOCUMENT_NAME).join(""),
         mimeType: held.mimeType,
         documentRef: held.ref,
         pages: preview.pages,

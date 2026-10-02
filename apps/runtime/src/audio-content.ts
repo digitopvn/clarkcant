@@ -24,8 +24,14 @@ export function sniffAudio(bytes: Uint8Array): AudioMimeType | undefined {
 
 /** Seconds, or undefined when the container does not say. */
 export function audioDurationSeconds(bytes: Uint8Array, mime: AudioMimeType): number | undefined {
-  const seconds =
-    mime === "audio/wav" ? wavDuration(bytes) : mime === "audio/ogg" ? oggDuration(bytes) : mime === "audio/webm" ? webmDuration(bytes) : mp3Duration(bytes);
+  let seconds: number | undefined;
+  try {
+    seconds =
+      mime === "audio/wav" ? wavDuration(bytes) : mime === "audio/ogg" ? oggDuration(bytes) : mime === "audio/webm" ? webmDuration(bytes) : mp3Duration(bytes);
+  } catch {
+    // A header that points past its own bytes is a file whose length cannot be read, which the caller refuses.
+    return undefined;
+  }
   return seconds !== undefined && Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
 }
 
@@ -47,7 +53,7 @@ function wavDuration(bytes: Uint8Array): number | undefined {
   while (at + 8 <= bytes.byteLength) {
     const id = ascii(bytes, at, 4);
     const size = data.getUint32(at + 4, true);
-    if (id === "fmt " && at + 16 <= bytes.byteLength) byteRate = data.getUint32(at + 16, true);
+    if (id === "fmt " && at + 20 <= bytes.byteLength) byteRate = data.getUint32(at + 16, true);
     if (id === "data") {
       if (byteRate === 0) return undefined;
       // A streamed WAV may write the largest size it can rather than the real one; what arrived is what plays.

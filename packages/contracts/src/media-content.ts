@@ -250,11 +250,28 @@ export function readDocument(props: Record<string, unknown>): DocumentProps | un
  * Kept to {@link MEDIA_CONTENT_LIMITS.maxDocumentChars} and cut into pages of
  * {@link MEDIA_CONTENT_LIMITS.documentPageChars}, preferring a break at a line or a space near the end of a page so a
  * page does not end in the middle of a word. Code points are never split.
+ *
+ * Only the kept prefix is split into code points; the rest is counted without being copied, so a large file costs a
+ * count rather than an array of every character. `knownTotalChars` is the whole document's length when `text` is
+ * only its beginning.
  */
-export function paginateDocumentText(text: string): { pages: string[]; totalChars: number; truncated: boolean } {
-  const characters = Array.from(text);
-  const totalChars = characters.length;
-  const kept = characters.slice(0, MEDIA_CONTENT_LIMITS.maxDocumentChars);
+export function paginateDocumentText(
+  text: string,
+  knownTotalChars?: number,
+): { pages: string[]; totalChars: number; truncated: boolean } {
+  let totalChars = 0;
+  let prefixEnd = text.length;
+  for (let index = 0; index < text.length; index += 1) {
+    if (totalChars === MEDIA_CONTENT_LIMITS.maxDocumentChars && prefixEnd === text.length) prefixEnd = index;
+    totalChars += 1;
+    const unit = text.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff && index + 1 < text.length) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) index += 1;
+    }
+  }
+  if (knownTotalChars !== undefined && knownTotalChars > totalChars) totalChars = knownTotalChars;
+  const kept = Array.from(text.slice(0, prefixEnd));
   const truncated = totalChars > kept.length;
   const pages: string[] = [];
   let at = 0;

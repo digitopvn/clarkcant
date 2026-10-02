@@ -1,7 +1,7 @@
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import { request as httpsRequest } from "node:https";
 import type { IncomingMessage } from "node:http";
-import { isIP, type LookupFunction } from "node:net";
+import { BlockList, isIP, type LookupFunction } from "node:net";
 
 import {
   type AudioMimeType,
@@ -60,8 +60,31 @@ class PolicyError extends Error {
   }
 }
 
-function privateAddress(address: string): boolean {
-  return isPrivateNetworkHost(new URL(`https://${isIP(address) === 6 ? `[${address}]` : address}`));
+/**
+ * Addresses no public media origin uses, beyond the loopback, private and link-local ranges the egress check knows:
+ * shared address space (carrier NAT), benchmarking, multicast, reserved, NAT64, 6to4, and the old site-local range.
+ * A 6to4 or NAT64 address can carry an inside IPv4 address, so both are refused whole.
+ */
+const NON_PUBLIC = (() => {
+  const list = new BlockList();
+  list.addSubnet("100.64.0.0", 10, "ipv4");
+  list.addSubnet("198.18.0.0", 15, "ipv4");
+  list.addSubnet("224.0.0.0", 4, "ipv4");
+  list.addSubnet("240.0.0.0", 4, "ipv4");
+  list.addSubnet("64:ff9b::", 96, "ipv6");
+  list.addSubnet("2002::", 16, "ipv6");
+  list.addSubnet("fec0::", 10, "ipv6");
+  list.addSubnet("ff00::", 8, "ipv6");
+  return list;
+})();
+
+export function privateAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 0) return true;
+  if (isPrivateNetworkHost(new URL(`https://${family === 6 ? `[${address}]` : address}`))) return true;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address)?.[1];
+  if (mapped !== undefined) return NON_PUBLIC.check(mapped, "ipv4");
+  return NON_PUBLIC.check(address, family === 6 ? "ipv6" : "ipv4");
 }
 
 /**
@@ -113,23 +136,70 @@ function get(url: URL, deps: MediaFetchDeps, signal: AbortSignal): Promise<Incom
   });
 }
 
+/**
+ * Read the body up to the ceiling. Every way the read can end settles the promise exactly once: the body ends, the
+ * ceiling is crossed, the response errors, the signal aborts (a deadline mid-body), or the stream closes early.
+ */
 function readBounded(response: IncomingMessage, signal: AbortSignal): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
+    let settled = false;
+    const finish = (outcome: () => void): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      outcome();
+    };
+    const onAbort = (): void => {
+      finish(() => reject(signal.reason instanceof Error ? signal.reason : new Error("aborted")));
+      response.destroy();
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
     response.on("data", (chunk: Buffer) => {
       total += chunk.byteLength;
       if (total > MEDIA_CONTENT_LIMITS.maxAudioBytes) {
+        finish(() => reject(new PolicyError(mediaRefusal("too-large", `the audio is over the ${String(MEDIA_CONTENT_LIMITS.maxAudioBytes)} byte ceiling`))));
         response.destroy();
-        reject(new PolicyError(mediaRefusal("too-large", `the audio is over the ${String(MEDIA_CONTENT_LIMITS.maxAudioBytes)} byte ceiling`)));
         return;
       }
       chunks.push(chunk);
     });
-    response.on("end", () => resolve(new Uint8Array(Buffer.concat(chunks))));
-    response.on("error", reject);
-    signal.addEventListener("abort", () => response.destroy(), { once: true });
+    response.on("end", () => finish(() => resolve(new Uint8Array(Buffer.concat(chunks)))));
+    response.on("error", (error) => finish(() => reject(error)));
+    response.on("close", () => finish(() => reject(new Error("the connection closed before the audio was complete"))));
   });
+}
+
+/** Abandon a response whose body is not wanted, without reading it. */
+function discard(response: IncomingMessage): void {
+  response.destroy();
+}
+
+/** Network failures said as a fixed reason, never the raw error text of a remote system. */
+function unreachableReason(error: unknown): string {
+  const code = (error as { code?: unknown }).code;
+  switch (code) {
+    case "ENOTFOUND":
+    case "EAI_AGAIN":
+      return "its name did not resolve";
+    case "ECONNREFUSED":
+      return "it refused the connection";
+    case "ECONNRESET":
+    case "EPIPE":
+      return "the connection was cut";
+    case "ETIMEDOUT":
+      return "the connection timed out";
+    default:
+      if (typeof code === "string" && (code.startsWith("ERR_TLS") || code.includes("CERT") || code.startsWith("ERR_SSL"))) {
+        return "its certificate was not trusted";
+      }
+      return "the connection failed";
+  }
 }
 
 export async function fetchAudio(
@@ -150,7 +220,7 @@ export async function fetchAudio(
       response = await get(url, deps, combined);
       const status = response.statusCode ?? 0;
       if (status < 300 || status >= 400 || status === 304) break;
-      response.resume();
+      discard(response);
       const location = response.headers.location;
       if (location === undefined) return mediaRefusal("fetch-failed", `${origin} answered ${String(status)} without saying where to`);
       if (redirects >= MEDIA_CONTENT_LIMITS.maxRedirects) {
@@ -164,22 +234,22 @@ export async function fetchAudio(
     }
     const status = response.statusCode ?? 0;
     if (status === 404 || status === 410) {
-      response.resume();
+      discard(response);
       return mediaRefusal("not-found", `${origin} has no file at that address (${String(status)})`);
     }
     if (status !== 200) {
-      response.resume();
+      discard(response);
       return mediaRefusal("fetch-failed", `${origin} answered ${String(status)}`);
     }
     const declaredHeader = response.headers["content-type"];
     const declared = normalizeAudioType(declaredHeader);
     if (declared === undefined) {
-      response.resume();
+      discard(response);
       return mediaRefusal("type-not-allowed", `${origin} sent ${declaredHeader ?? "no content type"}, which is not an audio type this node plays (mp3, ogg, wav or webm)`);
     }
     const encoding = response.headers["content-encoding"];
     if (encoding !== undefined && encoding !== "identity") {
-      response.resume();
+      discard(response);
       return mediaRefusal("type-mismatch", `${origin} sent the audio ${encoding}-encoded, which this node does not unpack`);
     }
     const declaredLength = Number(response.headers["content-length"]);
@@ -195,7 +265,7 @@ export async function fetchAudio(
     if (cause instanceof PolicyError) return cause.refusal;
     if (deadline.aborted) return mediaRefusal("timeout", `${origin} did not send the audio within ${String(Math.round((deps.timeoutMs ?? MEDIA_CONTENT_LIMITS.fetchTimeoutMs) / 1000))} seconds`);
     if (signal?.aborted === true) return mediaRefusal("fetch-failed", "the fetch was stopped");
-    return mediaRefusal("fetch-failed", `${origin} could not be reached: ${error instanceof Error ? error.message : String(error)}`);
+    return mediaRefusal("fetch-failed", `${origin} could not be reached: ${unreachableReason(error)}`);
   }
 }
 

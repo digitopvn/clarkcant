@@ -81,7 +81,7 @@ async function place(definitionId: string, props: Record<string, unknown>, optio
   return block;
 }
 
-function heldArtifact(artifactId: string, bytes: Uint8Array, mimeType: string, overrides: { ownerPrincipalId?: string; conversationId?: string } = {}): void {
+function heldArtifact(artifactId: string, bytes: Uint8Array, mimeType: string, overrides: { ownerPrincipalId?: string; conversationId?: string; name?: string } = {}): void {
   const blob = writeBlob({ dataDir: dir, bytes, extension: "bin" });
   insertBrokerArtifact(services.runtime.db, {
     artifactId,
@@ -91,7 +91,7 @@ function heldArtifact(artifactId: string, bytes: Uint8Array, mimeType: string, o
     conversationId: overrides.conversationId ?? CONVERSATION,
     // Saved by some earlier widget of the conversation; the player never needs that widget's grant to read it.
     instanceId: "inst_earlier",
-    name: `${artifactId}.bin`,
+    name: overrides.name ?? `${artifactId}.bin`,
     mimeType,
     sizeBytes: bytes.byteLength,
     digest: blob.digest,
@@ -248,6 +248,16 @@ describe("placing an audio player from an allowed URL", () => {
     );
     expect(instanceRows()).toBe(0);
   });
+
+  it("refuses a title or transcript the schema cannot hold before fetching anything", async () => {
+    fetched = [];
+    await expect(place(AUDIO.id, { title: "t".repeat(201), url: `${ORIGIN}/a.wav` })).rejects.toThrow("props.title is longer than 200 characters");
+    await expect(
+      place(AUDIO.id, { title: "x", url: `${ORIGIN}/a.wav`, transcript: "w".repeat(MEDIA_CONTENT_LIMITS.maxTranscriptChars + 1) }),
+    ).rejects.toThrow("props.transcript is longer than");
+    expect(fetched).toEqual([]);
+    expect(instanceRows()).toBe(0);
+  });
 });
 
 describe("placing an audio player from a file the conversation holds", () => {
@@ -364,6 +374,22 @@ describe("placing a document preview", () => {
     const outcome = await setView(instanceId, { page: pages.length });
     expect(outcome.ok).toBe(false);
     expect(liveStateOf(services.conductor, instanceId, DOCUMENT)?.body).toEqual({ page: 3 });
+  });
+
+  it("decodes only the start of a large text file, counts the rest, and clips a long name by character", async () => {
+    // Past the decode window: four bytes for every character a preview can keep.
+    const line = "ă".repeat(99) + "\n";
+    const text = line.repeat(Math.ceil((MEDIA_CONTENT_LIMITS.maxDocumentChars * 4) / (Buffer.byteLength(line) - 1)) + 10);
+    const bytes = new TextEncoder().encode(text);
+    expect(bytes.byteLength).toBeGreaterThan(MEDIA_CONTENT_LIMITS.maxDocumentChars * 4);
+    const name = `${"ồ".repeat(300)}.txt`;
+    heldArtifact("art_big", bytes, "text/plain", { name });
+    const block = await place(DOCUMENT.id, { artifactId: "art_big" });
+    const props = getInstance(services.conductor, block.snapshot.instanceId ?? "")?.props ?? {};
+    expect(props.totalChars).toBe(Array.from(text).length);
+    expect(props.truncated).toBe(true);
+    expect((props.pages as string[]).join("")).toBe(text.slice(0, (props.pages as string[]).join("").length));
+    expect(Array.from(String(props.name))).toHaveLength(255);
   });
 
   it.each([
