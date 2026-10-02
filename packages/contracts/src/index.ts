@@ -42,6 +42,7 @@ export * from "./diagram-mermaid.ts";
 export * from "./board-view.ts";
 export * from "./media-view.ts";
 export * from "./map-view.ts";
+export * from "./media-content.ts";
 export * from "./text-rules.ts";
 export * from "./surface-composition.ts";
 export * from "./period.ts";

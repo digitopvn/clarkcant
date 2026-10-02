@@ -141,3 +141,15 @@ export function extractPdfText(bytes: Uint8Array): { ok: true; text: string } | 
   }
   return { ok: true, text };
 }
+
+/**
+ * How many pages a PDF says it has: its page objects, counted. A page tree's `/Pages` nodes are not pages and are not
+ * counted. Pages held in compressed object streams are not visible here, so the count is undefined rather than a guess
+ * when none are found.
+ */
+export function countPdfPages(bytes: Uint8Array): number | undefined {
+  const source = Buffer.from(bytes).toString("latin1");
+  if (!source.startsWith("%PDF-")) return undefined;
+  const count = source.match(/\/Type\s*\/Page(?![A-Za-z])/g)?.length ?? 0;
+  return count > 0 ? count : undefined;
+}

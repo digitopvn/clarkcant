@@ -179,6 +179,18 @@ const META: Record<string, CatalogMeta> = {
     aliases: ["video", "phim"],
     status: "stable",
   },
+  "canvas.audio@1": {
+    displayName: "Trình phát âm thanh",
+    tags: ["media", "audio"],
+    aliases: ["audio", "âm thanh", "podcast", "nhạc", "ghi âm"],
+    status: "stable",
+  },
+  "canvas.document@1": {
+    displayName: "Xem trước tài liệu",
+    tags: ["media", "document"],
+    aliases: ["document", "pdf", "tài liệu", "xem trước"],
+    status: "stable",
+  },
   "canvas.cta@1": {
     displayName: "Nút lưu khung nhìn",
     tags: ["cta", "save"],

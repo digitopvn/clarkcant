@@ -1,12 +1,14 @@
 ---
 title: "#317 Reference app A: text editor that opens and saves a real file"
-status: in-review
+status: completed
 created: 2026-10-02
 issues: [317]
 related: [200, 313, 314, 318, 382]
 ---
 
 # #317 Reference app A: text editor that opens and saves a real file
+
+Pull request: [#383](https://github.com/digitopvn/clarkcant/pull/383).
 
 ## Outcome
 

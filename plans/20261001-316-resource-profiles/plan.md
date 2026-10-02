@@ -1,12 +1,14 @@
 ---
 title: "#316 Resource profiles, service egress broker and browser token broker"
-status: in-review
+status: completed
 created: 2026-10-01
 issues: [316]
 related: [200, 221, 231, 313, 314, 315, 319, 320, 332]
 ---
 
 # #316 Resource profiles, service egress broker and browser token broker
+
+Pull request: [#381](https://github.com/digitopvn/clarkcant/pull/381).
 
 ## Outcome
 

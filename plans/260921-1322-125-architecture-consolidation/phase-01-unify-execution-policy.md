@@ -1,7 +1,7 @@
 ---
 phase: 1
 title: "Canonical execution policy cho command, widget, install và capability"
-status: pending
+status: done
 priority: P1
 effort: "2-3 ngày"
 dependencies: []

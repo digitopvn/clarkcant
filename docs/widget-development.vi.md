@@ -300,7 +300,7 @@ Luồng duy nhất là authorization code với PKCE, nên package không bao gi
 Mọi URL phải dùng HTTPS trừ khi là địa chỉ loopback. Probe phải nằm trên một endpoint đã khai báo. Một package khai báo
 nhiều nhất một connection, và một endpoint không thể đồng thời là origin của `egress`, nên mỗi origin chỉ có một
 credential. Capability nêu các scope nó cần trong `requiredScopes`; mỗi scope phải là scope mà connection có xin. Host
-kết nối tài khoản và ký request của service ra sao nằm ở §14.5.
+kết nối tài khoản và ký request của service ra sao nằm ở §14.6.
 
 `publisher` là tuỳ chọn trong manifest. `clark widget publish` thì bắt buộc phải có, vì một directory entry phải
 cho biết package đến từ ai. `dependencies` mặc định là `[]`.
@@ -1248,8 +1248,8 @@ tên ảnh theo cách con người đếm. Gallery hay carousel không nối dâ
 
 `canvas.video@1` lưu `status`, `position` và `duration` qua cùng binding của host (state version 2; state cũ
 version 1 được migrate thành paused tại 0). Các lần ghi vị trí đi qua một bộ gộp playback dùng chung
-([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), chính bộ mà widget audio đã lên kế
-hoạch (#324) sẽ dùng lại: pause, seek và kết thúc ghi ngay; trong khi phát liên tục thì tối đa mỗi
+([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), chính bộ mà trình phát âm thanh
+(§8.14) dùng lại: pause, seek và kết thúc ghi ngay; trong khi phát liên tục thì tối đa mỗi
 `MEDIA_PLAYBACK_WRITE_INTERVAL_MS` (ba giây) mới ghi một lần. Mỗi lần ghi là một view action có binding, nên nó cũng ghi
 một action invocation và trả về timeline của cuộc hội thoại; một đường chỉ-ghi-state nhẹ hơn sẽ cần route mới và không
 thuộc thay đổi này. Việc ghi khuếch đại đó, cùng thời gian giữ các bản ghi invocation, được theo dõi ở [#380](https://github.com/digitopvn/clarkcant/issues/380). Khi trang bị ẩn, player ghi vị trí hiện tại; khi rời trang hoặc player bị gỡ, nó tự ghi trạng thái
@@ -1447,6 +1447,58 @@ nhau giữa schema và runtime. Browser journey [map-view.spec.ts](../apps/web/e
 - các trường hợp bị từ chối;
 - cả hai theme, giảm chuyển động và 390 px;
 - bản xem trước trong Widget Library.
+
+### 8.14 Trình phát âm thanh và xem trước tài liệu
+
+`canvas.audio@1` phát một tệp âm thanh và `canvas.document@1` xem trước phần chữ của một tệp PDF hoặc tệp văn bản
+([#324](https://github.com/digitopvn/clarkcant/issues/324)). Cả hai là widget catalog do host vẽ, được model đặt bằng
+`show_view`. Không widget nào nhận thứ gì mà trang phải tự fetch: model nêu một nguồn, node đọc nguồn đó, kiểm tra theo
+chính sách nội dung media (§14.5) và chỉ lưu những gì đã kiểm tra.
+
+**Âm thanh.** Model nêu đúng một nguồn và một `title`, kèm `transcript` tuỳ chọn (tối đa 4.000 ký tự):
+
+- `artifactId` hoặc `attachmentId`: một tệp mà người dùng đang có trong cuộc hội thoại này, chẳng hạn một tệp WAV họ đã gửi
+  (loại tệp đính kèm `audio`) hoặc một tệp WAV mà service của package đã render (§14.4);
+- `url`: một URL `https` thuộc origin mà chính sách media của node cho phép. Node fetch, kiểm tra, rồi giữ tệp thành
+  một artifact đã niêm phong của cuộc hội thoại, cấp quyền cho player, trong cùng transaction đặt player. Về sau có thể
+  đặt lại artifact đó bằng id mà không phải fetch lần nữa.
+
+Node tự điền `audioRef` (`artifact:<id>` hoặc `attachment:<id>`, không bao giờ là URL), `mimeType`, `durationSeconds`,
+`sizeBytes` và, với tệp được fetch, `sourceOrigin`. Model nào tự đưa các trường này đều bị từ chối, nên player không bao
+giờ tuyên bố một kiểu hay một độ dài mà chưa ai kiểm tra. Trang phát tệp từ node qua cùng object URL có xác thực như ảnh,
+với điều khiển gốc của trình duyệt (dùng được bằng bàn phím) và `preload="metadata"`. Nó không bao giờ tự phát, kể cả
+lần vẽ đầu hay khi khôi phục. Bản ghi lời được vẽ thành chữ trong một khối mở/đóng, mọi ký tự ẩn hiện thành dấu đánh
+dấu. Trạng thái phát giống video: `status`, `position` và `duration` qua binding `media.view` (state version 2), ghi qua
+bộ gộp playback dùng chung và khôi phục ở trạng thái dừng tại vị trí đã lưu. Semantic document báo trạng thái, vị trí và
+thời lượng làm tròn tới một phần mười giây, tiêu đề và việc có bản ghi lời hay không; khi player chưa báo thời lượng,
+độ dài node đọc được từ tệp được dùng thay.
+
+**Tài liệu.** Model nêu đúng một nguồn, `artifactId` hoặc `attachmentId`, là một tệp PDF hoặc tệp văn bản
+(`text/plain`, `text/markdown`, `text/csv`, `text/tab-separated-values`, `application/json`) trong cuộc hội thoại này,
+kèm `title` tuỳ chọn. Node đọc phần chữ (chữ trong PDF được đọc bằng bộ đọc riêng của node, không thêm dependency),
+chia thành tối đa 10 trang, mỗi trang tối đa 2.000 ký tự, ngắt ở cuối dòng hoặc ở dấu cách gần cuối trang và không bao
+giờ cắt giữa một ký tự, và giữ tối đa 20.000 ký tự. Node lưu các trang, số trang của chính tệp PDF khi đọc được,
+`totalChars` và `truncated`. Bản xem trước chỉ có chữ: hình ảnh và bố cục không được hiển thị, và không gì trong tệp
+được phân tích như markup hay được chạy. Trang hiển thị từng trang trong một vùng cuộn mà bàn phím tới được. Có nút
+Trang trước và Trang sau, vị trí được thông báo nhẹ nhàng, và một dòng báo khi bản xem trước bị cắt cùng phần được hiển
+thị. Ký tự ẩn được vẽ thành dấu đánh dấu kèm cảnh báo. Trang người dùng đang xem là state (`{ "page" }`, đếm từ 0, state
+version 2; state cũ hơn được migrate về trang đầu), ghi qua `media.view` và được kiểm tra với các trang widget đang
+giữ. Semantic document đếm từ 1: `currentPage` trên `pageCount`, kèm `sourcePages` và `truncated`.
+
+Cả hai widget không có trong layout ghép: mỗi widget được đặt bằng `show_view` riêng, nơi node kiểm tra nguồn của nó.
+Thẻ trong Library dùng props mẫu không có tệp trên node; thẻ âm thanh nói rằng chưa phát được thay vì giả vờ, và lưới
+gallery không bao giờ gắn player.
+
+Test: [media-content.spec.ts](../packages/contracts/test/media-content.spec.ts) (các quy tắc URL của chính sách, chia
+trang, state của trang), [media-content.spec.ts](../apps/runtime/test/media-content.spec.ts) (đọc từng kiểu âm thanh
+và độ dài từ bytes, và lần fetch có giới hạn tới một origin https cục bộ thật),
+[media-views.spec.ts](../apps/runtime/test/media-views.spec.ts) (đặt widget, các lần từ chối, artifact được lưu, state
+và giới hạn semantic), [pdf-text.spec.ts](../apps/runtime/test/pdf-text.spec.ts) (số trang),
+[media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts) và browser journey
+[audio-document.spec.ts](../apps/web/e2e/audio-document.spec.ts). Journey fetch âm thanh từ một origin https cục bộ có
+trong chính sách và từ ArtifactRef đã lưu. Nó kiểm tra origin chỉ nghe thấy node và trang chỉ gọi tới origin của chính
+nó, phát rồi dừng bằng bàn phím, và tải lại về đúng vị trí đã dừng. Nó lật trang tài liệu bằng bàn phím và giữ trang
+qua lần tải lại, và kiểm tra cả hai theme, 390 px, giảm chuyển động và bản xem trước trong Library.
 
 ---
 
@@ -2009,7 +2061,7 @@ service mà không cần khởi động lại, và xóa key thì đăng xuất. 
 trường này nghĩa là package không tiếp cận gì. Thẻ thư mục trong cuộc trò chuyện, câu hỏi cài đặt trong hộp thư, và chi
 tiết package trong Settings → Extensions liệt kê từng origin kèm mục đích, từng key theo tên kèm mục đích (không bao giờ
 hiện giá trị), từng nhà cung cấp token trình duyệt kèm scope và mục đích, và từng kết nối tài khoản kèm nhà cung cấp,
-scope và endpoint (§14.5), trước khi cấp bất cứ thứ gì. Artifact có
+scope và endpoint (§14.6), trước khi cấp bất cứ thứ gì. Artifact có
 manifest khai báo phạm vi khác với mục trong thư mục bị từ chối với `409 DECLARED_REACH_MISMATCH` trước khi ghi lại bất cứ
 thứ gì, nên sự đồng ý bao gồm đúng những gì đã hiện. Thông báo cập nhật chưa liệt kê phạm vi này.
 
@@ -2158,7 +2210,38 @@ service thật: egress bị từ chối, Clark và giọng nói bị từ chối
 chừng, lần đọc quá dài, tệp đang được ghi, hạn mức đọc, node không có profile, tệp của cuộc trò chuyện khác, và lần chạy
 lại sau phê duyệt. Ứng dụng tham chiếu ở §24.4.
 
-### 14.5 Kết nối tài khoản
+### 14.5 Chính sách nội dung media
+
+Trình phát âm thanh có thể phát một tệp trên web, nhưng trang không bao giờ tự fetch tệp đó: node làm việc này, theo
+chính sách trong [media-content.ts](../packages/contracts/src/media-content.ts) và
+[media-fetch.ts](../apps/runtime/src/media-fetch.ts). Mỗi lần từ chối nêu quy tắc bị vi phạm, dưới dạng
+`(media policy rule: <rule>)` ở cuối thông điệp mà model đọc.
+
+| Quy tắc | Điều bị từ chối |
+| --- | --- |
+| `origin-not-allowed` | origin mà người vận hành không liệt kê trong `CC_MEDIA_ORIGINS`. Mặc định danh sách rỗng, nên node không fetch gì cho tới khi người vận hành nêu một origin |
+| `https-only` | mọi scheme khác `https`, trong URL hoặc trong một lần chuyển hướng |
+| `credentials-in-url` | tên người dùng hoặc mật khẩu trong URL hoặc trong một lần chuyển hướng |
+| `private-address` | một tên phân giải ra địa chỉ loopback, private hoặc link-local. Việc kiểm tra chạy trên chính địa chỉ được kết nối, nên một tên đổi câu trả lời cũng không lọt qua. Origin mà người vận hành viết bằng địa chỉ (`https://127.0.0.1:8443`) tự nêu địa chỉ đó và được phép |
+| `redirect-off-origin`, `too-many-redirects` | chuyển hướng sang origin khác, hoặc quá 3 lần |
+| `type-not-allowed` | kiểu được khai báo không phải `audio/mpeg`, `audio/ogg`, `audio/wav` hay `audio/webm` |
+| `type-mismatch` | bytes không đúng kiểu được khai báo, kiểm tra bằng cách nhận diện container, hoặc dữ liệu truyền bị nén |
+| `too-large` | quá 25 MiB, bị từ chối từ độ dài khai báo hoặc ngay khi phần thân vượt mức |
+| `too-long`, `duration-unknown` | dài quá một giờ, hoặc container không ghi độ dài (một giới hạn không kiểm tra được thì không phải giới hạn) |
+| `timeout`, `not-found`, `fetch-failed` | lần fetch quá 30 giây, tệp không tồn tại, hoặc không kết nối được |
+| `source` | không đúng một nguồn, hoặc id không do node cấp |
+
+Request không mang cookie, authorization hay referrer, và dùng một kết nối mới. Tệp vượt qua kiểm tra được tính vào
+dung lượng lưu trữ của người dùng. Cùng các kiểm tra kiểu, kích thước và độ dài cũng áp dụng cho tệp âm thanh người dùng
+đã có. `CC_MEDIA_ORIGINS` là danh sách các origin `https` trần, cách nhau bằng dấu phẩy, tối đa 32. Danh sách có một mục
+không hợp lệ bị bỏ qua toàn bộ, node không cho phép gì, và nói lý do một lần lúc khởi động. Page policy không đổi:
+`media-src 'self' blob:`.
+
+Bộ test trình duyệt chạy một origin https thật trên loopback với chứng chỉ được tạo lúc chạy và không bao giờ được commit
+([media-fixtures.ts](../apps/runtime/src/test-support/media-fixtures.ts)), được node mà bộ test khởi động tin qua
+`NODE_EXTRA_CA_CERTS`.
+
+### 14.6 Kết nối tài khoản
 
 Một service làm việc trên tài khoản của một người tại một nhà cung cấp, chẳng hạn danh sách công việc hay lịch của họ,
 khai báo một `connection` trên facet tools của nó (§4). Host làm mọi việc chạm tới credential của tài khoản
@@ -2276,7 +2359,7 @@ Templates:
   facet id và tên riêng của package mới, không kèm các kiểm thử của trình soạn thảo;
 - media-tool: bản sao của trình dựng âm thanh mẫu ([§24.4](#244-trình-dựng-âm-thanh)), gồm một widget và một
   service, mang id riêng của package mới, không kèm các kiểm thử của công cụ;
-- connected-app: bản sao của ứng dụng kết nối mẫu ([§14.5](#145-kết-nối-tài-khoản)) mang id và tên riêng của package
+- connected-app: bản sao của ứng dụng kết nối mẫu ([§14.6](#146-kết-nối-tài-khoản)) mang id và tên riêng của package
   mới: một widget, một service có các capability nêu scope chúng cần trên một connection đã khai báo, skills, fake
   connector mà nó được kiểm thử, và `dev/service.test.mjs` di động của service. Hãy thay nhà cung cấp, client id, scope
   và endpoint bằng của nhà cung cấp thật trước khi phát hành;

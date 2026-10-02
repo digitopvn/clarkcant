@@ -555,7 +555,8 @@ export function useSurfaceRenderer({
           ? [MAP_SELECT_OPERATION, MAP_VIEW_OPERATION]
         : definitionId === BOARD_ID
           ? [BOARD_MOVE_OPERATION, BOARD_APPROVAL_OPERATION, BOARD_RESOLVE_OPERATION, BOARD_ACKNOWLEDGE_OPERATION]
-          : definitionId === "canvas.carousel@1" || definitionId === "canvas.gallery@1" || definitionId === "canvas.video@1"
+          : definitionId === "canvas.carousel@1" || definitionId === "canvas.gallery@1" || definitionId === "canvas.video@1" ||
+              definitionId === "canvas.audio@1" || definitionId === "canvas.document@1"
             ? [MEDIA_VIEW_OPERATION]
             : viewOperation === undefined ? [] : [viewOperation];
       const viewRefusal = viewRefusals[instance.instanceId];

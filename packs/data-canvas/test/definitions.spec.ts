@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import { widgetDefinitionSchema } from "@clarkcant/contracts";
 
 import {
+  AUDIO,
   BAR_CHART,
   CALENDAR,
   CAROUSEL,
   CTA,
+  DOCUMENT,
   DONUT_CHART,
   FAMILY_BY_DEFINITION,
   FILTER,
@@ -74,6 +76,8 @@ describe("data canvas pack widget definitions", () => {
         GALLERY,
         YOUTUBE,
         VIDEO,
+        AUDIO,
+        DOCUMENT,
         CTA,
       ]),
     );

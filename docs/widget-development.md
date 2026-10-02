@@ -295,7 +295,7 @@ The only flow is authorization code with PKCE, so a package never carries a clie
 Every URL must be HTTPS unless it is a loopback address. The probe must be on a declared endpoint. A package declares at
 most one connection, and an endpoint cannot also be an `egress` origin, so each origin has one credential. A capability
 names the scopes it needs in `requiredScopes`; each must be a scope the connection asks for. How the host connects the
-account and signs the service's requests is §14.5.
+account and signs the service's requests is §14.6.
 
 `publisher` is optional in the manifest. `clark widget publish` requires it, because a directory entry has to say who
 a package comes from. `dependencies` defaults to `[]`.
@@ -1250,7 +1250,7 @@ composed surface keeps its choice on the page only.
 
 `canvas.video@1` stores `status`, `position` and `duration` through the same host binding (state version 2; an old
 version-1 state migrates to paused at 0). Position writes go through one shared playback coalescer
-([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), the one the planned audio widget (#324) is to reuse:
+([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), which the audio player (§8.14) reuses:
 pause, seek and end flush immediately, while continuous playback writes at most once per
 `MEDIA_PLAYBACK_WRITE_INTERVAL_MS` (three seconds). Each write is one bound view action, so it also records an action
 invocation and returns the conversation timeline; a lighter state-only path would need a new route and is not part of
@@ -1453,6 +1453,59 @@ fixtures and the agreement between schema and runtime. The browser journey
 - the refusals;
 - both themes, reduced motion and 390 px;
 - the Widget Library preview.
+
+### 8.14 Audio player and document preview
+
+`canvas.audio@1` plays one audio file and `canvas.document@1` previews the text of a PDF or text file
+([#324](https://github.com/digitopvn/clarkcant/issues/324)). Both are host-rendered catalog widgets that a model places
+with `show_view`. Neither takes anything the page would have to fetch: a model names a source, and the node reads it,
+checks it under the media content policy (§14.5) and stores only what it checked.
+
+**Audio.** A model names exactly one source and a `title`, with an optional `transcript` (at most 4,000 characters):
+
+- `artifactId` or `attachmentId`: a file the person holds in this conversation, such as a WAV they sent (the `audio`
+  attachment kind) or a WAV a package service rendered (§14.4);
+- `url`: an `https` URL on an origin the node's media policy allows. The node fetches it, checks it, and keeps it as a
+  sealed artifact of the conversation, granted to the player, in the same transaction that places the player. That
+  artifact can be placed again later by its id, without fetching again.
+
+The node fills in `audioRef` (`artifact:<id>` or `attachment:<id>`, never a URL), `mimeType`, `durationSeconds`,
+`sizeBytes` and, for a fetched file, `sourceOrigin`. A model that supplies any of these is refused, so a player never
+claims a type or a length nobody checked. The page plays the file from the node through the same authenticated object
+URL as a picture, with the browser's own controls (keyboard included) and `preload="metadata"`. It never plays by
+itself, on first draw or on restore. The transcript is drawn as text in a disclosure, with any hidden character shown
+as a marker. Playback state is the video's: `status`, `position` and `duration` through the `media.view` binding
+(state version 2), written through the shared playback coalescer and restored paused at the stored position. Its
+semantic document reports the status, the position and the duration in tenths of a second, the title and whether it
+has a transcript; until a player reports a duration, the length the node read from the file stands in.
+
+**Document.** A model names exactly one source, `artifactId` or `attachmentId`, a PDF or a text file (`text/plain`,
+`text/markdown`, `text/csv`, `text/tab-separated-values`, `application/json`) in this conversation, with an optional
+`title`. The node reads the text (a PDF's text through the node's own reader, without a dependency), splits it into at
+most 10 pages of at most 2,000 characters, breaking at a line end or a space near the end of a page and never inside a
+character, and keeps at most 20,000 characters. It stores the pages, the PDF's own page count when it can read one,
+`totalChars` and `truncated`. The preview is text only: pictures and layout are not shown, and nothing in the file is
+parsed as markup or run. The page shows a page at a time in a scroll region a keyboard can reach. It has Previous and
+Next buttons, the position is announced politely, and a notice says when the preview was cut short and how much of it
+is shown. Hidden characters are drawn as markers with a warning. The page a person is on is state
+(`{ "page" }`, counted from 0, state version 2; an older state migrates to the first page), written through
+`media.view` and checked against the pages the widget holds. The semantic document counts from 1: `currentPage` of
+`pageCount`, with `sourcePages` and `truncated`.
+
+Both widgets stay out of composed layouts: each is placed with its own `show_view`, where the node checks its source.
+Library cards use sample props with no file on the node; the audio card says it cannot be played rather than pretend,
+and the gallery grid never mounts a player.
+
+Tests: [media-content.spec.ts](../packages/contracts/test/media-content.spec.ts) (the policy's URL rules, pagination,
+the page state), [media-content.spec.ts](../apps/runtime/test/media-content.spec.ts) (reading each audio type and its
+length from its bytes, and the bounded fetch against a real local https origin),
+[media-views.spec.ts](../apps/runtime/test/media-views.spec.ts) (placement, refusals, stored artifacts, state and
+semantic bounds), [pdf-text.spec.ts](../apps/runtime/test/pdf-text.spec.ts) (the page count),
+[media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts) and the browser journey
+[audio-document.spec.ts](../apps/web/e2e/audio-document.spec.ts). The journey fetches audio from a local https origin
+named in the policy and from its stored ArtifactRef. It checks the origin heard only the node and the page asked only
+its own origins, plays and pauses from the keyboard, and reloads to the paused position. It pages a document from the
+keyboard and keeps the page over a reload, and covers both themes, 390 px, reduced motion and the Library previews.
 
 ---
 
@@ -2012,7 +2065,7 @@ secret, so store a separate one for the package.
 without it says the package reaches nothing. The directory card in the conversation, the install question in the inbox,
 and package details in Settings → Extensions list each origin with its purpose, each key by name with its purpose
 (never a value), each browser-token provider with its scopes and purpose, and each account connection with its
-provider, scopes and endpoints (§14.5), before anything is granted. An artifact
+provider, scopes and endpoints (§14.6), before anything is granted. An artifact
 whose manifest declares a different reach than its listing shows is refused with `409 DECLARED_REACH_MISMATCH` before
 anything is recorded, so consent covers what was shown. The update notice does not list the reach yet.
 
@@ -2160,7 +2213,37 @@ service process: the egress refusal, Clark and voice refused, a read after the c
 over-long read, a file still being written, the read budget, a node with no profile, another conversation's file, and
 the approval replay. The reference app is in §24.4.
 
-### 14.5 Connecting an account
+### 14.5 Media content policy
+
+The audio player can play a file from the web, but the page never fetches it: the node does, under a policy in
+[media-content.ts](../packages/contracts/src/media-content.ts) and [media-fetch.ts](../apps/runtime/src/media-fetch.ts).
+Each refusal names the rule it broke, as `(media policy rule: <rule>)` at the end of the message a model reads.
+
+| Rule | What is refused |
+| --- | --- |
+| `origin-not-allowed` | an origin the operator did not list in `CC_MEDIA_ORIGINS`. The list is empty by default, so a node fetches nothing until an operator names an origin |
+| `https-only` | any scheme but `https`, in the URL or in a redirect |
+| `credentials-in-url` | a user name or password in the URL or in a redirect |
+| `private-address` | a name that resolves to a loopback, private or link-local address. The check runs on the address actually dialled, so a name that changes its answer cannot slip past. An origin the operator wrote as an address (`https://127.0.0.1:8443`) names that address and is allowed |
+| `redirect-off-origin`, `too-many-redirects` | a redirect to another origin, or more than 3 |
+| `type-not-allowed` | a declared type that is not `audio/mpeg`, `audio/ogg`, `audio/wav` or `audio/webm` |
+| `type-mismatch` | bytes that are not the declared type, checked by sniffing the container, or a compressed transfer |
+| `too-large` | more than 25 MiB, refused from the declared length or as soon as the body crosses it |
+| `too-long`, `duration-unknown` | more than an hour, or a container that does not state its length (a bound that cannot be checked is not a bound) |
+| `timeout`, `not-found`, `fetch-failed` | a fetch that took longer than 30 s, a missing file, or one that could not be reached |
+| `source` | not exactly one source, or an id the node does not issue |
+
+The request carries no cookie, authorization or referrer, and uses a fresh connection. A file that passes is stored
+against the person's storage quota. The same checks of type, size and length apply to an audio file the person already
+holds. `CC_MEDIA_ORIGINS` is a comma-separated list of bare `https` origins, at most 32. A list with an entry that is
+not one is ignored as a whole, the node allows nothing, and it says why once at startup. The page policy is unchanged:
+`media-src 'self' blob:`.
+
+The browser suite runs a real https origin on loopback with a certificate it makes at run time and never commits
+([media-fixtures.ts](../apps/runtime/src/test-support/media-fixtures.ts)), trusted by the node it starts through
+`NODE_EXTRA_CA_CERTS`.
+
+### 14.6 Connecting an account
 
 A service that works on a person's account at a provider, such as their tasks or calendar, declares one `connection`
 on its tools facet (§4). The host does everything that touches the account's credential
@@ -2281,7 +2364,7 @@ Templates:
   package's own id, facet id and name, without the editor's tests;
 - media-tool: a copy of the reference media render tool ([§24.4](#244-media-render)), a widget and a service
   under the new package's own id, without the tool's tests;
-- connected-app: a copy of the reference connected app ([§14.5](#145-connecting-an-account)) under the new package's
+- connected-app: a copy of the reference connected app ([§14.6](#146-connecting-an-account)) under the new package's
   own ids and name: a widget, a service whose capabilities name the scopes they need on one declared connection,
   skills, the fake connector it is tested against, and the service's portable `dev/service.test.mjs`. Replace the
   provider, client id, scopes and endpoints with your provider's before publishing;

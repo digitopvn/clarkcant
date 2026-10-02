@@ -16,6 +16,7 @@
  */
 
 import {
+  type ActionBinding,
   type WidgetDefinition,
   CHOICE_KINDS,
   INPUT_KINDS,
@@ -143,6 +144,8 @@ import {
   CAROUSEL,
   GALLERY,
   VIDEO,
+  AUDIO,
+  DOCUMENT,
   WIDGETS as CATALOG_WIDGETS,
   primitivePropsProblems,
 } from "@clarkcant/data-canvas";
@@ -156,6 +159,7 @@ import {
 import { calendarViewBinding } from "./calendar-binding.ts";
 import { COMPOSITION_TEMPLATES, type ComposeDeps, type ComposeInput, composeMiniApp } from "./compose-mini-app.ts";
 import { composeLayout, layoutLeafWidgets } from "./compose-layout.ts";
+import { type MediaViewDeps, audioView, documentView } from "./media-views.ts";
 import { definitionDigest, validateProps } from "@clarkcant/widget-host";
 
 import type { ViewDescriptor } from "./model-turn.ts";
@@ -175,6 +179,7 @@ export function buildViewCatalog(
   deps: WidgetDeps,
   compose?: ComposeDeps,
   actions?: () => ActionBindingDeps,
+  media?: MediaViewDeps,
 ): ViewDescriptor[] {
   // The container is excluded: it is not a leaf a model may place, and registering it twice would
   // give the model a view name whose build knows nothing about the composition. The old call to action is
@@ -213,6 +218,8 @@ export function buildViewCatalog(
     CAROUSEL.id,
     GALLERY.id,
     VIDEO.id,
+    AUDIO.id,
+    DOCUMENT.id,
   ]);
   const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
@@ -268,6 +275,8 @@ export function buildViewCatalog(
     ...[CAROUSEL, GALLERY, VIDEO].map((definition) => mediaView(deps, definition)),
     boardView(deps, actions),
   );
+  // Only with somewhere to keep files: an audio player and a document preview are placed from bytes the node holds.
+  if (media !== undefined) simple.push(audioView(deps, media), documentView(deps, media));
   if (compose === undefined) return simple;
 
   const overview = OVERVIEW;
@@ -412,7 +421,7 @@ type ViewRequest = Parameters<ViewDescriptor["build"]>[0];
  * nothing left behind; the widget's own words are built by this node from props that already passed their schema, so
  * they are shortened, and say so, rather than refusing a widget the model placed correctly.
  */
-function keptText(definitionId: string, caption: string, fallback: string): string {
+export function keptText(definitionId: string, caption: string, fallback: string): string {
   if (caption.trim() === "") return clipWithMarker(fallback, SNAPSHOT_TEXT_LIMIT);
   if (caption.length > SNAPSHOT_TEXT_LIMIT) {
     throw new Error(
@@ -1118,35 +1127,43 @@ function mediaView(deps: WidgetDeps, definition: WidgetDefinition): ViewDescript
         messageId: request.messageId,
         textAlternative: keptText(definition.id, request.caption, definition.textFallback),
         presentationRef: `catalog:${definition.id}`,
-        bind: (instanceId) => {
-          const result = compileActionBinding({
-            bindingId: deps.newId("act"),
-            instance: {
-              instanceId,
-              ownerNodeId: deps.nodeId,
-              definitionRef: { id: definition.id, version: definition.version, packageDigest },
-              actionBindingRevision: 1,
-            },
-            packageGeneration: packageDigest,
-            label: "Media view state",
-            proposal: { kind: "view", operation: MEDIA_VIEW_OPERATION, args: {} },
-            inputSchema: { type: "object" },
-            allowedDataRefs: [],
-            fixedConstraints: {},
-            effectCategory: "read",
-            requiresApproval: false,
-            limits: {},
-            bindingDigest: `sha256:${MEDIA_VIEW_OPERATION}:${instanceId}`,
-            at: deps.now(),
-            knownCapabilities: new Set(),
-          });
-          if (!result.ok) throw new Error(result.message);
-          return [result.binding];
-        },
+        bind: (instanceId) => [mediaViewBinding(deps, definition, packageDigest, instanceId)],
       });
       return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
     },
   };
+}
+
+/** The one view binding every media widget holds: its bounded view state (`media.view`), written by the host. */
+export function mediaViewBinding(
+  deps: WidgetDeps,
+  definition: WidgetDefinition,
+  packageDigest: string,
+  instanceId: string,
+): ActionBinding {
+  const result = compileActionBinding({
+    bindingId: deps.newId("act"),
+    instance: {
+      instanceId,
+      ownerNodeId: deps.nodeId,
+      definitionRef: { id: definition.id, version: definition.version, packageDigest },
+      actionBindingRevision: 1,
+    },
+    packageGeneration: packageDigest,
+    label: "Media view state",
+    proposal: { kind: "view", operation: MEDIA_VIEW_OPERATION, args: {} },
+    inputSchema: { type: "object" },
+    allowedDataRefs: [],
+    fixedConstraints: {},
+    effectCategory: "read",
+    requiresApproval: false,
+    limits: {},
+    bindingDigest: `sha256:${MEDIA_VIEW_OPERATION}:${instanceId}`,
+    at: deps.now(),
+    knownCapabilities: new Set(),
+  });
+  if (!result.ok) throw new Error(result.message);
+  return result.binding;
 }
 
 function boardView(deps: WidgetDeps, bindingDeps: (() => ActionBindingDeps) | undefined): ViewDescriptor {

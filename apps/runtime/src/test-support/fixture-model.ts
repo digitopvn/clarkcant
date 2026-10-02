@@ -34,6 +34,7 @@ import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
 import {
   getNotification,
   listArtifactsForConversation,
+  listAttachmentsForConversation,
   listLocalImages,
   upsertArtifact,
   upsertDataset,
@@ -61,6 +62,7 @@ import { type ModelTurn, createModelTurn } from "../model-turn.ts";
 import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
 import { createAutomationTools } from "../automation-tools.ts";
 import { controlApp, createNodeTools, createRememberTool, createSearchDirectoryTool, type CommandToolDeps } from "../node-tools.ts";
+import { mediaPolicyFromEnv } from "../media-views.ts";
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps, indexDirectoryPath } from "../project-finder.ts";
 import { createInvokeCapabilityTool } from "../invoke-capability-tool.ts";
@@ -805,6 +807,64 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         conversationId: input.conversationId,
       });
       return { text: "Fixture: thẻ tệp của widget (không phải model thật).", block };
+    }
+
+    /*
+     * The audio player and the document preview, placed through the views `show_view` uses, under the media policy the
+     * node was started with (`CC_MEDIA_ORIGINS`). "âm thanh từ nguồn mẫu" fetches the tone the browser journey's local
+     * https origin serves; "âm thanh đã lưu" places the artifact that fetch stored, by its id, without fetching again;
+     * "âm thanh chuyển hướng ra ngoài" and "âm thanh nguồn lạ" are refused with the rule each breaks. "xem trước tài liệu"
+     * previews the newest file attached in this conversation. A refusal is the host's own sentence.
+     */
+    const mediaPrompt = /^(?:đặt|place)\s+(âm thanh từ nguồn mẫu|âm thanh đã lưu|âm thanh chuyển hướng ra ngoài|âm thanh nguồn lạ|xem trước tài liệu)$/iu.exec(
+      input.text.trim(),
+    );
+    if (mediaPrompt !== null) {
+      const services = deps.services();
+      const which = (mediaPrompt[1] ?? "").toLowerCase();
+      const policy = mediaPolicyFromEnv(process.env, () => undefined);
+      const origin = policy.origins[0] ?? "https://127.0.0.1:1";
+      const catalog = buildViewCatalog(services.conductor, undefined, undefined, { dataDir: deps.dataDir, policy: () => policy });
+      const reply = (text: string) => ({ text, block: { type: "text" as const, format: "plain" as const, content: text, streaming: false } });
+      let definitionId = "canvas.audio@1";
+      let props: Record<string, unknown>;
+      if (which === "xem trước tài liệu") {
+        definitionId = "canvas.document@1";
+        const attachment = listAttachmentsForConversation(services.runtime.db, input.conversationId)
+          .filter((candidate) => candidate.principalId === input.principal.principalId)
+          .at(-1);
+        if (attachment === undefined) return reply("Fixture: cuộc trò chuyện này chưa có tệp đính kèm nào.");
+        props = { attachmentId: attachment.attachmentId, title: "Xem trước tài liệu" };
+      } else if (which === "âm thanh đã lưu") {
+        const stored = listArtifactsForConversation(services.runtime.db, input.conversationId)
+          .filter((candidate) => candidate.state === "sealed" && candidate.ownerPrincipalId === input.principal.principalId && candidate.mimeType.startsWith("audio/"))
+          .at(-1);
+        if (stored === undefined) return reply("Fixture: cuộc trò chuyện này chưa có tệp âm thanh nào.");
+        props = { title: "Bản tin đã lưu", artifactId: stored.artifactId };
+      } else {
+        const path = which === "âm thanh chuyển hướng ra ngoài" ? "/away" : "/tone.wav";
+        const url = which === "âm thanh nguồn lạ" ? "https://media.invalid/tone.wav" : `${origin}${path}`;
+        props = {
+          title: "Bản tin buổi sáng",
+          url,
+          transcript: `Chào buổi sáng.${String.fromCodePoint(0x202e)} Đây là âm thanh thử từ nguồn mẫu.\nKhông có gì phát tự động.`,
+        };
+      }
+      const view = catalog.find((entry) => entry.id === definitionId);
+      if (view === undefined) return undefined;
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt ${which} (không phải model thật).`, block };
+      } catch (cause) {
+        return reply(`Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`);
+      }
     }
 
     const viewer = /^(?:đặt|place)\s+(khối mã|khối mã ẩn|bản diff|bản diff sai|bản diff ẩn|bản diff xuống dòng|thẻ tệp)$/iu.exec(

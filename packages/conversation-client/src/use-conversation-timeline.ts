@@ -212,6 +212,7 @@ export function useConversationTimeline(
       collect(props.imageRefs);
       collect(props.videoRef);
       collect(props.posterRef);
+      collect(props.audioRef);
     }
     for (const entry of composedSnapshots) {
       for (const ref of composedImageRefs(snapshots[entry.snapshotId]?.sections ?? [])) refs.add(ref);

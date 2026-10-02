@@ -2,7 +2,7 @@ import { deflateSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { extractPdfText } from "../src/pdf-text.ts";
+import { countPdfPages, extractPdfText } from "../src/pdf-text.ts";
 
 /**
  * The text a PDF holds, without a dependency.
@@ -87,5 +87,18 @@ describe("reading the text out of a PDF", () => {
     expect(result.ok).toBe(true);
     expect(result.ok === true && result.text).toContain("that su la noi dung");
     expect(result.ok === true && result.text).not.toContain("khong phai noi dung");
+  });
+});
+
+describe("counting a PDF's pages", () => {
+  it("counts page objects and not the page tree that holds them", () => {
+    expect(countPdfPages(pdfWith("BT (mot) Tj ET"))).toBe(1);
+    const two = Buffer.from(pdfWith("BT (mot) Tj ET")).toString("latin1").replace("%%EOF", "5 0 obj << /Type/Page /Parent 2 0 R >> endobj\n%%EOF");
+    expect(countPdfPages(new Uint8Array(Buffer.from(two, "latin1")))).toBe(2);
+  });
+
+  it("says it does not know rather than guessing, for a file that is not a PDF or shows no page objects", () => {
+    expect(countPdfPages(new Uint8Array(Buffer.from("/Type /Page", "latin1")))).toBeUndefined();
+    expect(countPdfPages(new Uint8Array(Buffer.from("%PDF-1.7\n1 0 obj << /Type /ObjStm >> endobj", "latin1")))).toBeUndefined();
   });
 });

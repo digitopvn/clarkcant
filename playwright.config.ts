@@ -1,6 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 import { join } from "node:path";
 
+import { ensureLocalTls } from "./apps/runtime/src/test-support/media-fixtures.ts";
+
 /**
  * End-to-end configuration.
  *
@@ -31,6 +33,14 @@ const WEB_PORT = Number(process.env.CC_E2E_WEB_PORT ?? 4273);
  */
 const NPM_REGISTRY_PORT = Number(process.env.CC_E2E_NPM_REGISTRY_PORT ?? 8878);
 /**
+ * The audio journey's https origin (`apps/web/e2e/audio-document.spec.ts` serves it on loopback). The node is started
+ * with this origin in its media policy and with the origin's certificate trusted, so the fetch it makes is the real one:
+ * TLS, the policy check and the bounded read. The certificate is made here, before any server starts, because a node
+ * reads `NODE_EXTRA_CA_CERTS` only when it starts; it is kept outside the wiped data directory and never committed.
+ */
+const MEDIA_PORT = Number(process.env.CC_E2E_MEDIA_PORT ?? 8884);
+const MEDIA_TLS = ensureLocalTls(join(process.cwd(), ".data", "e2e-media-tls"));
+/**
  * `--no-env-file` keeps a developer's local `.env` out of the node this suite starts, so a provider key in that file
  * cannot make the node report a credential CI's node does not have. Left off for a live-provider run, which is the one
  * case that wants a real key and may keep it in `.env`.
@@ -41,6 +51,9 @@ const NODE_ENV_FILE_FLAG = process.env.CC_LIVE_PROVIDER_TEST === "1" ? "" : " --
 // default the client would otherwise assume.
 process.env.CC_E2E_NODE_PORT = String(NODE_PORT);
 process.env.CC_E2E_WEB_PORT = String(WEB_PORT);
+process.env.CC_E2E_MEDIA_PORT = String(MEDIA_PORT);
+process.env.CC_E2E_MEDIA_CERT = MEDIA_TLS.certPath;
+process.env.CC_E2E_MEDIA_KEY = MEDIA_TLS.keyPath;
 
 export default defineConfig({
   testDir: "./apps/web/e2e",
@@ -172,6 +185,12 @@ export default defineConfig({
          * outcome depends on the network.
          */
         CC_NPM_REGISTRY_URL: `http://127.0.0.1:${NPM_REGISTRY_PORT}`,
+        /*
+         * The one origin the audio journey may fetch from, and its certificate. The origin is written as an address, so
+         * the media policy's private-address rule lets the node reach it; a name that resolved to loopback would be refused.
+         */
+        CC_MEDIA_ORIGINS: `https://127.0.0.1:${MEDIA_PORT}`,
+        NODE_EXTRA_CA_CERTS: MEDIA_TLS.certPath,
       },
       url: `http://127.0.0.1:${NODE_PORT}/health`,
       reuseExistingServer: false,

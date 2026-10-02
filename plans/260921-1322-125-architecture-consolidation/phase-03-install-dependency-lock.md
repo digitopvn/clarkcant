@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: "Khoá dependency closure trước khi build install"
-status: pending
+status: done
 priority: P1
 effort: "1.5-2 ngày"
 dependencies: []
