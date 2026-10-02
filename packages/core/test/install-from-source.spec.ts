@@ -1,10 +1,14 @@
-import { instantSchema, type DirectoryEntry } from "@clarkcant/contracts";
-import { migrate, openDatabase } from "@clarkcant/storage";
+import { instantSchema, type DirectoryEntry, type WidgetDefinition } from "@clarkcant/contracts";
+import { MIGRATIONS, migrate, openDatabase } from "@clarkcant/storage";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { installFromSource, type InstallFromSourceInput } from "../src/install-from-source.ts";
 import { activeGeneration, getPlan } from "../src/install-lifecycle.ts";
 import { listInstalledPackages } from "../src/installed-packages.ts";
+import { listRestorablePackages, restorePackage, uninstallPackage } from "../src/package-lifecycle.ts";
+import { createInstance } from "../src/widget-service.ts";
+import { readInstanceState } from "../src/widget-lifecycle.ts";
+import { applyWidgetStatePatch } from "../src/widget-state.ts";
 
 /**
  * Installing from a source.
@@ -154,6 +158,152 @@ describe("a successful install", () => {
   });
 });
 
+describe("installing again after the package stopped running", () => {
+  it("installs a fresh generation after an uninstall, rather than joining the plan whose generation was retired", () => {
+    const first = installFromSource(deps, input());
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(uninstallPackage(deps, { packageId: "com.example.calendar", widgetIds: [] })).toMatchObject({ ok: true });
+
+    const again = installFromSource(deps, input({ codeGeneration: "codegen_2" }));
+
+    expect(again).toMatchObject({ ok: true, state: "active", joinedExisting: false });
+    if (!again.ok) return;
+    expect(again.planId).not.toBe(first.planId);
+    expect(activeGeneration(deps, "com.example.calendar", "node_a")?.generationId).toBe(again.generationId);
+    expect(listInstalledPackages(deps).map((entry) => entry.packageId)).toEqual(["com.example.calendar"]);
+    // The first plan stays as the record of what was installed then, and no longer stands for what is running.
+    expect(getPlan(deps, first.planId)?.state).toBe("retired");
+    expect(getPlan(deps, again.planId)?.state).toBe("active");
+  });
+
+  it("installs a version again after another version replaced it", () => {
+    const v1 = installFromSource(deps, input());
+    expect(v1.ok).toBe(true);
+    const v2Entry: DirectoryEntry = { ...NPM_ENTRY, version: "1.3.0", source: { kind: "npm", name: "com.example.calendar", version: "1.3.0" } };
+    const v2 = installFromSource(
+      deps,
+      input({ source: v2Entry.source, directory: [v2Entry], requirementKey: "cap:project.code.change@1.3", codeGeneration: "codegen_2" }),
+    );
+    expect(v2).toMatchObject({ ok: true, joinedExisting: false });
+
+    const back = installFromSource(deps, input({ codeGeneration: "codegen_3" }));
+
+    expect(back).toMatchObject({ ok: true, joinedExisting: false });
+    expect(activeGeneration(deps, "com.example.calendar", "node_a")?.version).toBe("1.2.0");
+  });
+
+  it("installs fresh on a database upgraded from schema 41 that still holds the active plan of an uninstalled package", () => {
+    // What a node holds that installed and uninstalled a package before the retired state existed.
+    const base = makeDeps();
+    base.db.close();
+    const legacy = { ...base, db: openDatabase({ path: ":memory:" }) };
+    migrate(legacy.db, MIGRATIONS.slice(0, 41));
+    const first = installFromSource(legacy, input());
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(uninstallPackage(legacy, { packageId: "com.example.calendar", widgetIds: [] })).toMatchObject({ ok: true });
+    expect(getPlan(legacy, first.planId)?.state).toBe("active");
+
+    expect(migrate(legacy.db).applied).toEqual([42]);
+    const again = installFromSource(legacy, input({ codeGeneration: "codegen_2" }));
+
+    expect(again).toMatchObject({ ok: true, state: "active", joinedExisting: false });
+    if (!again.ok) return;
+    expect(again.planId).not.toBe(first.planId);
+    expect(getPlan(legacy, first.planId)?.state).toBe("retired");
+    expect(activeGeneration(legacy, "com.example.calendar", "node_a")?.generationId).toBe(again.generationId);
+    legacy.db.close();
+  });
+  it("still joins the plan while the generation it activated is the one running", () => {
+    const first = installFromSource(deps, input());
+    expect(uninstallPackage(deps, { packageId: "com.example.calendar", widgetIds: [] })).toMatchObject({ ok: true });
+    const again = installFromSource(deps, input({ codeGeneration: "codegen_2" }));
+    const third = installFromSource(deps, input({ codeGeneration: "codegen_3" }));
+
+    expect(first.ok && again.ok && third.ok).toBe(true);
+    if (!again.ok || !third.ok) return;
+    expect(third).toMatchObject({ joinedExisting: true, planId: again.planId });
+    expect(activeGeneration(deps, "com.example.calendar", "node_a")?.generationId).toBe(again.generationId);
+  });
+});
+
+describe("installing again brings back the widgets the uninstall took offline", () => {
+  const WIDGET = "com.example.calendar.agenda@1";
+  const DEF: WidgetDefinition = {
+    id: WIDGET,
+    version: "1.2.0",
+    renderer: "isolated-app",
+    propsSchema: { type: "object", additionalProperties: true },
+    eventSchemas: {},
+    stateSchema: { type: "object" },
+    stateVersion: 1,
+    sizing: { compact: true, expanded: true },
+    textFallback: "An agenda.",
+    effectCategories: [],
+    datasetRefs: [],
+    semanticDescription: "An agenda",
+    requestedCapabilities: [],
+  };
+  const lifecycleOf = (instanceId: string): string =>
+    (deps.db.prepare("SELECT lifecycle FROM widget_instances WHERE instance_id = ?").get(instanceId) as { lifecycle: string }).lifecycle;
+  const write = (instanceId: string, expectedRevision: number, patch: Record<string, unknown>) =>
+    applyWidgetStatePatch(deps, { instanceId, principalId: "prin_owner", definition: DEF, expectedRevision, patch });
+
+  /** Installs, writes the widget's state, then uninstalls: the instance is offline and refuses writes. */
+  function uninstalledWithState(): string {
+    expect(installFromSource(deps, input({ widgetIds: [WIDGET] }))).toMatchObject({ ok: true });
+    const { instanceId } = createInstance(deps, { definition: DEF, packageDigest: DIGEST, ownerPrincipalId: "prin_owner" as never, props: {} });
+    expect(write(instanceId, 0, { items: ["dentist"] })).toMatchObject({ ok: true, stateRevision: 1 });
+    expect(uninstallPackage(deps, { packageId: "com.example.calendar", widgetIds: [WIDGET] })).toMatchObject({ instancesOffline: 1 });
+    expect(write(instanceId, 1, { items: [] })).toMatchObject({ ok: false, code: "INSTANCE_OFFLINE" });
+    return instanceId;
+  }
+
+  it("brings the instance back writable with the state from before the uninstall, and settles what Restore offered", () => {
+    const instanceId = uninstalledWithState();
+    const before = lifecycleOf(instanceId);
+    expect(before).toBe("offline");
+    expect(listRestorablePackages(deps)).toHaveLength(1);
+
+    expect(installFromSource(deps, input({ widgetIds: [WIDGET], codeGeneration: "codegen_2" }))).toMatchObject({ ok: true, joinedExisting: false });
+
+    expect(lifecycleOf(instanceId)).not.toBe("offline");
+    expect(readInstanceState(deps, instanceId)?.body).toEqual({ items: ["dentist"] });
+    expect(write(instanceId, 1, { items: ["dentist", "gym"] })).toMatchObject({ ok: true, stateRevision: 2 });
+    // The uninstall's record is settled: nothing is left for Restore, which refuses because the package is installed.
+    expect(deps.db.prepare("SELECT COUNT(*) AS n FROM package_uninstall_lifecycles").get()).toEqual({ n: 0 });
+    expect(listRestorablePackages(deps)).toEqual([]);
+    expect(restorePackage(deps, { packageId: "com.example.calendar", widgetIds: [WIDGET], available: () => true })).toMatchObject({
+      ok: false,
+      code: "ALREADY_INSTALLED",
+    });
+  });
+
+  it("does the same when the version installed after the uninstall is a different one", () => {
+    const instanceId = uninstalledWithState();
+    const next: DirectoryEntry = { ...NPM_ENTRY, version: "1.3.0", source: { kind: "npm", name: "com.example.calendar", version: "1.3.0" } };
+
+    // The newer version is installed without naming the widget ids: the ones generation 1.2.0 recorded still answer.
+    const outcome = installFromSource(deps, input({ source: next.source, directory: [next], codeGeneration: "codegen_2" }));
+
+    expect(outcome).toMatchObject({ ok: true });
+    expect(activeGeneration(deps, "com.example.calendar", "node_a")?.version).toBe("1.3.0");
+    expect(lifecycleOf(instanceId)).not.toBe("offline");
+    expect(write(instanceId, 1, { items: ["dentist", "gym"] })).toMatchObject({ ok: true });
+  });
+
+  it("leaves alone an instance that was offline for another reason", () => {
+    expect(installFromSource(deps, input({ widgetIds: [WIDGET] }))).toMatchObject({ ok: true });
+    const { instanceId } = createInstance(deps, { definition: DEF, packageDigest: DIGEST, ownerPrincipalId: "prin_owner" as never, props: {} });
+    deps.db.prepare("UPDATE widget_instances SET lifecycle = 'offline' WHERE instance_id = ?").run(instanceId);
+    uninstallPackage(deps, { packageId: "com.example.calendar", widgetIds: [WIDGET] });
+
+    installFromSource(deps, input({ widgetIds: [WIDGET], codeGeneration: "codegen_2" }));
+
+    expect(lifecycleOf(instanceId)).toBe("offline");
+  });
+});
 describe("a failed healthcheck", () => {
   it("reports what actually happened, and never claims a rollback it did not perform", () => {
     // A first install, so there is no previous generation to go back to.

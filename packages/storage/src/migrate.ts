@@ -1673,6 +1673,24 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    /*
+     * A finished install plan whose generation no longer runs — uninstalled, or replaced by another version — is
+     * `retired`, and leaves the one-live-plan-per-requirement index like the other ended states. Without that, installing
+     * the same version again joined the old plan and activated nothing.
+     */
+    version: 42,
+    name: "retired_install_plans",
+    reversible: true,
+    up(db) {
+      db.exec(`
+        DROP INDEX idx_install_plans_active_requirement;
+        CREATE UNIQUE INDEX idx_install_plans_active_requirement
+          ON install_plans(requirement_key, target_node_id)
+          WHERE state NOT IN ('declined','failed','cancelled','retired');
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

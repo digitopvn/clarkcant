@@ -221,6 +221,42 @@ describe("uninstalling and restoring a package", () => {
     expect(refused.body).toMatchObject({ code: "ALREADY_INSTALLED" });
   });
 
+  it("installs the package again after an uninstall, as a first install does", async () => {
+    const install = () => send("POST", "/packages/install", { packageId: PACKAGE, version: "2.0.0", localDigest: "sha256:board-2.0.0" });
+    const first = await install();
+    expect(first.status).toBe(200);
+    expect((await change("uninstall")).status).toBe(200);
+
+    const again = await install();
+
+    expect(again.status).toBe(200);
+    const generationId = (again.body as { generationId: string }).generationId;
+    expect(generationId).not.toBe("");
+    expect(generationId).not.toBe((first.body as { generationId: string }).generationId);
+    expect(activeGeneration(services.conductor, PACKAGE, services.runtime.identity.nodeId)?.generationId).toBe(generationId);
+    expect((await send("GET", "/packages")).body).toMatchObject({ packages: [{ packageId: PACKAGE, version: "2.0.0" }], restorable: [] });
+  });
+
+  it("brings the package's widget back writable, with its state, when it is installed again after an uninstall", async () => {
+    const install = () => send("POST", "/packages/install", { packageId: PACKAGE, version: "2.0.0", localDigest: "sha256:board-2.0.0" });
+    const save = (instanceId: string, body: unknown) => send("POST", `/conversations/conv_1/widgets/${instanceId}/state`, body);
+    expect((await install()).status).toBe(200);
+    const instanceId = makeInstance();
+    expect((await save(instanceId, { expectedRevision: 0, patch: { items: ["kept"] } })).status).toBe(200);
+    expect((await change("uninstall")).body).toMatchObject({ instancesOffline: 1 });
+    expect((await save(instanceId, { expectedRevision: 1, patch: { items: [] } })).body).toMatchObject({ code: "INSTANCE_OFFLINE" });
+
+    expect((await install()).status).toBe(200);
+
+    expect((await live(instanceId)).body).toMatchObject({ readOnly: false, state: { items: ["kept"] }, stateStatus: { kind: "writable" } });
+    const written = await save(instanceId, { expectedRevision: 1, patch: { items: ["kept", "new"] } });
+    expect(written.status).toBe(200);
+    expect(written.body).toMatchObject({ stateRevision: 2 });
+    // Nothing is left to restore, so Restore is not offered and refuses as it does for any installed package.
+    expect((await send("GET", "/packages")).body).toMatchObject({ restorable: [] });
+    expect((await change("restore")).body).toMatchObject({ code: "ALREADY_INSTALLED" });
+  });
+
   it("refuses to restore bytes the directory no longer lists with the same digest", async () => {
     recordInstall("2.0.0", "sha256:something-else");
     await change("uninstall");

@@ -13,6 +13,8 @@ import {
 
 import { type Database, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
+import { bringBackUninstalledWidgets } from "./package-lifecycle.ts";
+
 /**
  * Install supervisor.
  *
@@ -78,15 +80,25 @@ export type JoinPlanResult =
  */
 export function joinOrCreatePlan(deps: InstallDeps, plan: InstallPlan): JoinPlanResult {
   return transaction(deps.db, () => {
-    const existing = oneRow<{ plan_id: string; state: string }>(
+    const existing = oneRow<{ plan_id: string; state: string; candidate: string }>(
       deps.db,
-      `SELECT plan_id, state FROM install_plans
+      `SELECT plan_id, state, candidate FROM install_plans
         WHERE requirement_key = ? AND target_node_id = ?
-          AND state NOT IN ('declined','failed','cancelled')
+          AND state NOT IN ('declined','failed','cancelled','retired')
         LIMIT 1`,
       plan.requirementKey,
       plan.targetNodeId,
     );
+    /*
+     * A finished plan stands for its generation only while that generation runs. Once it was uninstalled or another
+     * version replaced it, joining the plan would answer "installed" and activate nothing, so the plan is retired — kept
+     * as the record of that install — and this request plans a fresh one.
+     */
+    if (existing && isFinished(existing.state) && !generationRuns(deps, existing.candidate, plan.targetNodeId)) {
+      deps.db.prepare("UPDATE install_plans SET state = 'retired' WHERE plan_id = ?").run(existing.plan_id);
+      savePlan(deps, plan);
+      return { status: "created" as const, planId: plan.planId };
+    }
     if (existing) {
       return {
         status: "joined-existing" as const,
@@ -97,6 +109,23 @@ export function joinOrCreatePlan(deps: InstallDeps, plan: InstallPlan): JoinPlan
     savePlan(deps, plan);
     return { status: "created" as const, planId: plan.planId };
   });
+}
+
+/** A plan that reached its end and activated a generation: everything after `active` that is not a rollback. */
+function isFinished(state: string): boolean {
+  return state === "active" || state === "continuation_ready";
+}
+
+/** Whether the generation a plan's candidate names is the one active for its package on this node. */
+function generationRuns(deps: InstallDeps, candidateJson: string, nodeId: string): boolean {
+  const candidate = parseJson<InstallPlan["candidate"]>(candidateJson, "install_plans.candidate");
+  const running = oneRow<{ version: string; digest: string }>(
+    deps.db,
+    "SELECT version, digest FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
+    candidate.id,
+    nodeId,
+  );
+  return running !== undefined && running.version === candidate.version && running.digest === candidate.digest;
 }
 
 export function getPlan(deps: InstallDeps, planId: string): InstallRecord | undefined {
@@ -247,6 +276,14 @@ export function activateGeneration(
           }),
     });
 
+    const wasActive =
+      oneRow<{ one: number }>(
+        deps.db,
+        "SELECT 1 AS one FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
+        generation.packageId,
+        generation.nodeId,
+      ) !== undefined;
+
     // Supersede the previous generation for this package on this node. Keeping the
     // row (rather than deleting it) is what makes rollback possible.
     deps.db
@@ -273,6 +310,13 @@ export function activateGeneration(
       );
 
     deps.db.prepare("UPDATE install_plans SET state = 'active' WHERE plan_id = ?").run(input.planId);
+
+    // Installing a package that was uninstalled here brings its widgets back, as Restore would: an instance an
+    // uninstall took offline is not left saying the package is not installed once it is. Widget instances belong to
+    // this node, so only an install on this node touches them.
+    if (!wasActive && generation.nodeId === deps.nodeId) {
+      bringBackUninstalledWidgets(deps, generation.packageId, input.widgetIds ?? []);
+    }
 
     const refreshScope = requiredRefreshScope({
       facetKinds: input.currentPlan.isolationPlan.map((entry) => entry.facetKind),

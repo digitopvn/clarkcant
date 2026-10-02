@@ -50,33 +50,25 @@ function headers(): Record<string, string> {
   return { authorization: `Bearer ${identity().token}` };
 }
 
-/** Whether this node has the package installed, uninstalled but restorable, or neither. */
-async function packageState(request: APIRequestContext): Promise<"installed" | "restorable" | "absent"> {
-  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers: headers() })).json()) as {
-    packages: { packageId: string }[];
-    restorable?: { packageId: string }[];
-  };
-  if (listed.packages.some((entry) => entry.packageId === PACKAGE)) return "installed";
-  return listed.restorable?.some((entry) => entry.packageId === PACKAGE) === true ? "restorable" : "absent";
+/** Whether this node has the package installed. */
+async function isInstalled(request: APIRequestContext): Promise<boolean> {
+  const listed = (await (await request.get(`${GATEWAY}/packages`, { headers: headers() })).json()) as { packages: { packageId: string }[] };
+  return listed.packages.some((entry) => entry.packageId === PACKAGE);
 }
 
-/** Uninstall or restore the package; an uninstall forgets its account too. */
-async function change(request: APIRequestContext, action: "uninstall" | "restore"): Promise<void> {
-  const answer = await request.post(`${GATEWAY}/packages/${encodeURIComponent(PACKAGE)}/${action}`, { headers: headers() });
-  expect(answer.ok(), `${action} answered ${String(answer.status())}: ${await answer.text()}`).toBe(true);
+/** Uninstall the package, which forgets its account too. */
+async function uninstall(request: APIRequestContext): Promise<void> {
+  const answer = await request.post(`${GATEWAY}/packages/${encodeURIComponent(PACKAGE)}/uninstall`, { headers: headers() });
+  expect(answer.ok(), `uninstall answered ${String(answer.status())}: ${await answer.text()}`).toBe(true);
 }
 
 /**
- * The package installed with no account connected. A package this node uninstalled is restored rather than installed
- * again, and one an earlier attempt left installed — perhaps connected — is uninstalled first, which forgets its account.
+ * The package installed with no account connected, through the marketplace's install. One an earlier attempt left
+ * installed — perhaps connected — is uninstalled first, which forgets its account; installing again after that is a
+ * fresh install like the first.
  */
 async function freshInstall(request: APIRequestContext): Promise<void> {
-  const state = await packageState(request);
-  if (state === "installed") await change(request, "uninstall");
-  if (state !== "absent") {
-    await change(request, "restore");
-    return;
-  }
+  if (await isInstalled(request)) await uninstall(request);
   const answer = await request.post(`${GATEWAY}/packages/install`, {
     headers: headers(),
     data: { packageId: PACKAGE, version: "1.0.0", localDigest: "sha256:connected-app-reference-digest" },
@@ -209,7 +201,7 @@ test.beforeAll(async ({ request }) => {
  */
 test.afterAll(async ({ request }) => {
   await setPolicy(request, "autonomous");
-  if ((await packageState(request)) === "installed") await change(request, "uninstall");
+  if (await isInstalled(request)) await uninstall(request);
   await connector.close();
 });
 

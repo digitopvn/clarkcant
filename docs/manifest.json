@@ -90,13 +90,13 @@
     },
     {
       "path": "integration-onboarding.md",
-      "bytes": 21321,
-      "sha256": "4048e4658fe27834d26e537462ad4afda062da859878912f08d61a2761c32a1f"
+      "bytes": 21666,
+      "sha256": "9d6254a44683089d5ee46b0bb434a8f83b028614143e57cdd3fe09e0617918ee"
     },
     {
       "path": "integration-onboarding.vi.md",
-      "bytes": 21237,
-      "sha256": "2cfdd7c7aa46c7d41756ce6c4bda2d608e92a65caa8232ff9365bf9c06aaa06a"
+      "bytes": 21646,
+      "sha256": "2ccd471c506a6e78028f7383569f745fbb17c7e008c037e19b8de42b14c4decc"
     },
     {
       "path": "platform-smoke.md",
@@ -140,13 +140,13 @@
     },
     {
       "path": "widget-development.md",
-      "bytes": 239292,
-      "sha256": "ab4a1861a060f43c137c90a03327ed5fc7f0f899e0312dd924b02dd6e60723f6"
+      "bytes": 239490,
+      "sha256": "7768600f283b0085b0627d5d68e3c1c52d1f348f218d1fd8b774ed744ccf0273"
     },
     {
       "path": "widget-development.vi.md",
-      "bytes": 287563,
-      "sha256": "41f6b92113ba1e46addaf6f04a9a812a55673a5134be2aea702df448b0f1bc86"
+      "bytes": 287775,
+      "sha256": "3b44e39c3d66349c861cc9ff17bf4aa39834dea1d36a1af3c9d7c779a45d278e"
     },
     {
       "path": "widgets-and-extensions.md",

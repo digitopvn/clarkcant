@@ -2341,7 +2341,8 @@ generation: instances go offline with a text fallback, and state and snapshots a
 declares, including one whose definition this node could not load, and one whose package files are no longer on this node: the ids
 come from the manifest's `ui` facets and from the list the node recorded when the package was installed. **Restore** reactivates exactly the
 generation that was just removed; **Roll back** activates the most recently replaced generation. All three go through the same action from
-Settings, chat and voice.
+Settings, chat and voice. Installing the package again after removing it, in the same version or another, also brings its offline instances back
+with their state, as Restore would, and there is then nothing left to restore.
 
 ---
 

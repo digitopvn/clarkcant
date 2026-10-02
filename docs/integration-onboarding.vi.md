@@ -58,9 +58,11 @@ stateDiagram-v2
   validating --> failed
   rolling_back --> failed
   active --> continuation_ready
+  active --> retired
+  continuation_ready --> retired
 ```
 
-Một package không cần auth bỏ qua waiting_auth. Lifecycle hỗ trợ cancel ở nonterminal; sau external writes/dependency effects phải reconcile, không giả uninstall đảo ngược mọi thứ. Nhiều tasks cần cùng package dùng shared install plan + multiple waiting continuations; không hỏi cùng câu và cài cùng gói nhiều lần.
+Một package không cần auth bỏ qua waiting_auth. Lifecycle hỗ trợ cancel ở nonterminal; sau external writes/dependency effects phải reconcile, không giả uninstall đảo ngược mọi thứ. Nhiều tasks cần cùng package dùng shared install plan + multiple waiting continuations; không hỏi cùng câu và cài cùng gói nhiều lần. Một plan đã xong chỉ được dùng chung khi generation mà nó kích hoạt vẫn đang chạy: khi generation đó bị gỡ hoặc bị phiên bản khác thay thế, plan chuyển sang `retired` (giữ lại làm bản ghi của lần cài đó), và cài lại cùng phiên bản sẽ lập plan mới và kích hoạt một generation mới.
 
 ### 3.1 Proposal user thấy
 

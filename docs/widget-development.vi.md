@@ -2336,7 +2336,8 @@ chạy: instance chuyển offline với text fallback, state và snapshot đư�
 khai báo, kể cả widget có definition node này không nạp được và widget của package không còn file trên node: id lấy từ
 các facet `ui` của manifest và từ danh sách node ghi lại lúc cài package. **Khôi phục** kích hoạt lại đúng
 generation vừa gỡ; **Quay về** kích hoạt generation bị thay gần nhất. Cả ba đi qua cùng một action từ
-Settings, chat và voice.
+Settings, chat và voice. Cài lại package sau khi gỡ, cùng phiên bản hay phiên bản khác, cũng đưa các instance đang offline trở lại
+cùng state như **Khôi phục**, và khi đó không còn gì để khôi phục.
 
 ---
 
