@@ -13,6 +13,8 @@ import {
 
 import { type Database, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
+import { bringBackUninstalledWidgets } from "./package-lifecycle.ts";
+
 /**
  * Install supervisor.
  *
@@ -274,6 +276,14 @@ export function activateGeneration(
           }),
     });
 
+    const wasActive =
+      oneRow<{ one: number }>(
+        deps.db,
+        "SELECT 1 AS one FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
+        generation.packageId,
+        generation.nodeId,
+      ) !== undefined;
+
     // Supersede the previous generation for this package on this node. Keeping the
     // row (rather than deleting it) is what makes rollback possible.
     deps.db
@@ -300,6 +310,13 @@ export function activateGeneration(
       );
 
     deps.db.prepare("UPDATE install_plans SET state = 'active' WHERE plan_id = ?").run(input.planId);
+
+    // Installing a package that was uninstalled here brings its widgets back, as Restore would: an instance an
+    // uninstall took offline is not left saying the package is not installed once it is. Widget instances belong to
+    // this node, so only an install on this node touches them.
+    if (!wasActive && generation.nodeId === deps.nodeId) {
+      bringBackUninstalledWidgets(deps, generation.packageId, input.widgetIds ?? []);
+    }
 
     const refreshScope = requiredRefreshScope({
       facetKinds: input.currentPlan.isolationPlan.map((entry) => entry.facetKind),

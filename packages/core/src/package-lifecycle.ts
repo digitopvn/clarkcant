@@ -164,6 +164,17 @@ function bringBack(deps: InstallDeps, packageId: string, widgetIds: readonly str
   return moved;
 }
 
+/**
+ * Bring back the widgets an earlier uninstall of this package took offline, the way Restore does.
+ *
+ * For an install that activates a package nothing of which was active: installing again after an uninstall answers
+ * the same wish as Restore, so the same instances come back with the same state and the uninstall's record is settled,
+ * which is also what stops Restore from offering it. Runs inside the caller's transaction.
+ */
+export function bringBackUninstalledWidgets(deps: InstallDeps, packageId: string, fromFiles: readonly string[]): number {
+  return bringBack(deps, packageId, widgetIdsFor(deps, packageId, fromFiles));
+}
+
 function statesKept(deps: InstallDeps, widgetIds: readonly string[]): number {
   if (widgetIds.length === 0) return 0;
   return (
