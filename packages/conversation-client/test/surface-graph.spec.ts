@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { MESSAGES_EN, MESSAGES_VI } from "../src/i18n/messages.ts";
-import { STATE_EVENT_OPERATION, actionForIntent, surfaceGraph } from "../src/mini-app-surface.tsx";
+import { STATE_EVENT_OPERATION, actionForIntent, composedImageRefs, surfaceGraph } from "../src/mini-app-surface.tsx";
 
 /**
  * How a composed page routes what a leaf reports.
@@ -41,6 +41,16 @@ describe("routing a leaf's report", () => {
     expect(older?.state.query?.initial).toBe("acme");
     expect(older?.feed).toEqual([{ sectionId: "table-1", op: "query", key: "query" }]);
     expect(surfaceGraph({ sections: [section("table-1", "canvas.table@1")] as never })).toBeUndefined();
+  });
+
+  it("fetches every picture a composed surface asks for, from an image leaf and from a gallery or carousel", () => {
+    expect(
+      composedImageRefs([
+        { props: { imageRef: "image_one" } },
+        { props: { imageRefs: ["image_two", "image_one", "", 7] } },
+        { props: { title: "Bảng" } },
+      ]),
+    ).toEqual(["image_one", "image_two"]);
   });
 
   it("says which series a chart shows, and why it kept its own, in both languages", () => {

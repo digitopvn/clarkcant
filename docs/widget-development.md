@@ -615,6 +615,7 @@ counts into a number. The graph is data the host owns and checks, built from thr
 | `canvas.list@1` | `selection.change` | `selected` |
 | `canvas.table@1` | `row.select` | `rowIds` |
 | `canvas.calendar@1` | `date.select` | `date` |
+| `canvas.gallery@1`, `canvas.carousel@1` | `media.select` | `selectedIndex` |
 
 ```json
 {
@@ -1189,6 +1190,87 @@ the invoke result, approval matching and refusal rollback; the browser journey
 [kanban-board.spec.ts](../apps/web/e2e/kanban-board.spec.ts) exercises keyboard, mouse and touch moves in conversation,
 responsive light/dark and reduced motion, plus the read-only Widget Library preview.
 
+### 8.11 Media widgets and semantic state
+
+`canvas.image@1` describes the supplied alt text and includes dimensions only when the owning node has them. Gallery and
+carousel state stores a bounded `selectedIndex`, counted from 0 (state version 2); an old version-1 state migrates to
+the first item, and an index is normalized against the current props. Gallery/carousel selection is written through
+the host's `media.view` binding. When the node refuses a write, the widget draws the item the node holds again and says
+why beside it, like the other view widgets. Their semantic document counts the way a person does, under a different
+name: `selectedNumber` is the selected item counted from 1, next to `itemCount` and the item's alt text, and the summary
+reads "showing picture 2 of 3". A gallery or carousel placed before this binding existed has no `media.view` binding;
+it still renders and its selection still works on the page, but that selection is not stored, so its document reports
+the first item.
+
+A composed layout lists a widget only when the node has a real source for it. For media that means an imported image,
+and now a gallery or carousel too: a `canvas.gallery@1` or `canvas.carousel@1` leaf shows the person's own imported
+pictures, newest first, the same references `/images` serves, cut to what the widget holds (48 for a gallery, 24 for a
+carousel). The set is the pictures present when the layout is composed: a picture imported later appears only in a
+newly composed layout, and one removed since is no longer drawn. The node fills `imageRefs` and `alts`; a model names only the widget, its title and its wiring, and any
+pictures it names are ignored. A layout that asks for one when the node holds no picture is refused with the reason,
+and a placed set whose pictures were all removed is shown as missing rather than as broken images. A video or a YouTube
+embed still has no source and is refused. Choosing a picture in a composed gallery or carousel emits `media.select`
+with `{ "selectedIndex" }`, the same field the widget stores, so a graph rule such as `select-field` into a declared
+number key keeps the choice on the node. A leaf that picks the same key gets that value back as its own selection: two
+media leaves wired to one key follow each other, and the surface's `semanticState` and `inspect_ui` report it. That
+value is the stored index, counted from 0: the second picture is held and reported as `1`. Only a media widget's own
+semantic summary counts from 1 (`selectedNumber`, "showing picture 2 of 3"); a graph key fed by `media.select` does
+not, so a model reading one must add 1 to name the picture as a person counts it. An unwired gallery or carousel in a
+composed surface keeps its choice on the page only.
+
+`canvas.video@1` stores `status`, `position` and `duration` through the same host binding (state version 2; an old
+version-1 state migrates to paused at 0). Position writes go through one shared playback coalescer
+([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), the one the planned audio widget (#324) is to reuse:
+pause, seek and end flush immediately, while continuous playback writes at most once per
+`MEDIA_PLAYBACK_WRITE_INTERVAL_MS` (three seconds). Each write is one bound view action, so it also records an action
+invocation and returns the conversation timeline; a lighter state-only path would need a new route and is not part of
+this change. That write amplification, and how long those invocation records are kept, are tracked in [#380](https://github.com/digitopvn/clarkcant/issues/380). When the page is hidden, the player writes where it is; when the page is left or the player is removed, it
+writes itself paused where it stopped. The write made as the page is left is sent at once with `keepalive`, not behind
+a write still in flight, at the revision that write leads to. All of these writes are best-effort: an unloading page may
+still not finish the request, and a leaving write is refused if the one before it was. So the node also stops believing a stored "playing" once it is older than `MEDIA_PLAYING_FRESH_MS` (two
+intervals plus two seconds of slack, from the state row's `updated_at`): the semantic document then reports the video
+paused at the last stored position. A refused playback write is said beside the player, which is not moved, and the
+next write is sent even if the player has not moved since. A restored player
+seeks to the stored position once its metadata loads and stays paused; restoring never starts playback, and the restore
+seek is not written back. The semantic document reports the position and duration in
+tenths of a second. YouTube semantics use only its validated video id and title; no
+third-party playback messages are read. Image, gallery/carousel, local-video and YouTube semantics use the same bounded
+document for voice, the next-turn note and `inspect_ui`.
+
+Pinning a media widget works as it does for the tree and the timeline: the pin is a compact chip on the shelf, and the
+pin record and the widget's view state both survive a reload. There is no second, live pinned player; after a reload the
+one widget in the conversation reopens with the stored state.
+
+The unit coverage is in [media-view.spec.ts](../packages/contracts/test/media-view.spec.ts) (including the freshness
+window),
+[playback-coalescer.spec.ts](../packages/conversation-client/test/playback-coalescer.spec.ts) (including the write count over a
+minute of continuous play and the writes when the page is hidden, left, or the player removed),
+[media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts) (including the refusal message),
+[widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts) (including a stale "playing", a gallery placed
+without a binding, and the bounds at the largest accepted props) and
+[security.spec.ts](../apps/desktop/test/security.spec.ts) for the desktop media policy. The browser journeys in
+[widget.spec.ts](../apps/web/e2e/widget.spec.ts) verify a gallery selection through `inspect_ui`, a carousel selection
+through the next-turn note, a refused selection in both, and the carousel's state after pinning and a reload, with
+keyboard focus and both themes at 390 px. A gallery and a carousel placed in a composed layout are covered by
+[compose-layout.spec.ts](../apps/runtime/test/compose-layout.spec.ts) (the node's own pictures, the per-widget limit, a
+refusal with no picture), [composition-graph.spec.ts](../apps/runtime/test/composition-graph.spec.ts) (a pick kept,
+read back, refused when malformed, and missing once the pictures are removed) and the browser journey in
+[composition-graph.spec.ts](../apps/web/e2e/composition-graph.spec.ts), which picks a picture from the keyboard, sees the
+carousel follow, reads the value through the live surface and `inspect_ui`, reloads, and checks both themes at 390 px.
+[widget.spec.ts](../apps/web/e2e/widget.spec.ts) also plays a real local WebM clip in Chromium for about five seconds
+and counts the writes against the clock ticks, refuses one write, reads the paused position through `inspect_ui`, and
+reloads after pinning to check that the player reopens at that position without playing.
+
+The node cannot import video yet: `/images` accepts only pictures. A local video therefore plays only from a reference a
+host already serves, and the browser journey answers its clip's one reference itself; the authenticated fetch, the
+object URL, the page policy, the player and the node-held state are the production path. That video plays from an
+object URL the client creates from bytes it fetched with the node's token, exactly like an
+imported picture. The page policy therefore allows `media-src 'self' blob:` in both
+[apps/web/index.html](../apps/web/index.html) and the desktop window policy
+([security.mjs](../apps/desktop/src/security.mjs)), and nothing more: no remote media origin and no `data:` media
+([#374](https://github.com/digitopvn/clarkcant/issues/374)). A YouTube embed is a frame, governed by `frame-src`, not
+by this directive.
+
 ---
 
 ## 9. Semantic contract for voice and the next turn
@@ -1216,7 +1298,9 @@ instructions.
 Who writes the document:
 
 - **Built-in and composed surfaces** are described by the host from the state it stores: period, selected day and the
-  declared graph values.
+  declared graph values. Media widgets are described from validated props and their bounded view state only: an
+  image's alt text and known dimensions, a gallery's or carousel's selected item (`selectedNumber`, counted from
+  1), a local video's playback status and position (a "playing" the player stopped renewing is read as paused), and a YouTube video's validated id and title ([§8.11](#811-media-widgets-and-semantic-state)).
 - **A widget in its own frame** proposes a summary, selected IDs and values with
   `semantic.publish(summary, selectedIds, values?)`. The host sends the last of a burst after 250 ms, validates it
   against a strict schema (`POST …/widgets/{instanceId}/semantic`), cleans it and marks it as the widget's own words. A

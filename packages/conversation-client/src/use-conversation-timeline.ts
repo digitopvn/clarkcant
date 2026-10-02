@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { GatewayClient, ResolvedDataset, SnapshotPresentationResponse, Timeline } from "./api.ts";
+import { composedImageRefs } from "./mini-app-surface.tsx";
 import { useImageUrls } from "./use-image-urls.ts";
 
 /** Every block in a timeline's messages, flattened. */
@@ -213,10 +214,7 @@ export function useConversationTimeline(
       collect(props.posterRef);
     }
     for (const entry of composedSnapshots) {
-      for (const section of snapshots[entry.snapshotId]?.sections ?? []) {
-        const ref = section.props.imageRef;
-        if (typeof ref === "string" && ref !== "") refs.add(ref);
-      }
+      for (const ref of composedImageRefs(snapshots[entry.snapshotId]?.sections ?? [])) refs.add(ref);
     }
     return [...refs].sort();
   }, [composedSnapshots, snapshots, timeline]);

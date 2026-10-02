@@ -445,6 +445,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   display: grid; gap: var(--cc-space-md); margin: 0; padding: 0; list-style: none;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
 }
+.cc-gallery-select { display: block; width: 100%; padding: 0; color: inherit; text-align: left; background: transparent; border: 0; border-radius: var(--cc-radius-badge); cursor: pointer; }
+/* The chosen picture is ringed with a shadow, so the keyboard focus outline stays visible on top of it. */
+.cc-gallery-select[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--cc-accent); }
 .cc-gallery img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
 .cc-carousel { display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-carousel-controls { display: flex; align-items: center; justify-content: center; gap: var(--cc-space-md); }

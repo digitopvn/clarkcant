@@ -10,6 +10,8 @@ import {
   type Principal,
   type WidgetDefinition,
   LAYOUT_COMPOSITION_SCHEMA_VERSION,
+  SECTION_TEXT_LIMIT,
+  clipWithMarker,
   SURFACE_COMPOSITION_SCHEMA_VERSION,
   compileActionBinding,
 } from "@clarkcant/contracts";
@@ -156,6 +158,8 @@ export interface CompileInput {
   propsBySlot?: Partial<Record<CompositionSlot, Record<string, unknown>>>;
   initialState: { period: "week" | "month"; timezone: string; selectedDate?: string };
   imageRef?: { imageId: string; altText: string };
+  /** The pictures a gallery or carousel leaf shows, already cut to what that widget holds. */
+  pictureRefs?: { imageId: string; altText: string }[];
 }
 
 export type CompileResult =
@@ -242,7 +246,7 @@ export function compileTemplate(input: CompileInput): CompileResult {
 export function leafProps(
   slot: CompositionSlot,
   requested: Record<string, unknown>,
-  input: Pick<CompileInput, "initialState" | "imageRef">,
+  input: Pick<CompileInput, "initialState" | "imageRef" | "pictureRefs">,
 ): Record<string, unknown> {
   const base: Record<string, unknown> = { ...requested };
 
@@ -270,6 +274,11 @@ export function leafProps(
   if (slot === "image") {
     base.imageRef = input.imageRef?.imageId;
     base.alt = input.imageRef?.altText;
+  }
+  // The pictures and their descriptions are the node's, paired by position; a model names neither.
+  if (slot === "pictures") {
+    base.imageRefs = (input.pictureRefs ?? []).map((picture) => picture.imageId);
+    base.alts = (input.pictureRefs ?? []).map((picture) => picture.altText);
   }
   if (slot === "cta") {
     base.actionId = "view.save";
@@ -312,7 +321,7 @@ export function describeSection(
     return `Xu hướng theo ngày, tổng ${total} task hoàn thành trong kỳ.`;
   }
   if (slot === "calendar") return `Lịch có ${rows.length} sự kiện trong kỳ.`;
-  if (slot === "image") {
+  if (slot === "image" || slot === "pictures") {
     // The alt text is the whole accessible content of a picture, so the text alternative says the
     // user's words rather than the definition's generic sentence. A reader who cannot see the image —
     // because the renderer is unknown, the snapshot is text-only, or a screen reader is in use —
@@ -321,7 +330,7 @@ export function describeSection(
       .map((row) => (typeof row.altText === "string" ? row.altText.trim() : ""))
       .filter((value) => value !== "")
       .join("; ");
-    return alt === "" ? definition.textFallback : `Hình ảnh đã nhập: ${alt}`;
+    return alt === "" ? definition.textFallback : clipWithMarker(`Hình ảnh đã nhập: ${alt}`, SECTION_TEXT_LIMIT);
   }
   return definition.textFallback;
 }
@@ -479,6 +488,7 @@ export function rowsBySlotOf(published: PublishedMiniAppData): Partial<Record<Co
     table: published.metrics.trendRows,
     calendar: published.calendarRows,
     image: published.imageRefs.map((image) => ({ ...image })),
+    pictures: published.pictureRefs.map((image) => ({ ...image })),
   };
 }
 

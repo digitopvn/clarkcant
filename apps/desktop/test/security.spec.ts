@@ -75,6 +75,13 @@ describe("the content security policy leaves no execution primitive", () => {
     expect(policy).toContain("script-src 'self'");
   });
 
+  it("plays only media the page itself turned into an object URL", () => {
+    const media = policy.split("; ").filter((directive) => directive.startsWith("media-src"));
+    expect(media).toEqual(["media-src 'self' blob:"]);
+    const served = contentSecurityPolicy({ appOrigin: "http://127.0.0.1:4173/", nodeOrigin: "http://127.0.0.1:8765" });
+    expect(served.split("; ").filter((directive) => directive.startsWith("media-src"))).toEqual(["media-src 'self' blob:"]);
+  });
+
   it("refuses to be framed and refuses to load plugins", () => {
     expect(policy).toContain("frame-ancestors 'none'");
     expect(policy).toContain("object-src 'none'");

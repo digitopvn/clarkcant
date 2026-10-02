@@ -134,6 +134,9 @@ export function contentSecurityPolicy(input = {}) {
     `style-src ${sources(["'self'", app, dev, inline])}`,
     // `blob:` because an attachment preview is an object URL the renderer itself created, not a file it may read.
     "img-src 'self' data: blob:",
+    // A local video is the same: bytes the client fetched with the node's token and handed to `<video>` as an object URL
+    // it created. Without this the window's `default-src 'none'` refuses every local video. No remote media origin.
+    "media-src 'self' blob:",
     "font-src 'self'",
     `connect-src ${sources(["'self'", app, node, dev], { webSockets: true })}`,
     "form-action 'none'",

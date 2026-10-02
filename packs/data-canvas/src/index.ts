@@ -31,6 +31,10 @@ import {
   CALENDAR_STATE_VERSION,
   CALENDAR_VIEWS,
   CALENDAR_VIEW_OPERATION,
+  MEDIA_STATE_VERSION,
+  MEDIA_SELECTION_MIGRATION,
+  MEDIA_VIDEO_MIGRATION,
+  MEDIA_VIEW_OPERATION,
   MAX_EVENT_KEY,
   MAX_TIMELINE_ACTOR,
   MAX_TIMELINE_DESCRIPTION,
@@ -455,7 +459,10 @@ export const CAROUSEL: WidgetDefinition = {
     },
     required: ["imageRefs", "alts"],
   },
-  eventSchemas: {},
+  eventSchemas: { "media.select": { type: "object", additionalProperties: false, properties: { selectedIndex: { type: "integer", minimum: 0, maximum: 23 } }, required: ["selectedIndex"] } },
+  stateSchema: { type: "object", additionalProperties: false, properties: { selectedIndex: { type: "integer", minimum: 0, maximum: 23 } } },
+  stateVersion: MEDIA_STATE_VERSION,
+  stateMigrations: [MEDIA_SELECTION_MIGRATION],
   sizing: { compact: true, expanded: true, minHeight: 200 },
   semanticDescription: "A set of imported images shown one at a time, each with its own description",
   requestedCapabilities: [],
@@ -479,7 +486,10 @@ export const GALLERY: WidgetDefinition = {
     },
     required: ["imageRefs", "alts"],
   },
-  eventSchemas: {},
+  eventSchemas: { "media.select": { type: "object", additionalProperties: false, properties: { selectedIndex: { type: "integer", minimum: 0, maximum: 47 } }, required: ["selectedIndex"] } },
+  stateSchema: { type: "object", additionalProperties: false, properties: { selectedIndex: { type: "integer", minimum: 0, maximum: 47 } } },
+  stateVersion: MEDIA_STATE_VERSION,
+  stateMigrations: [MEDIA_SELECTION_MIGRATION],
   sizing: { compact: true, expanded: true, minHeight: 200 },
   semanticDescription: "A grid of imported images, each with its own description",
   requestedCapabilities: [],
@@ -518,6 +528,17 @@ export const YOUTUBE: WidgetDefinition = {
   datasetRefs: [],
 };
 
+/** What a local video holds and reports: the coalesced playback state, never a stream of clock ticks. */
+const VIDEO_PLAYBACK_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    status: { type: "string", enum: ["playing", "paused", "ended"] },
+    position: { type: "number", minimum: 0 },
+    duration: { type: "number", minimum: 0 },
+  },
+} as const;
+
 /** A video the host holds, served under an opaque reference like an imported image. */
 export const VIDEO: WidgetDefinition = {
   id: "canvas.video@1",
@@ -534,7 +555,10 @@ export const VIDEO: WidgetDefinition = {
     },
     required: ["videoRef", "alt"],
   },
-  eventSchemas: {},
+  eventSchemas: { [MEDIA_VIEW_OPERATION]: { ...VIDEO_PLAYBACK_SCHEMA, required: ["status", "position", "duration"] } },
+  stateSchema: VIDEO_PLAYBACK_SCHEMA,
+  stateVersion: MEDIA_STATE_VERSION,
+  stateMigrations: [MEDIA_VIDEO_MIGRATION],
   sizing: { compact: true, expanded: true, minHeight: 220 },
   semanticDescription: "A video the host holds, described by its required description text",
   requestedCapabilities: [],

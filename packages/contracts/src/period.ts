@@ -26,6 +26,7 @@ export const SLOT_ORDER: readonly CompositionSlot[] = [
   "list",
   "calendar",
   "image",
+  "pictures",
   "note",
   "cta",
 ];
