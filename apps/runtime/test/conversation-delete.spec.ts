@@ -148,6 +148,6 @@ it("refuses agent intents and machine relays, including alternate path segmentat
 it("upgrades a populated schema 38 without rewriting applied migrations or disabling foreign keys", () => {
   const legacy = openDatabase({path: ":memory:"}); migrate(legacy, MIGRATIONS.slice(0, 38));
   createConversation(legacy, {conversationId: id, homeNodeId: nodeId, at: AT});
-  expect(migrate(legacy).applied).toEqual([39, 40, 41]); expect(getConversation(legacy, id)).toBeDefined();
+  expect(migrate(legacy).applied).toEqual([39, 40, 41, 42]); expect(getConversation(legacy, id)).toBeDefined();
   expect(legacy.prepare("PRAGMA foreign_keys").get()).toMatchObject({foreign_keys: 1}); legacy.close();
 });

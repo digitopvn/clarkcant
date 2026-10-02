@@ -11,13 +11,21 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type CapabilityRef,
   DEFAULT_EXECUTION_POLICY_CONFIG,
+  type DirectoryEntry,
   type EngineCapacity,
   type ExecutionPolicyConfig,
   type Instant,
   RESOURCE_PROFILES,
   type ResourceProfileName,
 } from "@clarkcant/contracts";
-import { EXECUTION_POLICY_PREFERENCE_KEY, getCapability, registerCapability, writeRegisteredPreference } from "@clarkcant/core";
+import {
+  EXECUTION_POLICY_PREFERENCE_KEY,
+  getCapability,
+  installFromEntry,
+  registerCapability,
+  uninstallPackage,
+  writeRegisteredPreference,
+} from "@clarkcant/core";
 import { deleteCredential, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import {
@@ -563,6 +571,73 @@ describe("a capability something else on the node already provides", () => {
     await host?.reconcile();
     expect(getCapability({ db, nodeId: NODE }, ADD, NODE)?.readiness).toMatchObject({ installed: true, loaded: true, healthy: true });
     expect(readiness(LIST)).toMatchObject({ installed: false });
+  });
+});
+
+describe("a package installed again after it was uninstalled", () => {
+  /** The notes package as a directory lists it, at the folder this test copied it to. */
+  function listing(): DirectoryEntry {
+    return {
+      packageId: PACKAGE,
+      version: "1.0.0",
+      displayName: "Notes",
+      description: "Notes kept by the package's own service.",
+      source: { kind: "local", path: root },
+      publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
+      preview: {},
+      facets: ["ui", "tools"],
+      isolations: [
+        { facetKind: "ui", isolation: "isolated-ui" },
+        { facetKind: "tools", isolation: "service" },
+      ],
+      platforms: ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64", "win32-arm64", "web"],
+      hostApi: { min: 1, max: 1 },
+      permissionsSummary: [],
+      riskTier: "service",
+      sizeBytes: 1024,
+      digest: "sha256:notes-service-digest",
+    };
+  }
+
+  /** The install supervisor's own path, as `POST /packages/install` reaches it for a listed local package. */
+  function install(): void {
+    const entry = listing();
+    const installDeps = { db, nodeId: NODE, now: () => new Date().toISOString() as Instant, newId: (prefix: string) => `${prefix}_${String(++counter)}` };
+    const outcome = installFromEntry(installDeps, {
+      entry,
+      directory: [entry],
+      platform: "linux-x64",
+      ownerPrincipalId: PRINCIPAL,
+      codeGeneration: `codegen_${String(++counter)}`,
+      expiresAt: new Date(Date.now() + 600_000).toISOString() as Instant,
+      localDigest: entry.digest,
+    });
+    expect(outcome).toMatchObject({ ok: true, state: "active", joinedExisting: false });
+  }
+
+  it("runs its service and answers a call, as the first install did", async () => {
+    const serviceHost = start();
+    install();
+    await running(serviceHost);
+    expect(await invokeCapability(invokeDeps(), { ref: ADD, args: { text: "lần đầu" }, source: "agent" })).toMatchObject({ kind: "done" });
+
+    expect(
+      uninstallPackage({ db, nodeId: NODE, now: () => new Date().toISOString() as Instant, newId: (prefix) => `${prefix}_${String(++counter)}` }, {
+        packageId: PACKAGE,
+        widgetIds: [],
+      }),
+    ).toMatchObject({ ok: true });
+    await serviceHost.reconcile();
+    expect(serviceHost.status()).toEqual([]);
+    expect(readiness(LIST)).toMatchObject({ installed: false });
+
+    install();
+    await running(serviceHost);
+    expect(readiness(LIST)).toMatchObject({ installed: true, loaded: true, healthy: true });
+    const listed = await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "agent" });
+    expect(listed).toMatchObject({ kind: "done" });
+    // The service keeps its data folder across the reinstall, as it does across a restore.
+    expect(JSON.stringify(listed)).toContain("lần đầu");
   });
 });
 

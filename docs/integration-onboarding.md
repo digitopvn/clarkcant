@@ -58,9 +58,11 @@ stateDiagram-v2
   validating --> failed
   rolling_back --> failed
   active --> continuation_ready
+  active --> retired
+  continuation_ready --> retired
 ```
 
-A package that needs no auth skips waiting_auth. The lifecycle supports cancel in nonterminal states; after external writes/dependency effects it must reconcile, and must not pretend an uninstall reverses everything. Several tasks that need the same package use a shared install plan + multiple waiting continuations; do not ask the same question or install the same package several times.
+A package that needs no auth skips waiting_auth. The lifecycle supports cancel in nonterminal states; after external writes/dependency effects it must reconcile, and must not pretend an uninstall reverses everything. Several tasks that need the same package use a shared install plan + multiple waiting continuations; do not ask the same question or install the same package several times. A finished plan is shared only while the generation it activated is the one running: once that generation is uninstalled or replaced by another version, the plan is `retired` (kept as the record of that install), and installing the same version again plans and activates a fresh generation.
 
 ### 3.1 The proposal the user sees
 

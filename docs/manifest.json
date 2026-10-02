@@ -90,13 +90,13 @@
     },
     {
       "path": "integration-onboarding.md",
-      "bytes": 21321,
-      "sha256": "4048e4658fe27834d26e537462ad4afda062da859878912f08d61a2761c32a1f"
+      "bytes": 21666,
+      "sha256": "9d6254a44683089d5ee46b0bb434a8f83b028614143e57cdd3fe09e0617918ee"
     },
     {
       "path": "integration-onboarding.vi.md",
-      "bytes": 21237,
-      "sha256": "2cfdd7c7aa46c7d41756ce6c4bda2d608e92a65caa8232ff9365bf9c06aaa06a"
+      "bytes": 21646,
+      "sha256": "2ccd471c506a6e78028f7383569f745fbb17c7e008c037e19b8de42b14c4decc"
     },
     {
       "path": "platform-smoke.md",

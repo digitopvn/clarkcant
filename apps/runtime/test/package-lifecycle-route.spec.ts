@@ -221,6 +221,22 @@ describe("uninstalling and restoring a package", () => {
     expect(refused.body).toMatchObject({ code: "ALREADY_INSTALLED" });
   });
 
+  it("installs the package again after an uninstall, as a first install does", async () => {
+    const install = () => send("POST", "/packages/install", { packageId: PACKAGE, version: "2.0.0", localDigest: "sha256:board-2.0.0" });
+    const first = await install();
+    expect(first.status).toBe(200);
+    expect((await change("uninstall")).status).toBe(200);
+
+    const again = await install();
+
+    expect(again.status).toBe(200);
+    const generationId = (again.body as { generationId: string }).generationId;
+    expect(generationId).not.toBe("");
+    expect(generationId).not.toBe((first.body as { generationId: string }).generationId);
+    expect(activeGeneration(services.conductor, PACKAGE, services.runtime.identity.nodeId)?.generationId).toBe(generationId);
+    expect((await send("GET", "/packages")).body).toMatchObject({ packages: [{ packageId: PACKAGE, version: "2.0.0" }], restorable: [] });
+  });
+
   it("refuses to restore bytes the directory no longer lists with the same digest", async () => {
     recordInstall("2.0.0", "sha256:something-else");
     await change("uninstall");

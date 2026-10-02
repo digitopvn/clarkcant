@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { installFromSource, type InstallFromSourceInput } from "../src/install-from-source.ts";
 import { activeGeneration, getPlan } from "../src/install-lifecycle.ts";
 import { listInstalledPackages } from "../src/installed-packages.ts";
+import { uninstallPackage } from "../src/package-lifecycle.ts";
 
 /**
  * Installing from a source.
@@ -151,6 +152,54 @@ describe("a successful install", () => {
       expect(second.planId).toBe(first.planId);
       expect(second.joinedExisting).toBe(true);
     }
+  });
+});
+
+describe("installing again after the package stopped running", () => {
+  it("installs a fresh generation after an uninstall, rather than joining the plan whose generation was retired", () => {
+    const first = installFromSource(deps, input());
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(uninstallPackage(deps, { packageId: "com.example.calendar", widgetIds: [] })).toMatchObject({ ok: true });
+
+    const again = installFromSource(deps, input({ codeGeneration: "codegen_2" }));
+
+    expect(again).toMatchObject({ ok: true, state: "active", joinedExisting: false });
+    if (!again.ok) return;
+    expect(again.planId).not.toBe(first.planId);
+    expect(activeGeneration(deps, "com.example.calendar", "node_a")?.generationId).toBe(again.generationId);
+    expect(listInstalledPackages(deps).map((entry) => entry.packageId)).toEqual(["com.example.calendar"]);
+    // The first plan stays as the record of what was installed then, and no longer stands for what is running.
+    expect(getPlan(deps, first.planId)?.state).toBe("retired");
+    expect(getPlan(deps, again.planId)?.state).toBe("active");
+  });
+
+  it("installs a version again after another version replaced it", () => {
+    const v1 = installFromSource(deps, input());
+    expect(v1.ok).toBe(true);
+    const v2Entry: DirectoryEntry = { ...NPM_ENTRY, version: "1.3.0", source: { kind: "npm", name: "com.example.calendar", version: "1.3.0" } };
+    const v2 = installFromSource(
+      deps,
+      input({ source: v2Entry.source, directory: [v2Entry], requirementKey: "cap:project.code.change@1.3", codeGeneration: "codegen_2" }),
+    );
+    expect(v2).toMatchObject({ ok: true, joinedExisting: false });
+
+    const back = installFromSource(deps, input({ codeGeneration: "codegen_3" }));
+
+    expect(back).toMatchObject({ ok: true, joinedExisting: false });
+    expect(activeGeneration(deps, "com.example.calendar", "node_a")?.version).toBe("1.2.0");
+  });
+
+  it("still joins the plan while the generation it activated is the one running", () => {
+    const first = installFromSource(deps, input());
+    expect(uninstallPackage(deps, { packageId: "com.example.calendar", widgetIds: [] })).toMatchObject({ ok: true });
+    const again = installFromSource(deps, input({ codeGeneration: "codegen_2" }));
+    const third = installFromSource(deps, input({ codeGeneration: "codegen_3" }));
+
+    expect(first.ok && again.ok && third.ok).toBe(true);
+    if (!again.ok || !third.ok) return;
+    expect(third).toMatchObject({ joinedExisting: true, planId: again.planId });
+    expect(activeGeneration(deps, "com.example.calendar", "node_a")?.generationId).toBe(again.generationId);
   });
 });
 

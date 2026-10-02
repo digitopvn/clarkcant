@@ -690,6 +690,11 @@ export const installStateSchema = z.enum([
   "rolling_back",
   "failed",
   "cancelled",
+  /**
+   * The plan finished and the generation it activated is no longer the one running: it was uninstalled, or another
+   * version replaced it. Kept as the record of that install, and no longer what a new install of the same version joins.
+   */
+  "retired",
 ]);
 export type InstallState = z.infer<typeof installStateSchema>;
 
@@ -704,12 +709,13 @@ const INSTALL_TRANSITIONS: Record<InstallState, readonly InstallState[]> = {
   draining: ["activating", "failed", "cancelled"],
   activating: ["healthchecking", "rolling_back", "failed"],
   healthchecking: ["active", "rolling_back", "failed"],
-  active: ["continuation_ready", "rolling_back"],
-  continuation_ready: ["rolling_back"],
+  active: ["continuation_ready", "rolling_back", "retired"],
+  continuation_ready: ["rolling_back", "retired"],
   rolling_back: ["failed"],
   declined: ["proposed"],
   failed: ["staging"],
   cancelled: [],
+  retired: [],
 };
 
 export function canTransitionInstall(from: InstallState, to: InstallState): boolean {
