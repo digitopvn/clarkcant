@@ -1560,7 +1560,9 @@ not. `jobs.get(ref)` reads one snapshot: status (`queued`, `running`, `waiting`,
 progress, output, error, result files and times. `jobs.subscribe(ref, handler)` starts from that snapshot, polls once a
 second, hands the handler only snapshots that changed, and stops by itself at an ending, on `JOB_NOT_FOUND` or
 `EXTENSION_NOT_OFFERED`, or after 30 refused reads in a row. `jobs.cancel(ref)` asks the node to stop the job; one that
-already ended is refused with `JOB_NOT_RUNNING`. The contract is [jobs.ts](../packages/contracts/src/jobs.ts).
+already ended is refused with `JOB_NOT_RUNNING`. `jobs.list()` returns the jobs this widget's own bindings started,
+newest first and at most 20, including ones started by voice or by Clark for this widget, so a widget can show work it
+did not start from a click. The contract is [jobs.ts](../packages/contracts/src/jobs.ts).
 
 **A JobRef is a pointer, not a permission.** The node re-checks every read and cancel against the job's owner: the
 principal, the widget instance, its binding and the package generation that binding was authorized under, and the

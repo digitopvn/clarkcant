@@ -721,6 +721,12 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
           throw new Error(`${result.code ?? "JOB_REFUSED"}: ${result.message ?? "host refused the job request"}`);
         }
       },
+      list: async () => {
+        const result = await jobRequest({ op: "list" });
+        if (result.status !== "ok") throw new Error(`${result.code ?? "JOB_REFUSED"}: ${result.message ?? "host refused the job request"}`);
+        // Already checked against the bridge schema when the answer arrived, which bounds it to `JOB_LIST_LIMIT`.
+        return (result.jobs ?? []).map((job) => freezeSnapshot(job));
+      },
       subscribe: (ref, handler) => {
         requireReady("đăng ký theo dõi job");
         if (!extensions.has(JOBS_EXTENSION)) throw new Error(`widget runtime: host không mở ${JOBS_EXTENSION} cho frame này`);

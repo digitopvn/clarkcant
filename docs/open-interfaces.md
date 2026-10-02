@@ -427,6 +427,7 @@ generation and capability. Anything else, including a ref that does not exist, i
 
 | Method | Path | Body / answer |
 |---|---|---|
+| GET | `/conversations/{id}/widgets/{instanceId}/jobs` | – `{ jobs: [...] }`, newest first and at most 20: the jobs this widget's own invoke bindings started, so a remounted widget finds its running jobs; an instance outside the conversation is `404 INSTANCE_UNKNOWN` |
 | GET | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – `{ job: { jobId, status, progress?, resultRefs, output?, error?, createdAt, startedAt?, endedAt? } }`; files are `ArtifactRef`s, never paths |
 | POST | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – cancels the service request, `202 { accepted, jobId }`; an ended job is `409 JOB_NOT_RUNNING` and stays readable |
 

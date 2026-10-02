@@ -428,6 +428,16 @@ export function openApiDocument(): Record<string, unknown> {
           responses: { "201": ok("{ artifactRef, attachmentRef }"), "409": ok("ARTIFACT_NOT_FINALIZED"), ...refusals },
         },
       },
+      "/conversations/{conversationId}/widgets/{instanceId}/jobs": {
+        get: {
+          summary: "List the package jobs this instance started (jobs@1)",
+          description:
+            "Newest first, at most 20: the jobs this instance's own invoke bindings started, from a click, a spoken " +
+            "command or Clark, read with the same owner tuple a single job is. A remounted frame finds its running jobs here.",
+          parameters: [conversationId, instanceId],
+          responses: { ...refusals, "200": ok("{ jobs: JobSnapshot[] }"), "404": ok("INSTANCE_UNKNOWN"), "503": ok("JOB_UNAVAILABLE") },
+        },
+      },
       "/conversations/{conversationId}/widgets/{instanceId}/jobs/{jobId}": {
         get: {
           summary: "Read a package job this instance started (jobs@1)",

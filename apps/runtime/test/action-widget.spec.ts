@@ -1778,4 +1778,38 @@ describe("a button whose capability runs as a durable job", () => {
     expect(ended.job).toMatchObject({ status: "cancelled" });
     expect(ended.job.error).toContain("may already have completed");
   });
+
+  it("lists only the jobs this widget's own bindings started, newest first, with the same owner checks", async () => {
+    serveJob();
+    answer = neverAnswers;
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+    const other = await place({ label: "Render too", action: { kind: "invoke", capabilityRef: JOB, args: { text: "y" } } });
+    const first = await press(button, "inv_job_list_1");
+    const second = await press(button, "inv_job_list_2");
+    const elsewhere = await press(other, "inv_job_list_other");
+    if (!first.ok || !second.ok || !elsewhere.ok) throw new Error("a job did not start");
+    const ids = [first, second].map((started) => (started.body.job as { jobId: string }).jobId);
+    // Two presses in the same millisecond keep their insertion order.
+    services.runtime.db.prepare("UPDATE jobs SET created_at = ? WHERE job_id = ?").run("2026-10-01T00:00:00.000Z", ids[0] ?? "");
+
+    const list = (instanceId: string, conversation = conversationId, authorized = true) =>
+      handleRequest({ services, now: () => AT }, {
+        method: "GET",
+        path: `/conversations/${conversation}/widgets/${instanceId}/jobs`,
+        query: {},
+        headers: authorized ? { authorization: `Bearer ${services.runtime.identity.localToken}` } : {},
+        body: "",
+      });
+    expect((await list(button, conversationId, false)).status).toBe(401);
+    const listed = await list(button);
+    expect(listed.status).toBe(200);
+    const jobs = (listed.body as { jobs: Record<string, unknown>[] }).jobs;
+    expect(jobs.map((job) => job.jobId)).toEqual([ids[1], ids[0]]);
+    expect(jobs[0]).not.toHaveProperty("ownerPrincipalId");
+    expect(jobs[0]).not.toHaveProperty("actionBindingId");
+    expect((await list(button, "conv_elsewhere")).status).toBe(404);
+    expect((await list("winst_unknown")).status).toBe(404);
+    const otherJobs = ((await list(other)).body as { jobs: { jobId: string }[] }).jobs;
+    expect(otherJobs.map((job) => job.jobId)).toEqual([(elsewhere.body.job as { jobId: string }).jobId]);
+  });
 });

@@ -28,7 +28,7 @@ describe("simulated jobs@1 in the dev host", () => {
     jobs.control(jobId, "advance");
     const done = jobs.control(jobId, "advance");
     expect(done).toMatchObject({ job: { status: "completed", progress: { current: 2 }, endedAt: "2026-10-01T10:00:00.000Z" } });
-    expect(done.status === "ok" ? done.job.output : "").toBe("rendered.png (simulated by clark widget dev)");
+    expect(done.status === "ok" && "job" in done ? done.job.output : "").toBe("rendered.png (simulated by clark widget dev)");
 
     // An ended job stays readable and refuses a second ending, with the node's own code.
     expect(jobs.control(jobId, "fail")).toMatchObject({ status: "refused", code: "JOB_NOT_RUNNING" });
@@ -50,6 +50,19 @@ describe("simulated jobs@1 in the dev host", () => {
     expect(jobs.handle({ op: "get", jobId: "job_unknown" })).toMatchObject({ status: "refused", code: "JOB_NOT_FOUND" });
     expect(jobs.handle({ op: "get", jobId: "../etc/passwd" })).toMatchObject({ status: "refused", code: "SCHEMA_INVALID" });
     expect(jobs.handle({ op: "delete", jobId: cancelled })).toMatchObject({ status: "refused", code: "SCHEMA_INVALID" });
+  });
+
+  it("lists the jobs it holds newest first, so a remounted frame finds the one still running", () => {
+    const jobs = createDevJobBroker();
+    const older = jobs.start(binding)?.jobId ?? "";
+    const newer = jobs.start(binding)?.jobId ?? "";
+    jobs.control(older, "complete");
+    const listed = jobs.handle({ op: "list" });
+    expect(listed.status === "ok" && "jobs" in listed ? listed.jobs.map((job) => [job.jobId, job.status]) : []).toEqual([
+      [newer, "queued"],
+      [older, "completed"],
+    ]);
+    expect(jobs.handle({ op: "list", jobId: older })).toMatchObject({ status: "refused", code: "SCHEMA_INVALID" });
   });
 
   it("holds a bounded number of jobs, making room from ended ones and refusing when all are running", () => {

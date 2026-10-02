@@ -98,6 +98,7 @@ describe("discovery", () => {
       "/signals/webhook/{source}",
       "/automations",
       "/stop",
+      "/conversations/{conversationId}/widgets/{instanceId}/jobs",
       "/conversations/{conversationId}/widgets/{instanceId}/jobs/{jobId}",
       "/conversations/{conversationId}/widgets/{instanceId}/browser-tokens",
       "/conversations/{conversationId}/widgets/{instanceId}/browser-tokens/{session}",

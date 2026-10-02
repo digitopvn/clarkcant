@@ -659,7 +659,7 @@ describe("the jobs@1 extension", () => {
     createdAt: "2026-10-01T00:00:00.000Z",
     ...(status === "completed" ? { endedAt: "2026-10-01T00:00:02.000Z" } : {}),
   });
-  type Sent = { kind?: string; requestId?: string; request?: { op: string; jobId: string } };
+  type Sent = { kind?: string; requestId?: string; request?: { op: string; jobId?: string } };
 
   function ready(extensions: string[] = ["jobs@1"]) {
     const bus = channel();
@@ -695,6 +695,20 @@ describe("the jobs@1 extension", () => {
     expect(requests()[1]?.request).toEqual({ op: "cancel", jobId });
     answer(requests()[1]?.requestId ?? "", { status: "ok" });
     await expect(cancelling).resolves.toBeUndefined();
+  });
+
+  it("lists the instance's jobs through the host, frozen, and turns a refusal into an error", async () => {
+    const { runtime, requests, answer } = ready();
+    const listing = runtime.api().jobs.list();
+    expect(requests()[0]?.request).toEqual({ op: "list" });
+    answer(requests()[0]?.requestId ?? "", { status: "ok", jobs: [snapshot("running"), { ...snapshot("completed"), jobId: "job_older" }] });
+    const jobs = await listing;
+    expect(jobs.map((job) => job.jobId)).toEqual([jobId, "job_older"]);
+    expect(Object.isFrozen(jobs[0])).toBe(true);
+
+    const refused = runtime.api().jobs.list();
+    answer(requests()[1]?.requestId ?? "", { status: "refused", code: "JOB_UNAVAILABLE", message: "no jobs here" });
+    await expect(refused).rejects.toThrow(/JOB_UNAVAILABLE/);
   });
 
   it("resumes from a snapshot, serializes polling and stops when terminal", async () => {

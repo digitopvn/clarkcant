@@ -1561,7 +1561,10 @@ từ chối ngay tại chỗ. `jobs.get(ref)` đọc một snapshot: trạng th�
 `failed`, `cancelled`), tiến độ, output, lỗi, tệp kết quả và các mốc thời gian. `jobs.subscribe(ref, handler)` bắt đầu
 từ snapshot đó, hỏi lại mỗi giây, chỉ đưa cho handler những snapshot đã thay đổi, và tự dừng khi job kết thúc, khi gặp
 `JOB_NOT_FOUND` hoặc `EXTENSION_NOT_OFFERED`, hoặc sau 30 lần đọc bị từ chối liên tiếp. `jobs.cancel(ref)` yêu cầu node
-dừng job; job đã kết thúc bị từ chối với `JOB_NOT_RUNNING`. Contract nằm ở [jobs.ts](../packages/contracts/src/jobs.ts).
+dừng job; job đã kết thúc bị từ chối với `JOB_NOT_RUNNING`. `jobs.list()` trả về các job mà chính các binding của
+widget này đã khởi chạy, mới nhất trước và tối đa 20, kể cả job được khởi chạy bằng giọng nói hoặc bởi Clark cho widget
+này, để widget hiển thị được cả việc không bắt đầu từ một cú nhấn. Contract nằm ở
+[jobs.ts](../packages/contracts/src/jobs.ts).
 
 **JobRef là con trỏ, không phải quyền.** Node kiểm tra lại mọi lần đọc và huỷ theo chủ sở hữu của job: principal,
 widget instance, binding của nó cùng package generation mà binding đó được cấp quyền, và capability. Bất kỳ sai lệch

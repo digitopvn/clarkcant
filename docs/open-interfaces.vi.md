@@ -430,6 +430,7 @@ capability. Mọi trường hợp khác, kể cả một ref không tồn tại,
 
 | Method | Path | Body / câu trả lời |
 |---|---|---|
+| GET | `/conversations/{id}/widgets/{instanceId}/jobs` | – `{ jobs: [...] }`, mới nhất trước và tối đa 20: các job mà chính các invoke binding của widget này đã khởi chạy, để widget được mount lại tìm thấy job đang chạy; instance không thuộc cuộc trò chuyện là `404 INSTANCE_UNKNOWN` |
 | GET | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – `{ job: { jobId, status, progress?, resultRefs, output?, error?, createdAt, startedAt?, endedAt? } }`; tệp là `ArtifactRef`, không bao giờ là đường dẫn |
 | POST | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – huỷ request tới service, `202 { accepted, jobId }`; job đã kết thúc là `409 JOB_NOT_RUNNING` và vẫn đọc được |
 

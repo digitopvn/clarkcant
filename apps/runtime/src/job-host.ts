@@ -12,6 +12,7 @@ import {
   getOwnedJob,
   insertJob,
   listOpenJobs,
+  listOwnedJobs,
   transitionJob,
   updateJobProgress,
   type Database,
@@ -48,6 +49,8 @@ export interface PackageJobHost {
     onSettled?: (outcome: JobRunOutcome) => void;
   }): JobRecord;
   get(jobId: string, owner: JobOwner): JobRecord | undefined;
+  /** The newest jobs one owner started, newest first. */
+  list(owner: JobOwner, limit: number): JobRecord[];
   cancel(jobId: string, owner: JobOwner): boolean;
   subscribe(jobId: string, owner: JobOwner, listener: (job: JobRecord) => void): () => void;
   stopAll(): number;
@@ -240,6 +243,7 @@ export function createPackageJobHost(input: {
       return running;
     },
     get: (jobId, owner) => getOwnedJob(input.db, jobId, owner),
+    list: (owner, limit) => listOwnedJobs(input.db, owner, limit),
     cancel(jobId, owner) {
       if (getOwnedJob(input.db, jobId, owner) === undefined) return false;
       const controller = active.get(jobId);

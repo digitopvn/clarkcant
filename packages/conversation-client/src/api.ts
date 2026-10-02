@@ -59,7 +59,7 @@ import {
   type Suggestion,
   type VoiceCapabilities,
 } from "@clarkcant/contracts";
-import { browserTokenWireSchema, jobSnapshotWireSchema, type BrowserToken, type JobSnapshot, type TokenRequest } from "@clarkcant/widget-sdk";
+import { JOB_LIST_LIMIT, browserTokenWireSchema, jobSnapshotWireSchema, type BrowserToken, type JobSnapshot, type TokenRequest } from "@clarkcant/widget-sdk";
 
 import {
   type StartVoiceSessionOptions,
@@ -1788,6 +1788,17 @@ export class GatewayClient {
 
   async cancelWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<void> {
     await this.#call("POST", this.#jobPath(conversationId, instanceId, jobId), {});
+  }
+
+  /** The jobs this widget's own bindings started, newest first, as the node owns them. */
+  async listWidgetJobs(conversationId: string, instanceId: string): Promise<JobSnapshot[]> {
+    const body = await this.#call<{ jobs?: unknown }>(
+      "GET",
+      `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/jobs`,
+    );
+    const parsed = jobSnapshotWireSchema.array().max(JOB_LIST_LIMIT).safeParse(body.jobs);
+    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable job list");
+    return parsed.data;
   }
 
   #browserTokenPath(conversationId: string, instanceId: string, rest = ""): string {
