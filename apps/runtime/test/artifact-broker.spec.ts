@@ -517,6 +517,32 @@ describe("a file the person picked", () => {
     expect(disguised.body).toMatchObject({ code: "ARTIFACT_TYPE_MISMATCH" });
   });
 
+  it("takes tab-separated values as text like comma-separated ones, saves them as .tsv, and refuses binary bytes under that type", async () => {
+    const tsv = Buffer.from("ten\tso\nan\t1\n").toString("base64");
+    const declared = await pick({ name: "so-lieu.tsv", mimeType: "text/tab-separated-values", contentBase64: tsv, accept: ["text/tab-separated-values"] });
+    expect(declared.status).toBe(201);
+    expect((declared.body as RefBody).artifactRef).toMatchObject({ mimeType: "text/tab-separated-values", name: "so-lieu.tsv" });
+    // Another name for the type, and a generic type with the extension, land on the same type.
+    const aliased = await pick({ name: "so-lieu.tab", mimeType: "text/tsv", contentBase64: tsv, accept: ["text/*"] });
+    expect((aliased.body as RefBody).artifactRef).toMatchObject({ mimeType: "text/tab-separated-values" });
+    const generic = await pick({ name: "so-lieu.tsv", mimeType: "application/octet-stream", contentBase64: tsv });
+    expect((generic.body as RefBody).artifactRef).toMatchObject({ mimeType: "text/tab-separated-values" });
+    // A picture declared as tab-separated values is still refused: the bytes decide.
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+    const binary = await pick({ name: "so-lieu.tsv", mimeType: "text/tab-separated-values", contentBase64: png.toString("base64") });
+    expect(binary.status).toBe(415);
+    expect(binary.body).toMatchObject({ code: "ARTIFACT_TYPE_MISMATCH" });
+
+    const artifactId = await create("text/tab-separated-values", "bang.tsv");
+    await write(artifactId, 0, "a\tb\n1\t2\n");
+    expect((await call("POST", widget(`/${artifactId}/finalize`))).status).toBe(200);
+    const saved = await call("POST", `/artifacts/${artifactId}/export`, { suggestedName: "bang" });
+    expect(saved.binary?.headers?.["content-disposition"]).toContain('filename="bang.tsv"');
+    const written = await create("text/tab-separated-values", "nhi-phan.tsv");
+    await write(written, 0, png);
+    expect((await call("POST", widget(`/${written}/finalize`))).body).toMatchObject({ code: "ARTIFACT_TYPE_MISMATCH" });
+  });
+
   it("refuses bytes that are not what the widget asked for, or not what they claim to be", async () => {
     const notAccepted = await pick({ name: "a.txt", mimeType: "text/plain", contentBase64: Buffer.from("hi").toString("base64"), accept: ["image/*"] });
     expect(notAccepted.status).toBe(415);

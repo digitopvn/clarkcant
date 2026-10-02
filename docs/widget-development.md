@@ -459,7 +459,7 @@ binding is compiled it is refused for a file this node does not hold or one anot
 reads each reference again for the person who pressed and bounds each to 4000 characters, cut at a character boundary.
 A file is read as the pressed widget, under the same decision as that widget's own reads: its grant, the principal, and
 the conversation the press happened in, which must be the file's. What the model gets is the file's name, type and
-size and, for a text type (plain text, Markdown, CSV, JSON), the start of its contents — at most 3000 bytes, said to be
+size and, for a text type (plain text, Markdown, CSV, TSV, JSON), the start of its contents — at most 3000 bytes, said to be
 partial when it is. A picture or a PDF is described and never quoted. An unknown, expired or missing file refuses the
 press with `CONTEXT_REF_UNKNOWN`; another principal's file, one the widget was never granted, or a grant that has
 expired or been revoked refuses it with `CONTEXT_REF_FORBIDDEN`. What it reads can be text a widget wrote, so it is data, never guidance: it is not placed in the turn's
@@ -1471,8 +1471,9 @@ What each call does:
   it against `accept`, and applies the attachment rules: allowlisted types, 25 MiB a file, and the principal's quota.
   The type a system gives is only a claim, read under the name the node uses: `application/vnd.ms-excel` for a
   `.csv` on Windows is CSV, and `image/jpg` is JPEG. A missing or generic type (`application/octet-stream`) is
-  taken from the extension for Markdown, CSV and JSON, and otherwise read from the bytes. Characters that reverse how
-  a name reads (bidi controls) are dropped from the file's name.
+  taken from the extension for Markdown, CSV, TSV and JSON, and otherwise read from the bytes. Tab-separated values
+  (`text/tab-separated-values`, saved as `.tsv`, also named `text/tsv` or `.tab`) follow the same rules as CSV.
+  Characters that reverse how a name reads (bidi controls) are dropped from the file's name.
 - `read(ref, { offset, length })` reads one range of at most 256 KiB and says whether it reached the end. A larger
   file takes several reads.
 - `create({ mimeType, name? })` starts a working artifact of a type the attachment pipeline accepts.
@@ -1618,186 +1619,6 @@ Tests: [jobs.spec.ts](../packages/contracts/test/jobs.spec.ts) for the rules,
 [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) for the SDK, and the browser journey
 [package-job.spec.ts](../apps/web/e2e/package-job.spec.ts). The journey follows a real service's progress across a
 reload, refuses a forged JobRef, cancels from the widget, completes with a file and ends a job with emergency Stop.
-
-### 10.3 Reference app: a text editor
-
-[`examples/reference-apps/text-editor`](../examples/reference-apps/text-editor) is a whole app built only on the
-contracts above. It is one isolated UI facet with no service, no permissions and no requested capabilities. A person
-opens a text file, edits it, saves it and asks Clark to rewrite a selection, and the frame never sees where the file
-lives. `clark widget init --template pure-ui` starts a new package from a copy of it ([§16](#16-developer-cli-target)).
-
-**The package.** `clarkcant.json` is a schema-version-2 manifest for every platform and the web. `widget.json` takes
-two props: `title`, and `rewriteBinding`, the id of the `agent` binding the editor may press. Its `stateSchema` admits
-only `file`, `base` (two `ArtifactRef`s), `draft` and `draftTooLarge`, with `additionalProperties: false`. The rules
-are pure functions in [`editor-core.js`](../examples/reference-apps/text-editor/widgets/main/editor-core.js), tested
-without a browser; `main.js` is the DOM and the SDK calls.
-
-**Opening.** `artifacts.pick({ accept: ["text/plain", "text/markdown", "text/csv", "application/json"] })` asks the
-host, which draws the prompt outside the frame. The editor refuses a file over 1 MiB before reading a byte. It reads
-the rest in 256 KiB ranges and decodes them as strict UTF-8: bytes that are not text are refused with the reason
-rather than shown with replacement characters a save would write back.
-
-**Editing and keeping the draft.** The unsaved draft is written to widget state 400 ms after typing pauses, one write
-at a time. The editor remembers the write it has not had answered, with the revision it was written against, so when
-the host's commit of that write arrives after the person has typed on, it is recognized as the editor's own and not
-shown as a change from another window. A refused write is answered by the host's committed state. A reload, a pinned
-copy or another device therefore shows the same draft. Widget state holds 16 KiB, so a draft whose JSON is over
-12 KiB is not kept and is never cut. The editor says it will not survive a reload, and the flag survives so the next
-load says so too. On load the editor reads the saved bytes again through `base`. If they cannot be read (a picked
-file's grant lasts 24 hours), an unsaved draft is still shown, marked unsaved, with the reason. Without a draft there
-is nothing to show: the editor opens no document, says why and offers *Open*, so an empty text area is never
-presented, or saved, as the file.
-
-**Two views of one editor.** When committed state arrives from another view, the editor takes it if it has nothing
-unsent. If both changed, it shows *Keep mine* and *Use theirs* and throws neither away. The question does not take the
-keyboard from someone typing; the status line announces it. A view with no document open, such as one that could not
-read the saved copy back, has no draft of its own: it always takes committed state, never asks, and never writes
-state until the person opens a file, so it cannot erase another view's draft. A view still reopening the file after a
-reload is not such a view: state committed meanwhile is held and taken once the reopening has finished, and a read
-of the saved copy that a newer one overtook is dropped, so older text never replaces newer.
-
-**Saving.** The editor writes a `working` artifact of the opened file's type and name, in chunks, finalizes it and
-calls `export(ref, { suggestedName })`. The host decides what that means. On the desktop it offers *Replace original*
-for the file picked in this frame, because the type matches; on the web it starts a download and says replacing the
-original is a desktop feature. The editor learns only `true` or `false`, so on `true` it says it handed the copy to
-the app and leaves where it went to the host's own notice: on the web a download has only started. On `true` the copy
-becomes the new `base` and the previous copy the editor made is discarded; on `false` the unused copy is discarded.
-The editor never discards the file the person picked. Ctrl+S (Cmd+S on macOS) saves. *Attach* finalizes a copy and
-calls `attachToConversation`.
-
-*Replace original* is offered only in the frame where the file was picked, and only until it is reloaded: the host
-keeps the desktop's handle for the picked file in memory beside that one frame and never persists it. After a reload,
-in a pinned copy or in a detached window, the desktop offers Save As.
-
-**What Clark is shown.** The editor publishes a summary ("Editing notes.txt: 3 lines, with unsaved changes.") and the
-values `open`, `file`, `lines`, `dirty`, `selectionStart`, `selectionEnd`, `selectedChars` and `selectedText`. The
-excerpt is cut at 200 UTF-16 units, the host's limit for one value, and the cut is marked. The selected range is also
-a selected id (`chars:6-11`). The host bounds, redacts and marks all of it as the widget's own words.
-
-**Asking Clark to change the selection.** The editor presses an `agent` binding whose `contextRefs` are
-`["selection", "widget"]`, named by its `rewriteBinding` prop. Today only the repository's scripted fixture model
-places the editor with that binding; no product path places an installed package widget with a binding yet. In a
-real installation the button therefore stays disabled, with its reason shown ("Clark chưa được gắn vào trình soạn
-thảo này…"), until [#382](https://github.com/digitopvn/clarkcant/issues/382) lands. When the binding is there and the
-person presses *Nhờ Clark viết lại đoạn chọn*:
-
-1. The editor asks only about a selection the host passes to Clark unchanged. The host flattens line breaks, tabs and
-   runs of spaces, removes invisible characters, redacts secret-shaped text and cuts a value at 200 UTF-16 units, so a
-   selection it would change is refused in the editor with the reason: too long; more than one line; hidden characters
-   or unusual spaces such as a no-break space; or text the host redacts as possibly private, such as an e-mail
-   address, a long number, a home-folder path or key-like text. Text the host passes on unchanged is never refused.
-   Spaces at the ends are left out of the range, because the host trims them. The editor's copy of the host's
-   cleaning is checked against the host's own in the package's tests.
-2. The editor publishes its semantic document, makes the text area read-only and holds the published selection until
-   the answer. Because the binding reads the selection, the host sends any publish still settling and waits until
-   the node holds the description published before the press, or a newer one, before it runs the press. The wait is
-   bounded (8 seconds); when the description
-   cannot be delivered in that time, the press is refused, nothing is asked, the text area is editable again and the
-   status line says to try again in a moment.
-3. `actions.invoke(rewriteBinding, {}, invocationId)` starts one turn. The host reads the selection and the widget's
-   document into the turn's data section, which is marked as data and not instructions.
-4. The reply comes back as the press's output, at most 2,000 characters. The editor treats it as untrusted text and
-   takes it as a proposal only when it holds exactly one closed fenced (```) block within that bound; the block is the
-   replacement, with control and invisible characters other than line breaks and tabs removed. Any other reply is
-   shown as Clark's message, with nothing to apply.
-5. The proposal shows the replacement and the text it would replace, and takes the keyboard at its title. *Thay đoạn
-   đã chọn* applies it only if the selected range still holds the text Clark read; Escape or *Bỏ qua* dismisses it.
-   The change goes in through the browser's editing, so Ctrl+Z undoes it like anything typed; where the browser
-   refuses that, the text is set directly and the editor does not offer Undo. The applied change is an unsaved edit
-   like any other.
-
-Clark never writes into the frame, and no model approves a save: export stays the person's act in the host's prompt.
-
-**Known gap.** Typing a request in the composer ("make the second line shorter") cannot change the editor today, and
-no product path places the editor with its rewrite binding. No agent tool can perform an isolated widget's own
-action, so a change reaches the frame only through the editor's own button. Clark can still read the editor through
-the next-turn note and `inspect_ui`. Both are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382).
-
-**Accessibility.** Every control is a native button or the text area, in a fixed tab order, with a visible focus ring.
-The host's prompts and the editor's panels take the keyboard at their titles, except that the two-views question
-leaves it with someone typing. Escape closes whichever panel is open: it dismisses a proposal, cancels opening
-another file, and keeps this view's draft in the two-views question. Colours come from the host's appearance tokens
-(`appearance@1`), falling back to the system's light or dark preference. Reduced motion removes every transition. The
-toolbar wraps at 390 px, and the frame asks the host for its content's height.
-
-Tests: [editor-core.spec.ts](../examples/reference-apps/text-editor/test/editor-core.spec.ts) for the rules,
-[package.spec.ts](../examples/reference-apps/text-editor/test/package.spec.ts) for conformance, the manifest and the
-copy of the host's cleaning, [pure-ui-template.spec.ts](../packages/widget-cli/test/pure-ui-template.spec.ts) for the
-template, [semantic-settle.spec.ts](../packages/conversation-client/test/semantic-settle.spec.ts) for sending a
-settling publish before a press, and the browser journey
-[text-editor.spec.ts](../apps/web/e2e/text-editor.spec.ts). The journey opens, edits, reloads, saves as a download
-and reopens on the web. It keeps typing while a draft write is held on its way to the node and checks that no conflict
-appears and nothing typed is lost. Its desktop test is the page's half only: it replaces the original and reopens it
-against a simulated preload with the shell's contract. The shell's helpers (handle to path, keeping the type, the
-atomic write) are unit-tested in [file-bridge.spec.ts](../apps/desktop/test/file-bridge.spec.ts); the shell's IPC
-handler and its confirm dialog are not exercised by either, and a real-shell journey is still to come. The journey
-asks Clark through the scripted model, which quotes the selection from the data section, shows the text it would
-replace, applies the reply and undoes it, refuses a multi-line selection, and refuses a reply whose range changed. It
-runs by keyboard alone, at 390 px in both themes under reduced motion, and checks, with messages recorded in both
-directions, that no place on disk or file handle crosses the bridge.
-
-### 10.4 Reference app: an image generator
-
-[`examples/reference-apps/image-generator`](../examples/reference-apps/image-generator)
-([#319](https://github.com/digitopvn/clarkcant/issues/319), part of
-[#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with an isolated UI facet and a
-service facet. It shows a widget that starts long work on a service, follows it, and gets a file back, while the
-service reaches a provider with a key it never holds.
-
-- **Capability.** The service offers `com.clarkcant.reference.image-generator.image.generate@1` (a capability ref is
-  named under its package's id), with `effectCategory: "external-write"` and `execution: { kind: "job", version: 1 }`.
-  A press answers at once with a JobRef ([§10.2](#102-long-running-jobs-jobs1)).
-- **Why `external-write`.** Asking a provider to draw is a write to someone else's service: it does work there and
-  spends the person's quota. It is also what lets the service start the image with a POST whose prompt is in a JSON
-  body: the node sends a service's request with any method but GET or HEAD only for a capability decided as
-  `external-write` or above ([§14.2](#142-reaching-a-provider-from-a-service)), and a prompt in a URL ends up in more
-  logs than a body does. Under the default autonomous policy a press just runs; a person whose policy asks before
-  external writes sees the host's approval card first, and the widget is told the press is waiting.
-- **Provider.** The tools facet declares one origin and one secret, `IMAGE_PROVIDER_KEY`. The service starts an image
-  with a POST, reads its status once per step and fetches the PNG with GET, all through `clarkcant/egress.fetch`; the
-  node adds the key as a bearer header. Until the person stores the key, the button is off with the node's reason. The
-  provider in this repository is a fake one in the package's tests: it answers only requests carrying the key, refuses
-  a prompt in the URL, and returns a deterministic image. A real provider is
-  [#321](https://github.com/digitopvn/clarkcant/issues/321).
-- **Progress and result.** Each finished step is MCP progress, which the job records and the widget shows; the widget
-  estimates nothing. The PNG comes back as an image part, which the node stores as the job's result artifact. A
-  service error is kept on the failed job in the service's words ([§10.2](#102-long-running-jobs-jobs1)), and the
-  widget shows them quoted as the service's, inside its own sentence. Every running job has its own panel with its
-  progress and its own Stop, which cancels that job; the service stops reading the provider.
-- **Gallery.** When the host offers `jobs.list@1`, the widget lists its own jobs, follows the open ones, and reads
-  finished images as `ArtifactRef`s in 256 KiB chunks; a reload or another device shows the same jobs, because they
-  are the node's. On a host without it, the gallery holds the jobs started while the widget is open and says so. Each
-  image can be attached to the conversation or exported through the host ([§10.1](#101-files-by-reference-artifacts1)).
-- **Widget, Clark and voice.** The button is an `invoke` action binding named in props as `generateBinding`. It fills
-  `prompt` from the draft in widget state, and from the press's input when there is one. Saying the button's label
-  with the widget open presses it with the draft, and the reply says the job started. Clark's `invoke_capability` tool
-  starts a job capability through the conversation's widget that has a binding to it, so that widget follows the job.
-  With none, nothing runs and Clark says so; with several, Clark is told the `instanceId` and `actionBindingId` of each
-  and names one. Clark is refused a binding that asks Clark itself, because that press would be sent as the person's
-  own message.
-- **Language.** Like the text editor ([§10.3](#103-reference-app-a-text-editor)), the frame's own text is Vietnamese
-  only: DESIGN §11.1 translates the host's default chrome, not a widget's text.
-- **Templates.** `clark widget init --template ai-generator` copies this app under the new package's ids, provider
-  and all, with the placeholder origin `https://images.example.com` in place of the test provider's: replace it, and
-  the paths in `service/server.mjs`, with your provider's before you publish. `--template ui-with-service` copies the
-  same widget and job with a service that draws the image itself, declares no provider, and so only reads. Both pass
-  `clark widget test` and `pack` as created. `pure-ui` and both of these go through one copier in the CLI.
-
-Only the repository's scripted fixture model places the widget with `generateBinding` today. No product path places
-an installed package widget with a binding yet ([#382](https://github.com/digitopvn/clarkcant/issues/382)), so in a
-real installation the widget says it is not connected to the service.
-
-Tests: [service-job.spec.ts](../examples/reference-apps/image-generator/test/service-job.spec.ts) for the service
-against the fake provider through the job host, the egress broker and the artifact broker (completion, progress,
-the POST that starts an image, failure, a refused key, cancel, a provider error that echoes the key, and the key absent
-from the service's launch, the job, the database, logs, audit, notices and files);
-[package.spec.ts](../examples/reference-apps/image-generator/test/package.spec.ts) for conformance and the manifest;
-[reference-templates.spec.ts](../packages/widget-cli/test/reference-templates.spec.ts) for the templates and the
-shared copier; and the browser journey [image-generator.spec.ts](../apps/web/e2e/image-generator.spec.ts). The
-journey covers the key-less refusal, progress across a reload, the gallery, two jobs each with its own Stop, a provider
-failure that echoes the key, attach and export, Clark, voice, an approval on the host's card, a host without
-`jobs.list@1`, keyboard, both themes, 390 px and reduced motion. After each journey it searches for the key in the
-page, the bridge, the node's files and tables, and the service's container.
 
 ---
 
@@ -2126,13 +1947,13 @@ Templates:
 - blank;
 - dashboard;
 - form;
-- pure-ui: a copy of the reference text editor ([§10.3](#103-reference-app-a-text-editor)), under the new
+- pure-ui: a copy of the reference text editor ([§24.1](#241-text-editor)), under the new
   package's own id, facet id and name, without the editor's tests;
 - editor;
 - media;
 - MCP App adapter;
 - `ai-generator` and `ui-with-service`, copied from the reference image generator
-  ([§10.4](#104-reference-app-an-image-generator)); `ai-generator` starts with a placeholder provider origin to replace.
+  ([§24.3](#243-image-generator)); `ai-generator` starts with a placeholder provider origin to replace.
 
 `clark widget init --template` accepts `blank`, `form`, `dashboard`, `pure-ui`, `ai-generator` and `ui-with-service`
 today. `editor`, `media` and the MCP
@@ -2677,3 +2498,280 @@ a package that is ready to use. No real dev flow depends on the old behavior ("l
 uses its own dev host and does not go through this route. An old dev DB that sees its generation disappear from this
 route after upgrading should re-run `POST /packages/install` for that package, or `node
 tools/check-invariants.mjs --fix-manifest` if it only needs to resync `docs/manifest.json` after editing this file.
+
+---
+
+## 24. Reference apps
+
+Reference apps are complete packages that show how the platform's pieces fit together in one real widget. They live
+in `examples/reference-apps/` and are tested like any other package, plus a browser journey through a real node.
+
+### 24.1 Text editor
+
+[`examples/reference-apps/text-editor`](../examples/reference-apps/text-editor) is a whole app built only on the
+contracts in [§10](#10-widget-sdk-surface). It is one isolated UI facet with no service, no permissions and no requested capabilities. A person
+opens a text file, edits it, saves it and asks Clark to rewrite a selection, and the frame never sees where the file
+lives. `clark widget init --template pure-ui` starts a new package from a copy of it ([§16](#16-developer-cli-target)).
+
+**The package.** `clarkcant.json` is a schema-version-2 manifest for every platform and the web. `widget.json` takes
+two props: `title`, and `rewriteBinding`, the id of the `agent` binding the editor may press. Its `stateSchema` admits
+only `file`, `base` (two `ArtifactRef`s), `draft` and `draftTooLarge`, with `additionalProperties: false`. The rules
+are pure functions in [`editor-core.js`](../examples/reference-apps/text-editor/widgets/main/editor-core.js), tested
+without a browser; `main.js` is the DOM and the SDK calls.
+
+**Opening.** `artifacts.pick({ accept: ["text/plain", "text/markdown", "text/csv", "application/json"] })` asks the
+host, which draws the prompt outside the frame. The editor refuses a file over 1 MiB before reading a byte. It reads
+the rest in 256 KiB ranges and decodes them as strict UTF-8: bytes that are not text are refused with the reason
+rather than shown with replacement characters a save would write back.
+
+**Editing and keeping the draft.** The unsaved draft is written to widget state 400 ms after typing pauses, one write
+at a time. The editor remembers the write it has not had answered, with the revision it was written against, so when
+the host's commit of that write arrives after the person has typed on, it is recognized as the editor's own and not
+shown as a change from another window. A refused write is answered by the host's committed state. A reload, a pinned
+copy or another device therefore shows the same draft. Widget state holds 16 KiB, so a draft whose JSON is over
+12 KiB is not kept and is never cut. The editor says it will not survive a reload, and the flag survives so the next
+load says so too. On load the editor reads the saved bytes again through `base`. If they cannot be read (a picked
+file's grant lasts 24 hours), an unsaved draft is still shown, marked unsaved, with the reason. Without a draft there
+is nothing to show: the editor opens no document, says why and offers *Open*, so an empty text area is never
+presented, or saved, as the file.
+
+**Two views of one editor.** When committed state arrives from another view, the editor takes it if it has nothing
+unsent. If both changed, it shows *Keep mine* and *Use theirs* and throws neither away. The question does not take the
+keyboard from someone typing; the status line announces it. A view with no document open, such as one that could not
+read the saved copy back, has no draft of its own: it always takes committed state, never asks, and never writes
+state until the person opens a file, so it cannot erase another view's draft. A view still reopening the file after a
+reload is not such a view: state committed meanwhile is held and taken once the reopening has finished, and a read
+of the saved copy that a newer one overtook is dropped, so older text never replaces newer.
+
+**Saving.** The editor writes a `working` artifact of the opened file's type and name, in chunks, finalizes it and
+calls `export(ref, { suggestedName })`. The host decides what that means. On the desktop it offers *Replace original*
+for the file picked in this frame, because the type matches; on the web it starts a download and says replacing the
+original is a desktop feature. The editor learns only `true` or `false`, so on `true` it says it handed the copy to
+the app and leaves where it went to the host's own notice: on the web a download has only started. On `true` the copy
+becomes the new `base` and the previous copy the editor made is discarded; on `false` the unused copy is discarded.
+The editor never discards the file the person picked. Ctrl+S (Cmd+S on macOS) saves. *Attach* finalizes a copy and
+calls `attachToConversation`.
+
+*Replace original* is offered only in the frame where the file was picked, and only until it is reloaded: the host
+keeps the desktop's handle for the picked file in memory beside that one frame and never persists it. After a reload,
+in a pinned copy or in a detached window, the desktop offers Save As.
+
+**What Clark is shown.** The editor publishes a summary ("Editing notes.txt: 3 lines, with unsaved changes.") and the
+values `open`, `file`, `lines`, `dirty`, `selectionStart`, `selectionEnd`, `selectedChars` and `selectedText`. The
+excerpt is cut at 200 UTF-16 units, the host's limit for one value, and the cut is marked. The selected range is also
+a selected id (`chars:6-11`). The host bounds, redacts and marks all of it as the widget's own words.
+
+**Asking Clark to change the selection.** The editor presses an `agent` binding whose `contextRefs` are
+`["selection", "widget"]`, named by its `rewriteBinding` prop. Today only the repository's scripted fixture model
+places the editor with that binding; no product path places an installed package widget with a binding yet. In a
+real installation the button therefore stays disabled, with its reason shown ("Clark chưa được gắn vào trình soạn
+thảo này…"), until [#382](https://github.com/digitopvn/clarkcant/issues/382) lands. When the binding is there and the
+person presses *Nhờ Clark viết lại đoạn chọn*:
+
+1. The editor asks only about a selection the host passes to Clark unchanged. The host flattens line breaks, tabs and
+   runs of spaces, removes invisible characters, redacts secret-shaped text and cuts a value at 200 UTF-16 units, so a
+   selection it would change is refused in the editor with the reason: too long; more than one line; hidden characters
+   or unusual spaces such as a no-break space; or text the host redacts as possibly private, such as an e-mail
+   address, a long number, a home-folder path or key-like text. Text the host passes on unchanged is never refused.
+   Spaces at the ends are left out of the range, because the host trims them. The editor's copy of the host's
+   cleaning is checked against the host's own in the package's tests.
+2. The editor publishes its semantic document, makes the text area read-only and holds the published selection until
+   the answer. Because the binding reads the selection, the host sends any publish still settling and waits until
+   the node holds the description published before the press, or a newer one, before it runs the press. The wait is
+   bounded (8 seconds); when the description
+   cannot be delivered in that time, the press is refused, nothing is asked, the text area is editable again and the
+   status line says to try again in a moment.
+3. `actions.invoke(rewriteBinding, {}, invocationId)` starts one turn. The host reads the selection and the widget's
+   document into the turn's data section, which is marked as data and not instructions.
+4. The reply comes back as the press's output, at most 2,000 characters. The editor treats it as untrusted text and
+   takes it as a proposal only when it holds exactly one closed fenced (```) block within that bound; the block is the
+   replacement, with control and invisible characters other than line breaks and tabs removed. Any other reply is
+   shown as Clark's message, with nothing to apply.
+5. The proposal shows the replacement and the text it would replace, and takes the keyboard at its title. *Thay đoạn
+   đã chọn* applies it only if the selected range still holds the text Clark read; Escape or *Bỏ qua* dismisses it.
+   The change goes in through the browser's editing, so Ctrl+Z undoes it like anything typed; where the browser
+   refuses that, the text is set directly and the editor does not offer Undo. The applied change is an unsaved edit
+   like any other.
+
+Clark never writes into the frame, and no model approves a save: export stays the person's act in the host's prompt.
+
+**Known gap.** Typing a request in the composer ("make the second line shorter") cannot change the editor today, and
+no product path places the editor with its rewrite binding. No agent tool can perform an isolated widget's own
+action, so a change reaches the frame only through the editor's own button. Clark can still read the editor through
+the next-turn note and `inspect_ui`. Both are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382).
+
+**Accessibility.** Every control is a native button or the text area, in a fixed tab order, with a visible focus ring.
+The host's prompts and the editor's panels take the keyboard at their titles, except that the two-views question
+leaves it with someone typing. Escape closes whichever panel is open: it dismisses a proposal, cancels opening
+another file, and keeps this view's draft in the two-views question. Colours come from the host's appearance tokens
+(`appearance@1`), falling back to the system's light or dark preference. Reduced motion removes every transition. The
+toolbar wraps at 390 px, and the frame asks the host for its content's height.
+
+Tests: [editor-core.spec.ts](../examples/reference-apps/text-editor/test/editor-core.spec.ts) for the rules,
+[package.spec.ts](../examples/reference-apps/text-editor/test/package.spec.ts) for conformance, the manifest and the
+copy of the host's cleaning, [pure-ui-template.spec.ts](../packages/widget-cli/test/pure-ui-template.spec.ts) for the
+template, [semantic-settle.spec.ts](../packages/conversation-client/test/semantic-settle.spec.ts) for sending a
+settling publish before a press, and the browser journey
+[text-editor.spec.ts](../apps/web/e2e/text-editor.spec.ts). The journey opens, edits, reloads, saves as a download
+and reopens on the web. It keeps typing while a draft write is held on its way to the node and checks that no conflict
+appears and nothing typed is lost. Its desktop test is the page's half only: it replaces the original and reopens it
+against a simulated preload with the shell's contract. The shell's helpers (handle to path, keeping the type, the
+atomic write) are unit-tested in [file-bridge.spec.ts](../apps/desktop/test/file-bridge.spec.ts); the shell's IPC
+handler and its confirm dialog are not exercised by either, and a real-shell journey is still to come. The journey
+asks Clark through the scripted model, which quotes the selection from the data section, shows the text it would
+replace, applies the reply and undoes it, refuses a multi-line selection, and refuses a reply whose range changed. It
+runs by keyboard alone, at 390 px in both themes under reduced motion, and checks, with messages recorded in both
+directions, that no place on disk or file handle crosses the bridge.
+
+### 24.2 Spreadsheet
+
+`examples/reference-apps/spreadsheet` ([#318](https://github.com/digitopvn/clarkcant/issues/318), part of [#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with one
+isolated UI facet and no service. It shows a widget that works on a file, keeps a large document within bounds,
+describes itself to Clark and applies a change Clark chose.
+
+- **Files.** CSV and TSV come in through `api.artifacts.pick` ([§10.1](#101-files-by-reference-artifacts1)) and are
+  read in 256 KiB chunks; the widget never sees a path. An export is a new file written through `create`, `write`,
+  `finalize` and `export`, with a byte-order mark as the host's table export writes. XLSX is not supported: there is
+  no vetted parser in the tree and the host's file broker does not accept the type.
+- **Bounds.** At most 25,000 cells, 64 columns and 5,000 rows are loaded, and no file is read past 8 MiB. The cell
+  bound is on the rectangle the rows make (rows times the widest row), the same rule the sheet applies to an edit, so a
+  ragged file is cut where its rectangle stops fitting instead of loading a sheet that then refuses every edit. Reading
+  stops at the bound and a notice says how much is shown and that an export writes only that part. A read stopped by
+  the 8 MiB limit drops the line it stopped in rather than show a fragment as a row, and is flagged as cut even when the
+  limit falls on a line end. Blank lines at the end of a file
+  are not counted, so they never make a file that fits look cut. Rows and columns are virtualized, so a large sheet
+  keeps only the cells in view in the document.
+- **State.** The widget state holds the source file's reference, the edits since and the formats, never the sheet
+  itself. The active cell and the selection are declared in `ephemeralStateKeys` ([§5](#5-widget-definition)): the
+  host keeps them for the frame and never writes them to the node, and moving the cursor sends at most one update per
+  pause. Straight after an import the widget writes the sheet to a file of its own, which becomes the source. The
+  widget's read grant on a picked file lasts 24 hours from the pick, while a finalized file the widget wrote itself
+  does not expire. If that write fails, the status line says so and the next edit tries again; until then the sheet
+  still depends on the picked file. When the edits outgrow 10 KiB of the host's 16 KiB, the widget writes the whole
+  sheet to a file of its own in the same way and starts again from it. One such checkpoint runs at a time, with at
+  most one more queued. Edits made while one is written stay and are saved after it, and only the edits the file
+  holds are cleared. Once a checkpoint is committed the widget asks the host to discard the checkpoint it replaced, and
+  a checkpoint written for a sheet an import replaced meanwhile is discarded too. A discard the host refuses leaves
+  that file in the widget's storage. A checkpoint that does not load whole after a reload says so in the notice.
+  Clearing a selection is one batched edit, so clearing the whole sheet takes a moment rather than minutes.
+- **Loading.** On mount the sheet is read again from its source. Until it has loaded, the grid takes no edits,
+  Import, Export and "Ask Clark" wait, and the status line says the sheet is opening. When the source cannot be read,
+  the status line says so, the grid shows only the edits made since and takes none, and nothing is saved, so the
+  saved sheet is still there on the next mount. Importing a file starts over from that file.
+- **Formulas.** A closed set: arithmetic, cell and range references, and `SUM`, `AVERAGE`, `MIN`, `MAX` and
+  `COUNT`. A parser builds a tree that the widget walks; no text is ever run as code. Errors are values (`#DIV/0!`,
+  `#VALUE!`, `#REF!`, `#NAME?`, `#PARSE!`, `#NUM!`, `#LIMIT!`), and a circular reference is `#CIRC!` with
+  the cells on it named in the notice. One recalculation reads at most 5,000,000 cells through ranges and follows at
+  most 2,000,000 links between formulas. `#LIMIT!` marks only a formula past either bound, and the formulas that read
+  it; a formula with no range, such as `=1+1`, is always worked out. A running total such as `=SUM($A$1:A3000)` down
+  3,000 rows fits.
+- **CSV injection.** An export carries computed values, never formulas. Text that starts with `=`, `+`, `-`,
+  `@`, a tab or a carriage return is written behind a `'`, the same rule as `toCsv`. Text this sheet would read
+  back as something else, such as `007`, `1e3` or text that itself starts with `'`, is written behind a `'` too.
+  A leading `'` reads back as text, so an exported file imports into this sheet to the same values. Another
+  spreadsheet application shows that `'` as part of the text, as it does for the formula rule.
+- **Semantic document.** The selected A1 range, an excerpt of at most 12 rows by 8 columns, the active cell's formula
+  and value, and the sheet's size, sized to fit the host's semantic limits so nothing is cut.
+- **Formatting through Clark.** The widget's "format as percent" button presses an `agent` binding whose id arrives
+  as the `formatBinding` prop and whose context is `selection` and `widget`. The press sends nothing: the host reads
+  the range from the widget's semantic document and asks for exactly one line, `format: percent <range>`. The widget
+  treats the reply as untrusted. It accepts a closed set of lines, `format: percent|number|plain <range>`, and
+  applies one only when the range is the one selected at the press; otherwise it says so and changes nothing. The
+  selection is locked until the reply arrives. The sheet keeps at most 32 formats. When a new one pushes out the
+  oldest, the status line names the range that lost its format. "Undo format", or Ctrl+Z in the grid, restores the
+  formats from before Clark's change. The widget offers no other undo.
+- **Keyboard.** The grid is a single tab stop. Arrow keys move, Shift extends the selection, Home/End and
+  Ctrl+Home/End jump, and Page Up/Down page. Enter or F2 edits, typing starts an edit, and Enter commits and moves
+  down. Escape cancels an edit or collapses a range to its active cell. Delete clears the selection, and Ctrl+Z
+  undoes the last format. Tab and Shift+Tab leave the grid, so Import, Export, "Ask Clark" and the rest of the page
+  stay reachable. Only while editing does Tab commit and move right.
+- **Pointer and touch.** A mouse selects by click, Shift+click or drag. On touch, a tap selects a cell and a swipe
+  scrolls the grid. "Select range" makes the following taps extend the selection from the cell tapped before; tap it
+  again to stop. Buttons are at least 40 px high.
+
+Two limits are stated rather than hidden. Nothing in the product places a package widget with a bound action yet: in the
+browser suite the fixture node places the spreadsheet and compiles its binding the way the host compiles a model's
+proposal. And a request typed in the composer reaches Clark through the semantic note but cannot change the frame. Both
+are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382). A press straight after the selection changes
+is not one of them: before it runs the press, the host sends the widget's pending semantic document and waits until
+the node holds it ([§24.1](#241-text-editor)), so Clark reads the range selected at the press. A reply that names
+another range is still refused, and nothing changes.
+
+Tests: unit tests for the parser, formulas, bounds and semantic document in
+[test/](../examples/reference-apps/spreadsheet/test/) (56 tests), including checkpoints against a fake host: edits made
+while one is written surviving a reload, one at a time, superseded files discarded, a refused one kept in memory, a
+sheet replaced mid-write or mid-commit, an import written to the widget's own file, and nothing saved before the sheet
+has loaded or after its source could not be read. `clark widget test` passes 22 checks, with 12 needing the dev host. The browser journey
+[spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (4 tests) covers:
+
+- import, edit, export and reimport in CSV and TSV to the same values;
+- a selected range Clark formats as percent, with the selection locked while Clark answers, and Undo;
+- a file past the bounds that loads its first part, says so, stays responsive, and clears all 25,000 cells at once;
+- no path in bridge or frame traffic;
+- the grid from the keyboard (Tab and Shift+Tab leave it), by touch with "Select range", and by mouse drag;
+- both themes, 40 px buttons, and 390 px with the grid scrolling inside its card;
+- a sheet still loading or whose source cannot be read taking no edits and keeping the saved sheet, and a failed
+  checkpoint saying what was kept and saving with the next edit.
+
+### 24.3 Image generator
+
+[`examples/reference-apps/image-generator`](../examples/reference-apps/image-generator)
+([#319](https://github.com/digitopvn/clarkcant/issues/319), part of
+[#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with an isolated UI facet and a
+service facet. It shows a widget that starts long work on a service, follows it, and gets a file back, while the
+service reaches a provider with a key it never holds.
+
+- **Capability.** The service offers `com.clarkcant.reference.image-generator.image.generate@1` (a capability ref is
+  named under its package's id), with `effectCategory: "external-write"` and `execution: { kind: "job", version: 1 }`.
+  A press answers at once with a JobRef ([§10.2](#102-long-running-jobs-jobs1)).
+- **Why `external-write`.** Asking a provider to draw is a write to someone else's service: it does work there and
+  spends the person's quota. It is also what lets the service start the image with a POST whose prompt is in a JSON
+  body: the node sends a service's request with any method but GET or HEAD only for a capability decided as
+  `external-write` or above ([§14.2](#142-reaching-a-provider-from-a-service)), and a prompt in a URL ends up in more
+  logs than a body does. Under the default autonomous policy a press just runs; a person whose policy asks before
+  external writes sees the host's approval card first, and the widget is told the press is waiting.
+- **Provider.** The tools facet declares one origin and one secret, `IMAGE_PROVIDER_KEY`. The service starts an image
+  with a POST, reads its status once per step and fetches the PNG with GET, all through `clarkcant/egress.fetch`; the
+  node adds the key as a bearer header. Until the person stores the key, the button is off with the node's reason. The
+  provider in this repository is a fake one in the package's tests: it answers only requests carrying the key, refuses
+  a prompt in the URL, and returns a deterministic image. A real provider is
+  [#321](https://github.com/digitopvn/clarkcant/issues/321).
+- **Progress and result.** Each finished step is MCP progress, which the job records and the widget shows; the widget
+  estimates nothing. The PNG comes back as an image part, which the node stores as the job's result artifact. A
+  service error is kept on the failed job in the service's words ([§10.2](#102-long-running-jobs-jobs1)), and the
+  widget shows them quoted as the service's, inside its own sentence. Every running job has its own panel with its
+  progress and its own Stop, which cancels that job; the service stops reading the provider.
+- **Gallery.** When the host offers `jobs.list@1`, the widget lists its own jobs, follows the open ones, and reads
+  finished images as `ArtifactRef`s in 256 KiB chunks; a reload or another device shows the same jobs, because they
+  are the node's. On a host without it, the gallery holds the jobs started while the widget is open and says so. Each
+  image can be attached to the conversation or exported through the host ([§10.1](#101-files-by-reference-artifacts1)).
+- **Widget, Clark and voice.** The button is an `invoke` action binding named in props as `generateBinding`. It fills
+  `prompt` from the draft in widget state, and from the press's input when there is one. Saying the button's label
+  with the widget open presses it with the draft, and the reply says the job started. Clark's `invoke_capability` tool
+  starts a job capability through the conversation's widget that has a binding to it, so that widget follows the job.
+  With none, nothing runs and Clark says so; with several, Clark is told the `instanceId` and `actionBindingId` of each
+  and names one. Clark is refused a binding that asks Clark itself, because that press would be sent as the person's
+  own message.
+- **Language.** Like the text editor ([§24.1](#241-text-editor)), the frame's own text is Vietnamese
+  only: DESIGN §11.1 translates the host's default chrome, not a widget's text.
+- **Templates.** `clark widget init --template ai-generator` copies this app under the new package's ids, provider
+  and all, with the placeholder origin `https://images.example.com` in place of the test provider's: replace it, and
+  the paths in `service/server.mjs`, with your provider's before you publish. `--template ui-with-service` copies the
+  same widget and job with a service that draws the image itself, declares no provider, and so only reads. Both pass
+  `clark widget test` and `pack` as created. `pure-ui` and both of these go through one copier in the CLI.
+
+Only the repository's scripted fixture model places the widget with `generateBinding` today. No product path places
+an installed package widget with a binding yet ([#382](https://github.com/digitopvn/clarkcant/issues/382)), so in a
+real installation the widget says it is not connected to the service.
+
+Tests: [service-job.spec.ts](../examples/reference-apps/image-generator/test/service-job.spec.ts) for the service
+against the fake provider through the job host, the egress broker and the artifact broker (completion, progress,
+the POST that starts an image, failure, a refused key, cancel, a provider error that echoes the key, and the key absent
+from the service's launch, the job, the database, logs, audit, notices and files);
+[package.spec.ts](../examples/reference-apps/image-generator/test/package.spec.ts) for conformance and the manifest;
+[reference-templates.spec.ts](../packages/widget-cli/test/reference-templates.spec.ts) for the templates and the
+shared copier; and the browser journey [image-generator.spec.ts](../apps/web/e2e/image-generator.spec.ts). The
+journey covers the key-less refusal, progress across a reload, the gallery, two jobs each with its own Stop, a provider
+failure that echoes the key, attach and export, Clark, voice, an approval on the host's card, a host without
+`jobs.list@1`, keyboard, both themes, 390 px and reduced motion. After each journey it searches for the key in the
+page, the bridge, the node's files and tables, and the service's container.

@@ -462,7 +462,7 @@ từ chối nếu node này không giữ tệp đó hoặc tệp thuộc về ng
 bấm và giới hạn mỗi cái ở 4000 ký tự, cắt đúng ranh giới ký tự. Một tệp được đọc với tư cách widget vừa được bấm, theo
 đúng quyết định áp dụng cho những lần đọc của chính widget đó: grant của nó, principal, và cuộc trò chuyện nơi nút được
 bấm, vốn phải là cuộc trò chuyện của tệp. Model nhận được tên, kiểu và kích thước của tệp, và với kiểu văn bản (văn bản
-thuần, Markdown, CSV, JSON) thì thêm phần đầu nội dung — tối đa 3000 byte, có ghi rõ là chưa đủ khi đúng như vậy. Ảnh
+thuần, Markdown, CSV, TSV, JSON) thì thêm phần đầu nội dung — tối đa 3000 byte, có ghi rõ là chưa đủ khi đúng như vậy. Ảnh
 hoặc PDF chỉ được mô tả, không bao giờ được trích. Một tệp không rõ, đã hết hạn hoặc mất byte làm lượt bấm bị từ chối với
 `CONTEXT_REF_UNKNOWN`; tệp của principal khác, tệp widget chưa từng được cấp, hoặc grant đã hết hạn hay bị thu hồi làm
 lượt bấm bị từ chối với `CONTEXT_REF_FORBIDDEN`. Những gì host đọc có thể là
@@ -1470,7 +1470,9 @@ Mỗi lời gọi làm gì:
   `accept`, và áp dụng các quy tắc đính kèm: kiểu nằm trong danh sách cho phép, tối đa 25 MiB một tệp, và hạn mức
   của principal. Kiểu mà hệ thống đưa ra chỉ là một lời khai, được đọc theo tên node dùng: `application/vnd.ms-excel`
   cho một tệp `.csv` trên Windows là CSV, và `image/jpg` là JPEG. Một kiểu bị thiếu hoặc chung chung
-  (`application/octet-stream`) được lấy từ phần mở rộng đối với Markdown, CSV và JSON, còn lại thì đọc từ các byte.
+  (`application/octet-stream`) được lấy từ phần mở rộng đối với Markdown, CSV, TSV và JSON, còn lại thì đọc từ các byte.
+  Giá trị phân tách bằng tab (`text/tab-separated-values`, lưu thành `.tsv`, còn được gọi là `text/tsv` hoặc `.tab`)
+  theo cùng các quy tắc như CSV.
   Các ký tự đảo chiều đọc văn bản (ký tự điều khiển bidi) bị bỏ khỏi tên tệp.
 - `read(ref, { offset, length })` đọc một đoạn tối đa 256 KiB và cho biết đã tới cuối tệp chưa. Tệp lớn hơn thì phải
   đọc nhiều lần.
@@ -1620,192 +1622,6 @@ Kiểm thử: [jobs.spec.ts](../packages/contracts/test/jobs.spec.ts) cho các q
 [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) cho SDK, và hành trình trên trình duyệt
 [package-job.spec.ts](../apps/web/e2e/package-job.spec.ts). Hành trình đó theo dõi tiến độ của một service thật qua
 một lần tải lại, từ chối một JobRef giả, huỷ từ widget, hoàn tất kèm một tệp và kết thúc một job bằng Dừng khẩn cấp.
-
-### 10.3 Ứng dụng mẫu: trình soạn thảo văn bản
-
-[`examples/reference-apps/text-editor`](../examples/reference-apps/text-editor) là một ứng dụng hoàn chỉnh chỉ dựng
-trên các hợp đồng ở trên. Nó có một facet UI cách ly, không có service, không xin quyền nào và không yêu cầu capability
-nào. Người dùng mở một tệp văn bản, sửa, lưu và nhờ Clark viết lại một đoạn đang chọn, còn frame không bao giờ thấy tệp
-nằm ở đâu. `clark widget init --template pure-ui` tạo một package mới từ bản sao của nó
-([§16](#16-developer-cli-target)).
-
-**Package.** `clarkcant.json` là manifest schema phiên bản 2 cho mọi nền tảng và cho web. `widget.json` nhận hai
-prop: `title`, và `rewriteBinding` là id của binding `agent` mà trình soạn thảo được phép bấm. `stateSchema` chỉ nhận
-`file`, `base` (hai `ArtifactRef`), `draft` và `draftTooLarge`, với `additionalProperties: false`. Các quy tắc là hàm
-thuần trong [`editor-core.js`](../examples/reference-apps/text-editor/widgets/main/editor-core.js), được kiểm thử không
-cần trình duyệt; `main.js` lo phần DOM và các lời gọi SDK.
-
-**Mở tệp.** `artifacts.pick({ accept: ["text/plain", "text/markdown", "text/csv", "application/json"] })` hỏi host,
-và host vẽ hộp hỏi bên ngoài frame. Trình soạn thảo từ chối tệp lớn hơn 1 MiB trước khi đọc byte nào. Phần còn lại được
-đọc theo từng đoạn 256 KiB và giải mã UTF-8 nghiêm ngặt: byte không phải văn bản bị từ chối kèm lý do, thay vì được hiển
-thị bằng ký tự thay thế mà một lần lưu sẽ ghi ngược lại vào tệp.
-
-**Sửa và giữ bản nháp.** Bản nháp chưa lưu được ghi vào widget state 400 ms sau khi người dùng ngừng gõ, mỗi lần chỉ một
-lượt ghi. Trình soạn thảo nhớ lượt ghi chưa được trả lời cùng revision mà nó ghi dựa trên, nên khi host commit lượt ghi
-đó sau lúc người dùng đã gõ tiếp, nó được nhận ra là lượt ghi của chính trình soạn thảo chứ không bị coi là thay đổi từ
-một cửa sổ khác. Một lượt ghi bị từ chối được trả lời bằng state mà host đã commit. Vì vậy tải lại trang, một bản đã ghim
-hay một thiết bị khác đều thấy cùng bản nháp. Widget state chứa tối đa 16 KiB, nên bản nháp có JSON lớn hơn 12 KiB không
-được giữ và cũng không bao giờ bị cắt. Trình soạn thảo nói rõ bản nháp sẽ không còn sau khi tải lại, và cờ báo được giữ
-lại để lần tải sau cũng nói như vậy. Khi tải, trình soạn thảo đọc lại các byte đã lưu qua `base`. Nếu không đọc được
-(quyền với một tệp đã chọn chỉ kéo dài 24 giờ), bản nháp chưa lưu vẫn được hiển thị, đánh dấu chưa lưu, kèm lý do. Nếu
-không có bản nháp thì không có gì để hiển thị: trình soạn thảo không mở tài liệu nào, nói lý do và đưa ra *Mở tệp*, nên
-một ô văn bản trống không bao giờ được trình bày, hay được lưu, như thể là tệp đó.
-
-**Hai chỗ xem cùng một trình soạn thảo.** Khi state đã commit đến từ một chỗ xem khác, trình soạn thảo nhận lấy nếu
-nó không còn gì chưa gửi. Nếu cả hai cùng đổi, nó hiện *Giữ bản của tôi* và *Dùng bản kia*, và không vứt bản nào. Câu
-hỏi này không lấy bàn phím của người đang gõ; dòng trạng thái thông báo nó. Một chỗ xem chưa mở tài liệu nào, chẳng hạn
-chỗ xem không đọc lại được bản đã lưu, không có bản nháp của riêng nó: nó luôn nhận state đã commit, không bao giờ hỏi,
-và không ghi state cho đến khi người dùng mở một tệp, nên không thể xoá bản nháp của chỗ xem khác. Một
-chỗ xem còn đang mở lại tệp sau khi tải lại thì không phải chỗ xem như vậy: state được commit trong lúc đó được giữ lại
-và nhận sau khi mở lại xong, còn một lần đọc bản đã lưu bị lần đọc mới hơn vượt qua sẽ bị bỏ, nên văn bản cũ không bao
-giờ thay văn bản mới.
-
-**Lưu.** Trình soạn thảo ghi một artifact `working` cùng loại và cùng tên với tệp đã mở, theo từng đoạn, finalize nó
-rồi gọi `export(ref, { suggestedName })`. Host quyết định điều đó nghĩa là gì. Trên máy tính, host đưa ra *Ghi đè tệp
-gốc* cho tệp đã chọn trong frame này, vì cùng loại; trên web, host bắt đầu tải xuống và nói rằng ghi đè tệp gốc là tính
-năng của ứng dụng máy tính. Trình soạn thảo chỉ biết `true` hoặc `false`, nên với `true` nó nói đã giao bản sao cho
-ứng dụng và để thông báo riêng của host nói bản đó đi đâu: trên web, việc tải xuống mới chỉ bắt đầu. Với `true`, bản sao
-trở thành `base` mới và bản sao trước đó do trình soạn thảo tạo bị bỏ; với `false`, bản sao không dùng đến bị bỏ. Trình
-soạn thảo không bao giờ bỏ tệp mà người dùng đã chọn. Ctrl+S (Cmd+S trên macOS) để lưu. *Đính kèm* finalize một bản sao
-rồi gọi `attachToConversation`.
-
-*Ghi đè tệp gốc* chỉ được đưa ra trong frame nơi tệp được chọn, và chỉ cho đến khi frame đó được tải lại: host giữ
-handle của máy tính cho tệp đã chọn trong bộ nhớ, bên cạnh đúng frame đó, và không bao giờ lưu nó lại. Sau khi tải lại,
-trong một bản đã ghim hoặc trong một cửa sổ tách riêng, máy tính chỉ đưa ra Lưu thành.
-
-**Những gì Clark được cho xem.** Trình soạn thảo công bố một câu tóm tắt ("Editing notes.txt: 3 lines, with unsaved
-changes.") và các giá trị `open`, `file`, `lines`, `dirty`, `selectionStart`, `selectionEnd`, `selectedChars` và
-`selectedText`. Đoạn trích bị cắt ở 200 đơn vị UTF-16, giới hạn của host cho một giá trị, và chỗ cắt được đánh dấu.
-Khoảng đang chọn cũng là một id được chọn (`chars:6-11`). Host giới hạn, che thông tin nhạy cảm và đánh dấu tất cả là
-lời của chính widget.
-
-**Nhờ Clark sửa đoạn đang chọn.** Trình soạn thảo bấm một binding `agent` có `contextRefs` là
-`["selection", "widget"]`, được nêu tên qua prop `rewriteBinding`. Hiện tại chỉ model kịch bản (fixture) của repository
-đặt trình soạn thảo kèm binding đó; chưa có đường nào của sản phẩm đặt một widget từ package đã cài kèm binding. Vì vậy
-trong một bản cài thật, nút này vẫn bị tắt và hiện lý do ("Clark chưa được gắn vào trình soạn thảo này…") cho đến khi
-[#382](https://github.com/digitopvn/clarkcant/issues/382) hoàn tất. Khi có binding và người dùng bấm *Nhờ Clark viết lại
-đoạn chọn*:
-
-1. Trình soạn thảo chỉ hỏi về một đoạn chọn mà host chuyển cho Clark nguyên vẹn. Host làm phẳng xuống dòng, tab và các
-   dãy khoảng trắng, bỏ ký tự vô hình, che nội dung giống khoá bí mật và cắt một giá trị ở 200 đơn vị UTF-16, nên đoạn
-   chọn nào bị host thay đổi sẽ bị từ chối ngay trong trình soạn thảo kèm lý do: quá dài; nhiều hơn một dòng; có ký tự
-   ẩn hoặc khoảng trắng đặc biệt như khoảng trắng không ngắt dòng; hoặc có nội dung host che vì có thể là thông tin
-   riêng, như địa chỉ e-mail, dãy số dài, đường dẫn thư mục người dùng hay chuỗi giống khoá bí mật. Văn bản mà host
-   chuyển nguyên vẹn thì không bao giờ bị từ chối. Khoảng trắng ở hai đầu được bỏ khỏi khoảng chọn, vì host cắt bỏ
-   chúng. Bản sao quy tắc làm sạch của host trong trình soạn thảo được so với chính quy tắc của host trong các kiểm thử
-   của package.
-2. Trình soạn thảo công bố semantic document, chuyển ô văn bản sang chỉ đọc và giữ nguyên đoạn chọn đã công bố cho đến
-   khi có câu trả lời. Vì binding này đọc đoạn đang chọn, host gửi lần publish còn đang chờ ổn định và chờ đến khi node
-   đã giữ mô tả được publish trước lần bấm, hoặc một mô tả mới hơn, rồi mới chạy lần bấm. Thời gian chờ có giới hạn
-   (8 giây); nếu không gửi được mô tả trong thời
-   gian đó, lần bấm bị từ chối, không có gì được hỏi, ô văn bản sửa được trở lại và dòng trạng thái nhắc thử lại sau
-   giây lát.
-3. `actions.invoke(rewriteBinding, {}, invocationId)` bắt đầu một lượt. Host đọc đoạn đang chọn và document của widget
-   vào phần dữ liệu của lượt đó, phần này được đánh dấu là dữ liệu chứ không phải chỉ dẫn.
-4. Câu trả lời quay về dưới dạng output của lần bấm, tối đa 2.000 ký tự. Trình soạn thảo coi nó là văn bản không tin
-   cậy và chỉ nhận làm đề xuất khi nó chứa đúng một khối có rào (```) đã đóng trong giới hạn đó; khối ấy là đoạn thay
-   thế, đã bỏ các ký tự điều khiển và ký tự vô hình trừ xuống dòng và tab. Mọi câu trả lời khác được hiển thị như lời
-   của Clark, không có gì để áp dụng.
-5. Đề xuất hiển thị đoạn thay thế cùng đoạn văn bản nó sẽ thay, và nhận bàn phím tại tiêu đề của nó. *Thay đoạn đã
-   chọn* chỉ áp dụng nếu khoảng đã chọn vẫn còn đúng đoạn văn bản Clark đã đọc; Escape hoặc *Bỏ qua* để đóng. Thay đổi
-   được đưa vào qua cơ chế soạn thảo của trình duyệt, nên Ctrl+Z hoàn tác được như mọi thứ đã gõ; nếu trình duyệt từ chối
-   cách đó, văn bản được đặt trực tiếp và trình soạn thảo không đề nghị hoàn tác. Thay đổi đã áp dụng là một chỉnh sửa
-   chưa lưu như mọi chỉnh sửa khác.
-
-Clark không bao giờ ghi vào frame, và không model nào phê duyệt một lần lưu: xuất tệp vẫn là hành động của người dùng
-trong hộp hỏi của host.
-
-**Khoảng trống đã biết.** Hiện tại, gõ yêu cầu trong ô soạn tin ("rút ngắn dòng thứ hai") không thể thay đổi trình soạn
-thảo, và chưa có đường nào của sản phẩm đặt trình soạn thảo kèm binding viết lại. Chưa có công cụ agent nào thực hiện
-được action riêng của một widget cách ly, nên thay đổi chỉ đến được frame qua nút của chính trình soạn thảo. Clark vẫn
-đọc được trình soạn thảo qua ghi chú lượt kế tiếp và `inspect_ui`. Cả hai được theo dõi ở
-[#382](https://github.com/digitopvn/clarkcant/issues/382).
-
-**Trợ năng.** Mọi điều khiển đều là nút gốc hoặc ô văn bản, theo thứ tự tab cố định, với viền focus nhìn thấy được. Hộp
-hỏi của host và các bảng của trình soạn thảo nhận bàn phím tại tiêu đề của chúng, trừ câu hỏi về hai chỗ xem để bàn
-phím lại cho người đang gõ. Escape đóng bảng đang mở: đóng đề xuất, huỷ việc mở tệp khác, và giữ bản nháp của chỗ xem
-này trong câu hỏi về hai chỗ xem. Màu lấy từ appearance token của host (`appearance@1`), nếu không có thì theo lựa chọn
-sáng hoặc tối của hệ thống. Chế độ giảm chuyển động bỏ mọi hiệu ứng chuyển tiếp. Thanh công cụ xuống dòng ở 390 px, và
-frame xin host chiều cao đúng bằng nội dung.
-
-Kiểm thử: [editor-core.spec.ts](../examples/reference-apps/text-editor/test/editor-core.spec.ts) cho các quy tắc,
-[package.spec.ts](../examples/reference-apps/text-editor/test/package.spec.ts) cho conformance, manifest và bản sao quy
-tắc làm sạch của host, [pure-ui-template.spec.ts](../packages/widget-cli/test/pure-ui-template.spec.ts) cho template,
-[semantic-settle.spec.ts](../packages/conversation-client/test/semantic-settle.spec.ts) cho việc gửi publish đang chờ
-trước một lần bấm, và hành trình trên trình duyệt [text-editor.spec.ts](../apps/web/e2e/text-editor.spec.ts). Hành
-trình đó mở, sửa, tải lại, lưu thành tệp tải xuống rồi mở lại trên web. Nó gõ tiếp trong lúc một lượt ghi bản nháp bị
-giữ lại trên đường tới node, và kiểm tra rằng không có xung đột nào hiện ra và không mất gì đã gõ. Kiểm thử máy tính
-của nó chỉ là phần của trang: nó ghi đè tệp gốc rồi mở lại với một preload được mô phỏng theo hợp đồng của shell. Các
-hàm hỗ trợ của shell (từ handle ra đường dẫn, giữ loại tệp, ghi nguyên khối) được kiểm thử đơn vị trong
-[file-bridge.spec.ts](../apps/desktop/test/file-bridge.spec.ts); IPC handler của shell và hộp xác nhận của nó chưa được
-cái nào chạy tới, và một hành trình với shell thật vẫn còn phải làm. Hành trình nhờ Clark qua model kịch bản, model này
-trích đoạn đang chọn từ phần dữ liệu; nó hiển thị đoạn sẽ bị thay, áp dụng câu trả lời rồi hoàn tác, từ chối một đoạn
-chọn nhiều dòng, và từ chối một câu trả lời khi khoảng đã chọn đã đổi. Nó chạy chỉ bằng bàn phím, ở 390 px với cả hai
-giao diện sáng và tối khi bật giảm chuyển động, và kiểm tra, với tin nhắn được ghi ở cả hai chiều, rằng không có vị trí
-trên đĩa hay file handle nào đi qua bridge.
-
-### 10.4 Ứng dụng mẫu: trình tạo ảnh
-
-[`examples/reference-apps/image-generator`](../examples/reference-apps/image-generator)
-([#319](https://github.com/digitopvn/clarkcant/issues/319), thuộc
-[#200](https://github.com/digitopvn/clarkcant/issues/200)) là một package manifest v2 có một facet giao diện cách ly và
-một facet service. Package cho thấy một widget khởi động việc dài trên service, theo dõi nó và nhận lại một tệp, trong
-khi service gọi tới nhà cung cấp bằng một key mà nó không bao giờ giữ.
-
-- **Capability.** Service cung cấp `com.clarkcant.reference.image-generator.image.generate@1` (ref của capability được
-  đặt dưới id của package), với `effectCategory: "external-write"` và `execution: { kind: "job", version: 1 }`. Một lần
-  bấm trả về ngay một JobRef ([§10.2](#102-job-chạy-lâu-jobs1)).
-- **Vì sao là `external-write`.** Yêu cầu nhà cung cấp vẽ là ghi vào dịch vụ của người khác: nó làm việc ở đó và tiêu
-  hạn mức của người dùng. Đó cũng là điều cho phép service bắt đầu ảnh bằng một POST với prompt nằm trong body JSON:
-  node chỉ gửi request của service bằng phương thức khác GET hay HEAD cho capability được quyết định là `external-write`
-  trở lên ([§14.2](#142-service-gọi-tới-nhà-cung-cấp)), và prompt nằm trong URL sẽ bị ghi vào nhiều log hơn body. Với
-  chính sách tự chủ mặc định, một lần bấm chạy luôn; người dùng có chính sách hỏi trước khi ghi ra ngoài sẽ thấy thẻ
-  duyệt của host trước, và widget được báo rằng lần bấm đang chờ.
-- **Nhà cung cấp.** Facet tools khai báo một origin và một secret, `IMAGE_PROVIDER_KEY`. Service bắt đầu một ảnh bằng
-  POST, đọc trạng thái mỗi bước một lần và lấy tệp PNG bằng GET, tất cả qua `clarkcant/egress.fetch`; node thêm key vào
-  như một header bearer. Cho tới khi người dùng lưu key, nút bị tắt kèm lý do của node. Nhà cung cấp trong repository
-  này là một bản giả trong phần kiểm thử của package: nó chỉ trả lời request có key, từ chối prompt nằm trong URL, và
-  trả về một ảnh tất định. Nhà cung cấp thật là [#321](https://github.com/digitopvn/clarkcant/issues/321).
-- **Tiến độ và kết quả.** Mỗi bước xong là một progress của MCP, được job ghi lại và widget hiển thị; widget không ước
-  đoán gì. Tệp PNG trả về dưới dạng một phần ảnh, được node lưu làm artifact kết quả của job. Lỗi của service được giữ
-  trên job thất bại bằng chính lời của service ([§10.2](#102-job-chạy-lâu-jobs1)), và widget hiển thị những lời đó
-  trong ngoặc kép như lời của service, bên trong câu của chính nó. Mỗi job đang chạy có một khung riêng với tiến độ và
-  nút Dừng riêng, nút này huỷ đúng job đó; service ngừng đọc nhà cung cấp.
-- **Thư viện ảnh.** Khi host mở `jobs.list@1`, widget liệt kê các job của chính nó, theo dõi những job đang mở, và đọc
-  ảnh đã xong dưới dạng `ArtifactRef` theo từng đoạn 256 KiB; tải lại trang hay mở trên thiết bị khác vẫn thấy cùng các
-  job, vì chúng thuộc về node. Trên host không có extension đó, thư viện ảnh chỉ giữ các job được khởi chạy trong lúc
-  widget đang mở và nói rõ điều đó. Mỗi ảnh có thể được đính kèm vào cuộc trò chuyện hoặc xuất ra qua host
-  ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)).
-- **Widget, Clark và giọng nói.** Nút là một action binding `invoke` có tên trong props là `generateBinding`. Binding
-  lấy `prompt` từ bản nháp trong widget state, và từ input của lần bấm khi có. Nói nhãn của nút khi widget đang mở sẽ
-  bấm nó với bản nháp, và câu trả lời nói job đã bắt đầu. Công cụ `invoke_capability` của Clark khởi động một capability
-  dạng job qua widget trong cuộc trò chuyện có binding tới nó, để widget đó theo dõi job. Nếu không có widget nào thì
-  không có gì chạy và Clark nói rõ; nếu có nhiều thì Clark được cho biết `instanceId` và `actionBindingId` của từng nút
-  và chọn một. Clark bị từ chối khi bấm một binding hỏi chính Clark, vì lần bấm đó sẽ được gửi như tin nhắn của chính
-  người dùng.
-- **Ngôn ngữ.** Giống trình soạn thảo văn bản ([§10.3](#103-ứng-dụng-mẫu-trình-soạn-thảo-văn-bản)), chữ của chính frame
-  chỉ có tiếng Việt: DESIGN §11.1 dịch phần giao diện mặc định của host, không dịch chữ của widget.
-- **Template.** `clark widget init --template ai-generator` sao chép ứng dụng này dưới id của package mới, kể cả nhà
-  cung cấp, với origin giữ chỗ `https://images.example.com` thay cho origin của nhà cung cấp kiểm thử: hãy thay nó, cùng
-  các đường dẫn trong `service/server.mjs`, bằng của nhà cung cấp của bạn trước khi phát hành. `--template
-  ui-with-service` sao chép cùng widget và job với một service tự vẽ ảnh, không khai báo nhà cung cấp nào, nên chỉ đọc.
-  Cả hai vượt qua `clark widget test` và `pack` ngay khi được tạo. `pure-ui` và cả hai template này đi qua cùng một bộ
-  sao chép trong CLI.
-
-Hiện chỉ có model fixture có kịch bản của repository đặt widget kèm `generateBinding`. Chưa có đường đi nào của sản
-phẩm đặt một widget của package đã cài kèm binding ([#382](https://github.com/digitopvn/clarkcant/issues/382)), nên
-trong một bản cài thật widget sẽ nói nó chưa được gắn với service.
-
-Kiểm thử: [service-job.spec.ts](../examples/reference-apps/image-generator/test/service-job.spec.ts) cho service với
-nhà cung cấp giả qua job host, egress broker và artifact broker (hoàn tất, tiến độ, POST bắt đầu một ảnh, thất bại, key
-bị từ chối, huỷ, lỗi của nhà cung cấp lặp lại key, và key không có trong lệnh khởi chạy service, job, cơ sở dữ liệu,
-log, audit, thông báo và tệp); [package.spec.ts](../examples/reference-apps/image-generator/test/package.spec.ts) cho
-conformance và manifest; [reference-templates.spec.ts](../packages/widget-cli/test/reference-templates.spec.ts) cho
-các template và bộ sao chép dùng chung; và hành trình trình duyệt
-[image-generator.spec.ts](../apps/web/e2e/image-generator.spec.ts). Hành trình bao gồm từ chối khi chưa có key, tiến độ
-qua một lần tải lại, thư viện ảnh, hai job mỗi job có nút Dừng riêng, nhà cung cấp báo lỗi có lặp lại key, đính kèm và
-xuất, Clark, giọng nói, duyệt trên thẻ của host, host không có `jobs.list@1`, bàn phím, hai theme, 390 px và giảm
-chuyển động. Sau mỗi hành trình, key được tìm trong trang, bridge, tệp và bảng của node, và container của service.
 
 ---
 
@@ -2131,12 +1947,12 @@ Templates:
 - blank;
 - dashboard;
 - form;
-- pure-ui: bản sao của trình soạn thảo văn bản mẫu ([§10.3](#103-ứng-dụng-mẫu-trình-soạn-thảo-văn-bản)), mang id,
+- pure-ui: bản sao của trình soạn thảo văn bản mẫu ([§24.1](#241-trình-soạn-thảo-văn-bản)), mang id,
   facet id và tên riêng của package mới, không kèm các kiểm thử của trình soạn thảo;
 - editor;
 - media;
 - MCP App adapter;
-- `ai-generator` và `ui-with-service`, sao chép từ ứng dụng tham chiếu tạo ảnh ([§10.4](#104-ứng-dụng-mẫu-trình-tạo-ảnh)); `ai-generator` bắt đầu với một origin nhà cung cấp giữ chỗ cần được thay.
+- `ai-generator` và `ui-with-service`, sao chép từ ứng dụng tham chiếu tạo ảnh ([§24.3](#243-trình-tạo-ảnh)); `ai-generator` bắt đầu với một origin nhà cung cấp giữ chỗ cần được thay.
 
 Hiện tại `clark widget init --template` nhận `blank`, `form`, `dashboard`, `pure-ui`, `ai-generator` và
 `ui-with-service`. `editor`, `media` và MCP App
@@ -2680,3 +2496,286 @@ một package sẵn sàng dùng. Không có flow dev thực nào phụ thuộc h
 dùng dev host riêng của nó, không đi qua route này. Một dev DB cũ thấy generation của mình biến mất khỏi route
 này sau khi nâng cấp nên chạy lại `POST /packages/install` cho package đó, hoặc `node
 tools/check-invariants.mjs --fix-manifest` nếu chỉ cần đồng bộ lại `docs/manifest.json` sau khi sửa file này.
+
+---
+
+## 24. Ứng dụng tham chiếu
+
+Ứng dụng tham chiếu là các package hoàn chỉnh cho thấy các phần của nền tảng ghép lại với nhau trong một widget thật.
+Chúng nằm trong `examples/reference-apps/` và được kiểm thử như mọi package khác, cộng thêm một hành trình trình duyệt
+qua một node thật.
+
+### 24.1 Trình soạn thảo văn bản
+
+[`examples/reference-apps/text-editor`](../examples/reference-apps/text-editor) là một ứng dụng hoàn chỉnh chỉ dựng
+trên các hợp đồng ở [§10](#10-widget-sdk-surface). Nó có một facet UI cách ly, không có service, không xin quyền nào và không yêu cầu capability
+nào. Người dùng mở một tệp văn bản, sửa, lưu và nhờ Clark viết lại một đoạn đang chọn, còn frame không bao giờ thấy tệp
+nằm ở đâu. `clark widget init --template pure-ui` tạo một package mới từ bản sao của nó
+([§16](#16-developer-cli-target)).
+
+**Package.** `clarkcant.json` là manifest schema phiên bản 2 cho mọi nền tảng và cho web. `widget.json` nhận hai
+prop: `title`, và `rewriteBinding` là id của binding `agent` mà trình soạn thảo được phép bấm. `stateSchema` chỉ nhận
+`file`, `base` (hai `ArtifactRef`), `draft` và `draftTooLarge`, với `additionalProperties: false`. Các quy tắc là hàm
+thuần trong [`editor-core.js`](../examples/reference-apps/text-editor/widgets/main/editor-core.js), được kiểm thử không
+cần trình duyệt; `main.js` lo phần DOM và các lời gọi SDK.
+
+**Mở tệp.** `artifacts.pick({ accept: ["text/plain", "text/markdown", "text/csv", "application/json"] })` hỏi host,
+và host vẽ hộp hỏi bên ngoài frame. Trình soạn thảo từ chối tệp lớn hơn 1 MiB trước khi đọc byte nào. Phần còn lại được
+đọc theo từng đoạn 256 KiB và giải mã UTF-8 nghiêm ngặt: byte không phải văn bản bị từ chối kèm lý do, thay vì được hiển
+thị bằng ký tự thay thế mà một lần lưu sẽ ghi ngược lại vào tệp.
+
+**Sửa và giữ bản nháp.** Bản nháp chưa lưu được ghi vào widget state 400 ms sau khi người dùng ngừng gõ, mỗi lần chỉ một
+lượt ghi. Trình soạn thảo nhớ lượt ghi chưa được trả lời cùng revision mà nó ghi dựa trên, nên khi host commit lượt ghi
+đó sau lúc người dùng đã gõ tiếp, nó được nhận ra là lượt ghi của chính trình soạn thảo chứ không bị coi là thay đổi từ
+một cửa sổ khác. Một lượt ghi bị từ chối được trả lời bằng state mà host đã commit. Vì vậy tải lại trang, một bản đã ghim
+hay một thiết bị khác đều thấy cùng bản nháp. Widget state chứa tối đa 16 KiB, nên bản nháp có JSON lớn hơn 12 KiB không
+được giữ và cũng không bao giờ bị cắt. Trình soạn thảo nói rõ bản nháp sẽ không còn sau khi tải lại, và cờ báo được giữ
+lại để lần tải sau cũng nói như vậy. Khi tải, trình soạn thảo đọc lại các byte đã lưu qua `base`. Nếu không đọc được
+(quyền với một tệp đã chọn chỉ kéo dài 24 giờ), bản nháp chưa lưu vẫn được hiển thị, đánh dấu chưa lưu, kèm lý do. Nếu
+không có bản nháp thì không có gì để hiển thị: trình soạn thảo không mở tài liệu nào, nói lý do và đưa ra *Mở tệp*, nên
+một ô văn bản trống không bao giờ được trình bày, hay được lưu, như thể là tệp đó.
+
+**Hai chỗ xem cùng một trình soạn thảo.** Khi state đã commit đến từ một chỗ xem khác, trình soạn thảo nhận lấy nếu
+nó không còn gì chưa gửi. Nếu cả hai cùng đổi, nó hiện *Giữ bản của tôi* và *Dùng bản kia*, và không vứt bản nào. Câu
+hỏi này không lấy bàn phím của người đang gõ; dòng trạng thái thông báo nó. Một chỗ xem chưa mở tài liệu nào, chẳng hạn
+chỗ xem không đọc lại được bản đã lưu, không có bản nháp của riêng nó: nó luôn nhận state đã commit, không bao giờ hỏi,
+và không ghi state cho đến khi người dùng mở một tệp, nên không thể xoá bản nháp của chỗ xem khác. Một
+chỗ xem còn đang mở lại tệp sau khi tải lại thì không phải chỗ xem như vậy: state được commit trong lúc đó được giữ lại
+và nhận sau khi mở lại xong, còn một lần đọc bản đã lưu bị lần đọc mới hơn vượt qua sẽ bị bỏ, nên văn bản cũ không bao
+giờ thay văn bản mới.
+
+**Lưu.** Trình soạn thảo ghi một artifact `working` cùng loại và cùng tên với tệp đã mở, theo từng đoạn, finalize nó
+rồi gọi `export(ref, { suggestedName })`. Host quyết định điều đó nghĩa là gì. Trên máy tính, host đưa ra *Ghi đè tệp
+gốc* cho tệp đã chọn trong frame này, vì cùng loại; trên web, host bắt đầu tải xuống và nói rằng ghi đè tệp gốc là tính
+năng của ứng dụng máy tính. Trình soạn thảo chỉ biết `true` hoặc `false`, nên với `true` nó nói đã giao bản sao cho
+ứng dụng và để thông báo riêng của host nói bản đó đi đâu: trên web, việc tải xuống mới chỉ bắt đầu. Với `true`, bản sao
+trở thành `base` mới và bản sao trước đó do trình soạn thảo tạo bị bỏ; với `false`, bản sao không dùng đến bị bỏ. Trình
+soạn thảo không bao giờ bỏ tệp mà người dùng đã chọn. Ctrl+S (Cmd+S trên macOS) để lưu. *Đính kèm* finalize một bản sao
+rồi gọi `attachToConversation`.
+
+*Ghi đè tệp gốc* chỉ được đưa ra trong frame nơi tệp được chọn, và chỉ cho đến khi frame đó được tải lại: host giữ
+handle của máy tính cho tệp đã chọn trong bộ nhớ, bên cạnh đúng frame đó, và không bao giờ lưu nó lại. Sau khi tải lại,
+trong một bản đã ghim hoặc trong một cửa sổ tách riêng, máy tính chỉ đưa ra Lưu thành.
+
+**Những gì Clark được cho xem.** Trình soạn thảo công bố một câu tóm tắt ("Editing notes.txt: 3 lines, with unsaved
+changes.") và các giá trị `open`, `file`, `lines`, `dirty`, `selectionStart`, `selectionEnd`, `selectedChars` và
+`selectedText`. Đoạn trích bị cắt ở 200 đơn vị UTF-16, giới hạn của host cho một giá trị, và chỗ cắt được đánh dấu.
+Khoảng đang chọn cũng là một id được chọn (`chars:6-11`). Host giới hạn, che thông tin nhạy cảm và đánh dấu tất cả là
+lời của chính widget.
+
+**Nhờ Clark sửa đoạn đang chọn.** Trình soạn thảo bấm một binding `agent` có `contextRefs` là
+`["selection", "widget"]`, được nêu tên qua prop `rewriteBinding`. Hiện tại chỉ model kịch bản (fixture) của repository
+đặt trình soạn thảo kèm binding đó; chưa có đường nào của sản phẩm đặt một widget từ package đã cài kèm binding. Vì vậy
+trong một bản cài thật, nút này vẫn bị tắt và hiện lý do ("Clark chưa được gắn vào trình soạn thảo này…") cho đến khi
+[#382](https://github.com/digitopvn/clarkcant/issues/382) hoàn tất. Khi có binding và người dùng bấm *Nhờ Clark viết lại
+đoạn chọn*:
+
+1. Trình soạn thảo chỉ hỏi về một đoạn chọn mà host chuyển cho Clark nguyên vẹn. Host làm phẳng xuống dòng, tab và các
+   dãy khoảng trắng, bỏ ký tự vô hình, che nội dung giống khoá bí mật và cắt một giá trị ở 200 đơn vị UTF-16, nên đoạn
+   chọn nào bị host thay đổi sẽ bị từ chối ngay trong trình soạn thảo kèm lý do: quá dài; nhiều hơn một dòng; có ký tự
+   ẩn hoặc khoảng trắng đặc biệt như khoảng trắng không ngắt dòng; hoặc có nội dung host che vì có thể là thông tin
+   riêng, như địa chỉ e-mail, dãy số dài, đường dẫn thư mục người dùng hay chuỗi giống khoá bí mật. Văn bản mà host
+   chuyển nguyên vẹn thì không bao giờ bị từ chối. Khoảng trắng ở hai đầu được bỏ khỏi khoảng chọn, vì host cắt bỏ
+   chúng. Bản sao quy tắc làm sạch của host trong trình soạn thảo được so với chính quy tắc của host trong các kiểm thử
+   của package.
+2. Trình soạn thảo công bố semantic document, chuyển ô văn bản sang chỉ đọc và giữ nguyên đoạn chọn đã công bố cho đến
+   khi có câu trả lời. Vì binding này đọc đoạn đang chọn, host gửi lần publish còn đang chờ ổn định và chờ đến khi node
+   đã giữ mô tả được publish trước lần bấm, hoặc một mô tả mới hơn, rồi mới chạy lần bấm. Thời gian chờ có giới hạn
+   (8 giây); nếu không gửi được mô tả trong thời
+   gian đó, lần bấm bị từ chối, không có gì được hỏi, ô văn bản sửa được trở lại và dòng trạng thái nhắc thử lại sau
+   giây lát.
+3. `actions.invoke(rewriteBinding, {}, invocationId)` bắt đầu một lượt. Host đọc đoạn đang chọn và document của widget
+   vào phần dữ liệu của lượt đó, phần này được đánh dấu là dữ liệu chứ không phải chỉ dẫn.
+4. Câu trả lời quay về dưới dạng output của lần bấm, tối đa 2.000 ký tự. Trình soạn thảo coi nó là văn bản không tin
+   cậy và chỉ nhận làm đề xuất khi nó chứa đúng một khối có rào (```) đã đóng trong giới hạn đó; khối ấy là đoạn thay
+   thế, đã bỏ các ký tự điều khiển và ký tự vô hình trừ xuống dòng và tab. Mọi câu trả lời khác được hiển thị như lời
+   của Clark, không có gì để áp dụng.
+5. Đề xuất hiển thị đoạn thay thế cùng đoạn văn bản nó sẽ thay, và nhận bàn phím tại tiêu đề của nó. *Thay đoạn đã
+   chọn* chỉ áp dụng nếu khoảng đã chọn vẫn còn đúng đoạn văn bản Clark đã đọc; Escape hoặc *Bỏ qua* để đóng. Thay đổi
+   được đưa vào qua cơ chế soạn thảo của trình duyệt, nên Ctrl+Z hoàn tác được như mọi thứ đã gõ; nếu trình duyệt từ chối
+   cách đó, văn bản được đặt trực tiếp và trình soạn thảo không đề nghị hoàn tác. Thay đổi đã áp dụng là một chỉnh sửa
+   chưa lưu như mọi chỉnh sửa khác.
+
+Clark không bao giờ ghi vào frame, và không model nào phê duyệt một lần lưu: xuất tệp vẫn là hành động của người dùng
+trong hộp hỏi của host.
+
+**Khoảng trống đã biết.** Hiện tại, gõ yêu cầu trong ô soạn tin ("rút ngắn dòng thứ hai") không thể thay đổi trình soạn
+thảo, và chưa có đường nào của sản phẩm đặt trình soạn thảo kèm binding viết lại. Chưa có công cụ agent nào thực hiện
+được action riêng của một widget cách ly, nên thay đổi chỉ đến được frame qua nút của chính trình soạn thảo. Clark vẫn
+đọc được trình soạn thảo qua ghi chú lượt kế tiếp và `inspect_ui`. Cả hai được theo dõi ở
+[#382](https://github.com/digitopvn/clarkcant/issues/382).
+
+**Trợ năng.** Mọi điều khiển đều là nút gốc hoặc ô văn bản, theo thứ tự tab cố định, với viền focus nhìn thấy được. Hộp
+hỏi của host và các bảng của trình soạn thảo nhận bàn phím tại tiêu đề của chúng, trừ câu hỏi về hai chỗ xem để bàn
+phím lại cho người đang gõ. Escape đóng bảng đang mở: đóng đề xuất, huỷ việc mở tệp khác, và giữ bản nháp của chỗ xem
+này trong câu hỏi về hai chỗ xem. Màu lấy từ appearance token của host (`appearance@1`), nếu không có thì theo lựa chọn
+sáng hoặc tối của hệ thống. Chế độ giảm chuyển động bỏ mọi hiệu ứng chuyển tiếp. Thanh công cụ xuống dòng ở 390 px, và
+frame xin host chiều cao đúng bằng nội dung.
+
+Kiểm thử: [editor-core.spec.ts](../examples/reference-apps/text-editor/test/editor-core.spec.ts) cho các quy tắc,
+[package.spec.ts](../examples/reference-apps/text-editor/test/package.spec.ts) cho conformance, manifest và bản sao quy
+tắc làm sạch của host, [pure-ui-template.spec.ts](../packages/widget-cli/test/pure-ui-template.spec.ts) cho template,
+[semantic-settle.spec.ts](../packages/conversation-client/test/semantic-settle.spec.ts) cho việc gửi publish đang chờ
+trước một lần bấm, và hành trình trên trình duyệt [text-editor.spec.ts](../apps/web/e2e/text-editor.spec.ts). Hành
+trình đó mở, sửa, tải lại, lưu thành tệp tải xuống rồi mở lại trên web. Nó gõ tiếp trong lúc một lượt ghi bản nháp bị
+giữ lại trên đường tới node, và kiểm tra rằng không có xung đột nào hiện ra và không mất gì đã gõ. Kiểm thử máy tính
+của nó chỉ là phần của trang: nó ghi đè tệp gốc rồi mở lại với một preload được mô phỏng theo hợp đồng của shell. Các
+hàm hỗ trợ của shell (từ handle ra đường dẫn, giữ loại tệp, ghi nguyên khối) được kiểm thử đơn vị trong
+[file-bridge.spec.ts](../apps/desktop/test/file-bridge.spec.ts); IPC handler của shell và hộp xác nhận của nó chưa được
+cái nào chạy tới, và một hành trình với shell thật vẫn còn phải làm. Hành trình nhờ Clark qua model kịch bản, model này
+trích đoạn đang chọn từ phần dữ liệu; nó hiển thị đoạn sẽ bị thay, áp dụng câu trả lời rồi hoàn tác, từ chối một đoạn
+chọn nhiều dòng, và từ chối một câu trả lời khi khoảng đã chọn đã đổi. Nó chạy chỉ bằng bàn phím, ở 390 px với cả hai
+giao diện sáng và tối khi bật giảm chuyển động, và kiểm tra, với tin nhắn được ghi ở cả hai chiều, rằng không có vị trí
+trên đĩa hay file handle nào đi qua bridge.
+
+### 24.2 Bảng tính
+
+`examples/reference-apps/spreadsheet` ([#318](https://github.com/digitopvn/clarkcant/issues/318), thuộc [#200](https://github.com/digitopvn/clarkcant/issues/200)) là một package manifest v2 có một facet
+giao diện cách ly và không có service. Package cho thấy một widget làm việc với tệp, giữ một tài liệu lớn trong giới
+hạn, tự mô tả cho Clark và áp dụng một thay đổi do Clark chọn.
+
+- **Tệp.** CSV và TSV được nhập qua `api.artifacts.pick` ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)) và đọc theo
+  từng đoạn 256 KiB; widget không bao giờ thấy đường dẫn. Xuất ghi một tệp mới qua `create`, `write`, `finalize` và
+  `export`, có dấu BOM như chức năng xuất bảng của host. XLSX không được hỗ trợ: trong mã nguồn không có bộ phân tích
+  đã được thẩm định, và broker tệp của host không chấp nhận kiểu này.
+- **Giới hạn.** Tải tối đa 25.000 ô, 64 cột và 5.000 hàng, và không tệp nào được đọc quá 8 MiB. Giới hạn ô áp lên
+  hình chữ nhật mà các hàng tạo thành (số hàng nhân với hàng rộng nhất), đúng quy tắc bảng áp cho một lần sửa, nên một
+  tệp có hàng dài ngắn không đều bị cắt ở chỗ hình chữ nhật hết vừa, thay vì tải ra một bảng rồi từ chối mọi lần sửa.
+  Việc đọc dừng ở giới hạn và một thông báo cho biết đã hiện bao nhiêu và khi xuất chỉ ghi phần đó. Lần đọc bị dừng ở
+  mức 8 MiB bỏ dòng đang đọc dở thay vì hiện một mảnh như thể là một hàng, và vẫn được báo là bị cắt kể cả khi giới hạn
+  rơi đúng vào cuối một dòng. Dòng trống ở cuối tệp không được tính, nên
+  không bao giờ làm một tệp vừa giới hạn trông như bị cắt. Hàng và cột được vẽ ảo, nên một bảng lớn chỉ giữ các ô đang
+  nhìn thấy trong trang.
+- **Trạng thái.** Trạng thái widget giữ tham chiếu tới tệp nguồn, các sửa đổi từ đó và định dạng, không bao giờ giữ
+  chính bảng. Ô hiện tại và vùng chọn được khai báo trong `ephemeralStateKeys` ([§5](#5-widget-definition)): host giữ
+  chúng cho frame và không bao giờ ghi xuống node, và việc di chuyển con trỏ gửi tối đa một lần cập nhật sau mỗi lần
+  dừng tay. Ngay sau khi nhập, widget ghi bảng vào một tệp riêng của nó, và tệp ấy trở thành nguồn. Quyền đọc của
+  widget trên một tệp được chọn chỉ kéo dài 24 giờ kể từ lúc chọn, còn một tệp đã hoàn tất do chính widget ghi thì
+  không hết hạn. Nếu lần ghi ấy thất bại, dòng trạng thái nói rõ và lần sửa tiếp theo sẽ thử lại; trong lúc đó bảng vẫn
+  phụ thuộc vào tệp được chọn. Khi sửa đổi vượt 10 KiB trong 16 KiB host cho phép, widget cũng ghi toàn bộ bảng vào
+  một tệp riêng như vậy và bắt đầu lại từ tệp ấy. Mỗi lúc chỉ chạy một checkpoint như vậy, và chờ thêm tối đa một cái.
+  Các sửa đổi làm trong lúc một checkpoint đang được ghi vẫn được giữ và được lưu sau nó, và chỉ những sửa đổi tệp ấy
+  đã chứa mới được xoá. Khi một checkpoint đã được ghi nhận, widget yêu cầu host huỷ checkpoint mà nó thay thế, và một
+  checkpoint được ghi cho một bảng đã bị lần nhập khác thay thế trong lúc đó cũng bị huỷ. Nếu host từ chối huỷ, tệp ấy
+  vẫn nằm trong vùng lưu trữ của widget. Một checkpoint không tải được trọn vẹn sau khi tải lại sẽ được nói rõ trong
+  thông báo. Xoá một vùng chọn là một lần sửa gộp, nên xoá cả bảng chỉ mất một lát chứ không phải vài phút.
+- **Tải bảng.** Khi được gắn vào, bảng được đọc lại từ nguồn. Cho tới khi tải xong, lưới không nhận sửa đổi, các nút
+  Nhập, Xuất và "Nhờ Clark" phải chờ, và dòng trạng thái báo bảng đang được mở. Khi không đọc được nguồn, dòng trạng
+  thái nói rõ, lưới chỉ hiện các sửa đổi làm sau đó và không nhận sửa đổi nào, và không có gì được lưu, nên bảng đã lưu
+  vẫn còn nguyên ở lần gắn sau. Nhập một tệp sẽ bắt đầu lại từ tệp ấy.
+- **Công thức.** Một tập đóng: số học, tham chiếu ô và vùng, và `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`. Một bộ
+  phân tích dựng cây và widget duyệt cây đó; không văn bản nào được chạy như mã. Lỗi là giá trị (`#DIV/0!`,
+  `#VALUE!`, `#REF!`, `#NAME?`, `#PARSE!`, `#NUM!`, `#LIMIT!`), và tham chiếu vòng là `#CIRC!`, với các ô
+  trên vòng được nêu tên trong thông báo. Một lần tính lại đọc tối đa 5.000.000 ô qua các vùng và lần theo tối đa
+  2.000.000 liên kết giữa các công thức. `#LIMIT!` chỉ đánh dấu công thức vượt một trong hai giới hạn đó, cùng các công
+  thức đọc nó; một công thức không có vùng, như `=1+1`, luôn được tính. Một tổng luỹ kế như `=SUM($A$1:A3000)` kéo
+  xuống 3.000 hàng vẫn vừa.
+- **Chèn công thức vào CSV.** Tệp xuất mang giá trị đã tính, không bao giờ mang công thức. Văn bản bắt đầu bằng `=`,
+  `+`, `-`, `@`, tab hoặc ký tự CR được ghi kèm dấu `'` ở đầu, đúng quy tắc của `toCsv`. Văn bản mà bảng này sẽ đọc
+  lại thành thứ khác, như `007`, `1e3` hoặc văn bản tự nó bắt đầu bằng `'`, cũng được ghi kèm dấu `'`. Dấu `'` ở đầu
+  được đọc lại là văn bản, nên một tệp đã xuất nhập lại vào bảng này vẫn ra cùng giá trị. Một ứng dụng bảng tính khác
+  hiện dấu `'` đó như một phần của văn bản, giống như với quy tắc công thức.
+- **Tài liệu ngữ nghĩa.** Vùng chọn dạng A1, một đoạn trích tối đa 12 hàng × 8 cột, công thức và giá trị của ô hiện tại,
+  và kích thước bảng, vừa trong giới hạn ngữ nghĩa của host nên không gì bị cắt.
+- **Định dạng qua Clark.** Nút "định dạng phần trăm" của widget bấm một binding `agent` có id được truyền qua prop
+  `formatBinding` và ngữ cảnh là `selection` và `widget`. Lần bấm không gửi gì: host đọc vùng chọn từ tài liệu ngữ
+  nghĩa của widget và yêu cầu đúng một dòng, `format: percent <vùng>`. Widget coi câu trả lời là không đáng tin. Nó
+  nhận một tập dòng đóng, `format: percent|number|plain <vùng>`, và chỉ áp dụng khi vùng đúng là vùng đã chọn lúc bấm;
+  nếu không, nó nói rõ và không thay đổi gì. Vùng chọn bị khoá cho tới khi có câu trả lời. Bảng giữ tối đa 32 định dạng.
+  Khi một định dạng mới đẩy định dạng cũ nhất ra, dòng trạng thái nêu tên vùng bị mất định dạng. "Hoàn tác định dạng",
+  hoặc Ctrl+Z trong lưới, khôi phục các định dạng trước thay đổi của Clark. Widget không có thao tác hoàn tác nào khác.
+- **Bàn phím.** Lưới là một điểm dừng Tab duy nhất. Phím mũi tên để di chuyển, Shift mở rộng vùng chọn, Home/End và
+  Ctrl+Home/End để nhảy, Page Up/Down để lật trang. Enter hoặc F2 để sửa, gõ phím để bắt đầu sửa, và Enter xác nhận rồi
+  xuống dưới. Escape huỷ lần sửa hoặc thu vùng chọn về ô hiện tại. Delete xoá vùng chọn, và Ctrl+Z hoàn tác định dạng
+  gần nhất. Tab và Shift+Tab rời lưới, nên vẫn tới được Nhập, Xuất, "Nhờ Clark" và phần còn lại của trang. Chỉ khi đang
+  sửa, Tab mới xác nhận và sang phải.
+- **Con trỏ và cảm ứng.** Chuột chọn bằng cách bấm, Shift+bấm hoặc kéo. Trên màn hình cảm ứng, chạm để chọn một ô và
+  vuốt để cuộn lưới. "Chọn vùng" làm các lần chạm sau mở rộng vùng chọn từ ô đã chạm trước đó; chạm lại để tắt. Các nút
+  cao ít nhất 40 px.
+
+Hai giới hạn được nói rõ thay vì giấu đi. Hiện chưa có gì trong sản phẩm đặt một widget của package kèm một hành động đã
+gắn: trong bộ kiểm thử trình duyệt, node fixture đặt bảng tính và biên dịch binding của nó theo cách host biên dịch đề
+xuất của model. Và một yêu cầu gõ trong ô soạn tin tới được Clark qua ghi chú ngữ nghĩa nhưng không thay đổi được frame.
+Cả hai được theo dõi ở [#382](https://github.com/digitopvn/clarkcant/issues/382). Một lần bấm ngay sau khi vùng chọn
+đổi không nằm trong số đó: trước khi chạy lần bấm, host gửi tài liệu ngữ nghĩa đang chờ của widget và chờ đến khi node
+đã giữ nó ([§24.1](#241-trình-soạn-thảo-văn-bản)), nên Clark đọc đúng vùng đã chọn lúc bấm. Một câu trả lời nêu vùng
+khác vẫn bị từ chối, và không có gì thay đổi.
+
+Kiểm thử: unit test cho bộ phân tích, công thức, giới hạn và tài liệu ngữ nghĩa trong
+[test/](../examples/reference-apps/spreadsheet/test/) (56 test), gồm cả checkpoint với một host giả: sửa đổi làm trong lúc
+một checkpoint đang được ghi vẫn còn sau khi tải lại, mỗi lúc một checkpoint, tệp bị thay thế được huỷ, checkpoint bị
+từ chối thì sửa đổi vẫn giữ trong bộ nhớ, bảng bị thay giữa lúc ghi hoặc lúc ghi nhận, tệp nhập được ghi thành tệp riêng
+của widget, và không lưu gì trước khi bảng tải xong hay sau khi không đọc được nguồn. `clark widget test` qua 22 kiểm tra, 12 kiểm
+tra cần dev host. Hành trình trình duyệt [spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (4 test) gồm:
+
+- nhập, sửa, xuất và nhập lại ở CSV và TSV ra cùng giá trị;
+- một vùng chọn được Clark định dạng phần trăm, vùng chọn bị khoá trong lúc Clark trả lời, và hoàn tác;
+- một tệp vượt giới hạn chỉ tải phần đầu, nói rõ điều đó, vẫn phản hồi nhanh, và xoá cả 25.000 ô một lần;
+- không đường dẫn nào trong lưu lượng bridge hay frame;
+- dùng lưới bằng bàn phím (Tab và Shift+Tab rời lưới), bằng cảm ứng với "Chọn vùng", và bằng cách kéo chuột;
+- cả hai giao diện sáng tối, nút cao 40 px, và 390 px với lưới cuộn bên trong thẻ của nó;
+- một bảng đang tải hoặc không đọc được nguồn thì không nhận sửa đổi và giữ nguyên bảng đã lưu, và một checkpoint thất
+  bại thì nói rõ những gì được giữ và được lưu ở lần sửa tiếp theo.
+
+### 24.3 Trình tạo ảnh
+
+[`examples/reference-apps/image-generator`](../examples/reference-apps/image-generator)
+([#319](https://github.com/digitopvn/clarkcant/issues/319), thuộc
+[#200](https://github.com/digitopvn/clarkcant/issues/200)) là một package manifest v2 có một facet giao diện cách ly và
+một facet service. Package cho thấy một widget khởi động việc dài trên service, theo dõi nó và nhận lại một tệp, trong
+khi service gọi tới nhà cung cấp bằng một key mà nó không bao giờ giữ.
+
+- **Capability.** Service cung cấp `com.clarkcant.reference.image-generator.image.generate@1` (ref của capability được
+  đặt dưới id của package), với `effectCategory: "external-write"` và `execution: { kind: "job", version: 1 }`. Một lần
+  bấm trả về ngay một JobRef ([§10.2](#102-job-chạy-lâu-jobs1)).
+- **Vì sao là `external-write`.** Yêu cầu nhà cung cấp vẽ là ghi vào dịch vụ của người khác: nó làm việc ở đó và tiêu
+  hạn mức của người dùng. Đó cũng là điều cho phép service bắt đầu ảnh bằng một POST với prompt nằm trong body JSON:
+  node chỉ gửi request của service bằng phương thức khác GET hay HEAD cho capability được quyết định là `external-write`
+  trở lên ([§14.2](#142-service-gọi-tới-nhà-cung-cấp)), và prompt nằm trong URL sẽ bị ghi vào nhiều log hơn body. Với
+  chính sách tự chủ mặc định, một lần bấm chạy luôn; người dùng có chính sách hỏi trước khi ghi ra ngoài sẽ thấy thẻ
+  duyệt của host trước, và widget được báo rằng lần bấm đang chờ.
+- **Nhà cung cấp.** Facet tools khai báo một origin và một secret, `IMAGE_PROVIDER_KEY`. Service bắt đầu một ảnh bằng
+  POST, đọc trạng thái mỗi bước một lần và lấy tệp PNG bằng GET, tất cả qua `clarkcant/egress.fetch`; node thêm key vào
+  như một header bearer. Cho tới khi người dùng lưu key, nút bị tắt kèm lý do của node. Nhà cung cấp trong repository
+  này là một bản giả trong phần kiểm thử của package: nó chỉ trả lời request có key, từ chối prompt nằm trong URL, và
+  trả về một ảnh tất định. Nhà cung cấp thật là [#321](https://github.com/digitopvn/clarkcant/issues/321).
+- **Tiến độ và kết quả.** Mỗi bước xong là một progress của MCP, được job ghi lại và widget hiển thị; widget không ước
+  đoán gì. Tệp PNG trả về dưới dạng một phần ảnh, được node lưu làm artifact kết quả của job. Lỗi của service được giữ
+  trên job thất bại bằng chính lời của service ([§10.2](#102-job-chạy-lâu-jobs1)), và widget hiển thị những lời đó
+  trong ngoặc kép như lời của service, bên trong câu của chính nó. Mỗi job đang chạy có một khung riêng với tiến độ và
+  nút Dừng riêng, nút này huỷ đúng job đó; service ngừng đọc nhà cung cấp.
+- **Thư viện ảnh.** Khi host mở `jobs.list@1`, widget liệt kê các job của chính nó, theo dõi những job đang mở, và đọc
+  ảnh đã xong dưới dạng `ArtifactRef` theo từng đoạn 256 KiB; tải lại trang hay mở trên thiết bị khác vẫn thấy cùng các
+  job, vì chúng thuộc về node. Trên host không có extension đó, thư viện ảnh chỉ giữ các job được khởi chạy trong lúc
+  widget đang mở và nói rõ điều đó. Mỗi ảnh có thể được đính kèm vào cuộc trò chuyện hoặc xuất ra qua host
+  ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)).
+- **Widget, Clark và giọng nói.** Nút là một action binding `invoke` có tên trong props là `generateBinding`. Binding
+  lấy `prompt` từ bản nháp trong widget state, và từ input của lần bấm khi có. Nói nhãn của nút khi widget đang mở sẽ
+  bấm nó với bản nháp, và câu trả lời nói job đã bắt đầu. Công cụ `invoke_capability` của Clark khởi động một capability
+  dạng job qua widget trong cuộc trò chuyện có binding tới nó, để widget đó theo dõi job. Nếu không có widget nào thì
+  không có gì chạy và Clark nói rõ; nếu có nhiều thì Clark được cho biết `instanceId` và `actionBindingId` của từng nút
+  và chọn một. Clark bị từ chối khi bấm một binding hỏi chính Clark, vì lần bấm đó sẽ được gửi như tin nhắn của chính
+  người dùng.
+- **Ngôn ngữ.** Giống trình soạn thảo văn bản ([§24.1](#241-trình-soạn-thảo-văn-bản)), chữ của chính frame
+  chỉ có tiếng Việt: DESIGN §11.1 dịch phần giao diện mặc định của host, không dịch chữ của widget.
+- **Template.** `clark widget init --template ai-generator` sao chép ứng dụng này dưới id của package mới, kể cả nhà
+  cung cấp, với origin giữ chỗ `https://images.example.com` thay cho origin của nhà cung cấp kiểm thử: hãy thay nó, cùng
+  các đường dẫn trong `service/server.mjs`, bằng của nhà cung cấp của bạn trước khi phát hành. `--template
+  ui-with-service` sao chép cùng widget và job với một service tự vẽ ảnh, không khai báo nhà cung cấp nào, nên chỉ đọc.
+  Cả hai vượt qua `clark widget test` và `pack` ngay khi được tạo. `pure-ui` và cả hai template này đi qua cùng một bộ
+  sao chép trong CLI.
+
+Hiện chỉ có model fixture có kịch bản của repository đặt widget kèm `generateBinding`. Chưa có đường đi nào của sản
+phẩm đặt một widget của package đã cài kèm binding ([#382](https://github.com/digitopvn/clarkcant/issues/382)), nên
+trong một bản cài thật widget sẽ nói nó chưa được gắn với service.
+
+Kiểm thử: [service-job.spec.ts](../examples/reference-apps/image-generator/test/service-job.spec.ts) cho service với
+nhà cung cấp giả qua job host, egress broker và artifact broker (hoàn tất, tiến độ, POST bắt đầu một ảnh, thất bại, key
+bị từ chối, huỷ, lỗi của nhà cung cấp lặp lại key, và key không có trong lệnh khởi chạy service, job, cơ sở dữ liệu,
+log, audit, thông báo và tệp); [package.spec.ts](../examples/reference-apps/image-generator/test/package.spec.ts) cho
+conformance và manifest; [reference-templates.spec.ts](../packages/widget-cli/test/reference-templates.spec.ts) cho
+các template và bộ sao chép dùng chung; và hành trình trình duyệt
+[image-generator.spec.ts](../apps/web/e2e/image-generator.spec.ts). Hành trình bao gồm từ chối khi chưa có key, tiến độ
+qua một lần tải lại, thư viện ảnh, hai job mỗi job có nút Dừng riêng, nhà cung cấp báo lỗi có lặp lại key, đính kèm và
+xuất, Clark, giọng nói, duyệt trên thẻ của host, host không có `jobs.list@1`, bàn phím, hai theme, 390 px và giảm
+chuyển động. Sau mỗi hành trình, key được tìm trong trang, bridge, tệp và bảng của node, và container của service.

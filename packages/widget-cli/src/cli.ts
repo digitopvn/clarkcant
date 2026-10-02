@@ -1,7 +1,8 @@
+#!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
 import {
@@ -517,6 +518,11 @@ function publish(root: string): number {
 export async function runCli(argv: readonly string[]): Promise<number> {
   const [group, command, ...rest] = argv;
   if (group === "theme") return runThemeCli(argv.slice(1), { pack, report });
+  // Help that was asked for is a success; help shown because the command was wrong is not.
+  if (group === "--help" || group === "-h" || group === "help") {
+    process.stdout.write(`${usage()}\n`);
+    return 0;
+  }
   if (group !== "widget" || command === undefined) {
     process.stdout.write(`${usage()}\n`);
     return 2;
@@ -589,10 +595,29 @@ export { applyShellAction, auditFrame, initialState, renderShell } from "./dev-s
 /*
  * The bin entry.
  *
- * Guarded by comparing the module URL to argv[1], so importing this file — which the exports above exist for — does
- * not start a server or run a command.
+ * Guarded by comparing this module's file to argv[1], so importing this file — which the exports above exist for —
+ * does not start a server or run a command.
+ *
+ * Both sides are compared as real paths. Started through a package manager's bin shim, argv[1] is the path inside
+ * the consumer's dependency folder, a symlink or junction into this workspace, while `import.meta.url` is the
+ * resolved file — so comparing the two URLs made `clark` a silent no-op. Windows paths are case-insensitive, and a
+ * drive letter can arrive in either case.
  */
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+export function isMainModule(entry: string | undefined, moduleUrl: string): boolean {
+  if (entry === undefined) return false;
+  let entryPath: string;
+  try {
+    entryPath = realpathSync(entry);
+  } catch {
+    return false;
+  }
+  const modulePath = realpathSync(fileURLToPath(moduleUrl));
+  return process.platform === "win32"
+    ? entryPath.toLowerCase() === modulePath.toLowerCase()
+    : entryPath === modulePath;
+}
+
+if (isMainModule(process.argv[1], import.meta.url)) {
   process.exitCode = await runCli(process.argv.slice(2));
 }
 export { readPackage, parseManifest, widgetManifestV1Schema } from "@clarkcant/core";
