@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 2,
+  "id": "com.clarkcant.reference.media-render",
+  "version": "1.0.0",
+  "displayName": "Media render",
+  "description": "Renders a WAV clip the person picks with a gain change and a trim, as a job the widget follows and can stop.",
+  "hostApi": {
+    "min": 1,
+    "max": 1
+  },
+  "facets": [
+    {
+      "kind": "ui",
+      "id": "com.clarkcant.reference.media-render.main@1",
+      "entry": "widgets/main/index.html",
+      "definition": "widgets/main/widget.json",
+      "isolation": "isolated-ui"
+    },
+    {
+      "kind": "tools",
+      "id": "com.clarkcant.reference.media-render.service",
+      "entry": "service/server.mjs",
+      "isolation": "service",
+      "protocol": "mcp-stdio",
+      "capabilities": [
+        {
+          "tool": "render_audio",
+          "ref": "com.clarkcant.reference.media-render.render@1",
+          "summary": "Render a WAV clip with a gain change and a trim, reading it from the host a chunk at a time",
+          "effectCategory": "read",
+          "execution": { "kind": "job", "version": 1 },
+          "inputArtifacts": { "version": 1, "fields": ["source"] }
+        }
+      ]
+    }
+  ],
+  "resources": {
+    "version": 1,
+    "profile": "background-compute"
+  },
+  "requestedCapabilities": [],
+  "permissions": {
+    "networkOrigins": [],
+    "filesystem": [],
+    "microphone": false,
+    "camera": false,
+    "lifecycleScripts": []
+  },
+  "platforms": [
+    "darwin-arm64",
+    "linux-x64",
+    "win32-x64",
+    "web"
+  ],
+  "publisher": {
+    "id": "clarkcant",
+    "sourceUrl": "https://github.com/digitopvn/clarkcant",
+    "license": "Apache-2.0"
+  },
+  "dependencies": []
+}

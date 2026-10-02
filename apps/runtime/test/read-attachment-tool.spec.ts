@@ -48,7 +48,7 @@ function store(input: {
   attachmentId: string;
   filename: string;
   mime: string;
-  kind: "text" | "image" | "pdf";
+  kind: "text" | "image" | "pdf" | "audio";
   bytes: Uint8Array;
   principalId?: string;
   conversationId?: string;
@@ -216,6 +216,19 @@ describe("a binary attachment", () => {
     const result = await tool().execute({ attachmentId: id });
     // A text file is read as text. An image part here would tell the model it was looking at a picture.
     expect(result.image).toBeUndefined();
+  });
+
+  it("names a sound file rather than decoding its bytes as text", async () => {
+    const bytes = new Uint8Array(64).fill(122);
+    bytes.set(new TextEncoder().encode("RIFF"), 0);
+    bytes.set(new TextEncoder().encode("WAVE"), 8);
+    const id = store({ attachmentId: "att_wav", filename: "clip.wav", mime: "audio/wav", kind: "audio", bytes, extension: "wav" });
+
+    const result = await tool().execute({ attachmentId: id });
+    expect(result.image).toBeUndefined();
+    expect(result.text).toContain("clip.wav");
+    expect(result.text).toContain("tệp âm thanh");
+    expect(result.text).not.toContain("zzzz");
   });
 
   it("reads the text out of a pdf rather than naming it", async () => {

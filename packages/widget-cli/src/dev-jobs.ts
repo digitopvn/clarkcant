@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import type { FrameJobOutcome } from "@clarkcant/widget-host";
-import { jobRequestSchema, type JobSnapshot } from "@clarkcant/widget-sdk";
+import { JOB_LIST_LIMIT, jobRequestSchema, type JobSnapshot } from "@clarkcant/widget-sdk";
 import { z } from "zod";
 
 /**
@@ -108,6 +108,10 @@ export function createDevJobBroker(input: { now?: () => string } = {}): {
     handle(raw) {
       const parsed = jobRequestSchema.safeParse(raw);
       if (!parsed.success) return refuse("SCHEMA_INVALID", "the request does not match the jobs@1 schema");
+      // Every job this dev host holds was started by the one frame it serves; newest first, as a node lists them.
+      if (parsed.data.op === "list") {
+        return { status: "ok", jobs: [...held.values()].map((entry) => entry.snapshot).reverse().slice(0, JOB_LIST_LIMIT) };
+      }
       const job = held.get(parsed.data.jobId);
       if (job === undefined) return missing();
       if (parsed.data.op === "get") return { status: "ok", job: job.snapshot };

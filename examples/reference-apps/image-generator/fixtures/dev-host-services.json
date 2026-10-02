@@ -1,0 +1,30 @@
+{
+  "bindings": [
+    {
+      "actionBindingId": "binding_image_generate",
+      "capabilityRef": "com.clarkcant.reference.image-generator.image.generate@1",
+      "job": {
+        "steps": [
+          { "current": 0, "total": 4, "message": "The provider finished step 0 of 4." },
+          { "current": 1, "total": 4, "message": "The provider finished step 1 of 4." },
+          { "current": 2, "total": 4, "message": "The provider finished step 2 of 4." },
+          { "current": 3, "total": 4, "message": "The provider finished step 3 of 4." },
+          { "current": 4, "total": 4, "message": "The provider finished step 4 of 4." }
+        ],
+        "output": "Image for “a fixture prompt” (192×192 PNG).",
+        "error": "The provider could not make the image: a fixture failure"
+      }
+    },
+    {
+      "actionBindingId": "binding_image_generate_failing",
+      "capabilityRef": "com.clarkcant.reference.image-generator.image.generate@1",
+      "job": {
+        "steps": [
+          { "current": 0, "total": 4, "message": "The provider finished step 0 of 4." },
+          { "current": 1, "total": 4, "message": "The provider finished step 1 of 4." }
+        ],
+        "error": "The provider could not make the image: a fixture failure"
+      }
+    }
+  ]
+}

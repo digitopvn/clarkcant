@@ -36,18 +36,21 @@ describe("resource profiles", () => {
       jobDeadlineMs: 30 * 60_000,
       maxActiveJobs: 4,
       artifactMaxBytes: ARTIFACT_LIMITS.maxBytes,
+      input: { maxBytes: 8 * 1024 * 1024, maxMediaSeconds: 120 },
       background: "continue",
       offscreen: "suspend",
       network: "none",
     });
   });
 
-  it("gives every profile no network and an artifact ceiling no larger than an attachable file", () => {
+  it("gives every profile no network, and an artifact ceiling and an input cap no larger than an attachable file", () => {
     for (const name of RESOURCE_PROFILE_NAMES) {
       const profile = RESOURCE_PROFILES[name];
       expect(profile.name).toBe(name);
       expect(profile.network).toBe("none");
       expect(profile.artifactMaxBytes).toBeLessThanOrEqual(ARTIFACT_LIMITS.maxBytes);
+      expect(profile.input.maxBytes).toBeLessThanOrEqual(ARTIFACT_LIMITS.maxBytes);
+      expect(profile.input.maxMediaSeconds).toBeGreaterThan(0);
       expect(Number.isInteger(profile.container.memoryMib)).toBe(true);
       expect(Number.isInteger(profile.container.tmpfsMib)).toBe(true);
     }
@@ -137,7 +140,7 @@ describe("resource profiles", () => {
 
   it("describes a profile in units a person reads", () => {
     expect(describeResourceProfile(RESOURCE_PROFILES["interactive-light"])).toBe(
-      "256 MiB memory, 1 CPU, 128 processes, 16 MiB scratch, 60 s per call, 30 min per job, 4 jobs at once, no network",
+      "256 MiB memory, 1 CPU, 128 processes, 16 MiB scratch, 60 s per call, 30 min per job, 4 jobs at once, 8 MiB input, 2 min of media, no network",
     );
     expect(describeResourceProfile(RESOURCE_PROFILES["media-workstation"])).toContain("4 GiB memory, 4 CPUs");
   });

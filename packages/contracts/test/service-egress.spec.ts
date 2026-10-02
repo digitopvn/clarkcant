@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   egressFetchRequestSchema,
   egressHeaderProblem,
+  egressInputProblem,
   manifestProblems,
   packageManifestSchema,
   serviceEgressProblems,
@@ -139,5 +140,18 @@ describe("the egress request a service sends the host", () => {
       egressFetchRequestSchema.safeParse({ version: 1, url: "https://a.example", body: { encoding: "utf8", data: "x".repeat(2 * 1024 * 1024) } }).success,
     ).toBe(false);
     expect(egressFetchRequestSchema.safeParse({ version: 1, url: "https://a.example", credential: "SEARCH_API_KEY" }).success).toBe(false);
+  });
+});
+
+describe("egress while a call holds a person's file", () => {
+  it("is refused unless every call holding one was decided as external-write or higher", () => {
+    expect(egressInputProblem([])).toBeUndefined();
+    for (const allowed of ["external-write", "communication", "destructive", "financial"] as const) {
+      expect(egressInputProblem([allowed])).toBeUndefined();
+    }
+    expect(egressInputProblem(["read"])).toContain("decided as read");
+    expect(egressInputProblem(["local-write"])).toContain("decided as local-write");
+    // One call that could not carry the file is enough: the egress cannot say which call it serves.
+    expect(egressInputProblem(["external-write", "read"])).toContain("decided as read");
   });
 });

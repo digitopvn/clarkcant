@@ -13,6 +13,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { type FileHandle, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { isWithinRoot } from "./path-roots.ts";
@@ -273,23 +274,9 @@ export function removeStagedBlob(input: { dataDir: string; stagingRef: string })
  * The caller has already bounded `length` (`checkArtifactRange`); this reads at most that many bytes from `offset`
  * and never the whole file, so a reader walking a large artifact holds one chunk at a time.
  */
-export function readBlobRange(input: {
-  dataDir: string;
-  location: { blobPath: string } | { stagingRef: string };
-  offset: number;
-  length: number;
-}): BlobReadResult {
-  let target: string | undefined;
-  if ("stagingRef" in input.location) {
-    target = stagingPath(input.dataDir, input.location.stagingRef);
-  } else {
-    const root = resolve(blobsDir(input.dataDir));
-    const candidate = resolve(input.location.blobPath);
-    target = isWithinRoot(root, candidate) ? candidate : undefined;
-  }
-  if (target === undefined) {
-    return { ok: false, code: "BLOB_PATH_ESCAPES_ROOT", message: "the stored blob path is outside the blob directory" };
-  }
+export function readBlobRange(input: BlobRangeInput): BlobReadResult {
+  const target = rangeTarget(input);
+  if (target === undefined) return ESCAPES_ROOT;
   let descriptor: number;
   try {
     descriptor = openSync(target, "r");
@@ -303,6 +290,49 @@ export function readBlobRange(input: {
   } finally {
     closeSync(descriptor);
   }
+}
+
+/**
+ * `readBlobRange` off the main thread: the open and the read run on the I/O pool, so a package service streaming a
+ * large file through the node does not hold every other conversation on the node while the disk answers.
+ */
+export async function readBlobRangeAsync(input: BlobRangeInput): Promise<BlobReadResult> {
+  const target = rangeTarget(input);
+  if (target === undefined) return ESCAPES_ROOT;
+  let handle: FileHandle;
+  try {
+    handle = await open(target, "r");
+  } catch {
+    return { ok: false, code: "BLOB_MISSING", message: "the stored bytes for that file are no longer on disk" };
+  }
+  try {
+    const buffer = Buffer.alloc(Math.max(0, input.length));
+    const read = input.length === 0 ? 0 : (await handle.read(buffer, 0, input.length, input.offset)).bytesRead;
+    return { ok: true, bytes: buffer.subarray(0, read) };
+  } finally {
+    await handle.close();
+  }
+}
+
+interface BlobRangeInput {
+  dataDir: string;
+  location: { blobPath: string } | { stagingRef: string };
+  offset: number;
+  length: number;
+}
+
+const ESCAPES_ROOT: BlobReadResult = {
+  ok: false,
+  code: "BLOB_PATH_ESCAPES_ROOT",
+  message: "the stored blob path is outside the blob directory",
+};
+
+/** The file a range is read from, or undefined when a stored path would leave the blob directory. */
+function rangeTarget(input: BlobRangeInput): string | undefined {
+  if ("stagingRef" in input.location) return stagingPath(input.dataDir, input.location.stagingRef);
+  const root = resolve(blobsDir(input.dataDir));
+  const candidate = resolve(input.location.blobPath);
+  return isWithinRoot(root, candidate) ? candidate : undefined;
 }
 
 /* ------------------------------------------------------------------ *
@@ -434,6 +464,17 @@ export function sniffContentType(bytes: Uint8Array, declaredMime: string): Conte
     return { ok: true, mime: "application/pdf", extension: "pdf" };
   }
 
+  if (hasWavHeader(bytes)) {
+    if (declared !== "" && !WAV_MIMES.includes(declared)) {
+      return {
+        ok: false,
+        code: "ATTACHMENT_TYPE_MISMATCH",
+        message: `the file is a wav but was declared as ${declared}`,
+      };
+    }
+    return { ok: true, mime: "audio/wav", extension: "wav" };
+  }
+
   if (looksLikeText(bytes)) {
     const textMime = declared === "" ? "text/plain" : declared;
     if (!TEXT_MIMES.includes(textMime)) {
@@ -449,7 +490,7 @@ export function sniffContentType(bytes: Uint8Array, declaredMime: string): Conte
   return {
     ok: false,
     code: "ATTACHMENT_TYPE_UNSUPPORTED",
-    message: declared === "" ? "the file is not an image, a pdf or readable text" : `${declared} does not match the file's bytes`,
+    message: declared === "" ? "the file is not an image, a pdf, a wav or readable text" : `${declared} does not match the file's bytes`,
   };
 }
 
@@ -461,6 +502,18 @@ function extensionForText(mime: string): string {
   if (mime === "text/tab-separated-values") return "tsv";
   if (mime === "application/json") return "json";
   return "txt";
+}
+
+/** The names systems give a WAV file. The node stores it as `audio/wav` whichever one was declared. */
+const WAV_MIMES: readonly string[] = ["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave"];
+
+/** A RIFF container whose form type is WAVE: the twelve bytes every WAV file starts with. */
+function hasWavHeader(bytes: Uint8Array): boolean {
+  return (
+    bytes.byteLength >= 12 &&
+    String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF" &&
+    String.fromCharCode(...bytes.subarray(8, 12)) === "WAVE"
+  );
 }
 
 function hasPdfHeader(bytes: Uint8Array): boolean {

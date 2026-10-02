@@ -148,7 +148,8 @@ export default defineConfig({
          */
         CC_DIRECTORY_INDEX: join(process.cwd(), "apps", "web", "e2e", "fixtures", "directory.json"),
         /*
-         * The fake provider the egress journey reaches listens on loopback (`127.0.0.1:8879`). A node refuses loopback,
+         * The fake providers the egress and image-generator journeys reach listen on loopback (`127.0.0.1:8879` and
+         * `127.0.0.1:8881`). A node refuses loopback,
          * private and link-local egress origins unless it is started with this setting; a manifest cannot turn it on.
          */
         CC_EGRESS_ALLOW_PRIVATE_NETWORK: "1",

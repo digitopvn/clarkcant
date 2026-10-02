@@ -12,6 +12,7 @@ import {
   getOwnedJob,
   insertJob,
   listOpenJobs,
+  listOwnedJobs,
   transitionJob,
   updateJobProgress,
   type Database,
@@ -48,6 +49,8 @@ export interface PackageJobHost {
     onSettled?: (outcome: JobRunOutcome) => void;
   }): JobRecord;
   get(jobId: string, owner: JobOwner): JobRecord | undefined;
+  /** The newest jobs one owner started, newest first. */
+  list(owner: JobOwner, limit: number): JobRecord[];
   cancel(jobId: string, owner: JobOwner): boolean;
   subscribe(jobId: string, owner: JobOwner, listener: (job: JobRecord) => void): () => void;
   stopAll(): number;
@@ -55,6 +58,37 @@ export interface PackageJobHost {
 }
 
 const MAX_ACTIVE_JOBS = 4;
+
+/** The most characters of a service's own words a failed job keeps. */
+const VERDICT_CHARS = 400;
+
+/**
+ * What a service said when its tool answered with an error, without the transport's prefix, as one bounded line.
+ *
+ * The words are the package's, shown to the person beside host text, so they are cleaned the way other untrusted text a
+ * host surface shows is: a control character becomes a space, and a format character (a bidi override, a zero-width
+ * joiner or space) is removed, so the service cannot reorder or hide what is read next to it. Curly quotes become
+ * straight ones, so the quotes the host puts around the words always mark where they start and end.
+ */
+export function serviceVerdict(message: string): string {
+  const said = message
+    .replace(/^mcp tool \S+ reported an error: /, "")
+    .replace(/\p{Cc}+/gu, " ")
+    .replace(/\p{Cf}+/gu, "")
+    .replace(/[“”]/gu, '"')
+    .replace(/\s+/gu, " ")
+    .trim();
+  // Cut by code point, so a cut never leaves half of a surrogate pair.
+  return [...said].slice(0, VERDICT_CHARS).join("").trim();
+}
+
+/** The failed job's error when its service answered with its own verdict: the words quoted, the host's sentence around them. */
+function serviceFailure(message: string): string {
+  const said = serviceVerdict(message);
+  return said === ""
+    ? "The package service reported an error without saying what failed. Its effect may have happened; review before retrying."
+    : `The package service reported an error: “${said}”. Its effect may have happened; review before retrying.`;
+}
 const NAMED_RESULTS = 3;
 /** The least time between two progress writes of one job; widgets read it once a second. */
 const PROGRESS_INTERVAL_MS = 250;
@@ -227,6 +261,9 @@ export function createPackageJobHost(input: {
             ? "The service request was not sent. Nothing ran; this job can be tried again."
             : cancelled
             ? "The service was told to cancel, but it may already have completed its effect; review before retrying."
+            : cause instanceof ServiceCallError && cause.code === "SERVICE_TOOL_FAILED"
+            // The service's own verdict, so the widget can say what failed; bounded like the rest of the record.
+            ? serviceFailure(cause.message)
             : "The package service did not complete the job. Its effect may have happened; review before retrying.",
         };
         reportSettled(outcome);
@@ -240,6 +277,7 @@ export function createPackageJobHost(input: {
       return running;
     },
     get: (jobId, owner) => getOwnedJob(input.db, jobId, owner),
+    list: (owner, limit) => listOwnedJobs(input.db, owner, limit),
     cancel(jobId, owner) {
       if (getOwnedJob(input.db, jobId, owner) === undefined) return false;
       const controller = active.get(jobId);

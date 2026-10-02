@@ -73,10 +73,19 @@ describe("what voice says after a widget action", () => {
     expect(body).toContain("if (!result.ok) return { ok: false, say: spokenActionRefusal(");
     expect(body).toContain("preferredAppIntentLocale(");
     expect(body).not.toContain("result.message");
+    // A started job is said as started, before the 202 an approval also answers with is read as one.
+    const job = body.indexOf('spokenActionWaiting(action.label, "job", locale)');
+    expect(job).toBeGreaterThan(-1);
+    expect(job).toBeLessThan(body.indexOf('spokenActionWaiting(action.label, "approval", locale)'));
   });
 
   it("says a started or waiting action in the person's language", () => {
     expect(spokenActionWaiting("Lưu", "background", "vi")).toContain("ở nền");
     expect(spokenActionWaiting("Save", "approval", "en")).toBe("“Save” needs your approval first. I placed the approval card in the conversation.");
+    // A job has started, nothing more: neither done nor waiting on a card.
+    expect(spokenActionWaiting("Tạo ảnh", "job", "vi")).toBe("Đã bắt đầu “Tạo ảnh”. Widget hiện tiến độ, và cuộc trò chuyện sẽ báo khi xong.");
+    expect(spokenActionWaiting("Generate", "job", "en")).toBe(
+      "“Generate” has started. Its widget shows the progress, and the conversation says when it is done.",
+    );
   });
 });
