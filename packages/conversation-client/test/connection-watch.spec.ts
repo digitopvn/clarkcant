@@ -9,7 +9,12 @@ import {
   documentVisibility,
   watchConnection,
 } from "../src/connection-watch.ts";
-import { connectionNoticeText } from "../src/connection-notice.tsx";
+import {
+  type ConnectionAnnouncement,
+  NO_CONNECTION_ANNOUNCEMENT,
+  connectionNoticeText,
+  nextConnectionAnnouncement,
+} from "../src/connection-notice.tsx";
 import { CATALOGS, type MessageKey } from "../src/i18n/messages.ts";
 
 /** A clock and timer queue the test moves by hand, so a backoff of thirty seconds takes no time at all. */
@@ -255,6 +260,45 @@ describe("watching whether the node answers", () => {
     expect(last()).toMatchObject({ state: "offline", failure: { kind: "refused", status: 503 } });
   });
 
+  it("reads a page that is not the gateway's JSON as something other than a node, whatever its status", async () => {
+    for (const status of [200, 502]) {
+      const client = new GatewayClient({
+        baseUrl: "http://not-a-node.test",
+        token: "t",
+        fetchImpl: (async () => new Response("<!doctype html><title>Welcome</title>", { status, headers: { "content-type": "text/html" } })) as typeof fetch,
+      });
+      const { last, time } = start({ check: (signal) => client.health({ signal }) });
+      await settle();
+      expect(last()).toMatchObject({ state: "offline", failure: { kind: "notNode" } });
+      // Something else may be answering while the node starts behind it, so checking goes on.
+      expect(time.pending()).toEqual([RETRY_DELAYS_MS[0]]);
+    }
+  });
+
+  it("does not use up the automatic checks when the person asks for one", async () => {
+    const { time, node, watch, last } = start();
+    await settle();
+    expect(last()).toMatchObject({ attempts: 1 });
+    for (let i = 0; i < 5; i++) {
+      watch.checkNow();
+      await settle();
+    }
+    expect(node.calls).toBe(6);
+    // Still one automatic check spent, and the next one waits as long as the one the presses replaced.
+    expect(last()).toMatchObject({ state: "offline", attempts: 1, checking: false });
+    expect(time.pending()).toEqual([RETRY_DELAYS_MS[0]]);
+
+    while (time.pending().length > 0) await time.advance(time.pending()[0]!);
+    expect(node.calls).toBe(MAX_AUTOMATIC_CHECKS + 5);
+    expect(last()).toMatchObject({ gaveUp: true, attempts: MAX_AUTOMATIC_CHECKS });
+
+    // A press after giving up that fails again gives up again, without counting past the limit or scheduling a check.
+    watch.checkNow();
+    await settle();
+    expect(last()).toMatchObject({ gaveUp: true, attempts: MAX_AUTOMATIC_CHECKS });
+    expect(time.pending()).toEqual([]);
+  });
+
   it("checks through the gateway's health route with the watcher's signal", async () => {
     const signals: (AbortSignal | null | undefined)[] = [];
     const client = new GatewayClient({
@@ -321,6 +365,72 @@ describe("what the page says while the node does not answer", () => {
     });
     expect(connectionNoticeText({ ...base, checking: false, failure: { kind: "unreachable" }, paused: true }, now, en)?.next).toBe(
       "Checks again when you come back to this page.",
+    );
+  });
+
+  it("says when something that is not a node answered, in both languages", () => {
+    const status: ConnectionStatus = { state: "offline", checking: false, attempts: 1, failure: { kind: "notNode" }, nextCheckAt: now + 1_000 };
+    expect(connectionNoticeText(status, now, en)?.failed).toBe("Something answered at this address, but it is not a ClarkCant node.");
+    expect(connectionNoticeText(status, now, vi)?.failed).toBe(
+      "Có thứ khác trả lời ở địa chỉ này, nhưng đó không phải là node ClarkCant.",
+    );
+  });
+});
+
+describe("what a screen reader is told about the connection", () => {
+  const en = (key: MessageKey): string => CATALOGS.en[key];
+  const failure = { kind: "unreachable" as const };
+
+  /** Feeds statuses through the announcer the way the notice does, and lists each text a screen reader would hear. */
+  function heard(statuses: ConnectionStatus[]): string[] {
+    let current: ConnectionAnnouncement = NO_CONNECTION_ANNOUNCEMENT;
+    const spoken: string[] = [];
+    for (const status of statuses) {
+      const next = nextConnectionAnnouncement(current, status, en);
+      if (next.text !== current.text && next.text !== "") spoken.push(next.text);
+      current = next;
+    }
+    return spoken;
+  }
+
+  it("speaks once when the page goes offline and once when checking gives up, never with the countdown or each retry", () => {
+    const offline = { state: "offline" as const, failure };
+    expect(
+      heard([
+        { state: "connecting", checking: true, attempts: 0 },
+        { ...offline, checking: false, attempts: 1, nextCheckAt: 1_000 },
+        { ...offline, checking: false, attempts: 1, nextCheckAt: 1_000 },
+        { ...offline, checking: true, attempts: 1 },
+        { ...offline, checking: false, attempts: 2, nextCheckAt: 3_000, failure: { kind: "timeout" } },
+        { ...offline, checking: false, attempts: 2, paused: true },
+        { ...offline, checking: true, attempts: 0 },
+        { ...offline, checking: false, attempts: 20, gaveUp: true },
+        // "Try now" after giving up, which fails again.
+        { ...offline, checking: true, attempts: 20 },
+        { ...offline, checking: false, attempts: 20, gaveUp: true },
+        // The page is shown again and the automatic checks resume.
+        { ...offline, checking: false, attempts: 1, nextCheckAt: 5_000 },
+      ]),
+    ).toEqual(["The node could not be reached. What you wrote stays here.", "Stopped checking on its own. Try again once the node is running."]);
+  });
+
+  it("goes quiet once the node answers, so the next outage is announced again", () => {
+    const down: ConnectionStatus = { state: "offline", checking: false, attempts: 1, failure, nextCheckAt: 1_000 };
+    const ready: ConnectionStatus = { state: "ready", checking: false, attempts: 0 };
+    const afterOutage = nextConnectionAnnouncement(NO_CONNECTION_ANNOUNCEMENT, down, en);
+    expect(nextConnectionAnnouncement(afterOutage, ready, en)).toBe(NO_CONNECTION_ANNOUNCEMENT);
+    expect(heard([down, ready, down])).toEqual([
+      "The node could not be reached. What you wrote stays here.",
+      "The node could not be reached. What you wrote stays here.",
+    ]);
+  });
+
+  it("returns the same announcement when nothing changes, so the notice settles after one render", () => {
+    const down: ConnectionStatus = { state: "offline", checking: false, attempts: 1, failure, nextCheckAt: 1_000 };
+    const first = nextConnectionAnnouncement(NO_CONNECTION_ANNOUNCEMENT, down, en);
+    expect(nextConnectionAnnouncement(first, { ...down, nextCheckAt: 2_000 }, en)).toBe(first);
+    expect(nextConnectionAnnouncement(NO_CONNECTION_ANNOUNCEMENT, { state: "connecting", checking: true, attempts: 0 }, en)).toBe(
+      NO_CONNECTION_ANNOUNCEMENT,
     );
   });
 });

@@ -53,6 +53,11 @@ test("a page opened while the node is unreachable says why, and recovers on its 
   await expect(notice).toContainText("Những gì bạn đã viết vẫn được giữ nguyên.");
   // The notice sits outside the polite live region, so a countdown is never read aloud second by second.
   await expect(status.locator("[data-connection-notice]")).toHaveCount(0);
+  // A screen reader hears the outage once, through its own polite region, with no countdown in it.
+  const announcement = page.locator("[data-connection-announcement]");
+  await expect(announcement).toHaveAttribute("aria-live", "polite");
+  await expect(announcement).toHaveText("Không kết nối được tới node. Những gì bạn đã viết vẫn được giữ nguyên.");
+  await expect(announcement.locator("[data-connection-next]")).toHaveCount(0);
   // It keeps checking, with a backoff, while the node is down.
   await expect.poll(node.healthChecks, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
 
@@ -61,16 +66,50 @@ test("a page opened while the node is unreachable says why, and recovers on its 
   await expect(notice).toHaveCount(0);
 });
 
-test("Try now checks at once instead of waiting out the backoff", async ({ page }) => {
+test("Try now checks at once instead of waiting out the backoff, and keeps keyboard focus off the body", async ({ page }) => {
   const node = await openWithNodeDown(page);
   const status = page.locator(".cc-status");
   const next = page.locator("[data-connection-next]");
+  const tryNow = page.locator("[data-connection-check]");
 
-  // Let the backoff grow past a few seconds, so recovering within that wait can only be the button's doing.
+  // Let the backoff grow to at least six seconds before pressing. Recovery is then required within two, well inside
+  // the wait, so it can only be the button's own check and not the automatic one.
   await expect.poll(node.healthChecks, { timeout: 20_000 }).toBeGreaterThanOrEqual(4);
-  await expect(next).toHaveText(/Sẽ kiểm tra lại sau ([4-9]|1\d) giây\./, { timeout: 10_000 });
+  await expect(next).toHaveText(/Sẽ kiểm tra lại sau ([6-9]|[1-9]\d) giây\./, { timeout: 10_000 });
 
   await node.bringNodeUp();
-  await page.locator("[data-connection-check]").click();
-  await expect(status).toHaveAttribute("data-connection", "ready", { timeout: 3_000 });
+  // From the keyboard, the way someone who cannot use a pointer presses it.
+  await tryNow.focus();
+  await page.keyboard.press("Enter");
+  await expect(status).toHaveAttribute("data-connection", "ready", { timeout: 2_000 });
+  await expect(page.locator("[data-connection-notice]")).toHaveCount(0);
+
+  // The button went away with the notice while it held focus; focus moved to the composer, not to the body.
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement !== null && document.activeElement !== document.body))
+    .toBe(true);
+  await expect(page.getByRole("combobox", { name: "Nhập tin nhắn" })).toBeFocused();
+});
+
+test("Try now stays focused and pressable while its check runs", async ({ page }) => {
+  await openWithNodeDown(page);
+  const tryNow = page.locator("[data-connection-check]");
+  await expect(tryNow).toBeVisible({ timeout: 15_000 });
+
+  // Hold the next check in flight long enough to look at the button during it; it still fails in the end.
+  await page.route(`${GATEWAY}/health`, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    await route.abort("connectionrefused");
+  });
+  await tryNow.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-connection-next]")).toHaveText("Đang kiểm tra lại…");
+  // Never `disabled`, which would drop focus to the body mid-check; a press during a check is simply ignored.
+  await expect(tryNow).toHaveAttribute("aria-disabled", "true");
+  await expect(tryNow).not.toHaveAttribute("disabled");
+  await expect(tryNow).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect(tryNow).toHaveAttribute("aria-disabled", "false", { timeout: 5_000 });
+  await expect(tryNow).toBeFocused();
 });

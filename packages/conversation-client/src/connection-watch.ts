@@ -2,8 +2,13 @@ import { GatewayError } from "./api.ts";
 
 export type ConnectionState = "connecting" | "ready" | "offline";
 
-/** Why the last check did not reach a working node, in the terms the person is told. */
-export type ConnectionFailure = { kind: "unreachable" } | { kind: "timeout" } | { kind: "refused"; status: number };
+/**
+ * Why the last check did not reach a working node, in the terms the person is told. `notNode` is something answering
+ * at the address that is not a ClarkCant node — a body that is not the gateway's JSON, such as a web server's HTML page.
+ * There is no "not allowed" kind: `/health` is the gateway's one unauthenticated route, so a node never refuses it for
+ * a missing or stale token.
+ */
+export type ConnectionFailure = { kind: "unreachable" } | { kind: "timeout" } | { kind: "notNode" } | { kind: "refused"; status: number };
 
 /**
  * What the page knows about the node right now. Every field describes something that happened or is scheduled:
@@ -12,7 +17,7 @@ export type ConnectionFailure = { kind: "unreachable" } | { kind: "timeout" } | 
 export interface ConnectionStatus {
   state: ConnectionState;
   checking: boolean;
-  /** Checks that failed in a row; zero once the node answered. */
+  /** Automatic checks that failed in a row; zero once the node answered. A check the person asked for is not counted. */
   attempts: number;
   failure?: ConnectionFailure;
   /** Epoch milliseconds of the next automatic check. Absent when none is scheduled. */
@@ -47,7 +52,10 @@ export interface ConnectionWatchInput {
 }
 
 export interface ConnectionWatch {
-  /** Checks now instead of waiting for the next automatic check. Does nothing while a check runs or once ready. */
+  /**
+   * Checks now instead of waiting for the next automatic check. Does nothing while a check runs or once ready. It does
+   * not use up the automatic checks: if it fails, the next automatic check waits as long as the one it replaced.
+   */
   checkNow(): void;
   /** Cancels the timers and the check in flight; nothing is reported after this. */
   stop(): void;
@@ -85,8 +93,8 @@ export function watchConnection(input: ConnectionWatchInput): ConnectionWatch {
     ...(status.failure === undefined ? {} : { failure: status.failure }),
   });
 
-  const failed = (failure: ConnectionFailure): void => {
-    const attempts = status.attempts + 1;
+  const failed = (failure: ConnectionFailure, automatic: boolean): void => {
+    const attempts = automatic ? status.attempts + 1 : status.attempts;
     const base = { state: "offline" as const, checking: false, attempts, failure };
     if (hidden()) {
       emit({ ...base, paused: true });
@@ -96,18 +104,18 @@ export function watchConnection(input: ConnectionWatchInput): ConnectionWatch {
       emit({ ...base, gaveUp: true });
       return;
     }
-    const wait = RETRY_DELAYS_MS[Math.min(attempts - 1, RETRY_DELAYS_MS.length - 1)]!;
+    const wait = RETRY_DELAYS_MS[Math.min(Math.max(attempts, 1) - 1, RETRY_DELAYS_MS.length - 1)]!;
     const scheduled = {
       handle: input.setTimer(() => {
         if (retry === scheduled) retry = undefined;
-        run();
+        run(true);
       }, wait),
     };
     retry = scheduled;
     emit({ ...base, nextCheckAt: input.now() + wait });
   };
 
-  const run = (): void => {
+  const run = (automatic: boolean): void => {
     if (stopped || inFlight !== undefined || status.state === "ready") return;
     clearRetry();
     const controller = new AbortController();
@@ -129,7 +137,7 @@ export function watchConnection(input: ConnectionWatchInput): ConnectionWatch {
       },
       (error: unknown) => {
         finish();
-        if (!stopped) failed(classify(error, timedOut));
+        if (!stopped) failed(classify(error, timedOut), automatic);
       },
     );
   };
@@ -143,15 +151,15 @@ export function watchConnection(input: ConnectionWatchInput): ConnectionWatch {
     }
     // The person is looking again: check at once, and give the backoff a fresh start.
     status = { ...settled(), attempts: 0 };
-    run();
+    run(true);
   };
   const unsubscribe = input.visibility?.subscribe(onVisibility);
 
   if (hidden()) emit({ ...settled(), paused: true });
-  else run();
+  else run(true);
 
   return {
-    checkNow: run,
+    checkNow: () => run(false),
     stop: () => {
       if (stopped) return;
       stopped = true;
@@ -175,6 +183,9 @@ export function documentVisibility(doc: EventTarget & { readonly visibilityState
 
 function classify(error: unknown, timedOut: boolean): ConnectionFailure {
   if (timedOut) return { kind: "timeout" };
+  // A body that is not JSON comes from something other than the gateway: a web server, a captive portal, a proxy's
+  // error page. Its status says nothing about the node, so it is not read as the node refusing.
+  if (error instanceof GatewayError && error.code === "MALFORMED_RESPONSE") return { kind: "notNode" };
   if (error instanceof GatewayError) return { kind: "refused", status: error.status };
   return { kind: "unreachable" };
 }
