@@ -588,5 +588,72 @@
     "riskTier": "isolated-ui",
     "sizeBytes": 65536,
     "digest": "sha256:text-editor-reference-digest"
+  },
+  {
+    "packageId": "com.clarkcant.reference.connected-app",
+    "version": "1.0.0",
+    "displayName": "Connected tasks",
+    "description": "The reference connected app: a widget and a service working on a task account the node connects, against a fake connector.",
+    "source": {
+      "kind": "local",
+      "path": "examples/reference-apps/connected-app"
+    },
+    "publisher": {
+      "id": "clarkcant",
+      "sourceUrl": "https://github.com/digitopvn/clarkcant",
+      "license": "Apache-2.0"
+    },
+    "preview": {},
+    "facets": [
+      "ui",
+      "tools",
+      "skills"
+    ],
+    "isolations": [
+      {
+        "facetKind": "ui",
+        "isolation": "isolated-ui"
+      },
+      {
+        "facetKind": "tools",
+        "isolation": "service"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "declaredReach": {
+      "origins": [],
+      "secrets": [],
+      "browserTokens": [],
+      "connections": [
+        {
+          "provider": "fake.tasks",
+          "displayName": "Fake Tasks (test fixture)",
+          "scopes": [
+            {
+              "scope": "tasks.read",
+              "purpose": "Lists your tasks."
+            },
+            {
+              "scope": "tasks.write",
+              "purpose": "Renames a task when you ask."
+            }
+          ],
+          "endpoints": ["http://127.0.0.1:8880"]
+        }
+      ]
+    },
+    "riskTier": "service",
+    "sizeBytes": 131072,
+    "digest": "sha256:connected-app-reference-digest"
   }
 ]

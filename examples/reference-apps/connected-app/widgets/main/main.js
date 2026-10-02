@@ -9,7 +9,8 @@
  *
  * A rename is an external write. The host decides it through the person's execution policy, so a press may wait for
  * an approval card in the conversation; and when the answer never comes back, the host says the outcome is unknown and
- * that it was not retried. The widget shows that sentence and does not press again on its own.
+ * that it was not retried. Either way the press does not finish here: the widget shows the host's sentence as it is and
+ * does not press again on its own.
  */
 
 import { readTaskList, readUpdatedTask, titleProblem } from "./tasks-core.js";
@@ -89,23 +90,20 @@ function draw() {
   function rename(task, field) {
     const problem = titleProblem(field.value);
     if (problem !== undefined) {
-      say(problem, "refused");
+      say(problem, "not-done");
       return;
     }
     say("đang lưu…", undefined);
     void api.actions
       .invoke(UPDATE, { id: task.id, title: field.value.trim() }, crypto.randomUUID())
       .then((answer) => {
-        if (answer === undefined) {
-          // The host is asking the person first: the card is in the conversation, and nothing was sent yet.
-          say("Đang chờ bạn duyệt trong cuộc trò chuyện. Chưa gửi gì cho nhà cung cấp.", "pending");
-          return;
-        }
         const updated = readUpdatedTask(answer);
         if (updated !== undefined) field.value = updated.title;
         say(`Đã lưu “${updated?.title ?? field.value}”.`, "done");
       })
-      .catch((error) => say(errorText(error), "refused"));
+      // The host's own sentence, as it is: the account is not connected, the policy is asking the person in the
+      // conversation (nothing was sent yet), or the answer never came back and whether it took effect is unknown.
+      .catch((error) => say(errorText(error), "not-done"));
   }
 
   function render(tasks) {
@@ -149,14 +147,14 @@ function draw() {
       .then((answer) => {
         const read = readTaskList(answer);
         if (!read.ok) {
-          say(read.problem, "refused");
+          say(read.problem, "not-done");
           return;
         }
         render(read.tasks);
         say(`Đã tải ${String(read.tasks.length)} công việc.`, "done");
         root.setAttribute("data-tasks-loaded", "true");
       })
-      .catch((error) => say(errorText(error), "refused"));
+      .catch((error) => say(errorText(error), "not-done"));
   });
 
   const announce = (entries) => {

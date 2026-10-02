@@ -109,6 +109,7 @@ export async function startFakeConnector(options = {}) {
   let mode = defaultMode();
   let tasks = INITIAL_TASKS.map((task) => ({ ...task }));
   let writes = 0;
+  let reads = 0;
   /** code -> { challenge, redirectUri, scopes, used } */
   const codes = new Map();
   /** One grant per consent: its tokens are revoked together. */
@@ -235,6 +236,7 @@ export async function startFakeConnector(options = {}) {
       if (request.method === "GET" && path === "/api/me") return send(response, 200, { id: "fake-user", name: "Người dùng thử" });
       if (request.method === "GET" && path === "/api/tasks") {
         if (!needs("tasks.read")) return;
+        reads += 1;
         return send(response, 200, { tasks });
       }
       const match = /^\/api\/tasks\/([A-Za-z0-9-]{1,40})$/.exec(path);
@@ -289,9 +291,10 @@ export async function startFakeConnector(options = {}) {
       mode = defaultMode();
       tasks = INITIAL_TASKS.map((task) => ({ ...task }));
       writes = 0;
+      reads = 0;
       return send(response, 200, {});
     }
-    if (request.method === "GET" && path === "/admin/stats") return send(response, 200, { writes, tasks, mode });
+    if (request.method === "GET" && path === "/admin/stats") return send(response, 200, { reads, writes, tasks, mode });
     if (request.method === "GET" && path === "/admin/secrets") return send(response, 200, { secrets: issued });
     send(response, 404, { error: "not found" });
   }
@@ -313,7 +316,7 @@ export async function startFakeConnector(options = {}) {
     clientId: FAKE_CLIENT_ID,
     /** Every code and token issued so far. */
     secrets: () => [...issued],
-    stats: () => ({ writes, tasks: tasks.map((task) => ({ ...task })) }),
+    stats: () => ({ reads, writes, tasks: tasks.map((task) => ({ ...task })) }),
     setMode: (patch) => {
       for (const [key, value] of Object.entries(patch)) if (key in mode) mode[key] = value;
     },
