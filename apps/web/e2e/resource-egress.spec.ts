@@ -254,21 +254,16 @@ test("what the package reaches is listed before it is installed, in the install 
     expect(await installedPackages(request)).not.toContain(PACKAGE);
 
     /*
-     * Declining leaves the node as it was. Approving is covered by the install-approval journey; this listing is a
-     * local-path fixture, which installs only with a digest its caller computed, so it is installed over the API next.
+     * Approving installs it. This listing is a path on this machine: the question pinned the content of its files, and
+     * Approve installs those files.
      */
-    await dialog.locator(`[data-inbox-deny="${approvalId}"]`).click();
-    await expect(dialog.locator('[data-inbox-status="done"]')).toBeVisible({ timeout: 20_000 });
-    expect(await installedPackages(request)).not.toContain(PACKAGE);
+    await dialog.locator(`[data-inbox-install-approve="${approvalId}"]`).click();
+    await expect(dialog.locator('[data-inbox-status="done"]')).toContainText("Đã cài", { timeout: 30_000 });
+    await expect(item).toHaveCount(0);
+    expect(await installedPackages(request)).toContain(PACKAGE);
   } finally {
     await writePolicy(request, previousPolicy);
   }
-
-  const installed = await request.post(`${GATEWAY}/packages/install`, {
-    headers: auth(),
-    data: { packageId: PACKAGE, version: "1.0.0", localDigest: "sha256:lookup-service-digest" },
-  });
-  expect(installed.ok(), `install answered ${String(installed.status())}: ${await installed.text()}`).toBe(true);
 
   // Package details keep showing it, read from the installed manifest.
   await openApp(page);

@@ -36,6 +36,7 @@ import {
   decideExecution,
   declaredWidgetIds,
   deriveGrantedCapabilities,
+  digestOfDirectory,
   directoryIndexPath,
   effectCategoryForLane,
   fetchGitArtifact,
@@ -320,6 +321,39 @@ export async function fetchRemoteArtifact(entry: DirectoryEntry, cacheRoot: stri
 export interface ApprovedInstall {
   approvalId: string;
   digest: string;
+  /** For a listing by a path on this machine: the content digest of its files when the person was asked. */
+  localDigest?: string;
+}
+
+/**
+ * The content digest of a package listed by a path on this machine, computed the way a git or npm fetch digests the
+ * bytes it holds (`digestOfDirectory`, with `.git` left out). Undefined for a git or npm listing, whose bytes the fetch
+ * itself checks against the listing.
+ *
+ * A local listing's own `digest` is what its publisher packed, not a hash of the files at the path now, and nothing
+ * stops those files changing after the person was asked. This is what an install question about such a listing pins,
+ * so an approval installs the files it was given for or nothing.
+ */
+export function localContentDigest(entry: DirectoryEntry): { ok: true; digest: string } | { ok: false; message: string } | undefined {
+  if (entry.source.kind !== "local") return undefined;
+  try {
+    const digest = digestOfDirectory(entry.source.path, { exclude: [".git"] });
+    return digest.ok ? { ok: true, digest: digest.digest } : { ok: false, message: digest.message };
+  } catch (cause) {
+    // A path that is gone or unreadable has no digest, and so cannot be the files anybody approved.
+    return { ok: false, message: cause instanceof Error ? cause.message : String(cause) };
+  }
+}
+
+/** Whether a local listing's files are still the ones an approval pinned. Always true for a git or npm listing. */
+export function localFilesUnchanged(entry: DirectoryEntry, pinned: string | undefined): boolean {
+  const current = localContentDigest(entry);
+  return current === undefined || (current.ok && pinned !== undefined && current.digest === pinned);
+}
+
+/** Why an approved local install was refused: its files are not the ones the person was asked about. */
+export function localFilesChangedMessage(packageId: string, version: string): string {
+  return `${packageId}@${version}'s files on this machine changed after you were asked, so nothing was installed; install it again to be asked about what they are now`;
 }
 
 export async function installPackage(
@@ -404,6 +438,14 @@ export async function installPackage(
       message: `${packageId}@${version} is no longer the artifact that was approved, so nothing was installed`,
     };
   }
+  /*
+   * The same rule for a listing by a path on this machine, whose listed digest says nothing about the files there now:
+   * the approval pinned their content when the person was asked, and other files - or an approval that pinned none -
+   * install nothing.
+   */
+  if (approved !== undefined && !localFilesUnchanged(entry, approved.localDigest)) {
+    return { kind: "refused", status: 409, code: "DIGEST_MISMATCH", message: localFilesChangedMessage(packageId, version) };
+  }
 
   const principalId = runtime.identity.ownerPrincipalId;
   // Read at the request rather than captured at boot, so a mode the user just changed applies to this install.
@@ -441,16 +483,36 @@ export async function installPackage(
 
   if (decision.kind === "ask") {
     /*
+     * A listing by a path on this machine is asked about together with the content of its files, so approving it
+     * later installs those files and not whatever the path holds by then. A path whose files cannot be digested is
+     * refused now: no answer to the question could install it.
+     */
+    const local = localContentDigest(entry);
+    if (local !== undefined && !local.ok) {
+      return {
+        kind: "refused",
+        status: 400,
+        code: "LOCAL_SOURCE_UNREADABLE",
+        message: `${packageId}@${version}'s files on this machine could not be read: ${local.message}`,
+      };
+    }
+    const localDigest = local?.digest;
+    /*
      * Asking to install the same artifact again while its approval still waits is the same question, not a new one:
      * reuse the pending row for this digest, as the capability approvals below do, so a second press or a repeated
      * request does not pile up approvals nobody can tell apart. Only a live one — an expired row is not a question
-     * anybody can still answer.
+     * anybody can still answer — and, for a local listing, only one asked about the files as they are now.
      */
-    const pending = runtime.db
-      .prepare(
-        "SELECT approval_id FROM approvals WHERE operation_digest = ? AND decision = 'pending' AND task_id IS NULL AND expires_at > ? LIMIT 1",
-      )
-      .get(entry.digest, nowInstant()) as { approval_id: string } | undefined;
+    const pending = allRows<{ approval_id: string }>(
+      runtime.db,
+      "SELECT approval_id FROM approvals WHERE operation_digest = ? AND decision = 'pending' AND task_id IS NULL AND expires_at > ? ORDER BY requested_at, approval_id",
+      entry.digest,
+      nowInstant(),
+    ).find(
+      (row) =>
+        localDigest === undefined ||
+        findInstallApprovalRequest(runtime.db, runtime.identity.nodeId, row.approval_id)?.localDigest === localDigest,
+    );
     /*
      * A new question is recorded together with what it asks about - the package, the version and the artifact - in
      * one transaction, so an approval the inbox cannot name never exists. That record is what makes it an install
@@ -470,6 +532,7 @@ export async function installPackage(
           packageId: entry.packageId,
           version: entry.version,
           digest: entry.digest,
+          ...(localDigest === undefined ? {} : { localDigest }),
           result: "asked",
         });
         return created.approvalId;
@@ -643,9 +706,16 @@ export async function installPackage(
     ...(lock === undefined ? {} : { dependencyLock: lockBindingForPlan(lock) }),
     ...(fetchedLocalDigest !== undefined
       ? { localDigest: fetchedLocalDigest }
-      : request.localDigest === undefined
-        ? {}
-        : { localDigest: request.localDigest }),
+      : request.localDigest !== undefined
+        ? { localDigest: request.localDigest }
+        : /*
+           * An approved local listing, whose files were checked above against the content the approval pinned. The plan
+           * and the generation carry the listing's digest - the one the person was shown and approved - as a local
+           * install that sends it does, so everything that finds a package by its listing finds this one.
+           */
+          approved !== undefined && entry.source.kind === "local"
+          ? { localDigest: entry.digest }
+          : {}),
     ...(request.requestedCapabilityRefs === undefined
       ? {}
       : { requestedCapabilityRefs: request.requestedCapabilityRefs }),
@@ -700,6 +770,8 @@ export interface InstallApprovalEvent {
   version: string;
   /** The directory entry's artifact digest the question was asked about. */
   digest: string;
+  /** For a listing by a path on this machine: the content digest of its files when the question was asked. */
+  localDigest?: string;
   result: InstallApprovalResult;
   code?: string;
   generationId?: string;
@@ -747,7 +819,7 @@ export function findInstallApprovalRequest(
   db: Database,
   nodeId: string,
   approvalId: string,
-): { packageId: string; version: string; digest: string } | undefined {
+): { packageId: string; version: string; digest: string; localDigest?: string } | undefined {
   const row = oneRow<{ document: string }>(
     db,
     `SELECT document FROM events
@@ -760,7 +832,12 @@ export function findInstallApprovalRequest(
   );
   if (row === undefined) return undefined;
   const event = parseJson<InstallApprovalEvent>(row.document, "events.document");
-  return { packageId: event.packageId, version: event.version, digest: event.digest };
+  return {
+    packageId: event.packageId,
+    version: event.version,
+    digest: event.digest,
+    ...(event.localDigest === undefined ? {} : { localDigest: event.localDigest }),
+  };
 }
 
 /* ------------------------------------------------------------------ *
