@@ -25,6 +25,7 @@ import { handleMemoryRoutes, handleSearchRoutes } from "./routes/search-memory.t
 import { handleWidgetServingRoutes } from "./routes/widget-serving.ts";
 import { handleArtifactRoutes } from "./routes/artifacts.ts";
 import { handleJobRoutes } from "./routes/jobs.ts";
+import { handleMapTileRoutes } from "./routes/map-tiles.ts";
 import { handleAttachmentRoutes } from "./routes/attachments.ts";
 import { handlePreviewRoutes } from "./routes/previews.ts";
 import { handlePreferenceRoutes } from "./routes/preferences.ts";
@@ -275,6 +276,9 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   if (artifactResponse !== undefined) return artifactResponse;
   const jobResponse = handleJobRoutes({ services, request, segments });
   if (jobResponse !== undefined) return jobResponse;
+  // Map tiles from the provider the person's tile policy names, and only then (`map-tiles.ts`).
+  const mapTileResponse = await handleMapTileRoutes({ services, request, segments, at });
+  if (mapTileResponse !== undefined) return mapTileResponse;
   const browserTokenResponse = await handleBrowserTokenRoutes({ services, request, segments });
   if (browserTokenResponse !== undefined) return browserTokenResponse;
 

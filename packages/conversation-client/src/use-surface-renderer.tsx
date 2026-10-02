@@ -17,6 +17,9 @@ import {
   BOARD_RESOLVE_OPERATION,
   BOARD_ACKNOWLEDGE_OPERATION,
   MEDIA_VIEW_OPERATION,
+  MAP_ID,
+  MAP_SELECT_OPERATION,
+  MAP_VIEW_OPERATION,
   XY_CHART_KIND,
   XY_CHART_VIEW_OPERATION,
 } from "@clarkcant/contracts";
@@ -31,7 +34,7 @@ import {
 } from "./api.ts";
 import { actionRefusalMessage, actionResultMessage, bindingUnavailableMessage } from "./action-messages.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
-import { type ArtifactFileHost, resolveRenderer, toRendererDataset } from "./renderers.tsx";
+import { type ArtifactFileHost, type MapTileHost, resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { tableExportRequestFrom } from "./table-model.ts";
 import { desktopDialogLabels } from "./artifact-messages.ts";
 import { downloadBlob, saveForPerson } from "./download.ts";
@@ -111,6 +114,8 @@ const VIEW_REFUSED: Record<string, MessageKey> = {
   [TREE_TOGGLE_OPERATION]: "widgets.tree.actionRefused",
   [DIAGRAM_SELECT_OPERATION]: "widgets.diagram.selectRefused",
   [MEDIA_VIEW_OPERATION]: "widgets.action.refusedGeneric",
+  [MAP_SELECT_OPERATION]: "widgets.map.viewRefused",
+  [MAP_VIEW_OPERATION]: "widgets.map.viewRefused",
 };
 /** The argument an agent-bound list item is sent under when the binding names none. */
 const DEFAULT_ITEM_KEY = "itemId";
@@ -123,11 +128,16 @@ interface ActionRun {
   approvalId?: string;
 }
 
-/** One widget's view writes: whether one is in flight, at which revision it was sent, and the latest change waiting. */
+/**
+ * One widget's view writes: whether one is in flight, at which revision it was sent, and the latest change waiting for
+ * each of its view bindings. A widget with two bindings (a tree's selection and expansion, a map's selection and view)
+ * keeps one waiting change per binding, each sent through its own binding, so a selection made while a pan is in flight
+ * is neither dropped nor sent to the binding that does not take it.
+ */
 export interface ViewQueue {
   inFlight: boolean;
   revision?: number;
-  queued?: { view: Record<string, unknown>; onSettled?: (timeline: Timeline) => void };
+  queued?: { action?: TimelineAction; view: Record<string, unknown>; onSettled?: (timeline: Timeline) => void }[];
 }
 
 /**
@@ -220,6 +230,19 @@ export function useSurfaceRenderer({
     }),
     [client, t],
   );
+  /*
+   * A map's tiles, when the node's tile policy names a provider: the policy view says whose they are, and each tile is
+   * read through the node's own tile route with the person's token, then drawn from a blob URL. A map never names a host,
+   * so nothing it holds can send the page elsewhere; a node with no policy answers `provider: null` and maps draw the
+   * offline basemap only.
+   */
+  const mapTiles = useMemo<MapTileHost>(
+    () => ({
+      policy: () => client.mapTilePolicy(),
+      tile: (z, x, y, signal) => client.mapTile(z, x, y, signal),
+    }),
+    [client],
+  );
   const [exports, setExports] = useState<Record<string, ExportStatus>>({});
   const exportTable = useCallback(
     (conversation: string, instanceId: string, payload: Record<string, unknown>): void => {
@@ -262,31 +285,46 @@ export function useSurfaceRenderer({
       const queue = viewQueues.current.get(instanceId);
       const plan = planViewWrite(queue, revision, leaving);
       if (!plan.send) {
-        viewQueues.current.set(instanceId, { ...(queue ?? { inFlight: true }), queued: { view, ...(onSettled === undefined ? {} : { onSettled }) } });
+        const waiting = (queue?.queued ?? []).filter((entry) => (entry.action ?? action).actionBindingId !== action.actionBindingId);
+        viewQueues.current.set(instanceId, {
+          ...(queue ?? { inFlight: true }),
+          queued: [...waiting, { action, view, ...(onSettled === undefined ? {} : { onSettled }) }],
+        });
         return;
       }
       if (queue?.inFlight === true) {
-        // The page is going away: what waited is older than this write, and nothing after it will run.
-        viewQueues.current.set(instanceId, { inFlight: true, revision: plan.expectedRevision });
-        void client
-          .invokeAction(
-            conversation,
-            instanceId,
-            {
-              actionBindingId: action.actionBindingId,
-              expectedRevision: plan.expectedRevision,
-              expectedBindingDigest: action.bindingDigest,
-              input: view,
-              invocationId: newInvocationId(),
-            },
-            { keepalive: true },
-          )
-          .then((result) => applyTimeline(result.timeline))
-          // Best-effort on a page that is unloading; the node stops believing an old "playing" on its own.
-          .catch(() => undefined);
+        // The widget is going away: a change waiting for this binding is older than this write and is replaced by it, but
+        // one waiting for another binding (a map's selection behind its view) is not covered by it, so it goes first, in
+        // order, each at the revision the one before it produces.
+        const others = (queue.queued ?? []).filter((entry) => (entry.action ?? action).actionBindingId !== action.actionBindingId);
+        const writes = [...others.map((entry) => ({ action: entry.action ?? action, view: entry.view })), { action, view }];
+        viewQueues.current.set(instanceId, { inFlight: true, revision: plan.expectedRevision + writes.length - 1 });
+        const send = (index: number): Promise<void> => {
+          const write = writes[index];
+          if (write === undefined) return Promise.resolve();
+          return client
+            .invokeAction(
+              conversation,
+              instanceId,
+              {
+                actionBindingId: write.action.actionBindingId,
+                expectedRevision: plan.expectedRevision + index,
+                expectedBindingDigest: write.action.bindingDigest,
+                input: write.view,
+                invocationId: newInvocationId(),
+              },
+              { keepalive: true },
+            )
+            .then((result) => {
+              applyTimeline(result.timeline);
+              return send(index + 1);
+            });
+        };
+        // Best-effort on a page that is unloading; the node stops believing an old "playing" on its own.
+        send(0).catch(() => undefined);
         return;
       }
-      viewQueues.current.set(instanceId, { inFlight: true, revision: plan.expectedRevision });
+      viewQueues.current.set(instanceId, { inFlight: true, revision: plan.expectedRevision, ...(queue?.queued === undefined ? {} : { queued: queue.queued }) });
       setViewRefusals((current) => {
         const refusal = current[instanceId];
         return refusal === undefined || refusal.message === "" ? current : { ...current, [instanceId]: { message: "", count: refusal.count } };
@@ -305,9 +343,9 @@ export function useSurfaceRenderer({
           plan.keepalive ? { keepalive: true } : {},
         )
         .then((result) => {
-          const queued = viewQueues.current.get(instanceId)?.queued;
-          viewQueues.current.set(instanceId, { inFlight: false });
-          if (queued !== undefined) sendView(conversation, instanceId, datasetRef, action, result.revision, queued.view, refused, queued.onSettled);
+          const [next, ...rest] = viewQueues.current.get(instanceId)?.queued ?? [];
+          viewQueues.current.set(instanceId, { inFlight: false, ...(rest.length === 0 ? {} : { queued: rest }) });
+          if (next !== undefined) sendView(conversation, instanceId, datasetRef, next.action ?? action, result.revision, next.view, refused, next.onSettled);
           else { applyTimeline(result.timeline); onSettled?.(result.timeline); }
         })
         .catch((cause: unknown) => {
@@ -513,6 +551,8 @@ export function useSurfaceRenderer({
                   : undefined;
       const viewOperations = definitionId === TREE_ID
         ? [TREE_SELECT_OPERATION, TREE_TOGGLE_OPERATION]
+        : definitionId === MAP_ID
+          ? [MAP_SELECT_OPERATION, MAP_VIEW_OPERATION]
         : definitionId === BOARD_ID
           ? [BOARD_MOVE_OPERATION, BOARD_APPROVAL_OPERATION, BOARD_RESOLVE_OPERATION, BOARD_ACKNOWLEDGE_OPERATION]
           : definitionId === "canvas.carousel@1" || definitionId === "canvas.gallery@1" || definitionId === "canvas.video@1" ||
@@ -583,6 +623,7 @@ export function useSurfaceRenderer({
                 : {})}
               {...(isTable ? { canExport: conversationId !== undefined } : {})}
               {...(conversationId === undefined ? {} : { artifactFiles })}
+              {...(conversationId === undefined || definitionId !== MAP_ID ? {} : { mapTiles })}
               {...(needsBinding && !actionReady
                 ? {}
                 : {

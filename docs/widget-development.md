@@ -1327,6 +1327,103 @@ keyboard movement, accessible names and markup-shaped labels drawn as text; the 
 focus, persisted selection across a reload, a DOM with nothing that runs or loads, the Mermaid input, refusals, both
 themes at 390 px, reduced motion and the Widget Library preview.
 
+### 8.13 Maps
+
+`canvas.map@1` draws a bounded set of points, lines and areas over an offline basemap
+([#322](https://github.com/digitopvn/clarkcant/issues/322)). Positions are WGS84 `[longitude, latitude]` in a strict
+subset of GeoJSON geometry: `Point`, `LineString` and `Polygon` (an outline plus up to 15 holes, each ring closed). A
+map holds at most 200 features and 5,000 positions in total. IDs are at most 120 characters, labels 120, descriptions
+300 and the title 200. An optional `view` of `{ center, zoom }` (a whole zoom from 0 to 18) replaces the fitted view.
+Placement refuses, with the reason: coordinates outside the globe, an unknown geometry type, too many features or
+positions, over-long or repeated text, hidden characters, and **any URL**. A key that names a link (`url`, `href`,
+`src`, `tile`, `endpoint`, …) or a value that is one (`https://`, `//`, `data:`, `javascript:`, `blob:`) is refused, so
+props can never name a host. Geocoding, routing, geolocation, vector tiles, 3D, clustering and editing are not part of
+this widget.
+
+The basemap is Natural Earth 1:110m land, version 5.1.2, which is in the public domain. It is generated into
+[map-basemap.ts](../packages/conversation-client/src/map-basemap.ts) by
+[build-map-basemap.mjs](../tools/build-map-basemap.mjs), which pins the source file's SHA-256, and the map credits it
+under every drawing. It ships with the client, so a map with no tile policy makes no request beyond the node.
+
+Raster tiles appear only under the node's tile policy, the registered preference `maps.tilePolicy`. It is `null` by
+default, and only a person can write or undo it: AI clients over the socket or MCP are refused
+(`isPersonOnlyRoute`). A policy names one provider:
+
+```json
+{
+  "origin": "https://tiles.example.com",
+  "template": "/styles/basic/{z}/{x}/{y}.png",
+  "attribution": "© Example contributors",
+  "maxZoom": 17,
+  "credential": { "secret": "tiles-key", "header": "x-api-key" }
+}
+```
+
+`origin` is exactly `scheme://host[:port]`: https, or http only for a loopback address. `template` is a path on that
+origin with `{z}`, `{x}` and `{y}` once each. The page never fetches the provider. It asks the node for
+`GET /map-tiles/:z/:x/:y`, and the node:
+
+- builds the address from the policy;
+- checks z, x and y against `maxZoom` (at most 19) and the grid;
+- does not follow redirects;
+- serves only PNG or WebP, checked by both the provider's content type and the bytes, at most 512 KiB, with `nosniff`;
+- rate-limits to 12 requests a second with a burst of 48;
+- caches up to 256 tiles or 24 MiB, for an hour.
+
+`GET /map-tiles` tells the page the provider's origin, attribution and maximum zoom, never its template or key. With no
+policy, every tile request is refused with `MAP_TILES_OFF` and nobody is asked. The page draws tiles from `blob:` URLs,
+so the page policy is unchanged.
+
+An optional `credential` names a secret the node holds. That secret must list the consumer `maps:tiles`, and it is
+injected as the HTTP header or query parameter the policy names, through the secret broker. The key never reaches the
+page, props, state, logs, the cache key, an error message or the model. The attribution line under the map names the
+tile origin and its attribution, and the map shows no "live" badge.
+
+`map.select` carries `{ selectedId }` (empty to clear) and `map.view` carries `{ center, zoom }`. The node checks both
+against the current props and keeps them as widget state. A pan is written 400 ms after it settles, so a run of key
+presses is one write. `map.select` is also a composition-graph event with a `selectedId` field.
+
+The map region is focusable and works by keyboard:
+
+- arrows pan, and Shift pans further;
+- `+` and `-` zoom, and `0` resets the view;
+- `N` and `P` step through the features, and Escape clears the selection.
+
+Pointer drag pans too. On a touch screen, a swipe over a map that has not been tapped scrolls the conversation; once
+the map is tapped, a drag pans it. The map is one world that does not repeat: the view stops at the antimeridian, and
+the basemap, features and tiles are each drawn once. Zoom-in, zoom-out and reset buttons are 44 px. A live region
+states the view once it settles, and the selection. Tiles are asked for once the view settles; one that failed for a
+passing reason is asked for again after a pause. Below the map, a table lists every feature with its kind and position. Its Select button selects the
+feature on the map and brings it into view, and selecting on the map highlights its row. A pan slides only when motion
+is allowed; under reduced motion the view moves at once. Every colour is a theme token. A narrow map moves its controls
+under the picture and draws its labels larger, and nothing overflows at 390 px.
+
+The semantic document reports:
+
+- the feature count and the count of each kind;
+- the visible bounds and zoom;
+- the selected feature's label and coordinates;
+- whether tiles are offline or from the policy's origin.
+
+The text fallback lists every feature with its kind and position. Both stay within `SEMANTIC_LIMITS`.
+
+Tests: [map-view.spec.ts](../packages/contracts/test/map-view.spec.ts) checks bounds, URL refusal, projection,
+semantics, the tile policy schema and the person-only route;
+[map-view.spec.ts](../apps/runtime/test/map-view.spec.ts) checks placement, refusals, state and semantics with and
+without a policy; [map-tiles.spec.ts](../apps/runtime/test/map-tiles.spec.ts) checks the proxy's allowlist, content
+type, size and zoom bounds, cache, rate, redirect refusal, and that the key is added and never returned;
+[map-layout.spec.ts](../packages/conversation-client/test/map-layout.spec.ts) checks the basemap's provenance, the
+projection and the tile grid; [map-schemas.spec.ts](../packages/widget-catalog/test/map-schemas.spec.ts) checks the
+fixtures and the agreement between schema and runtime. The browser journey
+[map-view.spec.ts](../apps/web/e2e/map-view.spec.ts) covers:
+
+- keyboard and table selection, persisted across a reload;
+- no requests beyond the node without a policy;
+- fixture tiles fetched through the node with their attribution;
+- the refusals;
+- both themes, reduced motion and 390 px;
+- the Widget Library preview.
+
 ### 8.14 Audio player and document preview
 
 `canvas.audio@1` plays one audio file and `canvas.document@1` previews the text of a PDF or text file

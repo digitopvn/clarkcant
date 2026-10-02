@@ -38,6 +38,10 @@ import {
   readBoard,
   readBoardState,
   boardSemantic,
+  MAP_ID,
+  readMap,
+  readMapState,
+  mapSemantic,
   playingIsFresh,
   readMediaPlayback,
   readMediaSelection,
@@ -55,6 +59,8 @@ import {
   listTouchedWidgets,
   recordWidgetSemantic,
 } from "@clarkcant/storage";
+
+import { readMapTilePolicy } from "./map-tiles.ts";
 
 /**
  * What a widget a person changed means now, built from what this node holds (#195).
@@ -216,6 +222,16 @@ export function buildWidgetSemantic(
   if (board !== undefined) {
     const state = readBoardState(liveStateOf(deps, instanceId)?.body, board);
     return normalizeSemanticDoc({ instanceId, definitionId, ...boardSemantic(board, state), availableActions, freshness: "unknown" });
+  }
+
+  // A map says what it holds, what part of the world it shows, the feature selected and where it is, and whether tiles
+  // are shown and whose — read from the node's tile policy, the same one the tile route obeys.
+  const map = definitionId === MAP_ID ? readMap(instance.props) : undefined;
+  if (map !== undefined) {
+    const state = readMapState(liveStateOf(deps, instanceId)?.body, map);
+    const policy = readMapTilePolicy(deps, instance.ownerPrincipalId);
+    const tiles = policy === null ? { kind: "offline" as const } : { kind: "provider" as const, origin: policy.origin };
+    return normalizeSemanticDoc({ instanceId, definitionId, ...mapSemantic(map, state, tiles), availableActions, freshness: "unknown" });
   }
 
   if (definitionId === IMAGE.id && typeof instance.props.imageRef === "string" && typeof instance.props.alt === "string") {

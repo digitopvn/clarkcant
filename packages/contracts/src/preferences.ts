@@ -21,6 +21,7 @@
 import { z } from "zod";
 
 import { GUARD_CLASSES, guardClassSchema, jevUnavailablePolicySchema } from "./execution.ts";
+import { MAP_TILE_POLICY_PREFERENCE, mapTilePolicySchema } from "./map-view.ts";
 import { orbPalettePreferenceSchema } from "./orb-palette.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 import { BUILTIN_CLARK_THEME_REF, DEFAULT_COLOR_SCHEME, accentPreferenceSchema, colorSchemeSchema, themeRefSchema } from "./themes.ts";
@@ -739,6 +740,18 @@ export const PREFERENCE_REGISTRY = {
     default: [],
     schema: githubSelfLoginsPreferenceSchema,
     normalize: normalizeNameList,
+  },
+  /*
+   * The one tile provider maps on this node may show, or none. A setting of the node, written only by the person: an AI
+   * client that could name a provider could make every map report what it shows to a host of its choosing, so the write
+   * is refused on every machine surface (`isPersonOnlyRoute`). None, the default, means no map requests a tile at all.
+   */
+  [MAP_TILE_POLICY_PREFERENCE]: {
+    key: MAP_TILE_POLICY_PREFERENCE,
+    scope: "node",
+    applies: "immediate",
+    default: null,
+    schema: mapTilePolicySchema,
   },
 } as const satisfies Record<string, PreferenceDefinition>;
 

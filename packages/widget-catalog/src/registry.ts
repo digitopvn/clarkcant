@@ -143,6 +143,12 @@ const META: Record<string, CatalogMeta> = {
     aliases: ["board", "kanban", "task board", "bảng", "công việc"],
     status: "stable",
   },
+  "canvas.map@1": {
+    displayName: "Bản đồ",
+    tags: ["map", "geo", "places"],
+    aliases: ["map", "places", "locations", "bản đồ", "địa điểm", "vị trí"],
+    status: "stable",
+  },
   "canvas.image@1": {
     displayName: "Ảnh",
     tags: ["media", "image"],
