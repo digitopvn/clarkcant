@@ -193,22 +193,13 @@ test("a sheet imported, edited and exported reads back to the same values, and C
   /*
    * Select B2:C3 and ask Clark. The press sends nothing: the host reads the selection from the document the widget
    * published, and the fixture model names the range it found in the turn's data. The widget applies the reply only
-   * because it is exactly the instruction for the range that was selected.
+   * because it is exactly the instruction for the range that was selected. The press follows the selection at once:
+   * the host sends the frame's pending semantic document, and waits until the node holds it, before it runs the press.
    */
-  const published = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      /\/widgets\/[^/]+\/semantic$/u.test(new URL(response.url()).pathname) &&
-      (response.request().postData() ?? "").includes("B2:C3"),
-  );
   await frame.locator(".cell[data-cell='B2']").click();
   await frame.locator(".cell[data-cell='C3']").click({ modifiers: ["Shift"] });
   const address = frame.locator("[data-sheet-address]");
   await expect(address).toHaveText("C3 · B2:C3");
-  // TODO(#383): drop this wait once the host sends a frame's pending semantic update before it runs an `agent` binding.
-  // Until then a press inside the host's 250 ms settle reaches the node before the selection does, Clark is given the
-  // previous range, and the widget refuses the reply (which is the safe outcome, but the press does nothing useful).
-  expect((await published).ok()).toBe(true);
   const ask = frame.locator("[data-sheet-ask-format]");
   await expect(ask).toBeEnabled();
 

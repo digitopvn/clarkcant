@@ -2672,13 +2672,13 @@ hạn, tự mô tả cho Clark và áp dụng một thay đổi do Clark chọn.
   vuốt để cuộn lưới. "Chọn vùng" làm các lần chạm sau mở rộng vùng chọn từ ô đã chạm trước đó; chạm lại để tắt. Các nút
   cao ít nhất 40 px.
 
-Ba giới hạn được nói rõ thay vì giấu đi. Hiện chưa có gì trong sản phẩm đặt một widget của package kèm một hành động đã
+Hai giới hạn được nói rõ thay vì giấu đi. Hiện chưa có gì trong sản phẩm đặt một widget của package kèm một hành động đã
 gắn: trong bộ kiểm thử trình duyệt, node fixture đặt bảng tính và biên dịch binding của nó theo cách host biên dịch đề
 xuất của model. Và một yêu cầu gõ trong ô soạn tin tới được Clark qua ghi chú ngữ nghĩa nhưng không thay đổi được frame.
-Cả hai được theo dõi ở [#382](https://github.com/digitopvn/clarkcant/issues/382). Cuối cùng, host gửi tài liệu ngữ
-nghĩa của widget 250 ms sau khi vùng chọn ngừng thay đổi, và chạy lần bấm mà không chờ nó. Một lần bấm trong khoảng đó
-có thể tới Clark với vùng trước. Khi ấy widget từ chối câu trả lời và không thay đổi gì. Bước phía host gửi tài liệu
-đang chờ trước khi chạy một binding `agent` là [#383](https://github.com/digitopvn/clarkcant/pull/383).
+Cả hai được theo dõi ở [#382](https://github.com/digitopvn/clarkcant/issues/382). Một lần bấm ngay sau khi vùng chọn
+đổi không nằm trong số đó: trước khi chạy lần bấm, host gửi tài liệu ngữ nghĩa đang chờ của widget và chờ đến khi node
+đã giữ nó ([§24.1](#241-trình-soạn-thảo-văn-bản)), nên Clark đọc đúng vùng đã chọn lúc bấm. Một câu trả lời nêu vùng
+khác vẫn bị từ chối, và không có gì thay đổi.
 
 Kiểm thử: unit test cho bộ phân tích, công thức, giới hạn và tài liệu ngữ nghĩa trong
 [test/](../examples/reference-apps/spreadsheet/test/) (56 test), gồm cả checkpoint với một host giả: sửa đổi làm trong lúc

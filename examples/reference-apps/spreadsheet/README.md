@@ -38,8 +38,9 @@ document bounded, describes itself to Clark, and applies a change Clark chose.
   asks Clark for exactly one line. The widget accepts `format: percent|number|plain <range>` and applies it only for
   the range selected at the press, which stays locked until the reply arrives; otherwise it says so visibly. At most
   32 formats are kept, and the status names one that had to go. "Undo format", or Ctrl+Z in the grid, takes back
-  Clark's change. A press made within 250 ms of changing the selection can reach Clark with the previous range, and is
-  then refused; the host fix is [#383](https://github.com/digitopvn/clarkcant/pull/383). A request typed in the
+  Clark's change. Before it runs the press, the host sends the widget's pending semantic document and waits until the
+  node holds it, so a press made straight after changing the selection still reaches Clark with that range. A request
+  typed in the
   composer reaches Clark through the semantic document but cannot change the frame; that gap is tracked in
   [#382](https://github.com/digitopvn/clarkcant/issues/382).
 

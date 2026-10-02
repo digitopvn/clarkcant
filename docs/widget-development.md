@@ -2669,14 +2669,13 @@ describes itself to Clark and applies a change Clark chose.
   scrolls the grid. "Select range" makes the following taps extend the selection from the cell tapped before; tap it
   again to stop. Buttons are at least 40 px high.
 
-Three limits are stated rather than hidden. Nothing in the product places a package widget with a bound action yet: in the
+Two limits are stated rather than hidden. Nothing in the product places a package widget with a bound action yet: in the
 browser suite the fixture node places the spreadsheet and compiles its binding the way the host compiles a model's
 proposal. And a request typed in the composer reaches Clark through the semantic note but cannot change the frame. Both
-are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382). Last, the host sends the widget's semantic
-document 250 ms after the selection settles, and runs the press without waiting for it. A press inside that window
-can reach Clark with the previous range. The widget then refuses the reply and changes nothing. The host step that
-sends the pending document before it runs an `agent` binding is
-[#383](https://github.com/digitopvn/clarkcant/pull/383).
+are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382). A press straight after the selection changes
+is not one of them: before it runs the press, the host sends the widget's pending semantic document and waits until
+the node holds it ([§24.1](#241-text-editor)), so Clark reads the range selected at the press. A reply that names
+another range is still refused, and nothing changes.
 
 Tests: unit tests for the parser, formulas, bounds and semantic document in
 [test/](../examples/reference-apps/spreadsheet/test/) (56 tests), including checkpoints against a fake host: edits made

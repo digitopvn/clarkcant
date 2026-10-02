@@ -37,9 +37,9 @@ một tài liệu lớn trong giới hạn, tự mô tả cho Clark và áp dụ
   bấm không gửi gì; host đọc vùng chọn từ tài liệu ngữ nghĩa của widget và yêu cầu Clark trả lời đúng một dòng,
   và widget nhận `format: percent|number|plain <vùng>`. Widget chỉ áp dụng cho vùng đã chọn lúc bấm, vùng này bị khoá
   tới khi có câu trả lời; nếu không, nó nói rõ. Bảng giữ tối đa 32 định dạng, và dòng trạng thái nêu tên định dạng phải
-  bỏ. "Hoàn tác định dạng", hoặc Ctrl+Z trong lưới, lấy lại thay đổi của Clark. Một lần bấm trong vòng 250 ms sau khi
-  đổi vùng chọn có thể tới Clark với vùng trước, và khi ấy bị từ chối; bản sửa phía host là
-  [#383](https://github.com/digitopvn/clarkcant/pull/383). Một yêu cầu gõ trong ô soạn tin tới được Clark qua tài liệu ngữ nghĩa nhưng không thay đổi
+  bỏ. "Hoàn tác định dạng", hoặc Ctrl+Z trong lưới, lấy lại thay đổi của Clark. Trước khi chạy lần bấm,
+  host gửi tài liệu ngữ nghĩa đang chờ của widget và chờ đến khi node đã giữ nó, nên một lần bấm ngay sau khi đổi vùng
+  chọn vẫn tới Clark với đúng vùng đó. Một yêu cầu gõ trong ô soạn tin tới được Clark qua tài liệu ngữ nghĩa nhưng không thay đổi
   được frame; khoảng trống này được theo dõi ở [#382](https://github.com/digitopvn/clarkcant/issues/382).
 
 Bàn phím: lưới là một điểm dừng Tab, và Tab, Shift+Tab rời lưới. Phím mũi tên để di chuyển, Shift+mũi tên mở rộng vùng

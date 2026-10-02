@@ -18,7 +18,7 @@ Reference app B: a spreadsheet package in `examples/reference-apps/spreadsheet`.
   - The host reads the range from the widget's semantic document, and the intent asks for exactly one line, `format: percent <range>`.
   - The widget treats the reply as untrusted and applies it only when it is that exact line for the range selected at the press. Otherwise it shows a visible refusal.
 - **Fixture node.** The fixture node places the package from its directory entry and compiles the binding the way the host compiles a model's proposal. Its reply names the range found in the turn's data section, so an applied format shows that the host-read range reached the model.
-- **Docs.** The reference-app section is in `docs/widget-development{,.vi}.md` §24.1, the status in `docs/widgets-and-extensions{,.vi}.md` §4.1, and the V12 ledger evidence in `docs/conformance-traceability.md`. The broker count there is corrected from 31 to 32.
+- **Docs.** The reference-app section is in `docs/widget-development{,.vi}.md` §24.2 (§24.1 is the text editor from #317), the status in `docs/widgets-and-extensions{,.vi}.md` §4.1, and the V12 ledger evidence in `docs/conformance-traceability.md`. The broker count there is corrected from 31 to 32.
 
 Review fixes (`plans/reports/review-261002-384-spreadsheet.md`):
 - **Clearing a selection** is one batched edit, so clearing all 25,000 cells is linear.
@@ -28,7 +28,7 @@ Review fixes (`plans/reports/review-261002-384-spreadsheet.md`):
   - A sheet replaced mid-write drops its checkpoint.
 - **Keyboard.** The grid is one tab stop, and Tab and Shift+Tab leave it, so Import, Export and "Ask Clark" are reachable. Arrows and Enter move, Escape collapses a range, focus stays visible, and Tab moves right only while editing.
 - **Bounds on import.** The rows × columns bound applies on import (the rectangle the rows make), so a loaded sheet always takes edits. A checkpoint cut short on restore says so. A read stopped by the 8 MiB limit drops its partial last line, and trailing blank lines no longer cause a false notice.
-- **The Clark round trip.** The widget still checks that the reply is for the range Clark read. The selection is locked while the request is in flight, and the 400 ms sleep is gone. The E2E keeps its wait for the semantic POST, marked `TODO(#383)`: without the host flush from #383, the host read the previous range and the widget correctly refused the reply.
+- **The Clark round trip.** The widget still checks that the reply is for the range Clark read. The selection is locked while the request is in flight, and the 400 ms sleep is gone. Since #383 landed, the host sends a frame's pending semantic publish before it runs an `agent` press, so the E2E no longer waits for the semantic POST before it clicks (the `TODO(#383)` wait is removed).
 - **Touch and Undo.** On touch, a tap selects and "Select range" extends the selection, and a mouse drags. "Undo format", or Ctrl+Z, takes back an applied format. The formats are a closed set (`percent|number|plain`), with a notice when the 32-format cap drops one.
 - **View state.** The cursor and selection are `ephemeralStateKeys`, and cursor saves are debounced. The semantic selection context Clark reads is unchanged.
 - **Smaller fixes.**
@@ -49,18 +49,28 @@ Round-2 review changes (`plans/reports/review-261002-384-spreadsheet-round2.md`)
 - **N6.** A read that stops at the 8 MiB limit is flagged as cut, also when the limit falls on `\n` or between `\r` and `\n`.
 - **N7.** A failed checkpoint now says that the sheet could not be written to a file, that the changes are in the frame but not saved, and that the next edit tries again. It no longer says "The sheet is unchanged".
 - **N8.** `load()` reports `superseded` when an import replaced the sheet while it loaded, and the widget does not show that result. Import is also disabled while the sheet loads.
-- **Docs.** EN and VI §24.1 and both READMEs now say when a replaced checkpoint is discarded and what happens when a discard is refused. They also describe the import checkpoint with the 24 h grant, the loading and unreadable states, and the cut flag at a line end. The V12 ledger row now reads 56 unit tests and 4 browser tests. `docs/manifest.json` was regenerated.
+- **Docs.** EN and VI §24.2 (then §24.1) and both READMEs now say when a replaced checkpoint is discarded and what happens when a discard is refused. They also describe the import checkpoint with the 24 h grant, the loading and unreadable states, and the cut flag at a line end. The V12 ledger row now reads 56 unit tests and 4 browser tests. `docs/manifest.json` was regenerated.
 
 Known gaps, tracked in #382:
 - Nothing in the product places a package widget with a bound action yet; only the fixture node does here.
 - A request typed in the composer reaches Clark through the semantic note but cannot change the frame.
 
-Coordination with #317:
-- The shared lines are the vitest/tsconfig includes, `examples/reference-apps/package.json`, the lockfile importer, `directory.json` and `fixture-model.ts`.
-- These were added as agreed, so a merge only appends. The PR that merges second combines the `test` script.
-- If #317 also adds a "Reference apps" section to `docs/widget-development{,.vi}.md`, keep one §24 heading and number the subsections.
+Coordination with #317 (merged to main as b2c1868d, merged into this branch):
+- `examples/reference-apps/package.json` is one `@clarkcant/reference-apps` package (version 1.0.0, Apache-2.0, as on main) whose `test` script runs `clark widget test text-editor && clark widget test spreadsheet`. The lockfile is main's, with one importer, and `pnpm install` left it unchanged.
+- `directory.json`, `fixture-model.ts` and the vitest/tsconfig globs carry both apps.
+- `docs/widget-development{,.vi}.md` has one §24 "Reference apps": the text editor moved from §10.3 to §24.1, and the spreadsheet is §24.2. Every anchor to the old numbers is updated in EN and VI (the `pure-ui` template entry in §16 and both `widgets-and-extensions` entries).
+- `docs/widgets-and-extensions{,.vi}.md` lists the text editor, then the spreadsheet. The V12 ledger row keeps both sentences and every count, and is still one table row.
+- With #383 in place, the "press within 250 ms" limit is gone from §24.2 (EN and VI) and both spreadsheet READMEs.
 
 ## Validation
+
+After merging main (b2c1868d, #317) into this branch:
+- `pnpm typecheck`: passed. `pnpm invariants`: all 12 checks passed.
+- `pnpm exec vitest run examples/reference-apps`: 6 files and **103 tests passed** (spreadsheet 56, text editor 47).
+- `clark widget test` through the package's `test` script exits 0. Each app run through the CLI directly: text editor 22 passed, 0 failed, 12 need the dev host; spreadsheet 22 passed, 0 failed, 12 need the dev host.
+- `apps/web/e2e/spreadsheet.spec.ts` without the `TODO(#383)` wait, `--repeat-each 3` (`CC_E2E_NODE_PORT=9476 CC_E2E_WEB_PORT=4773 CC_E2E_NPM_REGISTRY_PORT=9478`): **12/12 passed**. Then `text-editor.spec.ts` and `spreadsheet.spec.ts` together: **12/12 passed** (8 + 4).
+- **`pnpm verify`** passed: 414 test files passed and 1 skipped, and 5,305 tests passed and 34 skipped.
+- **Not run on this tree:** the `verify:full` stages after `verify`, and `clark widget pack`.
 
 After the round-2 changes (commit 386d9ed5):
 - `pnpm typecheck`: passed.
