@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test, type FrameLocator, type Page, type Request } from "@playwright/test";
+import { expect, test, type FrameLocator, type Page, type Request, type Route } from "@playwright/test";
 
 /**
  * The reference spreadsheet, from the conversation.
@@ -347,6 +347,127 @@ test("a file larger than the sheet holds loads its first part, says so, and stay
   expect(clearMs).toBeLessThan(5_000);
   await page.locator("[data-pin-live] [data-widget-frame]").scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(EVIDENCE, "spreadsheet-large-1280-dark.png"), fullPage: true });
+});
+
+const STATE_PATH = /\/widgets\/[^/]+\/state$/u;
+const ARTIFACT_READ = (url: URL): boolean => /\/widgets\/[^/]+\/artifacts\/[^/]+\/content$/u.test(url.pathname);
+const ARTIFACT_CREATE = (url: URL): boolean => /\/widgets\/[^/]+\/artifacts$/u.test(url.pathname);
+
+/** The next state write the node accepts whose body holds `text`. */
+function stateWritten(page: Page, text: string): Promise<boolean> {
+  return page
+    .waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        STATE_PATH.test(new URL(response.url()).pathname) &&
+        (response.request().postData() ?? "").includes(text),
+      { timeout: 30_000 },
+    )
+    .then((response) => response.ok());
+}
+
+/** A reload, and the same instance opened again: its frame is up, the sheet may still be loading. */
+async function reopenSpreadsheet(page: Page): Promise<FrameLocator> {
+  await page.reload();
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  const open = page.locator("[data-open-live]").last();
+  await expect(open).toBeVisible({ timeout: 20_000 });
+  await open.click();
+  await expect(page.locator("[data-pin-live] [data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", {
+    timeout: 20_000,
+  });
+  return page.frameLocator("[data-pin-live] [data-widget-frame] iframe");
+}
+
+test("the sheet takes no edits until the saved one is back, keeps it when it cannot be read, and says when a save failed", async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "light" });
+  let frame = await openSpreadsheet(page);
+
+  // An import is written once as a file of the widget's own, so the sheet does not depend on the picked file's grant.
+  const checkpointed = stateWritten(page, '"sourceKind":"checkpoint"');
+  await importFile(page, frame, SOURCE_NAME, "text/csv", SOURCE_CSV);
+  expect(await checkpointed).toBe(true);
+  const edited = stateWritten(page, '"D2":"=B2*2"');
+  await edit(page, frame, "D2", "=B2*2");
+  expect(await edited).toBe(true);
+  const saved = await shownValues(frame);
+  expect(saved).toMatchObject({ A1: "Tên", D2: "20", B4: "40" });
+
+  /*
+   * The saved sheet cannot be read on the next mount. The widget says so, takes no edits, and writes nothing: the
+   * mount after it shows the saved sheet whole.
+   */
+  const refuseRead = (route: Route): Promise<void> =>
+    route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "ARTIFACT_UNAVAILABLE", message: "held back by the test" }) });
+  await page.route(ARTIFACT_READ, refuseRead);
+  frame = await reopenSpreadsheet(page);
+  const status = frame.locator("[data-sheet-status]");
+  await expect(status).toHaveAttribute("data-sheet-status", "refused", { timeout: 20_000 });
+  await expect(status).toContainText("Không đọc được bảng tính đã lưu");
+  await expect(status).toContainText("Bảng tính đã lưu vẫn giữ nguyên");
+  const grid = frame.locator("[data-sheet-grid]");
+  await expect(grid).toHaveAttribute("aria-readonly", "true");
+  const editor = frame.locator("[data-sheet-editor]");
+  await frame.locator(".cell[data-cell='D2']").click();
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("7");
+  await page.keyboard.press("Delete");
+  await expect(editor).toBeHidden();
+  await expect(frame.locator(".cell[data-cell='A1']")).toHaveText("");
+  await page.unroute(ARTIFACT_READ, refuseRead);
+
+  // The next mount is held while it reads: the sheet says it is opening, and neither the grid nor Import takes input.
+  let releaseReads: () => void = () => undefined;
+  const readsHeld = new Promise<void>((resolve) => {
+    releaseReads = resolve;
+  });
+  const holdRead = async (route: Route): Promise<void> => {
+    await readsHeld;
+    await route.continue();
+  };
+  await page.route(ARTIFACT_READ, holdRead);
+  frame = await reopenSpreadsheet(page);
+  await expect(frame.locator("[data-sheet-status='loading']")).toHaveText("Đang mở bảng tính…", { timeout: 20_000 });
+  await expect(frame.locator("[data-sheet-grid]")).toHaveAttribute("aria-readonly", "true");
+  await expect(frame.locator("[data-sheet-grid]")).toHaveAttribute("data-sheet-loading", "");
+  await expect(frame.locator("[data-sheet-import]")).toBeDisabled();
+  await frame.locator("[data-sheet-grid]").focus();
+  await page.keyboard.type("9");
+  await page.keyboard.press("Delete");
+  await expect(frame.locator("[data-sheet-editor]")).toBeHidden();
+  releaseReads();
+  await expect(frame.locator("#root[data-widget-ready='true']")).toHaveCount(1, { timeout: 20_000 });
+  await page.unroute(ARTIFACT_READ, holdRead);
+  await expect(frame.locator("[data-sheet-grid]")).toHaveAttribute("aria-readonly", "false");
+  await expect(frame.locator("[data-sheet-import]")).toBeEnabled();
+  expect(await shownValues(frame)).toEqual(saved);
+
+  /*
+   * The import's own file cannot be written. The message says what failed, that the sheet is in the frame but not
+   * saved, and that the next edit tries again, which it does.
+   */
+  const refuseCreate = (route: Route): Promise<void> =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "ARTIFACT_UNAVAILABLE", message: "held back by the test" }) })
+      : route.continue();
+  await page.route(ARTIFACT_CREATE, refuseCreate);
+  await frame.locator("[data-sheet-import]").click();
+  const prompt = page.locator("[data-artifact-prompt='pick']");
+  await expect(prompt).toBeVisible();
+  const chooser = page.waitForEvent("filechooser");
+  await prompt.locator("[data-artifact-choose]").click();
+  await (await chooser).setFiles({ name: "moi.csv", mimeType: "text/csv", buffer: Buffer.from("Mới,1\r\nHai,2\r\n", "utf8") });
+  const failedStatus = frame.locator("[data-sheet-status='refused']");
+  await expect(failedStatus).toContainText("Không ghi được bảng tính ra tệp", { timeout: 30_000 });
+  await expect(failedStatus).toContainText("chưa được lưu");
+  await expect(failedStatus).not.toContainText("Bảng tính giữ nguyên");
+  await expect(frame.locator(".cell[data-cell='A1']")).toHaveText("Mới");
+  await page.unroute(ARTIFACT_CREATE, refuseCreate);
+  const retried = stateWritten(page, '"sourceKind":"checkpoint"');
+  await edit(page, frame, "C1", "ba");
+  expect(await retried).toBe(true);
 });
 
 test.describe("on a touch screen", () => {

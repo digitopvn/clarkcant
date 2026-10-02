@@ -45,7 +45,10 @@ export async function readSheetFile(artifacts, ref, delimiter, options = {}) {
       break;
     }
   }
-  return reader.finish({ dropPartial: stoppedEarly });
+  const result = reader.finish({ dropPartial: stoppedEarly });
+  // A read that stops at the byte limit leaves the rest of the file unread, even when the limit fell on a line end.
+  if (stoppedEarly) result.truncated.rows = true;
+  return result;
 }
 
 /** Text written to a new file in chunks and finalized; the finalized reference. */
@@ -88,6 +91,10 @@ export function readTruncated(value) {
  * Writes go to the host one at a time, in order. A checkpoint runs one at a time too, with at most one more queued
  * behind it: edits made while a checkpoint is written stay in the edit map and are folded into the next one, and the
  * checkpoint removes from the map only the edits its own file holds.
+ *
+ * Nothing is saved until `load()` has rebuilt the sheet from its source, or a picked file has replaced it: before that
+ * the sheet `snapshot()` sees is not the saved one, and a checkpoint of it would replace the saved sheet. A source that
+ * could not be read keeps the store closed, so the saved sheet stays as it was.
  */
 export function createStore(options) {
   const { state, artifacts, snapshot } = options;
@@ -100,34 +107,45 @@ export function createStore(options) {
   /** Owned here and changed in place, so recording a batch costs the batch, not the map. */
   let edits = typeof initial === "object" && initial !== null && !Array.isArray(initial) ? { ...initial } : {};
   let writes = Promise.resolve();
+  /** Patches sent and not answered yet, in order: what `saved` holds beyond what the host has committed. */
+  const pending = [];
   /** Bumped when the sheet's source is replaced, so a checkpoint of the old sheet never lands on the new one. */
   let generation = 0;
   let running;
   let queued = false;
+  /** The sheet in memory is the saved one (loaded, or just picked): until then nothing is saved. */
+  let ready = false;
+  /** The source is a picked file, whose read grant expires: the sheet goes to a file of the widget's own next. */
+  let mustCheckpoint = false;
 
   const bytesOf = (value) => encoder.encode(JSON.stringify(value)).byteLength;
 
   /** A write, after the ones before it. Resolves true once the host committed it, false when it refused. */
   const persist = (patch) => {
     saved = { ...saved, ...patch };
-    const result = writes.then(
-      () => state.update(state.revision(), patch).then(
-        () => true,
-        () => {
-          // What the host holds is what is true; the edits in memory are kept and go out with the next write.
-          saved = { ...state.get() };
+    pending.push(patch);
+    const result = writes
+      .then(() => state.update(state.revision(), patch).then(() => true, () => false))
+      .then((committed) => {
+        pending.splice(pending.indexOf(patch), 1);
+        if (!committed) {
+          // What the host holds is what is true, plus the writes still queued behind this one; the edits in memory are
+          // kept and go out with the next write.
+          saved = Object.assign({ ...state.get() }, ...pending);
           onRefused();
-          return false;
-        },
-      ),
-    );
+        }
+        return committed;
+      });
     writes = result.then(() => undefined);
     return result;
   };
 
   const fitsInState = () => bytesOf({ ...saved, edits }) <= checkpointBytes;
 
-  /** One checkpoint; true when its file became the sheet's source. */
+  /**
+   * One checkpoint: `"committed"` when its file became the sheet's source, `"superseded"` when a picked file replaced
+   * the sheet meanwhile, `"refused"` when the host refused it.
+   */
   const checkpointOnce = async () => {
     const started = generation;
     const taken = { ...edits };
@@ -138,7 +156,7 @@ export function createStore(options) {
     if (started !== generation) {
       // The sheet was replaced while this was written: this file holds a sheet nobody has any more.
       await drop();
-      return false;
+      return "superseded";
     }
     // Edits made since the snapshot are not in the file: they stay, and are saved with the new source.
     const rest = {};
@@ -148,20 +166,23 @@ export function createStore(options) {
     const committed = await persist({ source: ref, sourceKind: "checkpoint", delimiter: ",", edits: rest });
     if (!committed) {
       await drop();
-      return false;
+      return "refused";
     }
-    // A file picked while this was committing replaced it, and discards it as the source it superseded.
-    if (started !== generation) return false;
+    // The commit landed, so the file before it is nobody's source, even when a file picked meanwhile replaced this one
+    // too (the pick discards this file as the source it superseded).
+    if (previous !== undefined && previous !== null) await artifacts.discard(previous).catch(() => undefined);
+    if (started !== generation) return "superseded";
     // Only what the file holds leaves the map; an edit changed again since the snapshot stays.
     for (const [name, value] of Object.entries(taken)) if (edits[name] === value) delete edits[name];
-    if (previous !== undefined && previous !== null) await artifacts.discard(previous).catch(() => undefined);
-    return true;
+    mustCheckpoint = false;
+    return "committed";
   };
 
   /**
    * Run checkpoints until the edits fit the state again. A save asked for while one runs only sets `queued`; the loop
    * then saves once more, in the state when the edits fit by now, through another checkpoint when they do not. A
-   * checkpoint that fails or is refused ends the loop: the edits stay in memory and the next edit tries again.
+   * checkpoint of a sheet a picked file replaced saves what was asked for the new sheet next. A checkpoint that fails or
+   * is refused ends the loop: the edits stay in memory and the next edit tries again.
    */
   const checkpoint = () => {
     if (running !== undefined) {
@@ -173,8 +194,8 @@ export function createStore(options) {
         let more = true;
         while (more) {
           queued = false;
-          if (fitsInState()) await persist({ edits: { ...edits } });
-          else if (!(await checkpointOnce())) break;
+          if (!mustCheckpoint && fitsInState()) await persist({ edits: { ...edits } });
+          else if ((await checkpointOnce()) === "refused") break;
           more = queued;
         }
       } catch (error) {
@@ -189,7 +210,8 @@ export function createStore(options) {
 
   /** Save the edits: in the state when they fit, through a checkpoint when they do not. */
   const save = () => {
-    if (fitsInState() || artifacts === undefined) {
+    if (!ready) return;
+    if (artifacts === undefined || (!mustCheckpoint && fitsInState())) {
       void persist({ edits: { ...edits } });
       return;
     }
@@ -206,40 +228,54 @@ export function createStore(options) {
       for (const [name, value] of changes) edits[name] = value;
     },
     /**
-     * The sheet's source replaced by a file just picked: the edits start again, and a checkpoint of the old sheet, one
-     * in flight included, is dropped.
+     * The sheet's source replaced by a file just picked, already read into the sheet `snapshot()` sees: the edits start
+     * again, and a checkpoint of the old sheet, one in flight included, is dropped. Once the pick is committed the sheet
+     * is written to a file of the widget's own, because the picked file can be read only until its grant expires.
      */
     async replaceSource(patch) {
       generation += 1;
       queued = false;
       edits = {};
+      ready = true;
+      mustCheckpoint = artifacts !== undefined;
       const previous = saved.sourceKind === "checkpoint" ? saved.source : undefined;
       const committed = await persist({ ...patch, sourceKind: "picked", edits: {} });
       if (committed && previous !== undefined && previous !== null && artifacts !== undefined) {
         await artifacts.discard(previous).catch(() => undefined);
       }
+      if (committed && mustCheckpoint) void checkpoint();
       return committed;
     },
     /**
-     * The sheet rebuilt from its source and the edits since. `gone` is true when the source could not be read; the edits
-     * are applied to an empty sheet then. `truncated` says what of the source did not load.
+     * The sheet rebuilt from its source and the edits since. `gone` is true when the source could not be read, with the
+     * reason in `error`: the edits are applied to an empty sheet to show them, and nothing is saved from then on, so
+     * the saved sheet stays as it was. `truncated` says what of the source did not load. `superseded` is true when a
+     * picked file replaced the sheet while it loaded: the result is not the sheet any more.
      */
     async load() {
+      const started = generation;
       const source = saved.source;
       let sheet = createSheet();
       let truncated = readTruncated(saved.truncated);
       let gone = false;
+      let error;
       if (source !== undefined && source !== null && artifacts !== undefined) {
         try {
           const result = await readSheetFile(artifacts, source, saved.delimiter === "\t" ? "\t" : ",");
           sheet = createSheet(result.rows);
           truncated = mergeTruncated(truncated, result.truncated);
-        } catch {
+        } catch (reason) {
           gone = true;
+          error = reason;
         }
       }
+      if (started !== generation) return { sheet, truncated, gone, error, superseded: true };
       applyEdits(sheet, edits);
-      return { sheet, truncated, gone };
+      if (!gone) {
+        ready = true;
+        mustCheckpoint = artifacts !== undefined && saved.sourceKind === "picked" && source !== undefined && source !== null;
+      }
+      return { sheet, truncated, gone, error, superseded: false };
     },
     /** Resolves once no checkpoint is running and every write has been answered. */
     async settled() {

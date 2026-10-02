@@ -58,6 +58,7 @@ button:focus-visible, .viewport:focus-visible, .editor:focus-visible { outline: 
   overscroll-behavior: contain; user-select: none; -webkit-user-select: none;
 }
 .viewport[data-selection-locked] { cursor: progress; }
+.viewport[data-sheet-loading] { cursor: progress; opacity: 0.6; }
 .canvas { position: relative; }
 .row { display: flex; height: 28px; }
 .body .row { position: absolute; left: 0; }

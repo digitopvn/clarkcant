@@ -11,13 +11,18 @@ document bounded, describes itself to Clark, and applies a change Clark chose.
 - **Bounds.** At most 25,000 cells, 64 columns and 5,000 rows are loaded, and a file is read no further than 8 MiB.
   The cell ceiling is on the rectangle the rows make (rows times the widest row), as for an edit, so a ragged file is
   cut where its rectangle stops fitting. Reading stops at the ceiling and a notice says how much was shown and that
-  export writes only that. A read stopped at 8 MiB drops the line it stopped in, and blank lines at the end of a file
+  export writes only that. A read stopped at 8 MiB drops the line it stopped in and says the file was cut, and blank lines at the end of a file
   do not count. Rows and columns are rendered virtually, so a large sheet keeps a few hundred cells in the page.
 - **State.** Widget state holds the source file's reference, the edits made since and the formats (the host allows
   16 KiB). The active cell and the selection are `ephemeralStateKeys`: view state the host never writes to the node.
-  When the edits outgrow 10 KiB, the widget writes the whole sheet to its own file and starts again from that one. One
-  such checkpoint runs at a time; edits made while it is written are kept and saved after it, and the file it replaces
-  is discarded. The sheet itself is never copied into state.
+  Straight after an import the sheet is written to the widget's own file, because the grant to read a picked file lasts
+  24 hours; if that write fails, the status says so and the next edit tries again. When the edits outgrow 10 KiB, the
+  widget writes the whole sheet to its own file the same way and starts again from that one. One such checkpoint runs at
+  a time; edits made while it is written are kept and saved after it. Once a checkpoint is committed the widget asks
+  the host to discard the file it replaces; a discard the host refuses leaves that file in place. The sheet itself is
+  never copied into state.
+- **Loading.** Until the sheet is read back from its source on mount, the grid takes no edits and the buttons wait. If
+  the source cannot be read, the status says so, the grid takes no edits, and nothing is saved over the saved sheet.
 - **Formulas.** Arithmetic (`+ - * / ^`, unary minus, parentheses), references (`B2`, `$B$2`), ranges and `SUM`,
   `AVERAGE`, `MIN`, `MAX`, `COUNT`. A parser builds a tree and the widget walks it; no text is ever run as code.
   Errors are values: `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#PARSE!`, `#NUM!`, `#CIRC!` (a circular reference, named

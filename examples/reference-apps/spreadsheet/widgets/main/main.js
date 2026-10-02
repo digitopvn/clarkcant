@@ -73,8 +73,12 @@ const TEXT = {
     refusedReply: "Câu trả lời của Clark không phải lệnh bảng tính này áp dụng được; không có gì thay đổi.",
     refusedRange: (range) => `Clark trả lời cho vùng ${range}, không phải vùng đang chọn; không có gì thay đổi.`,
     failed: (message) => `Không làm được: ${message}. Bảng tính giữ nguyên.`,
+    loading: "Đang mở bảng tính…",
+    restoreFailed: (message) =>
+      `Không đọc được bảng tính đã lưu: ${message}. Bảng tính đã lưu vẫn giữ nguyên; ở đây chỉ hiện các sửa đổi sau đó và không sửa được. Mở lại cuộc trò chuyện để thử lại, hoặc nhập một tệp để bắt đầu lại.`,
+    checkpointFailed: (message) =>
+      `Không ghi được bảng tính ra tệp: ${message}. Các thay đổi vẫn còn trong khung này nhưng chưa được lưu; lần sửa tiếp theo sẽ thử lưu lại.`,
     full: `Bảng tính giữ tối đa ${String(MAX_CELLS)} ô; ô này nằm ngoài giới hạn nên không được ghi.`,
-    sourceGone: "Không đọc lại được tệp gốc (có thể đã hết hạn). Các sửa đổi vẫn được giữ; hãy nhập lại tệp.",
     stateRefused: "Không lưu được trạng thái; thay đổi chỉ còn trong khung này.",
     circular: (cells) => `Tham chiếu vòng: ${cells}.`,
     limited: "Một số công thức tham chiếu quá nhiều ô nên không được tính và hiện #LIMIT!.",
@@ -107,8 +111,12 @@ const TEXT = {
     refusedReply: "Clark's reply was not an instruction this sheet can apply; nothing was changed.",
     refusedRange: (range) => `Clark answered for ${range}, not the selected range; nothing was changed.`,
     failed: (message) => `That did not work: ${message}. The sheet is unchanged.`,
+    loading: "Opening the sheet…",
+    restoreFailed: (message) =>
+      `The saved sheet could not be read: ${message}. The saved sheet is kept as it was; only the edits made since are shown here, and they cannot be changed. Reopen the conversation to try again, or import a file to start over.`,
+    checkpointFailed: (message) =>
+      `The sheet could not be written to a file: ${message}. Your changes are still in this frame but not saved; the next edit tries to save them again.`,
     full: `The sheet holds at most ${String(MAX_CELLS)} cells; that cell is outside the bound and was not written.`,
-    sourceGone: "The original file could not be read again (it may have expired). Your edits are kept; import the file again.",
     stateRefused: "The state could not be saved; changes live only in this frame.",
     circular: (cells) => `Circular reference: ${cells}.`,
     limited: "Some formulas reach too many cells to evaluate and show #LIMIT!.",
@@ -194,7 +202,7 @@ function mount(api) {
     artifacts: filesAvailable ? api.artifacts : undefined,
     snapshot: () => sheet.rawRows(),
     onRefused: () => say("refused", t().stateRefused),
-    onFailed: (error) => say("refused", t().failed(messageOf(error))),
+    onFailed: (error) => say("refused", t().checkpointFailed(messageOf(error))),
   });
   const initial = store.saved();
   let formats = Array.isArray(initial.formats) ? initial.formats.filter((entry) => entry && typeof entry.range === "string") : [];
@@ -209,6 +217,13 @@ function mount(api) {
   let asking = false;
   /** Taps extend the selection from the anchor, for touch, where there is no Shift. */
   let rangeMode = false;
+  /**
+   * The sheet is not the saved one yet (it is loading), or the saved one could not be read: cells take no edits, so
+   * nothing typed into a sheet that is not the saved one can replace it.
+   */
+  let loading = true;
+  let unreadable = false;
+  const readOnly = () => loading || unreadable;
 
   const recompute = () => {
     evaluation = evaluateSheet(sheet, parsedFormulas);
@@ -418,14 +433,35 @@ function mount(api) {
     }, CURSOR_SAVE_MS);
   };
 
+  const showReadOnly = () => {
+    viewport.setAttribute("aria-readonly", String(readOnly()));
+    viewport.toggleAttribute("data-sheet-loading", loading);
+  };
+
   const restore = async () => {
-    const loaded = await store.load();
-    sheet = loaded.sheet;
-    truncated = loaded.truncated;
-    if (loaded.gone) say("refused", t().sourceGone);
-    recompute();
-    render();
-    publish();
+    say("loading", t().loading);
+    showReadOnly();
+    let loaded;
+    try {
+      loaded = await store.load();
+    } catch (error) {
+      loaded = { sheet: createSheet(), truncated, gone: true, error, superseded: false };
+    }
+    loading = false;
+    // A file picked while the sheet loaded is the sheet now; what loaded is not shown over it.
+    if (!loaded.superseded) {
+      sheet = loaded.sheet;
+      truncated = loaded.truncated;
+      unreadable = loaded.gone;
+      if (loaded.gone) say("refused", t().restoreFailed(messageOf(loaded.error)));
+      else if (!filesAvailable) say("idle", t().noFiles);
+      else say("idle", sheet.used().rows === 0 ? t().empty : "");
+      recompute();
+      render();
+      publish();
+      setBusy(false);
+    }
+    showReadOnly();
   };
 
   /* --------------------------------------------------------------- moving */
@@ -457,6 +493,7 @@ function mount(api) {
   };
 
   const openEditor = (initialText) => {
+    if (readOnly()) return;
     editing = true;
     editor.hidden = false;
     editor.style.top = `${String((active.row + 1) * ROW_HEIGHT)}px`;
@@ -502,6 +539,7 @@ function mount(api) {
   editor.addEventListener("blur", () => closeEditor(true, false));
 
   const clearSelection = () => {
+    if (readOnly()) return;
     const cleared = clearRange(sheet, selection());
     if (cleared.length === 0) return;
     store.record(cleared.map((name) => [name, ""]));
@@ -677,6 +715,10 @@ function mount(api) {
       const delimiter = delimiterFor(ref.mimeType, ref.name);
       const result = await readSheetFile(api.artifacts, ref, delimiter);
       sheet = createSheet(result.rows);
+      // The picked file is the sheet now, whatever happened to the saved one.
+      loading = false;
+      unreadable = false;
+      showReadOnly();
       formats = [];
       formatHistory.length = 0;
       renderUndo();
@@ -798,7 +840,8 @@ function mount(api) {
     fit();
   }).observe(document.body);
 
-  setBusy(false);
+  // Until the saved sheet is back, the buttons wait too: an import or a format must not land on a sheet still loading.
+  setBusy(true);
   render();
   fit();
   void restore().then(() => {

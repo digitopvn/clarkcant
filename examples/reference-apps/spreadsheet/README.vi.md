@@ -11,13 +11,17 @@ một tài liệu lớn trong giới hạn, tự mô tả cho Clark và áp dụ
 - **Giới hạn.** Tải tối đa 25.000 ô, 64 cột và 5.000 hàng, và một tệp được đọc không quá 8 MiB. Việc đọc dừng ở giới hạn
   và một thông báo cho biết đã hiện bao nhiêu và khi xuất chỉ ghi phần đó. Giới hạn ô áp lên hình chữ nhật mà các hàng
   tạo thành (số hàng nhân với hàng rộng nhất), như với một lần sửa, nên tệp có hàng dài ngắn không đều bị cắt ở chỗ hình
-  chữ nhật hết vừa. Lần đọc dừng ở 8 MiB bỏ dòng đang đọc dở, và dòng trống ở cuối tệp không được tính. Hàng và cột được
+  chữ nhật hết vừa. Lần đọc dừng ở 8 MiB bỏ dòng đang đọc dở và báo tệp bị cắt, và dòng trống ở cuối tệp không được tính. Hàng và cột được
   vẽ ảo, nên một bảng lớn chỉ giữ vài trăm ô trong trang.
 - **Trạng thái.** Trạng thái widget giữ tham chiếu tới tệp nguồn, các sửa đổi từ đó và định dạng (host cho phép
   16 KiB). Ô hiện tại và vùng chọn là `ephemeralStateKeys`: trạng thái hiển thị mà host không bao giờ ghi xuống node.
-  Khi sửa đổi vượt 10 KiB, widget ghi toàn bộ bảng vào một tệp riêng và bắt đầu lại từ tệp ấy. Mỗi lúc chỉ chạy một
-  checkpoint như vậy; sửa đổi làm trong lúc nó đang được ghi vẫn được giữ và lưu sau nó, và tệp bị thay thế được huỷ.
-  Bản thân bảng không bao giờ được chép vào trạng thái.
+  Ngay sau khi nhập, bảng được ghi vào tệp riêng của widget, vì quyền đọc một tệp được chọn chỉ kéo dài 24 giờ; nếu lần
+  ghi ấy thất bại, dòng trạng thái nói rõ và lần sửa tiếp theo sẽ thử lại. Khi sửa đổi vượt 10 KiB, widget cũng ghi toàn
+  bộ bảng vào một tệp riêng như vậy và bắt đầu lại từ tệp ấy. Mỗi lúc chỉ chạy một checkpoint như vậy; sửa đổi làm trong
+  lúc nó đang được ghi vẫn được giữ và lưu sau nó. Khi một checkpoint đã được ghi nhận, widget yêu cầu host huỷ tệp mà
+  nó thay thế; nếu host từ chối huỷ, tệp ấy vẫn còn. Bản thân bảng không bao giờ được chép vào trạng thái.
+- **Tải bảng.** Cho tới khi bảng được đọc lại từ nguồn lúc gắn vào, lưới không nhận sửa đổi và các nút phải chờ. Nếu
+  không đọc được nguồn, dòng trạng thái nói rõ, lưới không nhận sửa đổi, và không có gì được lưu đè lên bảng đã lưu.
 - **Công thức.** Số học (`+ - * / ^`, dấu trừ một ngôi, ngoặc), tham chiếu (`B2`, `$B$2`), vùng và `SUM`, `AVERAGE`,
   `MIN`, `MAX`, `COUNT`. Một bộ phân tích dựng cây và widget duyệt cây đó; không văn bản nào được chạy như mã. Lỗi là giá
   trị: `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#PARSE!`, `#NUM!`, `#CIRC!` (tham chiếu vòng, được nêu tên trong thông

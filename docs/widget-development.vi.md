@@ -2483,17 +2483,27 @@ hạn, tự mô tả cho Clark và áp dụng một thay đổi do Clark chọn.
   hình chữ nhật mà các hàng tạo thành (số hàng nhân với hàng rộng nhất), đúng quy tắc bảng áp cho một lần sửa, nên một
   tệp có hàng dài ngắn không đều bị cắt ở chỗ hình chữ nhật hết vừa, thay vì tải ra một bảng rồi từ chối mọi lần sửa.
   Việc đọc dừng ở giới hạn và một thông báo cho biết đã hiện bao nhiêu và khi xuất chỉ ghi phần đó. Lần đọc bị dừng ở
-  mức 8 MiB bỏ dòng đang đọc dở thay vì hiện một mảnh như thể là một hàng. Dòng trống ở cuối tệp không được tính, nên
+  mức 8 MiB bỏ dòng đang đọc dở thay vì hiện một mảnh như thể là một hàng, và vẫn được báo là bị cắt kể cả khi giới hạn
+  rơi đúng vào cuối một dòng. Dòng trống ở cuối tệp không được tính, nên
   không bao giờ làm một tệp vừa giới hạn trông như bị cắt. Hàng và cột được vẽ ảo, nên một bảng lớn chỉ giữ các ô đang
   nhìn thấy trong trang.
 - **Trạng thái.** Trạng thái widget giữ tham chiếu tới tệp nguồn, các sửa đổi từ đó và định dạng, không bao giờ giữ
   chính bảng. Ô hiện tại và vùng chọn được khai báo trong `ephemeralStateKeys` ([§5](#5-widget-definition)): host giữ
   chúng cho frame và không bao giờ ghi xuống node, và việc di chuyển con trỏ gửi tối đa một lần cập nhật sau mỗi lần
-  dừng tay. Khi sửa đổi vượt 10 KiB trong 16 KiB host cho phép, widget ghi toàn bộ bảng vào một tệp riêng và bắt đầu
-  lại từ tệp ấy. Mỗi lúc chỉ chạy một checkpoint như vậy, và chờ thêm tối đa một cái. Các sửa đổi làm trong lúc một
-  checkpoint đang được ghi vẫn được giữ và được lưu sau nó, chỉ những sửa đổi tệp ấy đã chứa mới được xoá, và checkpoint
-  bị thay thế sẽ bị huỷ. Một checkpoint không tải được trọn vẹn sau khi tải lại sẽ được nói rõ trong thông báo. Xoá một
-  vùng chọn là một lần sửa gộp, nên xoá cả bảng chỉ mất một lát chứ không phải vài phút.
+  dừng tay. Ngay sau khi nhập, widget ghi bảng vào một tệp riêng của nó, và tệp ấy trở thành nguồn. Quyền đọc của
+  widget trên một tệp được chọn chỉ kéo dài 24 giờ kể từ lúc chọn, còn một tệp đã hoàn tất do chính widget ghi thì
+  không hết hạn. Nếu lần ghi ấy thất bại, dòng trạng thái nói rõ và lần sửa tiếp theo sẽ thử lại; trong lúc đó bảng vẫn
+  phụ thuộc vào tệp được chọn. Khi sửa đổi vượt 10 KiB trong 16 KiB host cho phép, widget cũng ghi toàn bộ bảng vào
+  một tệp riêng như vậy và bắt đầu lại từ tệp ấy. Mỗi lúc chỉ chạy một checkpoint như vậy, và chờ thêm tối đa một cái.
+  Các sửa đổi làm trong lúc một checkpoint đang được ghi vẫn được giữ và được lưu sau nó, và chỉ những sửa đổi tệp ấy
+  đã chứa mới được xoá. Khi một checkpoint đã được ghi nhận, widget yêu cầu host huỷ checkpoint mà nó thay thế, và một
+  checkpoint được ghi cho một bảng đã bị lần nhập khác thay thế trong lúc đó cũng bị huỷ. Nếu host từ chối huỷ, tệp ấy
+  vẫn nằm trong vùng lưu trữ của widget. Một checkpoint không tải được trọn vẹn sau khi tải lại sẽ được nói rõ trong
+  thông báo. Xoá một vùng chọn là một lần sửa gộp, nên xoá cả bảng chỉ mất một lát chứ không phải vài phút.
+- **Tải bảng.** Khi được gắn vào, bảng được đọc lại từ nguồn. Cho tới khi tải xong, lưới không nhận sửa đổi, các nút
+  Nhập, Xuất và "Nhờ Clark" phải chờ, và dòng trạng thái báo bảng đang được mở. Khi không đọc được nguồn, dòng trạng
+  thái nói rõ, lưới chỉ hiện các sửa đổi làm sau đó và không nhận sửa đổi nào, và không có gì được lưu, nên bảng đã lưu
+  vẫn còn nguyên ở lần gắn sau. Nhập một tệp sẽ bắt đầu lại từ tệp ấy.
 - **Công thức.** Một tập đóng: số học, tham chiếu ô và vùng, và `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`. Một bộ
   phân tích dựng cây và widget duyệt cây đó; không văn bản nào được chạy như mã. Lỗi là giá trị (`#DIV/0!`,
   `#VALUE!`, `#REF!`, `#NAME?`, `#PARSE!`, `#NUM!`, `#LIMIT!`), và tham chiếu vòng là `#CIRC!`, với các ô
@@ -2533,14 +2543,17 @@ có thể tới Clark với vùng trước. Khi ấy widget từ chối câu tr�
 đang chờ trước khi chạy một binding `agent` là [#383](https://github.com/digitopvn/clarkcant/pull/383).
 
 Kiểm thử: unit test cho bộ phân tích, công thức, giới hạn và tài liệu ngữ nghĩa trong
-[test/](../examples/reference-apps/spreadsheet/test/) (47 test), gồm cả checkpoint với một host giả: sửa đổi làm trong lúc
+[test/](../examples/reference-apps/spreadsheet/test/) (56 test), gồm cả checkpoint với một host giả: sửa đổi làm trong lúc
 một checkpoint đang được ghi vẫn còn sau khi tải lại, mỗi lúc một checkpoint, tệp bị thay thế được huỷ, checkpoint bị
-từ chối thì sửa đổi vẫn giữ trong bộ nhớ, và bảng bị thay giữa lúc ghi. `clark widget test` qua 22 kiểm tra, 12 kiểm
-tra cần dev host. Hành trình trình duyệt [spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (3 test) gồm:
+từ chối thì sửa đổi vẫn giữ trong bộ nhớ, bảng bị thay giữa lúc ghi hoặc lúc ghi nhận, tệp nhập được ghi thành tệp riêng
+của widget, và không lưu gì trước khi bảng tải xong hay sau khi không đọc được nguồn. `clark widget test` qua 22 kiểm tra, 12 kiểm
+tra cần dev host. Hành trình trình duyệt [spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (4 test) gồm:
 
 - nhập, sửa, xuất và nhập lại ở CSV và TSV ra cùng giá trị;
 - một vùng chọn được Clark định dạng phần trăm, vùng chọn bị khoá trong lúc Clark trả lời, và hoàn tác;
 - một tệp vượt giới hạn chỉ tải phần đầu, nói rõ điều đó, vẫn phản hồi nhanh, và xoá cả 25.000 ô một lần;
 - không đường dẫn nào trong lưu lượng bridge hay frame;
 - dùng lưới bằng bàn phím (Tab và Shift+Tab rời lưới), bằng cảm ứng với "Chọn vùng", và bằng cách kéo chuột;
-- cả hai giao diện sáng tối, nút cao 40 px, và 390 px với lưới cuộn bên trong thẻ của nó.
+- cả hai giao diện sáng tối, nút cao 40 px, và 390 px với lưới cuộn bên trong thẻ của nó;
+- một bảng đang tải hoặc không đọc được nguồn thì không nhận sửa đổi và giữ nguyên bảng đã lưu, và một checkpoint thất
+  bại thì nói rõ những gì được giữ và được lưu ở lần sửa tiếp theo.

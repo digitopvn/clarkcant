@@ -2485,17 +2485,27 @@ describes itself to Clark and applies a change Clark chose.
   bound is on the rectangle the rows make (rows times the widest row), the same rule the sheet applies to an edit, so a
   ragged file is cut where its rectangle stops fitting instead of loading a sheet that then refuses every edit. Reading
   stops at the bound and a notice says how much is shown and that an export writes only that part. A read stopped by
-  the 8 MiB limit drops the line it stopped in rather than show a fragment as a row. Blank lines at the end of a file
+  the 8 MiB limit drops the line it stopped in rather than show a fragment as a row, and is flagged as cut even when the
+  limit falls on a line end. Blank lines at the end of a file
   are not counted, so they never make a file that fits look cut. Rows and columns are virtualized, so a large sheet
   keeps only the cells in view in the document.
 - **State.** The widget state holds the source file's reference, the edits since and the formats, never the sheet
   itself. The active cell and the selection are declared in `ephemeralStateKeys` ([§5](#5-widget-definition)): the
   host keeps them for the frame and never writes them to the node, and moving the cursor sends at most one update per
-  pause. When the edits outgrow 10 KiB of the host's 16 KiB, the widget writes the whole sheet to a file of its own
-  and starts again from it. One such checkpoint runs at a time, with at most one more queued. Edits made while one is
-  written stay and are saved after it, only the edits the file holds are cleared, and the checkpoint it replaces is
-  discarded. A checkpoint that does not load whole after a reload says so in the notice. Clearing a selection is one
-  batched edit, so clearing the whole sheet takes a moment rather than minutes.
+  pause. Straight after an import the widget writes the sheet to a file of its own, which becomes the source. The
+  widget's read grant on a picked file lasts 24 hours from the pick, while a finalized file the widget wrote itself
+  does not expire. If that write fails, the status line says so and the next edit tries again; until then the sheet
+  still depends on the picked file. When the edits outgrow 10 KiB of the host's 16 KiB, the widget writes the whole
+  sheet to a file of its own in the same way and starts again from it. One such checkpoint runs at a time, with at
+  most one more queued. Edits made while one is written stay and are saved after it, and only the edits the file
+  holds are cleared. Once a checkpoint is committed the widget asks the host to discard the checkpoint it replaced, and
+  a checkpoint written for a sheet an import replaced meanwhile is discarded too. A discard the host refuses leaves
+  that file in the widget's storage. A checkpoint that does not load whole after a reload says so in the notice.
+  Clearing a selection is one batched edit, so clearing the whole sheet takes a moment rather than minutes.
+- **Loading.** On mount the sheet is read again from its source. Until it has loaded, the grid takes no edits,
+  Import, Export and "Ask Clark" wait, and the status line says the sheet is opening. When the source cannot be read,
+  the status line says so, the grid shows only the edits made since and takes none, and nothing is saved, so the
+  saved sheet is still there on the next mount. Importing a file starts over from that file.
 - **Formulas.** A closed set: arithmetic, cell and range references, and `SUM`, `AVERAGE`, `MIN`, `MAX` and
   `COUNT`. A parser builds a tree that the widget walks; no text is ever run as code. Errors are values (`#DIV/0!`,
   `#VALUE!`, `#REF!`, `#NAME?`, `#PARSE!`, `#NUM!`, `#LIMIT!`), and a circular reference is `#CIRC!` with
@@ -2537,14 +2547,17 @@ sends the pending document before it runs an `agent` binding is
 [#383](https://github.com/digitopvn/clarkcant/pull/383).
 
 Tests: unit tests for the parser, formulas, bounds and semantic document in
-[test/](../examples/reference-apps/spreadsheet/test/) (47 tests), including checkpoints against a fake host: edits made
-while one is written surviving a reload, one at a time, superseded files discarded, a refused one kept in memory, and a
-sheet replaced mid-write. `clark widget test` passes 22 checks, with 12 needing the dev host. The browser journey
-[spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (3 tests) covers:
+[test/](../examples/reference-apps/spreadsheet/test/) (56 tests), including checkpoints against a fake host: edits made
+while one is written surviving a reload, one at a time, superseded files discarded, a refused one kept in memory, a
+sheet replaced mid-write or mid-commit, an import written to the widget's own file, and nothing saved before the sheet
+has loaded or after its source could not be read. `clark widget test` passes 22 checks, with 12 needing the dev host. The browser journey
+[spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (4 tests) covers:
 
 - import, edit, export and reimport in CSV and TSV to the same values;
 - a selected range Clark formats as percent, with the selection locked while Clark answers, and Undo;
 - a file past the bounds that loads its first part, says so, stays responsive, and clears all 25,000 cells at once;
 - no path in bridge or frame traffic;
 - the grid from the keyboard (Tab and Shift+Tab leave it), by touch with "Select range", and by mouse drag;
-- both themes, 40 px buttons, and 390 px with the grid scrolling inside its card.
+- both themes, 40 px buttons, and 390 px with the grid scrolling inside its card;
+- a sheet still loading or whose source cannot be read taking no edits and keeping the saved sheet, and a failed
+  checkpoint saying what was kept and saving with the next edit.
