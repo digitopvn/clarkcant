@@ -20,7 +20,10 @@ export const EDITOR_LIMITS = Object.freeze({
    * state per widget, and the refs and flags beside the draft need room too.
    */
   persistedDraftBytes: 12_288,
-  /** What the host keeps of one semantic value (`SEMANTIC_LIMITS.string`), so the excerpt is never cut by the host. */
+  /**
+   * What the host keeps of one semantic value (`SEMANTIC_LIMITS.string`), in UTF-16 units as the host measures it, so
+   * the excerpt is never cut by the host.
+   */
   excerptChars: 200,
   /** What the host returns of an agent reply. */
   replyChars: 2_000,
@@ -171,6 +174,27 @@ export function readPersistedState(state) {
   };
 }
 
+/**
+ * The document a reload shows, from persisted state and the saved text read back through `base`.
+ *
+ * When the saved text cannot be read back (`savedText` undefined: the grant lapsed, or the copy is gone), an unsaved
+ * draft is still the person's and is shown, marked unsaved. Without a draft there is nothing to show: an empty text area
+ * would be presented as the document, and saving it would write an empty file over the original. So there is no
+ * document, and the editor says why.
+ *
+ * @param {PersistedEditorState} persisted
+ * @param {string | undefined} savedText
+ * @returns {EditorDocument | undefined}
+ */
+export function restoreDocument(persisted, savedText) {
+  if (persisted.file === null || persisted.base === null) return undefined;
+  if (savedText === undefined) {
+    if (persisted.draft === null) return undefined;
+    return { file: persisted.file, base: persisted.base, savedText: "", draft: persisted.draft, baseUnreadable: true };
+  }
+  return withDraft({ ...openDocument(persisted.file, savedText), base: persisted.base }, persisted.draft ?? savedText);
+}
+
 function sameState(a, b) {
   return (
     (a.file?.artifactId ?? null) === (b.file?.artifactId ?? null) &&
@@ -181,18 +205,36 @@ function sameState(a, b) {
 }
 
 /**
+ * @typedef {object} PendingWrite
+ * @property {PersistedEditorState} state What this view asked the host to commit.
+ * @property {number} expectedRevision The revision it was written against; the commit lands after it.
+ */
+
+/**
  * What to do with committed state the host sent, given what this view holds and what it last knew the host held.
  *
  * - `unchanged`: the host holds what this view shows.
+ * - `echo`: the host committed this view's own write. The person may have typed since, which is not a conflict: that
+ *   newer text is simply not written yet. The SDK delivers the commit before the write's promise resolves, so without
+ *   the pending write this would look like another view's change.
  * - `adopt`: another view changed it and this one has nothing unsent, so this view takes the change.
  * - `keep`: the host still holds what this view last synced, so this view's newer edit is simply not written yet.
  * - `conflict`: both changed. Neither is thrown away; the person chooses.
  *
- * @param {{ local: PersistedEditorState, synced: PersistedEditorState, incoming: PersistedEditorState }} input
- * @returns {"unchanged" | "adopt" | "keep" | "conflict"}
+ * @param {{
+ *   local: PersistedEditorState,
+ *   synced: PersistedEditorState,
+ *   incoming: PersistedEditorState,
+ *   revision?: number,
+ *   pending?: PendingWrite | undefined,
+ * }} input
+ * @returns {"unchanged" | "echo" | "adopt" | "keep" | "conflict"}
  */
-export function reconcileState({ local, synced, incoming }) {
+export function reconcileState({ local, synced, incoming, revision, pending }) {
   if (sameState(incoming, local)) return "unchanged";
+  if (pending !== undefined && typeof revision === "number" && revision > pending.expectedRevision && sameState(incoming, pending.state)) {
+    return "echo";
+  }
   if (sameState(local, synced)) return "adopt";
   if (sameState(incoming, synced)) return "keep";
   return "conflict";
@@ -201,6 +243,48 @@ export function reconcileState({ local, synced, incoming }) {
 function clipChars(text, max) {
   const points = Array.from(text);
   return points.length <= max ? text : `${points.slice(0, max - 1).join("")}…`;
+}
+
+/** Cut as the host cuts: in UTF-16 units, the last one given to the mark. */
+function clipUnits(text, max) {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+/**
+ * The secret shapes the host redacts from a widget's words before a model reads them (`SECRET_SHAPES` in the host's
+ * redaction module), in the same order. A frame cannot import host code, so they are restated here; the package's tests
+ * compare this list with the host's, so a change there fails here rather than drifting.
+ */
+export const HOST_SECRET_PATTERNS = Object.freeze([
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g,
+  /\bBearer\s+[A-Za-z0-9._~+/-]{10,}=*/g,
+  /\b(?:sk|pk|rk|ghp|gho|npm|xox[baprs]|api|key|token|secret)[-_][A-Za-z0-9._-]{8,}\b/gi,
+  /(?:access_token|refresh_token|client_secret|api[_-]?key|password)"?\s*[:=]\s*"?[^"\s,}]{6,}/gi,
+  /(?<![A-Za-z0-9+/._~-])\b[A-Za-z0-9+/]{32,}={0,2}\b/g,
+  /\b[A-Za-z0-9+]{32,}={0,2}\b/g,
+  /\b[A-Fa-f0-9]{32,}\b/g,
+  /(?:\/Users\/|\/home\/|\/private\/var\/)[A-Za-z0-9._\-/]+/g,
+  /[A-Za-z]:\\Users\\[A-Za-z0-9._\\-]+/g,
+  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+  /\b(?:\+?\d[\s-]?){9,}\b/g,
+]);
+
+/**
+ * A string as the model reads it once the host has taken it from the semantic document (`cleanSemanticText`): control
+ * and invisible characters, line breaks and tabs included, become spaces; runs of whitespace collapse to one; the ends
+ * are trimmed; anything secret-shaped becomes `[redacted]`; and it is cut at `max` UTF-16 units.
+ *
+ * @param {string} text
+ * @param {number} max
+ */
+export function hostSemanticText(text, max) {
+  let cleaned = text
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  for (const pattern of HOST_SECRET_PATTERNS) cleaned = cleaned.replace(new RegExp(pattern.source, pattern.flags), "[redacted]");
+  return clipUnits(cleaned, max);
 }
 
 /**
@@ -237,12 +321,12 @@ export function semanticProposal(doc, selection) {
   const selected = doc.draft.slice(range.start, range.end);
   const summary = `Editing ${clipChars(doc.file.name, 120)}: ${String(lines)} line${lines === 1 ? "" : "s"}${dirty ? ", with unsaved changes" : ", saved"}.`;
   /** @type {Record<string, string | number | boolean>} */
-  const values = { open: true, file: clipChars(doc.file.name, EDITOR_LIMITS.excerptChars), lines, dirty };
+  const values = { open: true, file: clipUnits(doc.file.name, EDITOR_LIMITS.excerptChars), lines, dirty };
   if (range.end > range.start) {
     values.selectionStart = range.start;
     values.selectionEnd = range.end;
     values.selectedChars = Array.from(selected).length;
-    values.selectedText = clipChars(selected, EDITOR_LIMITS.excerptChars);
+    values.selectedText = clipUnits(selected.trim(), EDITOR_LIMITS.excerptChars);
   }
   return { summary, selectedIds: range.end > range.start ? [`chars:${String(range.start)}-${String(range.end)}`] : [], values };
 }
@@ -250,40 +334,56 @@ export function semanticProposal(doc, selection) {
 /**
  * Whether the selection can be sent to Clark, and why not when it cannot.
  *
- * Clark reads the selection from the host's copy of the semantic document, which keeps at most 200 characters of one
- * value. A longer selection would reach Clark cut, and a rewrite of a cut selection would replace text Clark never
- * saw, so it is refused here with the reason rather than sent.
+ * Clark reads the selection from the host's copy of the semantic document, which the host cleans before a model sees
+ * it (`hostSemanticText`). A reply is applied to the selected range, so that range must hold exactly the text Clark
+ * read; any selection the host would change is refused here with the reason rather than sent:
+ *
+ * - `too-long`: over 200 UTF-16 units, so the host would cut it;
+ * - `one-line`: line breaks, tabs or repeated spaces, which the host flattens to single spaces, so a one-line reply
+ *   would replace text whose layout Clark never saw;
+ * - `hidden`: invisible or control characters, or something secret-shaped the host redacts.
+ *
+ * Whitespace at the ends is left out of the range rather than refused: the host trims it, and a double-click often
+ * selects the space after a word.
  *
  * @param {EditorDocument | undefined} doc
  * @param {TextSelection} selection
- * @returns {{ ok: true, start: number, end: number, text: string } | { ok: false, reason: "no-file" | "empty" | "too-long" }}
+ * @returns {{ ok: true, start: number, end: number, text: string } | { ok: false, reason: "no-file" | "empty" | "too-long" | "one-line" | "hidden" }}
  */
 export function askableSelection(doc, selection) {
   if (doc === undefined) return { ok: false, reason: "no-file" };
   const range = clampSelection(doc.draft, selection);
-  const text = doc.draft.slice(range.start, range.end);
-  if (text.trim() === "") return { ok: false, reason: "empty" };
-  if (Array.from(text).length > EDITOR_LIMITS.excerptChars) return { ok: false, reason: "too-long" };
-  return { ok: true, start: range.start, end: range.end, text };
+  const raw = doc.draft.slice(range.start, range.end);
+  if (raw.trim() === "") return { ok: false, reason: "empty" };
+  const start = range.start + (raw.length - raw.trimStart().length);
+  const end = range.end - (raw.length - raw.trimEnd().length);
+  const text = doc.draft.slice(start, end);
+  if (text.length > EDITOR_LIMITS.excerptChars) return { ok: false, reason: "too-long" };
+  if (hostSemanticText(text, EDITOR_LIMITS.excerptChars) !== text) {
+    return { ok: false, reason: /[\r\n\t\v\f]| {2}/u.test(text) ? "one-line" : "hidden" };
+  }
+  return { ok: true, start, end, text };
 }
 
 /**
  * The replacement a reply proposes, or undefined when it proposes none.
  *
- * A reply is untrusted text. The first fenced block is the replacement when there is one, because a model asked for a
- * fenced block often adds a sentence around it; otherwise the whole reply is. It is bounded, and control characters
- * other than line breaks and tabs are removed, so nothing invisible reaches the text without the person seeing it.
+ * A reply is untrusted text, and only a well-formed one is a proposal: within the bound the host keeps (a longer one
+ * may have been cut), holding exactly one closed fenced block, which is the replacement. A sentence around the block is
+ * allowed, because a model asked for a fenced block often adds one. Anything else (no fence, a fence the bound cut
+ * open, two blocks) is Clark talking, not a replacement, and is shown as such. Control characters other than line
+ * breaks and tabs are removed from the block, so nothing invisible reaches the text without the person seeing it.
  *
  * @param {unknown} output
  * @returns {string | undefined}
  */
 export function extractReplacement(output) {
-  if (typeof output !== "string") return undefined;
-  const bounded = output.slice(0, EDITOR_LIMITS.replyChars);
-  const fenced = /```[^\n`]*\n([\s\S]*?)\n?```/.exec(bounded);
-  const candidate = fenced === null ? bounded.trim() : (fenced[1] ?? "");
+  if (typeof output !== "string" || output.length > EDITOR_LIMITS.replyChars) return undefined;
+  if ((output.match(/```/g) ?? []).length !== 2) return undefined;
+  const fenced = /```[^\n`]*\n([\s\S]*?)\n?```/.exec(output);
+  if (fenced === null) return undefined;
   // eslint-disable-next-line no-control-regex
-  const cleaned = candidate.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/gu, "");
+  const cleaned = (fenced[1] ?? "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/gu, "");
   return cleaned.trim() === "" ? undefined : cleaned;
 }
 

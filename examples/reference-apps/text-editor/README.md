@@ -9,21 +9,26 @@ file, on the web as a download — without ever seeing where the file lives. It 
   id, a name, a type and a size) and reads the bytes in 256 KiB chunks. Files over 1 MiB, and bytes that are not
   UTF-8, are refused with the reason.
 - **Edit:** the unsaved draft lives in widget state, so a reload, another window or another device shows it. A draft
-  larger than the state can hold is not cut; the editor says it will not survive a reload.
+  larger than the state can hold is not cut; the editor says it will not survive a reload. The editor recognizes its
+  own write when the host commits it, even after the person has typed on, so that is never shown as a conflict. If
+  the saved copy cannot be read back after a reload and there is no draft, no document is shown and Save stays off.
 - **Save:** the editor writes a finalized copy and calls `artifacts.export`. The host decides where it goes: the
-  desktop offers *Replace original* for the file that was opened, the web downloads it. The editor learns only
-  whether it was saved.
+  desktop offers *Replace original* for the file picked in this frame until it reloads, the web starts a download. The
+  editor learns only whether the host took the copy, and says no more than that.
 - **Attach:** a finalized copy is put in the composer with `artifacts.attachToConversation`.
 - **Conflicts:** when another view of the same editor changes the draft while this one has unsent edits, the editor
   shows both choices and throws neither away.
-- **Ask Clark:** select up to 200 characters and press *Nhờ Clark viết lại đoạn chọn*. The editor presses its own
-  `agent` action binding (named in props as `rewriteBinding`). The host reads the selection from the editor's
-  semantic document through the binding's `contextRefs`, runs one turn, and returns Clark's reply as the press's
-  output. The editor shows the proposed replacement and changes the text only when the person accepts it, and only if
-  the selected text is still what Clark was shown.
+- **Ask Clark:** select text on one line, up to 200 UTF-16 units, with nothing the host would hide or redact, and
+  press *Nhờ Clark viết lại đoạn chọn*. The editor presses its own `agent` action binding (named in props as
+  `rewriteBinding`) and holds the selection read-only until the answer. The host sends the editor's latest semantic
+  document before it runs the press, reads the selection through the binding's `contextRefs`, runs one turn, and
+  returns Clark's reply as the press's output. Only a reply with exactly one closed fenced block is a proposal. The
+  editor shows it with the text it would replace, and changes the text only when the person accepts it and the range
+  still holds the text Clark read; Ctrl+Z undoes it.
 
-Typing a request in the composer cannot change the editor's text today: no agent tool can perform an isolated
-widget's own action. That gap is tracked in
+Only the repository's scripted fixture model places the editor with `rewriteBinding` today. No product path places
+an installed package widget with a binding yet, so in a real installation the button is disabled with its reason
+shown. That, and a request typed in the composer changing the editor's text, are tracked in
 [digitopvn/clarkcant#382](https://github.com/digitopvn/clarkcant/issues/382).
 
 ## Files
@@ -32,7 +37,7 @@ widget's own action. That gap is tracked in
 - `widgets/main/widget.json` — props (`title`, `rewriteBinding`), the state schema, sizing and the text fallback.
 - `widgets/main/editor-core.js` — the editor's rules as pure functions, tested in `test/editor-core.spec.ts`.
 - `widgets/main/main.js` — the frame code: the DOM, the SDK calls and the keyboard shortcuts (Ctrl/Cmd+S saves,
-  Escape dismisses a proposal).
+  Escape closes whichever panel is open).
 - `fixtures/` — the four prop sets the conformance suite requires.
 
 ## Check it
@@ -43,5 +48,6 @@ node packages/widget-cli/src/cli.ts widget pack examples/reference-apps/text-edi
 corepack pnpm exec vitest run examples/reference-apps/text-editor
 ```
 
-The browser journeys (open, edit, save on the web and on the desktop, ask Clark, keyboard only, light and dark,
-390 px, reduced motion) are in `apps/web/e2e/text-editor.spec.ts`.
+The browser journeys (open, edit, save on the web and, against a simulated shell, on the desktop; typing on while a
+draft write is held; ask Clark; keyboard only; light and dark; 390 px; reduced motion) are in
+`apps/web/e2e/text-editor.spec.ts`.

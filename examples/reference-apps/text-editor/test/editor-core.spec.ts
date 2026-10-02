@@ -100,6 +100,49 @@ describe("two views of one editor", () => {
   it("does nothing when the host holds what is shown", () => {
     expect(editor.reconcileState({ local: mine, synced: base, incoming: mine })).toBe("unchanged");
   });
+
+  it("recognizes its own write coming back while the person kept typing, rather than calling it a conflict", () => {
+    // The person paused, the draft "mine" was sent at revision 4, and they typed on before the host committed it.
+    const typedOn = { ...base, draft: "mine, and more" };
+    const pending = { state: mine, expectedRevision: 4 };
+    expect(editor.reconcileState({ local: typedOn, synced: base, incoming: mine, revision: 5, pending })).toBe("echo");
+    // Without knowing its own write, the same commit looked like another view's change.
+    expect(editor.reconcileState({ local: typedOn, synced: base, incoming: mine, revision: 5 })).toBe("conflict");
+  });
+
+  it("still asks when another view's write lands while this one is pending", () => {
+    const typedOn = { ...base, draft: "mine, and more" };
+    const pending = { state: mine, expectedRevision: 4 };
+    expect(editor.reconcileState({ local: typedOn, synced: base, incoming: theirs, revision: 5, pending })).toBe("conflict");
+    // A commit no newer than the one written against is not this view's.
+    expect(editor.reconcileState({ local: typedOn, synced: base, incoming: mine, revision: 4, pending })).toBe("conflict");
+  });
+});
+
+describe("reopening after a reload", () => {
+  const persisted = { file: picked, base: copy, draft: null, draftTooLarge: false };
+
+  it("lays the unsaved draft over the saved text read back", () => {
+    expect(editor.restoreDocument({ ...persisted, draft: "edited" }, "saved")).toEqual({
+      file: picked,
+      base: copy,
+      savedText: "saved",
+      draft: "edited",
+      baseUnreadable: false,
+    });
+    expect(editor.isDirty(editor.restoreDocument(persisted, "saved"))).toBe(false);
+  });
+
+  it("keeps an unsaved draft when the saved text cannot be read back, marked unsaved", () => {
+    const doc = editor.restoreDocument({ ...persisted, draft: "edited" }, undefined);
+    expect(doc?.draft).toBe("edited");
+    expect(editor.isDirty(doc)).toBe(true);
+  });
+
+  it("shows no document, rather than an empty one, when the saved text cannot be read and there is no draft", () => {
+    expect(editor.restoreDocument(persisted, undefined)).toBeUndefined();
+    expect(editor.restoreDocument({ file: null, base: null, draft: null, draftTooLarge: false }, "x")).toBeUndefined();
+  });
 });
 
 describe("what Clark is shown", () => {
@@ -124,16 +167,19 @@ describe("what Clark is shown", () => {
       selectionStart: 6,
       selectionEnd: 11,
       selectedChars: 5,
-      selectedText: "beta\n",
+      selectedText: "beta",
     });
   });
 
-  it("bounds the excerpt to what the host keeps and marks the cut", () => {
+  it("bounds the excerpt to what the host keeps, in the host's units, and marks the cut", () => {
     const text = "a".repeat(500);
     const proposal = editor.semanticProposal(editor.openDocument(picked, text), { start: 0, end: 500 });
     const excerpt = String(proposal.values.selectedText);
-    expect(Array.from(excerpt)).toHaveLength(editor.EDITOR_LIMITS.excerptChars);
+    expect(excerpt).toHaveLength(editor.EDITOR_LIMITS.excerptChars);
     expect(excerpt.endsWith("…")).toBe(true);
+    const emoji = "😀".repeat(150);
+    const astral = String(editor.semanticProposal(editor.openDocument(picked, emoji), { start: 0, end: emoji.length }).values.selectedText);
+    expect(astral.length).toBeLessThanOrEqual(editor.EDITOR_LIMITS.excerptChars);
   });
 
   it("clamps a stale selection to the text", () => {
@@ -154,13 +200,52 @@ describe("asking Clark to change the selection", () => {
     expect(editor.askableSelection(doc, { start: 11, end: 22 })).toEqual({ ok: true, start: 11, end: 22, text: "change that" });
   });
 
-  it("takes the first fenced block of a reply as the replacement", () => {
+  it("measures the bound in the host's UTF-16 units, so astral text the host would cut is refused", () => {
+    const emoji = "😀".repeat(150);
+    expect(Array.from(emoji)).toHaveLength(150);
+    expect(editor.askableSelection(editor.openDocument(picked, emoji), { start: 0, end: emoji.length })).toEqual({ ok: false, reason: "too-long" });
+    const fits = "😀".repeat(100);
+    expect(editor.askableSelection(editor.openDocument(picked, fits), { start: 0, end: fits.length })).toMatchObject({ ok: true, text: fits });
+  });
+
+  it("refuses a selection the host would flatten onto one line, so a reply cannot drop its line breaks", () => {
+    const lines = editor.openDocument(picked, "line one\nline two");
+    expect(editor.askableSelection(lines, { start: 0, end: 17 })).toEqual({ ok: false, reason: "one-line" });
+    const tabbed = editor.openDocument(picked, "a\tb");
+    expect(editor.askableSelection(tabbed, { start: 0, end: 3 })).toEqual({ ok: false, reason: "one-line" });
+    const spaced = editor.openDocument(picked, "a  b");
+    expect(editor.askableSelection(spaced, { start: 0, end: 4 })).toEqual({ ok: false, reason: "one-line" });
+  });
+
+  it("refuses a selection with hidden characters or secret-shaped text, which Clark would not read as it is", () => {
+    const hidden = editor.openDocument(picked, "pay\u200Bment");
+    expect(editor.askableSelection(hidden, { start: 0, end: 8 })).toEqual({ ok: false, reason: "hidden" });
+    const token = editor.openDocument(picked, "use sk-abcdefgh12345678 here");
+    expect(editor.askableSelection(token, { start: 0, end: 28 })).toEqual({ ok: false, reason: "hidden" });
+  });
+
+  it("leaves the spaces at the ends out of the range rather than refusing them", () => {
+    // A double-click often selects the space after a word; the host trims it, so the asked range does too.
+    expect(editor.askableSelection(doc, { start: 10, end: 22 })).toEqual({ ok: true, start: 11, end: 22, text: "change that" });
+  });
+
+  it("asks only about text the host passes on unchanged", () => {
+    for (const text of ["change that", "Xin chào, thế giới!", "😀 smile", "a.b-c_d"]) {
+      expect(editor.hostSemanticText(text, editor.EDITOR_LIMITS.excerptChars)).toBe(text);
+    }
+  });
+
+  it("takes the one fenced block of a reply as the replacement", () => {
     expect(editor.extractReplacement('Here it is, from "change that":\n```text\nCHANGE THAT\n```\nDone.')).toBe("CHANGE THAT");
     expect(editor.extractReplacement("```\nline one\nline two\n```")).toBe("line one\nline two");
   });
 
-  it("takes the whole reply when it has no fence, and none when it is empty", () => {
-    expect(editor.extractReplacement("  better words \n")).toBe("better words");
+  it("proposes nothing for a reply that is not one closed fenced block", () => {
+    expect(editor.extractReplacement("  better words \n")).toBeUndefined();
+    expect(editor.extractReplacement("I cannot rewrite that.")).toBeUndefined();
+    // Cut open by the host's bound: the block never closes.
+    expect(editor.extractReplacement("Sure here:\n```text\nPARTIAL")).toBeUndefined();
+    expect(editor.extractReplacement("```\none\n```\nor\n```\ntwo\n```")).toBeUndefined();
     expect(editor.extractReplacement("   ")).toBeUndefined();
     expect(editor.extractReplacement("```\n\n```")).toBeUndefined();
     expect(editor.extractReplacement(undefined)).toBeUndefined();
@@ -168,12 +253,13 @@ describe("asking Clark to change the selection", () => {
   });
 
   it("removes invisible and control characters, keeping line breaks and tabs", () => {
-    expect(editor.extractReplacement("a\u0007b​c‮d﻿e\tf\r\ng")).toBe("abcde\tf\ng");
+    expect(editor.extractReplacement("```\na\u0007b\u200Bc\u202Ed\uFEFFe\tf\r\ng\n```")).toBe("abcde\tf\ng");
   });
 
-  it("reads at most the bounded reply", () => {
-    const reply = "z".repeat(5_000);
-    expect(editor.extractReplacement(reply)).toHaveLength(editor.EDITOR_LIMITS.replyChars);
+  it("proposes nothing for a reply longer than the host returns, which may have been cut", () => {
+    const block = "```\nfine\n```";
+    expect(editor.extractReplacement(block + "z".repeat(editor.EDITOR_LIMITS.replyChars))).toBeUndefined();
+    expect(editor.extractReplacement(block + "z".repeat(editor.EDITOR_LIMITS.replyChars - block.length))).toBe("fine");
   });
 
   it("replaces the asked range and selects the new text", () => {

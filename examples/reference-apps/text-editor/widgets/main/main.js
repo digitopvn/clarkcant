@@ -6,9 +6,10 @@
  * copy — back over the original on the desktop, as a download on the web — or to attach it to the conversation. It never
  * sees a path, a handle or a secret, because nothing it is given has one.
  *
- * Asking Clark goes through the editor's own `agent` binding, named in props by the host that placed it. The host reads
- * the selection from the semantic document this code publishes, starts the turn, and returns Clark's reply as the
- * binding's output. The reply is shown for review and touches the text only when the person accepts it.
+ * Asking Clark goes through the editor's own `agent` binding, named in props by whoever placed it. The host sends the
+ * semantic document this code publishes before it runs the press, reads the selection from it, starts the turn, and
+ * returns Clark's reply as the binding's output. The reply is shown for review and touches the text only when the
+ * person accepts it.
  *
  * The rules (what is unsaved, what is kept, which draft wins, what a reply may change) live in `editor-core.js`.
  */
@@ -29,12 +30,11 @@ import {
   persistedState,
   readPersistedState,
   reconcileState,
+  restoreDocument,
   semanticProposal,
   withDraft,
 } from "./editor-core.js";
 
-/** How long the host waits for semantic publishes to settle (`SEMANTIC_SETTLE_MS`), plus room for the request. */
-const SEMANTIC_SETTLE_WAIT_MS = 450;
 /** How long typing must pause before the draft is written to widget state. */
 const DRAFT_WRITE_DELAY_MS = 400;
 
@@ -59,7 +59,9 @@ const TEXT = {
     "no-binding": "Clark chưa được gắn vào trình soạn thảo này, nên chưa nhờ được.",
     "no-file": "Mở một tệp trước.",
     empty: "Chọn một đoạn văn bản để nhờ Clark viết lại.",
-    "too-long": `Clark chỉ đọc được tối đa ${String(EDITOR_LIMITS.excerptChars)} ký tự; hãy chọn đoạn ngắn hơn.`,
+    "too-long": `Đoạn chọn quá dài: Clark chỉ đọc được tối đa ${String(EDITOR_LIMITS.excerptChars)} ký tự; hãy chọn ít hơn.`,
+    "one-line": "Clark sẽ đọc đoạn này thành một dòng, nên câu trả lời không giữ được xuống dòng hay khoảng trắng liền nhau; hãy chọn trong một dòng.",
+    hidden: "Đoạn chọn có ký tự ẩn hoặc nội dung giống khoá bí mật mà Clark không được xem; hãy chọn ít hơn.",
     // The status line already says what the editor is waiting for; a second sentence would only repeat it.
     busy: "",
   },
@@ -127,14 +129,17 @@ function start() {
   let synced = readPersistedState(api.state.get());
   let selection = { start: 0, end: 0 };
   let busy = false;
+  /** True from the press until Clark answers: the text area is read-only and the published selection is held. */
+  let asking = false;
   let asked;
   let proposal;
   let incomingConflict;
   let draftTimer;
   let writing = false;
   let writeAgain = false;
+  /** This view's write the host has not answered yet, so its commit is recognized as this view's own. */
+  let pendingWrite;
   let lastPublished = "";
-  let lastPublishedAt = 0;
   let disposed = false;
 
   const props = () => api.props.read();
@@ -194,11 +199,13 @@ function start() {
 
   // Clark's answer, shown before it touches anything. It is untrusted text, and it changes the draft only when accepted.
   const proposalPanel = element("section", { class: "panel proposal", "aria-labelledby": "editor-proposal-title", "data-editor-proposal": "", hidden: "" });
-  const proposalTitle = element("h3", { id: "editor-proposal-title", tabindex: "-1" }, "Clark đề xuất thay cho đoạn đã chọn");
+  const proposalTitle = element("h3", { id: "editor-proposal-title", tabindex: "-1" }, "");
+  // The text the replacement would take the place of, so accepting it is a judgement the person can make.
+  const proposalReplaces = element("p", { class: "muted", "data-editor-proposal-replaces": "" }, "");
   const proposalText = element("pre", { "data-editor-proposal-text": "" }, "");
   const applyButton = element("button", { type: "button", class: "primary", "data-editor-apply": "" }, TEXT.apply);
   const dismissButton = element("button", { type: "button", "data-editor-dismiss": "" }, TEXT.dismiss);
-  proposalPanel.append(proposalTitle, proposalText, element("div", { class: "actions" }));
+  proposalPanel.append(proposalTitle, proposalReplaces, proposalText, element("div", { class: "actions" }));
   proposalPanel.lastChild.append(applyButton, dismissButton);
 
   root.append(header, toolbar, discardPanel, conflictPanel, fieldLabel, textarea, meta, askReason, notice, proposalPanel, status);
@@ -244,12 +251,12 @@ function start() {
     const key = JSON.stringify(next);
     if (key === lastPublished) return;
     lastPublished = key;
-    lastPublishedAt = Date.now();
     api.semantic.publish(next.summary, next.selectedIds, next.values);
   }
 
   function readSelection() {
-    if (doc === undefined) return;
+    // While Clark is asked, the selection it was asked about stays the one published; it is read again afterwards.
+    if (doc === undefined || asking) return;
     const next = clampSelection(doc.draft, { start: textarea.selectionStart, end: textarea.selectionEnd });
     if (next.start === selection.start && next.end === selection.end) return;
     selection = next;
@@ -267,14 +274,18 @@ function start() {
     }
     writing = true;
     const next = persistedState(doc);
+    const expectedRevision = api.state.revision();
+    // Set before the write: the host's commit reaches `onState` before the write's promise resolves here.
+    pendingWrite = { state: next, expectedRevision };
     try {
-      await api.state.update(api.state.revision(), next);
+      await api.state.update(expectedRevision, next);
       synced = next;
     } catch (error) {
       // A stale or refused write is followed by the host's committed state, which `onState` reconciles. Anything
       // else is said, and the draft stays on screen.
       if (!/STALE|REVISION/i.test(reasonOf(error))) say("refused", `Chưa giữ được bản nháp: ${reasonOf(error)}`);
     } finally {
+      pendingWrite = undefined;
       writing = false;
       if (writeAgain && !disposed) {
         writeAgain = false;
@@ -314,27 +325,36 @@ function start() {
       return;
     }
     let text;
+    let failure;
     try {
       text = await readAll(persisted.base);
     } catch (error) {
-      // The draft is still the person's even when the saved copy cannot be read back, so it is shown and kept unsaved.
-      doc = { file: persisted.file, base: persisted.base, savedText: "", draft: persisted.draft ?? "", baseUnreadable: true };
-      textarea.value = doc.draft;
-      say("refused", `Không đọc lại được tệp đã lưu: ${reasonOf(error)}. Bản nháp của bạn vẫn ở đây.`);
+      failure = reasonOf(error);
+    }
+    doc = restoreDocument(persisted, text);
+    textarea.value = doc === undefined ? "" : doc.draft;
+    if (failure !== undefined) {
+      // The draft is still the person's when the saved copy cannot be read back, so it is shown and kept unsaved.
+      // Without one there is nothing to show, and an empty text area must not pass for the file.
+      say(
+        "refused",
+        doc === undefined
+          ? `Không đọc lại được “${persisted.file.name}”: ${failure}. Hãy mở lại tệp.`
+          : `Không đọc lại được tệp đã lưu: ${failure}. Bản nháp của bạn vẫn ở đây.`,
+      );
       return;
     }
-    doc = withDraft({ ...openDocument(persisted.file, text), base: persisted.base }, persisted.draft ?? text);
-    textarea.value = doc.draft;
     if (persisted.draftTooLarge) {
       say("draft-lost", "Bản nháp chưa lưu lần trước quá lớn để giữ lại khi tải lại; đây là bản đã lưu gần nhất.");
     }
   }
 
-  async function onState(state) {
+  async function onState(state, revision) {
     if (disposed) return;
     const incoming = readPersistedState(state);
-    const decision = reconcileState({ local: persistedState(doc), synced, incoming });
-    if (decision === "unchanged") {
+    const decision = reconcileState({ local: persistedState(doc), synced, incoming, revision, pending: pendingWrite });
+    if (decision === "unchanged" || decision === "echo") {
+      // An echo is this view's own write; anything typed since is written by the write already scheduled for it.
       synced = incoming;
       return;
     }
@@ -350,7 +370,8 @@ function start() {
     }
     incomingConflict = incoming;
     conflictPanel.hidden = false;
-    conflictTitle.focus();
+    // Someone typing keeps the keyboard; the panel is announced by the status line and waits for them.
+    if (document.activeElement !== textarea) conflictTitle.focus();
     say("conflict", "Hai bản nháp khác nhau; chưa bản nào bị bỏ.");
   }
 
@@ -443,8 +464,11 @@ function start() {
       if (previousBase.artifactId !== doc.file.artifactId) release(previousBase);
       await writeState();
       publish();
-      // The host decided where it went and says so in its own words; the editor only knows that it was saved.
-      say("saved", `Ứng dụng đã lưu “${doc.file.name}”.`);
+      /*
+       * The host decided where it went and says so in its own words. The editor only knows the host took the copy: on
+       * the desktop it was written, on the web a download has only started. So this says what is true in both.
+       */
+      say("saved", `Đã giao bản lưu “${doc.file.name}” cho ứng dụng; xem thông báo của ứng dụng để biết nó ở đâu.`);
     });
   }
   saveButton.addEventListener("click", save);
@@ -462,26 +486,67 @@ function start() {
     const binding = rewriteBinding();
     const ask = askableSelection(doc, selection);
     if (binding === undefined || !ask.ok || busy) return;
+    /*
+     * The range Clark is asked about is the trimmed selection, published as it is now. The host sends any publish still
+     * settling before it runs the press, so Clark reads this selection; and until the answer comes the text area is
+     * read-only and the published selection is held, so nothing on screen moves away from what Clark read.
+     */
+    asking = true;
+    textarea.readOnly = true;
+    selection = { start: ask.start, end: ask.end };
+    textarea.setSelectionRange(ask.start, ask.end);
+    publish();
+    asked = ask;
     void run("asking", "Đang nhờ Clark…", async () => {
-      // The host reads the selection from the last document it was sent, which settles after a short quiet period.
-      // Publishing now and waiting past that period means Clark reads this selection, not the one before it.
-      publish();
-      const wait = lastPublishedAt + SEMANTIC_SETTLE_WAIT_MS - Date.now();
-      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-      asked = ask;
-      const output = await api.actions.invoke(binding, {}, window.crypto.randomUUID());
-      const replacement = extractReplacement(output);
-      if (replacement === undefined) {
-        say("no-proposal", "Clark đã trả lời trong cuộc trò chuyện nhưng không kèm đoạn thay thế.");
-        return;
+      try {
+        const output = await api.actions.invoke(binding, {}, window.crypto.randomUUID());
+        const replacement = extractReplacement(output);
+        if (replacement === undefined) {
+          // Not a proposal: shown as what Clark said, with nothing to apply.
+          proposal = undefined;
+          showProposal("Clark trả lời", typeof output === "string" ? output.slice(0, EDITOR_LIMITS.replyChars) : "", false);
+          say("no-proposal", "Clark đã trả lời nhưng không kèm đúng một đoạn thay thế trong khối ```, nên không có gì để thay.");
+          return;
+        }
+        proposal = replacement;
+        showProposal("Clark đề xuất thay cho đoạn đã chọn", replacement, true);
+        say("proposed", "Clark đã đề xuất một đoạn thay thế. Xem rồi chọn thay hoặc bỏ qua.");
+      } finally {
+        asking = false;
+        textarea.readOnly = false;
       }
-      proposal = replacement;
-      proposalText.textContent = replacement;
-      proposalPanel.hidden = false;
-      proposalTitle.focus();
-      say("proposed", "Clark đã đề xuất một đoạn thay thế. Xem rồi chọn thay hoặc bỏ qua.");
     });
   });
+
+  function showProposal(title, text, applicable) {
+    proposalTitle.textContent = title;
+    proposalReplaces.textContent = asked === undefined ? "" : `Thay cho: «${asked.text}»`;
+    proposalReplaces.hidden = !applicable;
+    proposalText.textContent = text;
+    applyButton.hidden = !applicable;
+    proposalPanel.hidden = false;
+    proposalTitle.focus();
+  }
+
+  /**
+   * Put the accepted text in through the browser's editing, so Undo takes it back like any typed change; the `input`
+   * event that follows updates the draft. Where that is not available the value is set directly, which the browser does
+   * not record for Undo, and the answer says so by not offering it.
+   */
+  function insertReplacement(range, replacement, expected) {
+    textarea.focus();
+    textarea.setSelectionRange(range.start, range.end);
+    let inserted;
+    try {
+      inserted = document.execCommand("insertText", false, replacement);
+    } catch {
+      inserted = false;
+    }
+    if (inserted && textarea.value === expected) return true;
+    textarea.value = expected;
+    textarea.dispatchEvent(new window.Event("input"));
+    return false;
+  }
 
   applyButton.addEventListener("click", () => {
     if (doc === undefined || proposal === undefined || asked === undefined) return;
@@ -493,15 +558,12 @@ function start() {
       textarea.focus();
       return;
     }
-    doc = applied.doc;
+    const undoable = insertReplacement(asked, applied.doc.draft.slice(asked.start, applied.selection.end), applied.doc.draft);
     selection = applied.selection;
-    textarea.value = doc.draft;
-    textarea.focus();
     textarea.setSelectionRange(selection.start, selection.end);
     render();
     publish();
-    scheduleWrite();
-    say("applied", "Đã thay đoạn đã chọn. Thay đổi chưa được lưu vào tệp.");
+    say("applied", `Đã thay đoạn đã chọn. Thay đổi chưa được lưu vào tệp${undoable ? "; Ctrl+Z để hoàn tác" : ""}.`);
   });
 
   dismissButton.addEventListener("click", () => {
@@ -553,13 +615,21 @@ function start() {
       save();
       return;
     }
-    if (event.key === "Escape" && !proposalPanel.hidden) {
+    if (event.key !== "Escape") return;
+    if (!proposalPanel.hidden) {
       event.preventDefault();
       dismissButton.click();
+    } else if (!discardPanel.hidden) {
+      event.preventDefault();
+      discardNo.click();
+    } else if (!conflictPanel.hidden) {
+      // Closing the question keeps what is on screen, which is this view's draft.
+      event.preventDefault();
+      keepMine.click();
     }
   });
 
-  api.state.subscribe((state) => void onState(state));
+  api.state.subscribe((state, revision) => void onState(state, revision));
   api.props.subscribe(() => render());
   api.lifecycle.onDispose(() => {
     disposed = true;
