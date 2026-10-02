@@ -29,8 +29,11 @@ import { attachmentIdSchema, digestSchema } from "./primitives.ts";
  * `pdf` is read for its text and inlined the same way, without a provider.
  * `image` is named in the prompt and handed over by the host-mediated `read_attachment`
  * tool, which returns the picture itself rather than a sentence about it.
+ * `audio` is named in the prompt and never read into it: this node has no reader for sound, and a model told only
+ * the file's name, type and size says what it does not know instead of inventing it. Its bytes are for widgets and
+ * package services the person chose, which receive them by reference.
  */
-export const attachmentKindSchema = z.enum(["image", "pdf", "text"]);
+export const attachmentKindSchema = z.enum(["image", "pdf", "text", "audio"]);
 export type AttachmentKind = z.infer<typeof attachmentKindSchema>;
 
 export const ATTACHMENT_LIMITS = Object.freeze({
@@ -61,6 +64,7 @@ const MIME_KINDS: readonly { mime: string; kind: AttachmentKind }[] = [
   { mime: "text/markdown", kind: "text" },
   { mime: "text/csv", kind: "text" },
   { mime: "application/json", kind: "text" },
+  { mime: "audio/wav", kind: "audio" },
 ];
 
 export const ATTACHMENT_MIME_ALLOWLIST: readonly string[] = MIME_KINDS.map((entry) => entry.mime);

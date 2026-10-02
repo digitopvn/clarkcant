@@ -85,7 +85,7 @@ function store(input: {
   attachmentId: string;
   bytes: Uint8Array;
   extension: string;
-  kind: "text" | "image" | "pdf";
+  kind: "text" | "image" | "pdf" | "audio";
   mime: string;
   filename: string;
   conversationId?: string;
@@ -168,6 +168,20 @@ describe("the bytes decide the type", () => {
       extension: "md",
     });
     expect(sniffContentType(png(2, 3), "image/png")).toMatchObject({ ok: true, mime: "image/png", extension: "png" });
+  });
+
+  it("sniffing accepts a wav under any of its names and stores it as audio/wav", () => {
+    const wav = new Uint8Array(44);
+    wav.set(new TextEncoder().encode("RIFF"), 0);
+    wav.set(new TextEncoder().encode("WAVEfmt "), 8);
+    for (const declared of ["audio/wav", "audio/x-wav", "audio/wave", ""]) {
+      expect(sniffContentType(wav, declared)).toMatchObject({ ok: true, mime: "audio/wav", extension: "wav" });
+    }
+    expect(sniffContentType(wav, "image/png")).toMatchObject({ ok: false, code: "ATTACHMENT_TYPE_MISMATCH" });
+    // A RIFF file of another form, such as an AVI, is not a wav.
+    const avi = wav.slice();
+    avi.set(new TextEncoder().encode("AVI "), 8);
+    expect(sniffContentType(avi, "audio/wav")).toMatchObject({ ok: false });
   });
 
   it("sniffing refuses an empty file", () => {
@@ -268,6 +282,17 @@ describe("the brief a turn carries", () => {
     expect(brief).toContain("read_attachment");
     expect(brief).toContain("hinh.png");
     expect(brief).not.toContain(dir);
+  });
+
+  it("names an audio attachment without reading its bytes into the prompt", () => {
+    const bytes = new Uint8Array(64).fill(122);
+    bytes.set(new TextEncoder().encode("RIFF"), 0);
+    bytes.set(new TextEncoder().encode("WAVE"), 8);
+    const ref = store({ attachmentId: "att_1", bytes, extension: "wav", kind: "audio", mime: "audio/wav", filename: "clip.wav" });
+    const brief = attachmentBrief({ refs: [ref], dataDir: dir });
+    expect(brief).toContain("clip.wav");
+    expect(brief).toContain("tệp âm thanh");
+    expect(brief).not.toContain("zzzz");
   });
 
   it("shares one text budget across every attachment in the turn", () => {

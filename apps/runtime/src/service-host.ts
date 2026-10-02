@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve } from "node:path";
 
 import {
+  ARTIFACT_LIMITS,
   type CapabilityDescriptor,
   type CapabilityReadiness,
   type CapabilityRef,
@@ -11,6 +12,7 @@ import {
   type DirectoryEntry,
   type EffectCategory,
   type EngineCapacity,
+  type InputArtifactsDeclaration,
   type Instant,
   type PackageGeneration,
   RESOURCE_PROFILES,
@@ -18,6 +20,13 @@ import {
   type ResourceProfile,
   type ResourceProfileName,
   type ResourceRequest,
+  SERVICE_ARTIFACT_ERROR_CODES,
+  SERVICE_ARTIFACTS_CAPABILITY,
+  SERVICE_ARTIFACTS_METHOD,
+  SERVICE_ARTIFACTS_VERSION,
+  type ServiceArtifactReadResult,
+  type ServiceArtifactsOffer,
+  serviceArtifactReadRequestSchema,
   type ServiceCapabilityDeclaration,
   type ToolsFacet,
   unsafeSchemaPattern,
@@ -35,9 +44,12 @@ import {
   updateReadiness,
 } from "@clarkcant/core";
 import {
+  JSON_RPC_METHOD_NOT_FOUND,
+  MAX_MESSAGE_CHARS,
   McpRequestCancelled,
   McpRequestNotSent,
   McpRequestTimeout,
+  McpServerRequestError,
   type McpToolFile,
   type McpToolMetadata,
   StdioMcpTransport,
@@ -233,6 +245,38 @@ export interface ServiceCallOptions {
    */
   effectCategory?: EffectCategory;
   onProgress?: (progress: { current: number; total?: number; message?: string }) => void;
+  /**
+   * The files this call may read, already checked by the caller against the widget's grant and the profile's input cap.
+   * While the call is in flight the service may ask for their bytes with `clarkcant/artifacts.read`; each read goes
+   * through `read`, which authorizes it again. Absent, the service is answered as if it held no file.
+   */
+  artifactInput?: ServiceArtifactInput;
+}
+
+/** The files one call may read, and the host's reader for them. */
+export interface ServiceArtifactInput {
+  ids: ReadonlySet<string>;
+  read(range: { artifactId: string; offset: number; length: number }):
+    | { ok: true; bytes: Uint8Array; offset: number; eof: boolean; sizeBytes: number; mimeType: string }
+    | { ok: false; message: string };
+}
+
+/**
+ * The largest file one service answer can carry back: a result is one stdio message, base64 inflates bytes by a third,
+ * and the rest of the answer needs room. Never above the granted profile's artifact ceiling.
+ */
+export const SERVICE_RESULT_MAX_BYTES = Math.floor((MAX_MESSAGE_CHARS - 64 * 1024) / 4) * 3;
+
+/** What the host offers a service whose facet declares input artifacts, from the profile it was granted. */
+export function serviceArtifactsOffer(profile: ResourceProfile): ServiceArtifactsOffer {
+  return {
+    version: SERVICE_ARTIFACTS_VERSION,
+    methods: [SERVICE_ARTIFACTS_METHOD],
+    chunkBytes: ARTIFACT_LIMITS.chunkBytes,
+    maxInputBytes: profile.input.maxBytes,
+    maxMediaSeconds: profile.input.maxMediaSeconds,
+    maxResultBytes: Math.min(SERVICE_RESULT_MAX_BYTES, profile.artifactMaxBytes),
+  };
 }
 
 export class ServiceCallError extends Error {
@@ -267,6 +311,8 @@ export interface ServiceHost {
   execution?(ref: CapabilityRef): { kind: "job"; version: 1 } | undefined;
   /** The profile granted to the facet that serves a ref: its deadlines, job limit and artifact ceiling. */
   profile?(ref: CapabilityRef): ResourceProfile | undefined;
+  /** The arguments of a ref that carry artifact ids the service may read, as its manifest declares; undefined for none. */
+  inputArtifacts?(ref: CapabilityRef): InputArtifactsDeclaration | undefined;
   /** The latest resource decision for a package's services on this node; undefined before one was made. */
   resourceGrant?(packageId: string): ResourceGrant | undefined;
   /**
@@ -320,6 +366,8 @@ interface ServiceEntry {
   callEffects: EffectCategory[];
   /** Aborted when the last call in flight ends, so egress made for those calls stops with them. */
   callScope: AbortController;
+  /** The files each call in flight may read; a read is answered only for an id one of them holds. */
+  inputs: Set<ServiceArtifactInput>;
   /** Writes the egress refusals still being gathered for the trail; set while the service runs. */
   flushEgressAudit?: (() => void) | undefined;
   /** Why the facet's declared secrets cannot be used, as last written to its capabilities. */
@@ -514,11 +562,67 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     }
   }
 
-  /** The requests a service may send the host: egress, when its package declares it and this node makes requests. */
+  /**
+   * The requests a service may send the host: egress, when its package declares it and this node makes requests, and
+   * reads of the files a call in flight was given, when a capability of the facet declares input artifacts.
+   */
   function serverRequestsFor(entry: ServiceEntry): Pick<StdioMcpTransportOptions, "serverRequests"> {
+    const egress = egressRequestsFor(entry);
+    const reads = entry.facet.capabilities.some((declaration) => declaration.inputArtifacts !== undefined);
+    if (egress === undefined && !reads) return {};
+    const experimental: Record<string, unknown> = {
+      ...(egress === undefined ? {} : egress.experimental),
+      ...(reads ? { [SERVICE_ARTIFACTS_CAPABILITY]: serviceArtifactsOffer(grantedProfile(entry)) } : {}),
+    };
+    return {
+      serverRequests: {
+        experimental,
+        handle: async (request) => {
+          if (reads && request.method === SERVICE_ARTIFACTS_METHOD) return readInputArtifact(entry, request.params);
+          if (egress !== undefined) return egress.handle(request);
+          throw new McpServerRequestError(JSON_RPC_METHOD_NOT_FOUND, `the host does not answer ${request.method.slice(0, 80)}`);
+        },
+      },
+    };
+  }
+
+  /** One range of a file a call in flight was given, read through that call's own reader. */
+  function readInputArtifact(entry: ServiceEntry, params: unknown): ServiceArtifactReadResult {
+    const parsed = serviceArtifactReadRequestSchema.safeParse(params);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      throw new McpServerRequestError(
+        SERVICE_ARTIFACT_ERROR_CODES.invalid,
+        `the read request is not one the host answers: ${issue === undefined ? "invalid" : `${issue.path.join(".") || "params"}: ${issue.message}`}`,
+      );
+    }
+    const { artifactId, offset, length } = parsed.data;
+    const input = [...entry.inputs].find((candidate) => candidate.ids.has(artifactId));
+    if (input === undefined) {
+      throw new McpServerRequestError(
+        SERVICE_ARTIFACT_ERROR_CODES.notAnInput,
+        "that artifact is not an input of a call in flight; a service reads only the files a call was given",
+      );
+    }
+    const read = input.read({ artifactId, offset, length });
+    if (!read.ok) throw new McpServerRequestError(SERVICE_ARTIFACT_ERROR_CODES.refused, read.message.slice(0, 300));
+    return {
+      artifactId,
+      offset: read.offset,
+      bytes: Buffer.from(read.bytes).toString("base64"),
+      eof: read.eof,
+      sizeBytes: read.sizeBytes,
+      mimeType: read.mimeType,
+    };
+  }
+
+  /** Egress, when the facet declares it and this node makes requests. */
+  function egressRequestsFor(
+    entry: ServiceEntry,
+  ): NonNullable<StdioMcpTransportOptions["serverRequests"]> | undefined {
     const egress = entry.facet.egress;
     const deps = options.egress;
-    if (egress === undefined || deps === undefined) return {};
+    if (egress === undefined || deps === undefined) return undefined;
     const packageId = entry.generation.packageId;
     const handle = egressRequestHandler({
       packageId,
@@ -532,7 +636,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     });
     entry.flushEgressAudit?.();
     entry.flushEgressAudit = handle.flush;
-    return { serverRequests: { experimental: EGRESS_EXPERIMENTAL, handle } };
+    return { experimental: EGRESS_EXPERIMENTAL, handle };
   }
 
   function providerIdOf(entry: Pick<ServiceEntry, "generation">): string {
@@ -997,6 +1101,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         calls: 0,
         callEffects: [],
         callScope: new AbortController(),
+        inputs: new Set(),
       };
       entries.set(key, entry);
       // Each service starts on its own: one that takes a minute to fetch its image does not hold the others.
@@ -1039,6 +1144,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       const effect: EffectCategory = options.effectCategory ?? getCapability(registry, ref, registry.nodeId)?.effectCategory ?? "read";
       entry.calls += 1;
       entry.callEffects.push(effect);
+      if (options.artifactInput !== undefined) entry.inputs.add(options.artifactInput);
       const scope = entry.callScope;
       try {
         // A caller may ask for less time than the granted profile allows, never for more.
@@ -1075,6 +1181,8 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       } finally {
         entry.calls -= 1;
         entry.callEffects.splice(entry.callEffects.indexOf(effect), 1);
+        // The call is over: whatever it was given can no longer be read, even by a request already on its way.
+        if (options.artifactInput !== undefined) entry.inputs.delete(options.artifactInput);
         // The last call ended: whatever the service still has the host fetching for it stops now.
         if (entry.calls === 0 && entry.callScope === scope) {
           scope.abort(new Error("no call to the service is in flight"));
@@ -1107,6 +1215,14 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
 
     resourceGrant(packageId) {
       return [...entries.values()].find((entry) => entry.generation.packageId === packageId && entry.grant !== undefined)?.grant;
+    },
+
+    inputArtifacts(ref) {
+      for (const entry of entries.values()) {
+        if (!entry.facet.capabilities.some((declaration) => declaration.ref === ref) || entry.refused.has(ref) || !owns(entry, ref)) continue;
+        return entry.facet.capabilities.find((declaration) => declaration.ref === ref)?.inputArtifacts;
+      }
+      return undefined;
     },
 
     execution(ref) {

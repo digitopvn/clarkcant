@@ -434,6 +434,17 @@ export function sniffContentType(bytes: Uint8Array, declaredMime: string): Conte
     return { ok: true, mime: "application/pdf", extension: "pdf" };
   }
 
+  if (hasWavHeader(bytes)) {
+    if (declared !== "" && !WAV_MIMES.includes(declared)) {
+      return {
+        ok: false,
+        code: "ATTACHMENT_TYPE_MISMATCH",
+        message: `the file is a wav but was declared as ${declared}`,
+      };
+    }
+    return { ok: true, mime: "audio/wav", extension: "wav" };
+  }
+
   if (looksLikeText(bytes)) {
     const textMime = declared === "" ? "text/plain" : declared;
     if (!TEXT_MIMES.includes(textMime)) {
@@ -449,7 +460,7 @@ export function sniffContentType(bytes: Uint8Array, declaredMime: string): Conte
   return {
     ok: false,
     code: "ATTACHMENT_TYPE_UNSUPPORTED",
-    message: declared === "" ? "the file is not an image, a pdf or readable text" : `${declared} does not match the file's bytes`,
+    message: declared === "" ? "the file is not an image, a pdf, a wav or readable text" : `${declared} does not match the file's bytes`,
   };
 }
 
@@ -460,6 +471,18 @@ function extensionForText(mime: string): string {
   if (mime === "text/csv") return "csv";
   if (mime === "application/json") return "json";
   return "txt";
+}
+
+/** The names systems give a WAV file. The node stores it as `audio/wav` whichever one was declared. */
+const WAV_MIMES: readonly string[] = ["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave"];
+
+/** A RIFF container whose form type is WAVE: the twelve bytes every WAV file starts with. */
+function hasWavHeader(bytes: Uint8Array): boolean {
+  return (
+    bytes.byteLength >= 12 &&
+    String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF" &&
+    String.fromCharCode(...bytes.subarray(8, 12)) === "WAVE"
+  );
 }
 
 function hasPdfHeader(bytes: Uint8Array): boolean {

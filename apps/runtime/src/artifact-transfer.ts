@@ -177,6 +177,7 @@ export function extensionForMimeType(mimeType: string): string {
     "text/plain": "txt",
     "text/markdown": "md",
     "application/json": "json",
+    "audio/wav": "wav",
   };
   return known[mimeType.toLowerCase()] ?? "bin";
 }

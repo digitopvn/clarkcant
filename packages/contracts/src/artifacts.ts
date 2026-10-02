@@ -323,6 +323,7 @@ export const ARTIFACT_EXTENSIONS: Readonly<Record<string, readonly string[]>> = 
   "image/jpeg": ["jpg", "jpeg"],
   "image/webp": ["webp"],
   "image/gif": ["gif"],
+  "audio/wav": ["wav"],
 });
 
 /**
@@ -350,6 +351,9 @@ const TYPE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
   "image/jpg": "image/jpeg",
   "image/pjpeg": "image/jpeg",
   "image/x-png": "image/png",
+  "audio/x-wav": "audio/wav",
+  "audio/wave": "audio/wav",
+  "audio/vnd.wave": "audio/wav",
 });
 
 /** Types that only say "some bytes": a system that sends one does not know what the file is. */

@@ -255,6 +255,7 @@ export {
   JSON_RPC_INVALID_PARAMS,
   JSON_RPC_SERVER_BUSY,
   MAX_SERVER_REQUESTS,
+  MAX_MESSAGE_CHARS,
   type StdioMcpTransportOptions,
   type ServerHandshake,
 } from "./stdio.ts";

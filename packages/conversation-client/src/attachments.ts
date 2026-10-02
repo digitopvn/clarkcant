@@ -134,6 +134,7 @@ const PASTED_EXTENSIONS: Record<string, string> = {
   "text/markdown": "md",
   "text/csv": "csv",
   "application/json": "json",
+  "audio/wav": "wav",
 };
 
 /**

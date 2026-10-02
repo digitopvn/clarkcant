@@ -165,6 +165,7 @@ function statusOf(code: string): number {
     case "NOT_AUTHORIZED":
     case "CONTEXT_REF_FORBIDDEN":
     case "POLICY_REFUSED":
+    case "ARTIFACT_INPUT_REFUSED":
       return 403;
     case "REVISION_MISMATCH":
     case "BINDING_STALE":
@@ -178,6 +179,8 @@ function statusOf(code: string): number {
     case "RATE_LIMITED":
     case "JOB_LIMIT_REACHED":
       return 429;
+    case "ARTIFACT_INPUT_TOO_LARGE":
+      return 413;
     case "SERVICE_TOOL_FAILED":
       return 502;
     case "SERVICE_NOT_RUNNING":
