@@ -260,6 +260,19 @@ async function main(): Promise<void> {
   });
 
   /*
+   * In-process browser-token providers, only when their gate is on, registered with the broker `wireRuntime` created.
+   * Absent, the broker has no adapter and refuses every request as having none.
+   */
+  if (fixtureGates.browserTokens) {
+    const tokens = fixtures?.createBrowserTokenFixture();
+    if (tokens !== undefined && services.browserTokens !== undefined) {
+      for (const adapter of tokens.adapters) services.browserTokens.register(adapter);
+      services.browserTokenFixture = tokens;
+    }
+    process.stderr.write("browser tokens: FIXTURE providers loaded — tokens are random values minted in this process (CC_BROWSER_TOKEN_FIXTURE=1)\n");
+  }
+
+  /*
    * What the previous process of this node left open, reported where it was asked for.
    *
    * After `wireRuntime`, because a re-run needs the turn control it publishes, and before the server listens, so a
@@ -529,6 +542,8 @@ async function main(): Promise<void> {
           await new Promise((resolve) => setTimeout(resolve, STOP_GRACE_MS + 100));
         }
         await modelTurn?.dispose();
+        // Every browser token still held is withdrawn where its provider allows, rather than left to lapse.
+        await services.browserTokens?.close();
         await voice.close();
         await terminalGateway.close();
         await apiSocket.close();

@@ -9,6 +9,7 @@ import { useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
+import { PackageReach, readReach } from "./package-reach.tsx";
 import { MESSAGES_VI, type MessageKey } from "./i18n/messages.ts";
 
 /**
@@ -1954,6 +1955,8 @@ export function MarketplaceResultsBlock({
                   entry !== null && typeof entry === "object" && entry.mode === "fixed") && (
                   <div className="cc-marketplace-desc" data-widget-appearance="fixed">{t("widgets.appearance.fixed")}</div>
                 )}
+                {/* What installing lets it reach, before the Install press: the install refuses an artifact that differs. */}
+                <PackageReach reach={readReach(result.declaredReach)} />
                 <div className="cc-marketplace-meta">
                   <span data-marketplace-source="true">{describePackageSource(result.source, t)}</span>
                   <span data-marketplace-risk={lane}>{riskLaneLabel(t, lane)}</span>

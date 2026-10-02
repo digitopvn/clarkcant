@@ -42,6 +42,7 @@ import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } fr
 import type { SkillCatalog } from "./composer-references.ts";
 import type { ServiceHost } from "./service-host.ts";
 import type { PackageJobHost } from "./job-host.ts";
+import type { BrowserTokenBroker } from "./browser-token-broker.ts";
 import { BROWSER_TASK_CAPABILITY, BROWSER_TASK_NOT_ROUTABLE } from "./task-browser.ts";
 import type { TaskDispatcher } from "./task-dispatch.ts";
 import {
@@ -287,6 +288,19 @@ export interface NodeServices {
   serviceHost?: ServiceHost;
   /** Durable jobs started by versioned long-running package capabilities. */
   packageJobs?: PackageJobHost;
+  /**
+   * Short-lived, scoped provider tokens for widget frames whose package declared them (`browser-token-broker.ts`).
+   *
+   * Assigned after boot. Absent in a test that builds `NodeServices` directly, where every request is answered as
+   * unavailable. A node with no provider adapter registered refuses every request as having no adapter.
+   */
+  browserTokens?: BrowserTokenBroker;
+  /**
+   * The in-process providers a browser journey asks for tokens from, present only on a node started with
+   * `CC_BROWSER_TOKEN_FIXTURE=1` (`test-support/fixture-browser-tokens.ts`). Its presence is the gate for the route
+   * that lists what it minted.
+   */
+  browserTokenFixture?: { issued(): readonly { provider: string; tokenId: string; token: string; instanceId: string; revoked: boolean }[] };
 }
 
 /**

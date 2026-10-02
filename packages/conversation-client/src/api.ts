@@ -59,7 +59,7 @@ import {
   type Suggestion,
   type VoiceCapabilities,
 } from "@clarkcant/contracts";
-import { jobSnapshotWireSchema, type JobSnapshot } from "@clarkcant/widget-sdk";
+import { browserTokenWireSchema, jobSnapshotWireSchema, type BrowserToken, type JobSnapshot, type TokenRequest } from "@clarkcant/widget-sdk";
 
 import {
   type StartVoiceSessionOptions,
@@ -132,6 +132,13 @@ export interface IsolatedFrameLiveResponse {
     /** Granted capabilities held back because they cannot run yet, each with the reason the node gave. */
     unavailableCapabilities?: readonly { ref: string; code: string; message: string }[];
     allowedOrigins: readonly string[];
+    /**
+     * What the frame does out of view under its package's granted profile. `authorized-playback` lets the person keep
+     * it running offscreen from host chrome; absent or `suspend`, it unmounts when scrolled away.
+     */
+    offscreen?: "suspend" | "authorized-playback";
+    /** The providers the widget's package declared browser tokens from. Absent: the frame is offered no tokens. */
+    browserTokens?: readonly string[];
   } | null;
   /** Present when `frame` is null: the widget's own text alternative, from its definition. */
   textFallback?: string;
@@ -506,7 +513,41 @@ export interface InstalledPackageView {
   lock?: { ref: string; digest: string; coverage: string };
   /** The version a rollback would make active again; absent when no other version was ever active here. */
   previousVersion?: string;
+  /**
+   * The resource profile the package asked for and what this node decided. Absent when the node could not read the
+   * package's manifest, which is not the same as the light profile.
+   */
+  resources?: PackageResourcesView;
+  /**
+   * The origins, keys and browser-token providers its manifest declares, as install consent covered them. Absent when
+   * it reaches none, or when the node could not read its manifest.
+   */
+  reach?: unknown;
 }
+
+/** The node's resource decision for one package: the bounds its code runs in, or why it does not run. */
+export type PackageResourcesView =
+  | {
+      requested: ResourceProfileName;
+      status: "granted";
+      profile: ResourceProfileName;
+      bounds: {
+        memoryMib: number;
+        cpus: number;
+        pids: number;
+        tmpfsMib: number;
+        callDeadlineMs: number;
+        jobDeadlineMs: number;
+        maxActiveJobs: number;
+      };
+      summary: string;
+      offscreen: "suspend" | "authorized-playback";
+      /** Facts the node states beside the grant, such as limits its container engine does not enforce. */
+      notes: string[];
+    }
+  | { requested: ResourceProfileName; status: "degraded"; reason: string };
+
+export type ResourceProfileName = "interactive-light" | "interactive-heavy" | "media-workstation" | "background-compute";
 
 /** A package that was uninstalled here and can be restored without fetching anything. */
 export interface RestorablePackageView {
@@ -1747,6 +1788,35 @@ export class GatewayClient {
 
   async cancelWidgetJob(conversationId: string, instanceId: string, jobId: string): Promise<void> {
     await this.#call("POST", this.#jobPath(conversationId, instanceId, jobId), {});
+  }
+
+  #browserTokenPath(conversationId: string, instanceId: string, rest = ""): string {
+    return `/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/browser-tokens${rest}`;
+  }
+
+  /**
+   * Ask the node for a token for the frame mounted under `session`. Person-only on the node: only the chrome that
+   * mounted the frame asks, and the value goes to that frame and nowhere else.
+   */
+  async requestBrowserToken(conversationId: string, instanceId: string, session: string, request: TokenRequest): Promise<BrowserToken> {
+    const body = await this.#call<{ token?: { provider?: unknown; token?: unknown; scopes?: unknown; expiresAt?: unknown } }>(
+      "POST",
+      this.#browserTokenPath(conversationId, instanceId),
+      { session, request },
+    );
+    const parsed = browserTokenWireSchema.safeParse({
+      provider: body.token?.provider,
+      value: body.token?.token,
+      scopes: body.token?.scopes,
+      expiresAt: body.token?.expiresAt,
+    });
+    if (!parsed.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node answered without a usable token");
+    return parsed.data;
+  }
+
+  /** The frame mounted under `session` has gone: the node revokes what it was given. */
+  async endBrowserTokens(conversationId: string, instanceId: string, session: string): Promise<void> {
+    await this.#call("DELETE", this.#browserTokenPath(conversationId, instanceId, `/${encodeURIComponent(session)}`));
   }
 
   #artifactRef(body: { artifactRef?: unknown }): ArtifactRef {

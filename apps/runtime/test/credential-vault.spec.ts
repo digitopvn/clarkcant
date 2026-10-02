@@ -77,6 +77,32 @@ describe("the policy a stored secret gets", () => {
     });
   });
 
+  it("lets a package's service have it only as a request header the host adds, never in its environment", () => {
+    expect(injectionPolicyFor(["package:com.example.search"])).toBe("http-header");
+    store("package:com.example.search");
+    expect(getSecretMetadata(db, "owner_1", "github_token")).toMatchObject({
+      allowedConsumers: ["package:com.example.search"],
+      injectionPolicy: "http-header",
+    });
+    const broker = createSecretBroker({ db, principalId: "owner_1", now: () => AT });
+    expect(broker.headersFor({ name: "github_token", consumer: "package:com.example.search" }, "authorization")).toEqual({
+      ok: true,
+      headers: { authorization: VALUE },
+    });
+    expect(broker.environmentFor({ name: "github_token", consumer: "package:com.example.search" }, "TOKEN")).toMatchObject({
+      ok: false,
+      code: "EXPOSURE_NOT_ALLOWED",
+    });
+    expect(broker.headersFor({ name: "github_token", consumer: "package:com.example.other" }, "authorization")).toMatchObject({
+      ok: false,
+      code: "CONSUMER_NOT_ALLOWED",
+    });
+  });
+
+  it("keeps a command's environment policy when a secret is asked for a command and a package together", () => {
+    expect(injectionPolicyFor(["command:gh", "package:com.example.search"])).toBe("process-env");
+  });
+
   it("keeps anything else inside one tool call", () => {
     expect(injectionPolicyFor(["signals:github"])).toBe("tool-only");
     expect(injectionPolicyFor([])).toBe("tool-only");

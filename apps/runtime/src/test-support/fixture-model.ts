@@ -52,7 +52,7 @@ import { checkForUpdates } from "../update-checks.ts";
 import { type ModelTurn, createModelTurn } from "../model-turn.ts";
 import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
 import { createAutomationTools } from "../automation-tools.ts";
-import { controlApp, createNodeTools, createRememberTool, type CommandToolDeps } from "../node-tools.ts";
+import { controlApp, createNodeTools, createRememberTool, createSearchDirectoryTool, type CommandToolDeps } from "../node-tools.ts";
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps, indexDirectoryPath } from "../project-finder.ts";
 import { createInvokeCapabilityTool } from "../invoke-capability-tool.ts";
@@ -1698,6 +1698,18 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * The lookup package as the real directory search lists it: from the node's directory index, through the same tool
+     * a model calls, so the card shows what the listing says the package reaches before anybody presses Install.
+     */
+    if (/tìm gói tra từ|find the lookup package/i.test(input.text)) {
+      const tool = createSearchDirectoryTool({ indexPath: directoryIndexPath(process.env), newId: (prefix) => `${prefix}_lookup` });
+      const answer = await tool.execute({ query: "lookup" });
+      // No directory on this node: no card, and the turn is answered the ordinary way.
+      if (answer.hostCard === undefined) return undefined;
+      return { text: answer.text, block: answer.hostCard as unknown as MessageBlock };
+    }
+
+    /*
      * The marketplace-results card, produced without a directory on disk.
      *
      * A fixture proves the wiring, not the provider: the search itself is covered by the core tests, and what the
@@ -1933,6 +1945,49 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       });
       return {
         text: "Fixture: một widget giữ tệp bằng tham chiếu, trong frame cách ly (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
+    /*
+     * A frame whose package was granted a profile that lets the person keep it playing out of view. What it does
+     * offscreen is decided by the host from that grant and the person's press, never by the widget.
+     */
+    if (/widget phát|playback widget/i.test(input.text)) {
+      const definition = {
+        id: "com.example.playback.player@1",
+        version: "1.0.0",
+        renderer: "isolated-app" as const,
+        propsSchema: {
+          type: "object",
+          properties: { title: { type: "string", maxLength: 200 } },
+          required: ["title"],
+          additionalProperties: false,
+        },
+        eventSchemas: {},
+        stateSchema: { type: "object", properties: {}, additionalProperties: true },
+        stateVersion: 0,
+        semanticDescription: "A clock that keeps counting while its frame runs.",
+        requestedCapabilities: [],
+        sizing: { compact: true, expanded: true, minHeight: 160 },
+        textFallback: "Đồng hồ phát: đếm khi frame của nó đang chạy.",
+        effectCategories: [],
+        datasetRefs: [],
+      };
+      const instance = createInstance(deps.services().conductor, {
+        definition,
+        packageDigest: definitionDigest(definition),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Đồng hồ phát (fixture)" },
+      });
+      const snapshot = captureSnapshot(deps.services().conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: một widget phát trong frame cách ly (không phải model thật).",
         block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
       };
     }
@@ -2201,6 +2256,83 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       });
       return {
         text: "Fixture: widget ghi chú, các nút gọi dịch vụ của gói (không phải model thật).",
+        block: {
+          type: "surface",
+          definitionRef: { id: definition.id, version: definition.version },
+          snapshot,
+        },
+      };
+    }
+
+    /*
+     * The lookup package's widget, whose one button is bound to a capability its service answers by asking the node to
+     * reach a provider. Stands in for the same step as the notes widget above: the binding is scripted, and everything
+     * after it — the binding check, readiness including whether the package was given its key, the service in its
+     * container and the node's egress broker — is the path a real binding takes.
+     */
+    if (/widget tra từ|lookup widget/i.test(input.text)) {
+      const definition = {
+        id: "com.example.lookup.panel@1",
+        version: "1.0.0",
+        renderer: "isolated-app" as const,
+        propsSchema: {
+          type: "object",
+          properties: { title: { type: "string", maxLength: 200 } },
+          required: ["title"],
+          additionalProperties: false,
+        },
+        eventSchemas: {},
+        stateSchema: { type: "object", properties: {}, additionalProperties: true },
+        stateVersion: 0,
+        semanticDescription: "Looks words up with a provider the node reaches for the package.",
+        requestedCapabilities: [],
+        sizing: { compact: true, expanded: true, minHeight: 200 },
+        textFallback: "Tra từ: định nghĩa do nhà cung cấp trả về qua node.",
+        effectCategories: ["read" as const],
+        datasetRefs: [],
+      };
+      const served = deps.services().serviceHost?.serves("com.example.lookup.define@1");
+      const instance = createInstance(deps.services().conductor, {
+        definition,
+        packageDigest: definitionDigest(definition),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Tra từ (fixture)" },
+      });
+      saveActionBinding(deps.services().conductor, {
+        // Fixed, because the widget's own code names it.
+        actionBindingId: "binding_lookup_define",
+        label: "Tra từ",
+        proposal: {
+          kind: "invoke" as const,
+          capabilityRef: "com.example.lookup.define@1",
+          args: {},
+          bindings: [{ target: "word", source: "user-input" as const }],
+        },
+        inputSchema: {
+          type: "object",
+          properties: { word: { type: "string", minLength: 1, maxLength: 60, pattern: "^[A-Za-z-]+$" } },
+          required: ["word"],
+          additionalProperties: false,
+        },
+        effectCategory: "read" as const,
+        instanceId: instance.instanceId,
+        definitionId: definition.id,
+        packageGeneration: served?.generationId ?? definitionDigest(definition),
+        allowedDataRefs: [],
+        fixedConstraints: {},
+        requiresApproval: false,
+        limits: {},
+        bindingDigest: "sha256:binding_lookup_define",
+        createdAt: instantSchema.parse(new Date().toISOString()),
+      });
+      const snapshot = captureSnapshot(deps.services().conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: widget tra từ, nút gọi dịch vụ của gói qua node (không phải model thật).",
         block: {
           type: "surface",
           definitionRef: { id: definition.id, version: definition.version },

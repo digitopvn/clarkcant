@@ -30,10 +30,20 @@ export interface JobRunOutcome {
   sent?: boolean;
 }
 
+/** One package's own job limit, from its granted resource profile, inside the node's. */
+export interface PackageJobScope {
+  packageId: string;
+  maxActive: number;
+  /** The largest file a result may keep as an artifact; never above `ARTIFACT_LIMITS.maxBytes`. */
+  artifactMaxBytes?: number;
+}
+
 export interface PackageJobHost {
-  canAdmit(): boolean;
+  /** Whether a job can start now: the node is under its limit, and, with a scope, so is that package. */
+  canAdmit(scope?: PackageJobScope): boolean;
   start(input: {
     job: Omit<JobRecord, "status" | "resultRefs" | "createdAt" | "startedAt" | "endedAt" | "progress" | "error" | "output">;
+    scope?: PackageJobScope;
     run: (signal: AbortSignal, onProgress: (progress: { current: number; total?: number; message?: string }) => void) => Promise<McpToolResult>;
     onSettled?: (outcome: JobRunOutcome) => void;
   }): JobRecord;
@@ -85,6 +95,8 @@ export function createPackageJobHost(input: {
 }): PackageJobHost {
   const now = input.now ?? nowInstant;
   const active = new Map<string, AbortController>();
+  /** The package of each active job, so a package's own limit counts only its jobs. */
+  const activePackage = new Map<string, string>();
   const listeners = new Map<string, Set<(job: JobRecord) => void>>();
   const capacity = input.maxActiveJobs ?? MAX_ACTIVE_JOBS;
 
@@ -121,6 +133,12 @@ export function createPackageJobHost(input: {
     return job;
   };
 
+  const packageActive = (packageId: string): number => {
+    let count = 0;
+    for (const owner of activePackage.values()) if (owner === packageId) count += 1;
+    return count;
+  };
+
   input.supervisor.addSource({
     kind: "job",
     list: () => listOpenJobs(input.db, input.nodeId).map((job) => ({
@@ -140,9 +158,12 @@ export function createPackageJobHost(input: {
   });
 
   return {
-    canAdmit: () => active.size < capacity,
-    start({ job: draft, run, onSettled }) {
+    canAdmit: (scope) => active.size < capacity && (scope === undefined || packageActive(scope.packageId) < scope.maxActive),
+    start({ job: draft, scope, run, onSettled }) {
       if (active.size >= capacity) throw new Error("the node is at its active package job limit; this job was not sent");
+      if (scope !== undefined && packageActive(scope.packageId) >= scope.maxActive) {
+        throw new Error("the package is at its active job limit; this job was not sent");
+      }
       const at = now();
       const job = {
         ...draft,
@@ -158,6 +179,7 @@ export function createPackageJobHost(input: {
       let dispatched = false;
       let lastProgressAt = 0;
       active.set(job.jobId, controller);
+      if (scope !== undefined) activePackage.set(job.jobId, scope.packageId);
       publish(running);
       const reportSettled = (outcome: JobRunOutcome, refs: JobRecord["resultRefs"] = []): void => {
         if (finish(job.jobId, outcome, refs) === undefined) return;
@@ -184,7 +206,9 @@ export function createPackageJobHost(input: {
         const files = result.files ?? [];
         let captured: { refs: JobRecord["resultRefs"]; omitted: boolean } = { refs: [], omitted: files.length > 0 };
         try {
-          if (input.artifactBroker !== undefined) captured = storeJobResultArtifacts(input.artifactBroker, running, files);
+          if (input.artifactBroker !== undefined) {
+            captured = storeJobResultArtifacts(input.artifactBroker, running, files, scope?.artifactMaxBytes);
+          }
         } catch {
           // The service answered; a host file-storage error does not make its effect uncertain.
           captured.omitted = files.length > 0;
@@ -209,7 +233,10 @@ export function createPackageJobHost(input: {
       }).catch(() => {
         // Recording the ending itself failed (a full or locked database). The job stays open in storage, so the next
         // boot's recovery marks it interrupted with a may-have-run explanation; nothing is retried here.
-      }).finally(() => active.delete(job.jobId));
+      }).finally(() => {
+        active.delete(job.jobId);
+        activePackage.delete(job.jobId);
+      });
       return running;
     },
     get: (jobId, owner) => getOwnedJob(input.db, jobId, owner),

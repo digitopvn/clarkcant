@@ -6,6 +6,7 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import type { ViteDevServer } from "vite";
 import { closeDevModuleServer, createDevModuleServer } from "./dev-module-server.ts";
 
+import type { BrowserTokenDeclaration, ResourceRequest } from "@clarkcant/contracts";
 import { readPackage } from "@clarkcant/core";
 import { widgetToHostSchema } from "@clarkcant/widget-sdk";
 import { catalogFrameHtml, catalogTarget } from "./catalog-target.ts";
@@ -19,6 +20,7 @@ import {
 } from "./dev-shell.ts";
 import { createDevArtifactBroker, readFixtureFiles, type DevArtifactEvent, type DevFixtureFile } from "./dev-artifacts.ts";
 import { createDevJobBroker, type DevJobEvent } from "./dev-jobs.ts";
+import { createDevTokenBroker, simulateResourceGrant, type DevTokenEvent } from "./dev-resources.ts";
 import { openDevLeaseStore } from "./dev-lease.ts";
 import {
   actionAvailability,
@@ -82,6 +84,8 @@ export interface DevHost {
   artifactEvents: () => readonly DevArtifactEvent[];
   /** What the simulated `jobs@1` did — starts, steps, endings, cancels — by job id and status. */
   jobEvents: () => readonly DevJobEvent[];
+  /** What the simulated `tokens@1` did — issues and refusals — by provider and code, never by value. */
+  tokenEvents: () => readonly DevTokenEvent[];
   close: () => Promise<void>;
 }
 
@@ -345,7 +349,7 @@ function sendInit() {
     stateRevision: 0,
     brokeredCapabilities: Object.entries(state.capabilities).filter(([, decision]) => decision === "granted").map(([ref]) => ref),
     allowedOrigins: [],
-    extensions: ["artifacts@1", "jobs@1"],
+    extensions: ["artifacts@1", "jobs@1", ...(state.browserTokens.length > 0 ? ["tokens@1"] : [])],
   }, "*");
 }
 frameElement?.addEventListener("load", sendInit);
@@ -457,6 +461,28 @@ window.addEventListener("message", async (event) => {
 void renderJobs();
 
 /*
+ * tokens@1, offered only when the package declared browser tokens, and answered by the dev host's simulated provider.
+ * The log names the provider and the outcome; the value goes to the frame and is not written anywhere on this page.
+ */
+window.addEventListener("message", async (event) => {
+  const data = event.data;
+  if (event.source !== frameElement?.contentWindow || !data || data.kind !== "token.request" || data.nonce !== bridgeNonce) return;
+  let outcome;
+  try {
+    const response = await fetch("/dev/api/tokens", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(data.request),
+    });
+    outcome = await response.json();
+  } catch (error) {
+    outcome = { status: "refused", code: "TOKEN_UNAVAILABLE", message: "the dev host did not answer: " + error.message };
+  }
+  frameElement.contentWindow?.postMessage({ kind: "token-result", nonce: bridgeNonce, requestId: data.requestId, ...outcome }, "*");
+  appendLog("simulated token " + String(data.request?.provider) + " -> " + (outcome.status === "ok" ? "issued" : outcome.code));
+});
+
+/*
  * The live-owner lease, claimed by this window and released before a detached window claims it — the same
  * ordering apps/desktop's shell follows: the shell releases first, so there is never a moment with two owners.
  * Every claim/release here is a real HTTP call into the server's lease store (dev-lease.ts, over the same
@@ -533,6 +559,8 @@ interface ShellSource {
   fixtureProps: Record<string, Record<string, unknown>>;
   /** Files in `fixtures/files/` the simulated picker offers. Empty for a catalog widget. */
   files: readonly DevFixtureFile[];
+  /** The package's resource request and its widget's browser-token declaration. Absent for a catalog widget. */
+  resources?: { request: ResourceRequest | undefined; browserTokens: readonly BrowserTokenDeclaration[] };
 }
 
 /** The widget-cli package directory, which is Vite's root when the frame is a catalog widget. */
@@ -548,6 +576,7 @@ function packageSource(requested: string): ShellSource {
   const jobCapabilities = pkg.manifest.facets.flatMap((item) =>
     item.kind === "tools" ? item.capabilities.filter((capability) => capability.execution?.kind === "job").map((capability) => capability.ref) : []);
   const simulator = readServiceSimulator(root, serviceCapabilities, jobCapabilities);
+  const uiFacet = pkg.manifest.facets.find((item) => item.kind === "ui" && item.id === facet.facetId);
   return {
     root,
     packageId: pkg.manifest.id,
@@ -564,6 +593,10 @@ function packageSource(requested: string): ShellSource {
     },
     fixtureProps: pkg.fixtures,
     files: readFixtureFiles(root).files,
+    resources: {
+      request: pkg.manifest.resources,
+      browserTokens: uiFacet?.kind === "ui" ? (uiFacet.browserTokens?.providers ?? []) : [],
+    },
   };
 }
 
@@ -631,6 +664,18 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   // Read on every pick, so switching the shell's picker control changes what the next pick returns.
   const artifacts = createDevArtifactBroker({ files: source.files, choosePick: () => state.pickFile });
   const jobs = createDevJobBroker();
+  const declaredTokens = source.resources?.browserTokens ?? [];
+  // Read on every request, so the shell's "Provider unavailable" control changes the next answer.
+  const tokens = createDevTokenBroker({ declared: declaredTokens, mode: () => state.tokens });
+  /*
+   * The profile the simulated policy grants, decided by the node's own function. Not granted: no service is started,
+   * so every action bound to one is unavailable with the node's sentence, exactly as a degraded package on a node.
+   */
+  const profileRefusal = (): string | undefined => {
+    if (source.resources === undefined) return undefined;
+    const grant = simulateResourceGrant({ request: source.resources.request, mode: state.profile });
+    return grant.status === "degraded" ? grant.reason : undefined;
+  };
   let reloadCount = 0;
   /*
    * One lease store per dev host process, over the same claimLiveOwner/releaseLiveOwner the runtime calls
@@ -689,7 +734,13 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
           bridgeNonce,
           props: source.fixtureProps[state.fixture] ?? {},
           serviceBindings: source.serviceBindings,
-          actionAvailability: actionAvailability({ bindings: source.serviceBindings, readiness: state.serviceReadiness, offline: state.offline }),
+          actionAvailability: ((refusal) =>
+            refusal === undefined
+              ? actionAvailability({ bindings: source.serviceBindings, readiness: state.serviceReadiness, offline: state.offline })
+              : source.serviceBindings.map((binding) => ({ actionBindingId: binding.actionBindingId, available: false, reason: refusal })))(
+            profileRefusal(),
+          ),
+          browserTokens: declaredTokens.map((entry) => entry.provider),
         }),
       );
       return;
@@ -865,6 +916,33 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       }
     }
 
+    /*
+     * The simulated tokens@1 provider. `POST` answers one frame request as the node would, held to the package's
+     * declaration; nothing is asked of a provider, and the value answered is random bytes that open nothing.
+     */
+    if (path === "/dev/api/tokens" && request.method === "POST") {
+      let body = "";
+      request.on("data", (chunk: unknown) => {
+        body += String(chunk);
+        if (body.length > 8_192) request.destroy();
+      });
+      request.on("end", () => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          parsed = undefined;
+        }
+        const outcome =
+          declaredTokens.length === 0
+            ? { status: "refused", code: "EXTENSION_NOT_OFFERED", message: "this package declares no browser tokens, so tokens@1 is not offered" }
+            : tokens.handle(parsed);
+        response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        response.end(JSON.stringify(outcome));
+      });
+      return;
+    }
+
     if (path === "/dev/api/action" && request.method === "POST") {
       let body = "";
       request.on("data", (chunk: unknown) => {
@@ -920,13 +998,15 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
         }
         const binding = source.serviceBindings.find((candidate) => candidate.actionBindingId === action.actionBindingId);
         const readiness = binding === undefined ? undefined : state.serviceReadiness[binding.capabilityRef];
-        const available = binding !== undefined && readiness !== undefined && serviceStatus(readiness) === "ready" && !state.offline;
+        const refusal = profileRefusal();
+        const available =
+          binding !== undefined && readiness !== undefined && serviceStatus(readiness) === "ready" && !state.offline && refusal === undefined;
         // A binding whose capability runs as a job answers with its JobRef, as a node does; the job is the shell's to move.
         const started = available && binding.job !== undefined
           ? jobs.start({ actionBindingId: binding.actionBindingId, capabilityRef: binding.capabilityRef, job: binding.job })
           : undefined;
         const outcome = !available
-          ? { status: "refused", message: state.offline ? "the node is offline" : readiness?.blockedReason ?? "service is unavailable" }
+          ? { status: "refused", message: state.offline ? "the node is offline" : refusal ?? readiness?.blockedReason ?? "service is unavailable" }
           : binding.job === undefined
             ? binding.outcome
             : started === undefined
@@ -1076,6 +1156,9 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
             compositionEvents,
             compositionInputs,
             ...(root === undefined ? {} : { files }),
+            ...(source.resources === undefined
+              ? {}
+              : { resources: { request: source.resources.request, browserTokenProviders: declaredTokens.map((entry) => entry.provider) } }),
           },
           state,
         ),
@@ -1189,6 +1272,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     reloads: () => reloadCount,
     artifactEvents: () => artifacts.events(),
     jobEvents: () => jobs.events(),
+    tokenEvents: () => tokens.events(),
     close: async () => {
       watcher?.close();
       if (restartTimer !== undefined) clearTimeout(restartTimer);

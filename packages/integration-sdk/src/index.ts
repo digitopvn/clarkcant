@@ -229,3 +229,15 @@ export {
   type CalendarEvent as CalendarApiEvent,
   type CalendarWriteOutcome,
 } from "./calendar-api.ts";
+
+/**
+ * Browser-scoped provider tokens: what a provider can mint for a widget frame, and the check a request is held to.
+ * The node's broker (`apps/runtime/src/browser-token-broker.ts`) is the only caller.
+ */
+export {
+  checkBrowserTokenRequest,
+  type BrowserTokenAdapter,
+  type BrowserTokenCheck,
+  type BrowserTokenSupport,
+  type IssuedBrowserToken,
+} from "./browser-token.ts";
