@@ -50,6 +50,7 @@ export * from "./jobs.ts";
 export * from "./resource-profiles.ts";
 export * from "./service-egress.ts";
 export * from "./service-connection.ts";
+export * from "./service-artifacts.ts";
 export * from "./browser-token.ts";
 export * from "./declared-reach.ts";
 export * from "./composer-references.ts";

@@ -91,6 +91,16 @@ export function getOwnedJob(db: Database, jobId: string, owner: JobOwner): JobRe
   return row === undefined ? undefined : fromRow(row);
 }
 
+/** The newest jobs one owner tuple started, newest first. The same four fields as `getOwnedJob`, so a list grants no more. */
+export function listOwnedJobs(db: Database, owner: JobOwner, limit: number): JobRecord[] {
+  return allRows<JobRow>(
+    db,
+    `SELECT * FROM jobs WHERE owner_principal_id = ? AND instance_id = ? AND action_binding_id = ? AND package_generation = ?
+      ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+    owner.ownerPrincipalId, owner.instanceId, owner.actionBindingId, owner.packageGeneration, Math.max(0, Math.floor(limit)),
+  ).map(fromRow);
+}
+
 export function listOpenJobs(db: Database, nodeId: string, excludeBootId?: string): JobRecord[] {
   return allRows<JobRow>(
     db,

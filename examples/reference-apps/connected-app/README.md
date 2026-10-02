@@ -37,7 +37,7 @@ issues is a random test value kept only in its memory. A real provider replaces 
 - `skills/tasks/SKILL.md` — how Clark uses the two capabilities.
 - `dev/fake-connector.mjs` — the fake provider (port 8880) and its admin listener (port 8881, for tests only).
 - `dev/service-harness.mjs` — a stand-in for the node, to test the service on its own.
-- `test/service.test.mjs` — the service against the fake connector; portable, so a scaffolded copy keeps it.
+- `dev/service.test.mjs` — the service against the fake connector; portable, so a scaffolded copy keeps it.
 - `fixtures/` — the four prop sets the conformance suite requires.
 
 Only the repository's scripted fixture model places the widget with its two bindings (`listBinding`,
@@ -49,7 +49,7 @@ Only the repository's scripted fixture model places the widget with its two bind
 ```sh
 node packages/widget-cli/src/cli.ts widget test examples/reference-apps/connected-app
 node packages/widget-cli/src/cli.ts widget pack examples/reference-apps/connected-app
-node --test examples/reference-apps/connected-app/test/service.test.mjs
+node --test examples/reference-apps/connected-app/dev/service.test.mjs
 corepack pnpm exec vitest run examples/reference-apps/connected-app
 ```
 

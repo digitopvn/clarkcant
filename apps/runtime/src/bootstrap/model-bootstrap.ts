@@ -396,6 +396,8 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           deps: () => capabilityInvokeDeps(deps.services()),
           conversationId: turn.conversationId,
           channel: turn.channel,
+          // A long-running capability starts through this conversation's widget binding to it, which follows the job.
+          widgets: () => deps.services(),
         },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back

@@ -59,7 +59,7 @@ describe("the connected app package", () => {
   });
 
   it("runs its portable service tests against the fake connector", () => {
-    const run = spawnSync(process.execPath, ["--test", fileURLToPath(new URL("./service.test.mjs", import.meta.url))], {
+    const run = spawnSync(process.execPath, ["--test", fileURLToPath(new URL("../dev/service.test.mjs", import.meta.url))], {
       encoding: "utf8",
       timeout: 60_000,
     });

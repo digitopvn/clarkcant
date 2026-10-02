@@ -91,7 +91,7 @@ describe("the connected-app template", () => {
 
   it("carries the fake connector, its harness and the portable tests, and leaves the repository's tests behind", async () => {
     const root = await scaffold();
-    for (const file of ["dev/fake-connector.mjs", "dev/service-harness.mjs", "service/server.mjs", "test/service.test.mjs"]) {
+    for (const file of ["dev/fake-connector.mjs", "dev/service-harness.mjs", "service/server.mjs", "dev/service.test.mjs"]) {
       expect(existsSync(join(root, file)), file).toBe(true);
     }
     expect(readFileSync(join(root, "dev", "fake-connector.mjs"), "utf8")).toContain("TEST/DEV FIXTURE");
@@ -120,7 +120,7 @@ describe("the connected-app template", () => {
 
   it("runs its own service tests in the copy, against the fake connector", async () => {
     const root = await scaffold();
-    const run = spawnSync(process.execPath, ["--test", join(root, "test", "service.test.mjs")], { encoding: "utf8", timeout: 60_000 });
+    const run = spawnSync(process.execPath, ["--test", join(root, "dev", "service.test.mjs")], { encoding: "utf8", timeout: 60_000 });
     expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
   });
 });

@@ -317,12 +317,14 @@ export const ARTIFACT_EXTENSIONS: Readonly<Record<string, readonly string[]>> = 
   "text/plain": ["txt", "text", "log"],
   "text/markdown": ["md", "markdown"],
   "text/csv": ["csv"],
+  "text/tab-separated-values": ["tsv", "tab"],
   "application/json": ["json"],
   "application/pdf": ["pdf"],
   "image/png": ["png"],
   "image/jpeg": ["jpg", "jpeg"],
   "image/webp": ["webp"],
   "image/gif": ["gif"],
+  "audio/wav": ["wav"],
 });
 
 /**
@@ -345,11 +347,15 @@ const TYPE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
   "application/csv": "text/csv",
   "text/x-csv": "text/csv",
   "text/comma-separated-values": "text/csv",
+  "text/tsv": "text/tab-separated-values",
   "text/x-markdown": "text/markdown",
   "text/json": "application/json",
   "image/jpg": "image/jpeg",
   "image/pjpeg": "image/jpeg",
   "image/x-png": "image/png",
+  "audio/x-wav": "audio/wav",
+  "audio/wave": "audio/wav",
+  "audio/vnd.wave": "audio/wav",
 });
 
 /** Types that only say "some bytes": a system that sends one does not know what the file is. */
@@ -360,6 +366,8 @@ const NAMED_TEXT_TYPES: Readonly<Record<string, string>> = Object.freeze({
   md: "text/markdown",
   markdown: "text/markdown",
   csv: "text/csv",
+  tsv: "text/tab-separated-values",
+  tab: "text/tab-separated-values",
   json: "application/json",
 });
 

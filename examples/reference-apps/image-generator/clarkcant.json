@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 2,
+  "id": "com.clarkcant.reference.image-generator",
+  "version": "1.0.0",
+  "displayName": "Image generator",
+  "description": "Turns a prompt into an image with a provider the node reaches for it, adding the key you gave it, and keeps the results in a gallery.",
+  "hostApi": {
+    "min": 1,
+    "max": 1
+  },
+  "facets": [
+    {
+      "kind": "ui",
+      "id": "com.clarkcant.reference.image-generator.main@1",
+      "entry": "widgets/main/index.html",
+      "definition": "widgets/main/widget.json",
+      "isolation": "isolated-ui"
+    },
+    {
+      "kind": "tools",
+      "id": "com.clarkcant.reference.image-generator.service",
+      "entry": "service/server.mjs",
+      "isolation": "service",
+      "protocol": "mcp-stdio",
+      "capabilities": [
+        {
+          "tool": "generate_image",
+          "ref": "com.clarkcant.reference.image-generator.image.generate@1",
+          "summary": "Generate an image from a prompt, as a job the widget can follow and stop",
+          "effectCategory": "external-write",
+          "execution": { "kind": "job", "version": 1 }
+        }
+      ],
+      "egress": {
+        "version": 1,
+        "secrets": [
+          {
+            "name": "IMAGE_PROVIDER_KEY",
+            "purpose": "Signs the image requests in with the provider."
+          }
+        ],
+        "origins": [
+          {
+            "origin": "http://127.0.0.1:8881",
+            "purpose": "Draws the images you describe.",
+            "credential": {
+              "secret": "IMAGE_PROVIDER_KEY",
+              "header": "authorization",
+              "scheme": "bearer"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "requestedCapabilities": [],
+  "permissions": {
+    "networkOrigins": [],
+    "filesystem": [],
+    "microphone": false,
+    "camera": false,
+    "lifecycleScripts": []
+  },
+  "platforms": [
+    "darwin-arm64",
+    "linux-x64",
+    "win32-x64",
+    "web"
+  ],
+  "publisher": {
+    "id": "clarkcant",
+    "sourceUrl": "https://github.com/digitopvn/clarkcant",
+    "license": "Apache-2.0"
+  },
+  "dependencies": []
+}

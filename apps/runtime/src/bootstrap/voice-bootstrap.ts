@@ -416,6 +416,10 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         // Started, not done: the run reports into the conversation and the inbox when it ends.
         return { ok: true, instanceId, revision: target.revision, say: spokenActionWaiting(action.label, "background", locale) };
       }
+      if (result.body.outcome === "job") {
+        // Started, not done, and not waiting on an approval either: the widget follows the job.
+        return { ok: true, instanceId, revision: target.revision, say: spokenActionWaiting(action.label, "job", locale) };
+      }
       if (result.status === 202) {
         // The policy asked. The card is in the conversation; saying "done" here would be claiming something that has
         // not happened, and the person answers the card, not this sentence.

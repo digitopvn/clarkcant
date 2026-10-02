@@ -21,6 +21,7 @@ import { startDevHost } from "./dev-host.ts";
 import { publishedDefinitions, versionRuleViolations, type PublishedDefinitions } from "./version-rules.ts";
 import { installedThemes, readPackage } from "@clarkcant/core";
 import { packageFiles } from "./package-files.ts";
+import { REFERENCE_TEMPLATES, referenceCopy, type ReferenceTemplate } from "./reference-templates.ts";
 import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
 
 /**
@@ -37,7 +38,7 @@ import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
  * opposite.
  */
 
-const TEMPLATES = ["blank", "form", "dashboard", "pure-ui", "connected-app"] as const;
+const TEMPLATES = ["blank", "form", "dashboard", ...REFERENCE_TEMPLATES] as const;
 type Template = (typeof TEMPLATES)[number];
 
 /**
@@ -134,77 +135,24 @@ function definitionFor(id: string, template: Template): Record<string, unknown> 
   };
 }
 
-type ReferenceTemplate = Extract<Template, "pure-ui" | "connected-app">;
-
-/**
- * The templates that are copies of a reference app, and what differs between them.
- *
- * Copied rather than restated, so a template is the app this repository's own tests keep working instead of a second
- * copy of it that nobody runs.
- *
- *   - `pure-ui` is the reference text editor: one isolated UI facet, no service.
- *   - `connected-app` is the reference connected app: a UI facet, a service whose capabilities name the scopes they
- *     need on one declared account connection, skills, and a fake connector (`dev/fake-connector.mjs`, a test fixture)
- *     its own tests run against. The node connects the account and adds the token; the package never holds it.
- */
-const REFERENCE_COPIES: Record<
-  ReferenceTemplate,
-  { source: string; referenceId: string; displayName: string; description: string; sourceUrl: string; readme: string }
-> = {
-  "pure-ui": {
-    source: fileURLToPath(new URL("../../../examples/reference-apps/text-editor/", import.meta.url)),
-    referenceId: "com.clarkcant.reference.text-editor",
-    displayName: "My Widget",
-    description: "A text editor that opens, edits and saves a file the person picks.",
-    sourceUrl: "https://github.com/example/my-widget",
-    readme:
-      "# My Widget\n\nA copy of the reference text editor: it opens a file through the host, keeps the draft in widget " +
-      "state and saves through the host's export. Its rules are in `widgets/main/editor-core.js`.\n\n" +
-      "Run `clark widget test` then `clark widget pack`.\n",
-  },
-  "connected-app": {
-    source: fileURLToPath(new URL("../../../examples/reference-apps/connected-app/", import.meta.url)),
-    referenceId: "com.clarkcant.reference.connected-app",
-    displayName: "My Connected App",
-    description: "Lists and renames tasks in an account you connect; the node holds the account, the package never does.",
-    sourceUrl: "https://github.com/example/my-connected-app",
-    readme:
-      "# My Connected App\n\n" +
-      "A copy of the reference connected app: a widget that lists and renames tasks, a service whose two capabilities " +
-      "name the scopes they need, one declared account connection, and skills that tell Clark how to use them.\n\n" +
-      "- **The node holds the account.** A person connects it in Settings, in their system browser. The node keeps the " +
-      "tokens, adds the access token to the service's requests to the declared endpoints only, and marks a capability " +
-      "not ready, with the reason, when the connection is missing, expired, revoked or lacks its scope. The widget and " +
-      "the service never see a token, a refresh token or a code.\n" +
-      "- **The connection points at a fake.** `clarkcant.json` declares `http://127.0.0.1:8880`, served by " +
-      "`dev/fake-connector.mjs`, a test fixture with no real account. Run it with `node dev/fake-connector.mjs`; a node " +
-      "reaches loopback endpoints only with `CC_EGRESS_ALLOW_PRIVATE_NETWORK=1`. **Replace the provider, client id, " +
-      "scopes and endpoints with your provider's before publishing.** A real provider's endpoints must be HTTPS.\n" +
-      "- **Writes are decided by the node.** `update-task` is `external-write`: the person's execution policy may ask " +
-      "first, and a rename whose answer never came back is recorded as unknown and not retried.\n\n" +
-      "Run `clark widget test`, `clark widget pack`, and `node --test test/*.test.mjs` for the service's own tests.\n",
-  },
-};
-
-/**
- * The reference app's own files that describe or test that app rather than the package a person starts from. Its
- * repository tests (`*.spec.ts`) import this repository's sources, so they stay behind; a portable `*.test.mjs` the copy
- * can run on its own is kept.
- */
-function skippedFromReference(path: string): boolean {
-  return (path.startsWith("test/") && !path.endsWith(".test.mjs")) || path === "README.md";
+/** The reference app's own files that describe or test that app rather than the package a person starts from. */
+export function skippedFromReference(path: string): boolean {
+  return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "README.vi.md" || path === "LICENSE";
 }
 
-/** Files whose text can name the reference's id. Anything else is copied byte for byte. */
-const REFERENCE_TEXT = /\.(?:json|js|mjs|html|css|md)$/;
+/** Files whose text can name the reference's id — a skill names a capability ref. Anything else is copied byte for byte. */
+const REFERENCE_TEXT = /\.(json|js|mjs|html|css|md)$/;
+
+const asJson = (document: Record<string, unknown>): string => `${JSON.stringify(document, null, 2)}\n`;
 
 /**
- * Copy a reference app as a new package: its id becomes the new package's everywhere its text names it — the
- * manifest, the facets, a capability ref, a skill — so the copy is a package of its own and its capabilities are named
- * under its own id.
+ * The one copier every reference template goes through (`reference-templates.ts` says what each one copies).
+ *
+ * The reference's id becomes the new package's everywhere its text names it — the manifest, the facets, a capability
+ * ref, the frame code — so the copy is a package of its own and its capabilities are named under its own id.
  */
-function initFromReference(root: string, id: string, template: ReferenceTemplate): void {
-  const copy = REFERENCE_COPIES[template];
+export function initFromReference(root: string, id: string, template: ReferenceTemplate): void {
+  const copy = referenceCopy(template);
   if (!existsSync(join(copy.source, "clarkcant.json"))) {
     throw new Error(`the ${template} template is copied from ${copy.source}, which is missing from this checkout`);
   }
@@ -225,9 +173,10 @@ function initFromReference(root: string, id: string, template: ReferenceTemplate
         description: copy.description,
         publisher: { id: "example", sourceUrl: copy.sourceUrl, license: "MIT" },
       };
-      writeFileSync(target, `${JSON.stringify(manifest, null, 2)}\n`);
-    } else if (path.startsWith("widgets/") && path.endsWith("/widget.json")) {
-      writeFileSync(target, `${JSON.stringify({ ...(JSON.parse(text) as Record<string, unknown>), version: "0.1.0" }, null, 2)}\n`);
+      writeFileSync(target, asJson(copy.manifest?.(manifest) ?? manifest));
+    } else if (path === "widgets/main/widget.json") {
+      const definition = { ...(JSON.parse(text) as Record<string, unknown>), version: "0.1.0" };
+      writeFileSync(target, asJson(copy.definition?.(definition) ?? definition));
     } else {
       writeFileSync(target, text);
     }
@@ -237,12 +186,14 @@ function initFromReference(root: string, id: string, template: ReferenceTemplate
   writeFileSync(join(root, "LICENSE"), "MIT\n");
 }
 
+const isReferenceTemplate = (template: Template): template is ReferenceTemplate => (REFERENCE_TEMPLATES as readonly string[]).includes(template);
+
 function init(root: string, template: Template): void {
   // Lower-case letters, digits and hyphens, starting with a letter: the shape a capability name's segments take, so a
   // service facet added later can name its capabilities under this id.
   const slug = (root.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z]+/, "");
   const id = `com.example.${slug === "" ? "widget" : slug}`;
-  if (template === "pure-ui" || template === "connected-app") {
+  if (isReferenceTemplate(template)) {
     initFromReference(root, id, template);
     return;
   }

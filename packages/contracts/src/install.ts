@@ -7,6 +7,7 @@ import { networkOriginSchema } from "./network-origin.ts";
 import { browserTokensProblems, browserTokensSchema } from "./browser-token.ts";
 import { serviceEgressProblems, serviceEgressSchema } from "./service-egress.ts";
 import { connectionScopeSchema, serviceConnectionProblems, serviceConnectionSchema } from "./service-connection.ts";
+import { inputArtifactsDeclarationSchema } from "./service-artifacts.ts";
 
 export { networkOriginProblem, networkOriginSchema } from "./network-origin.ts";
 
@@ -107,6 +108,11 @@ export const serviceCapabilityDeclarationSchema = z.strictObject({
    * `connection`; a capability whose scopes the account did not grant is not ready, and says which scope is missing.
    */
   requiredScopes: z.array(connectionScopeSchema).min(1).max(16).optional(),
+  /**
+   * The arguments that carry ids of files a widget holds, which the host checks and then lets the service read for
+   * that call only (`service-artifacts.ts`). Absent, the service is never offered a byte of any artifact.
+   */
+  inputArtifacts: inputArtifactsDeclarationSchema.optional(),
 });
 export type ServiceCapabilityDeclaration = z.infer<typeof serviceCapabilityDeclarationSchema>;
 

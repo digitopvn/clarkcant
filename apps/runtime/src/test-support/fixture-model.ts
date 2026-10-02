@@ -21,7 +21,9 @@ import {
   markEffectUnknown,
   modelReplyCard,
   prepareEffect,
+  readDirectoryIndex,
   readExecutionPolicy,
+  readPackage,
   requestApproval,
   listInstalledPackages,
   saveActionBinding,
@@ -70,6 +72,10 @@ import { type NodeServices } from "../services.ts";
 import { createTaskBrowserBroker, taskProfileDir } from "../task-browser.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
+
+/** The reference image generator's definition, as its package ships it, and the job capability its button calls. */
+const IMAGE_GENERATOR_DEFINITION = new URL("../../../../examples/reference-apps/image-generator/widgets/main/widget.json", import.meta.url);
+const IMAGE_GENERATE = "com.clarkcant.reference.image-generator.image.generate@1" as CapabilityRef;
 
 /**
  * The deterministic composer, and the preconditions it needs to be reachable.
@@ -290,6 +296,18 @@ export function controlAppFixtureCalls(text: string): Record<string, unknown>[] 
   return calls;
 }
 
+/** The reference spreadsheet package, served from the browser suite's directory like the other fixture packages. */
+const SPREADSHEET_PACKAGE_ID = "com.example.spreadsheet";
+
+/**
+ * What the spreadsheet's format button asks Clark for. The spreadsheet applies only a reply that is exactly one line in
+ * this shape for the range it had selected, so the request names the shape and nothing else.
+ */
+const SPREADSHEET_FORMAT_INTENT =
+  "Format the cells selected in this spreadsheet as percentages. Reply with exactly one line and nothing else: " +
+  "format: percent <range>, where <range> is the selected A1 range the host read from the spreadsheet. " +
+  "The spreadsheet applies only that line.";
+
 /** The reference text editor's definition, as its package ships it. */
 const TEXT_EDITOR_DEFINITION = new URL("../../../../examples/reference-apps/text-editor/widgets/main/widget.json", import.meta.url);
 
@@ -299,6 +317,10 @@ const CONNECTED_APP_DEFINITION = new URL("../../../../examples/reference-apps/co
 /** What the editor's rewrite button asks Clark; the fixture recognises its own button by it. */
 const TEXT_EDITOR_REWRITE_INTENT =
   "Viết lại đoạn văn bản đang được chọn trong trình soạn thảo. Chỉ trả lời bằng đoạn thay thế, trong một khối ``` duy nhất.";
+
+/** The reference media render tool's definition, as its package ships it, and the capability its button calls. */
+const MEDIA_RENDER_DEFINITION = new URL("../../../../examples/reference-apps/media-render/widgets/main/widget.json", import.meta.url);
+const MEDIA_RENDER_CAPABILITY = "com.clarkcant.reference.media-render.render@1";
 
 /**
  * The scripted composer.
@@ -327,6 +349,20 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * the host read context for the button, the reply quotes it too — from the turn's data section, which is where the
      * host puts it, never from the guidance note: what reached the model is what the host read.
      */
+    /*
+     * The spreadsheet's format button, answered the way its intent asks: one line naming the range. The range is taken
+     * from the turn's data section, where the host put the selection it read from the widget's semantic document, so
+     * the line the widget receives shows which range reached the model. Without a selection there is nothing to name.
+     */
+    if (input.note?.includes(SPREADSHEET_FORMAT_INTENT) === true) {
+      const selected = /selected: ［"([A-Z]{1,3}[1-9]\d{0,6}(?::[A-Z]{1,3}[1-9]\d{0,6})?)"］/u.exec(input.data ?? "");
+      const reply =
+        selected === null
+          ? "Fixture: the host read no selection from the spreadsheet, so there is nothing to format."
+          : `format: percent ${selected[1] ?? ""}`;
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
     const pressed = input.note === undefined ? null : /You offered it for: (.+?)\nDo that now\.$/su.exec(input.note);
     /*
      * The reference text editor's "rewrite the selection" button, answered with a replacement.
@@ -2031,6 +2067,62 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * A widget that holds files by reference, in its own frame: the journey for `artifacts@1`. Like the frame widget
      * above, its definition agrees with the fixture package on disk (`apps/web/e2e/fixtures/artifact-widget`).
      */
+    /*
+     * The reference spreadsheet, in its own frame, with the one action it offers: asking Clark to format the selection.
+     *
+     * The definition is the package's own `widget.json`, read through the directory the node serves frames from, so the
+     * instance resolves to exactly the code on disk. The action is compiled by the host, as a model's would be, and its
+     * id reaches the widget as a prop: the widget cannot know a generated id any other way.
+     */
+    if (/bảng tính tham chiếu|reference spreadsheet/iu.test(input.text)) {
+      const services = deps.services();
+      const index = readDirectoryIndex(directoryIndexPath(process.env));
+      const entry = index.kind === "configured" ? index.entries.find((candidate) => candidate.packageId === SPREADSHEET_PACKAGE_ID) : undefined;
+      const definition = entry?.source.kind === "local" ? readPackage(entry.source.path).facets[0]?.definition : undefined;
+      if (definition === undefined) {
+        const reply = "Fixture: the reference spreadsheet is not in this node's directory, so it cannot be placed.";
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+      const packageDigest = definitionDigest(definition);
+      const compiled = compileWidgetAction(
+        {
+          db: services.runtime.db,
+          nodeId: services.runtime.identity.nodeId,
+          serviceHost: services.serviceHost,
+          now: () => new Date().toISOString(),
+          newId: services.conductor.newId,
+        },
+        {
+          definitionRef: { id: definition.id, version: definition.version, packageDigest },
+          label: "Định dạng vùng chọn thành phần trăm",
+          action: { kind: "agent", intent: SPREADSHEET_FORMAT_INTENT, contextRefs: ["selection", "widget"] },
+          ownerPrincipalId: input.principal.principalId,
+        },
+      );
+      if (!compiled.ok) {
+        const reply = `Fixture: the host refused the spreadsheet's action: ${compiled.message}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+      const formatBinding = compiled.bindTo("pending").actionBindingId;
+      const instance = createInstance(services.conductor, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Bảng tính tham chiếu (fixture)", locale: "vi", formatBinding },
+      });
+      saveActionBinding(services.conductor, compiled.bindTo(instance.instanceId));
+      const snapshot = captureSnapshot(services.conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: bảng tính tham chiếu trong frame cách ly (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
     if (/widget tệp|file widget/i.test(input.text)) {
       const definition = {
         id: "com.example.artifact-widget.main@1",
@@ -2268,6 +2360,76 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * The reference media render tool, placed with its own Render button.
+     *
+     * The definition is the package's own `widget.json`, read from disk, so the instance is one the directory entry
+     * serves. The button is an `invoke` binding made here, for the same reason as the notes widget's below: nothing in
+     * the product places a package widget with its own binding yet. Its id reaches the frame through props, because the
+     * frame can only press a binding the instance holds. The widget sends only the clip and the parameters a person
+     * sets; a journey can watch progress and stop a render mid-way because a fixture node answers each read the service
+     * makes a moment late (`FIXTURE_ARTIFACT_READ_DELAY_MS`), not because the package has a pacing argument.
+     */
+    if (/trình dựng âm thanh|media render tool/i.test(input.text)) {
+      const definition = widgetDefinitionSchema.parse(JSON.parse(readFileSync(MEDIA_RENDER_DEFINITION, "utf8")));
+      const conductor = deps.services().conductor;
+      const packageDigest = definitionDigest(definition);
+      const served = deps.services().serviceHost?.serves(MEDIA_RENDER_CAPABILITY);
+      const instance = createInstance(conductor, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Trình dựng âm thanh (fixture)", renderBinding: "binding_media_render" },
+      });
+      saveActionBinding(conductor, {
+        // Fixed, because the fixture's props name it.
+        actionBindingId: "binding_media_render",
+        label: "Dựng",
+        proposal: {
+          kind: "invoke" as const,
+          capabilityRef: MEDIA_RENDER_CAPABILITY,
+          args: {},
+          bindings: [
+            { target: "source", source: "user-input" as const },
+            { target: "gainDb", source: "user-input" as const },
+            { target: "trimStartMs", source: "user-input" as const },
+            { target: "trimEndMs", source: "user-input" as const },
+          ],
+        },
+        inputSchema: {
+          type: "object",
+          properties: {
+            source: { type: "string", pattern: "^art_[A-Za-z0-9_-]{1,120}$" },
+            gainDb: { type: "number", minimum: -24, maximum: 12 },
+            trimStartMs: { type: "integer", minimum: 0, maximum: 7_200_000 },
+            trimEndMs: { type: "integer", minimum: 0, maximum: 7_200_000 },
+          },
+          required: ["source", "gainDb"],
+          additionalProperties: false,
+        },
+        effectCategory: "read" as const,
+        instanceId: instance.instanceId,
+        definitionId: definition.id,
+        packageGeneration: served?.generationId ?? packageDigest,
+        allowedDataRefs: [],
+        fixedConstraints: {},
+        requiresApproval: false,
+        limits: {},
+        bindingDigest: "sha256:binding_media_render",
+        createdAt: instantSchema.parse(new Date().toISOString()),
+      });
+      const snapshot = captureSnapshot(conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: trình dựng âm thanh mẫu, nút Dựng gọi dịch vụ của gói (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
+    /*
      * The notes widget, whose buttons call its package's own service.
      *
      * The bindings are `invoke` bindings made here, because nothing in the product makes them for a package widget
@@ -2463,6 +2625,85 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * The reference image generator, placed with its "Tạo ảnh" button bound to the package's job capability.
+     *
+     * The definition is the package's own `widget.json`, read from disk, so the instance is one the directory entry
+     * serves. The binding takes the prompt from the widget's state (the draft the frame keeps there), or from what the
+     * press sends, which wins: a spoken "tạo ảnh" runs the draft, a click or Clark sends the prompt. Its id reaches the
+     * frame through props, because the frame can only press a binding the instance holds.
+     */
+    if (/trình tạo ảnh|image generator/i.test(input.text)) {
+      const definition = widgetDefinitionSchema.parse(JSON.parse(readFileSync(IMAGE_GENERATOR_DEFINITION, "utf8")));
+      const conductor = deps.services().conductor;
+      const served = deps.services().serviceHost?.serves(IMAGE_GENERATE);
+      const generateBinding = conductor.newId("binding_image");
+      const instance = createInstance(conductor, {
+        definition,
+        packageDigest: definitionDigest(definition),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Trình tạo ảnh (fixture)", generateBinding },
+      });
+      saveActionBinding(conductor, {
+        actionBindingId: generateBinding,
+        label: "Tạo ảnh",
+        proposal: {
+          kind: "invoke" as const,
+          capabilityRef: IMAGE_GENERATE,
+          args: {},
+          bindings: [
+            { target: "prompt", source: "widget-state" as const },
+            { target: "prompt", source: "user-input" as const },
+          ],
+        },
+        inputSchema: {
+          type: "object",
+          properties: { prompt: { type: "string", minLength: 1, maxLength: 500 } },
+          additionalProperties: false,
+        },
+        // As the package declares it: asking a provider to draw writes to someone else's service.
+        effectCategory: "external-write" as const,
+        instanceId: instance.instanceId,
+        definitionId: definition.id,
+        packageGeneration: served?.generationId ?? definitionDigest(definition),
+        allowedDataRefs: [],
+        fixedConstraints: {},
+        requiresApproval: false,
+        limits: {},
+        bindingDigest: `sha256:${generateBinding}`,
+        createdAt: instantSchema.parse(new Date().toISOString()),
+      });
+      const snapshot = captureSnapshot(conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: trình tạo ảnh mẫu, nút gọi dịch vụ của gói như một job (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
+    /*
+     * Clark starting the image generator's job. The decision to call `invoke_capability` is scripted; the tool is the
+     * real one, which starts the job through the conversation's image generator widget so that widget follows it.
+     */
+    const imagined = /^(?:tạo ảnh giúp tui|generate an image)\s*:\s*(.+)$/iu.exec(input.text.trim());
+    if (imagined !== null) {
+      const tool = createInvokeCapabilityTool({
+        deps: () => capabilityInvokeDeps(deps.services()),
+        conversationId: input.conversationId,
+        channel: () => input.channel ?? "chat",
+        widgets: () => deps.services(),
+      });
+      const answer = await tool.execute({ action: "invoke", ref: IMAGE_GENERATE, args: { prompt: (imagined[1] ?? "").trim() } });
+      return {
+        text: "Fixture: tui gọi invoke_capability (không phải model thật).",
+        block: { type: "text", format: "plain", content: answer.text, streaming: false },
+      };
+    }
+
+    /*
      * The agent calling the same capability the notes widget's button calls.
      *
      * The decision to call `invoke_capability` is scripted; the tool is the real one, so the gate, the policy card and
@@ -2474,6 +2715,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         deps: () => capabilityInvokeDeps(deps.services()),
         conversationId: input.conversationId,
         channel: () => input.channel ?? "chat",
+        widgets: () => deps.services(),
       });
       const answer = await tool.execute(
         noted === null

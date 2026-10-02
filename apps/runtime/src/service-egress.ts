@@ -6,6 +6,7 @@ import {
   type EgressFetchResult,
   egressFetchRequestSchema,
   egressHeaderProblem,
+  egressInputProblem,
   egressMethodProblem,
   SERVICE_EGRESS_CAPABILITY,
   SERVICE_EGRESS_LIMITS,
@@ -33,6 +34,8 @@ import type { SecretBroker } from "./secret-broker.ts";
  *     and its requests stop when the last call ends, when the call is cancelled, or when the service is stopped;
  *   - only `GET` and `HEAD` unless a call in flight was decided as external-write or higher, so a capability declared
  *     `read` cannot write to a provider with the person's key without the policy having decided on a write;
+ *   - not at all, any method, while a call that holds a person's files is in flight and was decided as less than
+ *     external-write (`egressInputProblem`): what the service read of a file could otherwise leave in a `GET` URL;
  *   - at a bounded rate per running service (`SERVICE_EGRESS_RATE`);
  *   - with the declared credential header added by the host from the secret broker, for the consumer
  *     `package:<id>`, which the secret must name explicitly; a header the service sets with that name is dropped;
@@ -100,6 +103,8 @@ export interface EgressAuditEvent {
 export interface EgressCallScope {
   signal: AbortSignal;
   effects: readonly EffectCategory[];
+  /** The effects of the calls among them that hold a person's files, one entry per call (`egressInputProblem`). */
+  inputEffects?: readonly EffectCategory[];
 }
 
 /** Whether the node lets services reach loopback, private and link-local addresses: a setting of the node, never a manifest's. */
@@ -372,6 +377,9 @@ export function egressRequestHandler(deps: EgressHandlerDeps): EgressRequestHand
       throw refuse(EGRESS_ERROR_CODES.notInCall, "egress is answered only while the host is calling this service", url.origin, credential?.secret);
     }
     const callSignal = calls.signal;
+    // Before the method: a GET can carry a file's bytes as well as a POST can.
+    const inputProblem = egressInputProblem(calls.inputEffects ?? []);
+    if (inputProblem !== undefined) throw refuse(EGRESS_ERROR_CODES.inputHeld, inputProblem, url.origin, credential?.secret);
     const methodProblem = egressMethodProblem(params.method, calls.effects);
     if (methodProblem !== undefined) throw refuse(EGRESS_ERROR_CODES.effectNotAllowed, methodProblem, url.origin, credential?.secret);
 

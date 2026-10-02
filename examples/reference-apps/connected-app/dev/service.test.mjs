@@ -9,8 +9,8 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { startFakeConnector } from "../dev/fake-connector.mjs";
-import { connectToFake, declaredConnection, startService } from "../dev/service-harness.mjs";
+import { startFakeConnector } from "./fake-connector.mjs";
+import { connectToFake, declaredConnection, startService } from "./service-harness.mjs";
 
 describe("the connected app's service", () => {
   let connector;

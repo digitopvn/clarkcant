@@ -34,6 +34,7 @@ const TYPE_LABELS: Readonly<Record<string, MessageKey>> = {
   "text/plain": "widgets.artifacts.type.textPlain",
   "text/markdown": "widgets.artifacts.type.markdown",
   "text/csv": "widgets.artifacts.type.csv",
+  "text/tab-separated-values": "widgets.artifacts.type.tsv",
   "application/json": "widgets.artifacts.type.json",
   "application/pdf": "widgets.artifacts.type.pdf",
   "image/*": "widgets.artifacts.type.imageAny",
@@ -41,6 +42,8 @@ const TYPE_LABELS: Readonly<Record<string, MessageKey>> = {
   "image/jpeg": "widgets.artifacts.type.jpeg",
   "image/webp": "widgets.artifacts.type.webp",
   "image/gif": "widgets.artifacts.type.gif",
+  "audio/*": "widgets.artifacts.type.audioAny",
+  "audio/wav": "widgets.artifacts.type.wav",
 };
 
 /** One accepted type as a person says it: "ảnh PNG", "text files". A type with no name is shown as itself. */

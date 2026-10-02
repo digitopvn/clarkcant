@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, insertJob, listAuditEvents, migrate, openDatabase, type Database } from "@clarkcant/storage";
 import { performEmergencyStop } from "../src/application/emergency-stop.ts";
 import { createWorkSupervisor } from "../src/work-supervisor.ts";
-import { createPackageJobHost, jobEndNotice } from "../src/job-host.ts";
+import { createPackageJobHost, jobEndNotice, serviceVerdict } from "../src/job-host.ts";
+import { ServiceCallError } from "../src/service-host.ts";
 
 let db: Database;
 beforeEach(() => {
@@ -141,6 +142,26 @@ describe("durable package job host", () => {
     finish?.();
     await flush();
     expect(host.get("job_chatty", owner)?.status).toBe("completed");
+  });
+
+  it("keeps a service's own error as quoted words, without the control and bidi characters that could disguise them", async () => {
+    const supervisor = createWorkSupervisor();
+    const host = createPackageJobHost({ db, nodeId: "node_1", nodeBootId: "boot_1", newId: () => "job_unused", supervisor });
+    const owner = { ownerPrincipalId: "prin_1", instanceId: "winst_1", actionBindingId: "binding_1", packageGeneration: "generation_1" };
+    const said = "mcp tool generate_image reported an error: out of\u0007 ink‮ gnp.exe​ “quoted”\n\tnext line";
+    host.start({ job: job("job_said"), run: () => Promise.reject(new ServiceCallError("SERVICE_TOOL_FAILED", said, true)) });
+    await flush();
+
+    const error = host.get("job_said", owner)?.error ?? "";
+    expect(error).toBe(
+      'The package service reported an error: “out of ink gnp.exe "quoted" next line”. Its effect may have happened; review before retrying.',
+    );
+    expect(error).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+    expect(serviceVerdict("mcp tool x reported an error: ‮⁦")).toBe("");
+    // Bounded by code point: a long verdict is cut, never into half of a surrogate pair.
+    const long = serviceVerdict(`${"a".repeat(399)}😀😀`);
+    expect([...long]).toHaveLength(400);
+    expect(long.endsWith("😀")).toBe(true);
   });
 
   it("stops a job before dispatch without sending a service request or claiming an uncertain effect", async () => {

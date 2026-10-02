@@ -191,6 +191,12 @@ export function attachmentBrief(input: {
       );
       continue;
     }
+    // Sound is named and never read: this node has no reader for it, so the model is told what it cannot hear rather
+    // than handed bytes it would describe from the file name.
+    if (ref.kind === "audio") {
+      lines.push(`${header}: tệp âm thanh. Node này không đọc được nội dung âm thanh; chỉ có tên, loại và dung lượng.`);
+      continue;
+    }
 
     if (remaining <= 0) {
       lines.push(`${header}: không chèn nội dung vì lượt này đã dùng hết ngân sách văn bản.`);

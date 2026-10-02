@@ -6,6 +6,7 @@
     "declaration": false,
     "declarationMap": false,
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "lib": [
       "ES2023",
       "DOM",

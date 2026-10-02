@@ -660,6 +660,14 @@ export function createReadAttachmentTool(input: {
         };
       }
 
+      // Sound has no reader on this node. Its bytes decoded as text would be noise the model then describes, so the
+      // answer says what the file is and that its content cannot be heard here.
+      if (record.kind === "audio") {
+        return {
+          text: `“${record.filename}” là tệp âm thanh (${record.mime}, ${record.sizeBytes} byte). Node này không đọc được nội dung âm thanh.`,
+        };
+      }
+
       const blob = readBlob({
         dataDir: input.dataDir,
         blobPath: join(blobsDir(input.dataDir), record.blobPath.split(/[/\\]/).at(-1) ?? ""),

@@ -649,6 +649,37 @@ describe("the artifacts@1 extension", () => {
     expect(session.accept(read("artreq-d")).ok).toBe(true);
   });
 
+  it("offers jobs.list@1 beside jobs@1, and neither without a job broker", () => {
+    const withJobs = makeSession({ jobs: async () => ({ status: "refused", code: "JOB_NOT_FOUND", message: "none" }) });
+    withJobs.session.init();
+    const offered = withJobs.posted.find((message) => message.kind === "init")?.extensions as string[] | undefined;
+    expect(offered).toEqual(expect.arrayContaining(["jobs@1", "jobs.list@1"]));
+
+    const without = makeSession({});
+    without.session.init();
+    const none = (without.posted.find((message) => message.kind === "init")?.extensions as string[] | undefined) ?? [];
+    expect(none).not.toContain("jobs@1");
+    expect(none).not.toContain("jobs.list@1");
+  });
+
+  it("answers a job list with the jobs the host returned, bounded to the bridge limit", async () => {
+    const asked: unknown[] = [];
+    const listed = Array.from({ length: 25 }, (_, index) => ({ jobId: `job_${index}`, status: "running" as const, resultRefs: [], createdAt: "2026-10-01T00:00:00.000Z" }));
+    const { session, posted } = makeSession({
+      jobs: async (request) => {
+        asked.push(request);
+        return { status: "ok", jobs: listed };
+      },
+    });
+    session.init();
+    expect(session.accept(fromFrame({ kind: "job.request", requestId: "jobreq-list", request: { op: "list" } })).ok).toBe(true);
+    await flush();
+    expect(asked).toEqual([{ op: "list" }]);
+    const answer = posted.find((message) => message.kind === "job-result" && message.requestId === "jobreq-list");
+    expect(answer).toMatchObject({ status: "ok" });
+    expect((answer?.jobs as unknown[]).length).toBe(20);
+  });
+
   it("paces job reads at their own rate, so watching a job does not spend the frame's message budget", async () => {
     let now = 1_000_000;
     const { session, posted } = makeSession({
@@ -656,7 +687,7 @@ describe("the artifacts@1 extension", () => {
       jobBurst: 2,
       jobRefillPerSecond: 1,
       now: () => now,
-      jobs: async (request) => ({ status: "ok", job: { jobId: request.jobId, status: "running", resultRefs: [], createdAt: "2026-10-01T00:00:00.000Z" } }),
+      jobs: async (request) => ({ status: "ok", job: { jobId: "jobId" in request ? request.jobId : "job_1", status: "running", resultRefs: [], createdAt: "2026-10-01T00:00:00.000Z" } }),
     });
     session.init();
     const job = (requestId: string) => fromFrame({ kind: "job.request", requestId, request: { op: "get", jobId: "job_1" } });

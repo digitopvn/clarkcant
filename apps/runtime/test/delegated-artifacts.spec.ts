@@ -81,6 +81,18 @@ describe("the files a node offers back for a task it ran", () => {
     expect(readFileSync(String(stored), "utf8")).toBe("viết từ máy bàn\n");
   });
 
+  it("types tab-separated files by either extension the file contracts accept", () => {
+    const tsv = written("bang.tsv", "a\tb\n");
+    const tab = written("bang.tab", "a\tb\n");
+
+    const { prepared } = prepareDelegatedArtifacts(dataDir, [tsv, tab], DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES);
+
+    expect(prepared.map((file) => [file.name, file.mimeType])).toEqual([
+      ["bang.tsv", "text/tab-separated-values"],
+      ["bang.tab", "text/tab-separated-values"],
+    ]);
+  });
+
   it("leaves out, and says so, a file changed since the worker wrote it or no longer there", () => {
     const changed = written("changed.md", "as written\n");
     writeFileSync(changed.path, "changed after\n");

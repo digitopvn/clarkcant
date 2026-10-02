@@ -25,8 +25,45 @@ function snapshot(job: NonNullable<ReturnType<NonNullable<NodeServices["packageJ
   };
 }
 
+/** The most jobs one list answer carries, the same bound the frame bridge has (`JOB_LIST_LIMIT`). */
+const LIST_LIMIT = 20;
+
+/**
+ * `GET /conversations/{c}/widgets/{i}/jobs`: the jobs this instance's own invoke bindings started — from a click, a
+ * spoken command or Clark — newest first. Each is read with the same owner tuple a single job is, so the list shows a
+ * frame nothing it could not already read by its ref.
+ */
+function listInstanceJobs(deps: JobRouteDeps): GatewayResponse {
+  const { segments, services } = deps;
+  const packageJobs = services.packageJobs;
+  if (packageJobs === undefined) return fail(503, "JOB_UNAVAILABLE", "package jobs are unavailable on this node");
+  const conversationId = decodeURIComponent(segments[1] ?? "");
+  const instanceId = decodeURIComponent(segments[3] ?? "");
+  const ownerPrincipalId = services.runtime.identity.ownerPrincipalId;
+  if (conversationId === "" || instanceId === "" || !instanceIsInConversation(services.runtime.db, { conversationId, instanceId })) {
+    return fail(404, "INSTANCE_UNKNOWN", "that widget is not in this conversation");
+  }
+  const instance = getInstance(services.conductor, instanceId);
+  if (instance === undefined || instance.ownerPrincipalId !== ownerPrincipalId) {
+    return fail(404, "INSTANCE_UNKNOWN", "that widget is not in this conversation");
+  }
+  const jobs: NonNullable<ReturnType<NonNullable<NodeServices["packageJobs"]>["get"]>>[] = [];
+  for (const actionBindingId of instance.actionBindingIds) {
+    const binding = getActionBinding(services.conductor, actionBindingId);
+    if (binding?.packageGeneration === undefined || binding.instanceId !== instanceId || binding.proposal.kind !== "invoke") continue;
+    const capabilityRef = binding.proposal.capabilityRef;
+    const owned = packageJobs.list({ ownerPrincipalId, instanceId, actionBindingId, packageGeneration: binding.packageGeneration }, LIST_LIMIT);
+    jobs.push(...owned.filter((job) => job.conversationId === conversationId && job.capabilityRef === capabilityRef));
+  }
+  jobs.sort((a, b) => (a.createdAt === b.createdAt ? 0 : a.createdAt < b.createdAt ? 1 : -1));
+  return json(200, { jobs: jobs.slice(0, LIST_LIMIT).map(snapshot) });
+}
+
 export function handleJobRoutes(deps: JobRouteDeps): GatewayResponse | undefined {
   const { segments, request, services } = deps;
+  if (segments.length === 5 && segments[0] === "conversations" && segments[2] === "widgets" && segments[4] === "jobs" && request.method === "GET") {
+    return listInstanceJobs(deps);
+  }
   if (segments.length !== 6 || segments[0] !== "conversations" || segments[2] !== "widgets" || segments[4] !== "jobs") {
     return undefined;
   }
