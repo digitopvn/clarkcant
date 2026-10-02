@@ -1268,6 +1268,100 @@ policy cho phép `media-src 'self' blob:` ở cả [apps/web/index.html](../apps
 ([#374](https://github.com/digitopvn/clarkcant/issues/374)). Embed YouTube là một frame, do `frame-src` quản lý, không
 thuộc directive này.
 
+### 8.13 Bản đồ
+
+`canvas.map@1` vẽ một tập điểm, đường và vùng có giới hạn trên một nền bản đồ ngoại tuyến
+([#322](https://github.com/digitopvn/clarkcant/issues/322)). Vị trí là `[kinh độ, vĩ độ]` WGS84, theo một tập con chặt
+của hình học GeoJSON: `Point`, `LineString` và `Polygon` (một đường viền cộng tối đa 15 lỗ, mỗi vòng phải khép kín). Một
+bản đồ có tối đa 200 đối tượng và tổng cộng 5.000 vị trí. ID dài tối đa 120 ký tự, nhãn 120, mô tả 300, tiêu đề 200.
+`view` tùy chọn có dạng `{ center, zoom }` (zoom là số nguyên từ 0 đến 18) và thay cho khung nhìn tự canh.
+
+Khi đặt, bản đồ bị từ chối kèm lý do nếu có: tọa độ nằm ngoài địa cầu, loại hình học lạ, quá nhiều đối tượng hoặc vị
+trí, chữ quá dài hoặc lặp, ký tự ẩn, và **bất kỳ URL nào**. Một khóa mang tên liên kết (`url`, `href`, `src`, `tile`,
+`endpoint`, …) hoặc một giá trị là liên kết (`https://`, `//`, `data:`, `javascript:`, `blob:`) đều bị từ chối, nên props
+không bao giờ nêu được một host. Widget này không làm geocoding, chỉ đường, định vị, vector tile, 3D, gom cụm hay
+chỉnh sửa.
+
+Nền bản đồ là lớp đất liền Natural Earth tỉ lệ 1:110m, phiên bản 5.1.2, thuộc phạm vi công cộng. Nó được sinh vào
+[map-basemap.ts](../packages/conversation-client/src/map-basemap.ts) bằng
+[build-map-basemap.mjs](../tools/build-map-basemap.mjs), công cụ này ghim SHA-256 của tệp nguồn, và bản đồ ghi nguồn ngay
+dưới mỗi hình vẽ. Nền đi kèm client, nên khi không có tile policy, bản đồ không gửi yêu cầu nào ra ngoài node.
+
+Ô bản đồ raster chỉ xuất hiện khi node có tile policy, tức preference đã đăng ký `maps.tilePolicy`. Mặc định nó là
+`null`, và chỉ con người được ghi hoặc hoàn tác nó: AI client qua socket hay MCP đều bị từ chối (`isPersonOnlyRoute`).
+Một policy nêu đúng một nhà cung cấp:
+
+```json
+{
+  "origin": "https://tiles.example.com",
+  "template": "/styles/basic/{z}/{x}/{y}.png",
+  "attribution": "© Example contributors",
+  "maxZoom": 17,
+  "credential": { "secret": "tiles-key", "header": "x-api-key" }
+}
+```
+
+`origin` phải đúng dạng `scheme://host[:port]`: https, hoặc http chỉ với địa chỉ loopback. `template` là một đường dẫn
+trên origin đó, có `{z}`, `{x}` và `{y}`, mỗi thứ đúng một lần. Trang không bao giờ fetch nhà cung cấp. Nó hỏi node qua
+`GET /map-tiles/:z/:x/:y`, và node:
+
+- dựng địa chỉ từ policy;
+- kiểm tra z, x, y theo `maxZoom` (tối đa 19) và lưới ô;
+- không đi theo redirect;
+- chỉ trả PNG hoặc WebP, kiểm cả content type của nhà cung cấp lẫn bytes, tối đa 512 KiB, kèm `nosniff`;
+- giới hạn tốc độ 12 yêu cầu mỗi giây, dồn tối đa 48;
+- cache tối đa 256 ô hoặc 24 MiB, trong một giờ.
+
+`GET /map-tiles` cho trang biết origin, attribution và zoom tối đa của nhà cung cấp, không bao giờ cho biết template
+hay khóa. Khi không có policy, mọi yêu cầu ô đều bị từ chối với `MAP_TILES_OFF` và không ai bị hỏi. Trang vẽ ô từ URL
+`blob:`, nên page policy không đổi.
+
+`credential` tùy chọn nêu tên một secret mà node giữ. Secret đó phải liệt kê consumer `maps:tiles`, và được chèn qua
+secret broker thành HTTP header hoặc query parameter mà policy chỉ định. Khóa không bao giờ đến trang, props, state, log,
+khóa cache, thông báo lỗi hay model. Dòng attribution dưới bản đồ nêu origin của ô và attribution của nó, và bản đồ
+không có huy hiệu "live".
+
+`map.select` mang `{ selectedId }` (rỗng để bỏ chọn), `map.view` mang `{ center, zoom }`. Node kiểm tra cả hai theo props
+hiện tại và giữ chúng làm state của widget. Một lần kéo bản đồ được ghi 400 ms sau khi dừng, nên một chuỗi phím chỉ là
+một lần ghi. `map.select` cũng là một sự kiện của composition graph, có trường `selectedId`.
+
+Vùng bản đồ nhận focus và dùng được bằng bàn phím:
+
+- phím mũi tên để kéo, giữ Shift để kéo xa hơn;
+- `+` và `-` để phóng to, thu nhỏ, `0` để về khung nhìn ban đầu;
+- `N` và `P` để đi qua các đối tượng, Escape để bỏ chọn.
+
+Kéo bằng con trỏ cũng được. Các nút phóng to, thu nhỏ và về ban đầu rộng 44 px. Một live region đọc khung nhìn và
+lựa chọn. Bên dưới bản đồ, một bảng liệt kê mọi đối tượng cùng loại và vị trí. Nút Chọn trong bảng chọn đối tượng trên
+bản đồ và đưa nó vào khung nhìn; chọn trên bản đồ thì tô sáng dòng tương ứng. Bản đồ chỉ trượt khi được phép chuyển
+động; với giảm chuyển động, khung nhìn đổi ngay. Mọi màu đều là theme token. Bản đồ hẹp đưa các nút điều khiển xuống
+dưới hình và vẽ nhãn lớn hơn, và không có gì tràn ở 390 px.
+
+Tài liệu semantic báo:
+
+- số đối tượng và số lượng từng loại;
+- vùng đang thấy và zoom;
+- nhãn và tọa độ của đối tượng đang chọn;
+- ô bản đồ là ngoại tuyến hay từ origin trong policy.
+
+Bản văn bản thay thế liệt kê mọi đối tượng cùng loại và vị trí. Cả hai đều nằm trong `SEMANTIC_LIMITS`.
+
+Kiểm thử: [map-view.spec.ts](../packages/contracts/test/map-view.spec.ts) kiểm giới hạn, việc từ chối URL, phép chiếu,
+semantic, schema của tile policy và route chỉ dành cho người;
+[map-view.spec.ts](../apps/runtime/test/map-view.spec.ts) kiểm việc đặt, từ chối, state và semantic khi có và không có
+policy; [map-tiles.spec.ts](../apps/runtime/test/map-tiles.spec.ts) kiểm allowlist của proxy, content type, giới hạn
+kích thước và zoom, cache, tốc độ, việc từ chối redirect, và rằng khóa được thêm vào nhưng không bao giờ bị trả về;
+[map-layout.spec.ts](../packages/conversation-client/test/map-layout.spec.ts) kiểm nguồn gốc của nền bản đồ, phép
+chiếu và lưới ô; [map-schemas.spec.ts](../packages/widget-catalog/test/map-schemas.spec.ts) kiểm fixture và sự khớp
+nhau giữa schema và runtime. Browser journey [map-view.spec.ts](../apps/web/e2e/map-view.spec.ts) bao quát:
+
+- chọn bằng bàn phím và bằng bảng, giữ qua lần tải lại;
+- không có yêu cầu nào ra ngoài node khi không có policy;
+- ô fixture được lấy qua node kèm attribution;
+- các trường hợp bị từ chối;
+- cả hai theme, giảm chuyển động và 390 px;
+- bản xem trước trong Widget Library.
+
 ---
 
 ## 9. Semantic contract cho voice và lượt kế tiếp
