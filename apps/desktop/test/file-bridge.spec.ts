@@ -45,6 +45,8 @@ describe("what the picker offers", () => {
   it("names a file's type from its extension, and anything else as a type the node will refuse", () => {
     expect(mimeForFileName("Báo cáo.CSV")).toBe("text/csv");
     expect(mimeForFileName("notes.md")).toBe("text/markdown");
+    expect(mimeForFileName("so-lieu.tsv")).toBe("text/tab-separated-values");
+    expect(saveNameForType("so-lieu", "text/tab-separated-values")).toBe("so-lieu.tsv");
     // No type rather than a generic binary one: the node reads the bytes, and refuses a file it cannot hold with its reason.
     expect(mimeForFileName("setup.exe")).toBe("");
     expect(mimeForFileName("README")).toBe("");

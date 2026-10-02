@@ -375,7 +375,7 @@ function otherConversation(
 }
 
 /** Types whose bytes are text a model can be shown as an excerpt. Everything else is described, never quoted. */
-const EXCERPT_TYPES: ReadonlySet<string> = new Set(["text/plain", "text/markdown", "text/csv", "application/json"]);
+const EXCERPT_TYPES: ReadonlySet<string> = new Set(["text/plain", "text/markdown", "text/csv", "text/tab-separated-values", "application/json"]);
 
 /** How much of a text file an agent button's context quotes, in bytes, before the per-reference character clip. */
 export const ARTIFACT_CONTEXT_EXCERPT_BYTES = 3_000;
@@ -535,7 +535,7 @@ export function appendArtifactChunk(
 }
 
 /** Types an empty working artifact may be finalized as. */
-const EMPTY_TEXT_TYPES: ReadonlySet<string> = new Set(["text/plain", "text/markdown", "text/csv"]);
+const EMPTY_TEXT_TYPES: ReadonlySet<string> = new Set(["text/plain", "text/markdown", "text/csv", "text/tab-separated-values"]);
 
 /**
  * Fix a working artifact's bytes.

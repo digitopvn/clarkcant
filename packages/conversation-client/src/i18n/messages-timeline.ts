@@ -567,6 +567,7 @@ export const MESSAGES_TIMELINE_VI = {
     "Không tải lại được widget này: liên kết truy cập đã hết hạn và liên kết mới cũng không dùng được. Những gì widget đã lưu vẫn được giữ trên node này. Hãy thử lại, hoặc đóng rồi mở lại widget.",
   "widgets.frame.reloadFailedReason": "Lý do: {reason}",
   "widgets.frame.retry": "Thử lại",
+  "widgets.frame.semanticNotSent": "Chưa gửi kịp cho Clark điều widget đang hiển thị, nên hành động này chưa chạy. Nội dung trong widget vẫn giữ nguyên. Hãy thử lại sau giây lát.",
 
   // widget-artifacts.tsx — host chrome for a widget's file request
   "widgets.artifacts.pickTitle": "Widget này xin một tệp",
@@ -598,6 +599,7 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.artifacts.type.textPlain": "tệp văn bản thuần",
   "widgets.artifacts.type.markdown": "tệp Markdown",
   "widgets.artifacts.type.csv": "bảng tính CSV",
+  "widgets.artifacts.type.tsv": "bảng tính TSV",
   "widgets.artifacts.type.json": "tệp JSON",
   "widgets.artifacts.type.pdf": "tệp PDF",
   "widgets.artifacts.type.imageAny": "ảnh",
@@ -1404,6 +1406,7 @@ export const MESSAGES_TIMELINE_EN = {
     "This widget could not load again: its access link had expired, and a fresh one did not work. What it saved is kept on this node. Try again, or close and reopen the widget.",
   "widgets.frame.reloadFailedReason": "Reason: {reason}",
   "widgets.frame.retry": "Try again",
+  "widgets.frame.semanticNotSent": "What the widget shows did not reach Clark in time, so this action did not run. Everything in the widget is kept as it was. Try again in a moment.",
 
   "widgets.artifacts.pickTitle": "This widget asks for a file",
   "widgets.artifacts.pickBody":
@@ -1433,6 +1436,7 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.artifacts.type.textPlain": "plain text files",
   "widgets.artifacts.type.markdown": "Markdown files",
   "widgets.artifacts.type.csv": "CSV spreadsheets",
+  "widgets.artifacts.type.tsv": "TSV spreadsheets",
   "widgets.artifacts.type.json": "JSON files",
   "widgets.artifacts.type.pdf": "PDF files",
   "widgets.artifacts.type.imageAny": "images",

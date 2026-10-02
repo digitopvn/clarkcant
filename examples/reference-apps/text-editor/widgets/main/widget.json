@@ -1,0 +1,159 @@
+{
+  "id": "com.clarkcant.reference.text-editor.main@1",
+  "version": "1.0.0",
+  "renderer": "isolated-app",
+  "propsSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "maxLength": 200
+      },
+      "rewriteBinding": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": false
+  },
+  "eventSchemas": {},
+  "stateSchema": {
+    "type": "object",
+    "properties": {
+      "file": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "v": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "artifactId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "attachment",
+              "working",
+              "finalized",
+              "external"
+            ]
+          },
+          "mimeType": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "sizeBytes": {
+            "type": "number",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "digest": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "v",
+          "artifactId",
+          "kind",
+          "mimeType",
+          "sizeBytes",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "base": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "v": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "artifactId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "attachment",
+              "working",
+              "finalized",
+              "external"
+            ]
+          },
+          "mimeType": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "sizeBytes": {
+            "type": "number",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "digest": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "v",
+          "artifactId",
+          "kind",
+          "mimeType",
+          "sizeBytes",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "draft": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "maxLength": 12288
+      },
+      "draftTooLarge": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "stateVersion": 0,
+  "semanticDescription": "A text editor holding one file the person opened: its name, line count, whether it has unsaved changes, and the selected text.",
+  "requestedCapabilities": [],
+  "sizing": {
+    "compact": true,
+    "expanded": true,
+    "minHeight": 320
+  },
+  "textFallback": "Trình soạn thảo văn bản: mở, sửa và lưu một tệp văn bản; nội dung chưa xem được ở chế độ chỉ có chữ.",
+  "effectCategories": [],
+  "datasetRefs": []
+}

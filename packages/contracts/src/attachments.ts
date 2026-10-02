@@ -63,6 +63,7 @@ const MIME_KINDS: readonly { mime: string; kind: AttachmentKind }[] = [
   { mime: "text/plain", kind: "text" },
   { mime: "text/markdown", kind: "text" },
   { mime: "text/csv", kind: "text" },
+  { mime: "text/tab-separated-values", kind: "text" },
   { mime: "application/json", kind: "text" },
   { mime: "audio/wav", kind: "audio" },
 ];

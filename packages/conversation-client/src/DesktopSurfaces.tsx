@@ -729,12 +729,16 @@ export function PinnedLiveSurface({
             }
           }}
           /*
-           * What the widget says it shows, for the next turn and for voice. Nothing waits on it: a publish that does not
-           * arrive leaves the widget out of the next turn's note, and changes nothing on screen.
+           * What the widget says it shows, for the next turn and for voice. The frame waits on it only before a press
+           * the widget makes, which may read it; otherwise a publish that does not arrive leaves the widget out of the
+           * next turn's note, and changes nothing on screen.
            */
-          publishSemantic={(proposal) => {
-            client.publishWidgetSemantic(conversationId, instanceId, proposal).catch(() => undefined);
+          publishSemantic={async (proposal, signal) => {
+            await client.publishWidgetSemantic(conversationId, instanceId, proposal, signal);
           }}
+          contextBindings={live.bindings.flatMap((entry) =>
+            entry.contextRefs !== undefined && entry.contextRefs.length > 0 ? [entry.actionBindingId] : [],
+          )}
           brokeredCapabilities={frame.grantedCapabilities}
           allowedOrigins={frame.allowedOrigins}
           knownActionBindings={live.bindings.map((entry) => entry.actionBindingId)}

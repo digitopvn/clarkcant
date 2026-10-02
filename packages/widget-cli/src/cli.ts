@@ -1,7 +1,8 @@
+#!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
 import {
@@ -36,7 +37,7 @@ import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
  * opposite.
  */
 
-const TEMPLATES = ["blank", "form", "dashboard", "media-tool"] as const;
+const TEMPLATES = ["blank", "form", "dashboard", "pure-ui", "media-tool"] as const;
 type Template = (typeof TEMPLATES)[number];
 
 /**
@@ -48,7 +49,10 @@ type Template = (typeof TEMPLATES)[number];
  * ran). A list both sides read has nothing to disagree with.
  */
 export const WIDGET_COMMANDS = [
-  { name: "init", usage: "clark widget init <dir> [--template blank|form|dashboard|media-tool]   scaffold a package" },
+  {
+    name: "init",
+    usage: "clark widget init <dir> [--template blank|form|dashboard|pure-ui|media-tool]   scaffold a package",
+  },
   { name: "test", usage: "clark widget test [dir]                                     run the conformance suite" },
   { name: "pack", usage: "clark widget pack [dir]                                     build the artifact and its digest" },
   {
@@ -133,6 +137,57 @@ function definitionFor(id: string, template: Template): Record<string, unknown> 
   };
 }
 
+/** The reference app's own files that describe or test that app rather than the package a person starts from. */
+function skippedFromReference(path: string): boolean {
+  return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "README.vi.md";
+}
+
+/**
+ * Where `--template pure-ui` is copied from: the reference text editor, a whole working app with no service.
+ *
+ * Copied rather than restated, so the template is the app this repository's own tests keep working (open, edit,
+ * save through the host, ask Clark) instead of a second copy of it that nobody runs.
+ */
+const PURE_UI_SOURCE = fileURLToPath(new URL("../../../examples/reference-apps/text-editor/", import.meta.url));
+
+function initFromReference(root: string, id: string): void {
+  if (!existsSync(join(PURE_UI_SOURCE, "clarkcant.json"))) {
+    throw new Error(`the pure-ui template is copied from ${PURE_UI_SOURCE}, which is missing from this checkout`);
+  }
+  const facetId = `${id}.main@1`;
+  for (const { path, bytes } of packageFiles(PURE_UI_SOURCE)) {
+    if (skippedFromReference(path)) continue;
+    const target = join(root, ...path.split("/"));
+    mkdirSync(dirname(target), { recursive: true });
+    if (path === "clarkcant.json") {
+      const manifest = JSON.parse(bytes.toString("utf8")) as { facets: Record<string, unknown>[] } & Record<string, unknown>;
+      const copy = {
+        ...manifest,
+        id,
+        version: "0.1.0",
+        displayName: "My Widget",
+        description: "A text editor that opens, edits and saves a file the person picks.",
+        facets: manifest.facets.map((facet) => ({ ...facet, id: facetId })),
+        publisher: { id: "example", sourceUrl: "https://github.com/example/my-widget", license: "MIT" },
+      };
+      writeFileSync(target, `${JSON.stringify(copy, null, 2)}\n`);
+    } else if (path === "widgets/main/widget.json") {
+      const definition = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
+      writeFileSync(target, `${JSON.stringify({ ...definition, id: facetId, version: "0.1.0" }, null, 2)}\n`);
+    } else {
+      writeFileSync(target, bytes);
+    }
+  }
+  mkdirSync(join(root, "test"), { recursive: true });
+  writeFileSync(
+    join(root, "README.md"),
+    "# My Widget\n\nA copy of the reference text editor: it opens a file through the host, keeps the draft in widget " +
+      "state and saves through the host's export. Its rules are in `widgets/main/editor-core.js`.\n\n" +
+      "Run `clark widget test` then `clark widget pack`.\n",
+  );
+  writeFileSync(join(root, "LICENSE"), "MIT\n");
+}
+
 /**
  * Where `--template media-tool` is copied from: the reference media render tool, a widget and a service whose one
  * capability runs as a job that reads a picked file through the host.
@@ -142,11 +197,6 @@ function definitionFor(id: string, template: Template): Record<string, unknown> 
  */
 const MEDIA_TOOL_SOURCE = fileURLToPath(new URL("../../../examples/reference-apps/media-render/", import.meta.url));
 const MEDIA_TOOL_ID = "com.clarkcant.reference.media-render";
-
-/** The reference app's own files that describe or test that app rather than the package a person starts from. */
-function skippedFromReference(path: string): boolean {
-  return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "README.vi.md";
-}
 
 /**
  * Copy the reference media tool under a new package id. Every id the reference names — the package, its widget, its
@@ -197,6 +247,10 @@ function init(root: string, template: Template): void {
   // service facet added later can name its capabilities under this id.
   const slug = (root.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z]+/, "");
   const id = `com.example.${slug === "" ? "widget" : slug}`;
+  if (template === "pure-ui") {
+    initFromReference(root, id);
+    return;
+  }
   if (template === "media-tool") {
     initMediaTool(root, id);
     return;
@@ -522,6 +576,11 @@ function publish(root: string): number {
 export async function runCli(argv: readonly string[]): Promise<number> {
   const [group, command, ...rest] = argv;
   if (group === "theme") return runThemeCli(argv.slice(1), { pack, report });
+  // Help that was asked for is a success; help shown because the command was wrong is not.
+  if (group === "--help" || group === "-h" || group === "help") {
+    process.stdout.write(`${usage()}\n`);
+    return 0;
+  }
   if (group !== "widget" || command === undefined) {
     process.stdout.write(`${usage()}\n`);
     return 2;
@@ -594,10 +653,29 @@ export { applyShellAction, auditFrame, initialState, renderShell } from "./dev-s
 /*
  * The bin entry.
  *
- * Guarded by comparing the module URL to argv[1], so importing this file — which the exports above exist for — does
- * not start a server or run a command.
+ * Guarded by comparing this module's file to argv[1], so importing this file — which the exports above exist for —
+ * does not start a server or run a command.
+ *
+ * Both sides are compared as real paths. Started through a package manager's bin shim, argv[1] is the path inside
+ * the consumer's dependency folder, a symlink or junction into this workspace, while `import.meta.url` is the
+ * resolved file — so comparing the two URLs made `clark` a silent no-op. Windows paths are case-insensitive, and a
+ * drive letter can arrive in either case.
  */
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+export function isMainModule(entry: string | undefined, moduleUrl: string): boolean {
+  if (entry === undefined) return false;
+  let entryPath: string;
+  try {
+    entryPath = realpathSync(entry);
+  } catch {
+    return false;
+  }
+  const modulePath = realpathSync(fileURLToPath(moduleUrl));
+  return process.platform === "win32"
+    ? entryPath.toLowerCase() === modulePath.toLowerCase()
+    : entryPath === modulePath;
+}
+
+if (isMainModule(process.argv[1], import.meta.url)) {
   process.exitCode = await runCli(process.argv.slice(2));
 }
 export { readPackage, parseManifest, widgetManifestV1Schema } from "@clarkcant/core";

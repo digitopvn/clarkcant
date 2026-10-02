@@ -32,6 +32,7 @@ export const PICKABLE_TYPES = Object.freeze([
   { mime: "text/plain", extensions: ["txt", "text", "log"] },
   { mime: "text/markdown", extensions: ["md", "markdown"] },
   { mime: "text/csv", extensions: ["csv"] },
+  { mime: "text/tab-separated-values", extensions: ["tsv", "tab"] },
   { mime: "application/json", extensions: ["json"] },
   { mime: "audio/wav", extensions: ["wav"] },
 ]);

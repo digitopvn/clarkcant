@@ -34,6 +34,7 @@ const TYPE_LABELS: Readonly<Record<string, MessageKey>> = {
   "text/plain": "widgets.artifacts.type.textPlain",
   "text/markdown": "widgets.artifacts.type.markdown",
   "text/csv": "widgets.artifacts.type.csv",
+  "text/tab-separated-values": "widgets.artifacts.type.tsv",
   "application/json": "widgets.artifacts.type.json",
   "application/pdf": "widgets.artifacts.type.pdf",
   "image/*": "widgets.artifacts.type.imageAny",

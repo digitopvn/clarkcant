@@ -49,6 +49,8 @@ const EXTENSION_TYPES: Record<string, string> = {
   ".md": "text/markdown",
   ".markdown": "text/markdown",
   ".csv": "text/csv",
+  ".tsv": "text/tab-separated-values",
+  ".tab": "text/tab-separated-values",
   ".json": "application/json",
   ".pdf": "application/pdf",
   ".png": "image/png",

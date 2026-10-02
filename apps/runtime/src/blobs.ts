@@ -494,11 +494,12 @@ export function sniffContentType(bytes: Uint8Array, declaredMime: string): Conte
   };
 }
 
-const TEXT_MIMES: readonly string[] = ["text/plain", "text/markdown", "text/csv", "application/json"];
+const TEXT_MIMES: readonly string[] = ["text/plain", "text/markdown", "text/csv", "text/tab-separated-values", "application/json"];
 
 function extensionForText(mime: string): string {
   if (mime === "text/markdown") return "md";
   if (mime === "text/csv") return "csv";
+  if (mime === "text/tab-separated-values") return "tsv";
   if (mime === "application/json") return "json";
   return "txt";
 }
