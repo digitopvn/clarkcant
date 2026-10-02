@@ -391,6 +391,109 @@ test("typing on while the draft is being kept is not mistaken for another window
   await expect(restored.locator("[data-editor-text]")).toHaveValue(`${FILE_TEXT}Một hai ba`);
 });
 
+test("asking Clark waits for the selection still on its way, and is refused with what happens next when it cannot arrive", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const frame = await openEditor(page);
+  await openInBrowser(page, frame, FILE_NAME, FILE_TEXT);
+  await page.waitForTimeout(800);
+
+  // Every description the editor sends from here on is held on its way to the node, as a stalled request would be.
+  const held: (() => void)[] = [];
+  let holding = true;
+  await page.route("**/widgets/*/semantic", async (route) => {
+    if (holding) await new Promise<void>((resolve) => held.push(resolve));
+    await route.continue().catch(() => undefined);
+  });
+  const actions: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && /\/widgets\/[^/]+\/actions$/.test(new URL(request.url()).pathname)) actions.push(request.url());
+  });
+
+  // The selection settles and is sent; the press comes while that send is still on its way, so the editor publishes
+  // nothing new and the press has only the send in flight to wait for.
+  await selectText(frame, SENTENCE);
+  await expect.poll(() => held.length, { timeout: 10_000 }).toBeGreaterThan(0);
+  await frame.locator("[data-editor-ask]").click();
+  await page.waitForTimeout(1_500);
+  // The agent press reads the selection, so it waits for it rather than running against an older description.
+  expect(actions).toEqual([]);
+  await expect(frame.locator("[data-editor-status='asking']")).toHaveCount(1);
+
+  // The wait is bounded: the press is refused with the host's sentence, which says what failed, what is kept and what
+  // to do next, and the text area is editable again.
+  const refused = frame.locator("[data-editor-status='refused']");
+  await expect(refused).toHaveCount(1, { timeout: 15_000 });
+  await expect(refused).toContainText("Chưa gửi kịp cho Clark điều widget đang hiển thị");
+  await expect(refused).toContainText("Hãy thử lại sau giây lát.");
+  expect(actions).toEqual([]);
+  await expect(frame.locator("[data-editor-text]")).not.toHaveAttribute("readonly");
+  await expect(frame.locator("[data-editor-text]")).toHaveValue(FILE_TEXT);
+
+  // Once the node answers again, the same press goes through and Clark reads the selection.
+  holding = false;
+  for (const release of held.splice(0)) release();
+  await page.unroute("**/widgets/*/semantic");
+  await selectText(frame, SENTENCE);
+  await frame.locator("[data-editor-ask]").click();
+  await expect(page.getByText(`Fixture: viết lại đoạn host đọc được "${SENTENCE}"`).last()).toBeVisible({ timeout: 30_000 });
+  await expect(frame.locator("[data-editor-proposal]")).toBeVisible({ timeout: 30_000 });
+});
+
+test("a view that could not reopen the file never writes, so another view's unsaved draft is kept", async ({ page, context }) => {
+  test.setTimeout(180_000);
+  const other = page;
+  await other.setViewportSize({ width: 1280, height: 900 });
+  const frame = await openEditor(other);
+  await openInBrowser(other, frame, FILE_NAME, FILE_TEXT);
+  await other.waitForTimeout(800);
+
+  // A second view of the same conversation, whose read of the saved copy is refused, as after its grant lapsed.
+  const conversation = await other.evaluate(() => window.sessionStorage.getItem("cc_conversation"));
+  expect(conversation).not.toBeNull();
+  const empty = await context.newPage();
+  await empty.setViewportSize({ width: 1280, height: 900 });
+  await empty.route("**/artifacts/*/content*", (route) =>
+    route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ code: "ARTIFACT_GRANT_EXPIRED", message: "the grant has lapsed" }) }),
+  );
+  const writes: string[] = [];
+  empty.on("request", (request) => {
+    if (request.method() === "POST" && /\/widgets\/[^/]+\/state$/.test(new URL(request.url()).pathname)) writes.push(request.url());
+  });
+  await empty.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+  await empty.evaluate((id) => window.sessionStorage.setItem("cc_conversation", id as string), conversation);
+  await empty.reload();
+  await expect(empty.locator("[data-pin-live] [data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", { timeout: 30_000 });
+  const emptyFrame = empty.frameLocator(FRAME);
+  await expect(emptyFrame.locator("#root[data-editor-ready='true']")).toHaveCount(1, { timeout: 20_000 });
+  // It shows no document, and says why, rather than an empty text that would pass for the file.
+  await expect(emptyFrame.locator("[data-editor-name]")).toHaveText("Chưa mở tệp nào");
+  await expect(emptyFrame.locator("[data-editor-status='refused']")).toContainText("Hãy mở lại tệp");
+
+  // The first view types a draft, which is kept in widget state.
+  const area = frame.locator("[data-editor-text]");
+  await area.focus();
+  await area.press("ControlOrMeta+End");
+  await area.pressSequentially("Nháp chưa lưu.");
+  await other.waitForTimeout(1_200);
+
+  // In the view with no document, Escape has nothing to keep, offers no conflict, and writes nothing.
+  await emptyFrame.locator("#root").click();
+  await empty.keyboard.press("Escape");
+  await empty.waitForTimeout(1_000);
+  await expect(emptyFrame.locator("[data-editor-conflict]")).toBeHidden();
+  expect(writes).toEqual([]);
+
+  // The first view's draft is still what the node keeps: a reload brings it back.
+  await other.reload();
+  await expect(other.locator("[data-pin-live] [data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", { timeout: 30_000 });
+  const restored = other.frameLocator(FRAME);
+  await expect(restored.locator("#root[data-editor-ready='true']")).toHaveCount(1, { timeout: 20_000 });
+  await expect(restored.locator("[data-editor-text]")).toHaveValue(`${FILE_TEXT}Nháp chưa lưu.`);
+  await expect(restored.locator("[data-editor-dirty]")).toHaveAttribute("data-editor-dirty", "true");
+  await empty.close();
+});
+
 test("the editor is usable by keyboard alone", async ({ page }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1280, height: 900 });
