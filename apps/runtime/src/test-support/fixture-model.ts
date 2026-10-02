@@ -1,4 +1,12 @@
-import { type CapabilityRef, type Instant, type MessageBlock, advanceEffect, instantSchema, platformForHost } from "@clarkcant/contracts";
+import {
+  type CapabilityRef,
+  type Instant,
+  type MessageBlock,
+  advanceEffect,
+  instantSchema,
+  platformForHost,
+  widgetDefinitionSchema,
+} from "@clarkcant/contracts";
 import {
   HOST_API_VERSION,
   type ConductorDeps,
@@ -33,13 +41,13 @@ import {
 } from "@clarkcant/storage";
 import { fixturesFor } from "@clarkcant/widget-catalog";
 import { definitionDigest } from "@clarkcant/widget-host";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 
-import { compileWidgetAction } from "../application/action-bindings.ts";
 import { artifactRefFromRecord } from "../artifact-broker.ts";
 import { createAskUserQuestionTool } from "../ask-user-question.ts";
+import { compileWidgetAction } from "../application/action-bindings.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
 import { blobsDir, readBlob } from "../blobs.ts";
@@ -296,6 +304,13 @@ const SPREADSHEET_FORMAT_INTENT =
   "format: percent <range>, where <range> is the selected A1 range the host read from the spreadsheet. " +
   "The spreadsheet applies only that line.";
 
+/** The reference text editor's definition, as its package ships it. */
+const TEXT_EDITOR_DEFINITION = new URL("../../../../examples/reference-apps/text-editor/widgets/main/widget.json", import.meta.url);
+
+/** What the editor's rewrite button asks Clark; the fixture recognises its own button by it. */
+const TEXT_EDITOR_REWRITE_INTENT =
+  "Viết lại đoạn văn bản đang được chọn trong trình soạn thảo. Chỉ trả lời bằng đoạn thay thế, trong một khối ``` duy nhất.";
+
 /**
  * The scripted composer.
  *
@@ -338,6 +353,22 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     const pressed = input.note === undefined ? null : /You offered it for: (.+?)\nDo that now\.$/su.exec(input.note);
+    /*
+     * The reference text editor's "rewrite the selection" button, answered with a replacement.
+     *
+     * The excerpt is read from the data section the host built from the editor's semantic document, never from the
+     * guidance note, so the reply quotes what reached the model. The replacement is the excerpt upper-cased: a
+     * deterministic change a journey can assert, inside the one fenced block the button's intent asks for.
+     */
+    if (pressed !== null && (pressed[1] ?? "").includes(TEXT_EDITOR_REWRITE_INTENT)) {
+      const quoted = /^\s*selectedText: ("(?:[^"\\]|\\.)*")$/mu.exec(input.data ?? "");
+      const excerpt = quoted === null ? undefined : (JSON.parse(quoted[1] ?? '""') as unknown);
+      const reply =
+        typeof excerpt !== "string" || excerpt === ""
+          ? "Fixture: host không gửi đoạn nào đang được chọn, nên không có gì để viết lại."
+          : `Fixture: viết lại đoạn host đọc được "${excerpt}".\n\`\`\`text\n${excerpt.toLocaleUpperCase("vi")}\n\`\`\``;
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
     if (pressed !== null) {
       const context = (input.data ?? "").split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim();
       const reply =
@@ -1850,6 +1881,54 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * the node resolves a definition to a package by reading that package's own `widget.json`, so a fixture that
      * disagreed with the file would describe a widget nothing can serve.
      */
+    /*
+     * The reference text editor, placed with its own "rewrite the selection" button.
+     *
+     * The definition is the package's own `widget.json`, read from disk, so the instance is one the directory entry
+     * serves. The button is compiled by the host's real binding compiler with the selection and the widget's semantic
+     * document as its context; its id reaches the frame through props, because the frame can only press a binding the
+     * instance holds and has no other way to learn its id.
+     */
+    if (/trình soạn thảo|text editor/i.test(input.text)) {
+      const definition = widgetDefinitionSchema.parse(JSON.parse(readFileSync(TEXT_EDITOR_DEFINITION, "utf8")));
+      const conductor = deps.services().conductor;
+      const packageDigest = definitionDigest(definition);
+      const compiled = compileWidgetAction(
+        {
+          db: deps.services().runtime.db,
+          nodeId: deps.services().runtime.identity.nodeId,
+          serviceHost: deps.services().serviceHost,
+          now: () => new Date().toISOString(),
+          newId: conductor.newId,
+        },
+        {
+          definitionRef: { id: definition.id, version: definition.version, packageDigest },
+          label: "Nhờ Clark viết lại đoạn đã chọn",
+          action: { kind: "agent", intent: TEXT_EDITOR_REWRITE_INTENT, contextRefs: ["selection", "widget"] },
+          ownerPrincipalId: input.principal.principalId,
+        },
+      );
+      if (!compiled.ok) throw new Error(`the text editor's rewrite button did not compile: ${compiled.message}`);
+      const rewriteBinding = compiled.bindTo("pending").actionBindingId;
+      const instance = createInstance(conductor, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Trình soạn thảo (fixture)", rewriteBinding },
+      });
+      saveActionBinding(conductor, compiled.bindTo(instance.instanceId));
+      const snapshot = captureSnapshot(conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: trình soạn thảo văn bản mẫu, trong frame cách ly (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
     /*
      * A widget that holds files by reference, in its own frame: the journey for `artifacts@1`. Like the frame widget
      * above, its definition agrees with the fixture package on disk (`apps/web/e2e/fixtures/artifact-widget`).

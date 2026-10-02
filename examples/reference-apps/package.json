@@ -1,9 +1,9 @@
 {
   "name": "@clarkcant/reference-apps",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "Reference apps built on the public package model: a spreadsheet with CSV and TSV import and export, formulas and formatting Clark applies.",
-  "license": "MIT",
+  "description": "Reference widget apps that use only shipped host contracts: a text editor that opens and saves a real file, and a spreadsheet with CSV and TSV import and export, formulas and formatting Clark applies.",
+  "license": "Apache-2.0",
   "type": "module",
   "clarkcant": {
     "phase": "P6",
@@ -11,7 +11,7 @@
     "blueprint": "docs/widget-development.md"
   },
   "scripts": {
-    "test": "clark widget test spreadsheet"
+    "test": "clark widget test text-editor && clark widget test spreadsheet"
   },
   "devDependencies": {
     "@clarkcant/widget-cli": "workspace:*"
