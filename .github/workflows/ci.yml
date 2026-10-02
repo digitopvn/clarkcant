@@ -4,6 +4,23 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  # A manual run can repeat chosen browser specs, so a test that failed only on
+  # the runner can be shown to pass there more than once. Left empty, the
+  # browser suite runs exactly as it does on a push.
+  workflow_dispatch:
+    inputs:
+      e2e_specs:
+        description: >-
+          Browser specs to run, space-separated, each a path or path:line (empty
+          runs the whole suite)
+        required: false
+        default: ""
+      e2e_repeat:
+        description: >-
+          Times to run each selected test, with retries off (empty runs each
+          once, with the usual retry)
+        required: false
+        default: ""
 
 # Least privilege: this workflow only reads the repository.
 permissions:
@@ -211,8 +228,29 @@ jobs:
       - name: Install the browser the suite launches
         run: pnpm exec playwright install --with-deps chromium
 
+      # The inputs reach the shell through the environment, never through the
+      # script text, so a manual run cannot inject a command. A repeat turns
+      # retries off: a test that needed its retry did not pass that many times.
       - name: Browser suite
-        run: pnpm test:e2e
+        env:
+          E2E_SPECS: ${{ inputs.e2e_specs }}
+          E2E_REPEAT: ${{ inputs.e2e_repeat }}
+        run: |
+          set -f
+          args=()
+          if [ -n "$E2E_REPEAT" ]; then
+            case "$E2E_REPEAT" in
+              *[!0-9]* | 0*) echo "e2e_repeat must be a positive whole number, got '$E2E_REPEAT'" >&2; exit 1 ;;
+            esac
+            args+=(--repeat-each="$E2E_REPEAT" --retries=0)
+          fi
+          for spec in $E2E_SPECS; do
+            case "$spec" in
+              -*) echo "e2e_specs takes spec paths, not options: '$spec'" >&2; exit 1 ;;
+            esac
+            args+=("$spec")
+          done
+          pnpm test:e2e "${args[@]}"
 
       # A failure on the runner is otherwise known only by its message: the trace, screenshot and page snapshot of
       # each failed attempt are what show what the page was doing when it failed.
