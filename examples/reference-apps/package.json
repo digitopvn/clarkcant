@@ -11,7 +11,7 @@
     "blueprint": "docs/widget-development.md"
   },
   "scripts": {
-    "test": "clark widget test text-editor && clark widget test spreadsheet && clark widget test image-generator && clark widget test media-render"
+    "test": "clark widget test text-editor && clark widget test spreadsheet && clark widget test image-generator && clark widget test media-render && clark widget test connected-app"
   },
   "devDependencies": {
     "@clarkcant/widget-cli": "workspace:*"

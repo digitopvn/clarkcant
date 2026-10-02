@@ -267,6 +267,36 @@ package service from the conversation by placing the generic action button with 
 journey [`service-facet.spec.ts`](../apps/web/e2e/service-facet.spec.ts) still creates a package's own widget with
 `invoke` bindings through a fixture model.
 
+**An account connection.** A `tools` facet may declare `connection` when its service works on a person's account at a
+provider ([service-connection.ts](../packages/contracts/src/service-connection.ts)):
+
+```json
+"connection": {
+  "version": 1,
+  "provider": "fake.tasks",
+  "displayName": "Fake Tasks (test fixture)",
+  "flow": "oauth-pkce",
+  "authorization": {
+    "authorizationEndpoint": "http://127.0.0.1:8880/oauth/authorize",
+    "tokenEndpoint": "http://127.0.0.1:8880/oauth/token",
+    "revocationEndpoint": "http://127.0.0.1:8880/oauth/revoke",
+    "clientId": "connected-app-dev"
+  },
+  "scopes": [
+    { "scope": "tasks.read", "purpose": "Lists your tasks." },
+    { "scope": "tasks.write", "purpose": "Renames a task when you ask." }
+  ],
+  "endpoints": ["http://127.0.0.1:8880"],
+  "probe": { "url": "http://127.0.0.1:8880/api/me" }
+}
+```
+
+The only flow is authorization code with PKCE, so a package never carries a client secret, and the client id is public.
+Every URL must be HTTPS unless it is a loopback address. The probe must be on a declared endpoint. A package declares at
+most one connection, and an endpoint cannot also be an `egress` origin, so each origin has one credential. A capability
+names the scopes it needs in `requiredScopes`; each must be a scope the connection asks for. How the host connects the
+account and signs the service's requests is §14.6.
+
 `publisher` is optional in the manifest. `clark widget publish` requires it, because a directory entry has to say who
 a package comes from. `dependencies` defaults to `[]`.
 
@@ -2031,10 +2061,11 @@ also stored for a `command:` consumer is given to that command as an environment
 secret, so store a separate one for the package.
 
 **What install consent shows.** A directory entry states the package's reach in `declaredReach`
-(`{ origins, secrets, browserTokens }`, [declared-reach.ts](../packages/contracts/src/declared-reach.ts)); a listing
+(`{ origins, secrets, browserTokens, connections }`, [declared-reach.ts](../packages/contracts/src/declared-reach.ts)); a listing
 without it says the package reaches nothing. The directory card in the conversation, the install question in the inbox,
 and package details in Settings → Extensions list each origin with its purpose, each key by name with its purpose
-(never a value), and each browser-token provider with its scopes and purpose, before anything is granted. An artifact
+(never a value), each browser-token provider with its scopes and purpose, and each account connection with its
+provider, scopes and endpoints (§14.6), before anything is granted. An artifact
 whose manifest declares a different reach than its listing shows is refused with `409 DECLARED_REACH_MISMATCH` before
 anything is recorded, so consent covers what was shown. The update notice does not list the reach yet.
 
@@ -2212,6 +2243,71 @@ The browser suite runs a real https origin on loopback with a certificate it mak
 ([media-fixtures.ts](../apps/runtime/src/test-support/media-fixtures.ts)), trusted by the node it starts through
 `NODE_EXTRA_CA_CERTS`.
 
+### 14.6 Connecting an account
+
+A service that works on a person's account at a provider, such as their tasks or calendar, declares one `connection`
+on its tools facet (§4). The host does everything that touches the account's credential
+([package-connections.ts](../apps/runtime/src/package-connections.ts)); the service sees the provider's answers and
+the widget sees a status. Neither ever holds an access token, a refresh token or an authorization code.
+
+1. **Connect.** The person presses *Connect* on the package in Settings → Extensions. This is host UI, not the widget.
+   `POST /packages/:id/connection` makes a PKCE pair (S256) and a single-use `state`, kept in memory for ten minutes,
+   and answers the provider's authorization URL. The client opens it in the system browser. The route is person-only:
+   a request through MCP or the relay is refused with `403 PERSON_ONLY`, so an AI client cannot start a connection for
+   itself. It answers `409 CONNECT_ON_THIS_MACHINE` unless the request reached the node over loopback, because the
+   provider redirects the browser back to `http://127.0.0.1:<port>/connections/callback/<package id>`. Each package
+   has its own callback path, so a code sent back to one package's path is never exchanged for another's (the OAuth
+   mix-up attack).
+2. **Come back.** `GET /connections/callback/:id` is public, because a browser following a redirect carries no gateway
+   token: the single-use `state` authenticates it. The node checks the state, and that it was issued for the package
+   the path names, before sending the code anywhere. It exchanges the code at the declared token endpoint, compares the granted scopes with the declared ones, and calls the
+   declared probe. Only then does it keep the connection. Tokens live in their own table on the node
+   (`package_connection_tokens`). The page the browser lands on never repeats the code or the state, sends no referrer,
+   and a replayed or forged callback is refused.
+3. **Sign.** The service runs with no network, as before (§14.2). When it asks for a URL on one of the connection's
+   endpoints with `clarkcant/egress.fetch`, the node adds `authorization: Bearer …` itself, only while one of the
+   service's calls runs, and redacts it from any answer it hands back to the service. A token about to lapse is
+   refreshed first; a renewal keeps the scopes granted at consent unless the provider says otherwise. A provider's
+   `401` to the token in use gets one refresh; if the token endpoint refuses that with `400` or `401`, the connection
+   is revoked, while a `408`, `429` or `5xx` leaves it as it is. A request is never retried.
+4. **Readiness.** `GET /packages/:id/connection` answers the `ConnectionStatus`: `not-connected`, `connected`,
+   `partial`, `expired` or `revoked`, the requested, granted and missing scopes, and a reason. A capability is not ready
+   while the connection is missing, expired or revoked, or did not grant one of its `requiredScopes`, and the reason
+   says which, for example "the Fake Tasks (test fixture) account did not grant tasks.write; reconnect it in Settings
+   and allow it". A widget reads it from `actions.availability()` (§10); a press, the agent and voice are refused with
+   `CAPABILITY_NOT_AUTHENTICATED` and the same reason. A capability whose scopes were granted keeps working on a partial
+   connection.
+5. **Revoke.** *Revoke* in Settings calls `POST /packages/:id/connection/revoke`. The node calls the provider's
+   revocation endpoint when one is declared, deletes the tokens, and the status reads `revoked` before the request
+   answers, even when a renewal was in flight. *Reconnect* runs step 1 again. Uninstalling the package, from Settings
+   or by asking Clark (`manage_package`), forgets the connection the same way, and an authorization still waiting for
+   its callback can no longer finish.
+6. **A new version.** The node keeps a fingerprint of where the declaration let the account's tokens go: the provider,
+   client id, authorization, token and revocation endpoints, the endpoints and the probe. If an update or a rollback
+   changes any of them, the connection reads `revoked`, its tokens are deleted without being sent to the new
+   addresses, and the person connects again under the new declaration.
+
+A connection changes nothing about how a capability runs: the widget's binding, Clark's `invoke_capability` and a
+spoken command still reach `invokeCapability`, the person's execution policy, the host-owned approval card and the
+same audit trail (§4). A write whose answer never came back before its deadline is recorded as unknown and not retried.
+
+The desktop shell opens only HTTPS addresses in the system browser, so a provider on a loopback `http` address (the fake
+connector below) is connected from the browser client. Real providers use HTTPS. Only the authorization-code flow with
+PKCE is built. Several accounts for one package, and a connection shared between packages, are not.
+
+**Reference app and template.** [examples/reference-apps/connected-app](../examples/reference-apps/connected-app/)
+lists and renames tasks through such a connection, and `clark widget init --template connected-app` copies it (§16).
+Its provider is a **fake connector**, `dev/fake-connector.mjs`: a test and development fixture with a tiny OAuth
+server and task API on loopback, no real account, and random test values kept only in memory. A node reaches its
+loopback endpoints only with `CC_EGRESS_ALLOW_PRIVATE_NETWORK=1`. A live provider follows
+[#333](https://github.com/digitopvn/clarkcant/issues/333). The tests are
+[package-connections.spec.ts](../apps/runtime/test/package-connections.spec.ts) for the broker,
+[package-connection-routes.spec.ts](../apps/runtime/test/package-connection-routes.spec.ts) for the routes, and the
+browser journey [connected-app.spec.ts](../apps/web/e2e/connected-app.spec.ts). The journey connects, reads and
+renames from the widget, calls the same capability from Clark and by voice with one audit trail, revokes and
+reconnects, grants only part of the scopes, lets a rename time out, and checks that no token, code or secret reaches the
+frame, the page, the node's records, its files or the service container.
+
 ---
 
 ## 15. State & migration
@@ -2268,14 +2364,18 @@ Templates:
   package's own id, facet id and name, without the editor's tests;
 - media-tool: a copy of the reference media render tool ([§24.4](#244-media-render)), a widget and a service
   under the new package's own id, without the tool's tests;
+- connected-app: a copy of the reference connected app ([§14.6](#146-connecting-an-account)) under the new package's
+  own ids and name: a widget, a service whose capabilities name the scopes they need on one declared connection,
+  skills, the fake connector it is tested against, and the service's portable `dev/service.test.mjs`. Replace the
+  provider, client id, scopes and endpoints with your provider's before publishing;
 - editor;
 - media;
 - MCP App adapter;
 - `ai-generator` and `ui-with-service`, copied from the reference image generator
   ([§24.3](#243-image-generator)); `ai-generator` starts with a placeholder provider origin to replace.
 
-`clark widget init --template` accepts `blank`, `form`, `dashboard`, `pure-ui`, `ai-generator`, `ui-with-service`
-and `media-tool` today. `editor`, `media` and the MCP
+`clark widget init --template` accepts `blank`, `form`, `dashboard`, `pure-ui`, `ai-generator`, `ui-with-service`,
+`media-tool` and `connected-app` today. `editor`, `media` and the MCP
 App adapter are not implemented yet.
 
 ### dev

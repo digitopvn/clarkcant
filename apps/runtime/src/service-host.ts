@@ -28,6 +28,7 @@ import {
   type ServiceArtifactsOffer,
   serviceArtifactReadRequestSchema,
   type ServiceCapabilityDeclaration,
+  type ServiceConnectionRequirement,
   type ToolsFacet,
   unsafeSchemaPattern,
 } from "@clarkcant/contracts";
@@ -88,6 +89,9 @@ export { engineEnvironment } from "./service-container.ts";
  *   - `authenticated` — every secret the facet's `egress` declares is stored for the package (`package:<id>`), may be
  *     sent as a header, and has a value. Rechecked before each call, at each health ping and when credentials change,
  *     so adding or removing a key changes it without restarting the service. A facet that declares no secret is.
+ *     For a facet that declares a `connection`, it is also per capability: the connection is connected (or partial)
+ *     and granted every scope that capability's `requiredScopes` names, as the connection broker reports. Connecting,
+ *     revoking, an expiry and a provider's 401 each recheck it at once, and the reason names what is missing.
  *   - `authorized` — true: installing the package was the person's consent to what its manifest declares, and every
  *     call is still decided by the execution policy on its own.
  *   - `healthy` — the container is running and answers `ping`.
@@ -222,6 +226,27 @@ export interface ServiceHostOptions {
     /** Whether services may reach loopback, private and link-local origins: the node's setting, off by default. */
     allowPrivateNetwork?: boolean;
   };
+  /**
+   * The node's connection broker (`package-connections.ts`), for a facet that declares a `connection`. Absent, such a
+   * facet reads as not signed in, with that as the reason. The host never hands a token to the service: it asks the
+   * broker for one per egress request and adds it as the request's `authorization` header.
+   */
+  connections?: ServiceConnectionBroker;
+}
+
+/** What the service host needs from the node's connection broker. Status and per-request credentials only. */
+export interface ServiceConnectionBroker {
+  /** Why a capability needing these scopes cannot run on the package's connection now, or undefined. Reads status only. */
+  problem(packageId: string, connection: ServiceConnectionRequirement, requiredScopes: readonly string[]): string | undefined;
+  /** Refresh a lapsed access token before a call, so the readiness a call is checked against is current. */
+  prepare(packageId: string, connection: ServiceConnectionRequirement): Promise<void>;
+  /** The access token for one egress request, or why there is none. */
+  credential(packageId: string, connection: ServiceConnectionRequirement): Promise<{ ok: true; token: string } | { ok: false; reason: string }>;
+  /**
+   * The provider answered 401 to a request carrying `sentToken`: refresh once, or mark the connection ended. Ignored
+   * when that token is no longer the connection's, so a late answer to an old token cannot end a newer connection.
+   */
+  rejected(packageId: string, connection: ServiceConnectionRequirement, sentToken: string): Promise<void>;
 }
 
 /**
@@ -327,6 +352,11 @@ export interface ServiceHost {
    * capabilities' `authenticated` when that changed. Reads metadata only, never a value.
    */
   refreshAuthentication?(packageId?: string): void;
+  /**
+   * Bring a package's account connection up to date before a call — refresh a lapsed token — and write what changed
+   * to its capabilities' readiness. A package without a connection resolves at once.
+   */
+  prepare?(packageId: string): Promise<void>;
   /** Stop every service. With `restart`, they are started again from scratch; without, the host stays stopped. */
   stopAll(options?: { restart?: boolean }): Promise<number>;
   /** What each facet is doing, for diagnostics and tests. */
@@ -382,8 +412,12 @@ interface ServiceEntry {
   inputEffects: EffectCategory[];
   /** Writes the egress refusals still being gathered for the trail; set while the service runs. */
   flushEgressAudit?: (() => void) | undefined;
-  /** Why the facet's declared secrets cannot be used, as last written to its capabilities. */
-  authReason?: string | undefined;
+  /**
+   * Why each capability cannot be signed in — the facet's declared secrets, or its connection and the scopes the
+   * capability needs — as last written to its row. Per capability, because a partial grant leaves some of a facet's
+   * capabilities usable and not others.
+   */
+  authReasons: Map<CapabilityRef, string | undefined>;
 }
 
 /**
@@ -537,28 +571,41 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     };
   }
 
-  /** Why the facet's declared secrets cannot be used now, or undefined; the first that cannot, by its name. */
-  function authProblem(entry: Pick<ServiceEntry, "facet" | "generation">): string | undefined {
+  /**
+   * Why a capability of the facet cannot be signed in now, or undefined: the first declared secret that cannot be
+   * used, by its name, and then the facet's connection — not connected, expired, revoked, or missing a scope this
+   * capability needs, named.
+   */
+  function authProblem(
+    entry: Pick<ServiceEntry, "facet" | "generation">,
+    declaration: Pick<ServiceCapabilityDeclaration, "requiredScopes">,
+  ): string | undefined {
     const secrets = entry.facet.egress?.secrets ?? [];
-    if (secrets.length === 0) return undefined;
-    if (options.egress === undefined) {
-      return "this node does not make requests for services, so the secrets this service declares cannot be used";
+    if (secrets.length > 0) {
+      if (options.egress === undefined) {
+        return "this node does not make requests for services, so the secrets this service declares cannot be used";
+      }
+      for (const secret of secrets) {
+        const problem = options.egress.secretProblem(entry.generation.packageId, secret.name);
+        if (problem !== undefined) return problem.slice(0, 500);
+      }
     }
-    for (const secret of secrets) {
-      const problem = options.egress.secretProblem(entry.generation.packageId, secret.name);
-      if (problem !== undefined) return problem.slice(0, 500);
+    const connection = entry.facet.connection;
+    if (connection === undefined) return undefined;
+    if (options.egress === undefined || options.connections === undefined) {
+      return `this node does not connect accounts for services, so ${connection.displayName} cannot be used`;
     }
-    return undefined;
+    return options.connections.problem(entry.generation.packageId, connection, declaration.requiredScopes ?? [])?.slice(0, 500);
   }
 
   /**
-   * Write a change in whether the facet's secrets can be used to its capabilities, keeping everything else each row
-   * says. A reason the row gave for the old answer is removed with it; any other reason stays.
+   * Write a change in whether each capability can be signed in to its row, keeping everything else the row says. A
+   * reason the row gave for the old answer is removed with it; any other reason stays.
    */
   function refreshEntryAuthentication(entry: ServiceEntry): void {
-    const previous = entry.authReason;
-    if (authProblem(entry) === previous) return;
     for (const declaration of entry.facet.capabilities) {
+      const previous = entry.authReasons.get(declaration.ref);
+      if (authProblem(entry, declaration) === previous) continue;
       if (entry.refused.has(declaration.ref) || !owns(entry, declaration.ref)) continue;
       const row = getCapability(registry, declaration.ref, registry.nodeId);
       if (row === undefined) continue;
@@ -639,12 +686,27 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     entry: ServiceEntry,
   ): NonNullable<StdioMcpTransportOptions["serverRequests"]> | undefined {
     const egress = entry.facet.egress;
+    const connection = entry.facet.connection;
     const deps = options.egress;
-    if (egress === undefined || deps === undefined) return undefined;
+    const broker = options.connections;
+    if ((egress === undefined && connection === undefined) || deps === undefined) return undefined;
     const packageId = entry.generation.packageId;
     const handle = egressRequestHandler({
       packageId,
-      egress,
+      ...(egress === undefined ? {} : { egress }),
+      ...(connection === undefined || broker === undefined
+        ? {}
+        : {
+            connection: {
+              provider: connection.provider,
+              endpoints: connection.endpoints,
+              credential: () => broker.credential(packageId, connection),
+              rejected: async (sentToken) => {
+                await broker.rejected(packageId, connection, sentToken);
+                refreshEntryAuthentication(entry);
+              },
+            },
+          }),
       secrets: deps.secrets,
       secretProblem: (name) => deps.secretProblem(packageId, name),
       inCall: () =>
@@ -699,8 +761,8 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     state: { readiness: CapabilityReadiness; effectCategory?: EffectCategory; inputSchema?: Record<string, unknown> },
   ): void {
     if (!claim(entry, declaration.ref)) return;
-    const problem = authProblem(entry);
-    entry.authReason = problem;
+    const problem = authProblem(entry, declaration);
+    entry.authReasons.set(declaration.ref, problem);
     // A capability that is otherwise ready says why it is not signed in; one that is not keeps its own reason.
     const readinessNow: CapabilityReadiness =
       problem === undefined
@@ -720,7 +782,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       resourceKinds: [],
       effectCategory: state.effectCategory ?? declaration.effectCategory,
       supportsCancellation: false,
-      requiresConnection: (entry.facet.egress?.secrets.length ?? 0) > 0,
+      requiresConnection: (entry.facet.egress?.secrets.length ?? 0) > 0 || entry.facet.connection !== undefined,
       readiness: readinessNow,
       uiAffordances: [],
     };
@@ -783,16 +845,16 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
 
   /** Mark every capability of a facet with one readiness change, keeping what was learned about each tool. */
   function markAll(entry: ServiceEntry, change: Partial<CapabilityReadiness>): void {
-    const problem = authProblem(entry);
-    entry.authReason = problem;
-    change = { ...change, authenticated: problem === undefined };
     for (const declaration of entry.facet.capabilities) {
       if (!claim(entry, declaration.ref)) continue;
+      const problem = authProblem(entry, declaration);
+      entry.authReasons.set(declaration.ref, problem);
+      const changed = { ...change, authenticated: problem === undefined };
       if (getCapability(registry, declaration.ref, registry.nodeId) === undefined) {
-        register(entry, declaration, { readiness: readiness(change) });
+        register(entry, declaration, { readiness: readiness(changed) });
         continue;
       }
-      updateReadiness(registry, { ref: declaration.ref, executionNodeId: registry.nodeId, change, at: now() });
+      updateReadiness(registry, { ref: declaration.ref, executionNodeId: registry.nodeId, change: changed, at: now() });
     }
   }
 
@@ -1119,6 +1181,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         fetchFailures: 0,
         epoch: 0,
         refused: new Set(),
+        authReasons: new Map(),
         calls: 0,
         callEffects: [],
         callScope: new AbortController(),
@@ -1222,6 +1285,17 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     refreshAuthentication(packageId) {
       for (const entry of entries.values()) {
         if (packageId === undefined || entry.generation.packageId === packageId) refreshEntryAuthentication(entry);
+      }
+    },
+
+    async prepare(packageId) {
+      const broker = options.connections;
+      if (broker === undefined) return;
+      for (const entry of [...entries.values()]) {
+        const connection = entry.facet.connection;
+        if (entry.generation.packageId !== packageId || connection === undefined) continue;
+        await broker.prepare(packageId, connection);
+        refreshEntryAuthentication(entry);
       }
     },
 

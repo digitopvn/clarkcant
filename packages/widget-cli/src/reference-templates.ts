@@ -15,9 +15,12 @@ import { fileURLToPath } from "node:url";
  *     capability only reads.
  *   - `media-tool` is the reference media render tool: a widget and a service whose one capability runs as a job that
  *     reads a picked file through the host.
+ *   - `connected-app` is the reference connected app: a UI facet, a service whose capabilities name the scopes they
+ *     need on one declared account connection, skills, and a fake connector (`dev/fake-connector.mjs`, a test fixture)
+ *     its own tests run against. The node connects the account and adds the token; the package never holds it.
  */
 
-export const REFERENCE_TEMPLATES = ["pure-ui", "ai-generator", "ui-with-service", "media-tool"] as const;
+export const REFERENCE_TEMPLATES = ["pure-ui", "ai-generator", "ui-with-service", "media-tool", "connected-app"] as const;
 export type ReferenceTemplate = (typeof REFERENCE_TEMPLATES)[number];
 
 /** A JSON document the copier rewrites: the manifest, or a widget definition. */
@@ -44,6 +47,7 @@ export const PLACEHOLDER_PROVIDER_ORIGIN = "https://images.example.com";
 const TEXT_EDITOR = fileURLToPath(new URL("../../../examples/reference-apps/text-editor/", import.meta.url));
 const IMAGE_GENERATOR = fileURLToPath(new URL("../../../examples/reference-apps/image-generator/", import.meta.url));
 const MEDIA_RENDER = fileURLToPath(new URL("../../../examples/reference-apps/media-render/", import.meta.url));
+const CONNECTED_APP = fileURLToPath(new URL("../../../examples/reference-apps/connected-app/", import.meta.url));
 
 type Facet = JsonDocument & { kind?: unknown; egress?: unknown; capabilities?: unknown };
 
@@ -103,6 +107,30 @@ export function referenceCopy(template: ReferenceTemplate): ReferenceCopy {
         "the service renders it as a job, reading the file a chunk at a time through `clarkcant/artifacts.read`. The " +
         "transform is in `service/wav.mjs`; the widget's rules are in `widgets/main/render-core.js`.\n\n" +
         "Run `clark widget test` then `clark widget pack`.\n",
+    };
+  }
+  if (template === "connected-app") {
+    return {
+      source: CONNECTED_APP,
+      referenceId: "com.clarkcant.reference.connected-app",
+      displayName: "My Connected App",
+      description: "Lists and renames tasks in an account you connect; the node holds the account, the package never does.",
+      sourceUrl: "https://github.com/example/my-connected-app",
+      readme:
+        "# My Connected App\n\n" +
+        "A copy of the reference connected app: a widget that lists and renames tasks, a service whose two capabilities " +
+        "name the scopes they need, one declared account connection, and skills that tell Clark how to use them.\n\n" +
+        "- **The node holds the account.** A person connects it in Settings, in their system browser. The node keeps the " +
+        "tokens, adds the access token to the service's requests to the declared endpoints only, and marks a capability " +
+        "not ready, with the reason, when the connection is missing, expired, revoked or lacks its scope. The widget and " +
+        "the service never see a token, a refresh token or a code.\n" +
+        "- **The connection points at a fake.** `clarkcant.json` declares `http://127.0.0.1:8880`, served by " +
+        "`dev/fake-connector.mjs`, a test fixture with no real account. Run it with `node dev/fake-connector.mjs`; a node " +
+        "reaches loopback endpoints only with `CC_EGRESS_ALLOW_PRIVATE_NETWORK=1`. **Replace the provider, client id, " +
+        "scopes and endpoints with your provider's before publishing.** A real provider's endpoints must be HTTPS.\n" +
+        "- **Writes are decided by the node.** `update-task` is `external-write`: the person's execution policy may ask " +
+        "first, and a rename whose answer never came back is recorded as unknown and not retried.\n\n" +
+        "Run `clark widget test`, `clark widget pack`, and `node --test dev/service.test.mjs` for the service's own tests.\n",
     };
   }
   if (template === "ai-generator") {

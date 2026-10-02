@@ -155,6 +155,10 @@ CredentialRequest is a separate host-owned surface, not a model-supplied form. F
 
 The model must not choose an arbitrary token endpoint/base URL that could exfiltrate a key. Endpoint discovery must verify provider/resource identity, allowed schemes/redirects, TLS and no credential forwarding to an unapproved origin.
 
+### 5.4 What is built for package connections
+
+A package service's account connection follows the native OAuth path above: a package declares the provider, a public client id, scopes with purposes, the endpoints and a probe; the endpoints come from the package's manifest, which install consent shows, never from the model. The person starts it from Settings, never from a widget or an AI client (`403 PERSON_ONLY`); the node opens the system browser with PKCE and a single-use state, takes the loopback callback, verifies the returned scopes and the probe, and records `connected` or `partial` with the missing scopes. Tokens stay on the node that ran the authorization. `expired` and `revoked` make the capabilities that need the connection not ready, with a reason that tells the person to reconnect in Settings. A write that times out is recorded as unknown and not repeated. Only the in-repository fake connector, a test fixture, exercises this today; a live provider follows #333. The server OAuth path for a headless node (§5.2) is not built: connecting answers `409 CONNECT_ON_THIS_MACHINE` unless the request reached the node over loopback. Details: [widget development §14.6](widget-development.md#146-connecting-an-account).
+
 ## 6. Reference journey: Google Calendar
 
 A direct API connector is chosen as the first-party reference so it does not depend on an unverified community MCP server. The app still discovers/installs an MCP/Pi alternative when it is genuinely suitable. This is a product decision, not a claim that Google has no MCP.

@@ -41,6 +41,7 @@ import { loadLocalEmbedder } from "./embeddings-local.ts";
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 import type { SkillCatalog } from "./composer-references.ts";
 import type { ServiceHost } from "./service-host.ts";
+import type { PackageConnectionBroker } from "./package-connections.ts";
 import type { PackageJobHost } from "./job-host.ts";
 import type { BrowserTokenBroker } from "./browser-token-broker.ts";
 import { BROWSER_TASK_CAPABILITY, BROWSER_TASK_NOT_ROUTABLE } from "./task-browser.ts";
@@ -286,6 +287,12 @@ export interface NodeServices {
    * capability is refused as not served by this node.
    */
   serviceHost?: ServiceHost;
+  /**
+   * The accounts package services work on (`package-connections.ts`): authorization in the system browser, tokens kept
+   * on the node, a credential added per egress request. Assigned with the service host; absent in a test that builds
+   * `NodeServices` directly, where a package's connection reads as one this node does not make.
+   */
+  connections?: PackageConnectionBroker;
   /** Durable jobs started by versioned long-running package capabilities. */
   packageJobs?: PackageJobHost;
   /**

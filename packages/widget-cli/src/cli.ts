@@ -140,8 +140,8 @@ export function skippedFromReference(path: string): boolean {
   return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "README.vi.md" || path === "LICENSE";
 }
 
-/** Files whose text can name the reference's id. Anything else is copied byte for byte. */
-const REFERENCE_TEXT = /\.(json|js|mjs|html|css)$/;
+/** Files whose text can name the reference's id — a skill names a capability ref. Anything else is copied byte for byte. */
+const REFERENCE_TEXT = /\.(json|js|mjs|html|css|md)$/;
 
 const asJson = (document: Record<string, unknown>): string => `${JSON.stringify(document, null, 2)}\n`;
 

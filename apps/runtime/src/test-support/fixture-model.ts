@@ -313,6 +313,9 @@ const SPREADSHEET_FORMAT_INTENT =
 /** The reference text editor's definition, as its package ships it. */
 const TEXT_EDITOR_DEFINITION = new URL("../../../../examples/reference-apps/text-editor/widgets/main/widget.json", import.meta.url);
 
+/** The reference connected app's widget definition, as its package ships it. */
+const CONNECTED_APP_DEFINITION = new URL("../../../../examples/reference-apps/connected-app/widgets/main/widget.json", import.meta.url);
+
 /** What the editor's rewrite button asks Clark; the fixture recognises its own button by it. */
 const TEXT_EDITOR_REWRITE_INTENT =
   "Viết lại đoạn văn bản đang được chọn trong trình soạn thảo. Chỉ trả lời bằng đoạn thay thế, trong một khối ``` duy nhất.";
@@ -2095,6 +2098,129 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       return {
         text: "Fixture: trình soạn thảo văn bản mẫu, trong frame cách ly (không phải model thật).",
         block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
+    /*
+     * The reference connected app, placed with its two buttons: list the tasks, rename one.
+     *
+     * Both are `invoke` bindings to the package's own capabilities, pinned to the generation serving them, so a press goes
+     * through the same `invokeCapability` the agent's tool and a spoken command reach — readiness (whether the account is
+     * connected and granted the scope), the execution policy, the egress broker. The ids reach the frame through props,
+     * as the text editor's do. The rename carries the task's id and new title from the frame, and its deadline is short so
+     * a provider that never answers is a call the node gives up on, records as unknown, and does not repeat.
+     */
+    if (/widget công việc|connected tasks/i.test(input.text)) {
+      const definition = widgetDefinitionSchema.parse(JSON.parse(readFileSync(CONNECTED_APP_DEFINITION, "utf8")));
+      const services = deps.services();
+      const conductor = services.conductor;
+      const packageDigest = definitionDigest(definition);
+      const instance = createInstance(conductor, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Công việc (fixture)", listBinding: conductor.newId("act"), updateBinding: conductor.newId("act") },
+      });
+      const props = instance.props as { listBinding: string; updateBinding: string };
+      const bind = (binding: {
+        actionBindingId: string;
+        label: string;
+        capabilityRef: string;
+        carries: string[];
+        inputSchema: Record<string, unknown>;
+        effectCategory: "read" | "external-write";
+        deadlineMs: number;
+      }): void => {
+        const served = services.serviceHost?.serves(binding.capabilityRef as CapabilityRef);
+        saveActionBinding(conductor, {
+          actionBindingId: binding.actionBindingId,
+          label: binding.label,
+          proposal: {
+            kind: "invoke" as const,
+            capabilityRef: binding.capabilityRef,
+            args: {},
+            bindings: binding.carries.map((target) => ({ target, source: "user-input" as const })),
+            limits: { deadlineMs: binding.deadlineMs },
+          },
+          inputSchema: binding.inputSchema,
+          effectCategory: binding.effectCategory,
+          instanceId: instance.instanceId,
+          definitionId: definition.id,
+          packageGeneration: served?.generationId ?? packageDigest,
+          allowedDataRefs: [],
+          fixedConstraints: {},
+          requiresApproval: false,
+          limits: { deadlineMs: binding.deadlineMs },
+          bindingDigest: `sha256:${binding.actionBindingId}`,
+          createdAt: instantSchema.parse(new Date().toISOString()),
+        });
+      };
+      bind({
+        actionBindingId: props.listBinding,
+        label: "Tải công việc",
+        capabilityRef: "com.clarkcant.reference.connected-app.list-tasks@1",
+        carries: [],
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        effectCategory: "read",
+        deadlineMs: 20_000,
+      });
+      bind({
+        actionBindingId: props.updateBinding,
+        label: "Lưu công việc",
+        capabilityRef: "com.clarkcant.reference.connected-app.update-task@1",
+        carries: ["id", "title"],
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 64 },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+          },
+          required: ["id", "title"],
+          additionalProperties: false,
+        },
+        effectCategory: "external-write",
+        deadlineMs: 8_000,
+      });
+      const snapshot = captureSnapshot(conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: widget công việc mẫu, nối với tài khoản qua node (không phải model thật).",
+        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
+      };
+    }
+
+    /*
+     * The agent calling the connected app's capabilities, the ones its buttons call. Scripted decision, real tool: the
+     * readiness that says the account is not connected, the policy and the egress broker are the node's own.
+     */
+    const renamed = /^(?:đổi tên công việc|rename task)\s+([\w-]+)\s*:\s*(.+)$/iu.exec(input.text.trim());
+    if (renamed !== null || /^(?:đọc công việc|list my tasks)\b/iu.test(input.text.trim())) {
+      const tool = createInvokeCapabilityTool({
+        deps: () => capabilityInvokeDeps(deps.services()),
+        conversationId: input.conversationId,
+        channel: () => input.channel ?? "chat",
+      });
+      const answer = await tool.execute(
+        renamed === null
+          ? { action: "invoke", ref: "com.clarkcant.reference.connected-app.list-tasks@1", args: {} }
+          : {
+              action: "invoke",
+              ref: "com.clarkcant.reference.connected-app.update-task@1",
+              args: { id: renamed[1] ?? "", title: (renamed[2] ?? "").trim() },
+            },
+      );
+      if (answer.hostCard !== undefined) {
+        // SAFETY: the approval card `invokeCapability` built against the message-block union; the node validates it
+        // before storing.
+        return { text: answer.text, block: answer.hostCard as unknown as MessageBlock };
+      }
+      return {
+        text: "Fixture: tui gọi invoke_capability (không phải model thật).",
+        block: { type: "text", format: "plain", content: answer.text, streaming: false },
       };
     }
 

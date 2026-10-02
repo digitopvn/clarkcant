@@ -202,14 +202,18 @@ export function VoiceOverlay({
   /**
    * Tell the node which widget is on screen.
    *
-   * Sent when the session appears and whenever the focus changes. The session state is in the dependencies because the
-   * session comes into existence after this component has already rendered: without it, a session opened while a
-   * surface was already up would never say so, and the first spoken action on that widget would be answered with
-   * "nothing is open" - a wrong answer that looks exactly like a working one.
+   * Sent whenever the focus changes, and once more by `start` the moment the session exists. The second send is
+   * what makes it reach the node: the session comes into existence after this component has rendered, and by then the
+   * node has usually reported "listening" already, so the state the session opens with is not a change and no effect
+   * re-runs for it. Without that send the first spoken action on an open widget was answered as if nothing were open,
+   * and later ones only when a state change happened to render between two frames - a race a slower machine lost on
+   * every sentence. The ref carries the focus to `start`, which is not re-created when the focus changes.
    */
+  const focusedRef = useRef(focusedInstanceId);
+  focusedRef.current = focusedInstanceId;
   useEffect(() => {
     sessionRef.current?.focus(focusedInstanceId);
-  }, [focusedInstanceId, state]);
+  }, [focusedInstanceId]);
   /** Rolling levels, newest last. A ref because it is read per frame and only summarised into bars. */
   const levels = useRef<number[]>(new Array(WAVEFORM_BARS).fill(0));
 
@@ -321,6 +325,9 @@ export function VoiceOverlay({
       })
       .then((session) => {
         sessionRef.current = session;
+        // Before the first captured audio leaves the page: the session resolves in the same turn capture starts, and
+        // the frames go out on this socket in order, so the node knows the focus before it can hear a sentence.
+        session.focus(focusedRef.current);
         startingRef.current = false;
         setState(session.state);
       })

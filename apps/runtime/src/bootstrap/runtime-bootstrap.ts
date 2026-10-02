@@ -31,6 +31,7 @@ import { type RequestSecretDeps } from "../request-secret.ts";
 import { detectServiceEngine, readEngineCapacity } from "../service-container.ts";
 import { createServiceHost, engineContainers, packageRootFrom, resourceProfilePolicy } from "../service-host.ts";
 import { type EgressAuditEvent, egressAllowsPrivateNetwork, egressSecretProblem } from "../service-egress.ts";
+import { type ConnectionAuditEvent, createPackageConnectionBroker } from "../package-connections.ts";
 import { type BrowserTokenAuditEvent, createBrowserTokenBroker } from "../browser-token-broker.ts";
 import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
@@ -366,6 +367,14 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    * starting, and without an engine they read as needing one.
    */
   const services = deps.services;
+  services.connections = createPackageConnectionBroker({
+    db: services.runtime.db,
+    principalId: services.runtime.identity.ownerPrincipalId,
+    newId: services.conductor.newId,
+    // The same node setting that lets services reach loopback providers lets the node connect to one.
+    allowPrivateNetwork: egressAllowsPrivateNetwork(process.env),
+    audit: connectionAudit(services),
+  });
   services.serviceHost = createServiceHost({
     registry: { db: services.runtime.db, nodeId: services.runtime.identity.nodeId },
     dataDir: services.runtime.dataDir,
@@ -384,6 +393,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       now: () => new Date().toISOString() as Instant,
     }),
     egress: serviceEgressDeps(services),
+    connections: services.connections,
     /*
      * A fixture node answers each file read a service makes a moment late, so a browser journey can watch a job's
      * progress and stop it mid-way. The package itself has no pacing knob: a node that is not a fixture never waits.
@@ -587,6 +597,22 @@ function browserTokenAudit(services: NodeServices): (event: BrowserTokenAuditEve
     });
 }
 
+/** Connections started, made, renewed and ended, in the node's trail by package and provider. Never a token or code. */
+function connectionAudit(services: NodeServices): (event: ConnectionAuditEvent) => void {
+  const db = services.runtime.db;
+  return (event) =>
+    appendAuditEvent(db, {
+      auditId: services.conductor.newId("audit"),
+      principalId: services.runtime.identity.ownerPrincipalId,
+      nodeId: services.runtime.identity.nodeId,
+      kind: "connection",
+      summary: `${event.packageId}: ${event.summary}`.slice(0, 500),
+      outcome: event.outcome,
+      ref: event.packageId,
+      at: new Date().toISOString() as Instant,
+    });
+}
+
 function serviceEgressDeps(services: NodeServices) {
   const db = services.runtime.db;
   const principalId = services.runtime.identity.ownerPrincipalId;
@@ -618,7 +644,7 @@ function serviceEgressDeps(services: NodeServices) {
         principalId,
         nodeId,
         kind: "egress",
-        summary: `${event.packageId} ${event.method} ${event.origin}${event.secret === undefined ? "" : ` with ${event.secret}`}${event.status === undefined ? "" : ` → ${String(event.status)}`}${event.count === undefined ? "" : ` (×${String(event.count)})`}${event.reason === undefined ? "" : `: ${event.reason}`}`.slice(0, 500),
+        summary: `${event.packageId} ${event.method} ${event.origin}${event.secret === undefined ? "" : ` with ${event.secret}`}${event.connection === undefined ? "" : ` with the ${event.connection} connection`}${event.status === undefined ? "" : ` → ${String(event.status)}`}${event.count === undefined ? "" : ` (×${String(event.count)})`}${event.reason === undefined ? "" : `: ${event.reason}`}`.slice(0, 500),
         outcome: event.outcome,
         ref: event.packageId,
         at: now(),

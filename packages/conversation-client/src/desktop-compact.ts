@@ -64,6 +64,23 @@ interface DesktopBridge {
   onNotificationClicked?: (callback: (payload?: { target?: unknown }) => void) => () => void;
   status?: () => Promise<unknown>;
   closeWindow?: () => Promise<unknown>;
+  /** Hands an https URL to the operating system's browser; the shell refuses any other scheme. */
+  openExternal?: (url: string) => Promise<unknown>;
+}
+
+/**
+ * Open a URL in the system browser, never inside the app: a provider's sign-in and consent page is the person's
+ * conversation with that provider, and the host must not be able to read or script it. The desktop shell hands an https
+ * URL to the operating system; a browser client opens a new tab with no opener. A loopback http URL — a development
+ * provider such as the reference app's fake connector — opens as a tab, since the shell hands only https to the OS.
+ */
+export function openInSystemBrowser(url: string, scope: unknown = globalThis): void {
+  const bridge = desktopBridge(scope);
+  if (bridge?.openExternal !== undefined && url.startsWith("https://")) {
+    void bridge.openExternal(url);
+    return;
+  }
+  (scope as { open?: (url: string, target: string, features: string) => unknown }).open?.(url, "_blank", "noopener,noreferrer");
 }
 
 /** What the window is right now, as the shell read it off the window. */

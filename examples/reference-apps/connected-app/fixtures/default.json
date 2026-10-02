@@ -1,0 +1,5 @@
+{
+  "title": "Công việc",
+  "listBinding": "act_fixture_list",
+  "updateBinding": "act_fixture_update"
+}

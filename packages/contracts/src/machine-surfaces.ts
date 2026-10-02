@@ -17,8 +17,9 @@ import { MAP_TILE_POLICY_PREFERENCE } from "./map-view.ts";
  * Saving a widget's artifact to a file (Save As) and handing a widget a file the person picked are the person's too:
  * one writes onto their machine, the other grants a widget bytes it could not otherwise reach. A widget's browser token
  * is asked for only by the host chrome showing that widget: through a machine surface it would be a provider credential
- * handed to whoever relayed the request. Naming the node's map tile provider, or undoing that choice, is the person's
- * too: it decides which host learns what every map shows.
+ * handed to whoever relayed the request. Connecting a package's service to an account is the person's for the same
+ * reason: it is the consent that lets the package act on that account. Naming the node's map tile provider, or undoing
+ * that choice, is the person's too: it decides which host learns what every map shows.
  *
  * Segments are split the way the gateway splits them (on `/`, empty segments dropped, no decoding), so a path this
  * lets through cannot reach one of these routes under another spelling. A route guarded here must not decode the
@@ -54,7 +55,10 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
         (first === "app-intents" && second === "host-control") ||
         (first === "effects" && third === "reconcile") ||
         // POST /artifacts/:id/export: Save As, the bytes of an artifact written to a file on the person's machine.
-        (first === "artifacts" && third === "export")
+        (first === "artifacts" && third === "export") ||
+        // POST /packages/:id/connection: connecting a package's service to the person's account. Consent is the host's
+        // and the person's; an AI client that could start it could grant a package an account nobody chose to give it.
+        (first === "packages" && third === "connection")
       );
     case 4:
       // POST /packages/approvals/:id/decision: a capability for an installed generation, or an install the policy asked about

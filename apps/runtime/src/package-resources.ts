@@ -12,6 +12,7 @@ import {
   type ResourceProfile,
   type ResourceProfileName,
   type ResourceRequest,
+  type ServiceConnectionRequirement,
 } from "@clarkcant/contracts";
 import { type DirectoryIndexState, readPackage } from "@clarkcant/core";
 
@@ -118,4 +119,12 @@ export function installedManifest(
 export function installedReach(manifest: PackageManifest): DeclaredReach | undefined {
   const reach = declaredReachOf(manifest);
   return declaredReachIsEmpty(reach) ? undefined : reach;
+}
+
+/** The account connection a package''s service declares, or `undefined`: at most one per package (`manifestProblems`). */
+export function installedConnection(manifest: PackageManifest): ServiceConnectionRequirement | undefined {
+  for (const facet of manifest.facets) {
+    if (facet.kind === "tools" && facet.connection !== undefined) return facet.connection;
+  }
+  return undefined;
 }

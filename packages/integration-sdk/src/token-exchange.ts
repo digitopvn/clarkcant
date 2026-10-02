@@ -145,7 +145,14 @@ async function requestGrant(
     grant: {
       accessToken,
       refreshToken: typeof record.refresh_token === "string" ? record.refresh_token : undefined,
-      expiresInSeconds: typeof record.expires_in === "number" ? record.expires_in : undefined,
+      // Some providers send the lifetime as a string of digits; reading that as "never expires" would mean the token is
+      // only ever renewed after a request it lapsed on.
+      expiresInSeconds:
+        typeof record.expires_in === "number"
+          ? record.expires_in
+          : typeof record.expires_in === "string" && /^\d{1,9}$/.test(record.expires_in)
+            ? Number(record.expires_in)
+            : undefined,
       scopes:
         grantedScopes === null
           ? { granted: [...descriptor.requestedScopes], missingRequired: [], missingOptional: [], status: "full" }

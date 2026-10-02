@@ -26,8 +26,9 @@ import {
   packageInstallDepsOf,
 } from "../application/package-install.ts";
 import { decideInstallApproval, isInstallApproval } from "../application/install-approval.ts";
-import { changePackage } from "../application/package-lifecycle.ts";
-import { installedManifest, installedReach, packageResourceGrant, packageResourcesView } from "../package-resources.ts";
+import { changePackageAndConnection } from "../application/package-change.ts";
+import { installedConnection, installedManifest, installedReach, packageResourceGrant, packageResourcesView } from "../package-resources.ts";
+import type { PackageConnectionBroker } from "../package-connections.ts";
 import { resourceProfilePolicy, type ServiceHost } from "../service-host.ts";
 import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
 
@@ -46,6 +47,8 @@ export interface PackageRouteDeps {
     serviceHost?: (Pick<ServiceHost, "reconcile"> & Partial<Pick<ServiceHost, "resourceGrant">>) | undefined;
     /** Told when a package's code goes, so the tokens its frames hold go with it. */
     browserTokens?: { endPackage(packageId: string): Promise<number> } | undefined;
+    /** Status for listings, and told when a package goes, so its account connection goes with it. */
+    connections?: Pick<PackageConnectionBroker, "status" | "forget"> | undefined;
   };
   request: GatewayRequest;
   segments: string[];
@@ -93,7 +96,15 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
         });
         // And what it reaches beyond its sandbox, from the same manifest, so details show what install consent covered.
         const reach = installedReach(manifest);
-        return { ...installed, resources: packageResourcesView(grant), ...(reach === undefined ? {} : { reach }) };
+        // And its account connection's status, when it declares one: state and scopes, never a credential.
+        const connection = installedConnection(manifest);
+        const connectionStatus = connection === undefined ? undefined : services.connections?.status(installed.packageId, connection);
+        return {
+          ...installed,
+          resources: packageResourcesView(grant),
+          ...(reach === undefined ? {} : { reach }),
+          ...(connectionStatus === undefined ? {} : { connection: connectionStatus }),
+        };
       }),
       // Uninstalled here and restorable without fetching anything: the generation rows outlive an uninstall.
       restorable: listRestorablePackages(deps),
@@ -119,7 +130,8 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
     } catch {
       return fail(400, "INVALID_SCHEMA", "the package id in the path is not valid percent-encoding");
     }
-    const outcome = changePackage(packageInstallDepsOf(services), { action: segments[2], packageId, source: "click" });
+    // An uninstalled package keeps no account: its tokens are revoked at the provider and deleted here.
+    const outcome = await changePackageAndConnection(packageInstallDepsOf(services), services.connections, { action: segments[2], packageId, source: "click" });
     if (outcome.kind === "refused") return fail(outcome.status, outcome.code, outcome.message);
     const { kind: _kind, ...changed } = outcome;
     return json(200, changed);

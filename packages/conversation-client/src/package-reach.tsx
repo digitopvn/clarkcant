@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 
-import { declaredReachSchema, type DeclaredReach } from "@clarkcant/contracts";
+import { declaredReachIsEmpty, declaredReachSchema, type DeclaredReach } from "@clarkcant/contracts";
 
 import { fillMessage } from "./i18n/fill-message.ts";
 import { useT } from "./i18n/locale-context.tsx";
@@ -8,7 +8,7 @@ import { useT } from "./i18n/locale-context.tsx";
 /**
  * What a package reaches outside its sandbox, as a person decides on it: each provider origin its services reach
  * through Clark, each key it needs with what the key is for, and each provider its frames may get a browser token from
- * with the scopes. Shown on the marketplace listing and the install question before anything is granted, and in
+ * with the scopes, and each account its services work on once the person connects it. Shown on the marketplace listing and the install question before anything is granted, and in
  * package details afterwards.
  *
  * Names and purposes only. A key's value is never part of this, and nothing here could show one: the declaration has
@@ -19,8 +19,7 @@ import { useT } from "./i18n/locale-context.tsx";
 export function readReach(value: unknown): DeclaredReach | undefined {
   const parsed = declaredReachSchema.safeParse(value);
   if (!parsed.success) return undefined;
-  const reach = parsed.data;
-  return reach.origins.length === 0 && reach.secrets.length === 0 && reach.browserTokens.length === 0 ? undefined : reach;
+  return declaredReachIsEmpty(parsed.data) ? undefined : parsed.data;
 }
 
 export function PackageReach({ reach }: { reach: DeclaredReach | undefined }): ReactElement | null {
@@ -55,7 +54,15 @@ export function PackageReach({ reach }: { reach: DeclaredReach | undefined }): R
             })}
           </li>
         ))}
-      </ul>
-    </div>
+        {(reach.connections ?? []).map((entry) => (
+          <li key={`connection:${entry.provider}`} data-reach-connection={entry.provider}>
+            {fillMessage(t("settings.extensions.reach.connection"), {
+              provider: entry.displayName,
+              endpoints: entry.endpoints.join(", "),
+              scopes: entry.scopes.map((scope) => `${scope.scope} (${scope.purpose})`).join("; "),
+            })}
+          </li>
+        ))}
+      </ul>    </div>
   );
 }

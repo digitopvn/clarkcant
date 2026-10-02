@@ -292,8 +292,9 @@ export async function invokeCapability(
     );
   }
 
-  // Whether the package's secrets can be used is read now, not at the last ping: a key added or removed a moment ago
-  // decides this call.
+  // Whether the package's secrets and connection can be used is read now, not at the last ping: a key added or removed,
+  // or a connection that lapsed or was revoked a moment ago, decides this call. A lapsed token is renewed first.
+  await host.prepare?.(served.packageId);
   host.refreshAuthentication?.(served.packageId);
   const descriptor = getCapability({ db: deps.db, nodeId: deps.nodeId }, ref, deps.nodeId);
   if (descriptor === undefined) {
