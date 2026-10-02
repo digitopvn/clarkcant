@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
 import {
@@ -36,7 +36,7 @@ import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
  * opposite.
  */
 
-const TEMPLATES = ["blank", "form", "dashboard"] as const;
+const TEMPLATES = ["blank", "form", "dashboard", "media-tool"] as const;
 type Template = (typeof TEMPLATES)[number];
 
 /**
@@ -48,7 +48,7 @@ type Template = (typeof TEMPLATES)[number];
  * ran). A list both sides read has nothing to disagree with.
  */
 export const WIDGET_COMMANDS = [
-  { name: "init", usage: "clark widget init <dir> [--template blank|form|dashboard]   scaffold a package" },
+  { name: "init", usage: "clark widget init <dir> [--template blank|form|dashboard|media-tool]   scaffold a package" },
   { name: "test", usage: "clark widget test [dir]                                     run the conformance suite" },
   { name: "pack", usage: "clark widget pack [dir]                                     build the artifact and its digest" },
   {
@@ -133,11 +133,74 @@ function definitionFor(id: string, template: Template): Record<string, unknown> 
   };
 }
 
+/**
+ * Where `--template media-tool` is copied from: the reference media render tool, a widget and a service whose one
+ * capability runs as a job that reads a picked file through the host.
+ *
+ * Copied rather than restated, so the template is the app this repository's own tests keep working (pick, render with
+ * progress, stop, preview, attach, export) instead of a second copy of it that nobody runs.
+ */
+const MEDIA_TOOL_SOURCE = fileURLToPath(new URL("../../../examples/reference-apps/media-render/", import.meta.url));
+const MEDIA_TOOL_ID = "com.clarkcant.reference.media-render";
+
+/** The reference app's own files that describe or test that app rather than the package a person starts from. */
+function skippedFromReference(path: string): boolean {
+  return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "README.vi.md";
+}
+
+/**
+ * Copy the reference media tool under a new package id. Every id the reference names — the package, its widget, its
+ * service facet and its capability — is renamed under the new one, in the manifest, the definition and the dev-host
+ * fixture alike, so the copy passes conformance as it stands.
+ */
+function initMediaTool(root: string, id: string): void {
+  if (!existsSync(join(MEDIA_TOOL_SOURCE, "clarkcant.json"))) {
+    throw new Error(`the media-tool template is copied from ${MEDIA_TOOL_SOURCE}, which is missing from this checkout`);
+  }
+  const rename = (text: string): string => text.split(MEDIA_TOOL_ID).join(id);
+  for (const { path, bytes } of packageFiles(MEDIA_TOOL_SOURCE)) {
+    if (skippedFromReference(path)) continue;
+    const target = join(root, ...path.split("/"));
+    mkdirSync(dirname(target), { recursive: true });
+    if (path === "clarkcant.json") {
+      const manifest = JSON.parse(rename(bytes.toString("utf8"))) as Record<string, unknown>;
+      const copy = {
+        ...manifest,
+        version: "0.1.0",
+        displayName: "My Media Tool",
+        description: "Renders a file the person picks as a job the widget follows and can stop.",
+        publisher: { id: "example", sourceUrl: "https://github.com/example/my-media-tool", license: "MIT" },
+      };
+      writeFileSync(target, `${JSON.stringify(copy, null, 2)}\n`);
+    } else if (path === "widgets/main/widget.json") {
+      const definition = JSON.parse(rename(bytes.toString("utf8"))) as Record<string, unknown>;
+      writeFileSync(target, `${JSON.stringify({ ...definition, version: "0.1.0" }, null, 2)}\n`);
+    } else if (path.endsWith(".json") || path.endsWith(".mjs") || path.endsWith(".js")) {
+      writeFileSync(target, rename(bytes.toString("utf8")));
+    } else {
+      writeFileSync(target, bytes);
+    }
+  }
+  mkdirSync(join(root, "test"), { recursive: true });
+  writeFileSync(
+    join(root, "README.md"),
+    "# My Media Tool\n\nA copy of the reference media render tool: the widget picks a WAV file through the host, and " +
+      "the service renders it as a job, reading the file a chunk at a time through `clarkcant/artifacts.read`. The " +
+      "transform is in `service/wav.mjs`; the widget's rules are in `widgets/main/render-core.js`.\n\n" +
+      "Run `clark widget test` then `clark widget pack`.\n",
+  );
+  writeFileSync(join(root, "LICENSE"), "MIT\n");
+}
+
 function init(root: string, template: Template): void {
   // Lower-case letters, digits and hyphens, starting with a letter: the shape a capability name's segments take, so a
   // service facet added later can name its capabilities under this id.
   const slug = (root.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z]+/, "");
   const id = `com.example.${slug === "" ? "widget" : slug}`;
+  if (template === "media-tool") {
+    initMediaTool(root, id);
+    return;
+  }
   mkdirSync(join(root, "widgets", "main"), { recursive: true });
   mkdirSync(join(root, "fixtures"), { recursive: true });
   mkdirSync(join(root, "previews"), { recursive: true });
@@ -481,7 +544,12 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       process.stderr.write(`unknown template "${template}"; expected one of ${TEMPLATES.join(", ")}\n`);
       return 2;
     }
-    init(dir, template);
+    try {
+      init(dir, template);
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
     process.stdout.write(`created a ${template} widget package in ${dir}\nnext: clark widget test ${dir}\n`);
     return 0;
   }
