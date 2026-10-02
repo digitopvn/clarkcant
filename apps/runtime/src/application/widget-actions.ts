@@ -902,7 +902,14 @@ export async function invokeWidgetAction(
   const kind = getActionBinding(services.conductor, request.actionBindingId)?.proposal.kind;
   const capabilitySource: CapabilityInvokeSource = source === "voice" ? "voice" : source === "agent" ? "agent" : "widget";
   if (kind === "invoke") return invokeCapabilityAction(services, request, capabilitySource);
-  if (kind === "agent") return invokeAgentAction(services, request, source === "voice" ? "voice" : "click");
+  if (kind === "agent") {
+    // An agent button sends its request to Clark as the person's own message. Clark pressing one would put words in the
+    // person's mouth and record Clark's choice as their click, so it is refused rather than relabelled.
+    if (source === "agent") {
+      return refusal("NOT_AUTHORIZED", "Clark cannot press a button that asks Clark: it would be sent as the person's own message. Nothing was sent.");
+    }
+    return invokeAgentAction(services, request, source);
+  }
   if (kind === "workflow") return invokeWorkflowAction(services, request, capabilitySource);
 
   // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take

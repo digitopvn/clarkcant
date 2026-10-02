@@ -45,23 +45,48 @@ const ACTIONS = ["list", "invoke"] as const;
  *
  * A package job belongs to the widget binding that started it: that widget shows its progress and result, and only it
  * may read or stop it. So Clark does not start an orphan job; it presses the binding, through the same gate, input
- * check, rate limit, policy and ledger a click goes through. When more than one widget could take it, the model is
- * asked to name one rather than the node guessing.
+ * check, rate limit, policy and ledger a click goes through. When more than one binding could take it — on several
+ * widgets, or several buttons of one widget — the model is asked to name one by `instanceId` and `actionBindingId`
+ * rather than the node guessing.
  */
+const LISTED_TARGETS = 10;
+
+function listTargets(targets: readonly CapabilityBindingTarget[]): string {
+  return targets
+    .slice(0, LISTED_TARGETS)
+    .map((target) => `- instanceId ${target.instanceId}, actionBindingId ${target.actionBindingId}: nút “${target.label}”`)
+    .join("\n");
+}
+
 async function startJobThroughWidget(
   services: WidgetActionServices,
-  call: { conversationId: string; ref: string; args: Record<string, unknown>; instanceId?: string; source: "voice" | "agent" },
+  call: {
+    conversationId: string;
+    ref: string;
+    args: Record<string, unknown>;
+    instanceId?: string;
+    actionBindingId?: string;
+    source: "voice" | "agent";
+  },
 ): Promise<string> {
   const all = conversationCapabilityBindings(services, call.conversationId, call.ref);
-  const targets = call.instanceId === undefined ? all : all.filter((target) => target.instanceId === call.instanceId);
+  const targets = all.filter(
+    (target) =>
+      (call.instanceId === undefined || target.instanceId === call.instanceId) &&
+      (call.actionBindingId === undefined || target.actionBindingId === call.actionBindingId),
+  );
   if (targets.length === 0) {
-    return call.instanceId === undefined
-      ? `Không gọi được: ${call.ref} là việc chạy lâu và phải được bắt đầu từ một widget có nút gọi nó, mà cuộc trò chuyện này chưa có widget nào như vậy. Không có gì được chạy.`
-      : `Không gọi được: widget ${call.instanceId} trong cuộc trò chuyện này không có nút gọi ${call.ref}. Không có gì được chạy.`;
+    if (all.length === 0) {
+      return `Không gọi được: ${call.ref} là việc chạy lâu và phải được bắt đầu từ một widget có nút gọi nó, mà cuộc trò chuyện này chưa có widget nào như vậy. Không có gì được chạy.`;
+    }
+    const named = [
+      ...(call.instanceId === undefined ? [] : [`instanceId ${call.instanceId}`]),
+      ...(call.actionBindingId === undefined ? [] : [`actionBindingId ${call.actionBindingId}`]),
+    ].join(", ");
+    return `Không gọi được: không có nút nào gọi ${call.ref} khớp ${named} trong cuộc trò chuyện này. Các nút có:\n${listTargets(all)}\nKhông có gì được chạy.`;
   }
   if (targets.length > 1) {
-    const listed = targets.slice(0, 10).map((target) => `- instanceId ${target.instanceId}: nút “${target.label}”`).join("\n");
-    return `Có nhiều widget gọi được ${call.ref}; gọi lại với instanceId của widget người dùng muốn:\n${listed}\nChưa có gì được chạy.`;
+    return `Có nhiều nút gọi được ${call.ref}; gọi lại với instanceId và actionBindingId của nút người dùng muốn:\n${listTargets(targets)}\nChưa có gì được chạy.`;
   }
   const [target] = targets as [CapabilityBindingTarget];
   const cursor = widgetActionTarget(services, target.instanceId, target.actionBindingId);
@@ -169,6 +194,11 @@ export function createInvokeCapabilityTool(input: InvokeCapabilityToolDeps): Too
           description:
             "For invoke of a long-running (job) capability, when several widgets in this conversation can start it: the widget to start it from.",
         },
+        actionBindingId: {
+          type: "string",
+          description:
+            "For invoke of a long-running (job) capability, when several buttons can start it (also on one widget): the button to press, by the id the ambiguity answer lists.",
+        },
       },
     },
     promptSnippet: "invoke_capability — list or call capabilities that installed packages' services provide",
@@ -188,7 +218,9 @@ export function createInvokeCapabilityTool(input: InvokeCapabilityToolDeps): Too
       const source = input.channel() === "voice" ? "voice" : "agent";
       const widgets = input.widgets?.();
       if (deps.serviceHost?.execution?.(ref)?.kind === "job" && widgets !== undefined && input.conversationId !== undefined) {
-        const instanceId = typeof params.instanceId === "string" && params.instanceId.trim() !== "" ? params.instanceId.trim() : undefined;
+        const named = (value: unknown): string | undefined => (typeof value === "string" && value.trim() !== "" ? value.trim() : undefined);
+        const instanceId = named(params.instanceId);
+        const actionBindingId = named(params.actionBindingId);
         return {
           text: await startJobThroughWidget(widgets, {
             conversationId: input.conversationId,
@@ -196,6 +228,7 @@ export function createInvokeCapabilityTool(input: InvokeCapabilityToolDeps): Too
             args,
             source,
             ...(instanceId === undefined ? {} : { instanceId }),
+            ...(actionBindingId === undefined ? {} : { actionBindingId }),
           }),
         };
       }

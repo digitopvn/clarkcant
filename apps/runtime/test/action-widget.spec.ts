@@ -10,6 +10,7 @@ import {
   getActionBinding,
   getInstance,
   registerCapability,
+  saveActionBinding,
   writeRegisteredPreference,
 } from "@clarkcant/core";
 import { ACTION, DETAILS } from "@clarkcant/data-canvas";
@@ -527,6 +528,36 @@ describe("placing a button through the model's view", () => {
       intent: "Tóm tắt lại",
       contextRefs: [],
     });
+  });
+
+  it("refuses Clark pressing a button that asks Clark, rather than recording it as the person's click", async () => {
+    const instanceId = await place({ label: "Tóm tắt", action: { kind: "agent", intent: "Tóm tắt lại" } });
+    const instance = getInstance(services.conductor, instanceId);
+    const bindingId = instance?.actionBindingIds[0] ?? "";
+    const binding = getActionBinding(services.conductor, bindingId);
+    const messages = () => (services.runtime.db.prepare("SELECT COUNT(*) AS n FROM messages").get() as { n: number }).n;
+    const before = messages();
+
+    const refused = await invokeWidgetAction(
+      services,
+      {
+        conversationId,
+        principalId: services.runtime.identity.ownerPrincipalId,
+        instanceId,
+        actionBindingId: bindingId,
+        expectedRevision: instance?.revision ?? 0,
+        expectedBindingDigest: binding?.bindingDigest ?? "",
+        input: {},
+        invocationId: "inv_agent_presses_agent",
+      },
+      "agent",
+    );
+
+    expect(refused).toMatchObject({ ok: false, status: 403, code: "NOT_AUTHORIZED" });
+    if (refused.ok) throw new Error("unreachable");
+    expect(refused.message).toContain("Nothing was sent");
+    // No message was written as the person's, and no turn ran.
+    expect(messages()).toBe(before);
   });
 
   it("refuses a proposal before anything is stored, so no button without an action is left behind", async () => {
@@ -1818,6 +1849,49 @@ describe("a button whose capability runs as a durable job", () => {
     expect(chosen.text).toContain(`widget ${second}`);
     await until(() => calls.length === 2);
     expect(calls[1]?.args).toEqual({ text: "y" });
+  });
+
+  it("lets Clark choose between two buttons of one widget that start the same job, by binding id", async () => {
+    serveJob();
+    answer = neverAnswers;
+    const tool = createInvokeCapabilityTool({ deps: () => capabilityInvokeDeps(services), conversationId, channel: () => "chat", widgets: () => services });
+    const widget = await place({ label: "Generate", action: { kind: "invoke", capabilityRef: JOB, args: { text: "standard" } } });
+    const standard = getInstance(services.conductor, widget)?.actionBindingIds[0] ?? "";
+    const first = getActionBinding(services.conductor, standard);
+    if (first === undefined) throw new Error("no binding was stored");
+    // A second button on the same widget, calling the same capability with other fixed arguments.
+    const hd = "binding_render_hd";
+    saveActionBinding(services.conductor, {
+      ...first,
+      actionBindingId: hd,
+      label: "Generate HD",
+      proposal: { kind: "invoke", capabilityRef: JOB, args: { text: "hd" } },
+      bindingDigest: `sha256:${hd}`,
+    });
+    expect(getInstance(services.conductor, widget)?.actionBindingIds).toEqual([standard, hd]);
+
+    // Naming the widget is not enough: both buttons are listed with their ids, and nothing runs.
+    const ambiguous = await tool.execute({ action: "invoke", ref: JOB, args: {}, instanceId: widget });
+    expect(ambiguous.text).toContain(`actionBindingId ${standard}`);
+    expect(ambiguous.text).toContain(`actionBindingId ${hd}`);
+    expect(ambiguous.text).toContain("Chưa có gì được chạy");
+    expect(calls).toHaveLength(0);
+
+    // An id that is not one of them is refused with the ids that exist.
+    const unknown = await tool.execute({ action: "invoke", ref: JOB, args: {}, actionBindingId: "binding_nope" });
+    expect(unknown.text).toContain("binding_nope");
+    expect(unknown.text).toContain(`actionBindingId ${standard}`);
+    expect(unknown.text).toContain(`actionBindingId ${hd}`);
+    expect(unknown.text).toContain("Không có gì được chạy");
+    expect(calls).toHaveLength(0);
+
+    const chosen = await tool.execute({ action: "invoke", ref: JOB, args: {}, instanceId: widget, actionBindingId: hd });
+    expect(chosen.text).toContain("Đã bắt đầu job");
+    expect(chosen.text).toContain("“Generate HD”");
+    const jobId = /job_[A-Za-z0-9_-]+/.exec(chosen.text)?.[0] ?? "";
+    expect(jobRow(jobId)).toMatchObject({ instance_id: widget, action_binding_id: hd });
+    await until(() => calls.length === 1);
+    expect(calls[0]?.args).toEqual({ text: "hd" });
   });
 
   it("lists only the jobs this widget's own bindings started, newest first, with the same owner checks", async () => {
