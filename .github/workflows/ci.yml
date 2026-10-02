@@ -233,9 +233,8 @@ jobs:
       # retries off: a test that needed its retry did not pass that many times.
       - name: Browser suite
         env:
-          # TEMPORARY (#401 proof run): repeat the two voice tests five times. Reverted before review.
-          E2E_SPECS: ${{ inputs.e2e_specs || 'apps/web/e2e/connected-app.spec.ts apps/web/e2e/service-facet.spec.ts:126' }}
-          E2E_REPEAT: ${{ inputs.e2e_repeat || '5' }}
+          E2E_SPECS: ${{ inputs.e2e_specs }}
+          E2E_REPEAT: ${{ inputs.e2e_repeat }}
         run: |
           set -f
           args=()
