@@ -122,8 +122,42 @@ describe("evaluating a sheet", () => {
     expect(result.limited).toBe(false);
     // 2,500 formulas each summing the whole sheet, every other formula included: past it.
     const heavy = Array.from({ length: 50 }, () => Array.from({ length: 50 }, () => "=SUM(A1:AX50)"));
+    heavy.push(["=1+1", "=A51*3"]);
     const limited = evaluateSheet(createSheet(heavy));
     expect(limited.limited).toBe(true);
-    expect(limited.get(0, 0)).toEqual({ error: "#LIMIT!" });
+    expect(limited.get(49, 49)).toEqual({ error: "#LIMIT!" });
+    // The limit belongs to the formulas past it: a formula that reaches no range is still evaluated.
+    expect(limited.get(50, 0)).toBe(2);
+    expect(limited.get(50, 1)).toBe(6);
+  });
+
+  it("evaluates a running total over thousands of rows, and keeps the rest of the sheet out of any limit", () => {
+    const rows = Array.from({ length: 3_000 }, (_, row) => [String(row + 1), `=SUM($A$1:A${String(row + 1)})`]);
+    rows[0]?.push("=1+1");
+    const result = evaluateSheet(createSheet(rows));
+    expect(result.limited).toBe(false);
+    expect(result.get(2_999, 1)).toBe((3_000 * 3_001) / 2);
+    expect(result.get(0, 2)).toBe(2);
+  });
+
+  it("keeps a formula that reads no range out of the limit once the cells read have run past the budget", () => {
+    // 4,000 running totals read about 8 million cells between them, past the 5 million a pass may read.
+    const rows = Array.from({ length: 4_000 }, (_, row) => [String(row + 1), `=SUM($A$1:A${String(row + 1)})`, `=A${String(row + 1)}*2`]);
+    const result = evaluateSheet(createSheet(rows));
+    expect(result.limited).toBe(true);
+    expect(result.get(3_999, 1)).toEqual({ error: "#LIMIT!" });
+    expect(result.get(3_999, 2)).toBe(8_000);
+    expect(result.get(0, 1)).toBe(1);
+  });
+
+  it("keeps parsed formulas only for the formulas on the sheet", () => {
+    const sheet = createSheet([["=1+2", "=A1*2"]]);
+    const first = evaluateSheet(sheet);
+    expect([...first.parsed.keys()]).toEqual(["1+2", "A1*2"]);
+    sheet.set(0, 1, "=A1*3");
+    sheet.set(0, 0, "4");
+    const second = evaluateSheet(sheet, first.parsed);
+    expect([...second.parsed.keys()]).toEqual(["A1*3"]);
+    expect(second.get(0, 1)).toBe(12);
   });
 });

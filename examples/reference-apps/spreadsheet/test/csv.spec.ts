@@ -6,6 +6,7 @@ import {
   delimiterFor,
   exportedCellText,
   parseDelimited,
+  sheetCellText,
   writeDelimited,
 } from "../widgets/main/csv.js";
 import { evaluateSheet } from "../widgets/main/formula.js";
@@ -82,6 +83,32 @@ describe("reading delimited text", () => {
     expect(result.rows).toEqual([["1", "2"], ["3", "4"]]);
     expect(result.truncated).toEqual({ rows: false, columns: false, clipped: false });
   });
+
+  it("does not call a file cut for blank lines at its end, and keeps blank lines between rows", () => {
+    const end = parseDelimited("1\n2\n\n\r\n", { ...wide, maxRows: 2 });
+    expect(end.rows).toEqual([["1"], ["2"]]);
+    expect(end.truncated.rows).toBe(false);
+    expect(parseDelimited("1\n\n3\n", wide).rows).toEqual([["1"], [""], ["3"]]);
+    // A blank line still counts once a row follows it.
+    expect(parseDelimited("1\n\n3\n", { ...wide, maxRows: 2 }).truncated.rows).toBe(true);
+  });
+
+  it("bounds the rectangle a ragged file makes, as the sheet does, not just its fields", () => {
+    const text = `${["a,b,c,d,e,f,g,h,i,j", ...Array.from({ length: 30 }, () => "x")].join("\n")}\n`;
+    const result = parseDelimited(text, { ...wide, maxCells: 100 });
+    // Ten rows of the widest row's ten columns is the most that fits, though the fields would number only 19.
+    expect(result.rows).toHaveLength(10);
+    expect(result.truncated.rows).toBe(true);
+  });
+
+  it("drops the unfinished last line of a read that stopped early, and keeps it when the file ended there", () => {
+    const stopped = createDelimitedReader(wide);
+    stopped.push("12345,hello world\n12");
+    expect(stopped.finish({ dropPartial: true })).toMatchObject({ rows: [["12345", "hello world"]], truncated: { rows: true } });
+    const ended = createDelimitedReader(wide);
+    ended.push("12345,hello world\n12");
+    expect(ended.finish()).toMatchObject({ rows: [["12345", "hello world"], ["12"]], truncated: { rows: false } });
+  });
 });
 
 describe("writing an export", () => {
@@ -104,6 +131,17 @@ describe("writing an export", () => {
     expect(writeDelimited([["a\tb", "c"]], "\t")).toBe('"a\tb"\tc\r\n');
     expect(writeDelimited([["=A1+1", "'x"]], ",", { neutralize: false })).toBe("=A1+1,'x\r\n");
     expect(writeDelimited([], ",")).toBe("");
+  });
+
+  it("writes text that would read back as a number, or that starts with a quote, behind a quote", () => {
+    // Typed as `'007`, `'1e3` and `''x`: text whose values are 007, 1e3 and 'x.
+    const sheet = createSheet([["'007", "'1e3", "''x", "007", "chữ"]]);
+    const before = valuesOf(sheet.rawRows());
+    expect(before).toEqual([["007", "1e3", "'x", 7, "chữ"]]);
+    expect(writeDelimited(before, ",")).toBe("'007,'1e3,''x,7,chữ\r\n");
+    expect(valuesOf(parseDelimited(writeDelimited(before, ","), wide).rows)).toEqual(before);
+    expect(sheetCellText("=1")).toBe("'=1");
+    expect(sheetCellText(" 12 ")).toBe("' 12 ");
   });
 
   it("reimports an export to the same values: formulas as their results, errors as their codes", () => {

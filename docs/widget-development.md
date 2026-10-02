@@ -2285,37 +2285,70 @@ describes itself to Clark and applies a change Clark chose.
   read in 256 KiB chunks; the widget never sees a path. An export is a new file written through `create`, `write`,
   `finalize` and `export`, with a byte-order mark as the host's table export writes. XLSX is not supported: there is
   no vetted parser in the tree and the host's file broker does not accept the type.
-- **Bounds.** At most 25,000 cells, 64 columns and 5,000 rows are loaded, and no file is read past 8 MiB. Reading stops
-  at the bound and a notice says how much is shown and that an export writes only that part. Rows and columns are
-  virtualized, so a large sheet keeps only the cells in view in the document.
-- **State.** The widget state holds the source file's reference, the edits since, the formats and the active cell,
-  never the sheet itself. When the edits outgrow 10 KiB of the host's 16 KiB, the widget writes the whole sheet to a
-  file of its own and starts again from it.
+- **Bounds.** At most 25,000 cells, 64 columns and 5,000 rows are loaded, and no file is read past 8 MiB. The cell
+  bound is on the rectangle the rows make (rows times the widest row), the same rule the sheet applies to an edit, so a
+  ragged file is cut where its rectangle stops fitting instead of loading a sheet that then refuses every edit. Reading
+  stops at the bound and a notice says how much is shown and that an export writes only that part. A read stopped by
+  the 8 MiB limit drops the line it stopped in rather than show a fragment as a row. Blank lines at the end of a file
+  are not counted, so they never make a file that fits look cut. Rows and columns are virtualized, so a large sheet
+  keeps only the cells in view in the document.
+- **State.** The widget state holds the source file's reference, the edits since and the formats, never the sheet
+  itself. The active cell and the selection are declared in `ephemeralStateKeys` ([§5](#5-widget-definition)): the
+  host keeps them for the frame and never writes them to the node, and moving the cursor sends at most one update per
+  pause. When the edits outgrow 10 KiB of the host's 16 KiB, the widget writes the whole sheet to a file of its own
+  and starts again from it. One such checkpoint runs at a time, with at most one more queued. Edits made while one is
+  written stay and are saved after it, only the edits the file holds are cleared, and the checkpoint it replaces is
+  discarded. A checkpoint that does not load whole after a reload says so in the notice. Clearing a selection is one
+  batched edit, so clearing the whole sheet takes a moment rather than minutes.
 - **Formulas.** A closed set: arithmetic, cell and range references, and `SUM`, `AVERAGE`, `MIN`, `MAX` and
   `COUNT`. A parser builds a tree that the widget walks; no text is ever run as code. Errors are values (`#DIV/0!`,
   `#VALUE!`, `#REF!`, `#NAME?`, `#PARSE!`, `#NUM!`, `#LIMIT!`), and a circular reference is `#CIRC!` with
-  the cells on it named in the notice.
+  the cells on it named in the notice. One recalculation reads at most 5,000,000 cells through ranges and follows at
+  most 2,000,000 links between formulas. `#LIMIT!` marks only a formula past either bound, and the formulas that read
+  it; a formula with no range, such as `=1+1`, is always worked out. A running total such as `=SUM($A$1:A3000)` down
+  3,000 rows fits.
 - **CSV injection.** An export carries computed values, never formulas. Text that starts with `=`, `+`, `-`,
-  `@`, a tab or a carriage return is written behind a `'`, the same rule as `toCsv`, and a leading `'` reads back
-  as text, so an exported file imports to the same values.
+  `@`, a tab or a carriage return is written behind a `'`, the same rule as `toCsv`. Text this sheet would read
+  back as something else, such as `007`, `1e3` or text that itself starts with `'`, is written behind a `'` too.
+  A leading `'` reads back as text, so an exported file imports into this sheet to the same values. Another
+  spreadsheet application shows that `'` as part of the text, as it does for the formula rule.
 - **Semantic document.** The selected A1 range, an excerpt of at most 12 rows by 8 columns, the active cell's formula
   and value, and the sheet's size, sized to fit the host's semantic limits so nothing is cut.
 - **Formatting through Clark.** The widget's "format as percent" button presses an `agent` binding whose id arrives
   as the `formatBinding` prop and whose context is `selection` and `widget`. The press sends nothing: the host reads
   the range from the widget's semantic document and asks for exactly one line, `format: percent <range>`. The widget
-  treats the reply as untrusted, applies it only when it is that line for the range selected at the press, and says so
-  when it is not.
-- **Keyboard.** Arrow keys move, Shift extends the selection, Home/End and Ctrl+Home/End jump, Page Up/Down page,
-  Enter or F2 edits, typing starts an edit, Escape cancels, Tab moves right and Delete clears the selection.
+  treats the reply as untrusted. It accepts a closed set of lines, `format: percent|number|plain <range>`, and
+  applies one only when the range is the one selected at the press; otherwise it says so and changes nothing. The
+  selection is locked until the reply arrives. The sheet keeps at most 32 formats. When a new one pushes out the
+  oldest, the status line names the range that lost its format. "Undo format", or Ctrl+Z in the grid, restores the
+  formats from before Clark's change. The widget offers no other undo.
+- **Keyboard.** The grid is a single tab stop. Arrow keys move, Shift extends the selection, Home/End and
+  Ctrl+Home/End jump, and Page Up/Down page. Enter or F2 edits, typing starts an edit, and Enter commits and moves
+  down. Escape cancels an edit or collapses a range to its active cell. Delete clears the selection, and Ctrl+Z
+  undoes the last format. Tab and Shift+Tab leave the grid, so Import, Export, "Ask Clark" and the rest of the page
+  stay reachable. Only while editing does Tab commit and move right.
+- **Pointer and touch.** A mouse selects by click, Shift+click or drag. On touch, a tap selects a cell and a swipe
+  scrolls the grid. "Select range" makes the following taps extend the selection from the cell tapped before; tap it
+  again to stop. Buttons are at least 40 px high.
 
-Two limits are stated rather than hidden. Nothing in the product places a package widget with a bound action yet: in the
+Three limits are stated rather than hidden. Nothing in the product places a package widget with a bound action yet: in the
 browser suite the fixture node places the spreadsheet and compiles its binding the way the host compiles a model's
 proposal. And a request typed in the composer reaches Clark through the semantic note but cannot change the frame. Both
-are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382).
+are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382). Last, the host sends the widget's semantic
+document 250 ms after the selection settles, and runs the press without waiting for it. A press inside that window
+can reach Clark with the previous range. The widget then refuses the reply and changes nothing. The host step that
+sends the pending document before it runs an `agent` binding is
+[#383](https://github.com/digitopvn/clarkcant/pull/383).
 
 Tests: unit tests for the parser, formulas, bounds and semantic document in
-[test/](../examples/reference-apps/spreadsheet/test/) (28 tests); `clark widget test` passes 22 checks, with 12
-needing the dev host; and the browser journey [spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (3 tests):
-import, edit, export and reimport in CSV and TSV to the same values; a selected range Clark formats as percent; a file
-past the bounds that loads its first part, says so and stays responsive; no path in bridge or frame traffic; and the
-grid from the keyboard, in both themes, at 390 px with the grid scrolling inside its card.
+[test/](../examples/reference-apps/spreadsheet/test/) (47 tests), including checkpoints against a fake host: edits made
+while one is written surviving a reload, one at a time, superseded files discarded, a refused one kept in memory, and a
+sheet replaced mid-write. `clark widget test` passes 22 checks, with 12 needing the dev host. The browser journey
+[spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (3 tests) covers:
+
+- import, edit, export and reimport in CSV and TSV to the same values;
+- a selected range Clark formats as percent, with the selection locked while Clark answers, and Undo;
+- a file past the bounds that loads its first part, says so, stays responsive, and clears all 25,000 cells at once;
+- no path in bridge or frame traffic;
+- the grid from the keyboard (Tab and Shift+Tab leave it), by touch with "Select range", and by mouse drag;
+- both themes, 40 px buttons, and 390 px with the grid scrolling inside its card.

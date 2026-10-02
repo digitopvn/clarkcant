@@ -203,12 +203,34 @@ test("a sheet imported, edited and exported reads back to the same values, and C
   );
   await frame.locator(".cell[data-cell='B2']").click();
   await frame.locator(".cell[data-cell='C3']").click({ modifiers: ["Shift"] });
-  await expect(frame.locator("[data-sheet-address]")).toHaveText("C3 · B2:C3");
+  const address = frame.locator("[data-sheet-address]");
+  await expect(address).toHaveText("C3 · B2:C3");
+  // TODO(#383): drop this wait once the host sends a frame's pending semantic update before it runs an `agent` binding.
+  // Until then a press inside the host's 250 ms settle reaches the node before the selection does, Clark is given the
+  // previous range, and the widget refuses the reply (which is the safe outcome, but the press does nothing useful).
   expect((await published).ok()).toBe(true);
   const ask = frame.locator("[data-sheet-ask-format]");
   await expect(ask).toBeEnabled();
+
+  // The press is held at the network so the sheet can be seen while Clark answers: the selection does not move.
+  let releaseInvoke: () => void = () => undefined;
+  const invokeHeld = new Promise<void>((resolve) => {
+    releaseInvoke = resolve;
+  });
+  const actionsPath = /\/conversations\/[^/]+\/widgets\/[^/]+\/actions$/u;
+  await page.route(actionsPath, async (route) => {
+    await invokeHeld;
+    await route.continue();
+  });
   await ask.click();
+  await expect(frame.locator("[data-sheet-grid]")).toHaveAttribute("data-selection-locked");
+  await frame.locator(".cell[data-cell='A1']").click();
+  await page.keyboard.press("ArrowDown");
+  await expect(address).toHaveText("C3 · B2:C3");
+  releaseInvoke();
   await expect(ask).toHaveAttribute("data-format-result", "applied", { timeout: 60_000 });
+  await page.unroute(actionsPath);
+  await expect(frame.locator("[data-sheet-grid]")).not.toHaveAttribute("data-selection-locked");
   await expect(frame.locator("[data-sheet-status]")).toHaveText("Clark đã định dạng B2:C3 thành phần trăm.");
   await expect(frame.locator(".cell[data-cell='B2']")).toHaveText("1000%");
   await expect(frame.locator(".cell[data-cell='C2']")).toHaveText("25%");
@@ -217,6 +239,15 @@ test("a sheet imported, edited and exported reads back to the same values, and C
   await expect(frame.locator(".cell[data-cell='B4']")).toHaveText("40");
   await expect(frame.locator(".cell[data-cell='D2']")).toHaveText("20");
   await page.screenshot({ path: join(EVIDENCE, "spreadsheet-formatted-1280-light.png"), fullPage: true });
+
+  // What Clark applied can be taken back: the Undo button, or Ctrl+Z in the grid, restores the formats before it.
+  const undo = frame.locator("[data-sheet-undo-format]");
+  await expect(undo).toBeVisible();
+  await undo.click();
+  await expect(frame.locator(".cell[data-cell='B2']")).toHaveText("10");
+  await expect(frame.locator(".cell[data-cell='C3']")).toHaveText("0.75");
+  await expect(frame.locator("[data-sheet-status]")).toHaveText("Đã hoàn tác định dạng.");
+  await expect(undo).toBeHidden();
 
   // The reply the widget received came back across the bridge, naming the range the host read.
   const messages = await bridgeMessages(page);
@@ -293,91 +324,173 @@ test("a file larger than the sheet holds loads its first part, says so, and stay
   const editMs = Date.now() - moved;
   expect(Number(await frame.locator(".canvas").getAttribute("data-rendered-rows"))).toBeLessThan(80);
 
-  const timings = { loadMs, endMs, homeMs, pageMs, editMs };
+  // Clearing every loaded cell is one pass over the sheet, not a copy of the edits per cell.
+  moved = Date.now();
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.press("Control+Shift+End");
+  await expect(frame.locator("[data-sheet-address]")).toHaveText("E5000 · A1:E5000");
+  await page.keyboard.press("Delete");
+  await expect(frame.locator(".cell[data-cell='E5000']")).toHaveText("");
+  await page.keyboard.press("Control+Home");
+  await expect(frame.locator(".cell[data-cell='A1']")).toHaveText("");
+  const clearMs = Date.now() - moved;
+  // The grid still answers straight after.
+  await page.keyboard.press("ArrowDown");
+  await expect(frame.locator("[data-sheet-address]")).toHaveText("A2");
+
+  const timings = { loadMs, endMs, homeMs, pageMs, editMs, clearMs };
   test.info().annotations.push({ type: "timings", description: JSON.stringify(timings) });
   expect(endMs).toBeLessThan(2_000);
   expect(homeMs).toBeLessThan(2_000);
   expect(pageMs).toBeLessThan(3_000);
   expect(editMs).toBeLessThan(3_000);
+  expect(clearMs).toBeLessThan(5_000);
   await page.locator("[data-pin-live] [data-widget-frame]").scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(EVIDENCE, "spreadsheet-large-1280-dark.png"), fullPage: true });
 });
 
-test("the grid is used from the keyboard, follows both themes, and scrolls inside its card on a phone", async ({ page }) => {
-  test.setTimeout(180_000);
-  mkdirSync(EVIDENCE, { recursive: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.emulateMedia({ colorScheme: "light" });
-  const frame = await openSpreadsheet(page);
-  await importFile(page, frame, SOURCE_NAME, "text/csv", SOURCE_CSV);
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
 
-  const grid = frame.locator("[data-sheet-grid]");
-  const address = frame.locator("[data-sheet-address]");
-  await expect(grid).toHaveAttribute("role", "grid");
-  await grid.focus();
-  await expect(grid).toBeFocused();
-  await expect(grid).toHaveAttribute("aria-activedescendant", "cell-0-0");
+  test("the grid is used from the keyboard, by touch and by mouse, follows both themes, and scrolls inside its card on a phone", async ({ page }) => {
+    test.setTimeout(180_000);
+    mkdirSync(EVIDENCE, { recursive: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme: "light" });
+    const frame = await openSpreadsheet(page);
+    await importFile(page, frame, SOURCE_NAME, "text/csv", SOURCE_CSV);
 
-  await page.keyboard.press("ArrowRight");
-  await page.keyboard.press("ArrowDown");
-  await expect(address).toHaveText("B2");
-  await expect(grid).toHaveAttribute("aria-activedescendant", "cell-1-1");
-  await page.keyboard.press("Shift+ArrowRight");
-  await page.keyboard.press("Shift+ArrowDown");
-  await expect(address).toHaveText("C3 · B2:C3");
-  await expect(frame.locator(".cell[data-cell='B2']")).toHaveAttribute("aria-selected", "true");
-  await expect(frame.locator(".cell[data-cell='C3']")).toHaveAttribute("aria-selected", "true");
-  await expect(frame.locator(".cell[data-cell='D3']")).toHaveAttribute("aria-selected", "false");
-  await page.keyboard.press("End");
-  await expect(address).toHaveText("D3");
-  await page.keyboard.press("Home");
-  await expect(address).toHaveText("A3");
-  await page.keyboard.press("Tab");
-  await expect(address).toHaveText("B3");
+    const grid = frame.locator("[data-sheet-grid]");
+    const address = frame.locator("[data-sheet-address]");
+    await expect(grid).toHaveAttribute("role", "grid");
+    await grid.focus();
+    await expect(grid).toBeFocused();
+    await expect(grid).toHaveAttribute("aria-activedescendant", "cell-0-0");
 
-  // F2 edits; Escape leaves the cell as it was; typing starts an edit that Enter commits and moves down.
-  await page.keyboard.press("F2");
-  const editor = frame.locator("[data-sheet-editor]");
-  await expect(editor).toBeFocused();
-  await expect(editor).toHaveValue("30");
-  await page.keyboard.type("0");
-  await page.keyboard.press("Escape");
-  await expect(editor).toBeHidden();
-  await expect(grid).toBeFocused();
-  await expect(frame.locator(".cell[data-cell='B3']")).toHaveText("30");
-  await page.keyboard.type("50");
-  await page.keyboard.press("Enter");
-  await expect(frame.locator(".cell[data-cell='B3']")).toHaveText("50");
-  await expect(frame.locator(".cell[data-cell='B4']")).toHaveText("60");
-  await expect(address).toHaveText("B4");
-  await page.keyboard.press("Delete");
-  await expect(frame.locator(".cell[data-cell='B4']")).toHaveText("");
-  await page.keyboard.press("Control+Home");
-  await expect(address).toHaveText("A1");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowDown");
+    await expect(address).toHaveText("B2");
+    await expect(grid).toHaveAttribute("aria-activedescendant", "cell-1-1");
+    await page.keyboard.press("Shift+ArrowRight");
+    await page.keyboard.press("Shift+ArrowDown");
+    await expect(address).toHaveText("C3 · B2:C3");
+    await expect(frame.locator(".cell[data-cell='B2']")).toHaveAttribute("aria-selected", "true");
+    await expect(frame.locator(".cell[data-cell='C3']")).toHaveAttribute("aria-selected", "true");
+    await expect(frame.locator(".cell[data-cell='D3']")).toHaveAttribute("aria-selected", "false");
+    await page.keyboard.press("End");
+    await expect(address).toHaveText("D3");
+    await page.keyboard.press("Home");
+    await expect(address).toHaveText("A3");
+    await page.keyboard.press("ArrowRight");
+    await expect(address).toHaveText("B3");
 
-  // The grid is wider than the phone, and it scrolls inside its card: the page itself does not.
-  const sizes = await grid.evaluate((node) => ({ scrollWidth: node.scrollWidth, clientWidth: node.clientWidth }));
-  expect(sizes.scrollWidth).toBeGreaterThan(sizes.clientWidth);
-  for (let step = 0; step < 7; step += 1) await page.keyboard.press("ArrowRight");
-  await expect(address).toHaveText("H1");
-  expect(await grid.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
-  const frameBox = await page.locator("[data-pin-live] [data-widget-frame] iframe").boundingBox();
-  expect(frameBox === null ? Number.POSITIVE_INFINITY : frameBox.x + frameBox.width).toBeLessThanOrEqual(390);
+    /*
+     * The grid is one stop in the tab order. Shift+Tab leaves it for the buttons before it — "Ask Clark" among them —
+     * and Tab comes back to it with the cell where it was; Tab from the grid leaves the widget altogether.
+     */
+    const ask = frame.locator("[data-sheet-ask-format]");
+    await expect(ask).toBeEnabled();
+    let presses = 0;
+    while (!(await ask.evaluate((node) => node === document.activeElement)) && presses < 6) {
+      await page.keyboard.press("Shift+Tab");
+      presses += 1;
+    }
+    await expect(ask).toBeFocused();
+    for (const name of ["[data-sheet-export='tsv']", "[data-sheet-export='csv']", "[data-sheet-import]"]) {
+      await page.keyboard.press("Shift+Tab");
+      await expect(frame.locator(name)).toBeFocused();
+    }
+    for (let step = 0; step < 8 && !(await grid.evaluate((node) => node === document.activeElement)); step += 1) {
+      await page.keyboard.press("Tab");
+    }
+    await expect(grid).toBeFocused();
+    await expect(address).toHaveText("B3");
+    await expect(frame.locator(".viewport:focus-visible")).toHaveCount(1);
+    await page.keyboard.press("Tab");
+    await expect(grid).not.toBeFocused();
+    expect(await page.evaluate(() => document.activeElement?.tagName ?? "")).not.toBe("IFRAME");
+    await grid.focus();
+    await expect(address).toHaveText("B3");
 
-  const overflow: Record<string, number> = {};
-  const schemes: Record<string, string | null> = {};
-  for (const colorScheme of ["light", "dark"] as const) {
-    await page.emulateMedia({ colorScheme });
-    await expect(frame.locator("html")).toHaveAttribute("data-scheme", colorScheme);
-    schemes[colorScheme] = await frame.locator("html").getAttribute("data-scheme");
-    // The focus ring is visible against both canvases.
-    const ring = await frame.locator(".cell.active").evaluate((node) => getComputedStyle(node).outlineStyle);
-    expect(ring).not.toBe("none");
-    await page.locator("[data-pin-live] [data-widget-frame]").scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(EVIDENCE, `spreadsheet-390-${colorScheme}.png`), fullPage: true });
-    overflow[`390-${colorScheme}`] = await horizontalOverflow(page);
-  }
-  test.info().annotations.push({ type: "horizontal-overflow", description: JSON.stringify(overflow) });
-  expect(overflow).toEqual({ "390-light": 0, "390-dark": 0 });
-  expect(schemes).toEqual({ light: "light", dark: "dark" });
+    // F2 edits; Escape leaves the cell as it was; typing starts an edit that Enter commits and moves down.
+    await page.keyboard.press("F2");
+    const editor = frame.locator("[data-sheet-editor]");
+    await expect(editor).toBeFocused();
+    await expect(editor).toHaveValue("30");
+    await page.keyboard.type("0");
+    await page.keyboard.press("Escape");
+    await expect(editor).toBeHidden();
+    await expect(grid).toBeFocused();
+    await expect(frame.locator(".cell[data-cell='B3']")).toHaveText("30");
+    await page.keyboard.type("50");
+    await page.keyboard.press("Enter");
+    await expect(frame.locator(".cell[data-cell='B3']")).toHaveText("50");
+    await expect(frame.locator(".cell[data-cell='B4']")).toHaveText("60");
+    await expect(address).toHaveText("B4");
+    await page.keyboard.press("Delete");
+    await expect(frame.locator(".cell[data-cell='B4']")).toHaveText("");
+    await page.keyboard.press("Control+Home");
+    await expect(address).toHaveText("A1");
+
+    // Touch has no Shift: "Select range" makes a tap extend the selection from the cell tapped before it.
+    await frame.locator(".cell[data-cell='B2']").tap();
+    await expect(address).toHaveText("B2");
+    const selectRange = frame.locator("[data-sheet-select-range]");
+    await selectRange.tap();
+    await expect(selectRange).toHaveAttribute("aria-pressed", "true");
+    await frame.locator(".cell[data-cell='C3']").tap();
+    await expect(address).toHaveText("C3 · B2:C3");
+    await expect(frame.locator(".cell[data-cell='C2']")).toHaveAttribute("aria-selected", "true");
+    await selectRange.tap();
+    await expect(selectRange).toHaveAttribute("aria-pressed", "false");
+    await frame.locator(".cell[data-cell='A1']").tap();
+    await expect(address).toHaveText("A1");
+
+    // A mouse selects a range by dragging across it.
+    const from = await frame.locator(".cell[data-cell='A2']").boundingBox();
+    const to = await frame.locator(".cell[data-cell='B4']").boundingBox();
+    if (from === null || to === null) throw new Error("the cells to drag across are not on screen");
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await expect(address).toHaveText("B4 · A2:B4");
+    await page.keyboard.press("Escape");
+    await expect(address).toHaveText("B4");
+
+    // Every button is a touch target of at least 40 px.
+    for (const button of await frame.locator("button:visible").all()) {
+      const box = await button.boundingBox();
+      expect(box?.height ?? 0, (await button.textContent()) ?? "").toBeGreaterThanOrEqual(40);
+    }
+    await grid.focus();
+    await page.keyboard.press("Control+Home");
+    await expect(address).toHaveText("A1");
+
+    // The grid is wider than the phone, and it scrolls inside its card: the page itself does not.
+    const sizes = await grid.evaluate((node) => ({ scrollWidth: node.scrollWidth, clientWidth: node.clientWidth }));
+    expect(sizes.scrollWidth).toBeGreaterThan(sizes.clientWidth);
+    for (let step = 0; step < 7; step += 1) await page.keyboard.press("ArrowRight");
+    await expect(address).toHaveText("H1");
+    expect(await grid.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
+    const frameBox = await page.locator("[data-pin-live] [data-widget-frame] iframe").boundingBox();
+    expect(frameBox === null ? Number.POSITIVE_INFINITY : frameBox.x + frameBox.width).toBeLessThanOrEqual(390);
+
+    const overflow: Record<string, number> = {};
+    const schemes: Record<string, string | null> = {};
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme });
+      await expect(frame.locator("html")).toHaveAttribute("data-scheme", colorScheme);
+      schemes[colorScheme] = await frame.locator("html").getAttribute("data-scheme");
+      // The focus ring is visible against both canvases.
+      const ring = await frame.locator(".cell.active").evaluate((node) => getComputedStyle(node).outlineStyle);
+      expect(ring).not.toBe("none");
+      await page.locator("[data-pin-live] [data-widget-frame]").scrollIntoViewIfNeeded();
+      await page.screenshot({ path: join(EVIDENCE, `spreadsheet-390-${colorScheme}.png`), fullPage: true });
+      overflow[`390-${colorScheme}`] = await horizontalOverflow(page);
+    }
+    test.info().annotations.push({ type: "horizontal-overflow", description: JSON.stringify(overflow) });
+    expect(overflow).toEqual({ "390-light": 0, "390-dark": 0 });
+    expect(schemes).toEqual({ light: "light", dark: "dark" });
+  });
 });

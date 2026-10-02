@@ -5,25 +5,26 @@
  * in bounded chunks and stops at the sheet's ceiling, and an export is written as a new file the host offers to save.
  * The widget never sees a path, and the frame has no network.
  *
- * The widget's durable state is small on purpose: the file the sheet came from, the edits made since, the formats and
- * the active cell. The sheet itself is rebuilt from the file on mount. When the edits grow too large for the state, the
- * widget writes the whole sheet as its own file and starts again from that one.
+ * The widget's durable state is small on purpose: the file the sheet came from, the edits made since and the formats.
+ * The sheet itself is rebuilt from the file on mount. When the edits grow too large for the state, the widget writes
+ * the whole sheet as its own file and starts again from that one (see `store.js`). The active cell and the selection are
+ * view state the host keeps for the frame but never writes to the node.
  *
  * Clark can format the selection through the one bound action the host attached to this instance. The press sends
  * nothing; the host reads the selection from what this widget published, and Clark's reply is applied only when it is
- * exactly the instruction the widget expects for that selection.
+ * exactly the instruction the widget expects for that selection. The selection is held still until the reply is in.
  */
 
-import { delimiterFor, createDelimitedReader, writeDelimited } from "./csv.js";
+import { delimiterFor, writeDelimited } from "./csv.js";
 import { evaluateSheet, isError } from "./formula.js";
-import { displayValue, formatAt, readFormatDirective, withFormat } from "./formats.js";
+import { MAX_FORMATS, applyFormat, displayValue, formatAt, readFormatDirective } from "./formats.js";
 import { semanticDocument } from "./semantic.js";
 import {
   MAX_CELLS,
-  MAX_CELL_CHARS,
   MAX_COLUMNS,
   MAX_ROWS,
   cellName,
+  clearRange,
   columnName,
   createSheet,
   normalizeRange,
@@ -31,19 +32,16 @@ import {
   rangeName,
   truncationNotice,
 } from "./sheet.js";
+import { createStore, readSheetFile, readTruncated, writeTextFile } from "./store.js";
 
-/** One read: the bridge's own ceiling. */
-const CHUNK = 262_144;
-/** A file is read no further than this, whatever its rows look like. */
-const MAX_READ_BYTES = 8 * 1024 * 1024;
-/** Above this many bytes of state the edits are written to a file instead (the host's ceiling is 16 KiB). */
-const CHECKPOINT_BYTES = 10 * 1024;
 const ROW_HEIGHT = 28;
 const COLUMN_WIDTH = 96;
 const HEADER_WIDTH = 52;
 const OVERSCAN = 6;
-/** The host sends the latest semantic document once publishes have been quiet this long; a press waits for it. */
-const SEMANTIC_SETTLE_MS = 400;
+/** Moving the cursor writes view state no sooner than this after the last move. */
+const CURSOR_SAVE_MS = 250;
+/** Format changes Undo can step back through. */
+const MAX_UNDO = 20;
 
 const TEXT = {
   vi: {
@@ -51,8 +49,11 @@ const TEXT = {
     exportCsv: "Xuất CSV",
     exportTsv: "Xuất TSV",
     askFormat: "Nhờ Clark định dạng phần trăm",
+    selectRange: "Chọn vùng",
+    undoFormat: "Hoàn tác định dạng",
     grid: "Bảng tính",
     formula: "Nội dung ô",
+    exportName: "bang-tinh",
     empty: "Chưa có dữ liệu. Nhập một tệp CSV hoặc TSV, hoặc gõ vào ô.",
     noFiles: "Host này không cho dùng tệp, nên không nhập hay xuất được.",
     picking: "Đang chờ bạn chọn tệp…",
@@ -62,9 +63,13 @@ const TEXT = {
     exporting: "Đang ghi tệp xuất…",
     saved: "Đã lưu tệp xuất.",
     notSaved: "Bạn đã không lưu; bảng tính giữ nguyên.",
-    asking: "Đang hỏi Clark…",
+    asking: "Đang hỏi Clark… Vùng chọn được giữ nguyên cho tới khi có trả lời.",
     applied: (range) => `Clark đã định dạng ${range} thành phần trăm.`,
     appliedOther: (range, format) => `Clark đã định dạng ${range} (${format}).`,
+    dropped: (ranges) =>
+      `Định dạng cũ nhất (${ranges}) đã bị bỏ vì bảng tính giữ tối đa ${String(MAX_FORMATS)} định dạng.`,
+    undone: "Đã hoàn tác định dạng.",
+    rangeMode: (cell) => `Chạm một ô để chọn vùng từ ${cell}. Bấm “Chọn vùng” lần nữa để tắt.`,
     refusedReply: "Câu trả lời của Clark không phải lệnh bảng tính này áp dụng được; không có gì thay đổi.",
     refusedRange: (range) => `Clark trả lời cho vùng ${range}, không phải vùng đang chọn; không có gì thay đổi.`,
     failed: (message) => `Không làm được: ${message}. Bảng tính giữ nguyên.`,
@@ -72,15 +77,18 @@ const TEXT = {
     sourceGone: "Không đọc lại được tệp gốc (có thể đã hết hạn). Các sửa đổi vẫn được giữ; hãy nhập lại tệp.",
     stateRefused: "Không lưu được trạng thái; thay đổi chỉ còn trong khung này.",
     circular: (cells) => `Tham chiếu vòng: ${cells}.`,
-    limited: "Công thức tham chiếu quá nhiều ô nên không được tính (#LIMIT!).",
+    limited: "Một số công thức tham chiếu quá nhiều ô nên không được tính và hiện #LIMIT!.",
   },
   en: {
     import: "Import CSV/TSV",
     exportCsv: "Export CSV",
     exportTsv: "Export TSV",
     askFormat: "Ask Clark to format as percent",
+    selectRange: "Select range",
+    undoFormat: "Undo format",
     grid: "Spreadsheet",
     formula: "Cell contents",
+    exportName: "spreadsheet",
     empty: "No data yet. Import a CSV or TSV file, or type into a cell.",
     noFiles: "This host does not offer files, so import and export are unavailable.",
     picking: "Waiting for you to choose a file…",
@@ -90,9 +98,12 @@ const TEXT = {
     exporting: "Writing the export…",
     saved: "The export was saved.",
     notSaved: "You did not save; the sheet is unchanged.",
-    asking: "Asking Clark…",
+    asking: "Asking Clark… The selection is held until the answer arrives.",
     applied: (range) => `Clark formatted ${range} as percent.`,
     appliedOther: (range, format) => `Clark formatted ${range} (${format}).`,
+    dropped: (ranges) => `The oldest format (${ranges}) was removed because the sheet keeps at most ${String(MAX_FORMATS)} formats.`,
+    undone: "The format was undone.",
+    rangeMode: (cell) => `Tap a cell to select the range from ${cell}. Press “Select range” again to stop.`,
     refusedReply: "Clark's reply was not an instruction this sheet can apply; nothing was changed.",
     refusedRange: (range) => `Clark answered for ${range}, not the selected range; nothing was changed.`,
     failed: (message) => `That did not work: ${message}. The sheet is unchanged.`,
@@ -100,7 +111,7 @@ const TEXT = {
     sourceGone: "The original file could not be read again (it may have expired). Your edits are kept; import the file again.",
     stateRefused: "The state could not be saved; changes live only in this frame.",
     circular: (cells) => `Circular reference: ${cells}.`,
-    limited: "The formulas reach too many cells to evaluate (#LIMIT!).",
+    limited: "Some formulas reach too many cells to evaluate and show #LIMIT!.",
   },
 };
 
@@ -171,22 +182,37 @@ function mount(api) {
   /* ------------------------------------------------------------ the model */
 
   let sheet = createSheet();
+  let parsedFormulas = new Map();
   let evaluation = evaluateSheet(sheet);
-  const parsedFormulas = new Map();
-  let saved = { ...api.state.get() };
-  let edits = typeof saved.edits === "object" && saved.edits !== null ? { ...saved.edits } : {};
-  let formats = Array.isArray(saved.formats) ? saved.formats.filter((entry) => entry && typeof entry.range === "string") : [];
-  let truncated = typeof saved.truncated === "object" && saved.truncated !== null
-    ? { rows: saved.truncated.rows === true, columns: saved.truncated.columns === true, clipped: saved.truncated.clipped === true }
-    : { rows: false, columns: false, clipped: false };
-  let active = parseCellName(String(saved.active ?? "A1")) ?? { row: 0, column: 0 };
-  let anchor = parseCellName(String(saved.anchor ?? "A1")) ?? active;
+  const status = element("p", { role: "status", "data-sheet-status": "idle", class: "status" }, filesAvailable ? t().empty : t().noFiles);
+  const say = (state, text) => {
+    status.setAttribute("data-sheet-status", state);
+    status.textContent = text;
+  };
+  const store = createStore({
+    state: api.state,
+    artifacts: filesAvailable ? api.artifacts : undefined,
+    snapshot: () => sheet.rawRows(),
+    onRefused: () => say("refused", t().stateRefused),
+    onFailed: (error) => say("refused", t().failed(messageOf(error))),
+  });
+  const initial = store.saved();
+  let formats = Array.isArray(initial.formats) ? initial.formats.filter((entry) => entry && typeof entry.range === "string") : [];
+  /** Earlier format lists, latest last, for Undo. */
+  const formatHistory = [];
+  let truncated = readTruncated(initial.truncated);
+  let active = parseCellName(String(initial.active ?? "A1")) ?? { row: 0, column: 0 };
+  let anchor = parseCellName(String(initial.anchor ?? "A1")) ?? active;
   let lastExport;
   let busy = false;
-  let lastPublish = 0;
+  /** Clark is answering for the selection: it does not move until the answer is in. */
+  let asking = false;
+  /** Taps extend the selection from the anchor, for touch, where there is no Shift. */
+  let rangeMode = false;
 
   const recompute = () => {
     evaluation = evaluateSheet(sheet, parsedFormulas);
+    parsedFormulas = evaluation.parsed;
   };
   const valueAt = (row, column) => evaluation.get(row, column);
   const selection = () => normalizeRange(anchor, active);
@@ -198,18 +224,20 @@ function mount(api) {
   const exportCsv = element("button", { type: "button", "data-sheet-export": "csv" }, t().exportCsv);
   const exportTsv = element("button", { type: "button", "data-sheet-export": "tsv" }, t().exportTsv);
   const askFormat = element("button", { type: "button", "data-sheet-ask-format": "" }, t().askFormat);
+  const selectRange = element("button", { type: "button", "data-sheet-select-range": "", "aria-pressed": "false" }, t().selectRange);
+  const undoFormat = element("button", { type: "button", "data-sheet-undo-format": "", hidden: "" }, t().undoFormat);
   const actions = element("div", { class: "actions" });
-  actions.append(importButton, exportCsv, exportTsv, askFormat);
+  actions.append(importButton, exportCsv, exportTsv, askFormat, selectRange, undoFormat);
   const bar = element("header", { class: "bar" });
   bar.append(title, actions);
 
-  const status = element("p", { role: "status", "data-sheet-status": "idle", class: "status" }, filesAvailable ? t().empty : t().noFiles);
   const notice = element("p", { "data-sheet-notice": "", class: "notice", hidden: "" });
   const address = element("span", { class: "address", "data-sheet-address": "" }, "A1");
   const formula = element("output", { class: "formula-text", "data-sheet-formula": "", "aria-label": t().formula });
   const formulaBar = element("div", { class: "formula" });
   formulaBar.append(address, formula);
 
+  // The grid is one stop in the tab order: arrows, Home/End and the page keys move inside it, Tab and Shift+Tab leave.
   const viewport = element("div", {
     class: "viewport",
     role: "grid",
@@ -226,11 +254,6 @@ function mount(api) {
   viewport.append(canvas);
 
   root.append(bar, status, notice, formulaBar, viewport);
-
-  const say = (state, text) => {
-    status.setAttribute("data-sheet-status", state);
-    status.textContent = text;
-  };
 
   /* --------------------------------------------------------- dimensions */
 
@@ -341,7 +364,6 @@ function mount(api) {
   };
 
   const publish = () => {
-    lastPublish = Date.now();
     const doc = semanticDocument({
       title: String(props.title ?? ""),
       locale: locale(),
@@ -386,101 +408,21 @@ function mount(api) {
 
   /* -------------------------------------------------------- durable state */
 
-  let writes = Promise.resolve();
-  const persist = (patch) => {
-    saved = { ...saved, ...patch };
-    writes = writes
-      .then(() => api.state.update(api.state.revision(), patch))
-      .catch(() => say("refused", t().stateRefused));
-    return writes;
-  };
-
-  const stateBytes = (next) => new window.TextEncoder().encode(JSON.stringify(next)).byteLength;
-
-  const writeArtifact = async (text, mimeType, name) => {
-    const bytes = new window.TextEncoder().encode(text);
-    let ref = await api.artifacts.create({ mimeType, name });
-    for (let offset = 0; offset < bytes.byteLength; offset += CHUNK) {
-      ref = await api.artifacts.write(ref, bytes.subarray(offset, offset + CHUNK));
-    }
-    return api.artifacts.finalize(ref);
-  };
-
-  /**
-   * The whole sheet written to a file of its own, which becomes the sheet's source; the edits start again from empty.
-   * Raw input is written as it is, formulas included, because this file is the widget's copy and is never offered for
-   * saving; an export is a different file.
-   */
-  const checkpoint = async () => {
-    const previous = saved.sourceKind === "checkpoint" ? saved.source : undefined;
-    const ref = await writeArtifact(writeDelimited(sheet.rawRows(), ",", { neutralize: false }), "text/csv", "sheet-checkpoint.csv");
-    edits = {};
-    await persist({ source: ref, sourceKind: "checkpoint", delimiter: ",", edits: {} });
-    if (previous !== undefined) await api.artifacts.discard(previous).catch(() => undefined);
-  };
-
-  const saveEdits = () => {
-    const next = { ...saved, edits };
-    if (stateBytes(next) > CHECKPOINT_BYTES && filesAvailable) {
-      void checkpoint().catch((error) => say("refused", t().failed(messageOf(error))));
-      return;
-    }
-    void persist({ edits });
-  };
-
+  // The cursor is view state (`ephemeralStateKeys`): the host keeps it for the frame and never writes it to the node.
+  // Moves are still coalesced, so holding an arrow key sends one message, not thirty a second.
+  let cursorTimer;
   const saveCursor = () => {
-    void persist({ active: cellName(active.row, active.column), anchor: cellName(anchor.row, anchor.column) });
-  };
-
-  /* ------------------------------------------------------------- loading */
-
-  /** Read a file into a fresh sheet, stopping at the ceiling. */
-  const readSheet = async (ref, delimiter) => {
-    const reader = createDelimitedReader({
-      delimiter,
-      maxRows: MAX_ROWS,
-      maxColumns: MAX_COLUMNS,
-      maxCells: MAX_CELLS,
-      maxCellChars: MAX_CELL_CHARS,
-    });
-    const decoder = new window.TextDecoder();
-    let offset = 0;
-    let stoppedEarly = false;
-    for (;;) {
-      const { bytes, eof } = await api.artifacts.read(ref, { offset, length: CHUNK });
-      offset += bytes.byteLength;
-      const full = reader.push(decoder.decode(bytes, { stream: !eof }));
-      if (full) break;
-      if (eof || bytes.byteLength === 0) break;
-      if (offset >= MAX_READ_BYTES) {
-        stoppedEarly = true;
-        break;
-      }
-    }
-    const result = reader.finish();
-    if (stoppedEarly) result.truncated.rows = true;
-    return result;
-  };
-
-  const applyEdits = () => {
-    for (const [name, value] of Object.entries(edits)) {
-      const cell = parseCellName(name);
-      if (cell !== undefined && typeof value === "string") sheet.set(cell.row, cell.column, value);
-    }
+    window.clearTimeout(cursorTimer);
+    cursorTimer = window.setTimeout(() => {
+      void store.persist({ active: cellName(active.row, active.column), anchor: cellName(anchor.row, anchor.column) });
+    }, CURSOR_SAVE_MS);
   };
 
   const restore = async () => {
-    const source = saved.source;
-    if (source !== undefined && source !== null && filesAvailable) {
-      try {
-        const result = await readSheet(source, saved.delimiter === "\t" ? "\t" : ",");
-        sheet = createSheet(result.rows);
-      } catch {
-        sheet = createSheet();
-        say("refused", t().sourceGone);
-      }
-    }
-    applyEdits();
+    const loaded = await store.load();
+    sheet = loaded.sheet;
+    truncated = loaded.truncated;
+    if (loaded.gone) say("refused", t().sourceGone);
     recompute();
     render();
     publish();
@@ -510,23 +452,22 @@ function mount(api) {
       say("refused", t().full);
       return false;
     }
-    const name = cellName(row, column);
-    edits = { ...edits, [name]: sheet.raw(row, column) };
+    store.record([[cellName(row, column), sheet.raw(row, column)]]);
     return true;
   };
 
-  const openEditor = (initial) => {
+  const openEditor = (initialText) => {
     editing = true;
     editor.hidden = false;
     editor.style.top = `${String((active.row + 1) * ROW_HEIGHT)}px`;
     editor.style.left = `${String(HEADER_WIDTH + active.column * COLUMN_WIDTH)}px`;
-    editor.value = initial ?? sheet.raw(active.row, active.column);
+    editor.value = initialText ?? sheet.raw(active.row, active.column);
     editor.setAttribute("data-cell", cellName(active.row, active.column));
     editor.focus();
     editor.setSelectionRange(editor.value.length, editor.value.length);
   };
 
-  const closeEditor = (commit) => {
+  const closeEditor = (commit, refocus = true) => {
     if (!editing) return;
     editing = false;
     const value = editor.value;
@@ -534,12 +475,12 @@ function mount(api) {
     if (commit && value !== sheet.raw(active.row, active.column)) {
       if (write(active.row, active.column, value)) {
         recompute();
-        saveEdits();
+        store.save();
       }
     }
     render();
     publish();
-    viewport.focus();
+    if (refocus) viewport.focus();
   };
 
   editor.addEventListener("keydown", (event) => {
@@ -548,6 +489,7 @@ function mount(api) {
       closeEditor(true);
       moveTo(active.row + (event.shiftKey ? -1 : 1), active.column, false);
     } else if (event.key === "Tab") {
+      // Tab commits and moves along the row while editing; outside the editor Tab leaves the grid.
       event.preventDefault();
       closeEditor(true);
       moveTo(active.row, active.column + (event.shiftKey ? -1 : 1), false);
@@ -557,28 +499,57 @@ function mount(api) {
     }
     event.stopPropagation();
   });
-  editor.addEventListener("blur", () => closeEditor(true));
+  editor.addEventListener("blur", () => closeEditor(true, false));
 
   const clearSelection = () => {
-    const range = selection();
-    let changed = false;
-    for (let row = range.top; row <= range.bottom; row += 1) {
-      for (let column = range.left; column <= range.right; column += 1) {
-        if (sheet.raw(row, column) !== "") changed = write(row, column, "") || changed;
-      }
-    }
-    if (!changed) return;
+    const cleared = clearRange(sheet, selection());
+    if (cleared.length === 0) return;
+    store.record(cleared.map((name) => [name, ""]));
     recompute();
-    saveEdits();
+    store.save();
     render();
     publish();
   };
 
+  /* --------------------------------------------------------------- formats */
+
+  const renderUndo = () => {
+    undoFormat.hidden = formatHistory.length === 0;
+  };
+
+  const setFormats = (next) => {
+    formats = next;
+    render();
+    publish();
+    renderUndo();
+    return store.persist({ formats });
+  };
+
+  const undoLastFormat = () => {
+    if (busy || formatHistory.length === 0) return;
+    const previous = formatHistory.pop() ?? [];
+    void setFormats(previous);
+    say("formatted", t().undone);
+  };
+
+  /* -------------------------------------------------------------- keyboard */
+
   viewport.addEventListener("keydown", (event) => {
     if (editing) return;
+    // Tab and Shift+Tab always leave the grid, so a keyboard user can reach the buttons and the rest of the page.
+    if (event.key === "Tab") return;
+    if (asking) {
+      event.preventDefault();
+      return;
+    }
     const ctrl = event.ctrlKey || event.metaKey;
     const extend = event.shiftKey;
     const size = sheet.used();
+    if (ctrl && !extend && (event.key === "z" || event.key === "Z")) {
+      event.preventDefault();
+      undoLastFormat();
+      return;
+    }
     let handled = true;
     switch (event.key) {
       case "ArrowUp":
@@ -607,8 +578,10 @@ function mount(api) {
       case "PageUp":
         moveTo(active.row - pageRows(), active.column, extend);
         break;
-      case "Tab":
-        moveTo(active.row, active.column + (extend ? -1 : 1), false);
+      case "Escape":
+        // A range collapses to its active cell; a single cell lets Escape go on to the host.
+        if (anchor.row !== active.row || anchor.column !== active.column) moveTo(active.row, active.column, false);
+        else handled = false;
         break;
       case "Enter":
       case "F2":
@@ -625,20 +598,61 @@ function mount(api) {
     if (handled) event.preventDefault();
   });
 
-  viewport.addEventListener("mousedown", (event) => {
-    const target = event.target instanceof window.Element ? event.target.closest("[data-cell]") : null;
-    if (target === null || target === editor) return;
-    const cell = parseCellName(target.getAttribute("data-cell") ?? "");
+  /* --------------------------------------------------------------- pointer */
+
+  const cellAt = (target) => {
+    const node = target instanceof window.Element ? target.closest(".cell[data-cell]") : null;
+    return node === null ? undefined : parseCellName(node.getAttribute("data-cell") ?? "");
+  };
+
+  /*
+   * A mouse selects on press and extends while dragged. A finger or pen selects on tap (a click), so a swipe still
+   * scrolls the grid; "Select range" makes the next taps extend the selection, which is how touch selects a range.
+   */
+  let pointerKind = "mouse";
+  let dragging = false;
+  viewport.addEventListener("pointerdown", (event) => {
+    pointerKind = event.pointerType === "" ? "mouse" : event.pointerType;
+    if (pointerKind !== "mouse" || event.button !== 0) return;
+    const cell = cellAt(event.target);
     if (cell === undefined) return;
     if (editing) closeEditor(true);
     event.preventDefault();
     viewport.focus();
-    moveTo(cell.row, cell.column, event.shiftKey);
+    if (asking) return;
+    moveTo(cell.row, cell.column, event.shiftKey || rangeMode);
+    dragging = true;
+  });
+  viewport.addEventListener("pointermove", (event) => {
+    if (!dragging || asking) return;
+    const cell = cellAt(document.elementFromPoint(event.clientX, event.clientY));
+    if (cell !== undefined && (cell.row !== active.row || cell.column !== active.column)) moveTo(cell.row, cell.column, true);
+  });
+  const endDrag = () => {
+    dragging = false;
+  };
+  window.addEventListener("pointerup", endDrag);
+  window.addEventListener("pointercancel", endDrag);
+  viewport.addEventListener("click", (event) => {
+    if (pointerKind === "mouse") return;
+    const cell = cellAt(event.target);
+    if (cell === undefined) return;
+    if (editing) closeEditor(true);
+    viewport.focus({ preventScroll: true });
+    if (asking) return;
+    moveTo(cell.row, cell.column, event.shiftKey || rangeMode);
   });
   viewport.addEventListener("dblclick", (event) => {
-    const target = event.target instanceof window.Element ? event.target.closest(".cell[data-cell]") : null;
-    if (target !== null) openEditor();
+    if (!asking && cellAt(event.target) !== undefined) openEditor();
   });
+
+  selectRange.addEventListener("click", () => {
+    rangeMode = !rangeMode;
+    selectRange.setAttribute("aria-pressed", String(rangeMode));
+    if (rangeMode) say("idle", t().rangeMode(cellName(anchor.row, anchor.column)));
+  });
+
+  undoFormat.addEventListener("click", undoLastFormat);
 
   /* ------------------------------------------------------- files: import */
 
@@ -646,6 +660,7 @@ function mount(api) {
     busy = next;
     for (const button of [importButton, exportCsv, exportTsv]) button.disabled = next || !filesAvailable;
     askFormat.disabled = next || typeof props.formatBinding !== "string" || props.formatBinding === "";
+    undoFormat.disabled = next;
   };
 
   importButton.addEventListener("click", () => {
@@ -660,11 +675,11 @@ function mount(api) {
       }
       say("working", t().reading);
       const delimiter = delimiterFor(ref.mimeType, ref.name);
-      const result = await readSheet(ref, delimiter);
-      const previous = saved.sourceKind === "checkpoint" ? saved.source : undefined;
+      const result = await readSheetFile(api.artifacts, ref, delimiter);
       sheet = createSheet(result.rows);
-      edits = {};
       formats = [];
+      formatHistory.length = 0;
+      renderUndo();
       truncated = result.truncated;
       active = { row: 0, column: 0 };
       anchor = active;
@@ -673,18 +688,15 @@ function mount(api) {
       recompute();
       render();
       publish();
-      await persist({
+      await store.replaceSource({
         source: ref,
-        sourceKind: "picked",
         delimiter,
         name: String(ref.name ?? "").slice(0, 200),
-        edits: {},
         formats: [],
         truncated,
         active: "A1",
         anchor: "A1",
       });
-      if (previous !== undefined) await api.artifacts.discard(previous).catch(() => undefined);
       const size = sheet.used();
       say("loaded", t().loaded(String(ref.name ?? ""), size.rows, size.columns));
     })()
@@ -700,7 +712,7 @@ function mount(api) {
     say("working", t().exporting);
     const delimiter = kind === "tsv" ? "\t" : ",";
     const mimeType = kind === "tsv" ? "text/tab-separated-values" : "text/csv";
-    const base = String(saved.name ?? "").replace(/\.[A-Za-z0-9]{1,8}$/u, "") || "bang-tinh";
+    const base = String(store.saved().name ?? "").replace(/\.[A-Za-z0-9]{1,8}$/u, "") || t().exportName;
     void (async () => {
       const size = sheet.used();
       const rows = [];
@@ -713,7 +725,7 @@ function mount(api) {
         rows.push(cells);
       }
       // A byte-order mark, as the host's own table export writes, so a spreadsheet opens the file as UTF-8.
-      const ref = await writeArtifact(`\uFEFF${writeDelimited(rows, delimiter)}`, mimeType, `${base}.${kind}`);
+      const ref = await writeTextFile(api.artifacts, `\uFEFF${writeDelimited(rows, delimiter)}`, mimeType, `${base}.${kind}`);
       if (lastExport !== undefined) await api.artifacts.discard(lastExport).catch(() => undefined);
       lastExport = ref;
       const done = await api.artifacts.export(ref, { suggestedName: `${base}.${kind}` });
@@ -727,22 +739,24 @@ function mount(api) {
 
   /* ---------------------------------------------------- Clark formatting */
 
-  const quiet = () =>
-    new Promise((resolve) => {
-      const wait = SEMANTIC_SETTLE_MS - (Date.now() - lastPublish);
-      setTimeout(resolve, Math.max(0, wait));
-    });
+  const lockSelection = (locked) => {
+    asking = locked;
+    viewport.setAttribute("aria-busy", String(locked));
+    viewport.toggleAttribute("data-selection-locked", locked);
+  };
 
   askFormat.addEventListener("click", () => {
     const binding = props.formatBinding;
     if (busy || typeof binding !== "string" || binding === "") return;
+    if (editing) closeEditor(true, false);
     setBusy(true);
+    // The host reads the selection from what this widget published; it stays put until the answer is in, and the
+    // answer is applied only to this range.
+    lockSelection(true);
     const asked = selection();
     say("working", t().asking);
     askFormat.setAttribute("data-format-result", "pending");
     void (async () => {
-      // The host reads the selection from the last document it was sent; wait until that is this one.
-      await quiet();
       const reply = await api.actions.invoke(binding, {}, randomId());
       const directive = readFormatDirective(reply, asked);
       if (!directive.ok) {
@@ -750,19 +764,24 @@ function mount(api) {
         say("refused", directive.reason === "other-range" ? t().refusedRange(directive.range) : t().refusedReply);
         return;
       }
-      formats = withFormat(formats, directive.range, directive.format);
-      await persist({ formats });
-      render();
-      publish();
+      const next = applyFormat(formats, directive.range, directive.format);
+      formatHistory.push(formats);
+      if (formatHistory.length > MAX_UNDO) formatHistory.shift();
+      await setFormats(next.formats);
       askFormat.setAttribute("data-format-result", "applied");
       const name = rangeName(directive.range);
-      say("formatted", directive.format === "percent" ? t().applied(name) : t().appliedOther(name, directive.format));
+      const done = directive.format === "percent" ? t().applied(name) : t().appliedOther(name, directive.format);
+      const lost = next.dropped.map((entry) => entry.range).join(", ");
+      say("formatted", lost === "" ? done : `${done} ${t().dropped(lost)}`);
     })()
       .catch((error) => {
         askFormat.setAttribute("data-format-result", "failed");
         say("refused", t().failed(messageOf(error)));
       })
-      .finally(() => setBusy(false));
+      .finally(() => {
+        lockSelection(false);
+        setBusy(false);
+      });
   });
 
   /* ------------------------------------------------------------ the rest */

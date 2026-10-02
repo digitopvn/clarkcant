@@ -1,7 +1,7 @@
 import { SEMANTIC_LIMITS, canonicalSemanticDoc, normalizeSemanticDoc } from "@clarkcant/contracts";
 import { describe, expect, it } from "vitest";
 
-import { displayValue, formatAt, readFormatDirective, withFormat } from "../widgets/main/formats.js";
+import { MAX_FORMATS, applyFormat, displayValue, formatAt, readFormatDirective, withFormat } from "../widgets/main/formats.js";
 import { evaluateSheet } from "../widgets/main/formula.js";
 import { semanticDocument } from "../widgets/main/semantic.js";
 import {
@@ -92,6 +92,20 @@ describe("formats and Clark's instruction", () => {
     expect(formatAt(formats, 1, 1)).toBe("plain");
     for (let index = 0; index < 40; index += 1) formats = withFormat(formats, { top: index, left: 0, bottom: index, right: 0 }, "percent");
     expect(formats).toHaveLength(32);
+  });
+
+  it("names the formats it had to drop to stay within the bound, so the widget can say so", () => {
+    let formats: { range: string; format: string }[] = [];
+    for (let index = 0; index < MAX_FORMATS; index += 1) {
+      const next = applyFormat(formats, { top: index, left: 0, bottom: index, right: 0 }, "percent");
+      expect(next.dropped).toEqual([]);
+      formats = next.formats;
+    }
+    const over = applyFormat(formats, { top: 99, left: 0, bottom: 99, right: 1 }, "percent");
+    expect(over.formats).toHaveLength(MAX_FORMATS);
+    expect(over.dropped).toEqual([{ range: "A1", format: "percent" }]);
+    // Replacing a range already in the list drops nothing.
+    expect(applyFormat(over.formats, { top: 99, left: 0, bottom: 99, right: 1 }, "number").dropped).toEqual([]);
   });
 
   it("applies only the exact instruction for the range that was selected", () => {

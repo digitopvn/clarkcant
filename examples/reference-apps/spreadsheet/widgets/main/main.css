@@ -33,11 +33,13 @@ body { padding: 12px; font: 14px/1.4 system-ui, sans-serif; overflow-x: hidden; 
 .bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 h2 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* 40 px: the floor DESIGN sets for primary touch controls, and this card is used on phones. */
 button {
-  min-height: 32px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px;
+  min-height: 40px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--card); color: inherit; font: inherit; cursor: pointer;
 }
 button[data-sheet-ask-format] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); font-weight: 600; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button:focus-visible, .viewport:focus-visible, .editor:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
@@ -53,8 +55,9 @@ button:focus-visible, .viewport:focus-visible, .editor:focus-visible { outline: 
 .viewport {
   position: relative; width: 100%; max-width: 100%; height: 336px; overflow: auto;
   border: 1px solid var(--border); border-radius: 6px; background: var(--canvas);
-  overscroll-behavior: contain;
+  overscroll-behavior: contain; user-select: none; -webkit-user-select: none;
 }
+.viewport[data-selection-locked] { cursor: progress; }
 .canvas { position: relative; }
 .row { display: flex; height: 28px; }
 .body .row { position: absolute; left: 0; }

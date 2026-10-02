@@ -114,6 +114,10 @@
     "additionalProperties": false
   },
   "stateVersion": 0,
+  "ephemeralStateKeys": [
+    "active",
+    "anchor"
+  ],
   "semanticDescription": "A spreadsheet: CSV and TSV import and export, editable cells and a closed set of formulas.",
   "requestedCapabilities": [],
   "sizing": {

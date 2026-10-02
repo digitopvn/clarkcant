@@ -172,6 +172,20 @@ export function createSheet(rows = []) {
   return { raw, set, fits, used, forEach, rawRows, version: () => version };
 }
 
+/**
+ * Empty every cell of a range that holds anything, and name the cells that changed. One pass over the range: the caller
+ * records the names as one batch, so clearing the whole sheet costs the same as reading it.
+ */
+export function clearRange(sheet, range) {
+  const cleared = [];
+  for (let row = range.top; row <= range.bottom; row += 1) {
+    for (let column = range.left; column <= range.right; column += 1) {
+      if (sheet.raw(row, column) !== "" && sheet.set(row, column, "")) cleared.push(cellName(row, column));
+    }
+  }
+  return cleared;
+}
+
 /** The sentence that says a file was not loaded whole, or `undefined` when it was. */
 export function truncationNotice(truncated, size, locale) {
   if (!truncated.rows && !truncated.columns && !truncated.clipped) return undefined;

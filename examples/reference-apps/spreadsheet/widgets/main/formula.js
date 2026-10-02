@@ -30,7 +30,10 @@ export const FUNCTIONS = Object.freeze(["SUM", "AVERAGE", "MIN", "MAX", "COUNT"]
 const MAX_FORMULA_CHARS = 1_000;
 const MAX_DEPTH = 64;
 const MAX_ARGUMENTS = 64;
-/** Cells looked at while finding which formulas depend on which: beyond this the sheet is not evaluated. */
+/**
+ * Formula-to-formula links looked at while finding which formulas depend on which. A formula whose links do not fit in
+ * what is left is `#LIMIT!` on its own; the rest of the sheet is still evaluated.
+ */
 const DEPENDENCY_BUDGET = 2_000_000;
 /** Cells read while evaluating every formula once. */
 const EVALUATION_BUDGET = 5_000_000;
@@ -363,19 +366,21 @@ const nameOfKey = (key) => cellName(Math.floor(key / MAX_COLUMNS), key % MAX_COL
  * The order comes from the formulas' references, not from recursion, so a long chain (`A2=A1+1`, `A3=A2+1`, …) cannot
  * exhaust the call stack. Cells left over once everything else is ordered sit on or behind a cycle; the cycles themselves
  * are found as strongly connected components and reported by cell name, and every cell that reads one shows `#CIRC!`.
+ *
+ * `parsed` is a cache of trees by formula text from the previous pass; the result's `parsed` holds only the formulas on
+ * the sheet now, so the cache never outgrows the sheet.
  */
 export function evaluateSheet(sheet, parsed = new Map()) {
   const inputs = new Map();
   const formulas = new Map();
+  const nextParsed = new Map();
   sheet.forEach((row, column, raw) => {
     const input = classifyInput(raw);
     const key = keyOf(row, column);
     if (input.kind === "formula") {
-      let tree = parsed.get(input.source);
-      if (tree === undefined) {
-        tree = parseFormula(input.source);
-        parsed.set(input.source, tree);
-      }
+      let tree = nextParsed.get(input.source) ?? parsed.get(input.source);
+      if (tree === undefined) tree = parseFormula(input.source);
+      nextParsed.set(input.source, tree);
       formulas.set(key, { tree, deps: new Set() });
     } else if (input.kind !== "empty") {
       inputs.set(key, input.value);
@@ -384,7 +389,7 @@ export function evaluateSheet(sheet, parsed = new Map()) {
 
   const size = sheet.used();
   const values = new Map();
-  const result = { values, cycles: [], limited: false, errors: 0 };
+  const result = { values, cycles: [], limited: false, errors: 0, parsed: nextParsed };
   const read = (row, column) => {
     if (row >= size.rows || column >= size.columns) return null;
     const key = keyOf(row, column);
@@ -407,47 +412,64 @@ export function evaluateSheet(sheet, parsed = new Map()) {
     return true;
   };
 
-  // Which formulas each formula reads, directly or through a range.
+  // The rows that hold a formula, column by column, in order: a range finds the formulas inside it by searching these,
+  // so a range over plain numbers costs nothing however large it is.
   const formulaKeys = [...formulas.keys()];
+  const formulaRows = new Map();
+  for (const key of formulaKeys) {
+    const column = key % MAX_COLUMNS;
+    const list = formulaRows.get(column);
+    if (list === undefined) formulaRows.set(column, [Math.floor(key / MAX_COLUMNS)]);
+    else list.push(Math.floor(key / MAX_COLUMNS));
+  }
+  const firstAtOrBelow = (list, top) => {
+    let low = 0;
+    let high = list.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if ((list[middle] ?? 0) < top) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
+
+  // Which formulas each formula reads, directly or through a range. A formula whose links run past the budget is
+  // `#LIMIT!` by itself, and only the formulas that read it see that error.
+  const limitedKeys = new Set();
   let dependencySpent = 0;
-  for (const formula of formulas.values()) {
+  for (const [key, formula] of formulas) {
     const { cells, ranges } = references(formula.tree);
     for (const cell of cells) {
       const target = keyOf(cell.row, cell.column);
       if (formulas.has(target)) formula.deps.add(target);
     }
+    let fits = true;
     for (const range of ranges) {
       const bottom = Math.min(range.bottom, size.rows - 1);
       const right = Math.min(range.right, size.columns - 1);
-      const area = Math.max(0, bottom - range.top + 1) * Math.max(0, right - range.left + 1);
-      if (area <= formulaKeys.length) {
-        dependencySpent += area;
-        for (let row = range.top; row <= bottom; row += 1) {
-          for (let column = range.left; column <= right; column += 1) {
-            const target = keyOf(row, column);
-            if (formulas.has(target)) formula.deps.add(target);
+      for (let column = range.left; fits && column <= right; column += 1) {
+        dependencySpent += 1;
+        const list = formulaRows.get(column) ?? [];
+        for (let index = firstAtOrBelow(list, range.top); index < list.length; index += 1) {
+          const row = list[index] ?? 0;
+          if (row > bottom) break;
+          dependencySpent += 1;
+          if (dependencySpent > DEPENDENCY_BUDGET) {
+            fits = false;
+            break;
           }
+          formula.deps.add(keyOf(row, column));
         }
-      } else {
-        dependencySpent += formulaKeys.length;
-        for (const target of formulaKeys) {
-          const row = Math.floor(target / MAX_COLUMNS);
-          const column = target % MAX_COLUMNS;
-          if (row >= range.top && row <= bottom && column >= range.left && column <= right) formula.deps.add(target);
-        }
+        if (dependencySpent > DEPENDENCY_BUDGET) fits = false;
       }
-      if (dependencySpent > DEPENDENCY_BUDGET) break;
+      if (!fits) break;
     }
-    if (dependencySpent > DEPENDENCY_BUDGET) {
-      result.limited = true;
-      break;
+    if (!fits) {
+      formula.deps.clear();
+      limitedKeys.add(key);
     }
   }
-  if (result.limited) {
-    for (const key of formulaKeys) values.set(key, errorValue(ERRORS.limit));
-    result.errors = formulaKeys.length;
-    return finish(result, inputs);
-  }
+  result.limited = limitedKeys.size > 0;
 
   // Kahn's ordering: a formula is evaluated once every formula it reads has been.
   const waiting = new Map();
@@ -463,7 +485,7 @@ export function evaluateSheet(sheet, parsed = new Map()) {
   const done = new Set();
   const queue = [];
   let head = 0;
-  for (const [key, count] of waiting) if (count === 0) queue.push(key);
+  for (const [key, count] of waiting) if (count === 0 && !limitedKeys.has(key)) queue.push(key);
 
   const settle = (key) => {
     done.add(key);
@@ -480,12 +502,17 @@ export function evaluateSheet(sheet, parsed = new Map()) {
       head += 1;
       if (key === undefined || done.has(key)) continue;
       const formula = formulas.get(key);
+      // Past the budget a range reads as `#LIMIT!` (see `walkRange`); a formula that reads no range is still worked out.
       const value = evaluateTree(formula.tree, read, walkRange);
-      values.set(key, evaluationSpent > EVALUATION_BUDGET ? errorValue(ERRORS.limit) : value);
-      if (evaluationSpent > EVALUATION_BUDGET) result.limited = true;
+      values.set(key, value);
+      if (isError(value) && value.error === ERRORS.limit) result.limited = true;
       settle(key);
     }
   };
+  for (const key of limitedKeys) {
+    values.set(key, errorValue(ERRORS.limit));
+    settle(key);
+  }
   drain();
 
   if (done.size < formulas.size) {

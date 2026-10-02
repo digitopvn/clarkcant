@@ -2286,36 +2286,68 @@ hạn, tự mô tả cho Clark và áp dụng một thay đổi do Clark chọn.
   từng đoạn 256 KiB; widget không bao giờ thấy đường dẫn. Xuất ghi một tệp mới qua `create`, `write`, `finalize` và
   `export`, có dấu BOM như chức năng xuất bảng của host. XLSX không được hỗ trợ: trong mã nguồn không có bộ phân tích
   đã được thẩm định, và broker tệp của host không chấp nhận kiểu này.
-- **Giới hạn.** Tải tối đa 25.000 ô, 64 cột và 5.000 hàng, và không tệp nào được đọc quá 8 MiB. Việc đọc dừng ở giới
-  hạn và một thông báo cho biết đã hiện bao nhiêu và khi xuất chỉ ghi phần đó. Hàng và cột được vẽ ảo, nên một bảng lớn
-  chỉ giữ các ô đang nhìn thấy trong trang.
-- **Trạng thái.** Trạng thái widget giữ tham chiếu tới tệp nguồn, các sửa đổi từ đó, định dạng và ô hiện tại, không bao
-  giờ giữ chính bảng. Khi sửa đổi vượt 10 KiB trong 16 KiB host cho phép, widget ghi toàn bộ bảng vào một tệp riêng và
-  bắt đầu lại từ tệp ấy.
+- **Giới hạn.** Tải tối đa 25.000 ô, 64 cột và 5.000 hàng, và không tệp nào được đọc quá 8 MiB. Giới hạn ô áp lên
+  hình chữ nhật mà các hàng tạo thành (số hàng nhân với hàng rộng nhất), đúng quy tắc bảng áp cho một lần sửa, nên một
+  tệp có hàng dài ngắn không đều bị cắt ở chỗ hình chữ nhật hết vừa, thay vì tải ra một bảng rồi từ chối mọi lần sửa.
+  Việc đọc dừng ở giới hạn và một thông báo cho biết đã hiện bao nhiêu và khi xuất chỉ ghi phần đó. Lần đọc bị dừng ở
+  mức 8 MiB bỏ dòng đang đọc dở thay vì hiện một mảnh như thể là một hàng. Dòng trống ở cuối tệp không được tính, nên
+  không bao giờ làm một tệp vừa giới hạn trông như bị cắt. Hàng và cột được vẽ ảo, nên một bảng lớn chỉ giữ các ô đang
+  nhìn thấy trong trang.
+- **Trạng thái.** Trạng thái widget giữ tham chiếu tới tệp nguồn, các sửa đổi từ đó và định dạng, không bao giờ giữ
+  chính bảng. Ô hiện tại và vùng chọn được khai báo trong `ephemeralStateKeys` ([§5](#5-widget-definition)): host giữ
+  chúng cho frame và không bao giờ ghi xuống node, và việc di chuyển con trỏ gửi tối đa một lần cập nhật sau mỗi lần
+  dừng tay. Khi sửa đổi vượt 10 KiB trong 16 KiB host cho phép, widget ghi toàn bộ bảng vào một tệp riêng và bắt đầu
+  lại từ tệp ấy. Mỗi lúc chỉ chạy một checkpoint như vậy, và chờ thêm tối đa một cái. Các sửa đổi làm trong lúc một
+  checkpoint đang được ghi vẫn được giữ và được lưu sau nó, chỉ những sửa đổi tệp ấy đã chứa mới được xoá, và checkpoint
+  bị thay thế sẽ bị huỷ. Một checkpoint không tải được trọn vẹn sau khi tải lại sẽ được nói rõ trong thông báo. Xoá một
+  vùng chọn là một lần sửa gộp, nên xoá cả bảng chỉ mất một lát chứ không phải vài phút.
 - **Công thức.** Một tập đóng: số học, tham chiếu ô và vùng, và `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`. Một bộ
   phân tích dựng cây và widget duyệt cây đó; không văn bản nào được chạy như mã. Lỗi là giá trị (`#DIV/0!`,
   `#VALUE!`, `#REF!`, `#NAME?`, `#PARSE!`, `#NUM!`, `#LIMIT!`), và tham chiếu vòng là `#CIRC!`, với các ô
-  trên vòng được nêu tên trong thông báo.
+  trên vòng được nêu tên trong thông báo. Một lần tính lại đọc tối đa 5.000.000 ô qua các vùng và lần theo tối đa
+  2.000.000 liên kết giữa các công thức. `#LIMIT!` chỉ đánh dấu công thức vượt một trong hai giới hạn đó, cùng các công
+  thức đọc nó; một công thức không có vùng, như `=1+1`, luôn được tính. Một tổng luỹ kế như `=SUM($A$1:A3000)` kéo
+  xuống 3.000 hàng vẫn vừa.
 - **Chèn công thức vào CSV.** Tệp xuất mang giá trị đã tính, không bao giờ mang công thức. Văn bản bắt đầu bằng `=`,
-  `+`, `-`, `@`, tab hoặc ký tự CR được ghi kèm dấu `'` ở đầu, đúng quy tắc của `toCsv`, và dấu `'` ở đầu được
-  đọc lại là văn bản, nên một tệp đã xuất nhập lại vẫn ra cùng giá trị.
+  `+`, `-`, `@`, tab hoặc ký tự CR được ghi kèm dấu `'` ở đầu, đúng quy tắc của `toCsv`. Văn bản mà bảng này sẽ đọc
+  lại thành thứ khác, như `007`, `1e3` hoặc văn bản tự nó bắt đầu bằng `'`, cũng được ghi kèm dấu `'`. Dấu `'` ở đầu
+  được đọc lại là văn bản, nên một tệp đã xuất nhập lại vào bảng này vẫn ra cùng giá trị. Một ứng dụng bảng tính khác
+  hiện dấu `'` đó như một phần của văn bản, giống như với quy tắc công thức.
 - **Tài liệu ngữ nghĩa.** Vùng chọn dạng A1, một đoạn trích tối đa 12 hàng × 8 cột, công thức và giá trị của ô hiện tại,
   và kích thước bảng, vừa trong giới hạn ngữ nghĩa của host nên không gì bị cắt.
 - **Định dạng qua Clark.** Nút "định dạng phần trăm" của widget bấm một binding `agent` có id được truyền qua prop
   `formatBinding` và ngữ cảnh là `selection` và `widget`. Lần bấm không gửi gì: host đọc vùng chọn từ tài liệu ngữ
-  nghĩa của widget và yêu cầu đúng một dòng, `format: percent <vùng>`. Widget coi câu trả lời là không đáng tin, chỉ áp
-  dụng khi nó đúng là dòng đó cho vùng đã chọn lúc bấm, và nói rõ khi không phải.
-- **Bàn phím.** Phím mũi tên để di chuyển, Shift mở rộng vùng chọn, Home/End và Ctrl+Home/End để nhảy, Page Up/Down để
-  lật trang, Enter hoặc F2 để sửa, gõ phím để bắt đầu sửa, Escape để huỷ, Tab sang phải, Delete xoá vùng chọn.
+  nghĩa của widget và yêu cầu đúng một dòng, `format: percent <vùng>`. Widget coi câu trả lời là không đáng tin. Nó
+  nhận một tập dòng đóng, `format: percent|number|plain <vùng>`, và chỉ áp dụng khi vùng đúng là vùng đã chọn lúc bấm;
+  nếu không, nó nói rõ và không thay đổi gì. Vùng chọn bị khoá cho tới khi có câu trả lời. Bảng giữ tối đa 32 định dạng.
+  Khi một định dạng mới đẩy định dạng cũ nhất ra, dòng trạng thái nêu tên vùng bị mất định dạng. "Hoàn tác định dạng",
+  hoặc Ctrl+Z trong lưới, khôi phục các định dạng trước thay đổi của Clark. Widget không có thao tác hoàn tác nào khác.
+- **Bàn phím.** Lưới là một điểm dừng Tab duy nhất. Phím mũi tên để di chuyển, Shift mở rộng vùng chọn, Home/End và
+  Ctrl+Home/End để nhảy, Page Up/Down để lật trang. Enter hoặc F2 để sửa, gõ phím để bắt đầu sửa, và Enter xác nhận rồi
+  xuống dưới. Escape huỷ lần sửa hoặc thu vùng chọn về ô hiện tại. Delete xoá vùng chọn, và Ctrl+Z hoàn tác định dạng
+  gần nhất. Tab và Shift+Tab rời lưới, nên vẫn tới được Nhập, Xuất, "Nhờ Clark" và phần còn lại của trang. Chỉ khi đang
+  sửa, Tab mới xác nhận và sang phải.
+- **Con trỏ và cảm ứng.** Chuột chọn bằng cách bấm, Shift+bấm hoặc kéo. Trên màn hình cảm ứng, chạm để chọn một ô và
+  vuốt để cuộn lưới. "Chọn vùng" làm các lần chạm sau mở rộng vùng chọn từ ô đã chạm trước đó; chạm lại để tắt. Các nút
+  cao ít nhất 40 px.
 
-Hai giới hạn được nói rõ thay vì giấu đi. Hiện chưa có gì trong sản phẩm đặt một widget của package kèm một hành động đã
+Ba giới hạn được nói rõ thay vì giấu đi. Hiện chưa có gì trong sản phẩm đặt một widget của package kèm một hành động đã
 gắn: trong bộ kiểm thử trình duyệt, node fixture đặt bảng tính và biên dịch binding của nó theo cách host biên dịch đề
 xuất của model. Và một yêu cầu gõ trong ô soạn tin tới được Clark qua ghi chú ngữ nghĩa nhưng không thay đổi được frame.
-Cả hai được theo dõi ở [#382](https://github.com/digitopvn/clarkcant/issues/382).
+Cả hai được theo dõi ở [#382](https://github.com/digitopvn/clarkcant/issues/382). Cuối cùng, host gửi tài liệu ngữ
+nghĩa của widget 250 ms sau khi vùng chọn ngừng thay đổi, và chạy lần bấm mà không chờ nó. Một lần bấm trong khoảng đó
+có thể tới Clark với vùng trước. Khi ấy widget từ chối câu trả lời và không thay đổi gì. Bước phía host gửi tài liệu
+đang chờ trước khi chạy một binding `agent` là [#383](https://github.com/digitopvn/clarkcant/pull/383).
 
 Kiểm thử: unit test cho bộ phân tích, công thức, giới hạn và tài liệu ngữ nghĩa trong
-[test/](../examples/reference-apps/spreadsheet/test/) (28 test); `clark widget test` qua 22 kiểm tra, 12 kiểm tra cần
-dev host; và hành trình trình duyệt [spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (3 test): nhập, sửa,
-xuất và nhập lại ở CSV và TSV ra cùng giá trị; một vùng chọn được Clark định dạng phần trăm; một tệp vượt giới hạn chỉ
-tải phần đầu, nói rõ điều đó và vẫn phản hồi nhanh; không đường dẫn nào trong lưu lượng bridge hay frame; và dùng lưới
-bằng bàn phím, ở cả hai giao diện sáng tối, ở 390 px với lưới cuộn bên trong thẻ của nó.
+[test/](../examples/reference-apps/spreadsheet/test/) (47 test), gồm cả checkpoint với một host giả: sửa đổi làm trong lúc
+một checkpoint đang được ghi vẫn còn sau khi tải lại, mỗi lúc một checkpoint, tệp bị thay thế được huỷ, checkpoint bị
+từ chối thì sửa đổi vẫn giữ trong bộ nhớ, và bảng bị thay giữa lúc ghi. `clark widget test` qua 22 kiểm tra, 12 kiểm
+tra cần dev host. Hành trình trình duyệt [spreadsheet.spec.ts](../apps/web/e2e/spreadsheet.spec.ts) (3 test) gồm:
+
+- nhập, sửa, xuất và nhập lại ở CSV và TSV ra cùng giá trị;
+- một vùng chọn được Clark định dạng phần trăm, vùng chọn bị khoá trong lúc Clark trả lời, và hoàn tác;
+- một tệp vượt giới hạn chỉ tải phần đầu, nói rõ điều đó, vẫn phản hồi nhanh, và xoá cả 25.000 ô một lần;
+- không đường dẫn nào trong lưu lượng bridge hay frame;
+- dùng lưới bằng bàn phím (Tab và Shift+Tab rời lưới), bằng cảm ứng với "Chọn vùng", và bằng cách kéo chuột;
+- cả hai giao diện sáng tối, nút cao 40 px, và 390 px với lưới cuộn bên trong thẻ của nó.

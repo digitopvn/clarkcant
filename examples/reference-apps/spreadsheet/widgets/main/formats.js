@@ -23,15 +23,25 @@ export function formatAt(formats, row, column) {
   return "plain";
 }
 
-/** The list with this range set to this format, replacing an entry for the same range and keeping at most `MAX_FORMATS`. */
-export function withFormat(formats, range, format) {
+/**
+ * The list with this range set to this format, replacing an entry for the same range and keeping at most `MAX_FORMATS`,
+ * and the entries that had to go to keep it there, oldest first, so the widget can say so.
+ */
+export function applyFormat(formats, range, format) {
   const name = rangeName(range);
   const kept = formats.filter((entry) => {
     const existing = parseRangeName(entry.range);
     return existing === undefined || !sameRange(existing, range);
   });
   // A plain entry is kept too: it is what undoes an older, larger range for these cells.
-  return [...kept, { range: name, format }].slice(-MAX_FORMATS);
+  const next = [...kept, { range: name, format }];
+  const over = Math.max(0, next.length - MAX_FORMATS);
+  return { formats: next.slice(over), dropped: next.slice(0, over) };
+}
+
+/** The list with this range set to this format; see `applyFormat`. */
+export function withFormat(formats, range, format) {
+  return applyFormat(formats, range, format).formats;
 }
 
 function trimZeros(text) {
