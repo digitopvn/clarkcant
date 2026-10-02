@@ -24,7 +24,7 @@ import {
   recordInvokeAction,
   settleInvokeAction,
 } from "@clarkcant/core";
-import { appendAuditEvent } from "@clarkcant/storage";
+import { appendAuditEvent, listConversationInstanceIds } from "@clarkcant/storage";
 
 import { readArtifactForContext } from "../artifact-broker.ts";
 import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
@@ -209,7 +209,7 @@ function gateRefusal(checked: Extract<BoundActionCheck, { ok: false }>): WidgetA
   };
 }
 
-type WidgetActionServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "turnControl" | "packageJobs">;
+export type WidgetActionServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "turnControl" | "packageJobs">;
 
 type Admitted = Extract<BoundActionCheck, { ok: true }>;
 
@@ -885,7 +885,7 @@ async function invokeWorkflowAction(
 export async function invokeWidgetAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
-  source: "click" | "voice" = "click",
+  source: "click" | "voice" | "agent" = "click",
 ): Promise<WidgetActionResult> {
   // The guard main added at the route, kept where the invocation actually happens so both callers get it.
   if (!Number.isFinite(request.expectedRevision)) {
@@ -900,9 +900,9 @@ export async function invokeWidgetAction(
   // The binding decides what the action is; the request only names it. An unknown binding falls through to the view path,
   // whose gate refuses it with the reason.
   const kind = getActionBinding(services.conductor, request.actionBindingId)?.proposal.kind;
-  const capabilitySource: CapabilityInvokeSource = source === "voice" ? "voice" : "widget";
+  const capabilitySource: CapabilityInvokeSource = source === "voice" ? "voice" : source === "agent" ? "agent" : "widget";
   if (kind === "invoke") return invokeCapabilityAction(services, request, capabilitySource);
-  if (kind === "agent") return invokeAgentAction(services, request, source);
+  if (kind === "agent") return invokeAgentAction(services, request, source === "voice" ? "voice" : "click");
   if (kind === "workflow") return invokeWorkflowAction(services, request, capabilitySource);
 
   // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take
@@ -938,4 +938,40 @@ export async function invokeWidgetAction(
       timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),
     },
   };
+}
+
+/** A widget's invoke binding to one capability, in a conversation the person owns. */
+export interface CapabilityBindingTarget {
+  instanceId: string;
+  actionBindingId: string;
+  label: string;
+}
+
+/** How many of a conversation's widgets are looked through for a binding; a conversation rarely holds more. */
+const BINDING_SEARCH_INSTANCES = 50;
+
+/**
+ * The widgets in a conversation whose own invoke bindings call `capabilityRef`, newest first.
+ *
+ * A package job belongs to the widget binding that started it — that is whom it reports to and who may read or stop
+ * it — so Clark starting one does not start a job nobody follows: it presses one of these bindings, through the same
+ * gate a click does. Only the person's own instances, with a binding the instance still announces, are listed.
+ */
+export function conversationCapabilityBindings(
+  services: Pick<NodeServices, "runtime" | "conductor">,
+  conversationId: string,
+  capabilityRef: string,
+): CapabilityBindingTarget[] {
+  const owner = services.runtime.identity.ownerPrincipalId;
+  const found: CapabilityBindingTarget[] = [];
+  for (const instanceId of listConversationInstanceIds(services.runtime.db, conversationId, BINDING_SEARCH_INSTANCES)) {
+    const instance = getInstance(services.conductor, instanceId);
+    if (instance === undefined || instance.ownerPrincipalId !== owner) continue;
+    for (const actionBindingId of instance.actionBindingIds) {
+      const binding = getActionBinding(services.conductor, actionBindingId);
+      if (binding?.instanceId !== instanceId || binding.proposal.kind !== "invoke" || binding.proposal.capabilityRef !== capabilityRef) continue;
+      found.push({ instanceId, actionBindingId, label: binding.label });
+    }
+  }
+  return found;
 }

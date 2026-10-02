@@ -36,6 +36,7 @@ import { recoverUnfinishedWork } from "../src/work-recovery.ts";
 import { stopTurnOnNode } from "../src/application/stop-turn.ts";
 import { runApprovedCapability, capabilityInvokeDeps } from "../src/application/capability-invoke.ts";
 import { createPackageJobHost } from "../src/job-host.ts";
+import { createInvokeCapabilityTool } from "../src/invoke-capability-tool.ts";
 import { handleRequest } from "../src/gateway.ts";
 import { decideApprovalForNode } from "../src/routes/conversations.ts";
 import { createWorkSupervisor } from "../src/work-supervisor.ts";
@@ -1777,6 +1778,46 @@ describe("a button whose capability runs as a durable job", () => {
     const ended = ((await jobRoute("GET", button, jobId)).body as { job: Record<string, string> });
     expect(ended.job).toMatchObject({ status: "cancelled" });
     expect(ended.job.error).toContain("may already have completed");
+  });
+
+  it("starts a job Clark asks for through the conversation's widget binding to it, which then follows the job", async () => {
+    serveJob();
+    answer = neverAnswers;
+    const tool = (channel: "chat" | "voice" = "chat") =>
+      createInvokeCapabilityTool({ deps: () => capabilityInvokeDeps(services), conversationId, channel: () => channel, widgets: () => services });
+
+    // No widget offers it yet: refused, nothing sent, rather than a job no widget follows.
+    const orphan = await tool().execute({ action: "invoke", ref: JOB, args: { text: "x" } });
+    expect(orphan.text).toContain("chưa có widget nào");
+    expect(calls).toHaveLength(0);
+
+    const button = await place({ label: "Render", action: { kind: "invoke", capabilityRef: JOB, args: { text: "x" } } });
+    const started = await tool().execute({ action: "invoke", ref: JOB, args: {} });
+    expect(started.text).toContain("Đã bắt đầu job");
+    expect(started.text).toContain("chưa xong");
+    const jobId = /job_[A-Za-z0-9_-]+/.exec(started.text)?.[0] ?? "";
+    expect(jobRow(jobId)).toMatchObject({ instance_id: button, action_binding_id: getInstance(services.conductor, button)?.actionBindingIds[0] });
+    await until(() => calls.length === 1);
+    // The widget that follows it finds it in its own list.
+    const listed = await handleRequest({ services, now: () => AT }, {
+      method: "GET",
+      path: `/conversations/${conversationId}/widgets/${button}/jobs`,
+      query: {},
+      headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+      body: "",
+    });
+    expect((listed.body as { jobs: { jobId: string }[] }).jobs.map((job) => job.jobId)).toEqual([jobId]);
+
+    // Two widgets could take it: the model is asked to choose, and nothing runs until it does.
+    const second = await place({ label: "Render too", action: { kind: "invoke", capabilityRef: JOB, args: { text: "y" } } });
+    const ambiguous = await tool("voice").execute({ action: "invoke", ref: JOB, args: {} });
+    expect(ambiguous.text).toContain(second);
+    expect(ambiguous.text).toContain("Chưa có gì được chạy");
+    expect(calls).toHaveLength(1);
+    const chosen = await tool("voice").execute({ action: "invoke", ref: JOB, args: {}, instanceId: second });
+    expect(chosen.text).toContain(`widget ${second}`);
+    await until(() => calls.length === 2);
+    expect(calls[1]?.args).toEqual({ text: "y" });
   });
 
   it("lists only the jobs this widget's own bindings started, newest first, with the same owner checks", async () => {

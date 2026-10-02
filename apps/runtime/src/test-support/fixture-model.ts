@@ -2268,6 +2268,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         deps: () => capabilityInvokeDeps(deps.services()),
         conversationId: input.conversationId,
         channel: () => input.channel ?? "chat",
+        widgets: () => deps.services(),
       });
       const answer = await tool.execute(
         noted === null
