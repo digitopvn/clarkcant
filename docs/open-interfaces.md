@@ -427,12 +427,17 @@ generation and capability. Anything else, including a ref that does not exist, i
 
 | Method | Path | Body / answer |
 |---|---|---|
-| GET | `/conversations/{id}/widgets/{instanceId}/jobs` | – `{ jobs: [...] }`, newest first and at most 20: the jobs this widget's own invoke bindings started, so a remounted widget finds its running jobs; an instance outside the conversation is `404 INSTANCE_UNKNOWN` |
+| GET | `/conversations/{id}/widgets/{instanceId}/jobs` | – `{ jobs: [...] }`, newest first and at most 20: the jobs this widget's own invoke bindings started, so a remounted widget finds its running jobs. Each entry has the same fields as the single-job route's `job` and passes the same owner check; an instance outside the conversation is `404 INSTANCE_UNKNOWN`. In a frame this is `jobs.list()`, offered as its own bridge extension `jobs.list@1` beside `jobs@1` |
 | GET | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – `{ job: { jobId, status, progress?, resultRefs, output?, error?, createdAt, startedAt?, endedAt? } }`; files are `ArtifactRef`s, never paths |
 | POST | `/conversations/{id}/widgets/{instanceId}/jobs/{jobId}` | – cancels the service request, `202 { accepted, jobId }`; an ended job is `409 JOB_NOT_RUNNING` and stays readable |
 
 A node without a job host answers `503 JOB_UNAVAILABLE`. `POST /stop` also cancels running package jobs and counts them
 in `stopped.jobs`.
+
+The list route is not limited to the person's own surfaces, by design, the same as the single-job routes beside it
+(`packages/contracts/src/machine-surfaces.ts` names none of them). A machine client, such as an MCP or relay client, can
+list an instance's jobs, their outputs and their `ArtifactRef`s without knowing a JobRef first. It
+learns nothing it could not read one job at a time, and it cannot read a file's bytes through these routes.
 
 Browser tokens a frame asks for (`tokens@1`, [widget-development.md §14.3](widget-development.md#143-browser-tokens-tokens1))
 are in `/openapi.json`. Host chrome asks for them on behalf of the frame it mounted, with the random session id it gave
