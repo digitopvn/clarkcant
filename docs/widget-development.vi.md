@@ -1268,6 +1268,54 @@ policy cho phép `media-src 'self' blob:` ở cả [apps/web/index.html](../apps
 ([#374](https://github.com/digitopvn/clarkcant/issues/374)). Embed YouTube là một frame, do `frame-src` quản lý, không
 thuộc directive này.
 
+### 8.12 Sơ đồ và đồ thị
+
+`canvas.diagram@1` vẽ một đồ thị node và cạnh có giới hạn kích thước (lưu đồ, đồ thị phụ thuộc, một cây nhỏ) dưới dạng
+SVG do chính host dựng. Không có gì trong đó được thực thi: nhãn là text node, hình và đường là các con số từ một bố cục
+dùng chung, và không có HTML, `foreignObject`, liên kết, ảnh, style hay handler nào mà một nhãn có thể gọi tới. Sơ đồ có
+tối đa 60 node và 120 cạnh. ID node dài tối đa 64 ký tự gồm chữ cái ASCII, chữ số, `_` và `-`; nhãn là một dòng tối đa
+80 ký tự, nhãn cạnh 40, nhóm 40 và tiêu đề 200. Hình của node là `box`, `round`, `diamond` hoặc `circle`; hướng của cạnh
+là `forward`, `both` hoặc `none`. Khi đặt, node từ chối ID node bị lặp, cạnh trỏ tới node không tồn tại, cạnh từ một
+node về chính nó, cùng một cạnh hai lần, đồ thị vượt số lượng, trường lạ và ký tự ẩn, mỗi trường hợp bằng câu giải thích
+của chính host.
+
+`layout` là `layered` (mặc định) hoặc `tree`, còn `direction` là `TB` hoặc `LR`. Bố cục phân lớp phá vòng tại cạnh mà
+props dùng để khép vòng, chia lớp theo đường dài nhất, bẻ các cạnh dài qua những lớp chúng đi ngang và sắp thứ tự mỗi lớp
+bằng một số lượt barycenter cố định; bố cục cây đặt node con cân giữa dưới node cha và từ chối đồ thị không phải là
+rừng. Cả hai đều tất định: cùng props luôn cho cùng một hình vẽ, trên node và trên mọi client, và đồ thị lớn nhất được
+chấp nhận được dàn trong thời gian có giới hạn ([diagram-layout.ts](../packages/contracts/src/diagram-layout.ts)).
+
+Model cũng có thể đưa cho `show_view` một lưu đồ Mermaid: `{ "mermaid": "flowchart LR ...", "title"?, "layout"? }`.
+Node đọc một tập con được tài liệu hóa của cú pháp flowchart ngay trên host và chỉ lưu mô hình sơ đồ thu được; mã nguồn
+Mermaid không bao giờ được lưu và renderer của Mermaid không bao giờ được tải. Tập con gồm `flowchart`/`graph` với `TB`,
+`TD` hoặc `LR`; node dạng `id`, `id[box]`, `id(round)`, `id{diamond}` và `id((circle))`; liên kết `-->`, `---`,
+`<-->`, `-->|nhãn|` và `-- nhãn -->`; một cấp `subgraph` làm nhóm của node; `accTitle` làm tiêu đề; chú thích `%%`. Mọi
+thứ cấu hình hoặc mở rộng renderer của Mermaid đều bị từ chối theo dòng kèm lý do: `click`, `href`, `call`, `style`,
+`classDef`, `class`, `:::`, `linkStyle`, directive `%%{init}%%`, front matter, HTML hoặc mã entity trong nhãn, chuỗi
+Markdown, icon `fa:`, các hình node khác, các kiểu liên kết khác, chuỗi `&`, subgraph lồng nhau và các loại sơ đồ khác
+([diagram-mermaid.ts](../packages/contracts/src/diagram-mermaid.ts)).
+
+`diagram.select` mang `{ selectedId }`; node kiểm tra nó với props hiện tại và giữ trong trạng thái widget, nên lựa chọn
+vẫn còn sau khi tải lại, và state đã khôi phục bỏ qua ID mà props không còn chứa. Mỗi node là một nút có tên truy cập nói
+rõ nhãn, hình, nhóm và các node nó dẫn tới, đến từ và nối với. Chỉ một node nằm trong thứ tự tab; phím theo chiều luồng
+(Xuống với `TB`, Phải với `LR`) đi theo một cạnh về phía trước, phím ngược lại đi theo cạnh quay về, các phím ngang đi
+trong cùng một lớp, Home/End tới node đầu và cuối, Enter/Space để chọn và Escape để bỏ chọn. Node được chọn làm nổi các
+cạnh và node kề bằng độ dày nét và nét đứt chứ không chỉ bằng màu, và một vùng live thông báo thay đổi. Hình vẽ rộng giữ
+nguyên kích thước và cuộn bên trong thẻ, nên trang không bao giờ cuộn ngang; sơ đồ không tự tạo chuyển động và theo cả
+hai theme. Tài liệu semantic báo số node và cạnh, bố cục và hướng, cùng node được chọn với số cạnh vào/ra/nối; phần thay
+thế dạng chữ, cũng hiện dưới hình vẽ, liệt kê mọi node cùng các cạnh đi ra của nó.
+
+Kiểm thử: [diagram-view.spec.ts](../packages/contracts/test/diagram-view.spec.ts) kiểm tra giới hạn, đồ thị lỗi, state,
+chữ và semantic; [diagram-mermaid.spec.ts](../packages/contracts/test/diagram-mermaid.spec.ts) kiểm tra tập con và mọi
+cấu trúc bị từ chối; [diagram-layout.spec.ts](../packages/contracts/test/diagram-layout.spec.ts) kiểm tra tính tất
+định, việc chia lớp, không chồng lấn ở cả hai hướng và giới hạn thời gian;
+[diagram-view.spec.ts](../apps/runtime/test/diagram-view.spec.ts) kiểm tra placement, đầu vào Mermaid, các lần từ chối,
+lựa chọn và semantic output; [diagram-view.spec.ts](../packages/conversation-client/test/diagram-view.spec.ts) kiểm tra
+di chuyển bằng bàn phím, tên truy cập và nhãn có dạng markup được vẽ thành chữ; journey trình duyệt
+[diagram-view.spec.ts](../apps/web/e2e/diagram-view.spec.ts) bao phủ hội thoại, di chuyển bằng bàn phím với tiêu điểm
+nhìn thấy được, lựa chọn được giữ qua lần tải lại, DOM không có gì chạy hay tải được, đầu vào Mermaid, các lần từ chối,
+cả hai theme ở 390 px, giảm chuyển động và bản xem trước trong Widget Library.
+
 ---
 
 ## 9. Semantic contract cho voice và lượt kế tiếp

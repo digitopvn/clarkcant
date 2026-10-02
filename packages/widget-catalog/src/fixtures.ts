@@ -424,6 +424,34 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
     },
     { id: "tree.empty", label: "Cây trống", props: { title: "Không có mục", nodes: [] }, mode: "read-only" },
   ],
+  "canvas.diagram@1": [
+    {
+      id: "diagram.normal",
+      label: "Sơ đồ quy trình có lựa chọn",
+      props: {
+        title: "Quy trình phát hành",
+        nodes: [
+          { id: "plan", label: "Lên kế hoạch", shape: "round" },
+          { id: "build", label: "Xây dựng", group: "Tích hợp liên tục" },
+          { id: "test", label: "Kiểm thử đạt?", shape: "diamond", group: "Tích hợp liên tục" },
+          { id: "fix", label: "Sửa lỗi" },
+          { id: "ship", label: "Phát hành", shape: "circle" },
+          { id: "docs", label: "Cập nhật tài liệu" },
+        ],
+        edges: [
+          { from: "plan", to: "build" },
+          { from: "build", to: "test" },
+          { from: "test", to: "ship", label: "đạt" },
+          { from: "test", to: "fix", label: "chưa đạt" },
+          { from: "fix", to: "build" },
+          { from: "ship", to: "docs", direction: "none" },
+        ],
+      },
+      state: { selectedId: "test" },
+      mode: "interactive",
+    },
+    { id: "diagram.empty", label: "Sơ đồ trống", props: { title: "Chưa có bước nào", nodes: [] }, mode: "read-only" },
+  ],
   "canvas.board@1": [
     {
       id: "board.normal",

@@ -1297,6 +1297,71 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       }
     }
 
+    /*
+     * The diagram fixture places the real catalog descriptor through the same build `show_view` runs. "mermaid" sends a
+     * flowchart the node reads into the model; "chữ như mã" sends labels shaped like markup, which must be drawn as text;
+     * the other variants are each a refusal a browser journey reads back.
+     */
+    const diagramRequest = /^(?:đặt|place)\s+sơ đồ(?:\s+(trùng|thiếu nút|quá lớn|ký tự ẩn|mermaid|mermaid click|mermaid html|chữ như mã))?$/iu.exec(input.text.trim());
+    if (diagramRequest !== null) {
+      const which = (diagramRequest[1] ?? "").toLowerCase();
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.diagram@1");
+      const fixture = fixturesFor("canvas.diagram@1").find((entry) => entry.id === "diagram.normal");
+      if (view === undefined || fixture === undefined) return undefined;
+      const nodes = fixture.props.nodes as Record<string, unknown>[];
+      const edges = fixture.props.edges as Record<string, unknown>[];
+      const flowchart = [
+        "flowchart LR",
+        "  accTitle: Luồng duyệt",
+        "  draft(Bản nháp) --> review{Duyệt?}",
+        "  review -->|đồng ý| publish((Đăng))",
+        "  review -- sửa --> draft",
+      ].join("\n");
+      const props: Record<string, unknown> =
+        which === "trùng"
+          ? { ...fixture.props, nodes: [...nodes, { id: "plan", label: "Lên kế hoạch lần nữa" }] }
+          : which === "thiếu nút"
+            ? { ...fixture.props, edges: [...edges, { from: "docs", to: "archive" }] }
+            : which === "quá lớn"
+              ? { nodes: Array.from({ length: 61 }, (_, index) => ({ id: `n${String(index)}`, label: `Bước ${String(index)}` })) }
+              : which === "ký tự ẩn"
+                ? { ...fixture.props, nodes: [{ ...nodes[0], label: "Lên ‮kế hoạch" }, ...nodes.slice(1)] }
+                : which === "mermaid"
+                  ? { mermaid: flowchart }
+                  : which === "mermaid click"
+                    ? { mermaid: `${flowchart}\n  click draft "https://example.com"` }
+                    : which === "mermaid html"
+                      ? { mermaid: 'flowchart TB\n  a["<img src=x onerror=alert(1)>"] --> b' }
+                      : which === "chữ như mã"
+                        ? {
+                            title: "Nhãn giống mã",
+                            nodes: [
+                              { id: "img", label: "<img src=x onerror=alert(1)>" },
+                              { id: "script", label: "<script>alert(1)</script>", shape: "diamond" },
+                              { id: "link", label: "javascript:alert(1)", shape: "circle" },
+                            ],
+                            edges: [
+                              { from: "img", to: "script", label: "<b>onclick</b>" },
+                              { from: "script", to: "link" },
+                            ],
+                          }
+                        : fixture.props;
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt sơ đồ${which === "" ? "" : ` ${which}`} (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
+
     // The browser journey uses the deterministic model only to place the real board descriptor; moves and saved state
     // still pass through the production renderer, host binding and revision-checked widget service.
     const boardRequest = /^(?:đặt|place)\s+bảng kanban(?:\s+(liên kết))?$/iu.exec(input.text.trim());
