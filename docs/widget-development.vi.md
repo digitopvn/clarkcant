@@ -1864,6 +1864,56 @@ Test: [browser-token.spec.ts](../packages/contracts/test/browser-token.spec.ts) 
 và trên container đang chạy. Nó gọi tới một nhà cung cấp giả bằng key mà trang, frame, bridge, storage và container đều
 không giữ. Sau đó nó giữ một token vừa cấp trong frame và thu hồi token khi frame đóng.
 
+### 14.4 Tệp mà service đọc
+
+Service không bao giờ giữ tệp của người dùng, và container của nó không có mạng. Capability làm việc trên một tệp mà
+widget đang giữ sẽ nêu tên các trường tham số chứa mã artifact:
+
+    { "tool": "render_audio", "ref": "com.example.media.render@1", "effectCategory": "read",
+      "execution": { "kind": "job", "version": 1 },
+      "inputArtifacts": { "version": 1, "fields": ["source"] } }
+
+Lời gọi có nêu một tệp trong các trường đó chỉ được bắt đầu từ nút của chính widget instance đang giữ tệp. Cùng lời
+gọi đó từ Clark, giọng nói, MCP hay CLI bị từ chối với `ARTIFACT_INPUT_REFUSED`, vì không bên nào giữ quyền của widget
+trên tệp. Trước khi gửi lời gọi, node kiểm tra từng mã được nêu
+([capability-invoke.ts](../apps/runtime/src/application/capability-invoke.ts)):
+
+- widget instance đang nhấn có quyền trên tệp, và tệp đã được chốt, không còn đang được ghi
+  (`403 ARTIFACT_INPUT_REFUSED`);
+- tệp nằm trong giới hạn đầu vào của profile mà package được cấp (`413 ARTIFACT_INPUT_TOO_LARGE`).
+
+Lời gọi bị từ chối không gửi gì tới service.
+
+Node đưa quyền đọc tệp trong MCP `initialize` (`capabilities.experimental["clarkcant/artifacts"]`,
+[service-artifacts.ts](../packages/contracts/src/service-artifacts.ts)):
+
+    { "version": 1, "methods": ["clarkcant/artifacts.read"], "chunkBytes": 262144,
+      "maxInputBytes": …, "maxMediaSeconds": …, "maxResultBytes": … }
+
+Trong lúc lời gọi đang chạy, và chỉ khi đó, service gửi `clarkcant/artifacts.read` với
+`{ version: 1, artifactId, offset, length }`, mỗi lần tối đa một đoạn (256 KiB). Câu trả lời là
+`{ artifactId, offset, bytes (base64), eof, sizeBytes, mimeType }`. Node kiểm tra lại quyền ở mỗi lần đọc. Mã mà lời
+gọi không nêu trong một trường đã khai báo bị từ chối với `-32020`. Lần đọc mà node từ chối vì lý do khác (quyền đã bị
+thu hồi, tệp không còn) bị từ chối với `-32021`.
+
+Các giới hạn lấy từ profile đã cấp, không bao giờ từ manifest. Manifest chỉ nêu tên trường, không nêu kích thước, nên
+không nâng được giới hạn nào:
+
+| Profile | Tệp đầu vào | Độ dài media |
+|---|---|---|
+| `interactive-light` | 8 MiB | 2 phút |
+| `interactive-heavy` | 16 MiB | 10 phút |
+| `media-workstation` | 25 MiB | 2 giờ |
+| `background-compute` | 25 MiB | 1 giờ |
+
+Chỉ service đọc được độ dài của một đoạn âm thanh, nên service phải tự áp `maxMediaSeconds`. Nó từ chối đoạn dài hơn
+trước khi dựng bất cứ phần nào. `maxResultBytes` là tệp lớn nhất một kết quả mang được (khoảng 2,95 MiB, giới hạn tin
+nhắn stdio sau khi mã hoá base64). Tệp mà service trả về chỉ trở thành artifact khi job hoàn tất, nên job bị huỷ hay
+thất bại không để lại tệp nào được trình bày như tệp đã xong.
+
+Test: [service-artifact-input.spec.ts](../apps/runtime/test/service-artifact-input.spec.ts) cho node với một tiến trình
+service thật, và ứng dụng tham chiếu ở §24.4.
+
 ---
 
 ## 15. State & migration
@@ -2458,3 +2508,47 @@ một package sẵn sàng dùng. Không có flow dev thực nào phụ thuộc h
 dùng dev host riêng của nó, không đi qua route này. Một dev DB cũ thấy generation của mình biến mất khỏi route
 này sau khi nâng cấp nên chạy lại `POST /packages/install` cho package đó, hoặc `node
 tools/check-invariants.mjs --fix-manifest` nếu chỉ cần đồng bộ lại `docs/manifest.json` sau khi sửa file này.
+
+---
+
+## 24. Ứng dụng tham chiếu
+
+Ứng dụng tham chiếu là các package hoàn chỉnh cho thấy các phần của nền tảng ghép lại với nhau trong một widget thật.
+Chúng nằm trong `examples/reference-apps/` và được kiểm thử như mọi package khác, cộng thêm một hành trình trình duyệt
+qua một node thật.
+
+### 24.4 Trình dựng âm thanh
+
+`examples/reference-apps/media-render` ([#320](https://github.com/digitopvn/clarkcant/issues/320), thuộc
+[#200](https://github.com/digitopvn/clarkcant/issues/200)) là một package manifest v2 có một facet giao diện cách ly
+và một service. Package dựng lại một tệp WAV người dùng chọn, với mức âm lượng mới và phần cắt, thành một job mà widget
+theo dõi được và dừng được. `clark widget init --template media-tool` tạo package mới từ package này.
+
+- **Tệp theo tham chiếu.** Widget chọn tệp qua `api.artifacts.pick` ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)) và
+  chỉ giữ `ArtifactRef` của nó. Binding `render` của widget gửi cho service mã artifact của tệp, và service đọc dữ liệu
+  từ node theo từng đoạn ([§14.4](#144-tệp-mà-service-đọc)). Widget không bao giờ thấy đường dẫn, và service không bao
+  giờ giữ tệp.
+- **Profile.** Package xin `background-compute` theo tên ([§14.1](#141-resource-profile)). Node từ chối tệp vượt giới
+  hạn đầu vào 25 MiB của profile trước khi gửi lời gọi. Service từ chối đoạn dài hơn một giờ của profile trước khi dựng
+  bất cứ phần nào, và từ chối bản dựng lớn hơn mức một kết quả mang được.
+- **Job.** Lần nhấn trả về một JobRef ([§10.2](#102-job-chạy-lâu-jobs1)), widget giữ nó trong trạng thái. Tiến độ là
+  MCP progress của chính service, tính bằng số byte đã dựng. Nút Dừng, hoặc phím Escape, huỷ job; service ngừng đọc và
+  không trả lời, nên không tệp dở dang nào được giữ lại. Frame tải lại theo dõi đúng job đó từ trạng thái.
+- **Xem trước.** Tệp đã dựng là một `ArtifactRef` đã chốt. Widget đọc lại tệp và vẽ dạng sóng trên canvas, kèm thời
+  lượng, định dạng và mã băm sha256 do node tính. Chính sách của frame không cho nguồn media, nên không có trình phát âm
+  thanh. Đính kèm đưa tệp vào ô soạn tin; Lưu đi qua hộp xuất tệp của host.
+- **Profile không khả dụng.** Khi node không cấp được `background-compute`, vì một quy tắc chính sách từ chối hoặc
+  container engine quá nhỏ, service không được khởi động. Nút Dựng bị tắt, và lý do của host hiện ở chỗ đó.
+- **Đặt widget.** Hiện chỉ fixture model có kịch bản của repo mới đặt widget kèm `renderBinding`. Chưa có đường nào
+  trong sản phẩm đặt widget của một package đã cài kèm binding
+  ([#382](https://github.com/digitopvn/clarkcant/issues/382)), nên trong bản cài thật nút Dựng hiện lý do đó.
+
+Test: [wav.spec.ts](../examples/reference-apps/media-render/test/wav.spec.ts) cho phép biến đổi và mã băm cố định,
+[service.spec.ts](../examples/reference-apps/media-render/test/service.spec.ts) cho tiến trình service (tiến độ, huỷ,
+các giới hạn, một lần đọc bị từ chối), [package.spec.ts](../examples/reference-apps/media-render/test/package.spec.ts)
+cho bộ kiểm tra tuân thủ và manifest,
+[media-tool-template.spec.ts](../packages/widget-cli/test/media-tool-template.spec.ts) cho template, và hành trình
+trình duyệt [media-render.spec.ts](../apps/web/e2e/media-render.spec.ts). Hành trình dựng một tệp dài mười hai đoạn có
+tiến độ và bản xem trước, dừng một lần dựng giữa chừng, theo dõi một lần dựng qua một lần tải lại, hiện lý do profile
+bị từ chối, và chạy chỉ bằng bàn phím ở 390 px trong giao diện tối với giảm chuyển động. Hành trình cần một container
+engine chạy được container Linux.
