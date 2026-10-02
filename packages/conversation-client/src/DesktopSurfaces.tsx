@@ -733,9 +733,12 @@ export function PinnedLiveSurface({
            * the widget makes, which may read it; otherwise a publish that does not arrive leaves the widget out of the
            * next turn's note, and changes nothing on screen.
            */
-          publishSemantic={async (proposal) => {
-            await client.publishWidgetSemantic(conversationId, instanceId, proposal);
+          publishSemantic={async (proposal, signal) => {
+            await client.publishWidgetSemantic(conversationId, instanceId, proposal, signal);
           }}
+          contextBindings={live.bindings.flatMap((entry) =>
+            entry.contextRefs !== undefined && entry.contextRefs.length > 0 ? [entry.actionBindingId] : [],
+          )}
           brokeredCapabilities={frame.grantedCapabilities}
           allowedOrigins={frame.allowedOrigins}
           knownActionBindings={live.bindings.map((entry) => entry.actionBindingId)}
