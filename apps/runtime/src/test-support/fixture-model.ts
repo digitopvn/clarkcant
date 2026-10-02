@@ -1841,10 +1841,6 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * disagreed with the file would describe a widget nothing can serve.
      */
     /*
-     * A widget that holds files by reference, in its own frame: the journey for `artifacts@1`. Like the frame widget
-     * above, its definition agrees with the fixture package on disk (`apps/web/e2e/fixtures/artifact-widget`).
-     */
-    /*
      * The reference text editor, placed with its own "rewrite the selection" button.
      *
      * The definition is the package's own `widget.json`, read from disk, so the instance is one the directory entry
@@ -1892,6 +1888,10 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       };
     }
 
+    /*
+     * A widget that holds files by reference, in its own frame: the journey for `artifacts@1`. Like the frame widget
+     * above, its definition agrees with the fixture package on disk (`apps/web/e2e/fixtures/artifact-widget`).
+     */
     if (/widget tệp|file widget/i.test(input.text)) {
       const definition = {
         id: "com.example.artifact-widget.main@1",

@@ -12,9 +12,10 @@ import { expect, test, type FrameLocator, type Page } from "@playwright/test";
  * to rewrite it: the editor presses its own `agent` button, the host reads the selection from what the editor
  * published, and the reply comes back to the editor, which changes the text only when the person accepts it.
  *
- * The desktop shell's own dialog and atomic write are covered by `apps/desktop/test/file-bridge.spec.ts`. Here the
- * shell's preload is simulated in the page, with the same contract (`pickFile`/`saveFile`, an opaque handle), so the
- * page's Replace original path runs for real against it.
+ * The desktop path here is the page's half only: the shell's preload is simulated in the page, with the same contract
+ * (`pickFile`/`saveFile`, an opaque handle), so the page's Replace original path runs for real against it. The shell's
+ * helpers (handle to path, keeping the type, the atomic write) are unit-tested in `apps/desktop/test/file-bridge.spec.ts`;
+ * the shell's IPC handler and its confirm dialog are not exercised by either.
  */
 
 const DATA_DIR = join(process.cwd(), ".data", "e2e");
@@ -69,17 +70,21 @@ async function recordBridge(page: Page): Promise<void> {
 
 const FRAME = "[data-pin-live] [data-widget-frame] iframe";
 
-/** What the frame heard from the host, and what the page heard from the frame. */
-async function frameTraffic(page: Page): Promise<string[]> {
+/** What the page heard from the frame (`outer`), and what the frame heard from the host (`inner`). */
+async function frameTraffic(page: Page): Promise<{ outer: string[]; inner: string[] }> {
   const outer = await page.evaluate(() => (window as unknown as { __ccBridge?: string[] }).__ccBridge ?? []);
   const element = await page.locator(FRAME).elementHandle();
   const inner = (await (await element?.contentFrame())?.evaluate(() => (window as unknown as { __ccBridge?: string[] }).__ccBridge ?? [])) ?? [];
-  return [...outer, ...inner];
+  return { outer, inner };
 }
 
 async function expectNoPlaceInTraffic(page: Page): Promise<void> {
-  const messages = await frameTraffic(page);
-  expect(messages.some((message) => message.includes("artifact.request"))).toBe(true);
+  const { outer, inner } = await frameTraffic(page);
+  // Both directions were heard: the frame's file requests, and the host's answers carrying refs. A recording that
+  // missed either would pass the checks below without having looked at it.
+  expect(outer.some((message) => message.includes('"kind":"artifact.request"'))).toBe(true);
+  expect(inner.some((message) => message.includes('"kind":"artifact-result"'))).toBe(true);
+  const messages = [...outer, ...inner];
   expect(messages.filter((message) => PLACE.test(message))).toEqual([]);
   expect(messages.filter((message) => HANDLE.test(message))).toEqual([]);
 }
@@ -206,6 +211,8 @@ test("on the web, a file is opened, edited, saved as a download and opened again
   const savedText = readFileSync(await saved.path(), "utf8");
   expect(savedText).toBe(edited);
   await expect(restored.locator("[data-editor-status='saved']")).toHaveCount(1, { timeout: 20_000 });
+  // On the web a download has only started, so the editor does not say the file was saved.
+  await expect(restored.locator("[data-editor-status]")).not.toContainText("đã lưu");
   await expect(restored.locator("[data-editor-dirty]")).toHaveAttribute("data-editor-dirty", "false");
 
   // The saved file, opened again, has the edit.
@@ -299,14 +306,28 @@ test("a person selects a sentence, asks Clark to rewrite it, and accepts the rep
   const proposal = frame.locator("[data-editor-proposal]");
   await expect(proposal).toBeVisible({ timeout: 30_000 });
   await expect(frame.locator("[data-editor-proposal-text]")).toHaveText(SENTENCE.toLocaleUpperCase("vi"));
+  // It names the text it would replace, which is the text Clark read.
+  await expect(frame.locator("[data-editor-proposal-replaces]")).toHaveText(`Thay cho: «${SENTENCE}»`);
   await expect(frame.locator("[data-editor-text]")).toHaveValue(FILE_TEXT);
   await expect(frame.locator("[data-editor-dirty]")).toHaveAttribute("data-editor-dirty", "false");
+  // The text area is editable again once Clark answered.
+  await expect(frame.locator("[data-editor-text]")).not.toHaveAttribute("readonly");
 
   await frame.locator("[data-editor-apply]").click();
   await expect(proposal).toBeHidden();
   await expect(frame.locator("[data-editor-text]")).toHaveValue(FILE_TEXT.replace(SENTENCE, SENTENCE.toLocaleUpperCase("vi")));
   await expect(frame.locator("[data-editor-dirty]")).toHaveAttribute("data-editor-dirty", "true");
   await expect(frame.locator("[data-editor-status='applied']")).toHaveCount(1);
+
+  // The accepted change went in as an edit, so Undo takes it back like anything typed.
+  await frame.locator("[data-editor-text]").press("ControlOrMeta+z");
+  await expect(frame.locator("[data-editor-text]")).toHaveValue(FILE_TEXT);
+  await expect(frame.locator("[data-editor-dirty]")).toHaveAttribute("data-editor-dirty", "false");
+
+  // A selection over two lines would reach Clark flattened onto one, so it is not sent, and the editor says why.
+  await selectText(frame, "của ghi chú.\nhãy");
+  await expect(frame.locator("[data-editor-ask]")).toBeDisabled();
+  await expect(frame.locator("[data-editor-ask-reason]")).toContainText("một dòng");
 
   // A reply to a selection that changed while Clark answered is not applied over the new text.
   await selectText(frame, "Dòng ba.");
@@ -322,6 +343,52 @@ test("a person selects a sentence, asks Clark to rewrite it, and accepts the rep
   await expect(frame.locator("[data-editor-text]")).toHaveValue(/Dòng 3\./u);
 
   await expectNoPlaceInTraffic(page);
+});
+
+test("typing on while the draft is being kept is not mistaken for another window's change", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const frame = await openEditor(page);
+  await openInBrowser(page, frame, FILE_NAME, FILE_TEXT);
+
+  // Hold the first draft write on its way to the node, so the person types on before it is committed.
+  let release: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let holding = true;
+  await page.route("**/widgets/*/state", async (route) => {
+    if (holding && route.request().method() === "POST") {
+      holding = false;
+      await held;
+    }
+    await route.continue();
+  });
+
+  const area = frame.locator("[data-editor-text]");
+  await area.focus();
+  await area.press("ControlOrMeta+End");
+  await area.pressSequentially("Một");
+  // Past the pause after which the draft is written; that write is now held.
+  await expect.poll(() => holding, { timeout: 10_000 }).toBe(false);
+  await area.pressSequentially(" hai ba");
+  release?.();
+
+  // The write comes back committed while the text has moved on: that is this view's own write, not a conflict.
+  await page.waitForTimeout(1_500);
+  await expect(frame.locator("[data-editor-conflict]")).toBeHidden();
+  await expect(area).toBeFocused();
+  await expect(area).toHaveValue(`${FILE_TEXT}Một hai ba`);
+
+  // And the newer text is kept too: after a reload it is all there.
+  await page.waitForTimeout(800);
+  await page.unroute("**/widgets/*/state");
+  await page.reload();
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("[data-pin-live] [data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", { timeout: 20_000 });
+  const restored = page.frameLocator(FRAME);
+  await expect(restored.locator("#root[data-editor-ready='true']")).toHaveCount(1, { timeout: 20_000 });
+  await expect(restored.locator("[data-editor-text]")).toHaveValue(`${FILE_TEXT}Một hai ba`);
 });
 
 test("the editor is usable by keyboard alone", async ({ page }) => {
@@ -368,6 +435,15 @@ test("the editor is usable by keyboard alone", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(frame.locator("[data-editor-text]")).toBeFocused();
   await expect(frame.locator("[data-editor-text]")).toHaveValue(FILE_TEXT.replace(SENTENCE, SENTENCE.toLocaleUpperCase("vi")));
+
+  // Opening another file with unsaved changes asks first; Escape closes the question and returns to Open.
+  await frame.locator("[data-editor-open]").focus();
+  await page.keyboard.press("Enter");
+  await expect(frame.locator("#editor-discard-title")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(frame.locator("[data-editor-discard]")).toBeHidden();
+  await expect(frame.locator("[data-editor-open]")).toBeFocused();
+  await frame.locator("[data-editor-text]").focus();
 
   // Ctrl/Cmd+S from the text, Tab to Save As, Enter: the download carries the edit.
   await page.keyboard.press("ControlOrMeta+s");
