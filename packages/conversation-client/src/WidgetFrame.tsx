@@ -25,6 +25,7 @@ import {
 
 import { useT } from "./i18n/locale-context.tsx";
 import { useWidgetAppearance } from "./use-widget-appearance.ts";
+import { createSemanticSettler, gatePress } from "./semantic-settle.ts";
 
 /**
  * A widget running in its own frame.
@@ -78,8 +79,12 @@ export interface WidgetFrameProps {
   /**
    * Send what the widget says it shows to the node, for the next turn and for voice. Called with the last of a burst
    * only (`SEMANTIC_SETTLE_MS`), so a widget that publishes on every keystroke costs one request when it settles.
+   * Resolves once the node took it; a press that reads it waits for that. Should stop when `signal` aborts: a send that
+   * takes too long is given up.
    */
-  publishSemantic?: (proposal: SemanticProposal) => void;
+  publishSemantic?: (proposal: SemanticProposal, signal: AbortSignal) => Promise<void> | void;
+  /** The bindings whose press reads what the widget says it shows (`contextRefs`), so a pending publish is waited for. */
+  contextBindings?: readonly string[];
   /** Capabilities the host will broker for this frame. Empty unless something granted them. */
   brokeredCapabilities: readonly string[];
   /** Origins the document may reach. Enforced by its policy; declared here because the protocol says so. */
@@ -225,7 +230,8 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
   const [status, setStatus] = useState<"loading" | "ready" | "refused">("loading");
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [height, setHeight] = useState(DEFAULT_FRAME_HEIGHT);
-  const semanticTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const translate = useRef(t);
+  translate.current = t;
 
   /*
    * The URL the frame actually loads.
@@ -277,6 +283,14 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
     const frame = element.current;
     if (frame === null) return;
 
+    // Per session: what a widget says it shows belongs to its document, and goes with it.
+    const semantic = createSemanticSettler<SemanticProposal>({
+      settleMs: SEMANTIC_SETTLE_MS,
+      send: async (proposal, signal) => {
+        await latest.current.publishSemantic?.(proposal, signal);
+      },
+    });
+
     // This mount's own session for browser tokens: random, never the frame's nonce, and ended when the document goes.
     const tokenSession = newNonce();
     const live = createFrameSession({
@@ -295,20 +309,28 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
               Promise.resolve<FrameStateOutcome>({ ok: false, code: "STATE_NOT_SAVED", message: "the host stopped saving state" }),
           }),
       // Settled here rather than sent per publish: the node only needs what the widget says once it stops changing.
-      publishSemantic: (proposal) => {
-        if (semanticTimer.current !== undefined) clearTimeout(semanticTimer.current);
-        semanticTimer.current = setTimeout(() => {
-          semanticTimer.current = undefined;
-          latest.current.publishSemantic?.(proposal);
-        }, SEMANTIC_SETTLE_MS);
-      },
+      publishSemantic: (proposal) => semantic.publish(proposal),
       brokeredCapabilities: latest.current.brokeredCapabilities,
       allowedOrigins: latest.current.allowedOrigins,
       knownActionBindings: latest.current.knownActionBindings,
       // The revision the surface was last told, so the widget's first action is not refused as stale.
       revision: latest.current.revision,
-      // Read through the ref, so a newer callback is used without rebuilding the session that owns the handshake.
-      invokeAction: (intent) => latest.current.invokeAction(intent),
+      /*
+       * Read through the ref, so a newer callback is used without rebuilding the session that owns the handshake.
+       *
+       * A press may read what the widget says it shows (an `agent` button's selection), and the widget may have said it
+       * a moment ago. So whatever is still owed is sent first, and a press that reads it runs only once the node holds
+       * it: such a press never runs against an older description than the one the widget published before pressing.
+       * The wait is bounded; when it runs out, or the node refuses the description twice, the press is refused with a
+       * sentence that says what happens next.
+       */
+      invokeAction: (intent) =>
+        gatePress(
+          semantic,
+          latest.current.contextBindings?.includes(intent.actionBindingId) === true,
+          () => latest.current.invokeAction(intent),
+          (): FrameActionOutcome => ({ status: "refused", message: translate.current("widgets.frame.semanticNotSent") }),
+        ),
       chrome: {
         focus: () => latest.current.chrome.focus(),
         // The frame is sized here, within bounds, because the widget cannot see its own box from inside an opaque
@@ -385,8 +407,7 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
     window.addEventListener("message", onMessage);
     return () => {
       window.removeEventListener("message", onMessage);
-      if (semanticTimer.current !== undefined) clearTimeout(semanticTimer.current);
-      semanticTimer.current = undefined;
+      semantic.dispose();
       live.dispose();
       session.current = undefined;
     };

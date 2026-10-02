@@ -241,6 +241,7 @@ interface FrameBindingRow {
   capabilityRef?: string;
   available?: boolean;
   unavailableReason?: string;
+  contextRefs?: string[];
   unavailable: UnavailableCapability | undefined;
 }
 
@@ -331,7 +332,13 @@ function resolveLiveWidget(
         { db: runtime.db, nodeId: runtime.identity.nodeId, serviceHost: services.serviceHost },
         binding,
       );
-      const named = ref === undefined ? {} : { capabilityRef: ref };
+      const named = {
+        ...(ref === undefined ? {} : { capabilityRef: ref }),
+        // What an agent press reads, so the frame's host waits for the widget's description before such a press.
+        ...(binding.proposal.kind === "agent" && binding.proposal.contextRefs.length > 0
+          ? { contextRefs: [...binding.proposal.contextRefs] }
+          : {}),
+      };
       return [
         checked.available
           ? { ...base, ...named, available: true, unavailable: undefined }

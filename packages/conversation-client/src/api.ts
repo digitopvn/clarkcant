@@ -159,6 +159,11 @@ export interface IsolatedFrameLiveResponse {
     capabilityRef?: string;
     available?: boolean;
     unavailableReason?: string;
+    /**
+     * Present only on an `agent` binding that reads context: what it reads (`selection:…`, `widget:…`). A press of such
+     * a binding waits until the node holds what the frame last said it shows.
+     */
+    contextRefs?: readonly string[];
   }[];
   /** What the widget was created with, sent to it in the init message and nowhere else. */
   props: Record<string, unknown>;
@@ -765,8 +770,11 @@ export class GatewayClient {
     return this.#call("GET", `/terminals/${encodeURIComponent(terminalId)}/commands`);
   }
 
-  /** `keepalive` lets a request outlive the page that sent it, for the last write a page makes as it goes away. */
-  async #call<T>(method: string, path: string, body?: unknown, init: { keepalive?: true } = {}): Promise<T> {
+  /**
+   * `keepalive` lets a request outlive the page that sent it, for the last write a page makes as it goes away. `signal`
+   * aborts the request, for a caller that gives up waiting.
+   */
+  async #call<T>(method: string, path: string, body?: unknown, init: { keepalive?: true; signal?: AbortSignal } = {}): Promise<T> {
     const response = await this.#fetch(`${this.#baseUrl}${path}`, {
       ...init,
       method,
@@ -1459,10 +1467,20 @@ export class GatewayClient {
    * Tell the node what a frame says it shows, for the next turn and for voice.
    *
    * The node bounds and cleans the proposal and adds the widget's actions from its own bindings; a frame's words are
-   * never taken as actions or as instructions.
+   * never taken as actions or as instructions. `signal` aborts the request when the frame stops waiting for it.
    */
-  publishWidgetSemantic(conversationId: string, instanceId: string, proposal: SemanticProposal): Promise<{ accepted: true }> {
-    return this.#call("POST", `/conversations/${conversationId}/widgets/${instanceId}/semantic`, { proposal });
+  publishWidgetSemantic(
+    conversationId: string,
+    instanceId: string,
+    proposal: SemanticProposal,
+    signal?: AbortSignal,
+  ): Promise<{ accepted: true }> {
+    return this.#call(
+      "POST",
+      `/conversations/${conversationId}/widgets/${instanceId}/semantic`,
+      { proposal },
+      signal === undefined ? {} : { signal },
+    );
   }
 
   /**
