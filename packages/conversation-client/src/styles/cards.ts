@@ -477,6 +477,31 @@ label.cc-list-main { cursor: pointer; }
 .cc-tree-label { min-width: 0; overflow-wrap: anywhere; font-size: var(--cc-text-body-sm); }
 .cc-tree-secondary { min-width: 0; margin-inline-start: auto; color: var(--cc-text-muted); font-size: var(--cc-text-label); overflow-wrap: anywhere; }
 
+/* Diagram. The drawing keeps its own size and scrolls inside the card; nothing about it moves, so there is nothing for
+   reduced motion to turn off. Selection is said by aria-pressed and a heavier outline, not by colour alone. */
+.cc-diagram-root { display: flex; flex-direction: column; gap: var(--cc-space-xs); min-width: 0; }
+.cc-diagram-scroll { max-width: 100%; overflow: auto; overscroll-behavior-inline: contain; border: 1px solid var(--cc-border); border-radius: var(--cc-radius-sm, 6px); }
+.cc-diagram-svg { display: block; color: var(--cc-text); font-size: 13px; }
+.cc-diagram-node { cursor: pointer; outline: none; }
+.cc-diagram-shape { fill: var(--cc-elevated); stroke: var(--cc-border); stroke-width: 1.5; }
+.cc-diagram-node:hover .cc-diagram-shape { stroke: var(--cc-text-muted); }
+.cc-diagram-node[data-neighbour="true"] .cc-diagram-shape { stroke: var(--cc-accent); stroke-width: 1.5; stroke-dasharray: 5 3; }
+.cc-diagram-node[data-selected="true"] .cc-diagram-shape { fill: color-mix(in oklab, var(--cc-accent) 16%, var(--cc-elevated)); stroke: var(--cc-accent); stroke-width: 3; stroke-dasharray: none; }
+.cc-diagram-focus-ring { fill: none; stroke: transparent; stroke-width: 2; }
+.cc-diagram-node:focus-visible .cc-diagram-focus-ring { stroke: var(--cc-focus); }
+.cc-diagram-label { fill: currentColor; }
+.cc-diagram-group { fill: var(--cc-text-muted); font-size: 11px; }
+.cc-diagram-edge path { stroke: var(--cc-text-muted); stroke-width: 1.5; }
+.cc-diagram-edge[data-lit="true"] path { stroke: var(--cc-accent); stroke-width: 2.5; }
+.cc-diagram-arrow path { stroke: none; }
+.cc-diagram-arrow-plain path { fill: var(--cc-text-muted); }
+.cc-diagram-arrow-lit path { fill: var(--cc-accent); }
+.cc-diagram-edge-label rect { fill: var(--cc-elevated); stroke: var(--cc-border); }
+.cc-diagram-edge-label text { fill: currentColor; font-size: 11px; }
+.cc-diagram-detail { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-xs); font-size: var(--cc-text-body-sm); overflow-wrap: anywhere; }
+.cc-diagram-clear { margin-inline-start: auto; min-height: 44px; }
+.cc-diagram-text { font-size: var(--cc-text-body-sm); color: var(--cc-text-muted); }
+.cc-diagram-text ul { margin: var(--cc-space-xs) 0 0; padding-inline-start: 1.25em; overflow-wrap: anywhere; }
 /* Map. Every colour is a theme token, so light, dark and a package theme each draw their own basemap. */
 .cc-map { display: flex; flex-direction: column; gap: var(--cc-space-sm); min-width: 0; container-type: inline-size; }
 .cc-map-viewport {

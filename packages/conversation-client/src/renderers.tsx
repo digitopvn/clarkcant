@@ -112,6 +112,17 @@ import {
   type TreeNode,
   readTree,
   readTreeState,
+  DIAGRAM_ID,
+  DIAGRAM_SELECT_OPERATION,
+  type DiagramNode,
+  type PlacedDiagramNode,
+  DIAGRAM_LINE_HEIGHT,
+  diagramEdgeLabelWidth,
+  diagramNeighbours,
+  diagramTextLine,
+  layoutDiagram,
+  readDiagram,
+  readDiagramState,
   XY_CHART_KIND,
   XY_CHART_VIEW_OPERATION,
   type XyChart,
@@ -132,6 +143,7 @@ import { artifactReason } from "./artifact-messages.ts";
 import { formatFileSize } from "./attachments.ts";
 import { calendarWeek, eventSegment, moveDay, moveInList, nowIndex } from "./calendar-layout.ts";
 import { treeFocusTarget, treeTypeaheadTarget, visibleTreeNodes, type VisibleTreeNode } from "./tree-layout.ts";
+import { diagramKeyTarget } from "./diagram-navigation.ts";
 import {
   MAP_PAN_STEP,
   type MapTilePlacement,
@@ -5308,6 +5320,275 @@ function ActivityTimeline({ props, state, onAction, onStateChange, statedAt, sam
   );
 }
 /* ------------------------------------------------------------------ *
+ * Diagram
+ * ------------------------------------------------------------------ */
+
+const DIAGRAM_SHAPE_WORD: Record<DiagramNode["shape"], MessageKey> = {
+  box: "widgets.diagram.shape.box",
+  round: "widgets.diagram.shape.round",
+  diamond: "widgets.diagram.shape.diamond",
+  circle: "widgets.diagram.shape.circle",
+};
+
+/** One shape, in the node's own box: every coordinate is a number the layout computed, never markup from the props. */
+function DiagramShape({ node }: { node: PlacedDiagramNode }): ReactElement {
+  const { width, height } = node;
+  if (node.shape === "diamond") {
+    return <polygon className="cc-diagram-shape" points={`${String(width / 2)},0 ${String(width)},${String(height / 2)} ${String(width / 2)},${String(height)} 0,${String(height / 2)}`} />;
+  }
+  if (node.shape === "circle") return <circle className="cc-diagram-shape" cx={width / 2} cy={height / 2} r={width / 2} />;
+  return <rect className="cc-diagram-shape" width={width} height={height} rx={node.shape === "round" ? Math.min(height / 2, 24) : 4} />;
+}
+
+/**
+ * A diagram drawn from its model as SVG elements and text nodes.
+ *
+ * Nothing from the props reaches the page as markup: labels are React text, shapes and paths are numbers from the shared
+ * layout, and there is no link, image, `foreignObject` or handler a label could name. Each node is a button a person can
+ * reach by keyboard along the edges; its accessible name says its shape, its group and the nodes it leads to and comes
+ * from. The selected node is view state the node checks and keeps, and it lights its edges and neighbours.
+ */
+function DiagramView({ props, state, onAction, onStateChange, statedAt, sample }: RendererProps): ReactElement {
+  const t = useT();
+  const diagram = useMemo(() => readDiagram(props), [props]);
+  const layout = useMemo(() => (diagram === undefined ? undefined : layoutDiagram(diagram)), [diagram]);
+  const helpId = useId();
+  // A marker is referenced by id from an attribute, so the id is kept to characters every url() reads.
+  const markerBase = `cc-diagram-${useId().replace(/[^A-Za-z0-9_-]/gu, "")}`;
+  const nodeRefs = useRef(new Map<string, SVGGElement>());
+
+  // The selection the node holds, adopted whenever it changes; between those, what the person just did is drawn at once.
+  const stored = diagram === undefined ? {} : readDiagramState(state, diagram);
+  // A refusal counts up `viewReset`, so a selection the node refused is undrawn even when the one it holds did not move.
+  const storedKey = `${stored.selectedId ?? ""}#${String(state?.viewReset ?? 0)}`;
+  const [selectedId, setSelectedId] = useState(stored.selectedId);
+  const [syncedKey, setSyncedKey] = useState(storedKey);
+  const [focusedId, setFocusedId] = useState<string | undefined>(undefined);
+  const [announcement, setAnnouncement] = useState("");
+  if (syncedKey !== storedKey) {
+    setSyncedKey(storedKey);
+    setSelectedId(stored.selectedId);
+  }
+
+  const title = diagram?.title ?? t("widgets.diagram.title");
+  if (diagram === undefined || layout === undefined) {
+    return (
+      <Frame title={title} dataset={undefined} role="diagram">
+        <Unavailable reason={t("widgets.diagram.unreadable")} />
+      </Frame>
+    );
+  }
+
+  const byId = new Map(diagram.nodes.map((node) => [node.id, node]));
+  const describe = (node: DiagramNode): string => {
+    const near = diagramNeighbours(diagram, node.id).named;
+    const parts = [node.label, t(DIAGRAM_SHAPE_WORD[node.shape])];
+    if (node.group !== undefined) parts.push(fillMessage(t("widgets.diagram.inGroup"), { group: node.group }));
+    if (near.next.length > 0) parts.push(fillMessage(t("widgets.diagram.leadsTo"), { nodes: near.next.join(", ") }));
+    if (near.previous.length > 0) parts.push(fillMessage(t("widgets.diagram.comesFrom"), { nodes: near.previous.join(", ") }));
+    if (near.linked.length > 0) parts.push(fillMessage(t("widgets.diagram.linkedWith"), { nodes: near.linked.join(", ") }));
+    if (near.next.length + near.previous.length + near.linked.length === 0) parts.push(t("widgets.diagram.noEdges"));
+    return parts.join(", ");
+  };
+
+  const selected = selectedId === undefined ? undefined : byId.get(selectedId);
+  const neighbourhood = selected === undefined ? undefined : diagramNeighbours(diagram, selected.id);
+  const nearIds = new Set([...(neighbourhood?.next ?? []), ...(neighbourhood?.previous ?? []), ...(neighbourhood?.linked ?? [])].map((node) => node.id));
+  const litEdges = new Set(neighbourhood?.edges ?? []);
+  const tabStop = focusedId !== undefined && byId.has(focusedId) ? focusedId : (selected?.id ?? diagram.nodes[0]?.id);
+
+  const commit = (next: string | undefined): void => {
+    setSelectedId(next);
+    const node = next === undefined ? undefined : byId.get(next);
+    setAnnouncement(node === undefined ? t("widgets.diagram.cleared") : fillMessage(t("widgets.diagram.selected"), { description: describe(node) }));
+    onStateChange?.({ selectedId: next });
+    onAction?.(DIAGRAM_SELECT_OPERATION, { selectedId: next ?? "" });
+  };
+  const focusNode = (id: string): void => {
+    setFocusedId(id);
+    nodeRefs.current.get(id)?.focus();
+  };
+
+  const placedEdges = layout.edges.map((edge) => {
+    const source = diagram.edges[edge.index];
+    const lit = litEdges.has(edge.index);
+    const marker = `url(#${markerBase}-${lit ? "lit" : "plain"})`;
+    const path = edge.points.map((point, index) => `${index === 0 ? "M" : "L"} ${String(point.x)} ${String(point.y)}`).join(" ");
+    const labelWidth = source?.label === undefined ? 0 : diagramEdgeLabelWidth(source.label);
+    return (
+      <g key={edge.index} className="cc-diagram-edge" data-diagram-edge={`${edge.from}>${edge.to}`} data-lit={lit ? "true" : undefined}>
+        <path
+          d={path}
+          fill="none"
+          markerEnd={source?.direction === "none" ? undefined : marker}
+          markerStart={source?.direction === "both" ? marker : undefined}
+        />
+        {source?.label !== undefined && edge.labelAt !== undefined && (
+          <g className="cc-diagram-edge-label">
+            <rect x={edge.labelAt.x - labelWidth / 2} y={edge.labelAt.y - 10} width={labelWidth} height={20} rx={4} />
+            <text x={edge.labelAt.x} y={edge.labelAt.y} textAnchor="middle" dominantBaseline="central">
+              {source.label}
+            </text>
+          </g>
+        )}
+      </g>
+    );
+  });
+
+  const placedNodes = layout.nodes.map((placed) => {
+    const node = byId.get(placed.id);
+    if (node === undefined) return null;
+    const isSelected = placed.id === selectedId;
+    const lineCount = placed.lines.length + (placed.groupLine === undefined ? 0 : 1);
+    const firstLine = placed.height / 2 - ((lineCount - 1) * DIAGRAM_LINE_HEIGHT) / 2;
+    return (
+      <g
+        key={placed.id}
+        ref={(element) => {
+          if (element === null) nodeRefs.current.delete(placed.id);
+          else nodeRefs.current.set(placed.id, element);
+        }}
+        className="cc-diagram-node"
+        role="button"
+        tabIndex={placed.id === tabStop ? 0 : -1}
+        aria-pressed={isSelected}
+        aria-label={describe(node)}
+        data-diagram-node={placed.id}
+        data-shape={placed.shape}
+        data-selected={isSelected ? "true" : undefined}
+        data-neighbour={nearIds.has(placed.id) ? "true" : undefined}
+        transform={`translate(${String(placed.x)} ${String(placed.y)})`}
+        onFocus={() => setFocusedId(placed.id)}
+        onClick={() => commit(isSelected ? undefined : placed.id)}
+      >
+        <rect className="cc-diagram-focus-ring" x={-5} y={-5} width={placed.width + 10} height={placed.height + 10} rx={10} />
+        <DiagramShape node={placed} />
+        {placed.groupLine !== undefined && (
+          <text className="cc-diagram-group" x={placed.width / 2} y={firstLine} textAnchor="middle" dominantBaseline="central">
+            {placed.groupLine}
+          </text>
+        )}
+        {placed.lines.map((line, index) => (
+          <text
+            key={index}
+            className="cc-diagram-label"
+            x={placed.width / 2}
+            y={firstLine + (index + (placed.groupLine === undefined ? 0 : 1)) * DIAGRAM_LINE_HEIGHT}
+            textAnchor="middle"
+            dominantBaseline="central"
+          >
+            {line}
+          </text>
+        ))}
+      </g>
+    );
+  });
+
+  return (
+    <Frame title={title} dataset={undefined} role="diagram">
+      <div
+        className="cc-diagram-root"
+        data-diagram-selected={selectedId ?? ""}
+        data-diagram-direction={diagram.direction}
+        data-diagram-layout={diagram.layout}
+        onKeyDown={(keyEvent) => {
+          if (keyEvent.key === "Escape" && selectedId !== undefined) {
+            keyEvent.preventDefault();
+            commit(undefined);
+            return;
+          }
+          const id = (keyEvent.target as Element).closest("[data-diagram-node]")?.getAttribute("data-diagram-node");
+          if (id === null || id === undefined) return;
+          if (keyEvent.key === "Enter" || keyEvent.key === " ") {
+            keyEvent.preventDefault();
+            commit(id === selectedId ? undefined : id);
+            return;
+          }
+          const target = diagramKeyTarget(keyEvent.key, diagram, layout, id);
+          if (target === undefined) return;
+          keyEvent.preventDefault();
+          focusNode(target);
+        }}
+      >
+        <p className="cc-freshness" data-diagram-summary="" style={{ margin: 0 }}>
+          {fillMessage(t("widgets.diagram.summary"), { nodes: String(diagram.nodes.length), edges: String(diagram.edges.length) })}
+        </p>
+        {typeof state?.message === "string" && state.message !== "" && (
+          <p className="cc-freshness" role="status" data-diagram-message="true" style={{ margin: 0 }}>
+            {state.message}
+          </p>
+        )}
+        {diagram.nodes.length === 0 ? (
+          <p className="cc-freshness" data-diagram-empty="true" style={{ margin: 0 }}>
+            {t("widgets.diagram.empty")}
+          </p>
+        ) : (
+          <div className="cc-diagram-scroll" data-diagram-scroll="">
+            <svg
+              className="cc-diagram-svg"
+              width={layout.width}
+              height={layout.height}
+              viewBox={`0 0 ${String(layout.width)} ${String(layout.height)}`}
+              role="group"
+              aria-label={fillMessage(t("widgets.diagram.drawing"), { title })}
+              aria-describedby={helpId}
+            >
+              <defs>
+                {(["plain", "lit"] as const).map((kind) => (
+                  <marker
+                    key={kind}
+                    id={`${markerBase}-${kind}`}
+                    className={`cc-diagram-arrow cc-diagram-arrow-${kind}`}
+                    viewBox="0 0 10 10"
+                    refX={10}
+                    refY={5}
+                    markerWidth={8}
+                    markerHeight={8}
+                    markerUnits="userSpaceOnUse"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 0 L 10 5 L 0 10 z" />
+                  </marker>
+                ))}
+              </defs>
+              <g aria-hidden="true">{placedEdges}</g>
+              {placedNodes}
+            </svg>
+          </div>
+        )}
+        <p id={helpId} className="cc-sr-only">
+          {t(diagram.direction === "LR" ? "widgets.diagram.keyboardHelpLR" : "widgets.diagram.keyboardHelpTB")}
+        </p>
+        <p className="cc-sr-only" aria-live="polite" data-diagram-live="">
+          {announcement}
+        </p>
+        {selected !== undefined && (
+          <div className="cc-diagram-detail" data-diagram-selected-node={selected.id}>
+            <span>{fillMessage(t("widgets.diagram.selected"), { description: describe(selected) })}</span>
+            <button type="button" className="cc-diagram-clear" data-diagram-clear="" onClick={() => commit(undefined)}>
+              {t("widgets.diagram.clear")}
+            </button>
+          </div>
+        )}
+        {diagram.nodes.length > 0 && (
+          <details className="cc-diagram-text" data-diagram-text="">
+            <summary>{t("widgets.diagram.asText")}</summary>
+            <ul>
+              {diagram.nodes.map((node) => (
+                <li key={node.id} data-diagram-text-node={node.id}>
+                  {diagramTextLine(diagram, node)}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
+      <Provenance asOf={undefined} stated statedAt={statedAt} sample={sample} />
+    </Frame>
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * Registry
  * ------------------------------------------------------------------ */
 
@@ -5346,6 +5627,7 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.form@1": FormView,
   "canvas.list@1": ListView,
   [TREE_ID]: TreeWidgetView,
+  [DIAGRAM_ID]: DiagramView,
   [BOARD_ID]: BoardWidgetView,
   [MAP_ID]: MapWidgetView,
   "canvas.status@1": StatusCardView,
