@@ -425,6 +425,12 @@ async function runSteps(
           "it needs your approval, and the card is in the conversation. Approving it runs that step on its own; the steps after it are not run by the approval.",
       });
     }
+    if (outcome.kind === "job") {
+      outputs.set(step.stepId, outputValue(outcome.job.jobId));
+      lastOutput = outcome.job.jobId;
+      settle(step, { stepId: step.stepId, kind: step.kind, status: "done", detail: `started job ${outcome.job.jobId}` });
+      continue;
+    }
 
     const stopped = input.signal.aborted;
     const budgetSpent = nowMs() - started >= input.deadlineMs - DEADLINE_SLACK_MS;

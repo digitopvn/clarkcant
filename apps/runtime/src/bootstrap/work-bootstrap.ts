@@ -4,8 +4,10 @@ import { listSecretMetadata } from "@clarkcant/storage";
 
 import { withholdFromChildren } from "../child-env.ts";
 import { answerUncertain } from "../delegation-handlers.ts";
+import { tryRecordNodeNotice } from "../notices.ts";
 import { machineBootId } from "../process-tree.ts";
 import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
+import { createPackageJobHost, type PackageJobHost } from "../job-host.ts";
 import { listRunningCommands, setCommandJournal, stopCommand } from "../run-command.ts";
 import type { NodeServices } from "../services.ts";
 import { createWorkJournal, type NodeWorkJournal } from "../work-journal.ts";
@@ -30,6 +32,7 @@ import {
 export interface NodeWork {
   supervisor: WorkSupervisor;
   journal: NodeWorkJournal;
+  packageJobs: PackageJobHost;
   /** Register the task dispatcher once it exists. */
   addSource(source: WorkSource): void;
   /** Report and settle what an earlier process left open. Run once, after `wireRuntime`. */
@@ -84,6 +87,37 @@ export function attachNodeWork(input: {
         ),
     }),
   );
+  const packageJobs = createPackageJobHost({
+    db: runtime.db,
+    nodeId,
+    nodeBootId: journal.nodeBootId,
+    newId: services.conductor.newId,
+    supervisor,
+    artifactBroker: {
+      db: runtime.db,
+      dataDir: runtime.dataDir,
+      nodeId,
+      newId: services.conductor.newId,
+      now: () => new Date(),
+    },
+    // The note is the result; the notice is the pointer to it, which is also how an open conversation learns to re-read.
+    report: (conversationId, text, job) => {
+      const at = nowInstant();
+      appendHostReply(services, { conversationId, text, at });
+      tryRecordNodeNotice(services, {
+        sourceKind: "package",
+        category: "result",
+        severity: job.status === "completed" ? "success" : job.status === "cancelled" ? "info" : "warning",
+        title: job.status === "completed" ? "A package job finished" : job.status === "cancelled" ? "A package job was stopped" : "A package job did not finish",
+        body: text,
+        conversationId,
+        subject: { kind: "conversation", conversationId },
+        dedupKey: `job:${job.jobId}`,
+        at,
+      });
+    },
+  });
+  services.packageJobs = packageJobs;
 
   supervisor.addSource({
     kind: "command",
@@ -124,9 +158,11 @@ export function attachNodeWork(input: {
   return {
     supervisor,
     journal,
+    packageJobs,
     addSource: (source) => void supervisor.addSource(source),
-    recover: () =>
-      recoverUnfinishedWork({
+    recover: () => {
+      packageJobs.recover();
+      return recoverUnfinishedWork({
         db: runtime.db,
         nodeId,
         nodeBootId: journal.nodeBootId,
@@ -146,6 +182,7 @@ export function attachNodeWork(input: {
         },
         // A task a peer handed over is answered too, or that peer's own task would wait for an answer that never comes.
         onUncertain: answerUncertain(services, () => nowInstant()),
-      }),
+      });
+    },
   };
 }

@@ -23,6 +23,7 @@ import { handleMiniAppDataRoutes } from "./routes/mini-app-data.ts";
 import { handleMemoryRoutes, handleSearchRoutes } from "./routes/search-memory.ts";
 import { handleWidgetServingRoutes } from "./routes/widget-serving.ts";
 import { handleArtifactRoutes } from "./routes/artifacts.ts";
+import { handleJobRoutes } from "./routes/jobs.ts";
 import { handleAttachmentRoutes } from "./routes/attachments.ts";
 import { handlePreviewRoutes } from "./routes/previews.ts";
 import { handlePreferenceRoutes } from "./routes/preferences.ts";
@@ -269,6 +270,8 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   // which would otherwise answer `/conversations/:id/widgets/:instance/artifacts…` with its own 404.
   const artifactResponse = handleArtifactRoutes({ services, request, segments });
   if (artifactResponse !== undefined) return artifactResponse;
+  const jobResponse = handleJobRoutes({ services, request, segments });
+  if (jobResponse !== undefined) return jobResponse;
 
   if (segments[0] === "previews") {
     return handlePreviewRoutes({ services, request, segments });

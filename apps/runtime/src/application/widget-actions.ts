@@ -38,6 +38,7 @@ import { actionRunning, beginActionRun, endActionRun } from "./action-runs.ts";
 import {
   type CapabilityInvokeOutcome,
   type CapabilityInvokeRequest,
+  type CapabilityLedgerHooks,
   type CapabilityInvokeSource,
   capabilityInvokeDeps,
   invokeCapability,
@@ -175,6 +176,7 @@ function statusOf(code: string): number {
     case "WORKFLOW_STOPPED":
       return 409;
     case "RATE_LIMITED":
+    case "JOB_LIMIT_REACHED":
       return 429;
     case "SERVICE_TOOL_FAILED":
       return 502;
@@ -182,6 +184,7 @@ function statusOf(code: string): number {
     case "CAPABILITY_NOT_READY":
     case "BACKGROUND_UNAVAILABLE":
     case "LEDGER_UNAVAILABLE":
+    case "JOB_HOST_UNAVAILABLE":
       return 503;
     case "SERVICE_TIMED_OUT":
     case "SERVICE_UNREACHABLE":
@@ -206,7 +209,7 @@ function gateRefusal(checked: Extract<BoundActionCheck, { ok: false }>): WidgetA
   };
 }
 
-type WidgetActionServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "turnControl">;
+type WidgetActionServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "turnControl" | "packageJobs">;
 
 type Admitted = Extract<BoundActionCheck, { ok: true }>;
 
@@ -229,6 +232,14 @@ function actionBody(
     ...extra,
     timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
   };
+}
+
+/**
+ * A press that started a durable job. `output` carries the JobRef as well, because a frame reads a binding's answer
+ * there; the job itself, not this answer, says how it is going.
+ */
+function jobBody(jobId: string): Record<string, unknown> {
+  return { outcome: "job", job: { jobId }, output: jobId };
 }
 
 /** Why a call that was sent has no answer that can be trusted, as a clause of the sentence the person reads. */
@@ -257,6 +268,51 @@ function uncertainMessage(label: string, code: string, message: string, deadline
 }
 
 /**
+ * The effect-ledger hooks around one capability call made for a person: `beforeSend` opens the entry once the call is
+ * decided (a `read` opens none), and `onJobSettled` settles it when a durable job the call started ends. A synchronous
+ * call is settled by its caller on the answer, through `opened()`. Shared by a widget press and an approved card, so
+ * both leave the same record of what was sent.
+ */
+export function actionLedgerHooks(
+  services: Pick<NodeServices, "runtime" | "conductor">,
+  call: { conversationId: string; principalId: string; intent: string; ref: string; args: Record<string, unknown> },
+): { hooks: CapabilityLedgerHooks; opened: () => OpenedActionEffect | undefined } {
+  let opened: OpenedActionEffect | undefined;
+  return {
+    opened: () => opened,
+    hooks: {
+      beforeSend: ({ effectCategory }) => {
+        if (effectCategory === "read") return;
+        opened = openActionEffect(services, {
+          conversationId: call.conversationId,
+          principalId: call.principalId,
+          capabilityRef: call.ref,
+          args: call.args,
+          intent: call.intent,
+          effectCategory,
+        });
+      },
+      onJobSettled: (jobOutcome) => {
+        if (opened === undefined) return;
+        if (jobOutcome.sent === false) {
+          settleActionEffect(services, opened, { kind: "not-sent", reason: "the package job ended before the service request was sent" });
+          return;
+        }
+        if (jobOutcome.status === "completed") {
+          settleActionEffect(services, opened, { kind: "answered", evidence: `the package job completed: ${call.ref}` });
+          return;
+        }
+        settleActionEffect(services, opened, {
+          kind: "no-answer",
+          stopped: jobOutcome.status === "cancelled",
+          reason: `the package job ${jobOutcome.status}; its effect may have happened before the service stopped answering`,
+        });
+      },
+    },
+  };
+}
+
+/**
  * One service call a press makes, inside the effect ledger.
  *
  * The ledger entry is opened by `invokeCapability`'s `beforeSend`, after the registry, the schema and the policy have
@@ -268,47 +324,54 @@ async function callInLedger(
   services: WidgetActionServices,
   call: { conversationId: string; principalId: string; intent: string; request: Omit<CapabilityInvokeRequest, "beforeSend"> },
 ): Promise<StepCall & { taskId?: string }> {
-  const ledger: { opened?: OpenedActionEffect } = {};
+  const ledger = actionLedgerHooks(services, {
+    conversationId: call.conversationId,
+    principalId: call.principalId,
+    intent: call.intent,
+    ref: call.request.ref,
+    args: call.request.args,
+  });
   let outcome: CapabilityInvokeOutcome;
   try {
-    outcome = await invokeCapability(capabilityInvokeDeps(services), {
-      ...call.request,
-      beforeSend: ({ effectCategory }) => {
-        if (effectCategory === "read") return;
-        ledger.opened = openActionEffect(services, {
-          conversationId: call.conversationId,
-          principalId: call.principalId,
-          capabilityRef: call.request.ref,
-          args: call.request.args,
-          intent: call.intent,
-          effectCategory,
-        });
-      },
-    });
+    outcome = await invokeCapability(capabilityInvokeDeps(services), { ...call.request, ...ledger.hooks });
   } catch (cause) {
     // Thrown on this node before the call was sent: a service's failure is an answer, not a throw.
-    if (ledger.opened !== undefined) {
-      settleActionEffect(services, ledger.opened, { kind: "not-sent", reason: cause instanceof Error ? cause.message : String(cause) });
+    const opened = ledger.opened();
+    if (opened !== undefined) {
+      settleActionEffect(services, opened, { kind: "not-sent", reason: cause instanceof Error ? cause.message : String(cause) });
     }
     throw cause;
   }
-  const opened = ledger.opened;
-  if (opened === undefined) return { outcome, recorded: false };
+  const opened = ledger.opened();
+  const settled = settleCallOutcome(services, opened, outcome);
+  return { outcome, recorded: settled.recorded, ...(settled.recorded && opened !== undefined ? { taskId: opened.taskId } : {}) };
+}
+
+/**
+ * Settle the ledger entry a call's `beforeSend` opened, on what the call came back with: an answer closes it, a call
+ * that never left closes it as not sent, and a call sent without a trustworthy answer stays a question for the person.
+ * A job is left open here; its `onJobSettled` closes it when the job ends. Shared by a widget press and an approved
+ * card, so neither leaves an entry open after a plain answer.
+ */
+export function settleCallOutcome(
+  services: Pick<NodeServices, "runtime" | "conductor">,
+  opened: OpenedActionEffect | undefined,
+  outcome: CapabilityInvokeOutcome,
+): { recorded: boolean } {
+  if (opened === undefined || outcome.kind === "job" || outcome.kind === "approval-required") return { recorded: false };
   if (outcome.kind === "done") {
     settleActionEffect(services, opened, { kind: "answered", evidence: `the service answered: ${outcome.output.slice(0, 200)}` });
-    return { outcome, recorded: false };
+    return { recorded: false };
   }
-  if (outcome.kind !== "refused") return { outcome, recorded: false };
   if (!outcome.sent) {
     settleActionEffect(services, opened, { kind: "not-sent", reason: outcome.message });
-    return { outcome, recorded: false };
+    return { recorded: false };
   }
-  const settled = settleActionEffect(services, opened, {
+  return settleActionEffect(services, opened, {
     kind: "no-answer",
     stopped: outcome.code === "SERVICE_CANCELLED",
     reason: `no answer that can be trusted came back: ${outcome.message}`,
   });
-  return { outcome, recorded: settled.recorded, ...(settled.recorded ? { taskId: opened.taskId } : {}) };
 }
 
 /** An outcome of a workflow run, as the response carries it: its report, and whether anything it ran is kept. */
@@ -378,6 +441,8 @@ function replay(
       return body(202, { outcome: "approval-required", approvalRequired: { approvalId: prior.approvalId } });
     case "background":
       return body(202, { outcome: "background", background: { workId: prior.workId, state: prior.state } });
+    case "job":
+      return body(202, jobBody(prior.jobId));
     case "workflow":
       return workflowResult(services, checked, request.conversationId, prior.report, true);
     case "uncertain":
@@ -489,6 +554,7 @@ async function invokeCapabilityAction(
         source,
         conversationId: request.conversationId,
         bindingGeneration: checked.binding.packageGeneration,
+        jobOrigin: { instanceId: request.instanceId, actionBindingId: request.actionBindingId, invocationId: request.invocationId },
         ...(limits.deadlineMs === undefined ? {} : { timeoutMs: limits.deadlineMs }),
         signal: admitted.controller.signal,
       },
@@ -546,6 +612,14 @@ async function invokeCapabilityAction(
         outcome: "approval-required",
         approvalRequired: { approvalId: outcome.approval.approvalId },
       }),
+    };
+  }
+  if (outcome.kind === "job") {
+    settle(services, checked, request, { kind: "job", jobId: outcome.job.jobId });
+    return {
+      ok: true,
+      status: 202,
+      body: actionBody(services, checked, request.conversationId, false, jobBody(outcome.job.jobId)),
     };
   }
   settle(services, checked, request, { kind: "done", output: outcome.output });

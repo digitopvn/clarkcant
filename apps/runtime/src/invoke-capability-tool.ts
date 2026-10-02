@@ -55,6 +55,8 @@ export function describeCapabilityOutcome(outcome: CapabilityInvokeOutcome): str
   switch (outcome.kind) {
     case "done":
       return `Đã gọi ${outcome.ref}. Kết quả thật từ service:\n${outcome.output}`;
+    case "job":
+      return `Đã bắt đầu job ${outcome.job.jobId} cho ${outcome.ref}. Job tiếp tục chạy sau khi lời gọi này trả về; dùng widget đã bắt đầu nó để xem tiến độ.`;
     case "approval-required":
       return (
         `Đã gửi yêu cầu duyệt để gọi ${outcome.card.operationDescription}. Chưa có gì chạy — người dùng phải bấm ` +

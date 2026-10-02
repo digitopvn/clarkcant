@@ -10,13 +10,17 @@ import {
 import { hostToWidgetSchema } from "@clarkcant/widget-sdk";
 import { z } from "zod";
 
+import { devJobFixtureSchema, type DevJobFixture } from "./dev-jobs.ts";
+
 export type ServiceStatus = "loading" | "ready" | "blocked" | "unhealthy";
 export type ServiceReadiness = CapabilityReadiness;
 
 export interface ServiceBinding {
   actionBindingId: string;
   capabilityRef: string;
-  outcome: unknown;
+  outcome?: unknown;
+  /** Present when the capability runs as a job: the press answers with a simulated JobRef instead of `outcome`. */
+  job?: DevJobFixture | undefined;
 }
 
 const simulatorFile = "fixtures/dev-host-services.json";
@@ -25,12 +29,19 @@ const fixtureSchema = z.strictObject({
   bindings: z.array(z.strictObject({
     actionBindingId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/),
     capabilityRef: capabilityRefSchema,
-    outcome: z.unknown(),
+    // Absent only for a job binding, whose press is answered with its simulated JobRef.
+    outcome: z.unknown().optional(),
+    job: devJobFixtureSchema.optional(),
   })).max(64),
 });
 
 /** Read only bounded JSON data. The dev host never imports or executes a service fixture. */
-export function readServiceSimulator(root: string, declaredCapabilities: readonly string[]): {
+export function readServiceSimulator(
+  root: string,
+  declaredCapabilities: readonly string[],
+  /** Capabilities the manifest declares with `execution: { kind: "job" }`, whose press a node answers with a JobRef. */
+  jobCapabilities: readonly string[] = [],
+): {
   capabilities: readonly string[];
   bindings: readonly ServiceBinding[];
 } {
@@ -55,6 +66,14 @@ export function readServiceSimulator(root: string, declaredCapabilities: readonl
       throw new Error(`${simulatorFile} binding ${binding.actionBindingId} refers to undeclared capability ${binding.capabilityRef}`);
     }
     if (seen.has(binding.actionBindingId)) throw new Error(`${simulatorFile} repeats action binding ${binding.actionBindingId}`);
+    // Both ways, so the simulation answers a press the way a node would: a job capability with a JobRef, and only it.
+    const runsAsJob = jobCapabilities.includes(binding.capabilityRef);
+    if (runsAsJob && binding.job === undefined) {
+      throw new Error(`${simulatorFile} binding ${binding.actionBindingId} calls job capability ${binding.capabilityRef} and needs a "job" fixture`);
+    }
+    if (!runsAsJob && binding.job !== undefined) {
+      throw new Error(`${simulatorFile} binding ${binding.actionBindingId} has a "job" fixture, but ${binding.capabilityRef} is not declared with execution kind "job"`);
+    }
     seen.add(binding.actionBindingId);
   }
   return { capabilities: [...declaredCapabilities], bindings: parsed.data.bindings };
@@ -117,7 +136,7 @@ export function actionResult(input: {
   nonce: string;
   actionBindingId: string;
   invocationId: string;
-  outcome: unknown;
+  outcome?: unknown;
 }): Record<string, unknown> {
   const candidate = typeof input.outcome === "object" && input.outcome !== null
     ? { ...input.outcome, kind: "action-result", nonce: input.nonce, actionBindingId: input.actionBindingId, invocationId: input.invocationId }

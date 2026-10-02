@@ -46,6 +46,20 @@ const TOOLS = [
     },
   },
   {
+    name: "export_notes",
+    description: "Export every note to a text file, reporting progress each step, unless the request is cancelled first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        steps: { type: "integer", minimum: 1, maximum: 50 },
+        stepMs: { type: "integer", minimum: 10, maximum: 10000 },
+      },
+      required: ["steps", "stepMs"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "list_notes",
     description: "List every note, oldest first.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -177,8 +191,34 @@ function handle(request) {
       );
       return;
     }
+    if (name === "export_notes") {
+      const steps = Number(params?.arguments?.steps ?? 3);
+      const stepMs = Number(params?.arguments?.stepMs ?? 500);
+      const token = params?._meta?.progressToken;
+      let done = 0;
+      // Progress is the service's own, sent only when the node asked for it; a cancel stops the next step.
+      const step = () => {
+        done += 1;
+        if (token !== undefined) {
+          send({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: done, total: steps, message: `exported step ${String(done)} of ${String(steps)}` } });
+        }
+        if (done < steps) {
+          waiting.set(id, setTimeout(step, stepMs));
+          return;
+        }
+        waiting.delete(id);
+        const notes = readNotes();
+        send({ jsonrpc: "2.0", id, result: { content: [
+          { type: "text", text: `Exported ${String(notes.length)} note(s).` },
+          { type: "resource", resource: { uri: "file:///data/notes-export.txt", mimeType: "text/plain", text: notes.join("\n") || "No notes yet." } },
+        ] } });
+      };
+      waiting.set(id, setTimeout(step, stepMs));
+      return;
+    }
     if (name === "list_notes") {
-      const notes = readNotes();
+      // Newest first: a reader that keeps only the start of a long answer, like a spoken one, still hears the latest note.
+      const notes = readNotes().reverse();
       send({ jsonrpc: "2.0", id, result: text(notes.length === 0 ? "No notes yet." : notes.join(" | ")) });
       return;
     }

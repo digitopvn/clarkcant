@@ -39,7 +39,7 @@ export interface EmergencyStopDeps {
    */
   services?: { stopAll(options?: { restart?: boolean }): Promise<number> } | undefined;
   /** The background lane. Defaults to the node's supervisor; a test passes its own. */
-  work?: { cancelBackground(reason?: "stopped" | "shutdown"): number };
+  work?: { cancelBackground(reason?: "stopped" | "shutdown"): number; cancelKind?(kind: "job"): number };
   /**
    * Why everything is being stopped. A person's stop is `stopped`, and each background run says so in its conversation;
    * a shutdown is `shutdown`, which leaves the report of what was interrupted to the next boot.
@@ -51,6 +51,7 @@ export interface EmergencyStopReport {
   commands: number;
   turns: number;
   background: number;
+  jobs: number;
   tasks: number;
   terminals: number;
   services: number;
@@ -61,6 +62,7 @@ export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<Eme
   const commands = stopRunningCommands();
   // The supervisor first: it owns the queue, and a queued request left behind would start the moment a place freed.
   let background = (deps.work ?? nodeWork()).cancelBackground(shutdown ? "shutdown" : "stopped");
+  const jobs = (deps.work ?? nodeWork()).cancelKind?.("job") ?? 0;
   const control = deps.turnControl;
   let turns = 0;
   if (control !== undefined) {
@@ -85,7 +87,7 @@ export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<Eme
   const actions = cancelAllActionRuns();
   const services = (await deps.services?.stopAll({ restart: !shutdown }).catch(() => 0)) ?? 0;
 
-  const stopped = commands + turns + background + tasks + terminals + services + actions;
+  const stopped = commands + turns + background + jobs + tasks + terminals + services + actions;
   if (stopped > 0) {
     // Written down whether or not anybody was watching: a stop is the event most likely to need explaining later.
     appendAuditEvent(deps.db, {
@@ -93,10 +95,10 @@ export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<Eme
       principalId: deps.ownerPrincipalId,
       nodeId: deps.nodeId,
       kind: "stop",
-      summary: `${shutdown ? "tắt node" : "dừng khẩn cấp"}: ${commands} lệnh, ${turns} lượt, ${background} việc nền, ${tasks} worker task, ${terminals} terminal, ${services} service${actions > 0 ? `, ${String(actions)} thao tác widget` : ""}`,
+      summary: `${shutdown ? "tắt node" : "dừng khẩn cấp"}: ${commands} lệnh, ${turns} lượt, ${background} việc nền, ${jobs} package job, ${tasks} worker task, ${terminals} terminal, ${services} service${actions > 0 ? `, ${String(actions)} thao tác widget` : ""}`,
       outcome: "stopped",
       at: nowInstant(),
     });
   }
-  return { commands, turns, background, tasks, terminals, services };
+  return { commands, turns, background, jobs, tasks, terminals, services };
 }

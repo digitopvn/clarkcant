@@ -617,6 +617,7 @@ bảng được đếm thành một con số. Đồ thị là dữ liệu do hos
 | `canvas.list@1` | `selection.change` | `selected` |
 | `canvas.table@1` | `row.select` | `rowIds` |
 | `canvas.calendar@1` | `date.select` | `date` |
+| `canvas.gallery@1`, `canvas.carousel@1` | `media.select` | `selectedIndex` |
 
 ```json
 {
@@ -1188,6 +1189,84 @@ kết quả invoke, khớp approval và rollback khi bị từ chối; browser j
 [kanban-board.spec.ts](../apps/web/e2e/kanban-board.spec.ts) chạy thao tác bàn phím, chuột và cảm ứng trong hội thoại,
 theme sáng/tối thích ứng và giảm chuyển động, cùng preview chỉ-đọc trong Widget Library.
 
+### 8.11 Widget media và trạng thái semantic
+
+`canvas.image@1` mô tả alt text được cung cấp và chỉ đưa kích thước vào khi node sở hữu ảnh có các giá trị đó. State
+gallery và carousel lưu `selectedIndex` có giới hạn, đếm từ 0 (state version 2); state cũ version 1 được migrate về mục
+đầu tiên, và chỉ số luôn được chuẩn hoá theo props hiện tại. Lựa chọn gallery/carousel được ghi qua binding `media.view`
+của host. Khi node từ chối một lần ghi, widget vẽ lại mục node đang giữ và nói lý do ngay bên cạnh, giống các view widget
+khác. Semantic document của chúng đếm theo cách con người đếm, dưới một tên khác: `selectedNumber` là mục đang chọn đếm
+từ 1, đi cùng `itemCount` và alt text của mục đó, còn summary ghi "showing picture 2 of 3". Gallery hoặc carousel được
+đặt trước khi có binding này thì không có binding `media.view`; chúng vẫn render và lựa chọn vẫn hoạt động trên trang,
+nhưng lựa chọn đó không được lưu, nên document của chúng báo mục đầu tiên.
+
+Layout ghép chỉ liệt kê một widget khi node có nguồn dữ liệu thật cho nó. Với media, đó là một ảnh đã nhập, và giờ có
+thêm gallery và carousel: một lá `canvas.gallery@1` hoặc `canvas.carousel@1` hiển thị chính những ảnh người dùng đã
+nhập, mới nhất trước, đúng các tham chiếu mà `/images` phục vụ, cắt theo sức chứa của widget (48 với gallery, 24 với
+carousel). Bộ ảnh là những ảnh có mặt lúc layout được ghép: ảnh nhập sau đó chỉ xuất hiện trong một layout được ghép
+mới, còn ảnh đã bị xoá thì không còn được vẽ. Node điền `imageRefs` và `alts`; model chỉ nêu widget, tiêu đề và cách nối dây, còn ảnh nào model tự nêu
+đều bị bỏ qua. Một layout yêu cầu gallery hay carousel khi node không có ảnh nào sẽ bị từ chối kèm lý do, và một bộ ảnh
+đã đặt mà mọi ảnh đều bị xoá được hiển thị là thiếu thay vì ảnh hỏng. Video hay YouTube embed vẫn chưa có nguồn và bị từ
+chối. Chọn một ảnh trong gallery hay carousel của layout ghép sẽ phát `media.select` với `{ "selectedIndex" }`, đúng
+trường mà widget lưu, nên một quy tắc đồ thị như `select-field` vào một khoá number đã khai báo sẽ giữ lựa chọn đó trên
+node. Lá nào chọn cùng khoá đó sẽ nhận lại giá trị làm lựa chọn của chính nó: hai lá media nối vào một khoá sẽ đi theo
+nhau, và `semanticState` của bề mặt cùng `inspect_ui` đều báo giá trị đó. Giá trị đó là chỉ số được lưu, đếm từ 0:
+ảnh thứ hai được giữ và báo là `1`. Chỉ semantic summary riêng của widget media mới đếm từ 1 (`selectedNumber`,
+"showing picture 2 of 3"); một khoá đồ thị nhận từ `media.select` thì không, nên model đọc khoá đó phải cộng 1 để gọi
+tên ảnh theo cách con người đếm. Gallery hay carousel không nối dây trong một bề mặt ghép chỉ giữ lựa chọn trên trang.
+
+`canvas.video@1` lưu `status`, `position` và `duration` qua cùng binding của host (state version 2; state cũ
+version 1 được migrate thành paused tại 0). Các lần ghi vị trí đi qua một bộ gộp playback dùng chung
+([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), chính bộ mà widget audio đã lên kế
+hoạch (#324) sẽ dùng lại: pause, seek và kết thúc ghi ngay; trong khi phát liên tục thì tối đa mỗi
+`MEDIA_PLAYBACK_WRITE_INTERVAL_MS` (ba giây) mới ghi một lần. Mỗi lần ghi là một view action có binding, nên nó cũng ghi
+một action invocation và trả về timeline của cuộc hội thoại; một đường chỉ-ghi-state nhẹ hơn sẽ cần route mới và không
+thuộc thay đổi này. Việc ghi khuếch đại đó, cùng thời gian giữ các bản ghi invocation, được theo dõi ở [#380](https://github.com/digitopvn/clarkcant/issues/380). Khi trang bị ẩn, player ghi vị trí hiện tại; khi rời trang hoặc player bị gỡ, nó tự ghi trạng thái
+dừng tại chỗ đã dừng. Lần ghi khi rời trang được gửi ngay với `keepalive`, không phải chờ sau một lần ghi đang chạy, và
+dùng revision mà lần ghi đó sẽ tạo ra. Mọi lần ghi này đều là best-effort: trang đang đóng vẫn có thể không gửi xong
+request, và lần ghi khi rời trang bị từ chối nếu lần ghi trước nó bị từ chối. Vì vậy node
+cũng thôi tin một "playing" đã lưu khi nó cũ hơn `MEDIA_PLAYING_FRESH_MS` (hai khoảng ghi cộng hai giây dư, tính từ
+`updated_at` của dòng state): khi đó semantic document báo video dừng ở vị trí đã lưu cuối cùng. Một lần ghi playback bị
+từ chối được nói ngay bên cạnh player, player không bị tua đi, và lần ghi kế tiếp vẫn được gửi dù player chưa di chuyển.
+Player được khôi
+phục sẽ tua tới vị trí đã lưu khi metadata tải xong và vẫn dừng; khôi phục không bao giờ tự phát, và lần tua do khôi
+phục không được ghi ngược lại. Semantic document báo vị trí và thời lượng làm tròn tới
+một phần mười giây. Semantic của YouTube chỉ dùng video id đã kiểm tra cùng title; không đọc
+message playback của bên thứ ba. Image, gallery/carousel, video cục bộ và YouTube dùng chung một document có giới hạn
+cho voice, ghi chú lượt kế tiếp và `inspect_ui`.
+
+Ghim một widget media hoạt động như với tree và timeline: pin là một chip gọn trên kệ, và cả bản ghi pin lẫn view state
+của widget đều còn sau khi tải lại. Không có player thứ hai được ghim và chạy riêng; sau khi tải lại, chính widget trong
+cuộc hội thoại mở lại với state đã lưu.
+
+Unit test nằm ở [media-view.spec.ts](../packages/contracts/test/media-view.spec.ts) (gồm khoảng thời gian còn tin
+"playing"),
+[playback-coalescer.spec.ts](../packages/conversation-client/test/playback-coalescer.spec.ts) (gồm số lần ghi trong một phút
+phát liên tục và các lần ghi khi trang bị ẩn, bị rời đi hoặc player bị gỡ),
+[media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts) (gồm thông báo từ chối),
+[widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts) (gồm một "playing" đã cũ, một gallery được đặt
+không có binding, và giới hạn ở props lớn nhất được chấp nhận) và
+[security.spec.ts](../apps/desktop/test/security.spec.ts) cho media policy của desktop. Các browser journey trong
+[widget.spec.ts](../apps/web/e2e/widget.spec.ts) xác minh lựa chọn gallery qua `inspect_ui`, lựa chọn carousel qua ghi
+chú lượt kế tiếp, một lựa chọn bị từ chối ở cả hai, và state của carousel sau khi ghim rồi tải lại, với focus bàn phím
+và cả hai theme ở 390 px. Gallery và carousel đặt trong layout ghép được kiểm bởi
+[compose-layout.spec.ts](../apps/runtime/test/compose-layout.spec.ts) (ảnh của chính node, giới hạn theo từng widget,
+từ chối khi không có ảnh), [composition-graph.spec.ts](../apps/runtime/test/composition-graph.spec.ts) (lựa chọn được
+giữ, đọc lại, bị từ chối khi sai kiểu, và báo thiếu khi ảnh đã bị xoá) và browser journey trong
+[composition-graph.spec.ts](../apps/web/e2e/composition-graph.spec.ts): chọn một ảnh bằng bàn phím, thấy carousel đi
+theo, đọc giá trị qua bề mặt live và `inspect_ui`, tải lại, và kiểm tra cả hai theme ở 390 px. [widget.spec.ts](../apps/web/e2e/widget.spec.ts) cũng phát một clip WebM cục bộ thật trong Chromium khoảng năm giây và đếm số lần ghi so
+với số nhịp đồng hồ, từ chối một lần ghi, đọc vị trí đã dừng qua `inspect_ui`, rồi tải lại sau khi ghim để kiểm tra
+player mở lại đúng vị trí đó mà không tự phát.
+
+Node chưa nhập được video: `/images` chỉ nhận ảnh. Vì vậy video cục bộ chỉ phát được từ một tham chiếu mà host đã phục
+vụ sẵn, và browser journey tự trả bytes cho đúng một tham chiếu của clip; phần fetch có xác thực, object URL, page
+policy, player và state do node giữ đều là đường production. Video đó phát từ object URL mà client tạo từ bytes đã fetch
+bằng token của node, giống hệt ảnh đã nhập. Vì vậy page
+policy cho phép `media-src 'self' blob:` ở cả [apps/web/index.html](../apps/web/index.html) và policy của cửa sổ desktop
+([security.mjs](../apps/desktop/src/security.mjs)), và không gì hơn: không origin media từ xa và không media `data:`
+([#374](https://github.com/digitopvn/clarkcant/issues/374)). Embed YouTube là một frame, do `frame-src` quản lý, không
+thuộc directive này.
+
 ---
 
 ## 9. Semantic contract cho voice và lượt kế tiếp
@@ -1215,7 +1294,10 @@ chỉ dẫn.
 Ai viết tài liệu:
 
 - **Surface dựng sẵn và surface ghép** được host mô tả từ state nó lưu: khoảng thời gian, ngày được chọn và các giá trị
-  graph đã khai báo.
+  graph đã khai báo. Widget media chỉ được mô tả từ props đã kiểm tra và view state có giới hạn của chúng: alt text và
+  kích thước đã biết của ảnh, mục đang chọn của gallery hoặc carousel (`selectedNumber`, đếm từ 1), trạng thái phát và
+  vị trí của video cục bộ (một "playing" mà player không còn ghi mới được đọc là đang dừng), cùng
+  id đã kiểm tra và title của video YouTube ([§8.11](#811-widget-media-và-trạng-thái-semantic)).
 - **Widget chạy trong frame riêng** đề xuất summary, selected ID và giá trị bằng
   `semantic.publish(summary, selectedIds, values?)`. Host gửi lần publish cuối của một loạt sau 250 ms, kiểm tra theo
   schema chặt (`POST …/widgets/{instanceId}/semantic`), làm sạch và đánh dấu đó là lời của chính widget. Frame không
@@ -1458,6 +1540,57 @@ trình duyệt [widget-artifacts.spec.ts](../apps/web/e2e/widget-artifacts.spec.
 một đoạn, đọc nó trong hai đoạn, ghi và lưu một bản sao, đính kèm nó, rồi mở lại từ một thẻ tệp. Nó chạy ở cả hai
 giao diện và ở 390 px.
 
+### 10.2 Job chạy lâu (`jobs@1`)
+
+Một capability của package có công việc kéo dài hơn một lần bấm khai báo điều đó trong tools facet:
+
+    { "ref": "com.example.notes.export@1", "tool": "export_notes", "effectCategory": "read",
+      "execution": { "kind": "job", "version": 1 } }
+
+Một lần bấm vào binding của capability đó không chờ service làm xong. `actions.invoke` trả về một **JobRef**, là một
+id `job_…` không mang nghĩa, và node chạy lời gọi ở nền. Widget giữ JobRef trong state của chính nó, nhờ vậy một frame
+được mount lại vẫn theo dõi đúng job đó:
+
+    const jobId = await api.actions.invoke("binding_notes_export", { steps: 12, stepMs: 1500 }, invocationId);
+    await api.state.update((state) => ({ ...state, exportJob: jobId }), { exportJob: jobId });
+    const stop = api.jobs.subscribe(jobId, (job) => render(job));
+
+`jobs.available()` cho biết host có cung cấp `jobs@1` trong `init.extensions` hay không; khi không có, mọi lời gọi bị
+từ chối ngay tại chỗ. `jobs.get(ref)` đọc một snapshot: trạng thái (`queued`, `running`, `waiting`, `completed`,
+`failed`, `cancelled`), tiến độ, output, lỗi, tệp kết quả và các mốc thời gian. `jobs.subscribe(ref, handler)` bắt đầu
+từ snapshot đó, hỏi lại mỗi giây, chỉ đưa cho handler những snapshot đã thay đổi, và tự dừng khi job kết thúc, khi gặp
+`JOB_NOT_FOUND` hoặc `EXTENSION_NOT_OFFERED`, hoặc sau 30 lần đọc bị từ chối liên tiếp. `jobs.cancel(ref)` yêu cầu node
+dừng job; job đã kết thúc bị từ chối với `JOB_NOT_RUNNING`. Contract nằm ở [jobs.ts](../packages/contracts/src/jobs.ts).
+
+**JobRef là con trỏ, không phải quyền.** Node kiểm tra lại mọi lần đọc và huỷ theo chủ sở hữu của job: principal,
+widget instance, binding của nó cùng package generation mà binding đó được cấp quyền, và capability. Bất kỳ sai lệch
+nào, kể cả một ref bị chép sang widget khác, đều nhận `JOB_NOT_FOUND`, giống hệt một ref chưa từng tồn tại.
+
+Những gì job báo cáo là của chính service: tiến độ chỉ đến từ `notifications/progress` của MCP mà service gửi cho lời
+gọi đó, và các tệp nó trả về trở thành `ArtifactRef` mà widget đọc được qua `artifacts@1`. Việc đọc job có ngân sách
+riêng cho mỗi phiên frame (tối đa 60 lần dồn, sau đó 5 lần mỗi giây, tối đa 4 lần chờ cùng lúc), tách khỏi ngân sách
+message, nên widget đang theo dõi job không làm nghẽn các lời gọi bridge khác.
+
+Một job được chạy tối đa 30 phút thay vì hạn 60 giây của một lần bấm; quá thời hạn đó nó kết thúc ở trạng thái thất
+bại. Trong lúc chạy, nó nằm trong danh sách công việc đang chạy của node (`GET /work`), và việc dừng nó ở đó
+(`POST /work/{id}/cancel`), Dừng khẩn cấp và việc tắt node đều huỷ nó. Nút Dừng của hội thoại kết thúc câu trả lời và
+một lần bấm còn đang chờ, không kết thúc một job đã chạy, giống như các công việc nền khác. Lệnh huỷ được báo cho service
+qua cơ chế huỷ của MCP; vì service có thể đã làm xong tác động trước khi nhận được, phần kết thúc ghi rằng job "may
+already have completed its effect" thay vì khẳng định không có gì xảy ra. Job còn mở khi node khởi động lại được đánh
+dấu thất bại kèm lời giải thích đó; nó không bao giờ tự chạy lại.
+
+Khi job kết thúc, hội thoại nhận một ghi chú nêu capability, tối đa ba tệp kết quả và bước tiếp theo, và hộp thư ghi
+lại cùng kết thúc đó. Nếu execution policy cần hỏi trước khi capability chạy, lần bấm sẽ hiện thẻ phê duyệt của host
+trước, và job chỉ bắt đầu sau khi một người phê duyệt ở đó; widget không bao giờ tự phê duyệt job của chính nó. Hội
+thoại còn job đang mở thì không xoá được cho tới khi job kết thúc hoặc bị huỷ.
+
+Kiểm thử: [jobs.spec.ts](../packages/contracts/test/jobs.spec.ts) cho các quy tắc,
+[job-host.spec.ts](../apps/runtime/test/job-host.spec.ts) cho job host của node, Dừng và khởi động lại,
+[action-widget.spec.ts](../apps/runtime/test/action-widget.spec.ts) cho lần bấm, phê duyệt và các route bridge,
+[runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) cho SDK, và hành trình trên trình duyệt
+[package-job.spec.ts](../apps/web/e2e/package-job.spec.ts). Hành trình đó theo dõi tiến độ của một service thật qua
+một lần tải lại, từ chối một JobRef giả, huỷ từ widget, hoàn tất kèm một tệp và kết thúc một job bằng Dừng khẩn cấp.
+
 ---
 
 ## 11. Pin / detach lifecycle
@@ -1649,6 +1782,19 @@ kết quả theo schema bridge của widget; kết quả sai schema trở thành
 cách widget vẽ trạng thái và xử lý bridge, không chứng minh service hoạt động đúng. Package frame nhận cùng widget SDK
 runtime dùng cho bridge, vẫn nằm trong opaque-origin sandbox, và chỉ tải module package qua dev host.
 
+Binding tới capability được khai báo với `"execution": { "kind": "job", "version": 1 }` dùng fixture `job` thay cho
+`outcome`, và mọi binding như vậy đều phải có nó:
+
+    { "actionBindingId": "binding_notes_export", "capabilityRef": "com.example.notes.export@1",
+      "job": { "steps": [{ "current": 1, "total": 3, "message": "exported step 1 of 3" }],
+               "output": "Exported 1 note(s).", "error": "the export could not be written" } }
+
+Khi đó một lần bấm trả về một JobRef mô phỏng, và danh sách **Simulated jobs** của shell hiển thị từng job với **Next
+step**, **Complete** và **Fail**. Next step chuyển job từ queued sang running rồi đi qua từng bước tiến độ của fixture;
+`jobs.cancel` của chính widget kết thúc nó ở trạng thái cancelled. Mọi kết thúc đều ghi "(simulated by clark widget
+dev)". Host giữ tối đa 32 job trong bộ nhớ, dọn chỗ từ các job đã kết thúc, và quên hết khi dừng. Nó không bao giờ gọi
+service, nên một job thật vẫn phải được kiểm thử trên node.
+
 Semantic inspector nhận đề xuất `semantic.publish` từ frame qua normalizer dùng chung với runtime. Nó hiển thị tài
 liệu đã chuẩn hoá, các trường bị cắt hoặc loại bỏ, delta so với lần publish trước, ghi chú ngữ cảnh cho lượt kế tiếp
 và nội dung `inspect_ui`. Nội dung do frame đề xuất luôn được xem là dữ liệu không đáng tin; publish hơn bốn lần
@@ -1688,6 +1834,8 @@ Widget không publish-ready nếu thiếu các test sau:
   tra;
 - state version valid;
 - unknown event/action reject.
+- `fixtures/dev-host-services.json`, nếu có, chỉ nêu các capability đã khai báo và cung cấp fixture `job` cho đúng
+  những binding có capability chạy dưới dạng job.
 
 ### Security
 

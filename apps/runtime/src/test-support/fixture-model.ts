@@ -52,6 +52,7 @@ import { controlApp, createNodeTools, createRememberTool, type CommandToolDeps }
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps, indexDirectoryPath } from "../project-finder.ts";
 import { createInvokeCapabilityTool } from "../invoke-capability-tool.ts";
+import { createInspectUiTool } from "../inspect-ui-tool.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "../request-secret.ts";
 import { commandDigest } from "../run-command.ts";
 import { captureBrowserFrame, previewPageUrl } from "./browser-frame.ts";
@@ -478,6 +479,12 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       const reply = asked.ok ? "Fixture: tui đã hỏi một câu và để nó hết hạn, không ai trả lời." : asked.message;
       if (asked.ok) sweepExpired(deps.services(), instantSchema.parse(new Date().toISOString()));
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    if (/^(?:kiểm tra giao diện|inspect the ui)$/iu.test(input.text.trim())) {
+      const inspectUi = createInspectUiTool({ deps: () => deps.services().conductor, conversationId: input.conversationId });
+      const result = await inspectUi.execute({ scope: "recent" });
+      return { text: result.text, block: { type: "text", format: "plain", content: result.text, streaming: false } };
     }
 
     /*
@@ -2059,6 +2066,26 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           effectCategory: "local-write" as const,
         },
         {
+          actionBindingId: "binding_notes_export",
+          label: "Xuất ghi chú",
+          proposal: {
+            kind: "invoke" as const,
+            capabilityRef: "com.example.notes.export@1",
+            args: {},
+            bindings: [
+              { target: "steps", source: "user-input" as const },
+              { target: "stepMs", source: "user-input" as const },
+            ],
+          },
+          inputSchema: {
+            type: "object",
+            properties: { steps: { type: "integer", minimum: 1, maximum: 50 }, stepMs: { type: "integer", minimum: 10, maximum: 10000 } },
+            required: ["steps", "stepMs"],
+            additionalProperties: false,
+          },
+          effectCategory: "read" as const,
+        },
+        {
           actionBindingId: "binding_notes_list",
           label: "Tải danh sách",
           proposal: { kind: "invoke" as const, capabilityRef: "com.example.notes.list@1", args: {} },
@@ -2157,6 +2184,56 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * A carousel over pictures this node holds, placed through the same catalog view the model uses.
+     * The browser journey supplies two local images and then checks that selection survives a pin restore.
+    */
+    if (/^(?:đặt|place)\s+(?:bộ ảnh|carousel)$/iu.test(input.text.trim())) {
+      const recent = listLocalImages(deps.services().runtime.db, input.principal.principalId, 12);
+      const images = ["First carousel image", "Second carousel image"].flatMap((altText) => {
+        const image = recent.find((candidate) => candidate.altText === altText);
+        return image === undefined ? [] : [image];
+      });
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.carousel@1");
+      if (images.length < 2 || view === undefined) {
+        const reply = "Fixture: cần hai ảnh thử để dựng bộ ảnh.";
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+      const block = await view.build({
+        props: {
+          imageRefs: images.map((image) => image.imageId),
+          alts: images.map((image) => image.altText),
+          title: "Bộ ảnh (fixture)",
+        },
+        caption: "",
+        at: instantSchema.parse(new Date().toISOString()),
+        principal: input.principal as never,
+        messageId: input.messageId,
+        conversationId: input.conversationId,
+      });
+      return { text: "Fixture: bộ ảnh dựng từ những ảnh node này đang giữ (không phải model thật).", block };
+    }
+
+    /*
+     * A local video placed through the same catalog view the model uses, so it carries the host's playback-state
+     * binding. The node has no video import yet: the browser journey answers this one reference's authenticated fetch
+     * with a real WebM clip, and everything after the bytes — the object URL, the page's media policy, the player and
+     * the state the node holds — is the production path.
+     */
+    if (/^(?:đặt|place)\s+(?:video cục bộ|local video)$/iu.test(input.text.trim())) {
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.video@1");
+      if (view === undefined) return undefined;
+      const block = await view.build({
+        props: { videoRef: "video_e2e_local_clip", alt: "Đoạn phim thử tám giây", title: "Video cục bộ (fixture)" },
+        caption: "",
+        at: instantSchema.parse(new Date().toISOString()),
+        principal: input.principal as never,
+        messageId: input.messageId,
+        conversationId: input.conversationId,
+      });
+      return { text: "Fixture: một video cục bộ từ tham chiếu bài kiểm thử cung cấp (không phải model thật).", block };
+    }
+
+    /*
      * A table with every part of its contract: declared columns, search, multi-select, totals, several pages and a
      * cell that is a spreadsheet formula.
      *
@@ -2227,27 +2304,21 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         const empty = "Fixture: node này chưa có ảnh nào để dựng thư viện.";
         return { text: empty, block: { type: "text", format: "plain", content: empty, streaming: false } };
       }
-      const instance = createInstance(deps.services().conductor, {
-        definition: GALLERY,
-        packageDigest: definitionDigest(GALLERY),
-        ownerPrincipalId: input.principal.principalId,
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === GALLERY.id);
+      if (view === undefined) return undefined;
+      const block = await view.build({
         props: {
           imageRefs: images.map((image) => image.imageId),
           alts: images.map((image) => image.altText),
           title: "Thư viện ảnh (fixture)",
         },
-      });
-      const snapshot = captureSnapshot(deps.services().conductor, {
+        caption: "",
+        at: instantSchema.parse(new Date().toISOString()),
+        principal: input.principal as never,
         messageId: input.messageId,
-        instance,
-        textAlternative: GALLERY.textFallback,
-        presentationRef: `catalog:${GALLERY.id}`,
+        conversationId: input.conversationId,
       });
-      const reply = "Fixture: thư viện ảnh dựng từ những ảnh node này đang giữ, không phải model thật.";
-      return {
-        text: reply,
-        block: { type: "surface", definitionRef: { id: GALLERY.id, version: GALLERY.version }, snapshot },
-      };
+      return { text: "Fixture: thư viện ảnh dựng từ những ảnh node này đang giữ, không phải model thật.", block };
     }
 
     /*
@@ -2279,10 +2350,11 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * refusal sentence are the host's. `bảng điều khiển` is a grid of two metric tiles and a card holding a search box
      * above the table it narrows; `đầy đủ` uses every container kind; `có liên kết` connects a choice to the series a line
      * chart plots and a search box to a table through declared state; `thẻ trạng thái` puts a status, a progress and a
-     * details card in the three columns of a grid; `quá sâu`, `widget lạ` and `liên kết sai` are proposals the host
-     * refuses.
+     * details card in the three columns of a grid; `ảnh` puts a gallery and a carousel of the person's imported pictures
+     * side by side, both reporting the picture picked to one declared key; `quá sâu`, `widget lạ` and `liên kết sai` are
+     * proposals the host refuses.
      */
-    const arranged = /^bố cục\s+(bảng điều khiển|đầy đủ|có liên kết|liên kết sai|quá sâu|widget lạ|thẻ trạng thái)$/iu.exec(input.text.trim());
+    const arranged = /^bố cục\s+(bảng điều khiển|đầy đủ|có liên kết|liên kết sai|quá sâu|widget lạ|thẻ trạng thái|ảnh)$/iu.exec(input.text.trim());
     if (arranged !== null) {
       const compose = deps.wiring.compose();
       if (compose === undefined) return undefined;
@@ -2313,6 +2385,8 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         metric: { type: "string", initial: "completed" },
         query: { type: "string", initial: "" },
       };
+      // Which pictures the two leaves show is the node's; the model names only the widgets and what they report.
+      const pickPicture = [{ event: "media.select", steps: [{ op: "select-field", key: "picture", field: "selectedIndex" }] }];
       let nested: Record<string, unknown> = leaf("canvas.metrics@1");
       for (let level = 0; level < 6; level += 1) nested = { kind: "stack", children: [nested] };
       const layout: Record<string, unknown> =
@@ -2395,7 +2469,15 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
                           }),
                         ],
                       }
-                    : { kind: "grid", children: [leaf("canvas.metrics@1"), leaf("canvas.sparkle@1")] };
+                    : which === "ảnh"
+                      ? {
+                          kind: "split",
+                          children: [
+                            wired(leaf("canvas.gallery@1", { title: "Ảnh đã nhập" }), pickPicture),
+                            wired(leaf("canvas.carousel@1", { title: "Đang xem" }), pickPicture),
+                          ],
+                        }
+                      : { kind: "grid", children: [leaf("canvas.metrics@1"), leaf("canvas.sparkle@1")] };
       try {
         const block = await view.build({
           props: {
@@ -2407,8 +2489,11 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
                   ? "Bảng có liên kết"
                   : which === "thẻ trạng thái"
                     ? "Tình hình hôm nay"
-                    : "Bảng điều khiển",
+                    : which === "ảnh"
+                      ? "Ảnh của tôi"
+                      : "Bảng điều khiển",
             ...(which === "có liên kết" || which === "liên kết sai" ? { state: linkedState } : {}),
+            ...(which === "ảnh" ? { state: { picture: { type: "number", initial: 0 } } } : {}),
           },
           caption: "",
           at: instantSchema.parse(new Date().toISOString()),

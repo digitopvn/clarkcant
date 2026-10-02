@@ -646,7 +646,15 @@ export interface PublishedMiniAppData {
   metrics: TaskMetricsResult;
   calendarRows: Record<string, unknown>[];
   imageRefs: { imageId: string; altText: string }[];
+  /**
+   * The pictures a gallery or carousel in a composed surface shows: this person's imported images, newest first, as many
+   * as the largest set the catalog draws. The same references `/images` serves, read rather than invented.
+   */
+  pictureRefs: { imageId: string; altText: string }[];
 }
+
+/** The most pictures a composed gallery holds; a carousel takes the newest of them up to its own limit. */
+export const MAX_COMPOSED_PICTURES = 48;
 
 /**
  * Publish the datasets a composed surface references, and return their references.
@@ -698,10 +706,11 @@ export function publishMiniAppData(
   // The newest imported image, because "the picture in this overview" means the one the user just
   // brought in. Read rather than uploaded: a composed surface never invents an image, and an empty
   // list is what makes the region optional-by-data instead of a placeholder box.
-  const imageRefs = listLocalImages(deps.db, input.principalId, 1).map((image) => ({
+  const pictureRefs = listLocalImages(deps.db, input.principalId, MAX_COMPOSED_PICTURES).map((image) => ({
     imageId: image.imageId,
     altText: image.altText,
   }));
+  const imageRefs = pictureRefs.slice(0, 1);
 
   return {
     range: metrics.range,
@@ -712,6 +721,7 @@ export function publishMiniAppData(
     metrics,
     calendarRows,
     imageRefs,
+    pictureRefs,
   };
 }
 
@@ -788,6 +798,12 @@ function rowsForSlot(
       if (typeof imageRef !== "string" || imageRef === "") return { rows: undefined, state: "missing" };
       const image = getLocalImage(deps.db, imageRef, principalId);
       return { rows: undefined, state: image === undefined ? "missing" : "live" };
+    }
+    case "pictures": {
+      // A set is missing only when none of its pictures resolves any more; one that lost some still shows the rest.
+      const refs = Array.isArray(section.props.imageRefs) ? section.props.imageRefs : [];
+      const held = refs.some((ref) => typeof ref === "string" && ref !== "" && getLocalImage(deps.db, ref, principalId) !== undefined);
+      return { rows: undefined, state: held ? "live" : "missing" };
     }
     default:
       return { rows: undefined, state: "live" };

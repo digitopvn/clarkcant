@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 
 import { runCli } from "../src/cli.ts";
 import { startDevHost, type DevHost } from "../src/dev-host.ts";
@@ -20,6 +20,25 @@ afterEach(async () => {
   if (packageRoot !== undefined) rmSync(packageRoot, { recursive: true, force: true });
   packageRoot = undefined;
 });
+
+async function shellShows(page: Page, attribute: string, value: string): Promise<boolean> {
+  // A dev shell reloads after every control change; its controls answer only once its script has said so.
+  return page.evaluate(([name, expected]) => document.body.dataset.devShellReady === "true" && document.body.getAttribute(name) === expected, [attribute, value] as const);
+}
+
+async function shellChange(page: Page, change: () => Promise<unknown>): Promise<void> {
+  // Every control change reloads the shell. Wait for that reload and for the new page's script, so the next change
+  // is not made on a page that is about to go away or that does not listen yet.
+  await eventually(async () => shellReady(page), "dev shell ready");
+  const reloaded = page.waitForEvent("framenavigated", (frame) => frame === page.mainFrame());
+  await change();
+  await reloaded;
+  await eventually(async () => shellReady(page), "dev shell ready after reload");
+}
+
+async function shellReady(page: Page): Promise<boolean> {
+  return page.evaluate(() => document.body?.dataset.devShellReady === "true").catch(() => false);
+}
 
 async function eventually(check: () => Promise<boolean>, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -101,18 +120,18 @@ draw();\n`,
     await eventually(async () => (await page.locator("[data-dev-semantic-delta]").textContent())?.includes("Updated sample") === true, "semantic delta");
     expect(await page.locator("[data-dev-semantic-delta]").textContent()).toContain("query");
 
-    await page.locator('[data-dev-action="theme"][data-dev-value="light"]').click();
-    await eventually(async () => page.locator("body").getAttribute("data-dev-theme").then((value) => value === "light"), "light theme");
+    await shellChange(page, () => page.locator('[data-dev-action="theme"][data-dev-value="light"]').click());
+    await eventually(async () => shellShows(page, "data-dev-theme", "light"), "light theme");
     const light = await page.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor);
-    await page.locator('[data-dev-action="theme"][data-dev-value="dark"]').click();
-    await eventually(async () => page.locator("body").getAttribute("data-dev-theme").then((value) => value === "dark"), "dark theme");
+    await shellChange(page, () => page.locator('[data-dev-action="theme"][data-dev-value="dark"]').click());
+    await eventually(async () => shellShows(page, "data-dev-theme", "dark"), "dark theme");
     const dark = await page.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor);
     expect(dark).not.toBe(light);
     const reducedMotion = page.locator('input[data-dev-action="reduced-motion"]');
-    await reducedMotion.check();
-    await eventually(async () => page.locator("body").getAttribute("data-dev-reduced-motion").then((value) => value === "true"), "reduced motion state");
-    await reducedMotion.uncheck();
-    await eventually(async () => page.locator("body").getAttribute("data-dev-reduced-motion").then((value) => value === "false"), "normal motion state");
+    await shellChange(page, () => reducedMotion.check());
+    await eventually(async () => shellShows(page, "data-dev-reduced-motion", "true"), "reduced motion state");
+    await shellChange(page, () => reducedMotion.uncheck());
+    await eventually(async () => shellShows(page, "data-dev-reduced-motion", "false"), "normal motion state");
 
     const eventName = page.locator("[data-dev-composition-name]");
     await eventName.waitFor({ state: "visible", timeout: 5_000 });

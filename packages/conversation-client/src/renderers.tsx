@@ -83,6 +83,10 @@ import {
   BOARD_ID,
   BOARD_ACKNOWLEDGE_OPERATION,
   BOARD_MOVE_OPERATION,
+  MEDIA_VIEW_OPERATION,
+  readMediaPlayback,
+  readMediaSelection,
+  type MediaPlaybackState,
   boardMoveProblems,
   moveBoardCard,
   readBoard,
@@ -144,6 +148,7 @@ import {
   timelineToggle,
 } from "./timeline-layout.ts";
 import { vendorEmbedUrl } from "./media-embed.ts";
+import { createPlaybackCoalescer, flushPlaybackOnLeave, type PlaybackCoalescer, type PlaybackWriteReason } from "./playback-coalescer.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import {
@@ -204,7 +209,8 @@ export interface RendererProps {
   dataset?: RendererDataset | undefined;
   state?: Record<string, unknown> | undefined;
   /** Reports the revision the user saw, so a stale action is refused server-side. */
-  onAction?: ((action: string, payload: Record<string, unknown>) => void) | undefined;
+  /** `leaving` marks a write sent as the page goes away: the host sends it at once, with `keepalive`. */
+  onAction?: ((action: string, payload: Record<string, unknown>, options?: { leaving?: boolean }) => void) | undefined;
   onStateChange?: ((patch: Record<string, unknown>) => void) | undefined;
   /**
    * Resolves an imported image to a fetchable URL, or `undefined` while it is not available.
@@ -2179,12 +2185,17 @@ function pictureAlts(value: unknown, count: number): string[] {
 }
 
 /** Several pictures seen one at a time, with the controls a keyboard can reach. */
-function Carousel({ props, imageUrl }: RendererProps): ReactElement {
+function Carousel({ props, imageUrl, state, onAction, onStateChange }: RendererProps): ReactElement {
   const t = useT();
   const refs = pictureRefs(props.imageRefs);
   const alts = pictureAlts(props.alts, refs.length);
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useStoredSelection(state, refs.length);
   const current = refs.length === 0 ? 0 : Math.min(index, refs.length - 1);
+  const select = (next: number) => {
+    setIndex(next);
+    onStateChange?.({ selectedIndex: next });
+    onAction?.("media.select", { selectedIndex: next });
+  };
   const ref = refs[current];
   const alt = alts[current] ?? "";
   const url = ref === undefined ? undefined : imageUrl?.(ref);
@@ -2206,29 +2217,58 @@ function Carousel({ props, imageUrl }: RendererProps): ReactElement {
             <button
               type="button"
               aria-label={t("widgets.carousel.previous")}
-              onClick={() => setIndex(current <= 0 ? refs.length - 1 : current - 1)}
+              onClick={() => select(current <= 0 ? refs.length - 1 : current - 1)}
             >
               ‹
             </button>
             <span className="cc-freshness" aria-live="polite">
               {current + 1}/{refs.length}
             </span>
-            <button type="button" aria-label={t("widgets.carousel.next")} onClick={() => setIndex((current + 1) % refs.length)}>
+            <button type="button" aria-label={t("widgets.carousel.next")} onClick={() => select((current + 1) % refs.length)}>
               ›
             </button>
           </div>
           )}
         </div>
       )}
+      <ViewMessage state={state} name="carousel" />
     </Frame>
   );
 }
 
+/**
+ * The picture a carousel or gallery shows, as the node holds it, adopted whenever that changes; between those, what the
+ * person just chose is drawn at once. A refusal counts up `viewReset`, so a choice the node refused is undrawn even when
+ * the picture it holds did not move.
+ */
+function useStoredSelection(state: Record<string, unknown> | undefined, count: number): [number, (next: number) => void] {
+  const stored = readMediaSelection(state, count).selectedIndex;
+  const storedKey = `${String(stored)}#${String(state?.viewReset ?? 0)}`;
+  const [selected, setSelected] = useState(stored);
+  const [syncedKey, setSyncedKey] = useState(storedKey);
+  if (syncedKey !== storedKey) {
+    setSyncedKey(storedKey);
+    setSelected(stored);
+  }
+  return [selected, setSelected];
+}
+
+/** Why the node refused this widget's last change, said beside it; the widget already draws what the node holds. */
+function ViewMessage({ state, name }: { state: Record<string, unknown> | undefined; name: string }): ReactElement | null {
+  if (typeof state?.message !== "string" || state.message === "") return null;
+  return (
+    <p className="cc-freshness" role="status" data-media-message={name} style={{ margin: 0 }}>
+      {state.message}
+    </p>
+  );
+}
+
 /** The same pictures as a grid, for when seeing them together is the point. */
-function Gallery({ props, imageUrl }: RendererProps): ReactElement {
+function Gallery({ props, imageUrl, state, onAction, onStateChange }: RendererProps): ReactElement {
   const t = useT();
   const refs = pictureRefs(props.imageRefs);
   const alts = pictureAlts(props.alts, refs.length);
+  const [selectedIndex, setSelectedIndex] = useStoredSelection(state, refs.length);
   const shown = refs.flatMap((ref, index) => {
     const url = imageUrl?.(ref);
     return url === undefined ? [] : [{ ref, url, alt: alts[index] ?? "" }];
@@ -2242,16 +2282,34 @@ function Gallery({ props, imageUrl }: RendererProps): ReactElement {
         />
       ) : (
         <ul className="cc-gallery" data-gallery-count={shown.length}>
-          {shown.map((picture) => (
+          {shown.map((picture) => {
+            const index = refs.indexOf(picture.ref);
+            const selected = index === selectedIndex;
+            return (
             <li key={picture.ref}>
               <figure className="cc-image">
-                <img src={picture.url} alt={picture.alt} loading="lazy" decoding="async" data-image-ref={picture.ref} />
+                {/* The button holds only the picture: a figure and its caption are not phrasing content. */}
+                <button
+                  type="button"
+                  className="cc-gallery-select"
+                  aria-label={picture.alt || fillMessage(t("widgets.gallery.pictureOf"), { number: String(index + 1), count: String(refs.length) })}
+                  aria-pressed={selected}
+                  onClick={() => {
+                    setSelectedIndex(index);
+                    onStateChange?.({ selectedIndex: index });
+                    onAction?.("media.select", { selectedIndex: index });
+                  }}
+                >
+                  <img src={picture.url} alt={picture.alt} loading="lazy" decoding="async" data-image-ref={picture.ref} />
+                </button>
                 {picture.alt !== "" && <figcaption className="cc-freshness">{picture.alt}</figcaption>}
               </figure>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
+      <ViewMessage state={state} name="gallery" />
     </Frame>
   );
 }
@@ -2309,13 +2367,63 @@ function YouTubeEmbed({ props }: RendererProps): ReactElement {
  * host minted, and a video is another thing behind such a reference. A reference the host cannot resolve shows
  * the description instead of an invented address.
  */
-function LocalVideo({ props, imageUrl }: RendererProps): ReactElement {
+function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactElement {
   const t = useT();
   const ref = String(props.videoRef ?? "");
   const alt = String(props.alt ?? "");
   const posterRef = typeof props.posterRef === "string" ? props.posterRef : "";
   const url = ref === "" ? undefined : imageUrl?.(ref);
   const poster = posterRef === "" ? undefined : imageUrl?.(posterRef);
+  const callbackRef = useRef(onAction);
+  callbackRef.current = onAction;
+  // The stored position is applied once, when the player first knows its duration. The seek it causes is the host's
+  // own state coming back, so it is not written again; and nothing here calls `play()`: a restore never starts playback.
+  const restored = useRef(false);
+  const restoringSeek = useRef(false);
+  const playback = readMediaPlayback(state);
+  // Made once for the player's life: it remembers what was last written, so a new one each render would forget it.
+  const [coalescer] = useState<PlaybackCoalescer>(() => createPlaybackCoalescer({
+    write: (next, { leaving }) => callbackRef.current?.(MEDIA_VIEW_OPERATION, { ...next }, leaving ? { leaving: true } : undefined),
+  }));
+  // Where the player last said it was, kept for when it goes away: by then the element itself may be gone.
+  const lastKnown = useRef<MediaPlaybackState | undefined>(undefined);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const report = (next: MediaPlaybackState, reason: PlaybackWriteReason): void => {
+    lastKnown.current = next;
+    coalescer.report(next, reason);
+  };
+  useEffect(
+    () =>
+      flushPlaybackOnLeave({
+        page: window,
+        document,
+        read: () => {
+          const video = videoRef.current;
+          return video === null || lastKnown.current === undefined ? lastKnown.current : playbackFrom(video, clockStatus(video));
+        },
+        report: coalescer.report,
+      }),
+    // The player, its coalescer and the page are fixed for this widget's life.
+    [coalescer],
+  );
+  // A refused write leaves the node holding something other than what this page sent, so the next report is written
+  // even when it says the same. The player is not moved to the node's position: what it shows is where it really is.
+  const viewReset = typeof state?.viewReset === "number" ? state.viewReset : 0;
+  useEffect(() => coalescer.forget(), [coalescer, viewReset]);
+  const playbackFrom = (video: HTMLVideoElement, status: MediaPlaybackState["status"]): MediaPlaybackState => ({
+    status,
+    position: Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0,
+    duration: Number.isFinite(video.duration) ? Math.max(0, video.duration) : 0,
+  });
+  const clockStatus = (video: HTMLVideoElement): MediaPlaybackState["status"] => (video.ended ? "ended" : video.paused ? "paused" : "playing");
+  const restorePosition = (video: HTMLVideoElement) => {
+    if (restored.current || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+    restored.current = true;
+    if (playback.position > 0 && Number.isFinite(video.duration)) {
+      restoringSeek.current = true;
+      video.currentTime = Math.min(playback.position, video.duration);
+    }
+  };
 
   return (
     <Frame title={String(props.title ?? t("widgets.video.title"))} dataset={undefined} role="media">
@@ -2326,6 +2434,24 @@ function LocalVideo({ props, imageUrl }: RendererProps): ReactElement {
           <video
             controls
             preload="metadata"
+            onLoadedMetadata={(event) => restorePosition(event.currentTarget)}
+            ref={videoRef}
+            onPlaying={(event) => report(playbackFrom(event.currentTarget, "playing"), "playing")}
+            onTimeUpdate={(event) => {
+              // The restore seek reports the clock before it settles; that is the node's own position coming back.
+              if (!restoringSeek.current) report(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "timeupdate");
+            }}
+            onPause={(event) => {
+              if (!event.currentTarget.ended) report(playbackFrom(event.currentTarget, "paused"), "pause");
+            }}
+            onSeeked={(event) => {
+              if (restoringSeek.current) {
+                restoringSeek.current = false;
+                return;
+              }
+              report(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "seek");
+            }}
+            onEnded={(event) => report(playbackFrom(event.currentTarget, "ended"), "ended")}
             src={url}
             {...(poster === undefined ? {} : { poster })}
             aria-label={alt}
@@ -2334,6 +2460,7 @@ function LocalVideo({ props, imageUrl }: RendererProps): ReactElement {
           <figcaption className="cc-freshness">{alt}</figcaption>
         </figure>
       )}
+      <ViewMessage state={state} name="video" />
     </Frame>
   );
 }

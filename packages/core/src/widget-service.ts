@@ -62,6 +62,8 @@ import {
   BOARD_APPROVAL_OPERATION,
   BOARD_RESOLVE_OPERATION,
   BOARD_ACKNOWLEDGE_OPERATION,
+  MEDIA_STATE_VERSION,
+  MEDIA_VIEW_OPERATION,
   type BoardState,
   readBoard,
   readBoardState,
@@ -1183,6 +1185,7 @@ export const M1_VIEW_OPERATIONS = [
   BOARD_ACKNOWLEDGE_OPERATION,
   TREE_SELECT_OPERATION,
   TREE_TOGGLE_OPERATION,
+  MEDIA_VIEW_OPERATION,
 ] as const;
 
 /** Bumped when a filter changes the range, because the underlying rows are re-read. */
@@ -1200,6 +1203,7 @@ const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
   "timeline.select": "presentation",
   [TREE_SELECT_OPERATION]: "presentation",
   [TREE_TOGGLE_OPERATION]: "presentation",
+  [MEDIA_VIEW_OPERATION]: "presentation",
   [BOARD_MOVE_OPERATION]: "presentation",
   [BOARD_APPROVAL_OPERATION]: "presentation",
   [BOARD_RESOLVE_OPERATION]: "presentation",
@@ -1394,7 +1398,9 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
             ? treeSelectPatch(instance, request.input)
             : operation === TREE_TOGGLE_OPERATION
               ? treeToggleInputPatch(instance, request.input)
-          : validateViewInput(operation, request.input);
+              : operation === MEDIA_VIEW_OPERATION
+                ? mediaViewPatch(instance, request.input)
+                : validateViewInput(operation, request.input);
   if (!validation.ok) return { ok: false, code: "INVALID_INPUT", message: validation.message };
 
   const precheck = precheckInvocation(deps, request);
@@ -1472,14 +1478,14 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
     }
     // Chart, calendar, timeline and board operations each produce the widget's whole bounded view state, so each
     // replaces what was stored. This also removes a selection or pending board move that was cleared.
-    const replaces = operation === "chart.view" || operation === CALENDAR_VIEW_OPERATION || operation === TIMELINE_SELECT_OPERATION ||
+    const replaces = operation === "chart.view" || operation === CALENDAR_VIEW_OPERATION || operation === TIMELINE_SELECT_OPERATION || operation === MEDIA_VIEW_OPERATION ||
       operation === BOARD_MOVE_OPERATION || operation === BOARD_APPROVAL_OPERATION || operation === BOARD_RESOLVE_OPERATION || operation === BOARD_ACKNOWLEDGE_OPERATION;
     const body: Record<string, unknown> = replaces ? patch : { ...(current?.body ?? {}), ...patch };
     if (operation === TREE_SELECT_OPERATION && request.input.selectedId === "") delete body.selectedId;
     const stateRevision = (current?.revision ?? 0) + 1;
     // A calendar view is written in the calendar's current state shape, so the row says so; a row written in an older
     // shape is replaced whole, which is its migration. Every other operation keeps the version the row already has.
-    const stateVersion = operation === CALENDAR_VIEW_OPERATION ? CALENDAR_STATE_VERSION : undefined;
+    const stateVersion = operation === CALENDAR_VIEW_OPERATION ? CALENDAR_STATE_VERSION : operation === MEDIA_VIEW_OPERATION ? MEDIA_STATE_VERSION : undefined;
 
     if (current === undefined) {
       deps.db
@@ -1633,6 +1639,8 @@ interface InvokeRecord {
   result:
     | { kind: "done"; output: string }
     | { kind: "approval-required"; approvalId: string }
+    /** A long-running capability the node accepted as a durable job; its state is read through the job, not here. */
+    | { kind: "job"; jobId: string }
     /**
      * Sent, and its answer never came back: the deadline passed or a person stopped it. Recorded so the same
      * invocation id is told that again rather than sent a second time, which is how an effect would happen twice.
@@ -1861,6 +1869,25 @@ export function forgetStartedInvokeAction(deps: WidgetDeps, invocationId: string
     .run(invocationId);
 }
 
+/**
+ * Replace an invocation's `approval-required` outcome with the job its approval started, so the same invocation id
+ * arriving again is answered with that JobRef rather than a second job. Only the invocation the approved payload named,
+ * on the instance and binding it named and waiting on that approval, is changed.
+ */
+export function settleApprovedInvokeJob(
+  deps: WidgetDeps,
+  input: { invocationId: string; instanceId: string; actionBindingId: string; approvalId: string; jobId: string },
+): boolean {
+  const changed = deps.db.prepare(`UPDATE action_invocations
+    SET outcome = json_set(outcome, '$.result', json(?)), recorded_at = ?
+    WHERE invocation_id = ? AND instance_id = ? AND action_binding_id = ?
+      AND json_extract(outcome, '$.result.kind') = 'approval-required'
+      AND json_extract(outcome, '$.result.approvalId') = ?`)
+    .run(toJson({ kind: "job", jobId: input.jobId }), deps.now(), input.invocationId,
+      input.instanceId, input.actionBindingId, input.approvalId);
+  return Number(changed.changes) > 0;
+}
+
 function readDisplayMode(input: Record<string, unknown>): "compact" | "expanded" {
   return input.displayMode === "expanded" ? "expanded" : "compact";
 }
@@ -1869,10 +1896,10 @@ function readDisplayMode(input: Record<string, unknown>): "compact" | "expanded"
 export function readWidgetStateRow(
   db: Database,
   instanceId: string,
-): { revision: number; stateVersion: number; body: Record<string, unknown> } | undefined {
-  const row = oneRow<{ state_revision: number; state_version: number; document: string }>(
+): { revision: number; stateVersion: number; body: Record<string, unknown>; updatedAt: string } | undefined {
+  const row = oneRow<{ state_revision: number; state_version: number; document: string; updated_at: string }>(
     db,
-    "SELECT state_revision, state_version, document FROM widget_state WHERE instance_id = ?",
+    "SELECT state_revision, state_version, document, updated_at FROM widget_state WHERE instance_id = ?",
     instanceId,
   );
   if (row === undefined) return undefined;
@@ -1881,6 +1908,7 @@ export function readWidgetStateRow(
     revision: Number(row.state_revision),
     stateVersion: Number(row.state_version),
     body: typeof body === "object" && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : {},
+    updatedAt: String(row.updated_at),
   };
 }
 
@@ -1894,10 +1922,10 @@ export function liveStateOf(
   deps: WidgetDeps,
   instanceId: string,
   definition?: Pick<WidgetDefinition, "stateVersion" | "stateMigrations">,
-): { revision: number; stateVersion: number; body: Record<string, unknown> } | undefined {
+): { revision: number; stateVersion: number; body: Record<string, unknown>; updatedAt: string } | undefined {
   const row = readWidgetStateRow(deps.db, instanceId);
   if (row === undefined || definition === undefined) return row;
-  return { revision: row.revision, ...stateAsCurrentVersion(definition, row) };
+  return { revision: row.revision, updatedAt: row.updatedAt, ...stateAsCurrentVersion(definition, row) };
 }
 
 type InputValidation = { ok: true; patch: Record<string, unknown> } | { ok: false; message: string };
@@ -1947,6 +1975,30 @@ function chartViewPatch(deps: WidgetDeps, instance: WidgetInstance, input: Recor
   if (problems.length > 0) return { ok: false, message: `the chart view was refused: ${problems.join("; ")}` };
   const view = readXyChartView(chart, input, shown);
   return { ok: true, patch: { hiddenSeries: view.hiddenSeries, ...(view.selected === undefined ? {} : { selected: view.selected }) } };
+}
+
+function mediaViewPatch(instance: WidgetInstance, input: Record<string, unknown>): InputValidation {
+  const definitionId = instance.definitionRef.id;
+  if (definitionId === "canvas.carousel@1" || definitionId === "canvas.gallery@1") {
+    const refs = instance.props.imageRefs;
+    const count = Array.isArray(refs) ? refs.length : 0;
+    const index = input.selectedIndex;
+    if (!Number.isSafeInteger(count) || count < 1 || !Number.isSafeInteger(index) || typeof index !== "number" || index < 0 || index >= count) {
+      return { ok: false, message: "the selected media index is outside this gallery" };
+    }
+    return { ok: true, patch: { selectedIndex: index } };
+  }
+  if (definitionId === "canvas.video@1") {
+    const { status, position, duration } = input;
+    if ((status !== "playing" && status !== "paused" && status !== "ended") ||
+      typeof position !== "number" || !Number.isFinite(position) || position < 0 ||
+      typeof duration !== "number" || !Number.isFinite(duration) || duration < 0 ||
+      (duration > 0 && position > duration)) {
+      return { ok: false, message: "the video playback state is incomplete or outside the media duration" };
+    }
+    return { ok: true, patch: { status, position, duration } };
+  }
+  return { ok: false, message: "only a gallery, carousel or local video holds media view state" };
 }
 
 /**
