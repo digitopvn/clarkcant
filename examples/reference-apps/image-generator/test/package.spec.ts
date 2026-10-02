@@ -44,10 +44,12 @@ describe("the image generator package", () => {
         tool: "generate_image",
         ref: "com.clarkcant.reference.image-generator.image.generate@1",
         summary: "Generate an image from a prompt, as a job the widget can follow and stop",
-        effectCategory: "read",
+        effectCategory: "external-write",
         execution: { kind: "job", version: 1 },
       },
     ]);
+    // Asking a provider to draw is a write to someone else's service, and the widget that presses it says so too.
+    expect(json("widgets/main/widget.json").effectCategories).toEqual(["read", "external-write"]);
     expect(manifest.requestedCapabilities).toEqual([]);
     expect(manifest.permissions).toEqual({ networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] });
   });

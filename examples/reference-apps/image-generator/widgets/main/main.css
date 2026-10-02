@@ -87,6 +87,8 @@ button:focus-visible, textarea:focus-visible {
   outline-offset: 2px;
 }
 
+.jobs { display: flex; flex-direction: column; gap: 8px; }
+.jobs:empty { display: none; }
 .panel {
   display: flex;
   flex-direction: column;

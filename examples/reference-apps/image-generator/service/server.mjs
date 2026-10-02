@@ -7,7 +7,9 @@
  * Its container has no network and it never holds the provider's key. Every request to the provider is a
  * `clarkcant/egress.fetch` request to the node, which sends it to the origin this package declared and adds the key the
  * person stored for this package. The origin is read from the package's own manifest, so the service asks for exactly
- * what was declared. With no origin declared — the shape `clark widget init --template ui-with-service` starts from —
+ * what was declared. A copy made with `clark widget init --template ai-generator` starts with the placeholder origin
+ * `https://images.example.com`, which reaches no provider: replace it, and the paths below, with your provider's. With no
+ * origin declared — the shape `clark widget init --template ui-with-service` starts from —
  * the service draws the picture itself.
  *
  * No dependencies on purpose: the container mounts the package read-only.
@@ -36,7 +38,8 @@ const TOOLS = [
       required: ["prompt"],
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: true, openWorldHint: ORIGIN !== undefined },
+    // Asking a provider to draw writes to someone else's service and spends the person's quota there; drawing here does not.
+    annotations: { readOnlyHint: ORIGIN === undefined, openWorldHint: ORIGIN !== undefined },
   },
 ];
 
@@ -66,9 +69,21 @@ function askNode(method, params) {
   });
 }
 
-/** One GET to the provider through the node. Answers `{ status, bytes }`, or `{ error }` when the node refused it. */
-async function providerGet(path) {
-  const answer = await askNode("clarkcant/egress.fetch", { version: 1, url: `${ORIGIN}${path}`, method: "GET" });
+/**
+ * One request to the provider through the node. Answers `{ status, bytes }`, or `{ error }` when the node refused it.
+ *
+ * Reads are GET. Starting an image is a POST with the prompt in a JSON body, never in the URL: the node lets a service
+ * send anything but GET or HEAD only for a capability declared `external-write`, and a URL lands in more logs than a
+ * body does.
+ */
+async function providerAsk(path, json) {
+  const answer = await askNode("clarkcant/egress.fetch", {
+    version: 1,
+    url: `${ORIGIN}${path}`,
+    ...(json === undefined
+      ? { method: "GET" }
+      : { method: "POST", headers: { "content-type": "application/json" }, body: { encoding: "utf8", data: JSON.stringify(json) } }),
+  });
   if (answer.error !== undefined) return { error: String(answer.error.message ?? "the node did not make the request") };
   return { status: Number(answer.result?.status ?? 0), bytes: Buffer.from(answer.result?.body?.data ?? "", "base64") };
 }
@@ -100,7 +115,7 @@ function result(prompt, png) {
 /** The provider's work, step by step, as the provider reports it. Undefined when the call was cancelled. */
 async function generateWithProvider(id, prompt, token) {
   if (!egressOffered) return failure("The node does not make provider requests for this service.");
-  const started = await providerGet(`/v1/images/generate?prompt=${encodeURIComponent(prompt)}`);
+  const started = await providerAsk("/v1/images/generate", { prompt });
   if (cancelled.has(id)) return undefined;
   if (started.error !== undefined) return failure(`The provider was not reached: ${started.error}`);
   if (started.status === 401) return failure("The provider refused the key this package was given (401).");
@@ -111,7 +126,7 @@ async function generateWithProvider(id, prompt, token) {
 
   let reported = -1;
   for (;;) {
-    const polled = await providerGet(`/v1/images/${encodeURIComponent(created.id)}`);
+    const polled = await providerAsk(`/v1/images/${encodeURIComponent(created.id)}`);
     if (cancelled.has(id)) return undefined;
     if (polled.error !== undefined) return failure(`The provider stopped answering: ${polled.error}`);
     const state = providerJson(polled);
@@ -128,7 +143,7 @@ async function generateWithProvider(id, prompt, token) {
     if (cancelled.has(id)) return undefined;
   }
 
-  const image = await providerGet(`/v1/images/${encodeURIComponent(created.id)}/image`);
+  const image = await providerAsk(`/v1/images/${encodeURIComponent(created.id)}/image`);
   if (cancelled.has(id)) return undefined;
   if (image.error !== undefined || image.status !== 200) {
     return failure(`The provider did not send the finished image (${image.error ?? String(image.status)}).`);

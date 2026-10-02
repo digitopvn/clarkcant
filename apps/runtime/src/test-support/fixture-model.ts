@@ -2376,7 +2376,8 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           properties: { prompt: { type: "string", minLength: 1, maxLength: 500 } },
           additionalProperties: false,
         },
-        effectCategory: "read" as const,
+        // As the package declares it: asking a provider to draw writes to someone else's service.
+        effectCategory: "external-write" as const,
         instanceId: instance.instanceId,
         definitionId: definition.id,
         packageGeneration: served?.generationId ?? definitionDigest(definition),

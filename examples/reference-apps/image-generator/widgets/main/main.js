@@ -32,7 +32,14 @@ const TEXT = {
   running: "Đang tạo ảnh",
   cancelled: "Đã dừng. Nhà cung cấp có thể đã làm xong một phần trước khi dừng.",
   failed: "Không tạo được ảnh",
+  // The service's own words, quoted as theirs; the sentence around them is this widget's.
+  serviceSaid: (words) =>
+    `Không tạo được ảnh. Dịch vụ tạo ảnh báo: “${words}”. Có thể nó đã làm một phần trước khi dừng; hãy xem lại trước khi tạo lại.`,
+  listUnavailable: "Máy chủ này chưa cho widget xem lại các lần tạo ảnh trước, nên ở đây chỉ có ảnh tạo trong lần mở này.",
 };
+
+/** How the host quotes a service's own words in a failed job's error (`job-host.ts`). */
+const SERVICE_WORDS = /^The package service reported an error: “([^”]*)”/;
 
 const COLOR_TOKENS = {
   canvas: "--ig-canvas",
@@ -133,18 +140,17 @@ function start() {
   const unavailable = element("p", { role: "status", class: "notice", "data-image-unavailable": "true" });
   const status = element("p", { role: "status", "aria-live": "polite", "data-image-status": "true" });
 
-  const jobPanel = element("section", { class: "panel", "aria-label": TEXT.running, "data-image-job": "true" });
-  jobPanel.hidden = true;
-  const jobText = element("p", { "aria-live": "polite", "data-image-job-text": "true" });
-  const bar = element("progress", { "data-image-progress": "true" });
-  const cancel = element("button", { type: "button", "data-image-cancel": "true" }, TEXT.cancel);
-  jobPanel.append(jobText, bar, cancel);
+  // One panel per job worth showing: every open job, each with its own progress and Stop, and a newest one that ended
+  // without an image.
+  const jobPanels = element("div", { class: "jobs", "data-image-jobs": "true" });
 
   const galleryHeading = element("h3", { id: "image-gallery-heading" }, TEXT.gallery);
+  const listNote = element("p", { class: "muted", "data-image-list-note": "true" });
+  listNote.hidden = true;
   const empty = element("p", { class: "muted", "data-image-empty": "true" }, TEXT.empty);
   const gallery = element("ul", { class: "gallery", "aria-labelledby": "image-gallery-heading", "data-image-gallery": "true" });
 
-  root.append(title, form, unavailable, status, jobPanel, galleryHeading, empty, gallery);
+  root.append(title, form, unavailable, status, jobPanels, galleryHeading, listNote, empty, gallery);
 
   /* ---------------------------------------------------------- the draft */
 
@@ -211,14 +217,31 @@ function start() {
     }
   };
 
+  /*
+   * Whether this host lists a widget's jobs. `jobs.list` came after `jobs@1`, as its own extension, so a host that
+   * offers only `jobs@1` — or an injected runtime that predates the call — is asked nothing it cannot answer. Without
+   * it the gallery holds only the jobs this frame started and follows, and says so.
+   */
+  const canList =
+    api.jobs.available() && typeof api.jobs.list === "function" && typeof api.jobs.canList === "function" && api.jobs.canList();
+  listNote.textContent = TEXT.listUnavailable;
+  listNote.hidden = canList || !api.jobs.available();
+
   let listTimer;
   const refresh = () => {
     window.clearTimeout(listTimer);
-    if (!api.jobs.available()) return;
+    if (!canList) return;
     void api.jobs
       .list()
       .then((listed) => {
+        const known = new Set(jobs.map((job) => job.jobId));
         jobs = listed.slice();
+        // A job that appeared since the last read answers a press that was waiting, such as one a person approved on
+        // the host's card: the note about that wait is no longer true.
+        if (jobs.some((job) => !known.has(job.jobId)) && status.getAttribute("data-image-state") === "refused") {
+          status.textContent = "";
+          status.removeAttribute("data-image-state");
+        }
         for (const job of jobs) if (OPEN.includes(job.status)) follow(job.jobId);
         render();
       })
@@ -262,7 +285,58 @@ function start() {
         : `${TEXT.running}: bước ${String(step.current)}/${String(step.total)}`;
     }
     if (job.status === "cancelled") return TEXT.cancelled;
+    const words = SERVICE_WORDS.exec(job.error ?? "");
+    if (words !== null) return TEXT.serviceSaid(words[1] ?? "");
     return `${TEXT.failed}${job.error === undefined ? "." : `: ${job.error}`}`;
+  };
+
+  /** The panels drawn so far, by JobRef, reused so a focused Stop keeps its focus between reads. */
+  const panels = new Map();
+
+  const panelFor = (jobId) => {
+    const existing = panels.get(jobId);
+    if (existing !== undefined) return existing;
+    const section = element("section", { class: "panel", "aria-label": TEXT.running, "data-image-job": "true", "data-image-job-id": jobId });
+    const text = element("p", { "aria-live": "polite", "data-image-job-text": "true" });
+    const bar = element("progress", { "data-image-progress": "true" });
+    const cancel = element("button", { type: "button", "data-image-cancel": "true" }, TEXT.cancel);
+    cancel.addEventListener("click", () => {
+      // Held off until the job's ending arrives, so a second press does not ask again.
+      cancel.disabled = true;
+      cancel.setAttribute("data-image-cancelling", "true");
+      void api.jobs
+        .cancel(jobId)
+        .then(refresh)
+        .catch((error) => {
+          cancel.removeAttribute("data-image-cancelling");
+          cancel.disabled = false;
+          status.textContent = errorText(error);
+          status.setAttribute("data-image-state", "refused");
+        });
+    });
+    section.append(text, bar, cancel);
+    const panel = { section, text, bar, cancel };
+    panels.set(jobId, panel);
+    return panel;
+  };
+
+  const drawPanel = (job) => {
+    const { section, text, bar, cancel } = panelFor(job.jobId);
+    const open = OPEN.includes(job.status);
+    section.setAttribute("data-image-job-status", job.status);
+    section.setAttribute("data-image-job-progress", String(job.progress?.current ?? 0));
+    text.textContent = describeJob(job);
+    bar.hidden = !open;
+    if (job.progress?.total !== undefined) {
+      bar.max = job.progress.total;
+      bar.value = job.progress.current;
+    } else {
+      bar.removeAttribute("value");
+    }
+    cancel.hidden = !open;
+    if (!open) cancel.disabled = true;
+    else if (cancel.getAttribute("data-image-cancelling") !== "true") cancel.disabled = false;
+    return section;
   };
 
   const galleryItem = (job, ref, index) => {
@@ -311,26 +385,20 @@ function start() {
 
   let drawnGallery = "";
   function render() {
-    // The job the panel shows: the newest one, while it is open or when it did not end with an image.
+    /*
+     * The jobs the panels show, newest first: every open one, so each running job keeps its progress and its Stop, and
+     * the newest job when it ended without an image, so its reason stays in view until something newer starts.
+     */
     const newest = jobs[0];
-    const current = newest !== undefined && newest.status !== "completed" ? newest : undefined;
-    jobPanel.hidden = current === undefined;
-    if (current !== undefined) {
-      const open = OPEN.includes(current.status);
-      jobPanel.setAttribute("data-image-job-id", current.jobId);
-      jobPanel.setAttribute("data-image-job-status", current.status);
-      jobPanel.setAttribute("data-image-job-progress", String(current.progress?.current ?? 0));
-      jobText.textContent = describeJob(current);
-      bar.hidden = !open;
-      if (current.progress?.total !== undefined) {
-        bar.max = current.progress.total;
-        bar.value = current.progress.current;
-      } else {
-        bar.removeAttribute("value");
-      }
-      cancel.hidden = !open;
-      cancel.disabled = !open;
+    const shownJobs = jobs.filter(
+      (job) => OPEN.includes(job.status) || (job === newest && (job.status === "failed" || job.status === "cancelled")),
+    );
+    const drawn = shownJobs.map(drawPanel);
+    // Moved, not rebuilt, so the button that has focus keeps it.
+    if (drawn.length !== jobPanels.children.length || drawn.some((section, index) => jobPanels.children[index] !== section)) {
+      jobPanels.replaceChildren(...drawn);
     }
+    for (const jobId of panels.keys()) if (!shownJobs.some((job) => job.jobId === jobId)) panels.delete(jobId);
 
     const finished = [];
     for (const job of jobs) {
@@ -405,19 +473,6 @@ function start() {
       submit();
     }
   });
-  cancel.addEventListener("click", () => {
-    const jobId = jobPanel.getAttribute("data-image-job-id");
-    if (jobId === null) return;
-    cancel.disabled = true;
-    void api.jobs
-      .cancel(jobId)
-      .then(refresh)
-      .catch((error) => {
-        status.textContent = errorText(error);
-        status.setAttribute("data-image-state", "refused");
-      });
-  });
-
   /*
    * What the host last said about the binding. One it cannot run — the service starting, the key not given yet — is
    * disabled with the host's reason, not one this widget made up.

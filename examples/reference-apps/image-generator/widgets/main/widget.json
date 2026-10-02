@@ -40,6 +40,6 @@
     "minHeight": 320
   },
   "textFallback": "Trình tạo ảnh: mô tả một bức ảnh, theo dõi tiến độ và xem các ảnh đã tạo; ảnh chưa xem được ở chế độ chỉ có chữ.",
-  "effectCategories": ["read"],
+  "effectCategories": ["read", "external-write"],
   "datasetRefs": []
 }

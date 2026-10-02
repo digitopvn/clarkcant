@@ -111,6 +111,7 @@ let conversationId: string | undefined;
 /** Reopen the one image generator this file placed, with its service signed in. */
 async function reopen(page: Page): Promise<FrameLocator> {
   if (conversationId === undefined) throw new Error("the first journey did not place the image generator");
+  await recordBridge(page);
   await page.addInitScript((id) => window.sessionStorage.setItem("cc_conversation", id), conversationId);
   await openApp(page);
   const widget = await openLive(page);
@@ -122,14 +123,29 @@ async function imageCount(widget: FrameLocator): Promise<number> {
   return Number((await widget.locator("#root").getAttribute("data-image-count")) ?? "0");
 }
 
-/** Write a prompt and press "Tạo ảnh"; returns the JobRef the job panel follows. */
+/** Write a prompt and press "Tạo ảnh"; returns the JobRef of the new job, whose panel is the first: newest first. */
 async function generate(widget: FrameLocator, prompt: string): Promise<string> {
+  const before = new Set(await widget.locator("[data-image-job]").evaluateAll((panels) => panels.map((panel) => panel.getAttribute("data-image-job-id"))));
   await widget.locator("[data-image-prompt]").fill(prompt);
   await widget.locator("[data-image-generate]").click();
   await expect(widget.locator("[data-image-status]")).toHaveAttribute("data-image-state", "started", { timeout: 30_000 });
-  const panel = widget.locator("[data-image-job]");
+  const panel = widget.locator("[data-image-job]").first();
   await expect(panel).toHaveAttribute("data-image-job-id", /^job_/, { timeout: 30_000 });
+  await expect.poll(async () => before.has(await panel.getAttribute("data-image-job-id")), { timeout: 30_000 }).toBe(false);
   return (await panel.getAttribute("data-image-job-id")) ?? "";
+}
+
+/** The panel of one job, by its JobRef. */
+const jobPanel = (widget: FrameLocator, jobId: string) => widget.locator(`[data-image-job][data-image-job-id="${jobId}"]`);
+
+/** Every request reached the provider with the key the node added. Starting an image was a POST; the rest were reads. */
+function expectProviderRequestsSigned(): void {
+  const requests = fake().requests;
+  expect(requests.length).toBeGreaterThan(0);
+  expect(requests.every((entry) => entry.authorized)).toBe(true);
+  expect(requests.filter((entry) => entry.method === "POST").every((entry) => entry.path === "/v1/images/generate")).toBe(true);
+  expect(requests.filter((entry) => entry.path === "/v1/images/generate").every((entry) => entry.method === "POST")).toBe(true);
+  expect(requests.filter((entry) => entry.path !== "/v1/images/generate").every((entry) => entry.method === "GET")).toBe(true);
 }
 
 async function horizontalOverflow(page: Page): Promise<number> {
@@ -199,6 +215,48 @@ function databaseHolds(value: string): string[] {
   }
 }
 
+/**
+ * The key is nowhere the person's page, the widget, the node's records or the service's container can reach.
+ *
+ * Run at the end of every journey, because each one takes the key down a different path: a finished image, a Stop, a
+ * provider error that echoes the key, Clark's tool, a spoken request, an approval.
+ */
+async function expectKeyNowhere(page: Page, widget: FrameLocator, request: APIRequestContext): Promise<void> {
+  for (const [where, text] of Object.entries(await pageHoldings(page, widget))) expect(text, `the key is in the ${where}`).not.toContain(KEY);
+  const conversations = await request.get(`${GATEWAY}/conversations`, { headers: auth() });
+  expect(await conversations.text()).not.toContain(KEY);
+  expect(dataDirHolds(KEY)).toEqual([]);
+  // Not in widget state, the job's record, its notes, the audit or the transcript: only in the vault it was stored in.
+  expect(databaseHolds(KEY)).toEqual(["credentials"]);
+  const containers = serviceContainers();
+  expect(containers.length, "the node should be running the image service in a container").toBeGreaterThan(0);
+  const inspected = JSON.parse(execFileSync("docker", ["inspect", ...containers], { encoding: "utf8" })) as {
+    Config: { Env: string[] | null };
+    HostConfig: { NetworkMode: string };
+  }[];
+  for (const entry of inspected) {
+    expect(entry.HostConfig.NetworkMode).toBe("none");
+    expect(JSON.stringify(entry.Config.Env ?? [])).not.toContain(KEY);
+  }
+  for (const id of containers) expect(execFileSync("docker", ["exec", id, "env"], { encoding: "utf8" })).not.toContain(KEY);
+}
+
+const POLICY_KEY = "execution.policy";
+
+async function storedPolicy(request: APIRequestContext): Promise<Record<string, unknown>> {
+  const listed = (await (await request.get(`${GATEWAY}/preferences`, { headers: auth() })).json()) as {
+    preferences: { key: string; value: unknown }[];
+  };
+  const policy = listed.preferences.find((entry) => entry.key === POLICY_KEY)?.value;
+  if (typeof policy !== "object" || policy === null) throw new Error("the node reports no execution policy");
+  return policy as Record<string, unknown>;
+}
+
+async function writePolicy(request: APIRequestContext, value: Record<string, unknown>): Promise<void> {
+  const written = await request.put(`${GATEWAY}/preferences/${POLICY_KEY}`, { headers: auth(), data: { value } });
+  expect(written.ok(), await written.text()).toBe(true);
+}
+
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async ({ request }) => {
@@ -250,18 +308,19 @@ test("a prompt becomes a job whose progress survives a reload, and its image lan
   fake().holdAt(2);
   const prompt = "a red kite over a green sea";
   const jobId = await generate(widget, prompt);
-  const panel = widget.locator("[data-image-job]");
+  const panel = jobPanel(widget, jobId);
   await expect(panel).toHaveAttribute("data-image-job-status", "running", { timeout: 30_000 });
   await expect(panel).toHaveAttribute("data-image-job-progress", "2", { timeout: 30_000 });
   await expect(panel).toContainText("bước 2/4");
-  await expect(widget.locator("[data-image-cancel]")).toBeEnabled();
+  await expect(panel.locator("[data-image-cancel]")).toBeEnabled();
 
   // A reload unmounts the frame. The remounted widget lists its jobs from the node and follows the same one.
   await page.reload();
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
   widget = await openLive(page);
-  const resumed = widget.locator("[data-image-job]");
-  await expect(resumed).toHaveAttribute("data-image-job-id", jobId, { timeout: 30_000 });
+  await expect(widget.locator("[data-image-list-note]")).toBeHidden();
+  const resumed = jobPanel(widget, jobId);
+  await expect(resumed).toBeVisible({ timeout: 30_000 });
   await expect(resumed).toHaveAttribute("data-image-job-status", "running");
   await expect(resumed).toHaveAttribute("data-image-job-progress", "2");
   // The draft came back from widget state too.
@@ -276,9 +335,11 @@ test("a prompt becomes a job whose progress survives a reload, and its image lan
   expect(await image.getAttribute("src")).toBe(`data:image/png;base64,${renderImage(prompt).toString("base64")}`);
   await expect(page.getByText(`The package job for ${GENERATE} completed`).last()).toBeVisible({ timeout: 30_000 });
 
-  // Every request reached the provider with the key, which only the node could have added, and only as reads.
+  // Every request reached the provider with the key, which only the node could have added. The capability is declared
+  // external-write, so the node sent the start as a POST with the prompt in its body; following it were reads.
   expect(fake().requests.length).toBeGreaterThanOrEqual(4);
-  expect(fake().requests.every((entry) => entry.authorized && entry.method === "GET")).toBe(true);
+  expect(fake().requests.filter((entry) => entry.method === "POST")).toHaveLength(1);
+  expectProviderRequestsSigned();
 
   // Attach puts the image in the composer; the person decides whether to send it.
   const item = widget.locator("[data-image-item]").first();
@@ -301,43 +362,41 @@ test("a prompt becomes a job whose progress survives a reload, and its image lan
   expect(readFileSync(await saved.path()).equals(renderImage(prompt))).toBe(true);
   await expect(item.locator("[data-image-item-status]")).toHaveAttribute("data-image-item-state", "exported", { timeout: 20_000 });
 
-  // The key is nowhere the person's page, the widget, the node's records or the service's container can reach.
-  for (const [where, text] of Object.entries(await pageHoldings(page, widget))) expect(text, `the key is in the ${where}`).not.toContain(KEY);
-  const conversations = await request.get(`${GATEWAY}/conversations`, { headers: auth() });
-  expect(await conversations.text()).not.toContain(KEY);
-  expect(dataDirHolds(KEY)).toEqual([]);
-  // Not in widget state, the job's record, its notes, the audit or the transcript: only in the vault it was stored in.
-  expect(databaseHolds(KEY)).toEqual(["credentials"]);
-  const containers = serviceContainers();
-  expect(containers.length, "the node should be running the image service in a container").toBeGreaterThan(0);
-  const inspected = JSON.parse(execFileSync("docker", ["inspect", ...containers], { encoding: "utf8" })) as {
-    Config: { Env: string[] | null };
-    HostConfig: { NetworkMode: string };
-  }[];
-  for (const entry of inspected) {
-    expect(entry.HostConfig.NetworkMode).toBe("none");
-    expect(JSON.stringify(entry.Config.Env ?? [])).not.toContain(KEY);
-  }
-  for (const id of containers) expect(execFileSync("docker", ["exec", id, "env"], { encoding: "utf8" })).not.toContain(KEY);
+  await expectKeyNowhere(page, widget, request);
 });
 
-test("Stop ends a running job and the provider is not asked again; a provider failure is shown in its own words", async ({ page }) => {
+test("every running job keeps its own Stop, a stopped job asks the provider nothing more, and a failure quotes the provider", async ({
+  page,
+  request,
+}) => {
   test.setTimeout(300_000);
   const widget = await reopen(page);
   const before = await imageCount(widget);
 
   fake().holdAt(1);
   try {
-    const jobId = await generate(widget, "a lighthouse in the fog");
-    const panel = widget.locator("[data-image-job]");
-    await expect(panel).toHaveAttribute("data-image-job-progress", "1", { timeout: 30_000 });
-    await widget.locator("[data-image-cancel]").click();
+    // Two images at once: each keeps its own progress and its own Stop, not only the newest.
+    const first = await generate(widget, "a lighthouse in the fog");
+    await expect(jobPanel(widget, first)).toHaveAttribute("data-image-job-progress", "1", { timeout: 30_000 });
+    const second = await generate(widget, "a harbour at night");
+    await expect(jobPanel(widget, second)).toHaveAttribute("data-image-job-progress", "1", { timeout: 30_000 });
+    await expect(widget.locator("[data-image-job][data-image-job-status='running']")).toHaveCount(2);
+    await expect(jobPanel(widget, first).locator("[data-image-cancel]")).toBeEnabled();
+    await expect(jobPanel(widget, second).locator("[data-image-cancel]")).toBeEnabled();
+
+    // The older one is stopped from its own panel; the newer one keeps running, with its Stop.
+    await jobPanel(widget, first).locator("[data-image-cancel]").click();
+    await expect(jobPanel(widget, first)).toBeHidden({ timeout: 30_000 });
+    await expect(jobPanel(widget, second)).toHaveAttribute("data-image-job-status", "running");
+    await expect(jobPanel(widget, second).locator("[data-image-cancel]")).toBeEnabled();
+
+    await jobPanel(widget, second).locator("[data-image-cancel]").click();
+    const panel = jobPanel(widget, second);
     await expect(panel).toHaveAttribute("data-image-job-status", "cancelled", { timeout: 30_000 });
-    await expect(panel).toHaveAttribute("data-image-job-id", jobId);
     // It may have finished part of the work before it heard the stop, and the widget says so.
     await expect(panel).toContainText("Đã dừng");
-    await expect(widget.locator("[data-image-cancel]")).toBeHidden();
-    await expect(page.getByText(`The package job for ${GENERATE} was stopped`).last()).toBeVisible({ timeout: 30_000 });
+    await expect(panel.locator("[data-image-cancel]")).toBeHidden();
+    await expect(page.getByText(`The package job for ${GENERATE} was stopped`).nth(1)).toBeVisible({ timeout: 30_000 });
     const asked = fake().requests.length;
     await page.waitForTimeout(3_000);
     expect(fake().requests.length, "the service kept polling the provider after the job was stopped").toBe(asked);
@@ -345,15 +404,21 @@ test("Stop ends a running job and the provider is not asked again; a provider fa
     fake().release();
   }
 
-  fake().failNext(2, "the provider ran out of ink");
-  await generate(widget, "a cat made of clouds");
-  const panel = widget.locator("[data-image-job]");
+  // The provider fails and repeats the key it was sent in its reason. The node removed the key from the answer before
+  // the service read it, and the widget frames the provider's words as the provider's, in its own language.
+  fake().failNext(2, "the provider ran out of ink", { echoKey: true });
+  const failing = await generate(widget, "a cat made of clouds");
+  const panel = jobPanel(widget, failing);
   await expect(panel).toHaveAttribute("data-image-job-status", "failed", { timeout: 60_000 });
-  await expect(panel).toContainText("the provider ran out of ink");
+  await expect(panel).toContainText("Dịch vụ tạo ảnh báo: “The provider could not make the image: the provider ran out of ink (request signed with [redacted])”");
+  await expect(panel).not.toContainText(KEY);
   expect(await imageCount(widget)).toBe(before);
+  expectProviderRequestsSigned();
+
+  await expectKeyNowhere(page, widget, request);
 });
 
-test("Clark and a spoken request start the same job through the widget, which follows it to the image", async ({ page }) => {
+test("Clark and a spoken request start the same job through the widget, which follows it to the image", async ({ page, request }) => {
   test.setTimeout(300_000);
   let widget = await reopen(page);
   const before = await imageCount(widget);
@@ -381,9 +446,12 @@ test("Clark and a spoken request start the same job through the widget, which fo
   await expect(widget.locator("[data-image-gallery] figcaption").first()).toContainText("a snowy mountain at dawn", { timeout: 60_000 });
   expect(await imageCount(widget)).toBeGreaterThanOrEqual(before + 2);
   await expect(widget.locator("[data-image-job]")).toBeHidden({ timeout: 60_000 });
+  expectProviderRequestsSigned();
+
+  await expectKeyNowhere(page, widget, request);
 });
 
-test("the widget works from the keyboard, in both themes, on a phone and with reduced motion", async ({ page }, testInfo) => {
+test("the widget works from the keyboard, in both themes, on a phone and with reduced motion", async ({ page, request }, testInfo) => {
   test.setTimeout(300_000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
@@ -433,4 +501,87 @@ test("the widget works from the keyboard, in both themes, on a phone and with re
 
   testInfo.annotations.push({ type: "horizontal-overflow", description: JSON.stringify(overflow) });
   expect(overflow).toEqual({ "1280-dark": 0, "1280-dark-frame": 0, "1280-light": 0, "1280-light-frame": 0, "390-light": 0, "390-light-frame": 0 });
+
+  await expectKeyNowhere(page, widget, request);
+});
+
+test("with a policy that asks before external writes, a press waits for the person's approval on the host's card", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(300_000);
+  const previousPolicy = await storedPolicy(request);
+  // Asking a provider to draw is an external write; this person's policy asks before one.
+  await writePolicy(request, { ...previousPolicy, rules: [{ effectCategory: "external-write", decision: "ask" }] });
+  try {
+    let widget = await reopen(page);
+    const before = await imageCount(widget);
+    const asked = fake().requests.length;
+
+    await widget.locator("[data-image-prompt]").fill("an owl reading a map");
+    await widget.locator("[data-image-generate]").click();
+    // Nothing ran: the widget is told the press waits on the person, and the provider heard nothing.
+    await expect(widget.locator("[data-image-status]")).toHaveAttribute("data-image-state", "refused", { timeout: 30_000 });
+    await expect(widget.locator("[data-image-status]")).toContainText("đang chờ bạn duyệt");
+    expect(fake().requests.length).toBe(asked);
+
+    // The card is the host's, in the conversation, out of the frame's reach. The person closes the live view and
+    // approves it there.
+    await page.locator("[data-close-live]").first().click();
+    const card = page.locator('[data-host-card="approval"][data-decision="pending"]').last();
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await expect(card.locator("[data-approve]")).toBeEnabled();
+    await card.locator("[data-approve]").click();
+    await expect(card.locator("[data-approve]")).toHaveCount(0, { timeout: 30_000 });
+
+    // The approved press runs as the widget's own job, so the widget finds it in its list and follows it to the image.
+    widget = await openLive(page);
+    await expect(widget.locator("[data-image-gallery] figcaption").first()).toContainText("an owl reading a map", { timeout: 90_000 });
+    expect(await imageCount(widget)).toBe(before + 1);
+    expectProviderRequestsSigned();
+
+    await expectKeyNowhere(page, widget, request);
+  } finally {
+    await writePolicy(request, previousPolicy);
+  }
+});
+
+test("on a host that cannot list a widget's jobs, the gallery keeps the jobs started while it is open, and says so", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(300_000);
+  // An older host: it offers jobs@1 but not jobs.list@1. The frame's init is read with that token taken out.
+  await page.addInitScript(() => {
+    if (window === window.top) return;
+    window.addEventListener(
+      "message",
+      (event) => {
+        const data = event.data as { kind?: unknown; extensions?: unknown } | null;
+        if (data !== null && typeof data === "object" && data.kind === "init" && Array.isArray(data.extensions)) {
+          data.extensions = data.extensions.filter((token) => token !== "jobs.list@1");
+        }
+      },
+      true,
+    );
+  });
+  const widget = await reopen(page);
+
+  // Images made before this mount are not listed, and the widget says why rather than looking empty for no reason.
+  await expect(widget.locator("[data-image-list-note]")).toBeVisible();
+  await expect(widget.locator("[data-image-list-note]")).toContainText("chỉ có ảnh tạo trong lần mở này");
+  await expect(widget.locator("[data-image-empty]")).toBeVisible();
+
+  // A job started here is followed to its image all the same.
+  const jobId = await generate(widget, "a lantern on a windowsill");
+  await expect(jobPanel(widget, jobId)).toBeHidden({ timeout: 60_000 });
+  await expect(widget.locator("[data-image-gallery] figcaption").first()).toContainText("a lantern on a windowsill", { timeout: 30_000 });
+  await expect(widget.locator("#root")).toHaveAttribute("data-image-count", "1");
+
+  // And it never asked the host for a list the host could not answer.
+  const sent = await page.evaluate(() => (window as unknown as { __ccBridge?: string[] }).__ccBridge ?? []);
+  expect(sent.some((message) => message.includes('"kind":"job.request"'))).toBe(true);
+  expect(sent.filter((message) => message.includes('"op":"list"'))).toEqual([]);
+
+  await expectKeyNowhere(page, widget, request);
 });

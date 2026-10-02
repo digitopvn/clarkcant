@@ -233,9 +233,15 @@ describe("the image generator service", () => {
     expect(readArtifactRange(broker, { principalId: PRINCIPAL, instanceId: "winst_other", artifactId: ref.artifactId, offset: 0, length: 10 }).ok).toBe(false);
     expect(notices.join("\n")).toContain(`The package job for ${GENERATE} completed and produced`);
 
-    // Every provider request was a GET the node signed; none was made without the key.
+    // Every provider request was one the node signed; none was made without the key. Starting the image was the one
+    // POST, its prompt in the body (the fake refuses one in the URL); following it and fetching it were reads.
     expect(provider.requests.length).toBeGreaterThanOrEqual(FAKE_PROVIDER_STEPS + 2);
-    expect(provider.requests.every((request) => request.method === "GET" && request.authorized)).toBe(true);
+    expect(provider.requests.every((request) => request.authorized)).toBe(true);
+    expect(provider.requests.map((request) => `${request.method} ${request.path.replace(/img_\d+/u, "{id}")}`)).toEqual([
+      "POST /v1/images/generate",
+      ...provider.requests.slice(1, -1).map(() => "GET /v1/images/{id}"),
+      "GET /v1/images/{id}/image",
+    ]);
     expect(audit.every((event) => event.secret === SECRET_NAME && event.outcome === "done")).toBe(true);
   });
 
@@ -247,6 +253,30 @@ describe("the image generator service", () => {
     const job = await ended(jobId);
     expect(job).toMatchObject({ status: "failed", resultRefs: [] });
     expect(job.error).toContain("The provider could not make the image: the provider ran out of ink");
+  });
+
+  it("redacts the key from a provider error that echoes it, plain and JSON-escaped, before it reaches the job", async () => {
+    // Quote and backslash make the JSON-escaped form on the wire differ from the key as the person stored it.
+    secret = `fake-"quoted"\\${randomBytes(8).toString("hex")}`;
+    await provider.close();
+    provider = await startFakeProvider({ key: secret });
+    const manifestPath = join(dir, "package", "clarkcant.json");
+    writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace(/http:\/\/127\.0\.0\.1:\d+/u, provider.origin));
+    storeKey();
+    await startService();
+    provider.failNext(2, "the provider ran out of ink", { echoKey: true });
+    const { jobId } = await started("a leaking pen");
+    const job = await ended(jobId);
+
+    expect(job.status).toBe("failed");
+    expect(job.error).toContain("the provider ran out of ink (request signed with [redacted])");
+    const escaped = JSON.stringify(secret).slice(1, -1);
+    for (const form of [secret, escaped]) {
+      expect(job.error).not.toContain(form);
+      expect(JSON.stringify(db.prepare("SELECT * FROM jobs").all())).not.toContain(form);
+      expect(notices.join("\n")).not.toContain(form);
+      expect(logs.join("\n")).not.toContain(form);
+    }
   });
 
   it("says plainly when the provider refuses the key it was given", async () => {
