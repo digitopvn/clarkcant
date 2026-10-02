@@ -10,8 +10,8 @@ import { WidgetPreview } from "./WidgetPreview.tsx";
  *
  * Two decisions are visible here.
  *
- * **Media and embeds are not mounted in the grid.** The production renderers for YouTube and video
- * create an `<iframe>` and a `<video>`; a grid that mounted every card at once would issue requests to
+ * **Media and embeds are not mounted in the grid.** The production renderers for YouTube, video and
+ * audio create an `<iframe>`, a `<video>` and an `<audio>`; a grid that mounted every card at once would issue requests to
  * a third party and load media merely because somebody opened a catalogue. Those cards show the
  * widget's own text alternative and say the live view is one step away.
  *
@@ -24,6 +24,7 @@ import { WidgetPreview } from "./WidgetPreview.tsx";
 const EMBEDDED_DEFINITION_IDS: readonly string[] = [
   "canvas.youtube@1",
   "canvas.video@1",
+  "canvas.audio@1",
   "canvas.image@1",
   "canvas.carousel@1",
   "canvas.gallery@1",

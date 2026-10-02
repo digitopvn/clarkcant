@@ -35,6 +35,12 @@ import {
   MEDIA_SELECTION_MIGRATION,
   MEDIA_VIDEO_MIGRATION,
   MEDIA_VIEW_OPERATION,
+  AUDIO_MIME_TYPES,
+  DOCUMENT_MIME_TYPES,
+  DOCUMENT_PAGE_MIGRATION,
+  HOST_FILE_REF_PATTERN,
+  MAX_DOCUMENT_PAGES,
+  MEDIA_CONTENT_LIMITS,
   MAX_EVENT_KEY,
   MAX_TIMELINE_ACTOR,
   MAX_TIMELINE_DESCRIPTION,
@@ -563,6 +569,98 @@ export const VIDEO: WidgetDefinition = {
   semanticDescription: "A video the host holds, described by its required description text",
   requestedCapabilities: [],
   textFallback: "A video is described in text when it cannot be played.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/**
+ * One audio file the node holds, played by the browser's own controls.
+ *
+ * The props are what the node stored after it checked the source under the media content policy: a host reference the
+ * page resolves through its node, never a URL. A model names the source (an ArtifactRef, an attachment, or an https URL
+ * the policy allows) and the node fills in the type, size and duration it read from the bytes.
+ */
+export const AUDIO: WidgetDefinition = {
+  id: "canvas.audio@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: oneLineProp(200, 1),
+      audioRef: { type: "string", pattern: HOST_FILE_REF_PATTERN },
+      mimeType: { type: "string", enum: [...AUDIO_MIME_TYPES] },
+      durationSeconds: { type: "number", minimum: 0, maximum: MEDIA_CONTENT_LIMITS.maxAudioSeconds },
+      sizeBytes: { type: "integer", minimum: 0, maximum: MEDIA_CONTENT_LIMITS.maxAudioBytes },
+      sourceOrigin: { type: "string", maxLength: 300, pattern: "^https://[^/?#@\\s]+$" },
+      // No pattern, as with a code card's body: a pattern checks at most 1,000 characters, and a transcript may be
+      // longer. Hidden characters are kept and shown as markers by the renderer and in what is read aloud.
+      transcript: { type: "string", maxLength: MEDIA_CONTENT_LIMITS.maxTranscriptChars },
+    },
+    required: ["title", "audioRef", "mimeType"],
+  },
+  eventSchemas: { [MEDIA_VIEW_OPERATION]: { ...VIDEO_PLAYBACK_SCHEMA, required: ["status", "position", "duration"] } },
+  stateSchema: VIDEO_PLAYBACK_SCHEMA,
+  stateVersion: MEDIA_STATE_VERSION,
+  stateMigrations: [MEDIA_VIDEO_MIGRATION],
+  sizing: { compact: true, expanded: true, minHeight: 96 },
+  semanticDescription: "An audio file the node holds, with native controls and an optional transcript",
+  requestedCapabilities: [],
+  textFallback: "An audio file is named in text, with its transcript when it has one, when it cannot be played.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/**
+ * A read-only text preview of a PDF or text file the node holds.
+ *
+ * The node recovers the text and stores it bounded and already split into pages; the page draws those pages as text and
+ * never the file itself, so nothing in a document can run in the reader's browser.
+ */
+export const DOCUMENT: WidgetDefinition = {
+  id: "canvas.document@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: oneLineProp(200),
+      name: oneLineProp(255, 1),
+      mimeType: { type: "string", enum: [...DOCUMENT_MIME_TYPES] },
+      documentRef: { type: "string", pattern: HOST_FILE_REF_PATTERN },
+      pages: {
+        type: "array",
+        minItems: 1,
+        maxItems: MAX_DOCUMENT_PAGES,
+        items: { type: "string", maxLength: MEDIA_CONTENT_LIMITS.documentPageChars },
+      },
+      sourcePages: { type: "integer", minimum: 1, maximum: 100_000 },
+      totalChars: { type: "integer", minimum: 0 },
+      truncated: { type: "boolean" },
+    },
+    required: ["name", "mimeType", "documentRef", "pages", "totalChars", "truncated"],
+  },
+  eventSchemas: {
+    [MEDIA_VIEW_OPERATION]: {
+      type: "object",
+      additionalProperties: false,
+      properties: { page: { type: "integer", minimum: 0, maximum: MAX_DOCUMENT_PAGES - 1 } },
+      required: ["page"],
+    },
+  },
+  stateSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: { page: { type: "integer", minimum: 0, maximum: MAX_DOCUMENT_PAGES - 1 } },
+  },
+  stateVersion: MEDIA_STATE_VERSION,
+  stateMigrations: [DOCUMENT_PAGE_MIGRATION],
+  sizing: { compact: true, expanded: true, minHeight: 200 },
+  semanticDescription: "A paged text preview of a PDF or text file the node holds",
+  requestedCapabilities: [],
+  textFallback: "A document is named in text when its preview cannot be shown.",
   effectCategories: ["read"],
   datasetRefs: [],
 };
@@ -1450,6 +1548,8 @@ export const WIDGETS = [
   GALLERY,
   YOUTUBE,
   VIDEO,
+  AUDIO,
+  DOCUMENT,
   CTA,
   ACTION,
   CHOICE,
@@ -1489,6 +1589,8 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   "canvas.gallery@1": "media",
   "canvas.youtube@1": "media",
   "canvas.video@1": "media",
+  "canvas.audio@1": "media",
+  "canvas.document@1": "media",
   "canvas.cta@1": "cta",
   // Its own family rather than `cta`: a composed template filling its save region must not be offered a button whose
   // action is not a view save.

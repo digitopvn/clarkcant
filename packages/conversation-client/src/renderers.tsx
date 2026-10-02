@@ -87,6 +87,9 @@ import {
   readMediaPlayback,
   readMediaSelection,
   type MediaPlaybackState,
+  readAudio,
+  readDocument,
+  readDocumentPage,
   boardMoveProblems,
   moveBoardCard,
   readBoard,
@@ -2367,17 +2370,30 @@ function YouTubeEmbed({ props }: RendererProps): ReactElement {
  * host minted, and a video is another thing behind such a reference. A reference the host cannot resolve shows
  * the description instead of an invented address.
  */
-function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactElement {
-  const t = useT();
-  const ref = String(props.videoRef ?? "");
-  const alt = String(props.alt ?? "");
-  const posterRef = typeof props.posterRef === "string" ? props.posterRef : "";
-  const url = ref === "" ? undefined : imageUrl?.(ref);
-  const poster = posterRef === "" ? undefined : imageUrl?.(posterRef);
+/**
+ * The playback state a host-held player keeps on its node, shared by the video and the audio player.
+ *
+ * What it writes goes through the shared coalescer: pause, seek and end at once, a playing clock at most every
+ * interval, and the last position when the page goes away. The stored position is applied once, when the player first
+ * knows its duration; the seek that causes is the host's own state coming back, so it is not written again. Nothing
+ * here calls `play()`: a restore never starts playback.
+ */
+function useMediaPlayback<E extends HTMLMediaElement>(
+  state: Record<string, unknown> | undefined,
+  onAction: RendererProps["onAction"],
+): {
+  mediaRef: { current: E | null };
+  handlers: {
+    onLoadedMetadata: (event: { currentTarget: E }) => void;
+    onPlaying: (event: { currentTarget: E }) => void;
+    onTimeUpdate: (event: { currentTarget: E }) => void;
+    onPause: (event: { currentTarget: E }) => void;
+    onSeeked: (event: { currentTarget: E }) => void;
+    onEnded: (event: { currentTarget: E }) => void;
+  };
+} {
   const callbackRef = useRef(onAction);
   callbackRef.current = onAction;
-  // The stored position is applied once, when the player first knows its duration. The seek it causes is the host's
-  // own state coming back, so it is not written again; and nothing here calls `play()`: a restore never starts playback.
   const restored = useRef(false);
   const restoringSeek = useRef(false);
   const playback = readMediaPlayback(state);
@@ -2387,7 +2403,13 @@ function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactE
   }));
   // Where the player last said it was, kept for when it goes away: by then the element itself may be gone.
   const lastKnown = useRef<MediaPlaybackState | undefined>(undefined);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaRef = useRef<E>(null);
+  const playbackFrom = (media: E, status: MediaPlaybackState["status"]): MediaPlaybackState => ({
+    status,
+    position: Number.isFinite(media.currentTime) ? Math.max(0, media.currentTime) : 0,
+    duration: Number.isFinite(media.duration) ? Math.max(0, media.duration) : 0,
+  });
+  const clockStatus = (media: E): MediaPlaybackState["status"] => (media.ended ? "ended" : media.paused ? "paused" : "playing");
   const report = (next: MediaPlaybackState, reason: PlaybackWriteReason): void => {
     lastKnown.current = next;
     coalescer.report(next, reason);
@@ -2398,8 +2420,8 @@ function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactE
         page: window,
         document,
         read: () => {
-          const video = videoRef.current;
-          return video === null || lastKnown.current === undefined ? lastKnown.current : playbackFrom(video, clockStatus(video));
+          const media = mediaRef.current;
+          return media === null || lastKnown.current === undefined ? lastKnown.current : playbackFrom(media, clockStatus(media));
         },
         report: coalescer.report,
       }),
@@ -2410,20 +2432,46 @@ function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactE
   // even when it says the same. The player is not moved to the node's position: what it shows is where it really is.
   const viewReset = typeof state?.viewReset === "number" ? state.viewReset : 0;
   useEffect(() => coalescer.forget(), [coalescer, viewReset]);
-  const playbackFrom = (video: HTMLVideoElement, status: MediaPlaybackState["status"]): MediaPlaybackState => ({
-    status,
-    position: Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0,
-    duration: Number.isFinite(video.duration) ? Math.max(0, video.duration) : 0,
-  });
-  const clockStatus = (video: HTMLVideoElement): MediaPlaybackState["status"] => (video.ended ? "ended" : video.paused ? "paused" : "playing");
-  const restorePosition = (video: HTMLVideoElement) => {
-    if (restored.current || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+  const restorePosition = (media: E): void => {
+    if (restored.current || media.readyState < HTMLMediaElement.HAVE_METADATA) return;
     restored.current = true;
-    if (playback.position > 0 && Number.isFinite(video.duration)) {
+    if (playback.position > 0 && Number.isFinite(media.duration)) {
       restoringSeek.current = true;
-      video.currentTime = Math.min(playback.position, video.duration);
+      media.currentTime = Math.min(playback.position, media.duration);
     }
   };
+  return {
+    mediaRef,
+    handlers: {
+      onLoadedMetadata: (event) => restorePosition(event.currentTarget),
+      onPlaying: (event) => report(playbackFrom(event.currentTarget, "playing"), "playing"),
+      onTimeUpdate: (event) => {
+        // The restore seek reports the clock before it settles; that is the node's own position coming back.
+        if (!restoringSeek.current) report(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "timeupdate");
+      },
+      onPause: (event) => {
+        if (!event.currentTarget.ended) report(playbackFrom(event.currentTarget, "paused"), "pause");
+      },
+      onSeeked: (event) => {
+        if (restoringSeek.current) {
+          restoringSeek.current = false;
+          return;
+        }
+        report(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "seek");
+      },
+      onEnded: (event) => report(playbackFrom(event.currentTarget, "ended"), "ended"),
+    },
+  };
+}
+
+function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactElement {
+  const t = useT();
+  const ref = String(props.videoRef ?? "");
+  const alt = String(props.alt ?? "");
+  const posterRef = typeof props.posterRef === "string" ? props.posterRef : "";
+  const url = ref === "" ? undefined : imageUrl?.(ref);
+  const poster = posterRef === "" ? undefined : imageUrl?.(posterRef);
+  const { mediaRef, handlers } = useMediaPlayback<HTMLVideoElement>(state, onAction);
 
   return (
     <Frame title={String(props.title ?? t("widgets.video.title"))} dataset={undefined} role="media">
@@ -2434,24 +2482,8 @@ function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactE
           <video
             controls
             preload="metadata"
-            onLoadedMetadata={(event) => restorePosition(event.currentTarget)}
-            ref={videoRef}
-            onPlaying={(event) => report(playbackFrom(event.currentTarget, "playing"), "playing")}
-            onTimeUpdate={(event) => {
-              // The restore seek reports the clock before it settles; that is the node's own position coming back.
-              if (!restoringSeek.current) report(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "timeupdate");
-            }}
-            onPause={(event) => {
-              if (!event.currentTarget.ended) report(playbackFrom(event.currentTarget, "paused"), "pause");
-            }}
-            onSeeked={(event) => {
-              if (restoringSeek.current) {
-                restoringSeek.current = false;
-                return;
-              }
-              report(playbackFrom(event.currentTarget, clockStatus(event.currentTarget)), "seek");
-            }}
-            onEnded={(event) => report(playbackFrom(event.currentTarget, "ended"), "ended")}
+            ref={mediaRef}
+            {...handlers}
             src={url}
             {...(poster === undefined ? {} : { poster })}
             aria-label={alt}
@@ -2465,6 +2497,147 @@ function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactE
   );
 }
 
+/** Minutes and seconds, as a player shows them. */
+function clockText(seconds: number): string {
+  const whole = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor((whole % 3600) / 60);
+  const rest = String(whole % 60).padStart(2, "0");
+  return hours > 0 ? `${String(hours)}:${String(minutes).padStart(2, "0")}:${rest}` : `${String(minutes)}:${rest}`;
+}
+
+/**
+ * An audio file the node holds, played by the browser's own controls.
+ *
+ * The source is a host reference resolved through the node like a picture; the page never fetches anything else. The
+ * transcript is text, drawn with any hidden character marked. It never plays by itself, on first draw or on restore.
+ */
+function LocalAudio({ props, imageUrl, state, onAction }: RendererProps): ReactElement {
+  const t = useT();
+  const audio = readAudio(props);
+  const url = audio === undefined ? undefined : imageUrl?.(audio.audioRef);
+  const { mediaRef, handlers } = useMediaPlayback<HTMLAudioElement>(state, onAction);
+  const describe = useCallback(
+    (hidden: HiddenCharacter) => t(HIDDEN_TITLE[hidden.kind]).replace("{codePoint}", hidden.codePoint),
+    [t],
+  );
+  const title = audio?.title ?? t("widgets.audio.title");
+  const facts = audio === undefined
+    ? []
+    : [
+        ...(audio.durationSeconds === undefined ? [] : [clockText(audio.durationSeconds)]),
+        ...(audio.sizeBytes === undefined ? [] : [formatFileSize(audio.sizeBytes)]),
+        ...(audio.sourceOrigin === undefined ? [] : [t("widgets.audio.from").replace("{origin}", audio.sourceOrigin)]),
+      ];
+
+  return (
+    <Frame title={title} dataset={undefined} role="audio">
+      {audio === undefined ? (
+        <Unavailable reason={t("widgets.audio.unreadable")} />
+      ) : url === undefined ? (
+        <Unavailable reason={t("widgets.audio.notPlayable").replace("{title}", audio.title)} />
+      ) : (
+        <figure className="cc-audio" data-audio-state="ready">
+          <audio controls preload="metadata" ref={mediaRef} {...handlers} src={url} aria-label={audio.title} data-audio-ref={audio.audioRef} />
+          {facts.length > 0 && <figcaption className="cc-freshness">{facts.join(" · ")}</figcaption>}
+        </figure>
+      )}
+      {audio?.transcript !== undefined && (
+        <details className="cc-audio-transcript">
+          <summary>{t("widgets.audio.transcript")}</summary>
+          <p className="cc-audio-transcript-text" data-audio-transcript="">
+            {withHiddenMarkers(audio.transcript, describe)}
+          </p>
+        </details>
+      )}
+      <ViewMessage state={state} name="audio" />
+    </Frame>
+  );
+}
+
+/**
+ * A text preview of a PDF or text file, in the pages the node cut it into.
+ *
+ * The text is drawn as text, with any hidden character marked; nothing from the file is ever parsed as markup or run.
+ * The page shown is the one the node holds, adopted whenever that changes; a page the person turns to is drawn at once
+ * and written through the media view, and a refused write puts back the page the node holds.
+ */
+function DocumentPreview({ props, state, onAction, onStateChange }: RendererProps): ReactElement {
+  const t = useT();
+  const preview = readDocument(props);
+  const pageCount = preview?.pages.length ?? 0;
+  const stored = readDocumentPage(state, pageCount);
+  const storedKey = `${String(stored)}#${String(state?.viewReset ?? 0)}`;
+  const [page, setPage] = useState(stored);
+  const [syncedKey, setSyncedKey] = useState(storedKey);
+  if (syncedKey !== storedKey) {
+    setSyncedKey(storedKey);
+    setPage(stored);
+  }
+  const describe = useCallback(
+    (hidden: HiddenCharacter) => t(HIDDEN_TITLE[hidden.kind]).replace("{codePoint}", hidden.codePoint),
+    [t],
+  );
+  const current = Math.min(page, Math.max(0, pageCount - 1));
+  const text = preview?.pages[current] ?? "";
+  const body = useMemo(() => withHiddenMarkers(text, describe), [text, describe]);
+  const hidden = useMemo(() => hiddenCharacterSegments(text).filter((segment) => !("text" in segment)).length, [text]);
+  if (preview === undefined) {
+    return <ViewerUnreadable title={t("widgets.document.title")} role="document" message={t("widgets.document.unreadable")} />;
+  }
+  const turn = (next: number): void => {
+    setPage(next);
+    onStateChange?.({ page: next });
+    onAction?.(MEDIA_VIEW_OPERATION, { page: next });
+  };
+  const position = t("widgets.document.position").replace("{page}", String(current + 1)).replace("{count}", String(pageCount));
+  const meta = [
+    ...(preview.sourcePages === undefined ? [] : [t("widgets.document.sourcePages").replace("{count}", String(preview.sourcePages))]),
+    t("widgets.document.chars").replace("{count}", String(preview.totalChars)),
+  ].join(" · ");
+  return (
+    <Frame title={preview.title ?? preview.name} dataset={undefined} role="document">
+      <div className="cc-viewer-head cc-document-head">
+        <span className="cc-viewer-name">{preview.name}</span>
+        <span className="cc-viewer-meta">{meta}</span>
+      </div>
+      {hidden > 0 && (
+        <p className="cc-freshness cc-viewer-hidden" data-viewer-hidden={hidden} style={{ margin: 0 }}>
+          {t("widgets.document.hidden").replace("{count}", String(hidden))}
+        </p>
+      )}
+      <div
+        className="cc-viewer-scroll cc-document-page"
+        // Reachable without a pointer: a long page that only a mouse can scroll hides its end from a keyboard.
+        tabIndex={0}
+        role="region"
+        aria-label={t("widgets.document.region").replace("{name}", preview.name).replace("{position}", position)}
+        data-document-page={current}
+      >
+        <p className="cc-document-text">{body}</p>
+      </div>
+      {preview.truncated && (
+        <p className="cc-freshness" data-document-truncated="">
+          {t("widgets.document.truncated").replace("{shown}", String(preview.pages.reduce((sum, entry) => sum + Array.from(entry).length, 0))).replace("{total}", String(preview.totalChars))}
+        </p>
+      )}
+      {pageCount > 1 && (
+        <nav className="cc-document-nav" aria-label={t("widgets.document.paging")}>
+          <button type="button" className="cc-action" disabled={current === 0} onClick={() => turn(current - 1)} data-document-turn="previous">
+            {t("widgets.document.previous")}
+          </button>
+          <span className="cc-freshness" aria-live="polite" data-document-position="">
+            {position}
+          </span>
+          <button type="button" className="cc-action" disabled={current >= pageCount - 1} onClick={() => turn(current + 1)} data-document-turn="next">
+            {t("widgets.document.next")}
+          </button>
+        </nav>
+      )}
+      <ViewMessage state={state} name="document" />
+    </Frame>
+  );
+}
 /**
  * The one action in the M1 vocabulary.
  *
@@ -4785,6 +4958,8 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.gallery@1": Gallery,
   "canvas.youtube@1": YouTubeEmbed,
   "canvas.video@1": LocalVideo,
+  "canvas.audio@1": LocalAudio,
+  "canvas.document@1": DocumentPreview,
   "canvas.cta@1": CallToAction,
   "canvas.code@1": CodeViewerView,
   "canvas.diff@1": DiffViewerView,

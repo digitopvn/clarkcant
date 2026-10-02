@@ -83,6 +83,66 @@ describe("media renderers", () => {
     expect(render("canvas.carousel@1", PICTURES, { ...refusal, selectedIndex: 1 })).toContain('data-carousel-index="1"');
   });
 
+  it("plays audio from the node with native controls, never by itself, even when it was playing", () => {
+    const props = { title: "Brief", audioRef: "artifact:art_1", mimeType: "audio/ogg", durationSeconds: 75, sizeBytes: 2048, sourceOrigin: "https://media.example.com" };
+    const audio = render("canvas.audio@1", props, { status: "playing", position: 12, duration: 75 });
+    expect(audio).toContain('src="blob:test/artifact:art_1"');
+    expect(audio).toMatch(/<audio[^>]*controls/);
+    expect(audio).toMatch(/<audio[^>]*aria-label="Brief"/);
+    expect(audio).not.toMatch(/autoplay/i);
+    expect(audio).toContain("1:15");
+    expect(audio).toContain("https://media.example.com");
+    expect(audio).not.toContain("data-audio-transcript");
+  });
+
+  it("refuses to draw audio whose source is not a host reference", () => {
+    const audio = render("canvas.audio@1", { title: "Brief", audioRef: "https://media.example.com/a.ogg", mimeType: "audio/ogg" });
+    expect(audio).not.toContain("<audio");
+    expect(audio).not.toContain("media.example.com");
+  });
+
+  it("shows a transcript as text with each hidden character marked", () => {
+    const audio = render("canvas.audio@1", { title: "Brief", audioRef: "artifact:a", mimeType: "audio/wav", transcript: `Hello${String.fromCodePoint(0x202e)} <b>world</b>` });
+    expect(audio).toContain("<details");
+    expect(audio).toContain("⟨U+202E⟩");
+    expect(audio).not.toContain(String.fromCodePoint(0x202e));
+    expect(audio).toContain("&lt;b&gt;world&lt;/b&gt;");
+  });
+
+  it("previews a document a page at a time, as text, at the page the node holds", () => {
+    const props = { name: "notes.txt", mimeType: "text/plain", documentRef: "attachment:att_1", pages: ["first <script>alert(1)</script>", `second${String.fromCodePoint(0x200b)}`, "third"], totalChars: 60, truncated: false };
+    const first = render("canvas.document@1", props);
+    expect(first).toContain('data-document-page="0"');
+    expect(first).toContain("&lt;script&gt;");
+    expect(first).not.toContain("<script");
+    expect(first).toMatch(/data-document-turn="previous"[^>]*disabled|disabled=""[^>]*data-document-turn="previous"/);
+    expect(first).toMatch(/role="region"[^>]*tabindex="0"|tabindex="0"[^>]*role="region"/i);
+    expect(first).not.toContain("data-document-truncated");
+
+    const second = render("canvas.document@1", props, { page: 1 });
+    expect(second).toContain('data-document-page="1"');
+    expect(second).toContain("data-viewer-hidden=\"1\"");
+    expect(second).not.toContain(String.fromCodePoint(0x200b));
+
+    // A page past the end is read as the last page.
+    expect(render("canvas.document@1", props, { page: 7 })).toContain('data-document-page="2"');
+  });
+
+  it("says when a document's preview was cut short, and draws one page without paging controls", () => {
+    const drawn = render("canvas.document@1", { name: "big.pdf", mimeType: "application/pdf", documentRef: "artifact:a", pages: ["only"], sourcePages: 40, totalChars: 90_000, truncated: true });
+    expect(drawn).toContain("data-document-truncated");
+    expect(drawn).toContain("90000");
+    expect(drawn).not.toContain("data-document-turn");
+  });
+
+  it("says beside the audio player and the document why the node refused their last change", () => {
+    const refusal = { message: "This could not be done. Nothing was changed.", viewReset: 1 };
+    expect(render("canvas.audio@1", { title: "Brief", audioRef: "artifact:a", mimeType: "audio/wav" }, refusal)).toContain('data-media-message="audio"');
+    expect(render("canvas.document@1", { name: "a.txt", mimeType: "text/plain", documentRef: "artifact:a", pages: ["a", "b"], totalChars: 2, truncated: false }, refusal)).toContain(
+      'data-media-message="document"',
+    );
+  });
+
   it("names a picture without a description by its place, in the reader's language", () => {
     const gallery = render("canvas.gallery@1", { imageRefs: ["one", "two"] });
     expect(gallery).not.toMatch(/aria-label="\d+\/\d+"/);

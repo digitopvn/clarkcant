@@ -37,8 +37,11 @@ import {
   playingIsFresh,
   readMediaPlayback,
   readMediaSelection,
+  readAudio,
+  readDocument,
+  readDocumentPage,
 } from "@clarkcant/contracts";
-import { ARTIFACT_VIEWER_KIND, CALENDAR, CAROUSEL, GALLERY, IMAGE, STATUS_CARD_KIND, TIMELINE, TREE, VIDEO, YOUTUBE } from "@clarkcant/data-canvas";
+import { ARTIFACT_VIEWER_KIND, AUDIO, CALENDAR, CAROUSEL, DOCUMENT, GALLERY, IMAGE, STATUS_CARD_KIND, TIMELINE, TREE, VIDEO, YOUTUBE } from "@clarkcant/data-canvas";
 import { type WidgetDeps, getActionBinding, getInstance, liveStateOf, semanticViewOf } from "@clarkcant/core";
 import {
   findCompositionByInstance,
@@ -238,8 +241,10 @@ export function buildWidgetSemantic(
     });
   }
 
-  if (definitionId === VIDEO.id) {
-    const live = liveStateOf(deps, instanceId, VIDEO);
+  if (definitionId === VIDEO.id || definitionId === AUDIO.id) {
+    const isAudio = definitionId === AUDIO.id;
+    const audio = isAudio ? readAudio(instance.props) : undefined;
+    const live = liveStateOf(deps, instanceId, isAudio ? AUDIO : VIDEO);
     const body = live?.body;
     // The bounded position and duration come from the shared reader. "ended" is reported as written. "playing" is
     // believed only while the player keeps writing it: a playing player writes at least every interval, so an older
@@ -251,9 +256,29 @@ export function buildWidgetSemantic(
         : body?.status === "playing" && playingIsFresh(live?.updatedAt, deps.now())
           ? "playing"
           : "paused";
-    const alt = typeof instance.props.alt === "string" ? instance.props.alt : "";
-    // Tenths of a second: enough to say where a video stopped, without a float's noise in every sentence.
+    // Tenths of a second: enough to say where a player stopped, without a float's noise in every sentence.
     const seconds = (value: number): number => Math.round(value * 10) / 10;
+    if (isAudio) {
+      // The length the node read from the file stands in until a player has reported its own.
+      const duration = playback.duration > 0 ? playback.duration : audio?.durationSeconds ?? 0;
+      const title = audio?.title ?? (typeof instance.props.title === "string" ? instance.props.title : "");
+      return normalizeSemanticDoc({
+        instanceId,
+        definitionId,
+        title,
+        summary: `Audio ${status}: ${title}`,
+        values: {
+          status,
+          position: seconds(playback.position),
+          ...(duration > 0 ? { duration: seconds(duration) } : {}),
+          title,
+          hasTranscript: audio?.transcript !== undefined,
+        },
+        availableActions,
+        freshness: "unknown",
+      });
+    }
+    const alt = typeof instance.props.alt === "string" ? instance.props.alt : "";
     return normalizeSemanticDoc({
       instanceId,
       definitionId,
@@ -264,6 +289,27 @@ export function buildWidgetSemantic(
         position: seconds(playback.position),
         ...(playback.duration > 0 ? { duration: seconds(playback.duration) } : {}),
         alt,
+      },
+      availableActions,
+      freshness: "unknown",
+    });
+  }
+
+  const preview = definitionId === DOCUMENT.id ? readDocument(instance.props) : undefined;
+  if (preview !== undefined) {
+    const page = readDocumentPage(liveStateOf(deps, instanceId, DOCUMENT)?.body, preview.pages.length);
+    // Counted from 1, as a person says it, and named so: the stored `page` counts from 0.
+    return normalizeSemanticDoc({
+      instanceId,
+      definitionId,
+      title: preview.title ?? preview.name,
+      summary: `Document: ${preview.name}, page ${String(page + 1)} of ${String(preview.pages.length)}${preview.truncated ? " (preview cut short)" : ""}`,
+      values: {
+        name: preview.name,
+        pageCount: preview.pages.length,
+        currentPage: page + 1,
+        ...(preview.sourcePages === undefined ? {} : { sourcePages: preview.sourcePages }),
+        truncated: preview.truncated,
       },
       availableActions,
       freshness: "unknown",
