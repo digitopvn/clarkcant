@@ -64,6 +64,12 @@ import {
   BOARD_ACKNOWLEDGE_OPERATION,
   MEDIA_STATE_VERSION,
   MEDIA_VIEW_OPERATION,
+  MAP_ID,
+  MAP_SELECT_OPERATION,
+  MAP_VIEW_OPERATION,
+  readMap,
+  mapSelectProblems,
+  mapViewProblems,
   type BoardState,
   readBoard,
   readBoardState,
@@ -1186,6 +1192,8 @@ export const M1_VIEW_OPERATIONS = [
   TREE_SELECT_OPERATION,
   TREE_TOGGLE_OPERATION,
   MEDIA_VIEW_OPERATION,
+  MAP_SELECT_OPERATION,
+  MAP_VIEW_OPERATION,
 ] as const;
 
 /** Bumped when a filter changes the range, because the underlying rows are re-read. */
@@ -1204,6 +1212,9 @@ const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
   [TREE_SELECT_OPERATION]: "presentation",
   [TREE_TOGGLE_OPERATION]: "presentation",
   [MEDIA_VIEW_OPERATION]: "presentation",
+  // Selecting a place or moving the map changes what the map shows, not the features it holds.
+  [MAP_SELECT_OPERATION]: "presentation",
+  [MAP_VIEW_OPERATION]: "presentation",
   [BOARD_MOVE_OPERATION]: "presentation",
   [BOARD_APPROVAL_OPERATION]: "presentation",
   [BOARD_RESOLVE_OPERATION]: "presentation",
@@ -1400,7 +1411,11 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
               ? treeToggleInputPatch(instance, request.input)
               : operation === MEDIA_VIEW_OPERATION
                 ? mediaViewPatch(instance, request.input)
-                : validateViewInput(operation, request.input);
+                : operation === MAP_SELECT_OPERATION
+                  ? mapSelectPatch(instance, request.input)
+                  : operation === MAP_VIEW_OPERATION
+                    ? mapViewPatch(instance, request.input)
+                    : validateViewInput(operation, request.input);
   if (!validation.ok) return { ok: false, code: "INVALID_INPUT", message: validation.message };
 
   const precheck = precheckInvocation(deps, request);
@@ -1481,7 +1496,7 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
     const replaces = operation === "chart.view" || operation === CALENDAR_VIEW_OPERATION || operation === TIMELINE_SELECT_OPERATION || operation === MEDIA_VIEW_OPERATION ||
       operation === BOARD_MOVE_OPERATION || operation === BOARD_APPROVAL_OPERATION || operation === BOARD_RESOLVE_OPERATION || operation === BOARD_ACKNOWLEDGE_OPERATION;
     const body: Record<string, unknown> = replaces ? patch : { ...(current?.body ?? {}), ...patch };
-    if (operation === TREE_SELECT_OPERATION && request.input.selectedId === "") delete body.selectedId;
+    if ((operation === TREE_SELECT_OPERATION || operation === MAP_SELECT_OPERATION) && request.input.selectedId === "") delete body.selectedId;
     const stateRevision = (current?.revision ?? 0) + 1;
     // A calendar view is written in the calendar's current state shape, so the row says so; a row written in an older
     // shape is replaced whole, which is its migration. Every other operation keeps the version the row already has.
@@ -2060,6 +2075,30 @@ function treeSelectPatch(instance: WidgetInstance, input: Record<string, unknown
   const selectedId = input.selectedId;
   if (typeof selectedId !== "string") return { ok: false, message: "selectedId names a tree node or is empty to clear the selection" };
   return { ok: true, patch: selectedId === "" ? {} : { selectedId } };
+}
+
+/**
+ * The selection a map holds, checked against the features it was placed with. An empty id clears it; the view the map
+ * shows is kept, because a selection merges into what was stored.
+ */
+function mapSelectPatch(instance: WidgetInstance, input: Record<string, unknown>): InputValidation {
+  if (instance.definitionRef.id !== MAP_ID) return { ok: false, message: "only a map holds a map selection" };
+  const map = readMap(instance.props);
+  if (map === undefined) return { ok: false, message: "the map selection was refused: the map's props do not describe a map" };
+  const problems = mapSelectProblems(map, input);
+  if (problems.length > 0) return { ok: false, message: `the map selection was refused: ${problems.join("; ")}` };
+  const selectedId = input.selectedId as string;
+  return { ok: true, patch: selectedId === "" ? {} : { selectedId } };
+}
+
+/** Where the person moved a map: a center and a whole zoom inside the projection's bounds. The selection is kept. */
+function mapViewPatch(instance: WidgetInstance, input: Record<string, unknown>): InputValidation {
+  if (instance.definitionRef.id !== MAP_ID) return { ok: false, message: "only a map can be panned or zoomed" };
+  if (readMap(instance.props) === undefined) return { ok: false, message: "the map view was refused: the map's props do not describe a map" };
+  const problems = mapViewProblems(input);
+  if (problems.length > 0) return { ok: false, message: `the map view was refused: ${problems.join("; ")}` };
+  const center = input.center as readonly number[];
+  return { ok: true, patch: { center: [center[0], center[1]], zoom: input.zoom } };
 }
 
 function treeToggleInputPatch(instance: WidgetInstance, input: Record<string, unknown>): InputValidation {

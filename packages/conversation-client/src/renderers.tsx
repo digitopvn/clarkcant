@@ -1,6 +1,7 @@
 import {
   type ReactElement,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   cloneElement,
   isValidElement,
@@ -8,6 +9,7 @@ import {
   useDeferredValue,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -84,6 +86,21 @@ import {
   BOARD_ACKNOWLEDGE_OPERATION,
   BOARD_MOVE_OPERATION,
   MEDIA_VIEW_OPERATION,
+  MAP_ID,
+  MAP_SELECT_OPERATION,
+  MAP_VIEW_OPERATION,
+  MAP_MAX_ZOOM,
+  MAP_MIN_ZOOM,
+  MAP_VIEWPORT,
+  type MapCamera,
+  type MapFeature,
+  type MapPosition,
+  type MapTilePolicyView,
+  type MapView,
+  mapCamera,
+  mapFeatureAnchor,
+  readMap,
+  readMapState,
   readMediaPlayback,
   readMediaSelection,
   type MediaPlaybackState,
@@ -115,6 +132,20 @@ import { artifactReason } from "./artifact-messages.ts";
 import { formatFileSize } from "./attachments.ts";
 import { calendarWeek, eventSegment, moveDay, moveInList, nowIndex } from "./calendar-layout.ts";
 import { treeFocusTarget, treeTypeaheadTarget, visibleTreeNodes, type VisibleTreeNode } from "./tree-layout.ts";
+import {
+  MAP_PAN_STEP,
+  type MapTilePlacement,
+  basemapPath,
+  cameraShift,
+  featureShape,
+  graticulePath,
+  panCamera,
+  sameCamera,
+  stepFeature,
+  toScreen,
+  visibleTiles,
+  zoomCamera,
+} from "./map-layout.ts";
 import type { SaveOutcome } from "./download.ts";
 import {
   CHART_HEIGHT,
@@ -247,6 +278,22 @@ export interface RendererProps {
    * with an artifact says it cannot open the file here rather than drawing buttons that fail.
    */
   artifactFiles?: ArtifactFileHost | undefined;
+  /**
+   * A map's tiles, read through the node's own tile route as the person.
+   *
+   * Injected only for a map in a live conversation. Absent in a preview, a pin or a detached window, where a map draws its
+   * offline basemap alone and says so.
+   */
+  mapTiles?: MapTileHost | undefined;
+}
+
+/**
+ * What a host lends a map for tiles: whether the node shows any and whose, and one tile by its address. A map never names
+ * a host; the node's tile policy decides where tiles come from.
+ */
+export interface MapTileHost {
+  policy(): Promise<MapTilePolicyView>;
+  tile(z: number, x: number, y: number, signal?: AbortSignal): Promise<Blob>;
 }
 
 /** What a host lends a file card for an artifact: the bytes to preview, and a save the person drives. */
@@ -4094,6 +4141,423 @@ function TreeWidgetView({ props, state, onAction, onStateChange }: RendererProps
   );
 }
 
+/* ------------------------------------------------------------------ *
+ * Map
+ * ------------------------------------------------------------------ */
+
+/** Whether motion is reduced here: the person's own setting on the page or a Lab subtree, or the system's. */
+function motionReduced(element: Element | null): boolean {
+  if (element?.closest('[data-cc-reduced-motion="true"]') != null) return true;
+  if (typeof document !== "undefined" && document.body?.dataset.ccReducedMotion === "true") return true;
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** How long a moved map waits before the view it settled on is written, so a run of key presses is one write. */
+const MAP_VIEW_WRITE_DELAY_MS = 400;
+/** Point labels are drawn on the map up to this many points; past it the table names them and the map would be noise. */
+const MAP_POINT_LABELS = 12;
+/** Tile pictures one map keeps; the oldest is let go past this. */
+const MAP_TILE_PICTURES = 96;
+
+function MapWidgetView(rendererProps: RendererProps): ReactElement {
+  const t = useT();
+  const map = useMemo(() => readMap(rendererProps.props), [rendererProps.props]);
+  const title = typeof rendererProps.props.title === "string" && rendererProps.props.title !== "" ? rendererProps.props.title : t("widgets.map.title");
+  if (map === undefined) {
+    return (
+      <Frame title={title} dataset={undefined} role="group">
+        <p className="cc-freshness" data-map-state="error" role="status" style={{ margin: 0 }}>{t("widgets.map.unreadable")}</p>
+      </Frame>
+    );
+  }
+  return <MapCanvas {...rendererProps} map={map} title={title} />;
+}
+
+/** The tiles the node's policy allows for this view, as picture URLs, and whether any failed to load. */
+function useMapTiles(host: MapTileHost | undefined, camera: MapCamera): {
+  provider: MapTilePolicyView["provider"];
+  tiles: { placement: MapTilePlacement; url: string }[];
+  failed: boolean;
+} {
+  const [provider, setProvider] = useState<MapTilePolicyView["provider"]>(null);
+  const [pictures, setPictures] = useState<ReadonlyMap<string, string | "failed">>(new Map());
+  const loading = useRef(new Set<string>());
+  const owned = useRef(new Map<string, string>());
+  const controller = useRef<AbortController | undefined>(undefined);
+
+  useEffect(() => {
+    if (host === undefined) return undefined;
+    let live = true;
+    // A policy that cannot be read is no policy: the map stays on its offline basemap rather than guessing.
+    host.policy().then((view) => { if (live) setProvider(view.provider); }, () => { if (live) setProvider(null); });
+    return () => { live = false; };
+  }, [host]);
+
+  useEffect(() => {
+    const current = new AbortController();
+    controller.current = current;
+    const urls = owned.current;
+    return () => {
+      current.abort();
+      for (const url of urls.values()) URL.revokeObjectURL(url);
+      urls.clear();
+    };
+  }, []);
+
+  const placements = useMemo(() => (provider === null ? [] : visibleTiles(camera, provider.maxZoom)), [camera, provider]);
+
+  useEffect(() => {
+    if (host === undefined || provider === null) return;
+    for (const placement of placements) {
+      const address = `${String(placement.z)}/${String(placement.x)}/${String(placement.y)}`;
+      if (pictures.has(address) || loading.current.has(address)) continue;
+      loading.current.add(address);
+      const signal = controller.current?.signal;
+      host.tile(placement.z, placement.x, placement.y, signal).then(
+        (blob) => {
+          loading.current.delete(address);
+          if (signal?.aborted === true) return;
+          const url = URL.createObjectURL(blob);
+          owned.current.set(address, url);
+          setPictures((previous) => {
+            const next = new Map(previous);
+            next.set(address, url);
+            while (next.size > MAP_TILE_PICTURES) {
+              const oldest = next.keys().next().value;
+              if (oldest === undefined) break;
+              const stale = next.get(oldest);
+              next.delete(oldest);
+              if (stale !== undefined && stale !== "failed") {
+                URL.revokeObjectURL(stale);
+                owned.current.delete(oldest);
+              }
+            }
+            return next;
+          });
+        },
+        () => {
+          loading.current.delete(address);
+          if (signal?.aborted === true) return;
+          setPictures((previous) => new Map(previous).set(address, "failed"));
+        },
+      );
+    }
+  }, [host, pictures, placements, provider]);
+
+  const tiles = placements.flatMap((placement) => {
+    const url = pictures.get(`${String(placement.z)}/${String(placement.x)}/${String(placement.y)}`);
+    return url === undefined || url === "failed" ? [] : [{ placement, url }];
+  });
+  const failed = placements.some((placement) => pictures.get(`${String(placement.z)}/${String(placement.x)}/${String(placement.y)}`) === "failed");
+  return { provider, tiles, failed };
+}
+
+function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: RendererProps & { map: MapView; title: string }): ReactElement {
+  const t = useT();
+  const helpId = useId();
+  const stored = useMemo(() => readMapState(state, map), [map, state]);
+  const storedCamera = useMemo(() => mapCamera(map, stored), [map, stored]);
+  const initialCamera = useMemo(() => mapCamera(map, {}), [map]);
+  // What the node holds, adopted whenever it changes or a refusal counts up `viewReset`; between those, what the person
+  // just did is drawn at once.
+  const resets = String(state?.viewReset ?? 0);
+  const storedKey = `${JSON.stringify(stored)}#${resets}`;
+  const [syncedKey, setSyncedKey] = useState(storedKey);
+  const [camera, setCamera] = useState<MapCamera>(storedCamera);
+  const [selectedId, setSelectedId] = useState<string | undefined>(stored.selectedId);
+  const pendingView = useRef<MapCamera | undefined>(undefined);
+  if (syncedKey !== storedKey) {
+    setSyncedKey(storedKey);
+    // A view the person moved to and has not written yet stays drawn; a refusal always puts the node's view back.
+    if (!syncedKey.endsWith(`#${resets}`) || pendingView.current === undefined) setCamera(storedCamera);
+    setSelectedId(stored.selectedId);
+  }
+
+  const viewport = useRef<HTMLDivElement>(null);
+  const content = useRef<SVGGElement>(null);
+  const drawnCamera = useRef(camera);
+  const [reduced, setReduced] = useState(false);
+  const viewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const drag = useRef<{ pointerId: number; x: number; y: number; camera: MapCamera; moved: boolean } | undefined>(undefined);
+  const dragged = useRef(false);
+  const { provider, tiles, failed } = useMapTiles(mapTiles, camera);
+
+  // Slide the drawing from where it was to where it is now. Not under reduced motion: the view moves at once.
+  useLayoutEffect(() => {
+    const from = drawnCamera.current;
+    drawnCamera.current = camera;
+    const group = content.current;
+    const isReduced = motionReduced(viewport.current);
+    if (isReduced !== reduced) setReduced(isReduced);
+    if (group === null || isReduced) return undefined;
+    const shift = cameraShift(from, camera);
+    if (shift === undefined || (shift[0] === 0 && shift[1] === 0) || Math.abs(shift[0]) > MAP_VIEWPORT.width || Math.abs(shift[1]) > MAP_VIEWPORT.height) {
+      return undefined;
+    }
+    group.style.transition = "none";
+    group.style.transform = `translate(${String(shift[0])}px, ${String(shift[1])}px)`;
+    group.getBoundingClientRect();
+    const frame = requestAnimationFrame(() => {
+      group.style.transition = "transform 160ms ease-out";
+      group.style.transform = "";
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [camera, reduced]);
+
+  // The system setting can change while the map is open; what the map says about its motion follows it.
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return undefined;
+    const query = matchMedia("(prefers-reduced-motion: reduce)");
+    const changed = (): void => setReduced(motionReduced(viewport.current));
+    query.addEventListener("change", changed);
+    return () => query.removeEventListener("change", changed);
+  }, []);
+
+  // The host hands a new callback on every render; the latest is the one a delayed write uses.
+  const sendAction = useRef(onAction);
+  sendAction.current = onAction;
+  const writeView = useCallback((leaving: boolean): void => {
+    clearTimeout(viewTimer.current);
+    const next = pendingView.current;
+    pendingView.current = undefined;
+    if (next === undefined) return;
+    sendAction.current?.(MAP_VIEW_OPERATION, { center: [next.center[0], next.center[1]], zoom: next.zoom }, leaving ? { leaving: true } : undefined);
+  }, []);
+  // A view still waiting when the map goes away is sent as it goes.
+  useEffect(() => () => writeView(true), [writeView]);
+
+  const moveTo = (next: MapCamera): void => {
+    if (sameCamera(next, camera)) return;
+    setCamera(next);
+    onStateChange?.({ center: [next.center[0], next.center[1]], zoom: next.zoom });
+    pendingView.current = next;
+    clearTimeout(viewTimer.current);
+    viewTimer.current = setTimeout(() => writeView(false), MAP_VIEW_WRITE_DELAY_MS);
+  };
+
+  const select = (id: string | undefined, reveal: boolean): void => {
+    setSelectedId(id);
+    onStateChange?.({ selectedId: id ?? "" });
+    onAction?.(MAP_SELECT_OPERATION, { selectedId: id ?? "" });
+    const feature = map.features.find((entry) => entry.id === id);
+    if (!reveal || feature === undefined) return;
+    // A place chosen from the table or the keyboard is brought into view when it is off the map's edge.
+    const anchor = mapFeatureAnchor(feature);
+    const [x, y] = toScreen(anchor, camera);
+    const margin = MAP_VIEWPORT.padding;
+    if (x < margin || x > MAP_VIEWPORT.width - margin || y < margin || y > MAP_VIEWPORT.height - margin) {
+      moveTo({ center: [anchor[0], anchor[1]], zoom: camera.zoom });
+    }
+  };
+
+  const keyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey) return;
+    const step = event.shiftKey ? MAP_PAN_STEP * 3 : MAP_PAN_STEP;
+    let handled = true;
+    switch (event.key) {
+      case "ArrowLeft": moveTo(panCamera(camera, -step, 0)); break;
+      case "ArrowRight": moveTo(panCamera(camera, step, 0)); break;
+      case "ArrowUp": moveTo(panCamera(camera, 0, -step)); break;
+      case "ArrowDown": moveTo(panCamera(camera, 0, step)); break;
+      case "+": case "=": moveTo(zoomCamera(camera, 1)); break;
+      case "-": case "_": moveTo(zoomCamera(camera, -1)); break;
+      case "0": moveTo(initialCamera); break;
+      case "n": case "N": select(stepFeature(map.features, selectedId, 1), true); break;
+      case "p": case "P": select(stepFeature(map.features, selectedId, -1), true); break;
+      case "Escape":
+        if (selectedId === undefined) handled = false;
+        else select(undefined, false);
+        break;
+      default: handled = false;
+    }
+    if (handled) event.preventDefault();
+  };
+
+  const pointerDown = (event: ReactPointerEvent<SVGSVGElement>): void => {
+    if (event.button !== 0) return;
+    dragged.current = false;
+    drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, camera, moved: false };
+  };
+  const pointerMove = (event: ReactPointerEvent<SVGSVGElement>): void => {
+    const current = drag.current;
+    if (current === undefined || current.pointerId !== event.pointerId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const scale = rect.width > 0 ? MAP_VIEWPORT.width / rect.width : 1;
+    const dx = (event.clientX - current.x) * scale;
+    const dy = (event.clientY - current.y) * scale;
+    if (!current.moved && Math.hypot(dx, dy) < 4) return;
+    if (!current.moved) {
+      current.moved = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    // A drag follows the pointer exactly, so it never slides.
+    drawnCamera.current = panCamera(current.camera, -dx, -dy);
+    moveTo(drawnCamera.current);
+  };
+  const pointerUp = (event: ReactPointerEvent<SVGSVGElement>): void => {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    dragged.current = drag.current.moved;
+    drag.current = undefined;
+  };
+  const pickFeature = (id: string) => (): void => {
+    // The end of a drag is not a click on whatever is under the pointer.
+    if (dragged.current) return;
+    select(selectedId === id ? undefined : id, false);
+  };
+
+  const land = useMemo(() => basemapPath(camera), [camera]);
+  const graticule = useMemo(() => graticulePath(camera), [camera]);
+  const shapes = useMemo(() => map.features.map((feature) => ({ feature, shape: featureShape(feature, camera) })), [camera, map.features]);
+  const labelPoints = map.counts.points <= MAP_POINT_LABELS;
+  const selected = map.features.find((feature) => feature.id === selectedId);
+
+  const position = (at: MapPosition): string => fillMessage(t("widgets.map.position"), { lat: at[1].toFixed(4), lon: at[0].toFixed(4) });
+  const where = (feature: MapFeature): string => {
+    const geometry = feature.geometry;
+    if (geometry.type === "Point") return position(geometry.coordinates);
+    if (geometry.type === "LineString") {
+      return fillMessage(t("widgets.map.whereLine"), {
+        count: geometry.coordinates.length,
+        from: position(geometry.coordinates[0] ?? [0, 0]),
+        to: position(geometry.coordinates.at(-1) ?? [0, 0]),
+      });
+    }
+    return fillMessage(t("widgets.map.whereArea"), { at: position(mapFeatureAnchor(feature)) });
+  };
+  const kind = (feature: MapFeature): string =>
+    t(feature.geometry.type === "Point" ? "widgets.map.kindPoint" : feature.geometry.type === "LineString" ? "widgets.map.kindLine" : "widgets.map.kindArea");
+
+  return (
+    <Frame title={title} dataset={undefined} role="group">
+      <div className="cc-map">
+        <div
+          ref={viewport}
+          className="cc-map-viewport"
+          role="region"
+          aria-roledescription={t("widgets.map.title")}
+          aria-label={fillMessage(t("widgets.map.region"), { title })}
+          aria-describedby={helpId}
+          tabIndex={0}
+          data-map-viewport="true"
+          data-map-zoom={camera.zoom}
+          data-map-center={`${camera.center[0].toFixed(4)},${camera.center[1].toFixed(4)}`}
+          onKeyDown={keyDown}
+        >
+          <span id={helpId} className="cc-sr-only">{t("widgets.map.keyboardHelp")}</span>
+          <svg
+            className="cc-map-svg"
+            viewBox={`0 0 ${String(MAP_VIEWPORT.width)} ${String(MAP_VIEWPORT.height)}`}
+            aria-hidden="true"
+            focusable="false"
+            data-map-svg="true"
+            onPointerDown={pointerDown}
+            onPointerMove={pointerMove}
+            onPointerUp={pointerUp}
+            onPointerCancel={pointerUp}
+          >
+            <rect className="cc-map-ocean" x={0} y={0} width={MAP_VIEWPORT.width} height={MAP_VIEWPORT.height} />
+            <g ref={content} className="cc-map-content" data-map-content="true" data-map-motion={reduced ? "reduced" : "animated"}>
+              <path className="cc-map-land" d={land} data-map-basemap="natural-earth" />
+              <path className="cc-map-graticule" d={graticule} />
+              {tiles.map(({ placement, url }) => (
+                <image
+                  key={placement.key}
+                  href={url}
+                  x={placement.left}
+                  y={placement.top}
+                  width={placement.size}
+                  height={placement.size}
+                  preserveAspectRatio="none"
+                  data-map-tile={`${String(placement.z)}/${String(placement.x)}/${String(placement.y)}`}
+                />
+              ))}
+              {shapes.map(({ feature, shape }) => {
+                const isSelected = feature.id === selectedId;
+                const common = {
+                  "data-map-shape": feature.id,
+                  "data-selected": isSelected ? "true" : undefined,
+                  onClick: pickFeature(feature.id),
+                };
+                if (shape.kind === "point") {
+                  return (
+                    <g key={feature.id} className="cc-map-point" {...common}>
+                      <circle cx={shape.x} cy={shape.y} r={isSelected ? 9 : 6} />
+                      {(labelPoints || isSelected) && (
+                        <text className="cc-map-label" x={shape.x + 11} y={shape.y + 4}>{feature.label}</text>
+                      )}
+                    </g>
+                  );
+                }
+                return <path key={feature.id} className={shape.kind === "line" ? "cc-map-line" : "cc-map-area"} d={shape.d} {...common} />;
+              })}
+            </g>
+          </svg>
+          <div className="cc-map-controls">
+            <button type="button" className="cc-map-control" aria-label={t("widgets.map.zoomIn")} title={t("widgets.map.zoomIn")} disabled={camera.zoom >= MAP_MAX_ZOOM} data-map-zoom-in="true" onClick={() => moveTo(zoomCamera(camera, 1))}>+</button>
+            <button type="button" className="cc-map-control" aria-label={t("widgets.map.zoomOut")} title={t("widgets.map.zoomOut")} disabled={camera.zoom <= MAP_MIN_ZOOM} data-map-zoom-out="true" onClick={() => moveTo(zoomCamera(camera, -1))}>−</button>
+            <button type="button" className="cc-map-control" aria-label={t("widgets.map.reset")} title={t("widgets.map.reset")} data-map-reset="true" onClick={() => moveTo(initialCamera)}>⌂</button>
+          </div>
+        </div>
+        <p className="cc-sr-only" role="status" aria-live="polite" data-map-status="true">
+          {fillMessage(t("widgets.map.status"), { center: position(camera.center), zoom: camera.zoom })}{" "}
+          {selected === undefined ? t("widgets.map.noneSelected") : fillMessage(t("widgets.map.selected"), { label: selected.label, where: where(selected) })}
+        </p>
+        <ViewMessage state={state} name="map" />
+        <div className="cc-map-attribution" data-map-attribution="true">
+          <span data-map-basemap-credit="true">{t("widgets.map.basemap")}</span>
+          {provider === null ? (
+            <span data-map-tiles="off">{t("widgets.map.tilesOff")}</span>
+          ) : (
+            <span data-map-tiles="provider" data-map-tile-origin={provider.origin}>{fillMessage(t("widgets.map.tiles"), { origin: provider.origin, attribution: provider.attribution })}</span>
+          )}
+          {provider !== null && failed && <span data-map-tiles-failed="true">{fillMessage(t("widgets.map.tilesFailed"), { origin: provider.origin })}</span>}
+        </div>
+        {map.features.length === 0 ? (
+          <p className="cc-freshness" data-map-state="empty" role="status" style={{ margin: 0 }}>{t("widgets.map.empty")}</p>
+        ) : (
+          <table className="cc-map-table" data-map-table="true">
+            <caption className="cc-sr-only">{t("widgets.map.features")}</caption>
+            <thead>
+              <tr>
+                <th scope="col">{t("widgets.map.columnName")}</th>
+                <th scope="col">{t("widgets.map.columnWhere")}</th>
+                <th scope="col"><span className="cc-sr-only">{t("widgets.map.select")}</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {map.features.map((feature) => {
+                const isSelected = feature.id === selectedId;
+                return (
+                  <tr key={feature.id} data-map-feature={feature.id} data-selected={isSelected ? "true" : undefined}>
+                    <th scope="row">
+                      <span className="cc-map-feature-name">{feature.label}</span>
+                      <span className="cc-map-feature-kind">{kind(feature)}</span>
+                      {feature.description !== undefined && feature.description !== "" && <span className="cc-map-feature-kind">{feature.description}</span>}
+                    </th>
+                    <td>{where(feature)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="cc-action"
+                        aria-pressed={isSelected}
+                        aria-label={fillMessage(t("widgets.map.selectNamed"), { label: feature.label })}
+                        data-map-select={feature.id}
+                        onClick={() => select(isSelected ? undefined : feature.id, !isSelected)}
+                      >
+                        {t("widgets.map.select")}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </Frame>
+  );
+}
+
 function BoardWidgetView({ props, state, onAction }: RendererProps): ReactElement {
   const t = useT();
   const board = useMemo(() => readBoard(props), [props]);
@@ -4797,6 +5261,7 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.list@1": ListView,
   [TREE_ID]: TreeWidgetView,
   [BOARD_ID]: BoardWidgetView,
+  [MAP_ID]: MapWidgetView,
   "canvas.status@1": StatusCardView,
   "canvas.progress@1": ProgressCardView,
   "canvas.details@1": DetailsCardView,

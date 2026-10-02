@@ -221,7 +221,8 @@ function redactText(text: string, needles: readonly string[]): string {
   return current;
 }
 
-async function readBounded(response: Response, limit: number, signal: AbortSignal): Promise<Buffer | "too-large"> {
+/** A response body read up to `limit` bytes; past it the read is cancelled and `"too-large"` returned. */
+export async function readBounded(response: Response, limit: number, signal: AbortSignal): Promise<Buffer | "too-large"> {
   if (response.body === null) return Buffer.alloc(0);
   const reader = response.body.getReader();
   const chunks: Buffer[] = [];

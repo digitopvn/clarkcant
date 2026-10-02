@@ -58,6 +58,18 @@ import {
   TREE_ICONS,
   timelineProblems,
   treeProblems,
+  MAP_GEOMETRY_TYPES,
+  MAP_ID,
+  MAP_MAX_ZOOM,
+  MAP_MIN_ZOOM,
+  MAP_SELECT_OPERATION,
+  MAP_VIEW_OPERATION,
+  MAX_MAP_DESCRIPTION,
+  MAX_MAP_FEATURES,
+  MAX_MAP_ID,
+  MAX_MAP_LABEL,
+  MAX_MAP_TITLE,
+  mapProblems,
   BOARD_ID,
   BOARD_MOVE_OPERATION,
   MAX_BOARD_COLUMNS,
@@ -894,6 +906,91 @@ export const TREE: WidgetDefinition = {
   datasetRefs: [],
 };
 
+const MAP_POSITION_SCHEMA = {
+  type: "array",
+  minItems: 2,
+  maxItems: 2,
+  items: { type: "number" },
+  description: "[longitude, latitude] in WGS84 degrees",
+};
+
+/**
+ * A bounded map of points, lines and areas, drawn by the host over an offline basemap. Its props hold no URL: the only
+ * tiles it can show come from the node's own tile policy.
+ */
+export const MAP: WidgetDefinition = {
+  id: MAP_ID,
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: oneLineProp(MAX_MAP_TITLE),
+      features: {
+        type: "array",
+        maxItems: MAX_MAP_FEATURES,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: MAX_MAP_ID },
+            label: oneLineProp(MAX_MAP_LABEL, 1),
+            description: oneLineProp(MAX_MAP_DESCRIPTION),
+            geometry: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                type: { type: "string", enum: MAP_GEOMETRY_TYPES },
+                coordinates: {
+                  type: "array",
+                  description: "Point: [lon, lat]; LineString: [[lon, lat], …]; Polygon: [[[lon, lat], …, first again], holes…]",
+                },
+              },
+              required: ["type", "coordinates"],
+            },
+          },
+          required: ["id", "label", "geometry"],
+        },
+      },
+      view: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          center: MAP_POSITION_SCHEMA,
+          zoom: { type: "integer", minimum: MAP_MIN_ZOOM, maximum: MAP_MAX_ZOOM },
+        },
+        required: ["center", "zoom"],
+      },
+    },
+    required: ["features"],
+  },
+  eventSchemas: {
+    [MAP_SELECT_OPERATION]: { type: "object", properties: { selectedId: { type: "string", maxLength: MAX_MAP_ID } }, required: ["selectedId"] },
+    [MAP_VIEW_OPERATION]: {
+      type: "object",
+      properties: { center: MAP_POSITION_SCHEMA, zoom: { type: "integer", minimum: MAP_MIN_ZOOM, maximum: MAP_MAX_ZOOM } },
+      required: ["center", "zoom"],
+    },
+  },
+  stateSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      selectedId: { type: "string", maxLength: MAX_MAP_ID },
+      center: MAP_POSITION_SCHEMA,
+      zoom: { type: "integer", minimum: MAP_MIN_ZOOM, maximum: MAP_MAX_ZOOM },
+    },
+  },
+  stateVersion: 1,
+  semanticDescription: "A bounded map of points, lines and areas over an offline basemap, with a keyboard-accessible feature table",
+  requestedCapabilities: [],
+  sizing: { compact: true, expanded: true, minHeight: 240 },
+  textFallback: "A map appears as a list of its features with their coordinates when it cannot be drawn.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
 /** A bounded board whose view order is local unless an explicit invoke binding is supplied. */
 export const BOARD: WidgetDefinition = {
   id: BOARD_ID,
@@ -1459,6 +1556,7 @@ export const WIDGETS = [
   LIST,
   TREE,
   BOARD,
+  MAP,
   STATUS,
   PROGRESS,
   DETAILS,
@@ -1519,6 +1617,8 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   "canvas.timeline@1": "timeline",
   [TREE.id]: "hierarchy",
   [BOARD.id]: "board",
+  // Its own family: no layout region reads places, so a map is placed on its own.
+  [MAP.id]: "map",
 };
 
 /**
@@ -1554,6 +1654,7 @@ export function primitivePropsProblems(definitionId: string, props: Readonly<Rec
   if (chart !== undefined) return xyChartProblems(chart, props);
   if (definitionId === TIMELINE.id) return timelineProblems(props);
   if (definitionId === TREE.id) return treeProblems(props);
+  if (definitionId === MAP.id) return mapProblems(props);
   return [];
 }
 export function familyOf(definitionId: string): string {

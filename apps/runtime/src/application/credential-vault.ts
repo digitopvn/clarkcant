@@ -1,4 +1,4 @@
-import { nowInstant } from "@clarkcant/contracts";
+import { MAP_TILE_SECRET_CONSUMER, nowInstant } from "@clarkcant/contracts";
 import { credentialNames, putCredential, putSecretMetadata, secretKindOr } from "@clarkcant/storage";
 import type { Database } from "@clarkcant/storage";
 
@@ -44,13 +44,14 @@ export function consumersOf(value: unknown): string[] {
  * use it. A `package:` consumer is a package's service, which never receives the value at all: the host adds it as
  * the header the package declared to a request it makes on the service's behalf, so it is stored as `http-header`.
  * A secret asked for both a command and a package keeps `process-env`, and the package's service reads as not signed
- * in until it has one of its own. Every other consumer is served by a callback that runs and returns, which is
- * `tool-only`. Nothing here can produce `agent-context`, the one exposure that puts a value where it cannot be taken
- * back from.
+ * in until it has one of its own. The map tile provider's key (`maps:tiles`) is the same kind of value: the node adds
+ * it to a tile request it makes itself, so it is `http-header` too. Every other consumer is served by a callback that
+ * runs and returns, which is `tool-only`. Nothing here can produce `agent-context`, the one exposure that puts a value
+ * where it cannot be taken back from.
  */
 export function injectionPolicyFor(consumers: readonly string[]): "tool-only" | "process-env" | "http-header" {
   if (consumers.some((consumer) => consumer.startsWith("command:"))) return "process-env";
-  if (consumers.some((consumer) => consumer.startsWith("package:"))) return "http-header";
+  if (consumers.some((consumer) => consumer.startsWith("package:") || consumer === MAP_TILE_SECRET_CONSUMER)) return "http-header";
   return "tool-only";
 }
 

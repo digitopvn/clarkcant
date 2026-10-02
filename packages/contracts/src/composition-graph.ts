@@ -76,6 +76,8 @@ export const GRAPH_EVENTS: Readonly<Record<string, Readonly<Record<string, Graph
   "canvas.board@1": {
     "board.move": { fields: { cardId: "string", fromColumnId: "string", toColumnId: "string", position: "value" } },
   },
+  // The feature chosen on a map, by its id; empty when the selection was cleared.
+  "canvas.map@1": { "map.select": { fields: { selectedId: "string" } } },
 };
 
 interface GraphFeedSpec {

@@ -436,6 +436,32 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       mode: "interactive",
     },
   ],
+  "canvas.map@1": [
+    {
+      id: "map.normal",
+      label: "Bản đồ chặng giao hàng Bắc – Nam",
+      props: {
+        title: "Chặng giao hàng",
+        features: [
+          { id: "hanoi", label: "Hà Nội", description: "Kho xuất phát", geometry: { type: "Point", coordinates: [105.8342, 21.0278] } },
+          { id: "danang", label: "Đà Nẵng", geometry: { type: "Point", coordinates: [108.2022, 16.0544] } },
+          { id: "hcm", label: "TP. Hồ Chí Minh", description: "Điểm nhận", geometry: { type: "Point", coordinates: [106.6297, 10.8231] } },
+          {
+            id: "route",
+            label: "Tuyến Bắc – Nam",
+            geometry: { type: "LineString", coordinates: [[105.8342, 21.0278], [107.5909, 16.4637], [108.2022, 16.0544], [106.6297, 10.8231]] },
+          },
+          {
+            id: "halong",
+            label: "Vùng vịnh Hạ Long",
+            geometry: { type: "Polygon", coordinates: [[[106.95, 20.75], [107.35, 20.75], [107.35, 21.05], [106.95, 21.05], [106.95, 20.75]]] },
+          },
+        ],
+      },
+      mode: "interactive",
+    },
+    { id: "map.empty", label: "Bản đồ trống", props: { title: "Chưa có địa điểm", features: [] }, mode: "read-only" },
+  ],
   "canvas.image@1": [
     {
       id: "image.normal",
