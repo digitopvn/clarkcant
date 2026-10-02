@@ -125,7 +125,7 @@ function start() {
     "data-image-prompt": "true",
   });
   const hint = element("p", { id: "image-prompt-hint", class: "muted" }, TEXT.promptHint);
-  const generate = element("button", { type: "submit", class: "primary", "data-image-generate": "true" }, TEXT.generate);
+  const generate = element("button", { type: "button", class: "primary", "data-image-generate": "true" }, TEXT.generate);
   const actions = element("div", { class: "actions" });
   actions.append(generate);
   form.append(label, field, hint, actions);
@@ -396,10 +396,9 @@ function start() {
       })
       .finally(() => showAvailability(api.actions.availability()));
   };
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    submit();
-  });
+  // A click, not a form submission: the frame's sandbox does not allow forms, so a submit event would never fire.
+  generate.addEventListener("click", submit);
+  form.addEventListener("submit", (event) => event.preventDefault());
   field.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
