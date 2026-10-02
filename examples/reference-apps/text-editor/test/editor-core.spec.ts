@@ -117,6 +117,15 @@ describe("two views of one editor", () => {
     // A commit no newer than the one written against is not this view's.
     expect(editor.reconcileState({ local: typedOn, synced: base, incoming: mine, revision: 4, pending })).toBe("conflict");
   });
+
+  it("always adopts in a view with no document open, which has no draft of its own to keep", () => {
+    // A reload whose saved copy could not be read shows no document, while `synced` still names the file.
+    const empty = editor.persistedState(undefined);
+    const fromOther = { ...base, draft: "typed in the other view" };
+    expect(editor.reconcileState({ local: empty, synced: base, incoming: fromOther, documentOpen: false })).toBe("adopt");
+    expect(editor.reconcileState({ local: empty, synced: base, incoming: { ...base, base: copy }, documentOpen: false })).toBe("adopt");
+    expect(editor.reconcileState({ local: empty, synced: base, incoming: empty, documentOpen: false })).toBe("unchanged");
+  });
 });
 
 describe("reopening after a reload", () => {
@@ -217,11 +226,31 @@ describe("asking Clark to change the selection", () => {
     expect(editor.askableSelection(spaced, { start: 0, end: 4 })).toEqual({ ok: false, reason: "one-line" });
   });
 
-  it("refuses a selection with hidden characters or secret-shaped text, which Clark would not read as it is", () => {
+  it("refuses a selection with hidden characters or unusual spaces, which Clark would read as plain spaces", () => {
     const hidden = editor.openDocument(picked, "pay\u200Bment");
     expect(editor.askableSelection(hidden, { start: 0, end: 8 })).toEqual({ ok: false, reason: "hidden" });
-    const token = editor.openDocument(picked, "use sk-abcdefgh12345678 here");
-    expect(editor.askableSelection(token, { start: 0, end: 28 })).toEqual({ ok: false, reason: "hidden" });
+    for (const text of ["100\u00A0km", "\u6771\u4EAC\u3000\u99C5"]) {
+      expect(editor.askableSelection(editor.openDocument(picked, text), { start: 0, end: text.length })).toEqual({ ok: false, reason: "hidden" });
+    }
+  });
+
+  it("refuses a selection with text the host redacts as possibly private, and says so apart from hidden characters", () => {
+    for (const text of [
+      "use sk-abcdefgh12345678 here",
+      "write to an@example.com today",
+      "pay 1 234 567 890 \u0111\u1ED3ng",
+      "see C:\\Users\\an\\notes.txt",
+    ]) {
+      expect(editor.askableSelection(editor.openDocument(picked, text), { start: 0, end: text.length })).toEqual({ ok: false, reason: "redacted" });
+    }
+  });
+
+  it("never refuses text the host passes on unchanged", () => {
+    // Text that merely looks close to a redacted shape is still asked about when the host would leave it alone.
+    for (const text of ["call 12 34 56", "art_123 and [redacted]", "C:\\Temp\\x", "an@b"]) {
+      expect(editor.hostSemanticText(text, editor.EDITOR_LIMITS.excerptChars)).toBe(text);
+      expect(editor.askableSelection(editor.openDocument(picked, text), { start: 0, end: text.length })).toMatchObject({ ok: true, text });
+    }
   });
 
   it("leaves the spaces at the ends out of the range rather than refusing them", () => {

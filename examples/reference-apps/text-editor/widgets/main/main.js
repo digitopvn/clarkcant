@@ -61,7 +61,8 @@ const TEXT = {
     empty: "Chọn một đoạn văn bản để nhờ Clark viết lại.",
     "too-long": `Đoạn chọn quá dài: Clark chỉ đọc được tối đa ${String(EDITOR_LIMITS.excerptChars)} ký tự; hãy chọn ít hơn.`,
     "one-line": "Clark sẽ đọc đoạn này thành một dòng, nên câu trả lời không giữ được xuống dòng hay khoảng trắng liền nhau; hãy chọn trong một dòng.",
-    hidden: "Đoạn chọn có ký tự ẩn hoặc nội dung giống khoá bí mật mà Clark không được xem; hãy chọn ít hơn.",
+    hidden: "Đoạn chọn có ký tự ẩn hoặc khoảng trắng đặc biệt (như khoảng trắng không ngắt dòng) mà Clark sẽ đọc thành dấu cách; hãy chọn đoạn không có chúng.",
+    redacted: "Đoạn chọn có nội dung Clark không được xem vì có thể là thông tin riêng (địa chỉ e-mail, dãy số dài, đường dẫn thư mục hay chuỗi giống khoá bí mật); hãy chọn đoạn không có chúng.",
     // The status line already says what the editor is waiting for; a second sentence would only repeat it.
     busy: "",
   },
@@ -268,6 +269,8 @@ function start() {
 
   /** Write what the editor holds to widget state, one write at a time; a refusal is answered by the host's state. */
   async function writeState() {
+    // A view with no document has nothing of its own to keep; until the person opens a file, it never writes.
+    if (doc === undefined) return;
     if (writing) {
       writeAgain = true;
       return;
@@ -352,7 +355,14 @@ function start() {
   async function onState(state, revision) {
     if (disposed) return;
     const incoming = readPersistedState(state);
-    const decision = reconcileState({ local: persistedState(doc), synced, incoming, revision, pending: pendingWrite });
+    const decision = reconcileState({
+      local: persistedState(doc),
+      synced,
+      incoming,
+      revision,
+      pending: pendingWrite,
+      documentOpen: doc !== undefined,
+    });
     if (decision === "unchanged" || decision === "echo") {
       // An echo is this view's own write; anything typed since is written by the write already scheduled for it.
       synced = incoming;
@@ -575,6 +585,11 @@ function start() {
 
   keepMine.addEventListener("click", () => {
     conflictPanel.hidden = true;
+    // Only a view with a document has a draft to keep; `writeState` would refuse anyway, so nothing is claimed kept.
+    if (doc === undefined) {
+      incomingConflict = undefined;
+      return;
+    }
     // Mine is written over theirs at the revision the host now holds, which is what keeping it means.
     if (incomingConflict !== undefined) synced = incomingConflict;
     incomingConflict = undefined;

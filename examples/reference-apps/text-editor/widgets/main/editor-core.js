@@ -221,17 +221,24 @@ function sameState(a, b) {
  * - `keep`: the host still holds what this view last synced, so this view's newer edit is simply not written yet.
  * - `conflict`: both changed. Neither is thrown away; the person chooses.
  *
+ * A view with no document open (`documentOpen: false`, for example after a reload whose saved copy could not be read)
+ * has no draft of its own to defend, so it always adopts what another view committed. Comparing its empty state with
+ * what it last synced would otherwise report a conflict, and keeping "its" side would write that emptiness over the other
+ * view's draft.
+ *
  * @param {{
  *   local: PersistedEditorState,
  *   synced: PersistedEditorState,
  *   incoming: PersistedEditorState,
  *   revision?: number,
  *   pending?: PendingWrite | undefined,
+ *   documentOpen?: boolean,
  * }} input
  * @returns {"unchanged" | "echo" | "adopt" | "keep" | "conflict"}
  */
-export function reconcileState({ local, synced, incoming, revision, pending }) {
+export function reconcileState({ local, synced, incoming, revision, pending, documentOpen = true }) {
   if (sameState(incoming, local)) return "unchanged";
+  if (!documentOpen) return "adopt";
   if (pending !== undefined && typeof revision === "number" && revision > pending.expectedRevision && sameState(incoming, pending.state)) {
     return "echo";
   }
@@ -278,13 +285,25 @@ export const HOST_SECRET_PATTERNS = Object.freeze([
  * @param {number} max
  */
 export function hostSemanticText(text, max) {
-  let cleaned = text
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
+  return clipUnits(redactSecretShapes(flattenSpaces(text)), max);
+}
+
+/** The host's first step: invisible and control characters become spaces, whitespace runs collapse, the ends are trimmed. */
+function flattenSpaces(text) {
+  return (
+    text
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim()
+  );
+}
+
+/** The host's second step: anything secret-shaped becomes `[redacted]`. */
+function redactSecretShapes(text) {
+  let cleaned = text;
   for (const pattern of HOST_SECRET_PATTERNS) cleaned = cleaned.replace(new RegExp(pattern.source, pattern.flags), "[redacted]");
-  return clipUnits(cleaned, max);
+  return cleaned;
 }
 
 /**
@@ -341,14 +360,17 @@ export function semanticProposal(doc, selection) {
  * - `too-long`: over 200 UTF-16 units, so the host would cut it;
  * - `one-line`: line breaks, tabs or repeated spaces, which the host flattens to single spaces, so a one-line reply
  *   would replace text whose layout Clark never saw;
- * - `hidden`: invisible or control characters, or something secret-shaped the host redacts.
+ * - `hidden`: invisible or control characters, or unusual spaces (a no-break space, an ideographic space), which the
+ *   host turns into plain spaces;
+ * - `redacted`: something the host hides from the model as possibly private — an e-mail address, a long number, a
+ *   path in a home folder, or key-like text.
  *
- * Whitespace at the ends is left out of the range rather than refused: the host trims it, and a double-click often
- * selects the space after a word.
+ * Text the host passes on unchanged is never refused. Whitespace at the ends is left out of the range rather than
+ * refused: the host trims it, and a double-click often selects the space after a word.
  *
  * @param {EditorDocument | undefined} doc
  * @param {TextSelection} selection
- * @returns {{ ok: true, start: number, end: number, text: string } | { ok: false, reason: "no-file" | "empty" | "too-long" | "one-line" | "hidden" }}
+ * @returns {{ ok: true, start: number, end: number, text: string } | { ok: false, reason: "no-file" | "empty" | "too-long" | "one-line" | "hidden" | "redacted" }}
  */
 export function askableSelection(doc, selection) {
   if (doc === undefined) return { ok: false, reason: "no-file" };
@@ -359,10 +381,9 @@ export function askableSelection(doc, selection) {
   const end = range.end - (raw.length - raw.trimEnd().length);
   const text = doc.draft.slice(start, end);
   if (text.length > EDITOR_LIMITS.excerptChars) return { ok: false, reason: "too-long" };
-  if (hostSemanticText(text, EDITOR_LIMITS.excerptChars) !== text) {
-    return { ok: false, reason: /[\r\n\t\v\f]| {2}/u.test(text) ? "one-line" : "hidden" };
-  }
-  return { ok: true, start, end, text };
+  if (hostSemanticText(text, EDITOR_LIMITS.excerptChars) === text) return { ok: true, start, end, text };
+  if (/[\r\n\t\v\f]| {2}/u.test(text)) return { ok: false, reason: "one-line" };
+  return { ok: false, reason: flattenSpaces(text) !== text ? "hidden" : "redacted" };
 }
 
 /**
