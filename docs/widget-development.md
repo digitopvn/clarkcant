@@ -1307,6 +1307,15 @@ Who writes the document:
   frame cannot name actions: the actions always come from the instance's bindings, so a frame cannot advertise an
   action it was not bound to.
 
+  A press can read what the frame published: an `agent` binding's `contextRefs` (`selection:…`, `widget:…`). Before
+  such a press runs, the host sends any publish still settling and waits until the node has answered every publish
+  still on its way, so the press never reads an older description than the one published before it. Any other press
+  waits only for a publish still settling, or for one the node refused last. The wait is bounded: each send is given
+  up after 5 seconds and the whole wait after 8. A description the node refused is sent once more; if that fails too,
+  or the wait runs out, `actions.invoke` rejects with the host's refusal ("What the widget shows did not reach Clark in
+  time, so this action did not run…"). Nothing in the frame changes, and the person can press again. A widget should
+  show that refusal where the press was made.
+
 While developing a package, the semantic inspector shows the document after the same normalization, its delta, the
 next-turn context note and `inspect_ui`. It marks proposed fields the normalizer clipped or dropped and warns above
 four publishes per second. These diagnostics do not run a model turn or change the runtime's limits.
@@ -1623,7 +1632,9 @@ presented, or saved, as the file.
 
 **Two views of one editor.** When committed state arrives from another view, the editor takes it if it has nothing
 unsent. If both changed, it shows *Keep mine* and *Use theirs* and throws neither away. The question does not take the
-keyboard from someone typing; the status line announces it.
+keyboard from someone typing; the status line announces it. A view with no document open, such as one that could not
+read the saved copy back, has no draft of its own: it always takes committed state, never asks, and never writes
+state until the person opens a file, so it cannot erase another view's draft.
 
 **Saving.** The editor writes a `working` artifact of the opened file's type and name, in chunks, finalizes it and
 calls `export(ref, { suggestedName })`. The host decides what that means. On the desktop it offers *Replace original*
@@ -1652,12 +1663,16 @@ person presses *Nhờ Clark viết lại đoạn chọn*:
 
 1. The editor asks only about a selection the host passes to Clark unchanged. The host flattens line breaks, tabs and
    runs of spaces, removes invisible characters, redacts secret-shaped text and cuts a value at 200 UTF-16 units, so a
-   selection it would change is refused in the editor with the reason (too long, more than one line, or hidden text).
+   selection it would change is refused in the editor with the reason: too long; more than one line; hidden characters
+   or unusual spaces such as a no-break space; or text the host redacts as possibly private, such as an e-mail
+   address, a long number, a home-folder path or key-like text. Text the host passes on unchanged is never refused.
    Spaces at the ends are left out of the range, because the host trims them. The editor's copy of the host's
    cleaning is checked against the host's own in the package's tests.
 2. The editor publishes its semantic document, makes the text area read-only and holds the published selection until
-   the answer. The host sends any semantic publish still settling, and waits until the node holds it, before it runs
-   any press a frame makes; if that publish cannot be sent, the press is refused and nothing is asked.
+   the answer. Because the binding reads the selection, the host sends any publish still settling and waits until
+   the node holds the newest one before it runs the press. The wait is bounded (8 seconds); when the description
+   cannot be delivered in that time, the press is refused, nothing is asked, the text area is editable again and the
+   status line says to try again in a moment.
 3. `actions.invoke(rewriteBinding, {}, invocationId)` starts one turn. The host reads the selection and the widget's
    document into the turn's data section, which is marked as data and not instructions.
 4. The reply comes back as the press's output, at most 2,000 characters. The editor treats it as untrusted text and

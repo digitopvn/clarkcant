@@ -1305,6 +1305,15 @@ Ai viết tài liệu:
   được nêu action: action luôn lấy từ binding của instance, nên frame không thể quảng cáo một action mà nó không được
   bind.
 
+  Một lần bấm có thể đọc điều frame đã publish: `contextRefs` của binding `agent` (`selection:…`, `widget:…`). Trước
+  khi chạy lần bấm như vậy, host gửi lần publish còn đang chờ ổn định và chờ đến khi node đã trả lời mọi lần publish
+  đang trên đường đi, nên lần bấm không bao giờ đọc một mô tả cũ hơn mô tả đã publish trước nó. Các lần bấm khác chỉ
+  chờ lần publish còn đang chờ ổn định, hoặc lần mà node vừa từ chối. Thời gian chờ có giới hạn: mỗi lần gửi bị bỏ sau
+  5 giây và toàn bộ việc chờ sau 8 giây. Mô tả bị node từ chối được gửi lại một lần; nếu vẫn hỏng, hoặc hết thời gian
+  chờ, `actions.invoke` bị từ chối kèm câu của host ("Chưa gửi kịp cho Clark điều widget đang hiển thị, nên hành động
+  này chưa chạy…"). Không có gì trong frame bị thay đổi, và người dùng có thể bấm lại. Widget nên hiện lời từ chối đó ở
+  chỗ người dùng đã bấm.
+
 Khi phát triển package, semantic inspector hiển thị tài liệu sau cùng bước chuẩn hoá, delta, ghi chú ngữ cảnh cho lượt
 kế tiếp và `inspect_ui`. Nó đánh dấu các trường mà normalizer đã cắt hoặc loại bỏ, đồng thời cảnh báo khi publish quá
 bốn lần mỗi giây. Các chẩn đoán này không chạy model turn và không đổi giới hạn của runtime.
@@ -1624,7 +1633,9 @@ một ô văn bản trống không bao giờ được trình bày, hay được 
 
 **Hai chỗ xem cùng một trình soạn thảo.** Khi state đã commit đến từ một chỗ xem khác, trình soạn thảo nhận lấy nếu
 nó không còn gì chưa gửi. Nếu cả hai cùng đổi, nó hiện *Giữ bản của tôi* và *Dùng bản kia*, và không vứt bản nào. Câu
-hỏi này không lấy bàn phím của người đang gõ; dòng trạng thái thông báo nó.
+hỏi này không lấy bàn phím của người đang gõ; dòng trạng thái thông báo nó. Một chỗ xem chưa mở tài liệu nào, chẳng hạn
+chỗ xem không đọc lại được bản đã lưu, không có bản nháp của riêng nó: nó luôn nhận state đã commit, không bao giờ hỏi,
+và không ghi state cho đến khi người dùng mở một tệp, nên không thể xoá bản nháp của chỗ xem khác.
 
 **Lưu.** Trình soạn thảo ghi một artifact `working` cùng loại và cùng tên với tệp đã mở, theo từng đoạn, finalize nó
 rồi gọi `export(ref, { suggestedName })`. Host quyết định điều đó nghĩa là gì. Trên máy tính, host đưa ra *Ghi đè tệp
@@ -1654,12 +1665,17 @@ trong một bản cài thật, nút này vẫn bị tắt và hiện lý do ("Cl
 
 1. Trình soạn thảo chỉ hỏi về một đoạn chọn mà host chuyển cho Clark nguyên vẹn. Host làm phẳng xuống dòng, tab và các
    dãy khoảng trắng, bỏ ký tự vô hình, che nội dung giống khoá bí mật và cắt một giá trị ở 200 đơn vị UTF-16, nên đoạn
-   chọn nào bị host thay đổi sẽ bị từ chối ngay trong trình soạn thảo kèm lý do (quá dài, nhiều hơn một dòng, hoặc có
-   nội dung ẩn). Khoảng trắng ở hai đầu được bỏ khỏi khoảng chọn, vì host cắt bỏ chúng. Bản sao quy tắc làm sạch của
-   host trong trình soạn thảo được so với chính quy tắc của host trong các kiểm thử của package.
+   chọn nào bị host thay đổi sẽ bị từ chối ngay trong trình soạn thảo kèm lý do: quá dài; nhiều hơn một dòng; có ký tự
+   ẩn hoặc khoảng trắng đặc biệt như khoảng trắng không ngắt dòng; hoặc có nội dung host che vì có thể là thông tin
+   riêng, như địa chỉ e-mail, dãy số dài, đường dẫn thư mục người dùng hay chuỗi giống khoá bí mật. Văn bản mà host
+   chuyển nguyên vẹn thì không bao giờ bị từ chối. Khoảng trắng ở hai đầu được bỏ khỏi khoảng chọn, vì host cắt bỏ
+   chúng. Bản sao quy tắc làm sạch của host trong trình soạn thảo được so với chính quy tắc của host trong các kiểm thử
+   của package.
 2. Trình soạn thảo công bố semantic document, chuyển ô văn bản sang chỉ đọc và giữ nguyên đoạn chọn đã công bố cho đến
-   khi có câu trả lời. Trước khi chạy bất kỳ lần bấm nào từ một frame, host gửi semantic publish còn đang chờ ổn định và
-   chờ đến khi node đã giữ nó; nếu không gửi được, lần bấm bị từ chối và không có gì được hỏi.
+   khi có câu trả lời. Vì binding này đọc đoạn đang chọn, host gửi lần publish còn đang chờ ổn định và chờ đến khi node
+   đã giữ mô tả mới nhất rồi mới chạy lần bấm. Thời gian chờ có giới hạn (8 giây); nếu không gửi được mô tả trong thời
+   gian đó, lần bấm bị từ chối, không có gì được hỏi, ô văn bản sửa được trở lại và dòng trạng thái nhắc thử lại sau
+   giây lát.
 3. `actions.invoke(rewriteBinding, {}, invocationId)` bắt đầu một lượt. Host đọc đoạn đang chọn và document của widget
    vào phần dữ liệu của lượt đó, phần này được đánh dấu là dữ liệu chứ không phải chỉ dẫn.
 4. Câu trả lời quay về dưới dạng output của lần bấm, tối đa 2.000 ký tự. Trình soạn thảo coi nó là văn bản không tin
