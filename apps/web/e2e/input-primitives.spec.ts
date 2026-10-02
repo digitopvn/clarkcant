@@ -242,14 +242,18 @@ test("a list pages, picks by id, and sends the item a person pressed", async ({ 
   // The list hears the answer from the action and the conversation from its own stream, so the conversation is read
   // once it has it, and by what it says rather than by position: other replies may land after it. The reply that holds
   // the list carries the answer beside the list, which is checked on its own below.
-  const once = (text: string): number => text.split("đã nhận yêu cầu").length - 1;
+  // Both are read as text content, not `innerText`. Pressing the item scrolled the reader up to the list, so the transcript
+  // stops following the bottom and the answer settles below the fold in a row with `content-visibility: auto`, whose
+  // contents the browser skips until it is on screen: `innerText` reads "" for a row that holds the answer (seen on CI). A
+  // second copy would still be text in the row, so counting the text content proves "once" without depending on scroll.
+  const once = (text: string | null): number => (text ?? "").split("đã nhận yêu cầu").length - 1;
   const answers = page
     .locator("[data-role='assistant']")
     .filter({ hasText: "đã nhận yêu cầu" })
     .filter({ hasNot: page.locator("[data-widget-role='list']") });
   await expect(answers).toHaveCount(1, { timeout: 30_000 });
-  expect(once(await answers.innerText())).toBe(1);
-  expect(once(await list.locator("[data-list-result='done']").innerText())).toBe(1);
+  expect(once(await answers.textContent())).toBe(1);
+  expect(once(await list.locator("[data-list-result='done']").textContent())).toBe(1);
   await list.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("list-desktop.png") });
 
