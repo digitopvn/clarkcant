@@ -8,6 +8,8 @@ related: [200, 313, 314, 316]
 
 # #315 JobRef for long-running package capabilities
 
+Pull request: [#377](https://github.com/digitopvn/clarkcant/pull/377).
+
 ## Outcome
 
 Package services can run bounded, durable jobs through the existing action and service lanes. Widgets receive an opaque `JobRef`, can read/cancel only jobs started by their own binding, and can resume observation after remount. Jobs appear in the WorkSupervisor and Stop flow, report only service-originated progress, and are never silently replayed after restart.

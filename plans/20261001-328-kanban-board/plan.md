@@ -1,12 +1,14 @@
 ---
 title: "Kanban board widget"
-status: in-progress
+status: completed
 created: 2026-10-01
 issues: [328]
 related: [198, 226, 314, 327]
 ---
 
 # Kanban board widget (#328)
+
+Pull request: [#373](https://github.com/digitopvn/clarkcant/pull/373).
 
 ## Outcome
 Ship a bounded `canvas.board@1` built-in. People can reorder and move cards with keyboard, pointer, or touch; local moves remain view state, while changes to external data go through a bound `invoke` capability and show only truthful pending/confirmed/refused outcomes.

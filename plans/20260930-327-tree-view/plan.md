@@ -1,12 +1,14 @@
 ---
 title: "Tree and hierarchy widget"
-status: in-progress
+status: completed
 created: 2026-09-30
 issues: [327]
 related: [198, 225, 226, 280, 281, 282, 283, 326]
 ---
 
 # Tree and hierarchy widget (#327)
+
+Pull request: [#372](https://github.com/digitopvn/clarkcant/pull/372).
 
 ## Outcome
 Ship a host-rendered `canvas.tree@1` primitive that safely displays bounded hierarchical data, supports accessible keyboard navigation and persistent selection/expansion state, and exposes truthful semantic and text representations.

@@ -1,12 +1,14 @@
 ---
 title: "#329: semantic state for media widgets"
-status: in-progress
+status: completed
 created: 2026-10-01
 issues: [329, 374]
 related: [195, 198, 226, 282, 283, 324]
 ---
 
 # Media widget state and semantics
+
+Pull request: [#378](https://github.com/digitopvn/clarkcant/pull/378).
 
 ## Outcome
 

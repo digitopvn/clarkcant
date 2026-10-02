@@ -1,12 +1,14 @@
 ---
 title: Hộp thư — phần backend còn thiếu và lỗi có từ trước
-status: in-review
+status: completed
 created: 2026-09-24
 branch: claude/sleepy-mccarthy-ys493l
 issues: [169, 170, 171, 172, 173, 174]
 ---
 
 # Hộp thư — phần backend còn thiếu và lỗi có từ trước
+
+Pull requests: [#175](https://github.com/digitopvn/clarkcant/pull/175), [#176](https://github.com/digitopvn/clarkcant/pull/176), [#268](https://github.com/digitopvn/clarkcant/pull/268), [#276](https://github.com/digitopvn/clarkcant/pull/276), [#303](https://github.com/digitopvn/clarkcant/pull/303).
 
 ## Kết quả mong muốn
 

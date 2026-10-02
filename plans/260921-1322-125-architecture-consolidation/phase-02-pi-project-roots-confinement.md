@@ -1,7 +1,7 @@
 ---
 phase: 2
 title: "Pi projectRoots trở thành ranh giới filesystem thật"
-status: pending
+status: done
 priority: P1
 effort: "1.5-2 ngày (sau spike A3; nếu `builtinTools: []` không được SDK tôn trọng thì ước lượng này sai và phải re-plan)"
 dependencies: []

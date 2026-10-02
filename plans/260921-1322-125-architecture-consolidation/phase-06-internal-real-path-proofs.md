@@ -1,7 +1,7 @@
 ---
 phase: 6
 title: "Đóng internal real-path proof, không giả external gate"
-status: pending
+status: done
 priority: P2
 effort: "1.5-2 ngày"
 dependencies: [5]

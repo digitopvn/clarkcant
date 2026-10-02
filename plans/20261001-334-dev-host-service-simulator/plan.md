@@ -1,12 +1,14 @@
 ---
 title: "#334: dev-host service readiness and offline simulation"
-status: in-review
+status: completed
 created: 2026-10-01
 issues: [334]
 related: [200, 221, 335]
 ---
 
 # Dev-host service readiness and offline simulation
+
+Pull request: [#375](https://github.com/digitopvn/clarkcant/pull/375).
 
 ## Outcome
 

@@ -8,6 +8,8 @@ related: [200, 313, 314, 317, 382]
 
 # #318 Reference app B: spreadsheet
 
+Pull request: [#384](https://github.com/digitopvn/clarkcant/pull/384).
+
 ## Outcome
 
 `examples/reference-apps/spreadsheet/` is a manifest v2 package with one isolated-UI facet and no service. It imports and exports CSV and TSV through #313 ArtifactRefs, keeps the sheet bounded, edits cells, evaluates a closed formula set without `eval`, neutralizes CSV injection on export, publishes a bounded semantic document, and applies percent formatting that Clark chose through a host-attached agent binding.

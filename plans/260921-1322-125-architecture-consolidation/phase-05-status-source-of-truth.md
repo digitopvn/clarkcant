@@ -1,7 +1,7 @@
 ---
 phase: 5
 title: "Một nguồn sự thật cho implementation status"
-status: pending
+status: done
 priority: P2
 effort: "1-1.5 ngày"
 dependencies: [4]
