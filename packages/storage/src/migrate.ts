@@ -1637,6 +1637,39 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    /*
+     * The accounts a package's service works on, connected by the host. The status row is what any surface may read;
+     * the tokens live in a table of their own that no route lists, apart from the credential store a person sees in
+     * Settings, so a connection's token never shows up as a credential anybody can name or copy.
+     */
+    version: 41,
+    name: "package_connections",
+    reversible: true,
+    up(db) {
+      db.exec(`
+        CREATE TABLE package_connections (
+          connection_ref TEXT PRIMARY KEY,
+          principal_id TEXT NOT NULL,
+          package_id TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('connected', 'partial', 'expired', 'revoked')),
+          granted_scopes TEXT NOT NULL DEFAULT '[]',
+          access_expires_at TEXT,
+          reason TEXT,
+          connected_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (principal_id, package_id)
+        );
+        CREATE TABLE package_connection_tokens (
+          connection_ref TEXT NOT NULL REFERENCES package_connections(connection_ref) ON DELETE CASCADE,
+          kind TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+          value TEXT NOT NULL,
+          PRIMARY KEY (connection_ref, kind)
+        );
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

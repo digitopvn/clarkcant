@@ -6,6 +6,7 @@ import { resourceRequestSchema } from "./resource-profiles.ts";
 import { networkOriginSchema } from "./network-origin.ts";
 import { browserTokensProblems, browserTokensSchema } from "./browser-token.ts";
 import { serviceEgressProblems, serviceEgressSchema } from "./service-egress.ts";
+import { connectionScopeSchema, serviceConnectionProblems, serviceConnectionSchema } from "./service-connection.ts";
 
 export { networkOriginProblem, networkOriginSchema } from "./network-origin.ts";
 
@@ -101,6 +102,11 @@ export const serviceCapabilityDeclarationSchema = z.strictObject({
   effectCategory: effectCategorySchema,
   /** Absent means the capability remains an ordinary request/response call. */
   execution: z.strictObject({ kind: z.literal("job"), version: z.literal(1) }).optional(),
+  /**
+   * The connection scopes this capability needs (`service-connection.ts`). Only meaningful when the facet declares a
+   * `connection`; a capability whose scopes the account did not grant is not ready, and says which scope is missing.
+   */
+  requiredScopes: z.array(connectionScopeSchema).min(1).max(16).optional(),
 });
 export type ServiceCapabilityDeclaration = z.infer<typeof serviceCapabilityDeclarationSchema>;
 
@@ -123,6 +129,11 @@ export const toolsFacetSchema = z.strictObject({
    * the service reaches nothing, as before: its container has no network either way (`service-egress.ts`).
    */
   egress: serviceEgressSchema.optional(),
+  /**
+   * The account the service works on, connected by the host (`service-connection.ts`). The host adds its credential
+   * to egress requests for the declared endpoints; the service and its widget never hold it.
+   */
+  connection: serviceConnectionSchema.optional(),
 });
 export type ToolsFacet = z.infer<typeof toolsFacetSchema>;
 
@@ -291,6 +302,11 @@ export function manifestProblems(manifest: PackageManifest): string[] {
     for (const problem of browserTokensProblems(facet.browserTokens)) problems.push(`facet ${facet.id}: browserTokens ${problem}`);
   }
 
+  // One account per package: two facets each connecting would be two accounts a person could not tell apart in Settings.
+  if (manifest.facets.filter((facet) => facet.kind === "tools" && facet.connection !== undefined).length > 1) {
+    problems.push("facets: a package declares at most one connection");
+  }
+
   const refs = new Set<string>();
   for (const facet of manifest.facets) {
     if (facet.kind !== "tools") continue;
@@ -310,6 +326,26 @@ export function manifestProblems(manifest: PackageManifest): string[] {
     }
     if (facet.egress !== undefined) {
       for (const problem of serviceEgressProblems(facet.egress)) problems.push(`facet ${facet.id}: egress ${problem}`);
+    }
+    const connection = facet.connection;
+    if (connection !== undefined) {
+      for (const problem of serviceConnectionProblems(connection)) problems.push(`facet ${facet.id}: connection ${problem}`);
+      // One origin, one credential: an endpoint the connection's token goes to cannot also carry an egress secret.
+      for (const entry of facet.egress?.origins ?? []) {
+        if (connection.endpoints.includes(entry.origin)) {
+          problems.push(`facet ${facet.id}: ${entry.origin} is both an egress origin and a connection endpoint`);
+        }
+      }
+    }
+    const declared = new Set(connection?.scopes.map((entry) => entry.scope) ?? []);
+    for (const capability of facet.capabilities) {
+      for (const scope of capability.requiredScopes ?? []) {
+        if (connection === undefined) {
+          problems.push(`facet ${facet.id}: capability ${capability.ref} requires scope ${scope}, but the facet declares no connection`);
+        } else if (!declared.has(scope)) {
+          problems.push(`facet ${facet.id}: capability ${capability.ref} requires scope ${scope}, which the connection does not request`);
+        }
+      }
     }
   }
 

@@ -32,3 +32,4 @@ export * from "./peer-allowances.ts";
 export * from "./task-artifacts.ts";
 export * from "./jobs.ts";
 export * from "./conversation-deletion.ts";
+export * from "./package-connections.ts";

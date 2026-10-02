@@ -54,9 +54,9 @@ describe("what is written down", () => {
     // asked not to be notified about; 34 records what a paired node says it takes and what it calls itself; 35 records
     // the work a person started again from its notice and the versions they skipped; 36 carries the stored theme choice
     // into the colour-scheme preference; 37 records the files a task handed to a paired node brought back; 38 holds the files a widget holds by reference;
-    // 39 lets a person delete a conversation; 40 keeps package jobs. The schema version is the count of migrations that
-    // have run.
-    expect(currentSchemaVersion(db)).toBe(40);
+    // 39 lets a person delete a conversation; 40 keeps package jobs; 41 keeps the accounts package services connect to.
+    // The schema version is the count of migrations that have run.
+    expect(currentSchemaVersion(db)).toBe(41);
   });
 
   it("reads back newest first, with the fields it was given", () => {

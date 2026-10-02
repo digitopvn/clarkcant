@@ -18,7 +18,8 @@ import type { Database } from "./db.ts";
  * `model` is which model a dispatched task's worker was started on, how it was chosen and where its key came from —
  * never the key. `egress` is a request the host made for a package service: the package, method, origin and secret
  * name — never a path, a body or a value. `browser-token` is a provider token issued to, refused for or withdrawn from
- * a widget instance: the provider and the instance — never the token, its id or its scopes.
+ * a widget instance: the provider and the instance — never the token, its id or its scopes. `connection` is a package's
+ * account connection started, made, renewed or ended: the package, the provider and the scopes — never a token or code.
  */
 export type AuditKind =
   | "command"
@@ -30,7 +31,8 @@ export type AuditKind =
   | "peer"
   | "model"
   | "egress"
-  | "browser-token";
+  | "browser-token"
+  | "connection";
 export type AuditOutcome = "done" | "failed" | "refused" | "stopped";
 
 export interface AuditEvent {
