@@ -91,7 +91,7 @@ function toDataUrl(mimeType, chunks) {
       binary += String.fromCharCode.apply(null, chunk.subarray(index, index + 0x8000));
     }
   }
-  return `data:${mimeType};base64,${btoa(binary)}`;
+  return `data:${mimeType};base64,${window.btoa(binary)}`;
 }
 
 function start() {
@@ -172,7 +172,7 @@ function start() {
       });
   };
   field.addEventListener("input", () => {
-    clearTimeout(draftTimer);
+    window.clearTimeout(draftTimer);
     draftTimer = setTimeout(writeDraft, DRAFT_WRITE_DELAY_MS);
   });
   api.state.subscribe((next) => {
@@ -213,7 +213,7 @@ function start() {
 
   let listTimer;
   const refresh = () => {
-    clearTimeout(listTimer);
+    window.clearTimeout(listTimer);
     if (!api.jobs.available()) return;
     void api.jobs
       .list()
@@ -345,7 +345,7 @@ function start() {
     if (key !== drawnGallery) {
       drawnGallery = key;
       const focused = document.activeElement;
-      const focusKey = focused instanceof HTMLElement && gallery.contains(focused)
+      const focusKey = focused instanceof window.HTMLElement && gallery.contains(focused)
         ? [focused.closest("[data-image-item]")?.getAttribute("data-image-item"), focused.hasAttribute("data-image-export") ? "export" : "attach"]
         : undefined;
       gallery.replaceChildren(...shown.map(({ job, ref }, index) => galleryItem(job, ref, index)));
@@ -449,7 +449,7 @@ function start() {
   }
   new window.ResizeObserver(report).observe(document.body);
   api.lifecycle.onDispose(() => {
-    clearTimeout(listTimer);
+    window.clearTimeout(listTimer);
     for (const stop of following.values()) stop();
   });
 }
