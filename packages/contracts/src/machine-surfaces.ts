@@ -58,6 +58,9 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
         (first === "conversations" && third === "delete") ||
         (first === "peers" && third === "confirm") ||
         (first === "app-intents" && second === "host-control") ||
+        // POST /app-intents/widget-perform/:performId: the screen's report of what a widget's frame did with an action
+        // Clark asked it to perform. Forged, it would tell Clark a widget changed what it never changed.
+        (first === "app-intents" && second === "widget-perform") ||
         (first === "effects" && third === "reconcile") ||
         // POST /artifacts/:id/export: Save As, the bytes of an artifact written to a file on the person's machine.
         (first === "artifacts" && third === "export") ||

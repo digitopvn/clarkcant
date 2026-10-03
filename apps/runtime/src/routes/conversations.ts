@@ -135,7 +135,7 @@ import { exportTableCsv } from "./table-export.ts";
  */
 export type ConversationServices = Pick<
   NodeServices,
-  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl" | "hostControl"
+  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl" | "hostControl" | "widgetPerforms"
 >;
 
 /** What the conversation routes need. */
@@ -471,6 +471,13 @@ function resolveLiveWidget(
          * frame that may use it. Every request is still decided by the node against the declaration.
          */
         ...(isolated.browserTokens.length === 0 ? {} : { browserTokens: isolated.browserTokens.map((entry) => entry.provider) }),
+        /*
+         * The actions the package declared it offers to Clark, by name, so host chrome offers `actions.perform@1` only to
+         * a frame that has some. Which one runs, with what input, is still decided on the node before the frame is asked.
+         */
+        ...((isolated.definition.offeredActions ?? []).length === 0
+          ? {}
+          : { offeredActions: (isolated.definition.offeredActions ?? []).map((offered) => offered.name) }),
       },
       /*
        * The same shape the composition path returns, and for the same reason: an invocation is re-authorized
@@ -2094,7 +2101,7 @@ function sse(event: string, payload: unknown): string {
  * long since been written.
  */
 async function streamUserMessage(
-  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "hostControl">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "hostControl" | "widgetPerforms">,
   input: {
     conversationId: string;
     principal: Principal;
@@ -2134,6 +2141,11 @@ async function streamUserMessage(
           // tool is waiting to hear it.
           services.hostControl.expect(event.decision);
           send(sse("host-control", { decision: event.decision }));
+        } else if (event.type === "widget-perform") {
+          // An action Clark asked a widget's frame to perform. Only this page can reach the mounted frame, so it is
+          // expected before it is sent, and the dispatch waits for the page's report of what the frame answered.
+          services.widgetPerforms.expect(event.request.performId);
+          send(sse("widget-perform", { request: event.request }));
         }
       },
     });

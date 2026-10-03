@@ -420,3 +420,24 @@ describe("the page's report on an agent-issued action", () => {
     expect((await request("POST", "/app-intents/host-control/bad%20id", { ran: true, say: "" })).status).toBe(400);
   });
 });
+
+describe("the page's report on an action Clark asked a widget to perform", () => {
+  it("settles the perform the dispatch is waiting on, once", async () => {
+    services.widgetPerforms.expect("perform_1");
+    const waiting = services.widgetPerforms.wait("perform_1");
+    const reported = await request("POST", "/app-intents/widget-perform/perform_1", { status: "done", output: "Đã định dạng B2:C3." });
+    expect(reported.status).toBe(200);
+    expect(await waiting).toEqual({ status: "done", output: "Đã định dạng B2:C3." });
+
+    const again = await request("POST", "/app-intents/widget-perform/perform_1", { status: "done" });
+    expect(again.status).toBe(404);
+    expect(json(again).code).toBe("WIDGET_PERFORM_NOT_EXPECTED");
+  });
+
+  it("refuses a report for a perform nobody sent, and a malformed one", async () => {
+    expect((await request("POST", "/app-intents/widget-perform/never_sent", { status: "done" })).status).toBe(404);
+    services.widgetPerforms.expect("perform_2");
+    expect((await request("POST", "/app-intents/widget-perform/perform_2", { status: "maybe" })).status).toBe(400);
+    expect((await request("POST", "/app-intents/widget-perform/bad%20id", { status: "done" })).status).toBe(400);
+  });
+});

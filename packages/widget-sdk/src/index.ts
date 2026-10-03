@@ -47,6 +47,16 @@ export const JOBS_EXTENSION = "jobs@1";
  * widget asks only when this is in `init.extensions` too: `jobs.canList()`.
  */
 export const JOBS_LIST_EXTENSION = "jobs.list@1";
+/**
+ * Clark asking the frame to perform an action its definition offers (`offeredActions`).
+ *
+ * The host sends `action.perform` with input it has already checked against the declared schema, and the frame answers
+ * with `action.performed`; that answer is what Clark is told. A frame offers a handler with `actions.offer(name, …)`.
+ * Advertised in `init.extensions`, so a runtime older than it never receives a perform it cannot answer.
+ */
+export const ACTIONS_PERFORM_EXTENSION = "actions.perform@1";
+/** How long the answer to one perform may be. */
+export const PERFORM_OUTPUT_MAX_CHARS = 4_000;
 
 /**
  * Short-lived provider tokens for a frame whose package declared them: `tokens@1`.
@@ -324,6 +334,17 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
     nonce: z.string().min(16).max(200),
     job: jobSnapshotWireSchema,
   }),
+  /**
+   * Perform one action this widget offers (`actions.perform@1`), with input the host checked against the declared
+   * schema. Answered by an `action.performed` with the same `performId`.
+   */
+  z.strictObject({
+    kind: z.literal("action.perform"),
+    nonce: z.string().min(16).max(200),
+    performId: z.string().min(1).max(128),
+    action: z.string().min(1).max(64),
+    input: z.record(z.string(), z.unknown()),
+  }),
   /** The answer to one `token.request`: a token, or the host's code and sentence, such as `TOKEN_PROVIDER_UNSCOPED`. */
   z.strictObject({
     kind: z.literal("token-result"),
@@ -414,6 +435,19 @@ export const widgetToHostSchema = z.discriminatedUnion("kind", [
     nonce: z.string().min(16).max(200),
     requestId: z.string().min(1).max(128),
     request: tokenRequestSchema,
+  }),
+  /**
+   * The frame's answer to one `action.perform`: `done` with what it did, in a sentence or a short value, or `refused`
+   * with its code and why. Only a perform the host is waiting for is accepted.
+   */
+  z.strictObject({
+    kind: z.literal("action.performed"),
+    nonce: z.string().min(16).max(200),
+    performId: z.string().min(1).max(128),
+    status: z.enum(["done", "refused"]),
+    output: z.string().max(PERFORM_OUTPUT_MAX_CHARS).optional(),
+    code: z.string().min(1).max(60).optional(),
+    message: z.string().min(1).max(600).optional(),
   }),
 ]);
 export type WidgetToHostMessage = z.infer<typeof widgetToHostSchema>;
@@ -507,6 +541,14 @@ export interface WidgetAuthorApi {
     availability(): readonly ActionAvailability[];
     /** Called whenever the host reports a change in which service-backed bindings can run. */
     subscribe(handler: (availability: readonly ActionAvailability[]) => void): void;
+    /**
+     * Handle an action this widget's definition offers (`offeredActions`), when Clark asks for it (`actions.perform@1`).
+     *
+     * The input has been checked by the host against the declared schema. Return (or resolve with) a short sentence
+     * saying what was done — it is what Clark is told — and throw to refuse, with `CODE: why` as the message when there
+     * is a code to give. May be called before init. Returns a function that stops handling it.
+     */
+    offer(name: string, handler: (input: Record<string, unknown>) => string | undefined | Promise<string | undefined>): () => void;
   };
   capabilities: { request(capabilityRef: string, justification: string): Promise<void> };
   host: {

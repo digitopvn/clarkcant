@@ -894,3 +894,50 @@ describe("the tokens@1 extension", () => {
     await expect(asking).rejects.toThrow(/disposed/);
   });
 });
+
+describe("actions.perform@1", () => {
+  const performed = (bus: ReturnType<typeof channel>) => bus.sent.filter((message) => (message as { kind?: string }).kind === "action.performed");
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("runs the offered handler with the host's input and answers with what it said", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    const seen: unknown[] = [];
+    // Offered before init: registering a handler is not a send.
+    runtime.api().actions.offer("format", (input) => {
+      seen.push(input);
+      return "formatted B2:B4";
+    });
+    bus.deliver(initMessage({ extensions: ["actions.perform@1"] }));
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "format", input: { format: "percent" } });
+    await flush();
+    expect(seen).toEqual([{ format: "percent" }]);
+    expect(performed(bus)).toEqual([{ kind: "action.performed", nonce: NONCE, performId: "perf_1", status: "done", output: "formatted B2:B4" }]);
+  });
+
+  it("refuses an action it does not handle, and keeps a thrown code", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    runtime.api().actions.offer("format", () => {
+      throw new Error("NO_SELECTION: select some cells first");
+    });
+    bus.deliver(initMessage({ extensions: ["actions.perform@1"] }));
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "rename", input: {} });
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_2", action: "format", input: {} });
+    await flush();
+    expect(performed(bus)).toEqual([
+      expect.objectContaining({ performId: "perf_1", status: "refused", code: "ACTION_NOT_OFFERED" }),
+      expect.objectContaining({ performId: "perf_2", status: "refused", code: "NO_SELECTION", message: "select some cells first" }),
+    ]);
+  });
+
+  it("refuses a perform when the host did not offer the extension", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    runtime.api().actions.offer("format", () => "done");
+    bus.deliver(initMessage());
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "format", input: {} });
+    await flush();
+    expect(performed(bus)).toEqual([expect.objectContaining({ status: "refused", code: "EXTENSION_NOT_OFFERED" })]);
+  });
+});

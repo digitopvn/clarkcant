@@ -399,6 +399,17 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           // A long-running capability starts through this conversation's widget binding to it, which follows the job.
           widgets: () => deps.services(),
         },
+        // "Put a spreadsheet here", then "format this as a percentage": the widget placed with its offered actions
+        // bound, and each perform through the same widget-action path a press takes, asked of the page showing it.
+        widgets: {
+          place: { services: deps.services, conversationId: turn.conversationId, messageId: () => turn.messageId?.() },
+          perform: {
+            services: deps.services,
+            conversationId: turn.conversationId,
+            onEvent: turn.onEvent,
+            channel: turn.channel,
+          },
+        },
         // "Show map tiles from X" or "turn map tiles off": the same write Settings makes, as the execution policy decides.
         mapTiles: {
           deps: () => ({

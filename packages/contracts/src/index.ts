@@ -23,6 +23,7 @@ export * from "./install.ts";
 export * from "./directory.ts";
 export * from "./widgets.ts";
 export * from "./widget-state.ts";
+export * from "./widget-perform.ts";
 export * from "./table-view.ts";
 export * from "./composition-graph.ts";
 export * from "./widget-semantic.ts";

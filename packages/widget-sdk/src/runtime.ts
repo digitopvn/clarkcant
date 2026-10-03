@@ -1,4 +1,6 @@
 import {
+  ACTIONS_PERFORM_EXTENSION,
+  PERFORM_OUTPUT_MAX_CHARS,
   APPEARANCE_EXTENSION,
   ARTIFACT_BRIDGE_LIMITS,
   ARTIFACTS_EXTENSION,
@@ -117,6 +119,8 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     string,
     { actionBindingId: string; resolve: (value: string | undefined) => void; reject: (error: Error) => void }
   >();
+  /** Handlers for the actions this widget offers Clark (`actions.perform@1`), by the name its definition declares. */
+  const offeredHandlers = new Map<string, (input: Record<string, unknown>) => string | undefined | Promise<string | undefined>>();
   let availability: readonly ActionAvailability[] = [];
   const availabilityHandlers = new Set<(availability: readonly ActionAvailability[]) => void>();
   /** Extensions the host offered in `init`. A call into one it did not offer is refused here, never sent. */
@@ -362,6 +366,11 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       return;
     }
 
+    if (message.kind === "action.perform") {
+      void perform(message);
+      return;
+    }
+
     if (message.kind === "job.changed") {
       for (const subscription of jobSubscriptions) {
         if (!subscription.closed && subscription.jobId === message.job.jobId) deliverJob(subscription, message.job);
@@ -380,6 +389,48 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     if (message.status === "accepted") waiter.resolve(message.output);
     else waiter.reject(new Error(message.message));
   };
+
+  /**
+   * Run one offered action the host asked for, and answer it — always, once.
+   *
+   * A name nothing here handles is refused with `ACTION_NOT_OFFERED`, so the host's wait ends with a reason rather than
+   * at its timeout. A handler that throws refuses with its message (a `CODE: why` message keeps its code). An answer
+   * that carries a token this frame was given is refused rather than sent, as any other way out of the frame is.
+   */
+  async function perform(message: Extract<HostToWidgetMessage, { kind: "action.perform" }>): Promise<void> {
+    const answer = (fields: { status: "done" | "refused"; output?: string; code?: string; message?: string }): void => {
+      if (status === "disposed" || nonce === undefined) return;
+      send({ kind: "action.performed", nonce, performId: message.performId, ...fields });
+    };
+    if (!extensions.has(ACTIONS_PERFORM_EXTENSION)) {
+      answer({ status: "refused", code: "EXTENSION_NOT_OFFERED", message: `the host did not offer ${ACTIONS_PERFORM_EXTENSION} to this frame` });
+      return;
+    }
+    const handler = offeredHandlers.get(message.action);
+    if (handler === undefined) {
+      answer({ status: "refused", code: "ACTION_NOT_OFFERED", message: `this widget does not handle an action named "${message.action}" right now` });
+      return;
+    }
+    try {
+      const output = await handler(freezeSnapshot(structuredClone(message.input)));
+      if (output !== undefined && carriesToken(output)) {
+        answer({ status: "refused", code: "TOKEN_NOT_ALLOWED", message: TOKEN_LEAK.slice("TOKEN_NOT_ALLOWED: ".length) });
+        return;
+      }
+      answer({
+        status: "done",
+        ...(output === undefined || output === "" ? {} : { output: String(output).slice(0, PERFORM_OUTPUT_MAX_CHARS) }),
+      });
+    } catch (cause) {
+      const text = cause instanceof Error ? cause.message : String(cause);
+      const coded = /^([A-Z][A-Z0-9_]{1,59}): (.+)$/su.exec(text);
+      answer({
+        status: "refused",
+        code: coded?.[1] ?? "ACTION_REFUSED",
+        message: (coded?.[2] ?? text).slice(0, 600) || "the widget refused the action",
+      });
+    }
+  }
 
   deps.endpoint.addEventListener("message", handleMessage);
 
@@ -588,6 +639,12 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       availability: () => availability,
       subscribe: (handler) => {
         availabilityHandlers.add(handler);
+      },
+      offer: (name, handler) => {
+        offeredHandlers.set(name, handler);
+        return () => {
+          if (offeredHandlers.get(name) === handler) offeredHandlers.delete(name);
+        };
       },
     },
     capabilities: {
