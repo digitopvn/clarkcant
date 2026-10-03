@@ -340,7 +340,10 @@ Mỗi widget definition phải khai báo:
 - text fallback;
 - effect categories;
 - dataset refs;
-- entry artifact cho executable UI.
+- entry artifact cho executable UI;
+- `offeredActions` — tối đa 16 hành động một widget cách ly cho phép Clark thực hiện, mỗi hành động là `{name, label,
+  description, inputSchema}` với input schema kiểu object. Chúng được gắn như mọi hành động khác và được thực hiện qua
+  `actions.perform@1` ([§10.3](#103-hành-động-clark-thực-hiện-actionsperform1)).
 
 Không dùng props như một kênh truyền code, callback, HTML tùy ý, secret hoặc arbitrary URL.
 
@@ -1694,6 +1697,7 @@ Author-facing target:
     actions.invoke(bindingId, input, invocationId)
     actions.availability()
     actions.subscribe(handler)
+    actions.offer(name, handler)
 
     capabilities.request(ref, justification)
 
@@ -1973,6 +1977,67 @@ Kiểm thử: [jobs.spec.ts](../packages/contracts/test/jobs.spec.ts) cho các q
 [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) cho SDK, và hành trình trên trình duyệt
 [package-job.spec.ts](../apps/web/e2e/package-job.spec.ts). Hành trình đó theo dõi tiến độ của một service thật qua
 một lần tải lại, từ chối một JobRef giả, huỷ từ widget, hoàn tất kèm một tệp và kết thúc một job bằng Dừng khẩn cấp.
+
+### 10.3 Hành động Clark thực hiện (`actions.perform@1`)
+
+Một widget cách ly có thể cho Clark làm một việc bên trong nó, như định dạng các ô đang chọn hay thay đoạn văn bản đang
+chọn. Widget khai báo những gì nó cho phép; Clark yêu cầu; frame làm việc đó và nói điều đã xảy ra. Clark không bao giờ
+ghi vào frame và không bao giờ tự phê duyệt hành động.
+
+**Khai báo.** Definition liệt kê `offeredActions` (tối đa 16), mỗi mục có `name` (chữ cái, chữ số, `_` hoặc `-`),
+`label`, `description` và một `inputSchema` kiểu object. Một hành động được cho phép là một đề xuất `perform {action}`:
+nó được biên dịch như mọi action binding, với effect category `local-write` và input schema đã khai báo, và một hành
+động definition không cho phép bị từ chối ngay khi biên dịch.
+
+**Đặt widget.** Công cụ agent `place_widget` đặt một widget từ một package đã cài, đang hoạt động, có renderer
+`isolated-app`. `list` cho thấy id, props schema và các hành động được cho phép của từng widget đã cài; `place` gắn mọi
+hành động được cho phép và, tuỳ chọn, tối đa 4 nút "Nhờ Clark", mỗi nút được gắn vào một prop kiểu chuỗi mà widget đọc
+(prop, nhãn, ý định và `contextRefs` tuỳ chọn). Đây là đường đi của sản phẩm cho một widget của package nhận binding
+trong một bản cài thật.
+
+**Thực hiện.** Công cụ agent `perform_widget_action` dùng `list` để liệt kê các hành động mà widget trong hội thoại này
+cho phép, kèm binding id và input schema, và dùng `perform` để thực hiện một hành động theo binding id. Nó đi cùng đường
+với một lần bấm: cổng của binding, input được kiểm tra theo schema đã khai báo (`INVALID_INPUT`), chính sách thực thi,
+sổ hiệu ứng (effect ledger) và dòng audit "Clark asked widget … to perform …". Kết quả được đánh dấu là của Clark
+(`performedBy: "clark"`). Một cú bấm của người dùng vào binding perform bị từ chối (`NOT_AUTHORIZED`): các nút của chính
+frame làm việc đó trực tiếp.
+
+**Chính sách quyết định; không ai tự phê duyệt cho mình.** Chính sách từ chối thì trả `POLICY_REFUSED`. Chính sách muốn
+hỏi người dùng trước thì hiện tại trả `PERFORM_NEEDS_APPROVAL`: chưa có thẻ phê duyệt cho một lần perform, nên không có
+gì chạy. Cả widget lẫn model đều không phê duyệt được.
+
+**Frame làm việc đó.** Node stream một sự kiện `widget-perform` tới trang đang chạy lượt (hoặc phiên giọng nói); trang
+chuyển nó cho frame đã mount dưới dạng `action.perform` và báo câu trả lời `action.performed` của frame tại
+`POST /app-intents/widget-perform/{performId}` ([giao diện mở](open-interfaces.vi.md)). Trong frame:
+
+```js
+const stop = api.actions.offer("format", async (input) => {
+  if (busy) throw new Error("SHEET_BUSY: bảng đang bận; hãy thử lại sau giây lát.");
+  applyFormat(input.format);
+  return `Đã định dạng ${selection} thành ${input.format}.`; // điều Clark được báo, tối đa 4.000 ký tự
+});
+```
+
+Handler nhận một bản sao đã đóng băng của input đã kiểm tra. Chuỗi trả về là kết quả của công cụ; một lỗi
+`"CODE: message"` được ném ra là một lời từ chối với mã đó (mọi lỗi khác là `ACTION_REFUSED`). Hành động không có
+handler bị từ chối với `ACTION_NOT_OFFERED`, và output mang token bị từ chối với `TOKEN_NOT_ALLOWED`.
+
+**Không mở thì không thực hiện.** Khi không trang nào đang hiện widget, hoặc frame chưa được mount và sẵn sàng, công cụ
+bị từ chối với `FRAME_NOT_MOUNTED`. Không có gì được xếp hàng để làm sau và không có gì tới được widget. Frame có 6 giây
+để trả lời; node chờ tối đa 8 giây. Frame không trả lời, hoặc một lần Dừng trong lúc chờ, để lại kết quả không chắc chắn
+(`WIDGET_NO_ANSWER`, `WIDGET_PERFORM_STOPPED`): sổ hiệu ứng ghi là không rõ và Clark không tự hỏi lại. Một lời từ chối
+giải phóng invocation, nên có thể thử lại.
+
+**Giọng nói.** Một yêu cầu bằng lời nói tới cùng công cụ đó qua lượt của Clark trong phiên giọng nói. Một lần bấm nút
+widget bằng giọng nói không trực tiếp thực hiện một hành động được cho phép.
+
+Kiểm thử: [widget-perform.spec.ts](../apps/runtime/test/widget-perform.spec.ts) cho hành động chưa khai báo, input sai
+schema, frame chưa mount, hết thời gian chờ, chính sách, giọng nói và các công cụ;
+[app-intents.spec.ts](../apps/runtime/test/app-intents.spec.ts) cho báo cáo của trang;
+[session.spec.ts](../packages/widget-host/test/session.spec.ts) và
+[runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) cho bridge; và hành trình trên trình duyệt
+[widget-perform.spec.ts](../apps/web/e2e/widget-perform.spec.ts), định dạng một vùng bảng tính và thay đoạn đang chọn
+của trình soạn thảo từ điều người dùng gõ trong ô soạn tin.
 
 ---
 
@@ -3159,11 +3224,10 @@ Khoảng đang chọn cũng là một id được chọn (`chars:6-11`). Host gi
 lời của chính widget.
 
 **Nhờ Clark sửa đoạn đang chọn.** Trình soạn thảo bấm một binding `agent` có `contextRefs` là
-`["selection", "widget"]`, được nêu tên qua prop `rewriteBinding`. Hiện tại chỉ model kịch bản (fixture) của repository
-đặt trình soạn thảo kèm binding đó; chưa có đường nào của sản phẩm đặt một widget từ package đã cài kèm binding. Vì vậy
-trong một bản cài thật, nút này vẫn bị tắt và hiện lý do ("Clark chưa được gắn vào trình soạn thảo này…") cho đến khi
-[#382](https://github.com/digitopvn/clarkcant/issues/382) hoàn tất. Khi có binding và người dùng bấm *Nhờ Clark viết lại
-đoạn chọn*:
+`["selection", "widget"]`, được nêu tên qua prop `rewriteBinding`. `place_widget`
+([§10.3](#103-hành-động-clark-thực-hiện-actionsperform1)) gắn binding đó khi Clark đặt trình soạn thảo kèm nút này; nếu
+không có binding, nút bị tắt và hiện lý do ("Clark chưa được gắn vào trình soạn thảo này…"). Khi có binding và người
+dùng bấm *Nhờ Clark viết lại đoạn chọn*:
 
 1. Trình soạn thảo chỉ hỏi về một đoạn chọn mà host chuyển cho Clark nguyên vẹn. Host làm phẳng xuống dòng, tab và các
    dãy khoảng trắng, bỏ ký tự vô hình, che nội dung giống khoá bí mật và cắt một giá trị ở 200 đơn vị UTF-16, nên đoạn
@@ -3194,11 +3258,14 @@ trong một bản cài thật, nút này vẫn bị tắt và hiện lý do ("Cl
 Clark không bao giờ ghi vào frame, và không model nào phê duyệt một lần lưu: xuất tệp vẫn là hành động của người dùng
 trong hộp hỏi của host.
 
-**Khoảng trống đã biết.** Hiện tại, gõ yêu cầu trong ô soạn tin ("rút ngắn dòng thứ hai") không thể thay đổi trình soạn
-thảo, và chưa có đường nào của sản phẩm đặt trình soạn thảo kèm binding viết lại. Chưa có công cụ agent nào thực hiện
-được action riêng của một widget cách ly, nên thay đổi chỉ đến được frame qua nút của chính trình soạn thảo. Clark vẫn
-đọc được trình soạn thảo qua ghi chú lượt kế tiếp và `inspect_ui`. Cả hai được theo dõi ở
-[#382](https://github.com/digitopvn/clarkcant/issues/382).
+**Yêu cầu từ ô soạn tin.** Trình soạn thảo cho phép `replaceSelection` (`{text, expected?}`, text tối đa 4.000 ký tự) qua
+`actions.perform@1` ([§10.3](#103-hành-động-clark-thực-hiện-actionsperform1)). Khi người dùng gõ một yêu cầu như "viết
+hoa đoạn đang chọn", Clark có thể gọi `perform_widget_action` với đoạn thay thế và đoạn văn bản nó đã đọc làm
+`expected`. Trình soạn thảo từ chối khi đang bận (`EDITOR_BUSY`), khi không có đoạn chọn dùng được
+(`NO_USABLE_SELECTION`) hoặc khi đoạn chọn không còn đúng `expected` (`SELECTION_CHANGED`); nếu không, nó bỏ các ký tự
+điều khiển, thay đoạn chọn qua cơ chế soạn thảo của trình duyệt để Ctrl+Z hoàn tác được, và báo "Clark đã thay đoạn đã
+chọn. Thay đổi chưa được lưu vào tệp; Ctrl+Z để hoàn tác." Thay đổi là một chỉnh sửa chưa lưu; lưu vẫn là hành động của
+người dùng.
 
 **Trợ năng.** Mọi điều khiển đều là nút gốc hoặc ô văn bản, theo thứ tự tab cố định, với viền focus nhìn thấy được. Hộp
 hỏi của host và các bảng của trình soạn thảo nhận bàn phím tại tiêu đề của chúng, trừ câu hỏi về hai chỗ xem để bàn
@@ -3279,6 +3346,12 @@ hạn, tự mô tả cho Clark và áp dụng một thay đổi do Clark chọn.
   nếu không, nó nói rõ và không thay đổi gì. Vùng chọn bị khoá cho tới khi có câu trả lời. Bảng giữ tối đa 32 định dạng.
   Khi một định dạng mới đẩy định dạng cũ nhất ra, dòng trạng thái nêu tên vùng bị mất định dạng. "Hoàn tác định dạng",
   hoặc Ctrl+Z trong lưới, khôi phục các định dạng trước thay đổi của Clark. Widget không có thao tác hoàn tác nào khác.
+- **Định dạng từ ô soạn tin.** Bảng cho phép `format` (`{format: percent|number|plain, range?}`) qua
+  `actions.perform@1` ([§10.3](#103-hành-động-clark-thực-hiện-actionsperform1)). Khi người dùng gõ "định dạng phần
+  trăm cho vùng này", Clark có thể gọi `perform_widget_action`; bảng định dạng vùng được nêu, hoặc vùng đang chọn khi
+  không nêu vùng nào, và báo trên dòng trạng thái ("Clark đã định dạng B2:C3 thành phần trăm."). Nó từ chối khi đang bận
+  hoặc chỉ đọc (`SHEET_BUSY`), với định dạng không biết (`FORMAT_UNKNOWN`) và với vùng không đọc được hoặc vượt giới hạn
+  của bảng (`RANGE_INVALID`). "Hoàn tác định dạng" lấy lại định dạng của Clark như mọi định dạng khác.
 - **Bàn phím.** Lưới là một điểm dừng Tab duy nhất. Phím mũi tên để di chuyển, Shift mở rộng vùng chọn, Home/End và
   Ctrl+Home/End để nhảy, Page Up/Down để lật trang. Enter hoặc F2 để sửa, gõ phím để bắt đầu sửa, và Enter xác nhận rồi
   xuống dưới. Escape huỷ lần sửa hoặc thu vùng chọn về ô hiện tại. Delete xoá vùng chọn, và Ctrl+Z hoàn tác định dạng
@@ -3288,11 +3361,8 @@ hạn, tự mô tả cho Clark và áp dụng một thay đổi do Clark chọn.
   vuốt để cuộn lưới. "Chọn vùng" làm các lần chạm sau mở rộng vùng chọn từ ô đã chạm trước đó; chạm lại để tắt. Các nút
   cao ít nhất 40 px.
 
-Hai giới hạn được nói rõ thay vì giấu đi. Hiện chưa có gì trong sản phẩm đặt một widget của package kèm một hành động đã
-gắn: trong bộ kiểm thử trình duyệt, node fixture đặt bảng tính và biên dịch binding của nó theo cách host biên dịch đề
-xuất của model. Và một yêu cầu gõ trong ô soạn tin tới được Clark qua ghi chú ngữ nghĩa nhưng không thay đổi được frame.
-Cả hai được theo dõi ở [#382](https://github.com/digitopvn/clarkcant/issues/382). Một lần bấm ngay sau khi vùng chọn
-đổi không nằm trong số đó: trước khi chạy lần bấm, host gửi tài liệu ngữ nghĩa đang chờ của widget và chờ đến khi node
+`place_widget` đặt bảng tính và gắn cả hành động `format` được cho phép lẫn, khi được yêu cầu, `formatBinding` của nút
+"định dạng phần trăm". Trước khi chạy một lần bấm, host gửi tài liệu ngữ nghĩa đang chờ của widget và chờ đến khi node
 đã giữ nó ([§24.1](#241-trình-soạn-thảo-văn-bản)), nên Clark đọc đúng vùng đã chọn lúc bấm. Một câu trả lời nêu vùng
 khác vẫn bị từ chối, và không có gì thay đổi.
 
@@ -3362,9 +3432,9 @@ khi service gọi tới nhà cung cấp bằng một key mà nó không bao gi�
   Cả hai vượt qua `clark widget test` và `pack` ngay khi được tạo. `pure-ui` và cả hai template này đi qua cùng một bộ
   sao chép trong CLI.
 
-Hiện chỉ có model fixture có kịch bản của repository đặt widget kèm `generateBinding`. Chưa có đường đi nào của sản
-phẩm đặt một widget của package đã cài kèm binding ([#382](https://github.com/digitopvn/clarkcant/issues/382)), nên
-trong một bản cài thật widget sẽ nói nó chưa được gắn với service.
+Hiện chỉ có model fixture có kịch bản của repository đặt widget kèm `generateBinding`. `place_widget`
+([§10.3](#103-hành-động-clark-thực-hiện-actionsperform1)) gắn các hành động widget cho phép và các nút "Nhờ Clark",
+không gắn binding tới capability của một service, nên trong một bản cài thật widget sẽ nói nó chưa được gắn với service.
 
 Kiểm thử: [service-job.spec.ts](../examples/reference-apps/image-generator/test/service-job.spec.ts) cho service với
 nhà cung cấp giả qua job host, egress broker và artifact broker (hoàn tất, tiến độ, POST bắt đầu một ảnh, thất bại, key
@@ -3408,9 +3478,9 @@ theo dõi được và dừng được. `clark widget init --template media-tool
 - **Nhịp của fixture.** Node khởi động với `CC_MODEL_FIXTURE=1` giữ lại mỗi câu trả lời cho lần đọc tệp của service
   700 ms (`timings.artifactReadDelayMs` của service host), để hành trình theo dõi được tiến độ và dừng một lần dựng giữa
   chừng. Công cụ của service không có tham số điều nhịp, template `media-tool` cũng vậy.
-- **Đặt widget.** Hiện chỉ fixture model có kịch bản của repo mới đặt widget kèm `renderBinding`. Chưa có đường nào
-  trong sản phẩm đặt widget của một package đã cài kèm binding
-  ([#382](https://github.com/digitopvn/clarkcant/issues/382)), nên trong bản cài thật nút Dựng hiện lý do đó.
+- **Đặt widget.** Hiện chỉ fixture model có kịch bản của repo mới đặt widget kèm `renderBinding`. `place_widget`
+  ([§10.3](#103-hành-động-clark-thực-hiện-actionsperform1)) gắn các hành động được cho phép và các nút "Nhờ Clark",
+  không gắn binding tới capability của một service, nên trong bản cài thật nút Dựng hiện lý do đó.
 
 Test: [wav.spec.ts](../examples/reference-apps/media-render/test/wav.spec.ts) cho phép biến đổi và mã băm cố định,
 [service.spec.ts](../examples/reference-apps/media-render/test/service.spec.ts) cho tiến trình service (tiến độ, huỷ,

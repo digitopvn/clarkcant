@@ -41,8 +41,9 @@ issues is a random test value kept only in its memory. A real provider replaces 
 - `fixtures/` — the four prop sets the conformance suite requires.
 
 Only the repository's scripted fixture model places the widget with its two bindings (`listBinding`,
-`updateBinding`) today, as with the text editor; see
-[digitopvn/clarkcant#382](https://github.com/digitopvn/clarkcant/issues/382).
+`updateBinding`) today. The `place_widget` tool binds a widget's offered actions and "Ask Clark" buttons, not a
+binding to a service's capability; see
+[widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
 
 ## Check it
 
