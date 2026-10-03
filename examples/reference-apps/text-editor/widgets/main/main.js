@@ -604,6 +604,7 @@ function start() {
       if (typeof input.expected === "string" && input.expected !== ask.text) {
         throw new Error("SELECTION_CHANGED: đoạn đang chọn không còn là đoạn Clark đã đọc; không có gì thay đổi");
       }
+      // eslint-disable-next-line no-control-regex
       const replacement = String(input.text ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, "");
       const applied = applyReplacement(doc, ask, replacement);
       if (!applied.ok) throw new Error("SELECTION_CHANGED: đoạn đang chọn đã thay đổi; không có gì thay đổi");
