@@ -81,8 +81,8 @@ export interface FakeNpmRegistryHandle {
   close: () => Promise<void>;
 }
 
-/** Starts a tiny HTTP server that answers exactly like an npm registry would for one package@version: a packument
- * at `GET /<name>` naming a tarball at `GET /tarball.tgz`, with `dist.integrity` computed for real over the bytes
+/** Starts a tiny HTTP server that answers exactly like an npm registry would for one package@version (and the `more`
+ * versions beside it): a packument at `GET /<name>` naming a tarball at `GET /tarball.tgz`, with `dist.integrity` computed for real over the bytes
  * actually served — so `verifyNpmIntegrity` (`packages/core/src/package-fetch.ts`) checks something genuine rather
  * than a value a caller merely trusts. */
 export function startFakeNpmRegistry(input: {
@@ -96,11 +96,41 @@ export function startFakeNpmRegistry(input: {
   wrongIntegrity?: boolean;
   /** Lie about the tarball's size in `content-length`, without changing the actual bytes served. */
   declaredContentLength?: number;
+  /**
+   * More package versions served beside the first one, each at its own tarball path and listed in its name's packument
+   * with a real integrity value: what a journey needs to install one version and be offered the next.
+   */
+  more?: readonly { name: string; version: string; tarball: Buffer }[];
 }): Promise<FakeNpmRegistryHandle> {
   const integrity = `sha512-${createHash("sha512").update(input.tarball).digest("base64")}`;
+  const more = (input.more ?? []).map((entry) => ({
+    ...entry,
+    path: `/tarballs/${encodeURIComponent(entry.name)}/${encodeURIComponent(entry.version)}.tgz`,
+    integrity: `sha512-${createHash("sha512").update(entry.tarball).digest("base64")}`,
+  }));
   return new Promise((resolvePromise) => {
     const server = createServer((req, res) => {
       const url = req.url ?? "";
+      const origin = `http://127.0.0.1:${String((server.address() as { port: number }).port)}`;
+      const served = more.find((entry) => entry.path === url);
+      if (served !== undefined) {
+        res.writeHead(200, { "content-type": "application/octet-stream" });
+        res.end(served.tarball);
+        return;
+      }
+      const versions = more.filter((entry) => url === `/${entry.name}`);
+      if (versions.length > 0 && url !== `/${input.name}`) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            name: versions[0]?.name,
+            versions: Object.fromEntries(
+              versions.map((entry) => [entry.version, { dist: { tarball: `${origin}${entry.path}`, integrity: entry.integrity } }]),
+            ),
+          }),
+        );
+        return;
+      }
       if (url === `/${input.name}`) {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
@@ -109,10 +139,13 @@ export function startFakeNpmRegistry(input: {
             versions: {
               [input.version]: {
                 dist: {
-                  tarball: `http://127.0.0.1:${String((server.address() as { port: number }).port)}/tarball.tgz`,
+                  tarball: `${origin}/tarball.tgz`,
                   integrity: input.wrongIntegrity === true ? `sha512-${"A".repeat(88)}` : integrity,
                 },
               },
+              ...Object.fromEntries(
+                versions.map((entry) => [entry.version, { dist: { tarball: `${origin}${entry.path}`, integrity: entry.integrity } }]),
+              ),
             },
           }),
         );

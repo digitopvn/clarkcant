@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 
+import type { DirectoryEntry } from "@clarkcant/contracts";
 import {
+  activeGenerations,
   directoryIndexPath,
+  installedDirectoryEntries,
+  notInstalledAsListedMessage,
   readDirectoryIndex,
   readPackage,
   readPackageFile,
@@ -9,6 +14,7 @@ import {
   widgetDocument,
   widgetDocumentPolicy,
 } from "@clarkcant/core";
+import type { Database } from "@clarkcant/storage";
 
 import { type GatewayRequest, type GatewayResponse, fail } from "./http.ts";
 
@@ -25,6 +31,8 @@ export interface WidgetServingRouteDeps {
   segments: string[];
   /** The grant that was presented and verified, or `undefined` when none was. */
   grant: { packageId: string; version: string } | undefined;
+  /** Where the node keeps what it installed: a local package is served from the snapshot its generation records. */
+  runtime: { db: Database; identity: { nodeId: string }; dataDir: string };
 }
 
 /**
@@ -40,10 +48,22 @@ export function handleWidgetServingRoutes(deps: WidgetServingRouteDeps): Gateway
   if (index.kind !== "configured") {
     return fail(409, index.kind === "not-configured" ? "NO_DIRECTORY" : "DIRECTORY_UNREADABLE", index.reason);
   }
-  const entry = index.entries.find(
-    (candidate) => candidate.packageId === grant.packageId && candidate.version === grant.version,
+  /*
+   * A local package an active generation installed is served from that generation's snapshot, never from its path. A
+   * listing that no longer names what that generation installed is withheld rather than read from the path, and is
+   * refused the way the files route refuses it.
+   */
+  const installed = installedDirectoryEntries(
+    index.entries,
+    activeGenerations({ db: deps.runtime.db, nodeId: deps.runtime.identity.nodeId }),
+    join(deps.runtime.dataDir, "package-cache"),
   );
+  const names = (candidate: DirectoryEntry) => candidate.packageId === grant.packageId && candidate.version === grant.version;
+  const entry = installed.entries.find(names);
   if (entry === undefined) {
+    if (installed.withheld.some((held) => names(held.entry))) {
+      return fail(409, "NOT_INSTALLED", notInstalledAsListedMessage(grant.packageId, grant.version));
+    }
     return fail(404, "NOT_IN_DIRECTORY", "the package this grant names is no longer in the directory");
   }
   const file = readPackageFile({ entry, relativePath: segments.slice(2).join("/") });

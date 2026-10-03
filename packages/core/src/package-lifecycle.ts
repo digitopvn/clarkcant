@@ -361,6 +361,16 @@ export function activePackageVersions(deps: Pick<InstallDeps, "db" | "nodeId">):
   return new Set(rows.map((row) => `${row.package_id}@${row.version}`));
 }
 
+/** Every generation of one package on this node, active or superseded, as recorded. */
+export function packageGenerations(deps: Pick<InstallDeps, "db" | "nodeId">, packageId: string): PackageGeneration[] {
+  return allRows<{ document: string }>(
+    deps.db,
+    "SELECT document FROM package_generations WHERE package_id = ? AND node_id = ? ORDER BY rowid",
+    packageId,
+    deps.nodeId,
+  ).map((row) => parseJson<PackageGeneration>(row.document, "package_generations.document"));
+}
+
 /** Every active generation on this node, as recorded: what is running now, with what it was granted. */
 export function activeGenerations(deps: Pick<InstallDeps, "db" | "nodeId">): PackageGeneration[] {
   return allRows<{ document: string }>(

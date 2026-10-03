@@ -304,7 +304,15 @@ stored as given, not provenance; who answered is the authenticated principal. A 
 also offer operations on the thing itself, each backed by a route: `retry` is `POST /work/:id/retry` (runs failed,
 stopped or interrupted background work again as new work in the same conversation, once), `ask-again` is
 `POST /conversations/:id/questions/:questionId/ask-again` (asks an expired question again as a new one), `update` is
-the ordinary `POST /packages/install` with the version the notice names, and `review-update` opens Settings. An action
+the ordinary `POST /packages/install` with the version the notice names, and `review-update` opens Settings. A package
+update notice also carries `reachChange` when the package is installed: what the named version's listing reaches
+compared with the installed manifest, as `{ verdict: "wider" | "narrower" | "unchanged", profile?, gpu?, origins, secrets,
+keyDestinations, browserTokens, connectionScopes, connectionEndpoints }`, each set as `{ added, removed, addedMore?,
+removedMore? }` with at most 32 items per list and the rest counted, `keyDestinations` as each (key, origin) pair a key
+is sent to, and `profile` as the two profile names with each bounded limit that changes; or `{ verdict: "unknown" }`
+when the package is installed at another version and the two cannot be compared
+(`packages/contracts/src/reach-change.ts`). The web client parses `GET /inbox` item by item, so one item that does not
+match the contract is left out and counted rather than failing the whole inbox. An action
 listed with `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) says why it cannot be
 taken now. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
 [system-architecture.md](system-architecture.md) under the inbox.
@@ -457,7 +465,9 @@ Refusals: `403 TOKEN_PROVIDER_NOT_DECLARED` or `TOKEN_SCOPE_NOT_DECLARED`, `409 
 `TOKEN_SESSION_ENDED`, `422 TOKEN_PROVIDER_UNSCOPED`, `TOKEN_SCOPE_NOT_SUPPORTED` or `TOKEN_TTL_TOO_LONG`,
 `502 TOKEN_ISSUE_FAILED`, and `503 TOKEN_PROVIDER_UNAVAILABLE` on a node without an adapter for the provider. No
 provider adapter ships yet. A node started with `CC_BROWSER_TOKEN_FIXTURE=1` registers in-process fixture providers for
-the browser suite and answers `GET /browser-token-fixture/issued`; without it, that route is `404`.
+the browser suite and answers `GET /browser-token-fixture/issued`; without it, that route is `404`. A node started
+with `CC_UPDATE_CHECK_FIXTURE=1` answers `POST /update-check-fixture/run` by running the package update check once
+(`{ packageUpdates }`), so the browser suite can be offered an update after installing; without it, that route is `404`.
 
 The bridge side (`tokens@1`) is offered in `init.extensions` only to a frame whose package declared browser tokens.
 `token.request` is answered with `token-result`; the SDK and the host's frame session refuse a `state.update`,
@@ -478,27 +488,47 @@ name, and a name longer than 120 characters is shortened before its extension, w
 Install button and a notice's `update` call; no agent tool installs a package (the package tool lists, uninstalls,
 restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with `403 PERSON_ONLY`.
 
-For a package listed by a path on this machine the node digests its files itself (`digestOfDirectory`, the digest a git
-or npm fetch computes), so the request needs no digest from the client. The `marketplace-results` card carries that
-digest as each local listing's `contentDigest`, computed when the node listed it, and the Install button sends it back
-as `{ "contentDigest" }`. If the files changed since the list was made, the install is refused with
-`409 DIGEST_MISMATCH` and a reason that says so and tells the person to search again; nothing is installed or asked,
-and the card marks that row as changed rather than offering the same refused install again. The check happens at
-install time only: a local package stays linked to its path rather than copied, so it keeps being read from there and
-later edits to its files are not re-checked. A request without `contentDigest` (a card from before the field, or a
-notice's `update`) installs the files as they are when it arrives. A path whose files cannot be digested is refused
-with `400 LOCAL_SOURCE_UNREADABLE`: unreadable, holding a symbolic or hard link (which the digest refuses rather than
-follows), or too large to verify (more than 5,000 files or 64 MiB, the bound that keeps a search's digests cheap; the
-card then carries no `contentDigest` for it). These checks run before the execution policy decides, so a person whose
-mode would deny the install still gets the `409` or `400` rather than `403 POLICY_REFUSED`. The `effect.executed`
-record of a local install names the files it checked (`files sha256:…` in its description). A local install's plan and
-generation carry the listing's `digest`; a client that sends `{ "localDigest" }` names that identity itself, as before,
-and is not re-digested unless it also sends `contentDigest`.
+For a package listed by a path on this machine the node copies its files into its package cache
+(`<dataDir>/package-cache/local/<sha256>`) and digests the copy (`digestOfDirectory`, the digest a git or npm fetch
+computes), so the request needs no digest from the client. The copy is staged in a temporary folder, digested from the
+bytes written there and only then renamed to its content-addressed name; the same bytes installed again reuse the copy
+already there. The copy does not hold up the node while it runs. The `marketplace-results` card carries the digest of
+the files as each local listing's `contentDigest`, computed when the node listed them, and the Install button sends it
+back as `{ "contentDigest" }`. If the copy differs from it (the files changed since the list was made, including while
+the install was copying them), the install is refused with `409 DIGEST_MISMATCH` and a reason that says so and tells
+the person to search again; nothing is installed, asked or cached, and the card marks that row as changed rather than
+offering the same refused install again. A request without `contentDigest` (a card from before the field, or a notice's
+`update`) installs the files as they are when it arrives: the node lists the path again after the copy, and if any file
+or folder changed its size, modification time or identity while it was being copied, the install is refused with
+`409 DIGEST_MISMATCH` and a reason saying so, so a copy is never a mix of two versions. The installed package runs from
+the copy, not the path: its files, frames, widgets, themes and services are read from the snapshot its generation
+records (`snapshotDigest` on the generation and in `GET /packages`), so later edits to the path never run until the
+package is installed again, which copies and checks the files anew and activates a new generation. If the listing
+changes under an installed package instead (the same version listed again with another `digest`, or another version
+listed), neither the copy nor the path is served for that listing: `GET /packages/:id/:version/files/…`, the frame route
+and the conversation's widget read answer `409 NOT_INSTALLED` until the package is installed again, and its widgets keep
+their state. A path whose files cannot be copied is refused with `400 LOCAL_SOURCE_UNREADABLE`: unreadable, holding a
+symbolic link, junction or hard link (which the copy refuses rather than follows; on every platform a file replaced by a
+link or another file after it was listed is refused too), or too large to verify (more than 5,000 files, 5,000 folders,
+folders 64 deep or 64 MiB, the bound that keeps a search's digests cheap; the card then carries no `contentDigest` for
+it). A `.git` folder at the root is left out in any letter case. A copy the node cannot write into its own cache (a full
+disk, a cache folder it may not write, a rename Windows keeps refusing) is refused with `503 PACKAGE_CACHE_UNAVAILABLE`
+and a reason saying the files were not changed and to try again. These checks run before the execution policy decides,
+so a person whose mode would deny the install still gets the `409`, `400` or `503` rather than `403 POLICY_REFUSED`;
+the copy a refused or asked install made stays in the cache and is reused. The `effect.executed` record of a local
+install names the copy it runs (`files sha256:…` in its description). A local install's plan and generation carry the
+listing's `digest`; a client that sends `{ "localDigest" }` names that identity itself, as before, and its install
+still runs from a copy. A package installed from a path before snapshots keeps reading its path until it is installed
+again; nothing is migrated or deleted. Temporary folders a stopped install left in the cache are removed by a later
+install once they are an hour old; otherwise the package cache has no garbage collection, for snapshots as for git and
+npm artifacts, so a snapshot no generation uses any more stays on disk until the cache is cleared by hand.
 
 When the person's execution mode asks before installing, it answers `202` with
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
 `waiting` as `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions,
-description, operationDigest, requestedAt, expiresAt }`: `permissions` is what the listing says the package asks for,
+description, operationDigest, requestedAt, expiresAt, reach?, reachChange? }`: `permissions` is what the listing says the package asks for,
+`reach` what it reaches outside its sandbox, `reachChange` (for an update of an installed package) what that version
+adds to or drops from the installed one's reach, in the same shape as on the update notice,
 and `operationDigest` the listed artifact's digest the question is about. It is listed only while the directory still
 lists that artifact; a package or version republished since is left out, and installing it again asks about what it is
 now. The person decides it with `POST /packages/approvals/:id/decision`

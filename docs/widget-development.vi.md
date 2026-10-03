@@ -2160,7 +2160,30 @@ tiết package trong Settings → Extensions liệt kê từng origin kèm mục
 hiện giá trị), từng nhà cung cấp token trình duyệt kèm scope và mục đích, và từng kết nối tài khoản kèm nhà cung cấp,
 scope và endpoint (§14.6), trước khi cấp bất cứ thứ gì. Artifact có
 manifest khai báo phạm vi khác với mục trong thư mục bị từ chối với `409 DECLARED_REACH_MISMATCH` trước khi ghi lại bất cứ
-thứ gì, nên sự đồng ý bao gồm đúng những gì đã hiện. Thông báo cập nhật chưa liệt kê phạm vi này.
+thứ gì, nên sự đồng ý bao gồm đúng những gì đã hiện.
+
+Một mục trong thư mục cũng có thể nêu mức tài nguyên package yêu cầu trong `resources` (`{ version: 1, profile, gpu? }`,
+cùng dạng với trong manifest); mục không có trường này nghĩa là `interactive-light` và không có GPU, và
+`clark widget publish` chỉ ghi trường này từ manifest khi yêu cầu khác mặc định đó. Trường này ràng buộc theo cùng cách:
+artifact yêu cầu mức khác bị từ chối với `409 DECLARED_REACH_MISMATCH`. Node phát hành trước khi có trường này từ chối cả
+chỉ mục thư mục nếu có một mục mang trường nó không biết, nên chỉ mục liệt kê `resources` khác mặc định cần các node ít
+nhất mới bằng trường này.
+
+**Bản cập nhật hiện những gì.** Thông báo cập nhật package, và câu hỏi cài đặt mà bản cập nhật tạo ra khi chế độ thực thi
+hỏi trước, mang `reachChange` ([reach-change.ts](../packages/contracts/src/reach-change.ts)): mục trong thư mục của bản mới
+so với manifest của bản đang cài. Nó liệt kê từng origin, key, scope token trình duyệt, scope tài khoản và endpoint tài
+khoản mà bản mới thêm hoặc bỏ; từng origin mà một key giờ được gửi tới hoặc không còn được gửi tới, nên chuyển key sang
+origin khác, hoặc gửi nó tới thêm một origin, là `wider` kể cả khi tập origin và tập key không đổi; yêu cầu GPU, thứ node
+này không bao giờ cấp, nên xin GPU nghĩa là bản đó sẽ không chạy ở đây; và khi mức tài nguyên đổi thì liệt kê từng giới
+hạn có đổi (bộ nhớ, CPU, số tiến trình, `/tmp`, thời hạn mỗi lần gọi và mỗi việc chạy nền, số việc chạy cùng lúc, kích
+thước kết quả và đầu vào, độ dài media đầu vào) kèm cả hai giá trị, và cách chạy khi khuất màn hình nếu đổi.
+Các mức không được xếp hạng: mỗi giới hạn được so riêng.
+Kết luận là `wider` khi có gì được thêm hoặc có giới hạn nào tăng, kể cả khi thứ khác giảm; `narrower` khi chỉ có bỏ bớt
+hoặc giảm; còn lại là `unchanged`, kể cả khi chỉ câu mục đích đổi. Nó được tính lúc đọc hộp thư, nên luôn so với bản đang
+cài lúc đó. Nó không có khi package chưa được cài, và là `{ verdict: "unknown" }`, hiện thành "Không so sánh được với bản
+đang cài", khi không đọc được manifest đang cài hoặc mục trong thư mục của bản mới. Mỗi danh sách có tối đa 32 mục và
+đếm phần còn lại, thông báo hiện thành "…và N mục khác". Nó giúp quyết định chứ không quyết định gì: bản cập nhật được
+chính sách thực thi quyết định như mọi lần cài.
 
 Chưa xây: mạng qua proxy cho service cần socket thô. Cho container có mạng sẽ làm yếu một mặc định cô lập, nên việc này
 chờ quyết định đó.
@@ -2786,7 +2809,8 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   execution policy quyết định; bản thân card không cài gì, nên một listing không bao giờ biến thành authorization. Một
   listing bằng đường dẫn trên máy này còn mang `contentDigest`, digest các tệp của nó lúc được liệt kê, mà nút gửi lại
   để lần cài bị từ chối nếu các tệp đã đổi từ đó; khi ấy dòng đó cho thấy chúng đã đổi và mời tìm lại thay vì cùng nút
-  Cài. Việc kiểm tra chỉ diễn ra lúc cài: gói vẫn được liên kết với đường dẫn của nó. Mỗi dòng còn lặp lại
+  Cài. Lần cài sao chép các tệp vào cache package và package chạy từ bản sao đó, nên những chỉnh sửa sau này ở đường dẫn
+  không thay đổi gì cho tới khi nó được cài lại; vòng chỉnh sửa trực tiếp là `clark widget dev`. Mỗi dòng còn lặp lại
   `declaredReach` (những gì gói được phép chạm tới khi cài) và các khai báo `widgetAppearance` của listing, theo đúng
   schema của mục trong directory, nên dòng đó hiển thị chúng trước khi bấm Cài. Một card không khớp với contract của nó
   bị bỏ khỏi câu trả lời, và node ghi log `host card dropped` kèm loại card và đường dẫn các trường lỗi, không bao giờ
@@ -2962,6 +2986,36 @@ Cache được đánh địa chỉ theo nội dung: đường dẫn cache của 
 không bao giờ `rmSync` một artifact có thể đang sống), và bất kỳ nơi nào khác giữ cùng entry — route serve file,
 `findIsolatedFrame` — tính lại đúng path đó để phục vụ package git/npm đã fetch giống hệt package local
 (`resolveLocalSource`).
+
+Một package được liệt kê bằng đường dẫn trên máy này cũng được cache theo nội dung như vậy: `snapshotLocalPackage` sao
+chép đường dẫn vào `local/<sha256>` trong cache (`cachedLocalSnapshotPath`), và lần cài chạy từ bản sao đó như nó chạy
+một package git hay npm từ thư mục đã fetch. Việc sao chép là bất đồng bộ, nên node vẫn phục vụ trong lúc nó chạy. Đường
+dẫn được liệt kê trước, với cùng giới hạn như digest của listing (5.000 tệp, 5.000 thư mục, lồng sâu 64 cấp, 64 MiB) và
+cùng các lần từ chối như `digestOfDirectory` (symbolic link, junction, hard link, `.git` ở gốc bị bỏ ra dù viết hoa hay
+viết thường). Sau đó từng tệp được mở (với `O_NOFOLLOW` ở nền tảng có nó; Windows không có), và handle đã mở phải là
+đúng tệp đã liệt kê, theo thiết bị và mã định danh tệp, nên một tên bị thay bằng link hay một tệp khác ở giữa hai bước
+bị từ chối trên mọi nền tảng; kích thước của chính tệp đó được so với phần giới hạn byte còn lại trước khi đọc, và tệp
+không được đọc quá kích thước đó. Các byte được ghi vào một thư mục `.tmp-*` và được băm ngay khi ghi, theo thứ tự của
+digest, nên digest là của bản sao mà không cần đọc lại nó; digest được so với digest người dùng đã được cho xem, rồi thư
+mục mới được đổi tên vào chỗ; nếu không khớp thì bản dựng dở bị bỏ. Khi không có digest nào để so (thao tác `update` của
+một thông báo, một card cũ), đường dẫn được liệt kê lại sau khi sao chép, và một tệp hay thư mục đã đổi kích thước, thời
+điểm sửa đổi hay định danh sẽ khiến snapshot bị từ chối (`LOCAL_SOURCE_CHANGED`, trả về dưới dạng
+`409 DIGEST_MISMATCH`). Một lỗi khi ghi cache (tạo, ghi, đổi tên hay xoá ở đó, kể cả một lần đổi tên mà Windows vẫn từ
+chối sau khoảng ba giây thử lại) là `PACKAGE_CACHE_UNAVAILABLE` (`503`), không bao giờ là `LOCAL_SOURCE_UNREADABLE`.
+Mọi tệp được ghi với quyền ghi cho chủ sở hữu bất kể chế độ của tệp nguồn, nên một nguồn chỉ đọc không để lại bản sao mà
+cache không xoá được, và một tên mà hệ thống tệp không phân biệt hoa thường không thể giữ tách khỏi tên khác thì bị từ
+chối thay vì bị ghi đè. Generation ghi lại bản sao dưới dạng `snapshotDigest`, và mọi nơi đọc một package local đã cài
+(route tệp và frame, lần tìm frame của cuộc hội thoại, danh sách widget, registry theme, service, quyền đã cấp, và các
+widget id mà một lần gỡ hay khôi phục chạm tới) đều tìm nó qua `resolveLocalSource(entry, cacheRoot, generation)` hoặc
+`installedDirectoryEntries`, vốn không bao giờ quay về đường dẫn: một snapshot đã rời khỏi cache là một package mà các
+tệp của nó đã mất. `installedDirectoryEntries` giữ lại một listing local mà package của nó chạy từ snapshot nhưng không
+còn nêu đúng phiên bản và digest của generation đó (cùng phiên bản được đóng gói lại, hoặc một phiên bản khác), và nơi
+đọc trả về `409 NOT_INSTALLED` cho nó. Cài lại đường dẫn sau khi sửa sẽ tạo một bản sao mới, và `artifactUrl` khác của
+nó tạo một plan và generation mới thay vì nhập vào cái cũ; một plan đã xong chỉ được nhập vào khi snapshot của
+generation đang chạy chính là artifact của plan đó. Một generation được cài từ đường dẫn trước khi có snapshot thì không
+có `snapshotDigest` và vẫn đọc đường dẫn của nó cho tới khi được cài lại. Mỗi lần tạo snapshot sẽ dọn các thư mục
+`.tmp-*` và `.stale-*` cũ hơn một giờ khỏi cache; ngoài ra chưa có gì dọn các mục cache không còn dùng, với snapshot
+cũng như với artifact git và npm.
 
 `digestOfDirectory` dùng `lstatSync`, không phải `statSync`: một symlink hay hard link trong artifact bị refuse
 theo tên (`ARTIFACT_SYMLINK_ESCAPE`) chứ không bị theo dõi (follow) hay bỏ qua âm thầm, và hàm không bao giờ throw

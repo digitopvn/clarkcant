@@ -2165,7 +2165,30 @@ and package details in Settings → Extensions list each origin with its purpose
 (never a value), each browser-token provider with its scopes and purpose, and each account connection with its
 provider, scopes and endpoints (§14.6), before anything is granted. An artifact
 whose manifest declares a different reach than its listing shows is refused with `409 DECLARED_REACH_MISMATCH` before
-anything is recorded, so consent covers what was shown. The update notice does not list the reach yet.
+anything is recorded, so consent covers what was shown.
+
+A directory entry may also state the resource profile the package requests in `resources` (`{ version: 1, profile, gpu? }`,
+the same shape as the manifest's); a listing without it means `interactive-light` and no GPU, and `clark widget publish`
+writes it from the manifest only when the request is not that default. It binds the same way: an artifact that requests
+another profile is refused with `409 DECLARED_REACH_MISMATCH`. A node released before this field refuses a whole
+directory index that holds an entry field it does not know, so an index that lists a non-default `resources` needs
+nodes at least as new as this field.
+
+**What an update shows.** A package update notice, and the install question an update raises when the execution mode
+asks first, carry `reachChange` ([reach-change.ts](../packages/contracts/src/reach-change.ts)): the new version's listing
+compared with the installed version's manifest. It lists each origin, key, browser-token scope, account scope and account
+endpoint the new version adds or drops; each origin a key is now sent to or no longer sent to, so moving a key to
+another origin, or sending it to one more, is wider even when the origins and keys are the same; a GPU request, which
+this node never grants, so asking for one means the version will not run here; and, when the profile changes, each
+bounded limit that changes (memory, CPUs, processes, `/tmp`, call and job deadlines, concurrent jobs, result and input
+sizes, input media length) with both values,
+and the offscreen behaviour when it changes. Profiles are not ranked: each limit is compared on its own. The verdict is
+`wider` when anything is added or any limit goes up, even if something else goes down; `narrower` when something is only
+dropped or lowered; `unchanged` otherwise, including a changed purpose sentence. It is computed when the inbox is read,
+so it always compares against what is installed then. It is absent when the package is not installed, and is
+`{ verdict: "unknown" }`, shown as "Could not compare with the installed version", when the installed manifest or the
+new version's listing cannot be read. Each list holds at most 32 items and counts the rest, which the notice shows as
+"…and N more". It informs the decision and decides nothing: an update is decided by the execution policy like any install.
 
 Not built: a proxied network for services that need raw sockets. Giving a container a network would weaken an isolation
 default, so it waits for that decision.
@@ -2794,8 +2817,9 @@ This section states which parts of the document already have code, so that nobod
   the execution policy decides; the card installs nothing itself, so a listing never turns into authorization. A listing by a
   path on this machine also carries `contentDigest`, the digest of its files when they were listed, which the button sends
   back so the install is refused if the files changed since; the row then shows that they changed and offers a new
-  search instead of the same Install. The check is at install time only: the package stays linked to its path. A row also
-  repeats the listing's `declaredReach` (what installing lets the package reach) and `widgetAppearance` claims, under the
+  search instead of the same Install. The install copies the files into the package cache and the package runs from that
+  copy, so later edits to the path change nothing until it is installed again; the live editing loop is `clark widget dev`.
+  A row also repeats the listing's `declaredReach` (what installing lets the package reach) and `widgetAppearance` claims, under the
   same schemas as the directory entry, so the row shows them before the Install press. A card that does not match its
   contract is left out of the reply and the node logs `host card dropped` with the card type and the failing field
   paths, never a value. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
@@ -2970,6 +2994,35 @@ to be stored separately. This solves two things at once: refetching the same `ur
 never an `rmSync` of an artifact that may be live), and any other place holding the same entry — the file-serving route,
 `findIsolatedFrame` — recomputes exactly that path to serve a fetched git/npm package the same way as a local package
 (`resolveLocalSource`).
+
+A package listed by a path on this machine is cached the same way, by content: `snapshotLocalPackage` copies the path
+into `local/<sha256>` under the cache (`cachedLocalSnapshotPath`), and the install runs from that copy as it runs a
+git or npm package from its fetched folder. The copy is asynchronous, so the node keeps serving while it runs. The path
+is listed first, with the same bounds as the listing digest (5,000 files, 5,000 folders, 64 levels deep, 64 MiB) and
+the same refusals as `digestOfDirectory` (a symbolic link, a junction, a hard link, a root `.git` left out in any letter
+case). Each file is then opened (with `O_NOFOLLOW` where the platform has it; Windows has none), and the opened handle
+must be the same file, by device and file id, as the one listed, so a name replaced by a link or another file in between
+is refused on every platform; its own size is checked against the remaining byte bound before it is read, and it is read
+no further than that size. The bytes are written to a `.tmp-*` folder and hashed as they are written, in digest order,
+so the digest is of the copy without reading it again; it is compared with the digest the person was shown, and only
+then is the folder renamed into place; a mismatch discards the staged copy. With no digest to compare (a notice's
+`update`, an older card), the path is listed again after the copy, and a file or folder whose size, modification time or
+identity changed refuses the snapshot (`LOCAL_SOURCE_CHANGED`, answered as `409 DIGEST_MISMATCH`). A failure writing the
+cache (creating, writing, renaming or removing there, including a rename Windows still refuses after about three seconds
+of retries) is `PACKAGE_CACHE_UNAVAILABLE` (`503`), never `LOCAL_SOURCE_UNREADABLE`. Every file is written
+owner-writable whatever its source mode, so a read-only source does not leave a copy the cache cannot remove, and a name
+a case-insensitive filesystem cannot hold apart from another is refused rather than overwritten. The generation records
+the copy as `snapshotDigest`, and every reader of an installed local package (the file and frame routes, the
+conversation's frame lookup, the widget list, the theme registry, services, capability grants, and the widget ids an
+uninstall or restore reaches) resolves it through `resolveLocalSource(entry, cacheRoot, generation)` or
+`installedDirectoryEntries`, which never fall back to the path: a snapshot gone from the cache is a package whose files
+are gone. `installedDirectoryEntries` withholds a local listing whose package runs from a snapshot but which no longer
+names exactly that generation's version and digest (the same version re-packed, or another version), and readers answer
+it `409 NOT_INSTALLED`. Installing the path again after an edit makes a new copy, and its different `artifactUrl` makes a
+new plan and generation rather than joining the old one; a finished plan is joined only while the running generation's
+snapshot is that plan's artifact. A generation installed from a path before snapshots has no `snapshotDigest` and keeps
+reading its path until it is installed again. A snapshot sweeps `.tmp-*` and `.stale-*` folders older than an hour from
+the cache; nothing else collects unused cache entries yet, for snapshots as for git and npm artifacts.
 
 `digestOfDirectory` uses `lstatSync`, not `statSync`: a symlink or hard link in the artifact is refused
 by name (`ARTIFACT_SYMLINK_ESCAPE`) rather than being followed or silently skipped, and the function never throws

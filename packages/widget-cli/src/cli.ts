@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
 import {
+  DEFAULT_RESOURCE_PROFILE,
   PACKAGE_MANIFEST_SCHEMA_VERSION,
   declaredReachIsEmpty,
   declaredReachOf,
@@ -390,6 +391,11 @@ function requestedSummary(permissions: PackageManifest["permissions"]): string[]
  * the digest of the artifact that was packed. Two computations of the same thing is how a listing comes to name
  * an artifact nobody can produce.
  */
+/** Whether a resource request says anything an absent one does not: another profile, or a GPU. */
+function requestsMoreThanDefault(resources: PackageManifest["resources"]): resources is NonNullable<PackageManifest["resources"]> {
+  return resources !== undefined && (resources.profile !== DEFAULT_RESOURCE_PROFILE || resources.gpu === true);
+}
+
 function publish(root: string): number {
   const result = runConformance(root);
   if (!result.ok) {
@@ -444,6 +450,10 @@ function publish(root: string): number {
     permissionsSummary: requestedSummary(pkg.manifest.permissions),
     // What it reaches beyond its sandbox, shown before install. Binding: an install refuses an artifact that differs.
     ...(declaredReachIsEmpty(reach) ? {} : { declaredReach: reach }),
+    // The resource profile it requests, so an update can say what changes before it is fetched. Binding in the same way.
+    // Only when it is not the default, which an absent field already means: a node from before this field refuses an
+    // index holding an entry field it does not know, so a default request stays readable by it.
+    ...(requestsMoreThanDefault(pkg.manifest.resources) ? { resources: pkg.manifest.resources } : {}),
     // From the isolation the facets declare, never from what the publisher says about their own package.
     riskTier: riskLaneFor(pkg.manifest.facets.map((facet) => facet.isolation)),
     sizeBytes: (artifact.files ?? []).reduce((sum, file) => sum + file.bytes, 0),

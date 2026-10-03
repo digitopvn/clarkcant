@@ -308,7 +308,15 @@ nguồn gốc đã xác minh; ai trả lời là principal đã xác thực. `ac
 ra thao tác trên chính thứ được nói tới, mỗi thao tác có route thật phía sau: `retry` là `POST /work/:id/retry` (chạy
 lại một lần việc nền bị lỗi, bị dừng hoặc bị gián đoạn thành việc mới trong cùng hội thoại), `ask-again` là
 `POST /conversations/:id/questions/:questionId/ask-again` (hỏi lại một câu hỏi đã hết hạn thành câu hỏi mới),
-`update` là `POST /packages/install` thông thường với phiên bản mà thông báo nêu, và `review-update` mở Cài đặt. Thao
+`update` là `POST /packages/install` thông thường với phiên bản mà thông báo nêu, và `review-update` mở Cài đặt.
+Thông báo cập nhật gói còn mang `reachChange` khi gói đã được cài: phạm vi tiếp cận mà listing của phiên bản được nêu
+có so với manifest đang cài, dạng `{ verdict: "wider" | "narrower" | "unchanged", profile?, gpu?, origins, secrets,
+keyDestinations, browserTokens, connectionScopes, connectionEndpoints }`, mỗi tập là `{ added, removed, addedMore?,
+removedMore? }` với tối đa 32 mục mỗi danh sách và phần còn lại được đếm, `keyDestinations` là từng cặp (key, origin) mà
+một key được gửi tới, và `profile` gồm tên hai mức tài nguyên kèm từng giới hạn có đổi; hoặc `{ verdict: "unknown" }`
+khi gói đang được cài ở phiên bản khác và không so sánh được hai bản (`packages/contracts/src/reach-change.ts`). Web
+client đọc `GET /inbox` theo từng mục, nên một mục không khớp hợp đồng bị bỏ ra và được đếm, thay vì làm hỏng cả hộp
+thư. Thao
 tác được liệt kê kèm `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) nói rõ vì
 sao lúc này không làm được. Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
 [system-architecture.vi.md](system-architecture.vi.md) ở phần hộp thư.
@@ -460,7 +468,9 @@ hoặc `TOKEN_SESSION_ENDED`, `422 TOKEN_PROVIDER_UNSCOPED`, `TOKEN_SCOPE_NOT_SU
 `502 TOKEN_ISSUE_FAILED`, và `503 TOKEN_PROVIDER_UNAVAILABLE` trên node không có adapter cho nhà cung cấp đó. ClarkCant
 chưa kèm adapter cho nhà cung cấp nào. Node khởi động với `CC_BROWSER_TOKEN_FIXTURE=1` đăng ký các nhà cung cấp fixture
 chạy trong tiến trình cho bộ test trình duyệt và trả lời `GET /browser-token-fixture/issued`; không có biến này, route
-đó trả `404`.
+đó trả `404`. Node khởi động với `CC_UPDATE_CHECK_FIXTURE=1` trả lời `POST /update-check-fixture/run` bằng cách chạy
+kiểm tra cập nhật gói một lần (`{ packageUpdates }`), để bộ test trình duyệt được đề nghị cập nhật sau khi cài; không có
+biến này, route đó trả `404`.
 
 Phía bridge (`tokens@1`) chỉ được đề nghị trong `init.extensions` cho frame có package đã khai báo token trình duyệt.
 `token.request` được trả lời bằng `token-result`; SDK và phiên frame của host từ chối `state.update`,
@@ -482,27 +492,48 @@ của chính ứng dụng và thao tác `update` của một thông báo gọi; 
 liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
 `403 PERSON_ONLY`.
 
-Với một gói được liệt kê bằng đường dẫn trên máy này, node tự tính digest các tệp của nó (`digestOfDirectory`, cùng
-digest mà một lần fetch git hay npm tính), nên request không cần client gửi digest nào. Card `marketplace-results` mang
-digest đó trong `contentDigest` của mỗi listing cục bộ, tính lúc node liệt kê nó, và nút Cài gửi lại nó dưới dạng
-`{ "contentDigest" }`. Nếu các tệp đã đổi kể từ lúc danh sách được tạo, lần cài bị từ chối với `409 DIGEST_MISMATCH`
-kèm lý do nói rõ điều đó và bảo người dùng tìm lại; không có gì được cài hay được hỏi, và card đánh dấu dòng đó là đã
-đổi thay vì mời bấm lại đúng lần cài vừa bị từ chối. Việc kiểm tra chỉ diễn ra lúc cài: một gói cục bộ vẫn được liên kết
-với đường dẫn của nó chứ không được sao chép, nên nó tiếp tục được đọc từ đó và những chỉnh sửa sau này với các tệp của
-nó không được kiểm tra lại. Một request không có `contentDigest` (card có từ trước khi có trường này, hoặc thao tác
-`update` của một thông báo) cài các tệp như chúng đang có lúc request tới. Một đường dẫn không tính được digest các tệp
-bị từ chối với `400 LOCAL_SOURCE_UNREADABLE`: không đọc được, chứa symbolic link hay hard link (thứ mà digest từ chối
-thay vì đi theo), hoặc quá lớn để xác minh (hơn 5.000 tệp hay 64 MiB, giới hạn giữ cho các digest của một lần tìm kiếm
-rẻ; khi đó card không mang `contentDigest` cho nó). Các kiểm tra này chạy trước khi chính sách thực thi quyết định, nên
-một người có chế độ sẽ từ chối lần cài vẫn nhận `409` hay `400` thay vì `403 POLICY_REFUSED`. Bản ghi `effect.executed`
-của một lần cài cục bộ nêu các tệp nó đã kiểm tra (`files sha256:…` trong phần mô tả). Plan và generation của một lần
-cài cục bộ mang `digest` của listing; client nào gửi `{ "localDigest" }` thì tự đặt định danh đó như trước, và không bị
-tính lại digest trừ khi nó gửi kèm `contentDigest`.
+Với một gói được liệt kê bằng đường dẫn trên máy này, node sao chép các tệp của nó vào bộ nhớ đệm gói
+(`<dataDir>/package-cache/local/<sha256>`) và tính digest của bản sao (`digestOfDirectory`, cùng digest mà một lần
+fetch git hay npm tính), nên request không cần client gửi digest nào. Bản sao được dựng trong một thư mục tạm, tính
+digest từ chính những byte đã ghi ở đó, rồi mới được đổi tên thành tên theo nội dung của nó; cài lại đúng những byte đó
+thì dùng lại bản sao đã có. Việc sao chép không làm node bị đứng trong lúc chạy. Card `marketplace-results` mang digest
+của các tệp trong `contentDigest` của mỗi listing cục bộ, tính lúc node liệt kê chúng, và nút Cài gửi lại nó dưới dạng
+`{ "contentDigest" }`. Nếu bản sao khác với nó (các tệp đã đổi kể từ lúc danh sách được tạo, kể cả trong lúc lần cài
+đang sao chép chúng), lần cài bị từ chối với `409 DIGEST_MISMATCH` kèm lý do nói rõ điều đó và bảo người dùng tìm lại;
+không có gì được cài, được hỏi hay được lưu vào bộ nhớ đệm, và card đánh dấu dòng đó là đã đổi thay vì mời bấm lại đúng
+lần cài vừa bị từ chối. Một request không có `contentDigest` (card có từ trước khi có trường này, hoặc thao tác `update`
+của một thông báo) cài các tệp như chúng đang có lúc request tới: node liệt kê lại đường dẫn sau khi sao chép, và nếu
+có tệp hay thư mục nào đổi kích thước, thời điểm sửa đổi hay định danh trong lúc đang được sao chép, lần cài bị từ chối
+với `409 DIGEST_MISMATCH` kèm lý do nói rõ điều đó, nên một bản sao không bao giờ là hỗn hợp của hai phiên bản. Gói đã
+cài chạy từ bản sao, không phải từ đường dẫn: các tệp, frame, widget, theme và service của nó được đọc từ snapshot mà
+generation của nó ghi lại (`snapshotDigest` trên generation và trong `GET /packages`), nên những chỉnh sửa sau này ở
+đường dẫn không bao giờ được chạy cho tới khi gói được cài lại; lần cài lại sao chép và kiểm tra các tệp từ đầu rồi kích
+hoạt một generation mới. Nếu ngược lại listing thay đổi dưới một gói đã cài (cùng phiên bản được liệt kê lại với một
+`digest` khác, hoặc một phiên bản khác được liệt kê), cả bản sao lẫn đường dẫn đều không được phục vụ cho listing đó:
+`GET /packages/:id/:version/files/…`, route frame và lần đọc widget của cuộc hội thoại trả về `409 NOT_INSTALLED` cho
+tới khi gói được cài lại, và các widget của nó vẫn giữ trạng thái. Một đường dẫn không sao chép được các tệp bị từ chối
+với `400 LOCAL_SOURCE_UNREADABLE`: không đọc được, chứa symbolic link, junction hay hard link (thứ mà bản sao từ chối
+thay vì đi theo; trên mọi nền tảng, một tệp bị thay bằng link hay một tệp khác sau khi đã được liệt kê cũng bị từ chối),
+hoặc quá lớn để xác minh (hơn 5.000 tệp, 5.000 thư mục, thư mục lồng sâu 64 cấp hay 64 MiB, giới hạn giữ cho các digest
+của một lần tìm kiếm rẻ; khi đó card không mang `contentDigest` cho nó). Thư mục `.git` ở gốc được bỏ qua dù viết hoa
+hay viết thường. Một bản sao mà node không ghi được vào bộ nhớ đệm của chính nó (đĩa đầy, thư mục bộ nhớ đệm không có
+quyền ghi, một lần đổi tên mà Windows liên tục từ chối) bị từ chối với `503 PACKAGE_CACHE_UNAVAILABLE` kèm lý do nói rằng
+các tệp không bị thay đổi và hãy thử lại. Các kiểm tra này chạy trước khi chính sách thực thi quyết định, nên một người
+có chế độ sẽ từ chối lần cài vẫn nhận `409`, `400` hay `503` thay vì `403 POLICY_REFUSED`; bản sao mà một lần cài bị từ
+chối hay đang chờ hỏi đã tạo vẫn nằm trong bộ nhớ đệm và được dùng lại. Bản ghi `effect.executed` của một lần cài cục bộ
+nêu bản sao mà nó chạy (`files sha256:…` trong phần mô tả). Plan và generation của một lần cài cục bộ mang `digest` của
+listing; client nào gửi `{ "localDigest" }` thì tự đặt định danh đó như trước, và lần cài của nó vẫn chạy từ một bản
+sao. Một gói đã cài từ đường dẫn trước khi có snapshot vẫn đọc đường dẫn của nó cho tới khi được cài lại; không có gì bị
+chuyển đổi hay bị xoá. Các thư mục tạm mà một lần cài bị dừng giữa chừng để lại trong bộ nhớ đệm được một lần cài sau
+xoá khi chúng đã cũ hơn một giờ; ngoài ra bộ nhớ đệm gói không có cơ chế dọn rác, với snapshot cũng như với artifact git
+và npm, nên một snapshot không còn generation nào dùng vẫn nằm trên đĩa cho tới khi bộ nhớ đệm được xoá bằng tay.
 
 Khi chế độ thực thi của người dùng yêu cầu hỏi trước khi cài, route trả `202` với
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` và không cài gì. Câu hỏi đó chờ trong `GET /inbox`, ở `waiting`, dưới
 dạng `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions, description,
-operationDigest, requestedAt, expiresAt }`: `permissions` là những quyền mà listing nói gói xin, còn `operationDigest`
+operationDigest, requestedAt, expiresAt, reach?, reachChange? }`: `permissions` là những quyền mà listing nói gói xin,
+`reach` là những gì gói tiếp cận ngoài vùng cách ly, `reachChange` (với bản cập nhật của gói đã cài) là những gì phiên
+bản đó thêm hoặc bỏ so với bản đang cài, cùng dạng như trên thông báo cập nhật, còn `operationDigest`
 là digest của artifact được liệt kê mà câu hỏi nói tới. Mục này chỉ được liệt kê khi thư mục vẫn còn liệt kê đúng
 artifact đó; một gói hay phiên bản được phát hành lại từ đó bị bỏ ra, và cài lại nó sẽ hỏi về chính nó ở hiện tại.
 Người dùng quyết định bằng `POST /packages/approvals/:id/decision`
