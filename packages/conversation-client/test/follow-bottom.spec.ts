@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { BOTTOM_FOLLOW_SLACK_PX, distanceFromBottom, followsBottom } from "../src/follow-bottom.ts";
+import { BOTTOM_FOLLOW_SLACK_PX, distanceFromBottom, followScrollBehavior, followsBottom } from "../src/follow-bottom.ts";
 
 describe("following the bottom of the transcript", () => {
   it("measures how far the view is from the bottom", () => {
@@ -30,5 +30,14 @@ describe("following the bottom of the transcript", () => {
     const metrics = { scrollHeight: 1000, scrollTop: 300, clientHeight: 600 };
     expect(followsBottom(metrics, 100)).toBe(true);
     expect(followsBottom(metrics, 10)).toBe(false);
+  });
+
+  it("glides while following a reply, and jumps when the bottom is more than a screen away", () => {
+    // A few new lines follow the stylesheet's own behaviour, smooth unless reduced motion turns it off.
+    expect(followScrollBehavior({ scrollHeight: 1100, scrollTop: 400, clientHeight: 600 })).toBe("auto");
+    expect(followScrollBehavior({ scrollHeight: 1600, scrollTop: 400, clientHeight: 600 })).toBe("auto");
+    // Opening a stored conversation from its top would otherwise sweep every player past the screen.
+    expect(followScrollBehavior({ scrollHeight: 1601, scrollTop: 400, clientHeight: 600 })).toBe("instant");
+    expect(followScrollBehavior({ scrollHeight: 9000, scrollTop: 0, clientHeight: 600 })).toBe("instant");
   });
 });

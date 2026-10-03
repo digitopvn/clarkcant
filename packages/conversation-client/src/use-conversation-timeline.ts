@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { GatewayClient, ResolvedDataset, SnapshotPresentationResponse, Timeline } from "./api.ts";
 import { composedImageRefs } from "./mini-app-surface.tsx";
-import { useImageUrls } from "./use-image-urls.ts";
+import { useHostObjectUrls } from "./use-image-urls.ts";
+import type { ObjectUrls } from "./use-object-urls.ts";
 
 /** Every block in a timeline's messages, flattened. */
 function blocksOf(timeline: Timeline | undefined): Record<string, unknown>[] {
@@ -29,6 +30,8 @@ export interface ConversationTimelineState {
   instanceById: Map<string, Timeline["instances"][number]>;
   composedSnapshots: { snapshotId: string; instanceId: string | undefined }[];
   imageUrl: (imageRef: string) => string | undefined;
+  /** The same set, for a player: its source's state, and a way to ask for its bytes when they are needed. */
+  mediaUrls: ObjectUrls;
 }
 
 /**
@@ -191,36 +194,43 @@ export function useConversationTimeline(
   }, [client, composedSnapshots, conversationId, snapshots]);
 
   /**
-   * Every picture any surface asks for, from the props it asks in.
+   * Every picture and every player source any surface asks for, from the props it asks in.
    *
    * A single reference, a list of them, or the poster beside a video: a renderer cannot fetch, it
    * can only draw a URL it was handed, so whatever shape the request takes has to be recognised
    * here or the widget shows its text alternative while the picture sits on the node unread.
+   *
+   * Pictures, posters included, are read at once: a poster is a still picture under the same import limit as any
+   * other, and it is what stands in for the player until the person chooses to play. A video's or an audio file's
+   * bytes are listed but read only on request - when the player comes near the screen or the person presses play -
+   * because a recording can be tens of megabytes and most of a conversation's history is never replayed.
    */
-  const inlineImageRefs = useMemo(() => {
-    const refs = new Set<string>();
-    const collect = (value: unknown): void => {
+  const { inlineImageRefs, playerRefs } = useMemo(() => {
+    const pictures = new Set<string>();
+    const players = new Set<string>();
+    const collect = (into: Set<string>, value: unknown): void => {
       if (typeof value === "string") {
-        if (value !== "") refs.add(value);
+        if (value !== "") into.add(value);
         return;
       }
-      if (Array.isArray(value)) for (const entry of value) collect(entry);
+      if (Array.isArray(value)) for (const entry of value) collect(into, entry);
     };
     for (const instance of timeline?.instances ?? []) {
       const props = (instance as { props?: Record<string, unknown> }).props ?? {};
-      collect(props.imageRef);
-      collect(props.imageRefs);
-      collect(props.videoRef);
-      collect(props.posterRef);
-      collect(props.audioRef);
+      collect(pictures, props.imageRef);
+      collect(pictures, props.imageRefs);
+      collect(pictures, props.posterRef);
+      collect(players, props.videoRef);
+      collect(players, props.audioRef);
     }
     for (const entry of composedSnapshots) {
-      for (const ref of composedImageRefs(snapshots[entry.snapshotId]?.sections ?? [])) refs.add(ref);
+      for (const ref of composedImageRefs(snapshots[entry.snapshotId]?.sections ?? [])) pictures.add(ref);
     }
-    return [...refs].sort();
+    return { inlineImageRefs: [...pictures].sort(), playerRefs: [...players].sort() };
   }, [composedSnapshots, snapshots, timeline]);
 
-  const imageUrl = useImageUrls(client, inlineImageRefs);
+  const hostUrls = useHostObjectUrls(client, inlineImageRefs, playerRefs);
+  const imageUrl = hostUrls.get;
 
   return {
     conversationId,
@@ -237,5 +247,6 @@ export function useConversationTimeline(
     instanceById,
     composedSnapshots,
     imageUrl,
+    mediaUrls: hostUrls,
   };
 }

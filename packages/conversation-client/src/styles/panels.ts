@@ -464,6 +464,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-audio { margin: 0; display: flex; flex-direction: column; gap: var(--cc-space-xxs); }
 .cc-audio audio { width: 100%; max-width: 100%; display: block; }
 .cc-audio audio:focus-visible, .cc-video video:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* A player whose bytes are not read yet: its poster, the host's Play button, and the loading status once pressed. */
+.cc-media-wait { display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-xs); }
+.cc-media-wait img { width: 100%; display: block; border-radius: var(--cc-radius-card); }
+.cc-media-wait [data-media-loading]:empty { margin: 0; }
 .cc-audio-transcript summary { cursor: pointer; border-radius: var(--cc-radius-badge); }
 .cc-audio-transcript summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-audio-transcript-text, .cc-document-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -195,6 +195,8 @@ import {
 } from "./timeline-layout.ts";
 import { vendorEmbedUrl } from "./media-embed.ts";
 import { createPlaybackCoalescer, flushPlaybackOnLeave, type PlaybackCoalescer, type PlaybackWriteReason } from "./playback-coalescer.ts";
+import { useNearViewport } from "./near-viewport.ts";
+import type { ObjectUrls } from "./use-object-urls.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import {
@@ -265,6 +267,13 @@ export interface RendererProps {
    * component must not know how a node is addressed.
    */
   imageUrl?: ((imageRef: string) => string | undefined) | undefined;
+  /**
+   * A player's source, read on request: its state, and a way to ask for the bytes.
+   *
+   * A host that lists player sources here reads none of them until the player comes near the screen or the person
+   * presses play. Without it, a player resolves its source through `imageUrl` like a picture.
+   */
+  mediaUrls?: ObjectUrls | undefined;
   /**
    * Whether the host answers `export.requested` with a file.
    *
@@ -2435,12 +2444,15 @@ function YouTubeEmbed({ props }: RendererProps): ReactElement {
  *
  * What it writes goes through the shared coalescer: pause, seek and end at once, a playing clock at most every
  * interval, and the last position when the page goes away. The stored position is applied once, when the player first
- * knows its duration; the seek that causes is the host's own state coming back, so it is not written again. Nothing
- * here calls `play()`: a restore never starts playback.
+ * knows its duration; the seek that causes is the host's own state coming back, so it is not written again. A restore
+ * never starts playback: `play()` is called only for a press of the host's own Play button that arrived before the
+ * bytes did (see `usePlayerSource`).
  */
 function useMediaPlayback<E extends HTMLMediaElement>(
   state: Record<string, unknown> | undefined,
   onAction: RendererProps["onAction"],
+  /** Set when the person pressed play before the bytes were read: playback starts once the player knows its length. */
+  playWhenLoaded: { current: boolean },
 ): {
   mediaRef: { current: E | null };
   handlers: {
@@ -2503,7 +2515,15 @@ function useMediaPlayback<E extends HTMLMediaElement>(
   return {
     mediaRef,
     handlers: {
-      onLoadedMetadata: (event) => restorePosition(event.currentTarget),
+      onLoadedMetadata: (event) => {
+        const media = event.currentTarget;
+        restorePosition(media);
+        if (!playWhenLoaded.current) return;
+        // The person pressed play while the bytes were on their way: this is their press arriving, not autoplay, and it
+        // starts from the restored position. A browser that still refuses leaves the player paused where it is.
+        playWhenLoaded.current = false;
+        void media.play().catch(() => undefined);
+      },
       onPlaying: (event) => report(playbackFrom(event.currentTarget, "playing"), "playing"),
       onTimeUpdate: (event) => {
         // The restore seek reports the clock before it settles; that is the node's own position coming back.
@@ -2524,27 +2544,156 @@ function useMediaPlayback<E extends HTMLMediaElement>(
   };
 }
 
-function LocalVideo({ props, imageUrl, state, onAction }: RendererProps): ReactElement {
+/** Where a player's source is: drawable, not read yet (or still being read), or not available at all. */
+type PlayerSource = { kind: "ready"; url: string } | { kind: "waiting" } | { kind: "unavailable" };
+
+/**
+ * A player's source, read only when it is needed, shared by the video and the audio player.
+ *
+ * With a host that reads player bytes on request (`mediaUrls`), nothing is fetched until the player comes near the
+ * screen or the person presses the host's Play button that stands in for the player meanwhile. Pressing it says so
+ * honestly - "loading", with no invented progress - and once the bytes arrive the real player takes its place, takes the
+ * keyboard focus the button had, restores the stored position and then plays, because the person asked it to. A host
+ * without `mediaUrls` (a library preview) resolves through `imageUrl` as before.
+ */
+function usePlayerSource(
+  ref: string,
+  imageUrl: RendererProps["imageUrl"],
+  mediaUrls: RendererProps["mediaUrls"],
+): {
+  source: PlayerSource;
+  started: boolean;
+  start: () => void;
+  observe: (element: Element | null) => void;
+  playWhenLoaded: { current: boolean };
+} {
+  const [element, observe] = useState<Element | null>(null);
+  const [started, setStarted] = useState(false);
+  const playWhenLoaded = useRef(false);
+  const status = ref === "" ? "unlisted" : mediaUrls?.status(ref);
+  const waiting = status === "idle" || status === "loading";
+  const near = useNearViewport(element, mediaUrls !== undefined && waiting && !started);
+  useEffect(() => {
+    if (mediaUrls !== undefined && status === "idle" && (near || started)) mediaUrls.request(ref);
+  }, [mediaUrls, near, ref, started, status]);
+  const start = useCallback(() => {
+    playWhenLoaded.current = true;
+    setStarted(true);
+  }, []);
+
+  let source: PlayerSource;
+  if (mediaUrls === undefined) {
+    const url = ref === "" ? undefined : imageUrl?.(ref);
+    source = url === undefined ? { kind: "unavailable" } : { kind: "ready", url };
+  } else if (status === "ready") {
+    const url = mediaUrls.get(ref);
+    source = url === undefined ? { kind: "unavailable" } : { kind: "ready", url };
+  } else if (waiting) {
+    source = { kind: "waiting" };
+  } else {
+    source = { kind: "unavailable" };
+  }
+  return { source, started, start, observe, playWhenLoaded };
+}
+
+/**
+ * Hands the keyboard to the real player when it replaces the Play button the person pressed.
+ *
+ * Only when focus was left with nobody (the button it was on is gone): a person who moved on while the bytes were on
+ * their way keeps the focus where they put it.
+ */
+function useFocusWhenReady(media: { current: HTMLMediaElement | null }, ready: boolean, started: boolean): void {
+  useEffect(() => {
+    if (!ready || !started) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body) media.current?.focus();
+  }, [media, ready, started]);
+}
+
+/**
+ * What stands in for a player whose bytes are not read yet: its poster when it has one, the host's own Play button, and
+ * a polite status that says the bytes are loading once the person pressed it.
+ *
+ * The button stays focusable while loading (`aria-disabled`, not `disabled`), so the focus that pressed it is not
+ * dropped; a second press does nothing.
+ */
+function PlayerWaiting(props: {
+  name: "video" | "audio";
+  /** The host reference the player will read, said on the element like the player's own `data-*-ref`. */
+  reference: string;
+  title: string;
+  started: boolean;
+  onStart: () => void;
+  observe: (element: Element | null) => void;
+  poster?: string | undefined;
+  caption: ReactNode;
+}): ReactElement {
+  const t = useT();
+  const play = props.name === "video" ? t("widgets.video.play") : t("widgets.audio.play");
+  const loading = props.name === "video" ? t("widgets.video.loading") : t("widgets.audio.loading");
+  return (
+    <figure
+      ref={props.observe}
+      className={`cc-${props.name} cc-media-wait`}
+      data-media-state={props.started ? "loading" : "waiting"}
+      data-media-ref={props.reference}
+      {...(props.name === "audio" ? { "data-audio-state": props.started ? "loading" : "waiting" } : {})}
+    >
+      {props.poster !== undefined && <img src={props.poster} alt="" data-media-poster="" />}
+      <button
+        type="button"
+        className="cc-action"
+        data-media-play={props.name}
+        aria-label={`${play}: ${props.title}`}
+        aria-disabled={props.started}
+        onClick={() => {
+          if (!props.started) props.onStart();
+        }}
+      >
+        {play}
+      </button>
+      <p className="cc-freshness" role="status" aria-live="polite" data-media-loading={props.name}>
+        {props.started ? loading : ""}
+      </p>
+      {props.caption}
+    </figure>
+  );
+}
+
+function LocalVideo({ props, imageUrl, mediaUrls, state, onAction }: RendererProps): ReactElement {
   const t = useT();
   const ref = String(props.videoRef ?? "");
   const alt = String(props.alt ?? "");
+  const title = String(props.title ?? t("widgets.video.title"));
   const posterRef = typeof props.posterRef === "string" ? props.posterRef : "";
-  const url = ref === "" ? undefined : imageUrl?.(ref);
+  const { source, started, start, observe, playWhenLoaded } = usePlayerSource(ref, imageUrl, mediaUrls);
   const poster = posterRef === "" ? undefined : imageUrl?.(posterRef);
-  const { mediaRef, handlers } = useMediaPlayback<HTMLVideoElement>(state, onAction);
+  const { mediaRef, handlers } = useMediaPlayback<HTMLVideoElement>(state, onAction, playWhenLoaded);
+  useFocusWhenReady(mediaRef, source.kind === "ready", started);
 
   return (
-    <Frame title={String(props.title ?? t("widgets.video.title"))} dataset={undefined} role="media">
-      {url === undefined ? (
+    <Frame title={title} dataset={undefined} role="media">
+      {source.kind === "unavailable" ? (
         <Unavailable reason={t("widgets.video.notPlayable").replace("{alt}", alt)} />
+      ) : source.kind === "waiting" ? (
+        <PlayerWaiting
+          name="video"
+          reference={ref}
+          title={alt === "" ? title : alt}
+          started={started}
+          onStart={start}
+          observe={observe}
+          poster={poster}
+          caption={<figcaption className="cc-freshness">{alt}</figcaption>}
+        />
       ) : (
-        <figure className="cc-video">
+        <figure className="cc-video" data-media-state="ready">
           <video
             controls
             preload="metadata"
             ref={mediaRef}
             {...handlers}
-            src={url}
+            src={source.url}
             {...(poster === undefined ? {} : { poster })}
             aria-label={alt}
             data-video-ref={ref}
@@ -2569,14 +2718,16 @@ function clockText(seconds: number): string {
 /**
  * An audio file the node holds, played by the browser's own controls.
  *
- * The source is a host reference resolved through the node like a picture; the page never fetches anything else. The
- * transcript is text, drawn with any hidden character marked. It never plays by itself, on first draw or on restore.
+ * The source is a host reference resolved through the node like a picture, but only once it is needed (see
+ * `usePlayerSource`); the page never fetches anything else. The transcript is text, drawn with any hidden character
+ * marked. It never plays by itself, on first draw or on restore.
  */
-function LocalAudio({ props, imageUrl, state, onAction }: RendererProps): ReactElement {
+function LocalAudio({ props, imageUrl, mediaUrls, state, onAction }: RendererProps): ReactElement {
   const t = useT();
   const audio = readAudio(props);
-  const url = audio === undefined ? undefined : imageUrl?.(audio.audioRef);
-  const { mediaRef, handlers } = useMediaPlayback<HTMLAudioElement>(state, onAction);
+  const { source, started, start, observe, playWhenLoaded } = usePlayerSource(audio?.audioRef ?? "", imageUrl, mediaUrls);
+  const { mediaRef, handlers } = useMediaPlayback<HTMLAudioElement>(state, onAction, playWhenLoaded);
+  useFocusWhenReady(mediaRef, source.kind === "ready", started);
   const describe = useCallback(
     (hidden: HiddenCharacter) => t(HIDDEN_TITLE[hidden.kind]).replace("{codePoint}", hidden.codePoint),
     [t],
@@ -2594,11 +2745,21 @@ function LocalAudio({ props, imageUrl, state, onAction }: RendererProps): ReactE
     <Frame title={title} dataset={undefined} role="audio">
       {audio === undefined ? (
         <Unavailable reason={t("widgets.audio.unreadable")} />
-      ) : url === undefined ? (
+      ) : source.kind === "unavailable" ? (
         <Unavailable reason={t("widgets.audio.notPlayable").replace("{title}", audio.title)} />
+      ) : source.kind === "waiting" ? (
+        <PlayerWaiting
+          name="audio"
+          reference={audio.audioRef}
+          title={audio.title}
+          started={started}
+          onStart={start}
+          observe={observe}
+          caption={facts.length > 0 && <figcaption className="cc-freshness">{facts.join(" · ")}</figcaption>}
+        />
       ) : (
-        <figure className="cc-audio" data-audio-state="ready">
-          <audio controls preload="metadata" ref={mediaRef} {...handlers} src={url} aria-label={audio.title} data-audio-ref={audio.audioRef} />
+        <figure className="cc-audio" data-audio-state="ready" data-media-state="ready">
+          <audio controls preload="metadata" ref={mediaRef} {...handlers} src={source.url} aria-label={audio.title} data-audio-ref={audio.audioRef} />
           {facts.length > 0 && <figcaption className="cc-freshness">{facts.join(" · ")}</figcaption>}
         </figure>
       )}

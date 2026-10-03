@@ -1,7 +1,7 @@
 import { parseHostFileRef } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
-import { useObjectUrls } from "./use-object-urls.ts";
+import { type ObjectUrls, useObjectUrlSet } from "./use-object-urls.ts";
 
 /**
  * An object URL for anything a surface names by a host reference: an imported image or video by its id, or a file the
@@ -27,5 +27,19 @@ export function useImageUrls(
   client: GatewayClient,
   refs: readonly string[],
 ): (imageRef: string) => string | undefined {
-  return useObjectUrls((imageRef) => hostObjectUrl(client, imageRef), refs);
+  return useHostObjectUrls(client, refs, []).get;
+}
+
+/**
+ * Object URLs for host references read now (pictures) and host references read on request (a player's source).
+ *
+ * One set rather than two, so a reference that is both a picture somewhere and a player's source elsewhere is read
+ * once and owned once.
+ */
+export function useHostObjectUrls(
+  client: GatewayClient,
+  refs: readonly string[],
+  onRequest: readonly string[],
+): ObjectUrls {
+  return useObjectUrlSet((ref) => hostObjectUrl(client, ref), refs, onRequest);
 }

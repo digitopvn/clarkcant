@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { graphFeedState, type CompositionGraph } from "@clarkcant/contracts";
 
 import { CATALOG, type RendererProps } from "../src/renderers.tsx";
+import type { ObjectUrlStatus, ObjectUrls } from "../src/use-object-urls.ts";
 
 function render(definitionId: string, props: Record<string, unknown>, state?: Record<string, unknown>): string {
   const renderer = CATALOG[definitionId];
@@ -14,6 +15,21 @@ function render(definitionId: string, props: Record<string, unknown>, state?: Re
     props,
     dataset: undefined,
     imageUrl: (ref: string) => `blob:test/${ref}`,
+    state,
+  };
+  return renderToStaticMarkup(createElement(renderer, input));
+}
+
+/** Drawn by a host that reads a player's bytes only on request. */
+function renderWith(definitionId: string, props: Record<string, unknown>, mediaUrls: ObjectUrls, state?: Record<string, unknown>): string {
+  const renderer = CATALOG[definitionId];
+  if (renderer === undefined) throw new Error(`${definitionId} has no renderer`);
+  const input: RendererProps = {
+    definitionId,
+    props,
+    dataset: undefined,
+    imageUrl: (ref: string) => `blob:test/${ref}`,
+    mediaUrls,
     state,
   };
   return renderToStaticMarkup(createElement(renderer, input));
@@ -93,6 +109,46 @@ describe("media renderers", () => {
     expect(audio).toContain("1:15");
     expect(audio).toContain("https://media.example.com");
     expect(audio).not.toContain("data-audio-transcript");
+  });
+
+  it("draws a player whose bytes are not read yet as the host's Play button, with no source and no request", () => {
+    const requested: string[] = [];
+    const lazy = (status: ObjectUrlStatus): ObjectUrls => ({
+      get: (ref) => (status === "ready" ? `blob:lazy/${ref}` : undefined),
+      status: () => status,
+      request: (ref) => requested.push(ref),
+    });
+    const audioProps = { title: "Brief", audioRef: "artifact:art_1", mimeType: "audio/ogg", durationSeconds: 75 };
+    const videoProps = { videoRef: "clip", alt: "A short clip", posterRef: "still" };
+    for (const [definitionId, props, name] of [
+      ["canvas.audio@1", audioProps, "audio"],
+      ["canvas.video@1", videoProps, "video"],
+    ] as const) {
+      for (const status of ["idle", "loading"] as const) {
+        const drawn = renderWith(definitionId, props, lazy(status), { status: "paused", position: 12, duration: 75 });
+        expect(drawn).not.toContain(`<${name}`);
+        expect(drawn).not.toContain("blob:lazy/");
+        expect(drawn).toMatch(new RegExp(`<button[^>]*data-media-play="${name}"`));
+        expect(drawn).toMatch(/<button[^>]*aria-disabled="false"/);
+        // No progress is shown before anyone pressed play, even while the bytes are being read near the screen.
+        expect(drawn).toMatch(/<p[^>]*role="status"[^>]*data-media-loading="[a-z]+"><\/p>/);
+        expect(drawn).toContain('data-media-state="waiting"');
+      }
+      // Ready: the native player, exactly as before.
+      const ready = renderWith(definitionId, props, lazy("ready"));
+      expect(ready).toContain(`<${name}`);
+      expect(ready).toContain("blob:lazy/");
+      expect(ready).not.toMatch(/autoplay/i);
+      expect(ready).not.toContain("data-media-play");
+      // A source the node refused says so, as it always did.
+      expect(renderWith(definitionId, props, lazy("failed"))).not.toContain("data-media-play");
+    }
+    // The poster is a picture, drawn while the video waits; the Play button is named for what it plays.
+    const waiting = renderWith("canvas.video@1", videoProps, lazy("idle"));
+    expect(waiting).toContain('src="blob:test/still"');
+    expect(waiting).toMatch(/aria-label="(?:Phát video|Play video): A short clip"/);
+    // Drawing never asks for the bytes: that is the observer's or the person's call.
+    expect(requested).toEqual([]);
   });
 
   it("refuses to draw audio whose source is not a host reference", () => {
