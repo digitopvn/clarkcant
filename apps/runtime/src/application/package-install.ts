@@ -4,6 +4,7 @@ import {
   capabilityRefSchema,
   declaredReachMismatch,
   declaredReachOf,
+  declaredResourcesMismatch,
   entryFitsHost,
   instantSchema,
   nowInstant,
@@ -641,7 +642,10 @@ export async function installPackage(
    * before anything is recorded or installed, rather than installed on a consent given for something else. A listing
    * that says nothing claims the package reaches nothing.
    */
-  const reachMismatch = declaredReachMismatch(entry.declaredReach, declaredReachOf({ facets: fetchedManifest?.facets ?? [] }));
+  const reachMismatch =
+    declaredReachMismatch(entry.declaredReach, declaredReachOf({ facets: fetchedManifest?.facets ?? [] })) ??
+    // The resource profile is shown the same way (an update notice compares it before anything is fetched), so it binds too.
+    declaredResourcesMismatch(entry.resources, fetchedManifest?.resources);
   if (reachMismatch !== undefined) {
     return {
       kind: "refused",

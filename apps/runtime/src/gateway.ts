@@ -16,6 +16,7 @@ import { handleNodeRoutes } from "./routes/node.ts";
 import { handleVoiceRoutes } from "./routes/voice.ts";
 import { handleFrameGrantFixtureRoutes } from "./routes/frame-grant-fixture.ts";
 import { handleBrowserTokenFixtureRoutes, handleBrowserTokenRoutes } from "./routes/browser-tokens.ts";
+import { handleUpdateCheckFixtureRoutes } from "./routes/update-check-fixture.ts";
 import { handleControlRoutes } from "./routes/control.ts";
 import { handleTerminalRoutes } from "./routes/terminals.ts";
 import { handleCredentialRoutes } from "./routes/credentials.ts";
@@ -262,6 +263,8 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   if (frameGrantFixtureResponse !== undefined) return frameGrantFixtureResponse;
   const browserTokenFixtureResponse = handleBrowserTokenFixtureRoutes({ services, request, segments });
   if (browserTokenFixtureResponse !== undefined) return browserTokenFixtureResponse;
+  const updateCheckFixtureResponse = await handleUpdateCheckFixtureRoutes({ services, request, segments });
+  if (updateCheckFixtureResponse !== undefined) return updateCheckFixtureResponse;
 
   const controlResponse = await handleControlRoutes({ services, request, segments, at });
   if (controlResponse !== undefined) return controlResponse;

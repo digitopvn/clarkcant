@@ -17,6 +17,7 @@ import {
   localFilesUnchanged,
   type PackageInstallDeps,
 } from "./package-install.ts";
+import { reachChangeAgainstInstalled } from "../package-reach-change.ts";
 
 /**
  * An install the person's execution policy asked about, from the question to the answer.
@@ -64,6 +65,7 @@ export function listPendingInstallApprovals(
       ORDER BY requested_at, approval_id`,
     now,
   );
+  const index = readDirectoryIndex(directoryIndexPath(process.env));
   return rows.flatMap((row): InstallApprovalItem[] => {
     const asked = findInstallApprovalRequest(runtime.db, runtime.identity.nodeId, row.approval_id);
     if (asked === undefined || asked.digest !== row.operation_digest) return [];
@@ -71,6 +73,8 @@ export function listPendingInstallApprovals(
     if (entry === undefined || entry.digest !== row.operation_digest) return [];
     // A listing by a path on this machine whose files changed since the question is left out the same way.
     if (!localFilesUnchanged(entry, asked.localDigest)) return [];
+    // An update says what it changes against the version that runs now; the question itself is the same as any install's.
+    const reachChange = reachChangeAgainstInstalled(runtime, entry, index);
     return [
       {
         kind: "install-approval",
@@ -83,6 +87,7 @@ export function listPendingInstallApprovals(
         ...(entry.declaredReach === undefined || declaredReachIsEmpty(entry.declaredReach)
           ? {}
           : { reach: canonicalReach(entry.declaredReach) }),
+        ...(reachChange === undefined ? {} : { reachChange }),
         description: row.operation_description,
         operationDigest: row.operation_digest,
         requestedAt: row.requested_at as InstallApprovalItem["requestedAt"],

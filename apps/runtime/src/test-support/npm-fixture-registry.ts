@@ -15,6 +15,8 @@ import { join } from "node:path";
  */
 const PORT = Number(process.env["CC_NPM_FIXTURE_REGISTRY_PORT"] ?? 8878);
 const FIXTURE_DIR = join(process.cwd(), "apps", "web", "e2e", "fixtures", "dashboard-widget");
+/** Two versions of one package, so the update journey (`apps/web/e2e/update-reach.spec.ts`) installs one and is offered the next. */
+const FORECAST_DIR = join(process.cwd(), "apps", "web", "e2e", "fixtures", "forecast-widget");
 
 async function main(): Promise<void> {
   const tarball = buildNpmTarballFromDirectory(FIXTURE_DIR);
@@ -23,6 +25,11 @@ async function main(): Promise<void> {
     version: "1.0.0",
     tarball,
     port: PORT,
+    more: ["1.0.0", "1.1.0"].map((version) => ({
+      name: "com.acme.forecast",
+      version,
+      tarball: buildNpmTarballFromDirectory(join(FORECAST_DIR, version)),
+    })),
   });
   process.stdout.write(`npm fixture registry listening on ${registry.url}\n`);
 

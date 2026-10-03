@@ -549,6 +549,29 @@ describe("clark widget publish", () => {
     expect(entry["riskTier"]).toBe("service");
   });
 
+  it("writes the resource profile the package requests, which an install holds the artifact to, and none for the default", async () => {
+    const plain = await tempPackage();
+    expect(await runCli(["widget", "publish", plain])).toBe(0);
+    expect(JSON.parse(readFileSync(join(plain, "dist", "directory-entry.json"), "utf8"))).not.toHaveProperty("resources");
+
+    const root = await tempPackage();
+    const manifest = JSON.parse(readFileSync(join(root, "clarkcant.json"), "utf8")) as Record<string, unknown> & { id: string; facets: unknown[] };
+    manifest.facets.push({
+      kind: "tools",
+      id: `${manifest.id}.service`,
+      entry: "service/server.mjs",
+      isolation: "service",
+      protocol: "mcp-stdio",
+      capabilities: [{ tool: "list", ref: `${manifest.id}.items.list@1`, summary: "List items", effectCategory: "read" }],
+    });
+    manifest["resources"] = { version: 1, profile: "interactive-heavy" };
+    writeFileSync(join(root, "clarkcant.json"), JSON.stringify(manifest, null, 2));
+
+    expect(await runCli(["widget", "publish", root])).toBe(0);
+    const entry = JSON.parse(readFileSync(join(root, "dist", "directory-entry.json"), "utf8")) as Record<string, unknown>;
+    expect(entry["resources"]).toEqual({ version: 1, profile: "interactive-heavy" });
+  });
+
   it("refuses to publish a package that fails conformance", async () => {
     const root = await tempPackage();
     rmSync(join(root, "fixtures", "error.json"));

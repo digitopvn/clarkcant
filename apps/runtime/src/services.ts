@@ -308,6 +308,12 @@ export interface NodeServices {
    * that lists what it minted.
    */
   browserTokenFixture?: { issued(): readonly { provider: string; tokenId: string; token: string; instanceId: string; revoked: boolean }[] };
+  /**
+   * One run of the package update check a browser journey starts when it is ready, present only on a node started with
+   * `CC_UPDATE_CHECK_FIXTURE=1` (`test-support/fixture-update-check.ts`). Its presence is the gate for the route that
+   * runs it.
+   */
+  updateCheckFixture?: { run(): Promise<{ packageUpdates: number }> };
 }
 
 /**

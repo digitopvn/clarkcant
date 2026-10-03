@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { declaredReachSchema } from "./declared-reach.ts";
+import { reachChangeSchema } from "./reach-change.ts";
 import { riskLaneSchema } from "./directory.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 
@@ -245,6 +246,11 @@ export const noticeSchema = z.strictObject({
   snoozedUntil: instantSchema.optional(),
   /** What can be done with it now, worked out by the node when it was read. Absent where nothing resolved them. */
   actions: z.array(noticeActionSchema).max(12).optional(),
+  /**
+   * On a package update notice, what the version it offers reaches against the installed one, worked out by the node
+   * when it was read (`reach-change.ts`). Absent where nothing resolved it, or the installed manifest could not be read.
+   */
+  reachChange: reachChangeSchema.optional(),
 });
 export type Notice = z.infer<typeof noticeSchema>;
 
@@ -419,6 +425,12 @@ export const waitingItemSchema = z.discriminatedUnion("kind", [
      * install refuses an artifact that declares anything else, so this is what approving agrees to.
      */
     reach: declaredReachSchema.optional(),
+    /**
+     * When the package is installed at another version, what this version reaches that the installed one does not, and
+     * what it no longer reaches (`reach-change.ts`). Absent for a first install. It decides nothing: the question is the
+     * one any install the policy asks about raises.
+     */
+    reachChange: reachChangeSchema.optional(),
     description: z.string(),
     operationDigest: z.string().min(1),
     requestedAt: instantSchema,

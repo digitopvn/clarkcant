@@ -273,6 +273,16 @@ async function main(): Promise<void> {
   }
 
   /*
+   * A route that runs the package update check once, only when its gate is on. Absent, updates are checked only by the
+   * periodic job, and nothing can ask for a check.
+   */
+  if (fixtureGates.updateCheck) {
+    const updateCheck = fixtures?.createUpdateCheckFixture(services);
+    if (updateCheck !== undefined) services.updateCheckFixture = updateCheck;
+    process.stderr.write("update checks: fixture route loaded — a journey can run the package check once (CC_UPDATE_CHECK_FIXTURE=1)\n");
+  }
+
+  /*
    * What the previous process of this node left open, reported where it was asked for.
    *
    * After `wireRuntime`, because a re-run needs the turn control it publishes, and before the server listens, so a

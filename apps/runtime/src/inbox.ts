@@ -7,6 +7,7 @@ import {
   type Notice,
   type WaitingItem,
 } from "@clarkcant/contracts";
+import { directoryIndexPath, readDirectoryIndex, type DirectoryIndexState } from "@clarkcant/core";
 import {
   allRows,
   countUnreadNotifications,
@@ -22,6 +23,7 @@ import { listPendingInstallApprovals } from "./application/install-approval.ts";
 import { listPendingCapabilityApprovals } from "./application/package-install.ts";
 import { QUESTION_TTL_MS, pendingForConversation } from "./interactions.ts";
 import { noticeActionsFor } from "./notice-actions.ts";
+import { noticeReachChange } from "./package-reach-change.ts";
 import { interactionDepsFor } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
 
@@ -250,7 +252,18 @@ export function readInbox(services: InboxServices, now: Instant, limit = 50): In
   const { db } = services.runtime;
   const principalId = services.runtime.identity.ownerPrincipalId;
   const context = { nodeId: services.runtime.identity.nodeId, now };
-  const withActions = (notice: Notice): Notice => ({ ...notice, actions: noticeActionsFor(db, principalId, notice, context) });
+  // Read once per inbox read, and only when an update notice needs it.
+  let index: DirectoryIndexState | undefined;
+  const directory = (): DirectoryIndexState => (index ??= readDirectoryIndex(directoryIndexPath(process.env)));
+  const withActions = (notice: Notice): Notice => {
+    const reachChange =
+      notice.category === "update" && notice.subject?.kind === "package" ? noticeReachChange(services.runtime, notice, directory()) : undefined;
+    return {
+      ...notice,
+      actions: noticeActionsFor(db, principalId, notice, context),
+      ...(reachChange === undefined ? {} : { reachChange }),
+    };
+  };
   return {
     waiting: waitingItems(services, now),
     notices: listNotifications(db, principalId, limit, now).map(withActions),

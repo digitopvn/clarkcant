@@ -444,6 +444,8 @@ function publish(root: string): number {
     permissionsSummary: requestedSummary(pkg.manifest.permissions),
     // What it reaches beyond its sandbox, shown before install. Binding: an install refuses an artifact that differs.
     ...(declaredReachIsEmpty(reach) ? {} : { declaredReach: reach }),
+    // The resource profile it requests, so an update can say what changes before it is fetched. Binding in the same way.
+    ...(pkg.manifest.resources === undefined ? {} : { resources: pkg.manifest.resources }),
     // From the isolation the facets declare, never from what the publisher says about their own package.
     riskTier: riskLaneFor(pkg.manifest.facets.map((facet) => facet.isolation)),
     sizeBytes: (artifact.files ?? []).reduce((sum, file) => sum + file.bytes, 0),

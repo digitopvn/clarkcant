@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { declaredReachSchema } from "./declared-reach.ts";
+import { resourceRequestSchema } from "./resource-profiles.ts";
 import { facetKindSchema, isolationClassSchema } from "./install.ts";
 import { platformSchema, semverSchema, type Platform } from "./primitives.ts";
 
@@ -101,6 +102,12 @@ export const directoryEntrySchema = z.strictObject({
    * it is binding: the install refuses an artifact whose manifest declares a different reach.
    */
   declaredReach: declaredReachSchema.optional(),
+  /**
+   * The resource profile the package requests (`resource-profiles.ts`), so an update notice can say what changes before
+   * anything is fetched. Absent means the default profile and no GPU. Binding like `declaredReach`: the install refuses an
+   * artifact whose manifest requests anything else.
+   */
+  resources: resourceRequestSchema.optional(),
   riskTier: riskLaneSchema,
   sizeBytes: z.int().nonnegative(),
   /** The digest the publisher published. An install that resolves to anything else is refused. */

@@ -2101,7 +2101,23 @@ and package details in Settings → Extensions list each origin with its purpose
 (never a value), each browser-token provider with its scopes and purpose, and each account connection with its
 provider, scopes and endpoints (§14.6), before anything is granted. An artifact
 whose manifest declares a different reach than its listing shows is refused with `409 DECLARED_REACH_MISMATCH` before
-anything is recorded, so consent covers what was shown. The update notice does not list the reach yet.
+anything is recorded, so consent covers what was shown.
+
+A directory entry may also state the resource profile the package requests in `resources` (`{ version: 1, profile, gpu? }`,
+the same shape as the manifest's); a listing without it means `interactive-light` and no GPU, and `clark widget publish`
+writes it from the manifest. It binds the same way: an artifact that requests another profile is refused with
+`409 DECLARED_REACH_MISMATCH`.
+
+**What an update shows.** A package update notice, and the install question an update raises when the execution mode
+asks first, carry `reachChange` ([reach-change.ts](../packages/contracts/src/reach-change.ts)): the new version's listing
+compared with the installed version's manifest. It lists each origin, key, browser-token scope, account scope and account
+endpoint the new version adds or drops, and, when the profile changes, each bounded limit that changes (memory, CPUs,
+processes, `/tmp`, call and job deadlines, concurrent jobs, result and input sizes, input media length) with both values,
+and the offscreen behaviour when it changes. Profiles are not ranked: each limit is compared on its own. The verdict is
+`wider` when anything is added or any limit goes up, even if something else goes down; `narrower` when something is only
+dropped or lowered; `unchanged` otherwise, including a changed purpose sentence. It is computed when the inbox is read,
+so it always compares against what is installed then, and it is absent when the package is not installed or its manifest
+cannot be read. It informs the decision and decides nothing: an update is decided by the execution policy like any install.
 
 Not built: a proxied network for services that need raw sockets. Giving a container a network would weaken an isolation
 default, so it waits for that decision.

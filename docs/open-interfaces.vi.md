@@ -308,7 +308,11 @@ nguồn gốc đã xác minh; ai trả lời là principal đã xác thực. `ac
 ra thao tác trên chính thứ được nói tới, mỗi thao tác có route thật phía sau: `retry` là `POST /work/:id/retry` (chạy
 lại một lần việc nền bị lỗi, bị dừng hoặc bị gián đoạn thành việc mới trong cùng hội thoại), `ask-again` là
 `POST /conversations/:id/questions/:questionId/ask-again` (hỏi lại một câu hỏi đã hết hạn thành câu hỏi mới),
-`update` là `POST /packages/install` thông thường với phiên bản mà thông báo nêu, và `review-update` mở Cài đặt. Thao
+`update` là `POST /packages/install` thông thường với phiên bản mà thông báo nêu, và `review-update` mở Cài đặt.
+Thông báo cập nhật gói còn mang `reachChange` khi gói đã được cài: phạm vi tiếp cận mà listing của phiên bản được nêu
+có so với manifest đang cài, dạng `{ verdict: "wider" | "narrower" | "unchanged", profile?, origins, secrets,
+browserTokens, connectionScopes, connectionEndpoints }`, mỗi tập là `{ added, removed }` và `profile` gồm tên hai mức
+tài nguyên kèm từng giới hạn có đổi (`packages/contracts/src/reach-change.ts`). Thao
 tác được liệt kê kèm `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) nói rõ vì
 sao lúc này không làm được. Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
 [system-architecture.vi.md](system-architecture.vi.md) ở phần hộp thư.
@@ -460,7 +464,9 @@ hoặc `TOKEN_SESSION_ENDED`, `422 TOKEN_PROVIDER_UNSCOPED`, `TOKEN_SCOPE_NOT_SU
 `502 TOKEN_ISSUE_FAILED`, và `503 TOKEN_PROVIDER_UNAVAILABLE` trên node không có adapter cho nhà cung cấp đó. ClarkCant
 chưa kèm adapter cho nhà cung cấp nào. Node khởi động với `CC_BROWSER_TOKEN_FIXTURE=1` đăng ký các nhà cung cấp fixture
 chạy trong tiến trình cho bộ test trình duyệt và trả lời `GET /browser-token-fixture/issued`; không có biến này, route
-đó trả `404`.
+đó trả `404`. Node khởi động với `CC_UPDATE_CHECK_FIXTURE=1` trả lời `POST /update-check-fixture/run` bằng cách chạy
+kiểm tra cập nhật gói một lần (`{ packageUpdates }`), để bộ test trình duyệt được đề nghị cập nhật sau khi cài; không có
+biến này, route đó trả `404`.
 
 Phía bridge (`tokens@1`) chỉ được đề nghị trong `init.extensions` cho frame có package đã khai báo token trình duyệt.
 `token.request` được trả lời bằng `token-result`; SDK và phiên frame của host từ chối `state.update`,
@@ -502,7 +508,9 @@ tính lại digest trừ khi nó gửi kèm `contentDigest`.
 Khi chế độ thực thi của người dùng yêu cầu hỏi trước khi cài, route trả `202` với
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` và không cài gì. Câu hỏi đó chờ trong `GET /inbox`, ở `waiting`, dưới
 dạng `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions, description,
-operationDigest, requestedAt, expiresAt }`: `permissions` là những quyền mà listing nói gói xin, còn `operationDigest`
+operationDigest, requestedAt, expiresAt, reach?, reachChange? }`: `permissions` là những quyền mà listing nói gói xin,
+`reach` là những gì gói tiếp cận ngoài vùng cách ly, `reachChange` (với bản cập nhật của gói đã cài) là những gì phiên
+bản đó thêm hoặc bỏ so với bản đang cài, cùng dạng như trên thông báo cập nhật, còn `operationDigest`
 là digest của artifact được liệt kê mà câu hỏi nói tới. Mục này chỉ được liệt kê khi thư mục vẫn còn liệt kê đúng
 artifact đó; một gói hay phiên bản được phát hành lại từ đó bị bỏ ra, và cài lại nó sẽ hỏi về chính nó ở hiện tại.
 Người dùng quyết định bằng `POST /packages/approvals/:id/decision`
