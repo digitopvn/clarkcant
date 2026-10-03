@@ -1360,11 +1360,11 @@ export function createRememberTool(input: {
   };
 }
 
-
 /**
  * The content digest of a listing's files on this machine, as the card shows it, for the Install button to send back.
- * Nothing for a git or npm listing, whose fetch checks the published digest, or for a path that cannot be read now: the
- * install then digests the files itself and refuses the unreadable path by name.
+ * Nothing for a git or npm listing, whose fetch checks the published digest, or for a path that cannot be digested now
+ * (unreadable, linked, or past the size bounds `localContentDigest` keeps a search to — it lists ten rows by default):
+ * the install then digests the files itself and refuses such a path by name.
  */
 function listedContentDigest(entry: DirectoryEntry): { contentDigest?: string } {
   const local = localContentDigest(entry);
@@ -1429,7 +1429,7 @@ export function createSearchDirectoryTool(input: {
             description: entry.description,
             source: entry.source,
             digest: entry.digest,
-            // A path on this machine is shown with the content of its files now, so Install installs these files or nothing.
+            // A path on this machine is shown with the content of its files now; Install is refused if they changed since.
             ...listedContentDigest(entry),
             riskTier: entry.riskTier,
             ...(entry.widgetAppearance === undefined ? {} : { widgetAppearance: entry.widgetAppearance }),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { GatewayClient, Timeline } from "./api.ts";
+import { type GatewayClient, GatewayError, type Timeline } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 import type {
   ArtifactOpenState,
@@ -27,6 +27,26 @@ export interface BlockActionsDeps {
   t: (key: MessageKey) => string;
   /** Opens the inbox on one waiting item: where an install the execution policy asked about is decided. */
   openInbox?: (target: string) => void;
+}
+
+/**
+ * What a refused install press leaves on its row.
+ *
+ * A press that sent the listing's `contentDigest` and was answered `DIGEST_MISMATCH` came from a list made before the
+ * files changed: pressing the same row again would send the same digest and be refused the same way, and sending none
+ * would install files nobody was shown, so the row goes out of date (`stale`) and offers a new search instead. Any
+ * other refusal shows the node's own reason, where it gave one: it is the only thing that can say *why* the install
+ * stopped.
+ */
+export function installRefusalState(
+  error: unknown,
+  contentDigest: string | undefined,
+  t: (key: MessageKey) => string,
+): PackageInstallState {
+  if (contentDigest !== undefined && error instanceof GatewayError && error.code === "DIGEST_MISMATCH") {
+    return { status: "stale", message: t("shell.package.filesChangedSinceListing"), staleContentDigest: contentDigest };
+  }
+  return { status: "refused", message: error instanceof Error ? error.message : t("shell.package.installFailed") };
 }
 
 /**
@@ -318,15 +338,7 @@ export function useBlockActions({
           }));
         },
         (error: unknown) => {
-          // The node's own reason, where it gave one: it is the only thing that can say *why* the
-          // install stopped.
-          setPackageInstall((current) => ({
-            ...current,
-            [packageId]: {
-              status: "refused",
-              message: error instanceof Error ? error.message : t("shell.package.installFailed"),
-            },
-          }));
+          setPackageInstall((current) => ({ ...current, [packageId]: installRefusalState(error, contentDigest, t) }));
         },
       );
     },
@@ -406,6 +418,8 @@ export function useBlockActions({
       onInstallPackage: installPackage,
       packageInstall,
       ...(openInbox === undefined ? {} : { onOpenInbox: openInbox }),
+      // The card's own search again, sent the way a typed request is, so the agent lists the files as they are now.
+      onSearchAgain: ({ query }) => void send(t("blocks.marketplace.searchAgainMessage").replace("{query}", query)),
       onControlTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
       onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
       controlSession,
@@ -431,6 +445,7 @@ export function useBlockActions({
       send,
       stopTask,
       submitCredential,
+      t,
       taskStop,
     ],
   );

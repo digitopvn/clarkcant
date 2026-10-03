@@ -1914,10 +1914,14 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
 
     /*
      * A package listed by a path on this machine, as the real directory search lists it: the card carries what the node
-     * read of its files, and its Install button sends that back.
+     * read of its files, and its Install button sends that back. A row's "Search again" sends the card's own search as
+     * the person's message, which lists it anew; each card gets its own id, as a real search's do.
      */
-    if (/tìm gói trên máy|find the local package/i.test(input.text)) {
-      const tool = createSearchDirectoryTool({ indexPath: directoryIndexPath(process.env), newId: (prefix) => `${prefix}_local` });
+    if (/tìm gói trên máy|find the local package|(?:tìm lại các gói khớp|search the packages again for) “harbor”/i.test(input.text)) {
+      const tool = createSearchDirectoryTool({
+        indexPath: directoryIndexPath(process.env),
+        newId: (prefix) => `${prefix}_local_${Date.now().toString(36)}`,
+      });
       const answer = await tool.execute({ query: "harbor" });
       if (answer.hostCard === undefined) return undefined;
       return { text: answer.text, block: answer.hostCard as unknown as MessageBlock };

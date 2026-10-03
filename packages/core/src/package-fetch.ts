@@ -35,6 +35,8 @@ export type FetchRefusal =
   | "NPM_TARBALL_UNSAFE_ENTRY"
   | "NPM_INTEGRITY_MISMATCH"
   | "ARTIFACT_SYMLINK_ESCAPE"
+  // Only a `digestOfDirectory` caller that passes `limits` can see this; the fetches digest their artifact uncapped.
+  | "ARTIFACT_TOO_LARGE"
   | "CACHE_ESCAPE"
   | "ARTIFACT_DIGEST_MISMATCH";
 
@@ -125,19 +127,28 @@ function containedOrRefuse(cacheRoot: string, dest: string): { ok: true } | { ok
  * reach bytes outside the artifact root is refused by name — never silently skipped and never allowed to throw an
  * unhandled `ELOOP`, which `lstatSync` cannot raise in the first place because it never follows the final
  * component of the path it is asked about.
+ *
+ * `limits` bounds the work for a caller that digests a directory it did not fetch (a path on this machine, digested
+ * when it is listed or installed): past `maxFiles` regular files or `maxBytes` of them in total, the walk stops before
+ * a byte is read and the answer is `ARTIFACT_TOO_LARGE` rather than a digest.
  */
 export function digestOfDirectory(
   dir: string,
-  options: { exclude?: readonly string[] } = {},
-): { ok: true; digest: string } | { ok: false; code: "ARTIFACT_SYMLINK_ESCAPE"; message: string } {
+  options: { exclude?: readonly string[]; limits?: { maxFiles: number; maxBytes: number } } = {},
+): { ok: true; digest: string } | { ok: false; code: "ARTIFACT_SYMLINK_ESCAPE" | "ARTIFACT_TOO_LARGE"; message: string } {
   // `.git` (and any other caller-supplied exclusion) is only ever meaningful at the artifact root — a package that
   // legitimately ships a directory named `.git` deeper in its tree (a vendored git checkout, say) must not have it
   // silently dropped from the digest.
   const exclude = new Set(options.exclude ?? []);
+  const limits = options.limits;
   const root = resolve(dir);
   const files: string[] = [];
+  let totalBytes = 0;
 
-  function walk(current: string, isRoot: boolean): { ok: true } | { ok: false; message: string } {
+  function walk(
+    current: string,
+    isRoot: boolean,
+  ): { ok: true } | { ok: false; code: "ARTIFACT_SYMLINK_ESCAPE" | "ARTIFACT_TOO_LARGE"; message: string } {
     for (const name of readdirSync(current).sort()) {
       if (isRoot && exclude.has(name)) continue;
       const full = join(current, name);
@@ -145,27 +156,45 @@ export function digestOfDirectory(
       if (stat === undefined) continue;
 
       if (stat.isSymbolicLink()) {
-        return { ok: false, message: `"${relative(root, full)}" is a symlink, which is refused rather than followed` };
+        return {
+          ok: false,
+          code: "ARTIFACT_SYMLINK_ESCAPE",
+          message: `"${relative(root, full)}" is a symlink, which is refused rather than followed`,
+        };
       }
       // A hard link (nlink > 1 on a regular file) shares inode/bytes with a path outside the artifact that this
       // function never walked, so a digest over "the file at this path" would not describe bytes unique to this
       // artifact. Directories cannot be hard-linked on the filesystems this runs on, so the check is scoped to
       // regular files.
       if (stat.isFile() && stat.nlink > 1) {
-        return { ok: false, message: `"${relative(root, full)}" is a hard link, which is refused rather than read` };
+        return {
+          ok: false,
+          code: "ARTIFACT_SYMLINK_ESCAPE",
+          message: `"${relative(root, full)}" is a hard link, which is refused rather than read`,
+        };
       }
       if (stat.isDirectory()) {
         const sub = walk(full, false);
         if (!sub.ok) return sub;
         continue;
       }
-      if (stat.isFile()) files.push(full);
+      if (stat.isFile()) {
+        files.push(full);
+        totalBytes += stat.size;
+        if (limits !== undefined && (files.length > limits.maxFiles || totalBytes > limits.maxBytes)) {
+          return {
+            ok: false,
+            code: "ARTIFACT_TOO_LARGE",
+            message: `it holds more than ${String(limits.maxFiles)} files or ${String(limits.maxBytes)} bytes`,
+          };
+        }
+      }
     }
     return { ok: true };
   }
 
   const walked = walk(root, true);
-  if (!walked.ok) return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: walked.message };
+  if (!walked.ok) return { ok: false, code: walked.code, message: walked.message };
   // The relative path is hashed with `/` separators and sorted in that form, so a package has one digest on every
   // OS: hashing `widgets\main\index.html` on Windows would never match the digest a directory published from POSIX.
   const entries = files

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { expect, test, type APIRequestContext } from "@playwright/test";
@@ -10,8 +10,9 @@ import { DEFAULT_EXECUTION_POLICY_CONFIG } from "@clarkcant/contracts";
  * without asking first.
  *
  * The listing carries the digest the node computed over the package's files when it listed them, and the button sends it
- * back; the node digests the files again and installs them. The runtime's own tests cover the refusals (files changed since
- * the listing, a path that cannot be read); this covers what only a browser can: that the press installs.
+ * back; the node digests the files again and installs them. The runtime's own tests cover each refusal; this covers what
+ * only a browser can: that the press installs, and that a row refused for files that changed since its list was made says
+ * so, stops offering the same Install, and searches again.
  *
  * The node is shared by every spec in the run and keeps its preferences and packages, so the mode this spec sets is put
  * back afterwards and the package is uninstalled before and after, which also makes a retry start from the same state.
@@ -27,6 +28,13 @@ if (NODE_PORT === undefined || NODE_PORT === "") {
 const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 const PACKAGE = "com.example.theme-local";
 const POLICY_KEY = "execution.policy";
+/**
+ * A file the stale-row test adds to the committed fixture after the list is made, so the node's own digest sees changed
+ * files. Removed before and after every test, so an attempt that dies midway leaves neither the fixture nor a retry
+ * changed. Only the directory's listing digest is pinned for the fixture, and a local install does not compare files with
+ * it, so the addition changes nothing but the content digest.
+ */
+const CHANGED_FILE = join(process.cwd(), "apps", "web", "e2e", "fixtures", "theme-local", "changed-after-listing.txt");
 
 function token(): string {
   const parsed = JSON.parse(readFileSync(join(DATA_DIR, "identity.json"), "utf8")) as { localToken?: unknown };
@@ -66,6 +74,7 @@ async function uninstall(request: APIRequestContext): Promise<void> {
 let previousPolicy: Record<string, unknown> | undefined;
 
 test.beforeEach(async ({ request }) => {
+  rmSync(CHANGED_FILE, { force: true });
   await uninstall(request);
   previousPolicy = await storedPolicy(request);
   /*
@@ -77,6 +86,7 @@ test.beforeEach(async ({ request }) => {
 });
 
 test.afterEach(async ({ request }) => {
+  rmSync(CHANGED_FILE, { force: true });
   if (previousPolicy !== undefined) await writePolicy(request, previousPolicy);
   await uninstall(request);
 });
@@ -106,5 +116,43 @@ test("Install on a listing by a path on this machine installs it, without asking
   const state = listed.locator("[data-install-state]");
   await expect(state).toHaveAttribute("data-install-state", "installed", { timeout: 20_000 });
   await expect(listed.locator("[data-install-open-inbox]")).toHaveCount(0);
+  expect(await installed(request)).toEqual(["1.0.0"]);
+});
+
+test("a row whose files changed after the list was made goes out of date, and its search again lists them anew", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  const composer = page.locator("[data-composer='true']");
+  await composer.waitFor();
+  await composer.fill("tìm gói trên máy");
+  await composer.press("Enter");
+
+  const rows = page.locator(`[data-marketplace-package='${PACKAGE}']`);
+  const listed = rows.last();
+  await expect(listed).toBeVisible({ timeout: 20_000 });
+  const rowsBefore = await rows.count();
+
+  // The files change after the list was made: one is added, and removed again after the test whatever happens.
+  writeFileSync(CHANGED_FILE, "added after the list was made\n");
+  const refused = page.waitForResponse((answer) => answer.url().endsWith("/packages/install"));
+  await listed.locator(`[data-install-package='${PACKAGE}']`).click();
+  expect((await refused).status()).toBe(409);
+
+  // Out of date: Install stays disabled with the reason, and the way forward is the same search again.
+  await expect(listed.locator("[data-install-state]")).toHaveAttribute("data-install-state", "stale", { timeout: 20_000 });
+  await expect(listed.locator(`[data-install-package='${PACKAGE}']`)).toBeDisabled();
+  expect(await installed(request)).toEqual([]);
+
+  await listed.locator(`[data-marketplace-search-again='${PACKAGE}']`).click();
+  await expect(rows).toHaveCount(rowsBefore + 1, { timeout: 20_000 });
+
+  // The new list shows the files as they are now, so its row installs; the old one stays out of date.
+  const relisted = rows.last();
+  await expect(relisted.locator("[data-install-state]")).toHaveCount(0);
+  await relisted.locator(`[data-install-package='${PACKAGE}']`).click();
+  await expect(relisted.locator("[data-install-state]")).toHaveAttribute("data-install-state", "installed", { timeout: 20_000 });
   expect(await installed(request)).toEqual(["1.0.0"]);
 });

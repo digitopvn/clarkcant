@@ -476,17 +476,24 @@ name, and a name longer than 120 characters is shortened before its extension, w
 **Installing a package is person-only.** `POST /packages/install` `{ "packageId", "version" }` is what the app's own
 Install button and a notice's `update` call; no agent tool installs a package (the package tool lists, uninstalls,
 restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with `403 PERSON_ONLY`.
+
 For a package listed by a path on this machine the node digests its files itself (`digestOfDirectory`, the digest a git
 or npm fetch computes), so the request needs no digest from the client. The `marketplace-results` card carries that
 digest as each local listing's `contentDigest`, computed when the node listed it, and the Install button sends it back
-as `{ "contentDigest" }`: when the files no longer hash to it the install is refused with `409 DIGEST_MISMATCH` and a
-reason saying they changed, installing nothing and asking nothing, so an install from a listing installs the files that
-listing showed. A request without `contentDigest` (a card from before the field, or a notice's `update`) installs the
-files as they are when it arrives. A path whose files cannot be digested (unreadable, or holding a symbolic or hard
-link, which the digest refuses rather than follows) is refused with `400 LOCAL_SOURCE_UNREADABLE`. A local install's
-plan and generation carry
-the listing's `digest`; a client that sends `{ "localDigest" }` names that identity itself, as before, and is not
-re-digested unless it also sends `contentDigest`.
+as `{ "contentDigest" }`. If the files changed since the list was made, the install is refused with
+`409 DIGEST_MISMATCH` and a reason that says so and tells the person to search again; nothing is installed or asked,
+and the card marks that row as changed rather than offering the same refused install again. The check happens at
+install time only: a local package stays linked to its path rather than copied, so it keeps being read from there and
+later edits to its files are not re-checked. A request without `contentDigest` (a card from before the field, or a
+notice's `update`) installs the files as they are when it arrives. A path whose files cannot be digested is refused
+with `400 LOCAL_SOURCE_UNREADABLE`: unreadable, holding a symbolic or hard link (which the digest refuses rather than
+follows), or too large to verify (more than 5,000 files or 64 MiB, the bound that keeps a search's digests cheap; the
+card then carries no `contentDigest` for it). These checks run before the execution policy decides, so a person whose
+mode would deny the install still gets the `409` or `400` rather than `403 POLICY_REFUSED`. The `effect.executed`
+record of a local install names the files it checked (`files sha256:…` in its description). A local install's plan and
+generation carry the listing's `digest`; a client that sends `{ "localDigest" }` names that identity itself, as before,
+and is not re-digested unless it also sends `contentDigest`.
+
 When the person's execution mode asks before installing, it answers `202` with
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
 `waiting` as `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions,

@@ -372,6 +372,42 @@ describe("C2: digestOfDirectory refuses a symlink or hard link rather than follo
   });
 });
 
+describe("digestOfDirectory with limits, for a directory it did not fetch", () => {
+  function tree(name: string, files: Record<string, string>): string {
+    const artifact = join(dir, name);
+    mkdirSync(join(artifact, "nested"), { recursive: true });
+    for (const [path, content] of Object.entries(files)) writeFileSync(join(artifact, path), content);
+    return artifact;
+  }
+
+  it("gives the same digest as an uncapped walk within the limits", () => {
+    const artifact = tree("within", { "a.txt": "aa", "nested/b.txt": "bbb" });
+    expect(digestOfDirectory(artifact, { limits: { maxFiles: 2, maxBytes: 5 } })).toEqual(digestOfDirectory(artifact));
+  });
+
+  it("refuses more files than maxFiles, counting nested ones", () => {
+    const artifact = tree("many", { "a.txt": "", "nested/b.txt": "", "nested/c.txt": "" });
+    const result = digestOfDirectory(artifact, { limits: { maxFiles: 2, maxBytes: 1_000 } });
+    expect(result).toMatchObject({ ok: false, code: "ARTIFACT_TOO_LARGE" });
+    if (!result.ok) expect(result.message).toContain("more than 2 files");
+  });
+
+  it("refuses more bytes in total than maxBytes", () => {
+    const artifact = tree("heavy", { "a.txt": "aaa", "nested/b.txt": "bbb" });
+    expect(digestOfDirectory(artifact, { limits: { maxFiles: 10, maxBytes: 5 } })).toMatchObject({
+      ok: false,
+      code: "ARTIFACT_TOO_LARGE",
+    });
+  });
+
+  it("leaves an excluded root directory out of the count, as it is out of the digest", () => {
+    const artifact = tree("excluded", { "a.txt": "a" });
+    mkdirSync(join(artifact, ".git"));
+    writeFileSync(join(artifact, ".git", "HEAD"), "ref: refs/heads/main");
+    expect(digestOfDirectory(artifact, { exclude: [".git"], limits: { maxFiles: 1, maxBytes: 1 } }).ok).toBe(true);
+  });
+});
+
 describe("redactCredentials", () => {
   it("strips userinfo out of a url before it reaches a message (Low: credential leak)", () => {
     expect(redactCredentials("https://user:hunter2@github.com/example/repo.git")).toBe("https://github.com/example/repo.git");

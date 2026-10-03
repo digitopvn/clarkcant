@@ -396,18 +396,23 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
 /**
  * What became of an install attempt, as the card shows it.
  *
- * Four states because the four are different truths: it is happening, it happened, a person has to decide first, or
- * it was refused. Collapsing the middle two into "not installed" would hide that one of them is waiting on the
- * reader and the other is not.
+ * Five states because the five are different truths: it is happening, it happened, a person has to decide first, it
+ * was refused, or the list it was pressed on is out of date. Collapsing the middle two into "not installed" would hide
+ * that one of them is waiting on the reader and the other is not.
  */
 export interface PackageInstallState {
-  status: "installing" | "installed" | "approval-required" | "refused";
+  status: "installing" | "installed" | "approval-required" | "refused" | "stale";
   /** The node's own words where it gave them. */
   message?: string;
   generationId?: string;
   verified?: string;
   /** The inbox item the install waits on, when the execution policy asked first. */
   approvalId?: string;
+  /**
+   * For `stale`: the `contentDigest` the refused press sent. Only a row that shows this same digest is out of date; a
+   * row from a newer search shows the files as they are now and offers Install again.
+   */
+  staleContentDigest?: string;
 }
 
 /** How a question the agent asked stopped waiting, as the node recorded it in the transcript. */
@@ -482,6 +487,11 @@ export interface BlockActions {
    * decision there. Absent where there is no inbox to open, and then the card offers no such button.
    */
   onOpenInbox?: (target: string) => void;
+  /**
+   * Runs a marketplace card's search again, as the person's own next message, for a row whose files changed after the
+   * card was made. Absent where there is no conversation to send to, and then the card offers no such button.
+   */
+  onSearchAgain?: (input: { query: string }) => void;
   /**
    * The answer being composed for a question card, owned by the surface that draws it.
    *
@@ -1946,7 +1956,16 @@ export function MarketplaceResultsBlock({
             // What a listing by a path on this machine showed of its files, sent back so the install is of these files.
             const contentDigest = typeof result.contentDigest === "string" && result.contentDigest !== "" ? result.contentDigest : undefined;
             const lane = typeof result.riskTier === "string" ? result.riskTier : "";
-            const installState = actions?.packageInstall?.[packageId];
+            const attempt = actions?.packageInstall?.[packageId];
+            /*
+             * Out of date only on a row that shows the digest the refused press sent: pressing it again would send the
+             * same digest and be refused the same way, so it offers a new search instead. A row from a newer search
+             * shows the files as they are now and is not affected.
+             */
+            const stale =
+              attempt?.status === "stale" && contentDigest !== undefined && attempt.staleContentDigest === contentDigest;
+            const installState = attempt?.status === "stale" && !stale ? undefined : attempt;
+            const stateId = `cc-marketplace-state-${packageId}-${String(position)}`;
             return (
               <li className="cc-marketplace-item" key={`${packageId}-${version}-${position}`} data-marketplace-package={packageId}>
                 <div className="cc-marketplace-name">
@@ -1979,7 +1998,8 @@ export function MarketplaceResultsBlock({
                       type="button"
                       className="cc-chip"
                       data-install-package={packageId}
-                      disabled={installState?.status === "installing"}
+                      disabled={installState?.status === "installing" || stale}
+                      {...(stale ? { title: t("blocks.marketplace.staleReason"), "aria-describedby": stateId } : {})}
                       onClick={() =>
                         actions.onInstallPackage?.({ packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) })
                       }
@@ -1987,9 +2007,20 @@ export function MarketplaceResultsBlock({
                       {installState?.status === "installing" ? t("blocks.marketplace.installing") : t("blocks.marketplace.install")}
                     </button>
                     {installState !== undefined && installState.status !== "installing" && (
-                      <span className="cc-marketplace-install-state" data-install-state={installState.status}>
+                      <span id={stateId} className="cc-marketplace-install-state" data-install-state={installState.status}>
                         {installState.message ?? ""}
                       </span>
+                    )}
+                    {/* The way forward from an out-of-date list: the same search again, as the person's own message. */}
+                    {stale && actions.onSearchAgain !== undefined && (
+                      <button
+                        type="button"
+                        className="cc-chip"
+                        data-marketplace-search-again={packageId}
+                        onClick={() => actions.onSearchAgain?.({ query })}
+                      >
+                        {t("blocks.marketplace.searchAgain")}
+                      </button>
                     )}
                     {/* The install waits in the inbox, where the person decides it: one step there, never a decision here. */}
                     {installState?.status === "approval-required" &&
