@@ -1,10 +1,11 @@
-import { MAP_TILE_SECRET_CONSUMER } from "@clarkcant/contracts";
+import { MAP_TILE_SECRET_NAME } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
 import {
   type MapTilePolicyRequestDeps,
   type MapTilePolicyRequestOutcome,
   type MapTilePolicyStatus,
+  describeMapTileReceipt,
   mapTilePolicyStatus,
   requestMapTilePolicy,
 } from "./application/map-tile-policy.ts";
@@ -12,10 +13,10 @@ import {
 /**
  * Turning the maps' provider tiles on or off from the conversation.
  *
- * The same `writeMapTilePolicy` Settings writes through (`application/map-tile-policy.ts`). Naming a provider always
- * becomes a host-owned approval card the person decides; turning tiles off follows the execution policy. The key is
- * never a parameter: the person gives it through `request_secret` with consumer `maps:tiles`, and this tool names it by
- * the secret's name only.
+ * The same `writeMapTilePolicy` Settings writes through (`application/map-tile-policy.ts`), decided by the execution
+ * policy like any other effect. The key is never a parameter, and neither is the secret it lives in: it is the host's
+ * own `maps:tiles`, which only the person enters, in Settings, bound to the origin they enter it for. Clark says only
+ * whether the provider needs a key and where it goes; a provider at another origin than the key's runs without it.
  */
 
 export interface MapTilesToolDeps {
@@ -28,22 +29,29 @@ export interface MapTilesToolDeps {
 
 const ACTIONS = ["status", "set", "clear"] as const;
 
+const ENTER_KEY = "nhờ người dùng nhập khóa trong Cài đặt → Tiện ích → Ô bản đồ (tui không nhận và không chuyển được khóa)";
+
 export function describeMapTileStatus(status: MapTilePolicyStatus): string {
   const policy = status.policy;
-  if (policy === null) return "Bản đồ đang chỉ dùng nền ngoại tuyến: chưa đặt nhà cung cấp ô bản đồ nào.";
+  const saved = status.savedKey === null
+    ? "Chưa có khóa ô bản đồ nào được lưu."
+    : `Khóa ô bản đồ đã lưu ${status.savedKey.origin === undefined ? "không gắn với nguồn nào" : `chỉ được gửi tới ${status.savedKey.origin}`}.`;
+  if (policy === null) return `Bản đồ đang chỉ dùng nền ngoại tuyến: chưa đặt nhà cung cấp ô bản đồ nào. ${saved}`;
   const key = policy.credential === undefined
     ? "không dùng khóa"
     : status.keyUsable === true
-      ? `khóa ${policy.credential.secret} đã được lưu cho ${MAP_TILE_SECRET_CONSUMER}`
-      : `khóa ${policy.credential.secret} chưa dùng được (${status.keyProblem ?? "chưa có"}) nên bản đồ vẫn chỉ dùng nền ngoại tuyến; ` +
-        `nhờ người dùng nhập khóa bằng request_secret với consumer ${MAP_TILE_SECRET_CONSUMER} và tên ${policy.credential.secret}`;
-  return `Ô bản đồ lấy từ ${policy.origin} (${policy.attribution}, zoom tối đa ${String(policy.maxZoom)}); ${key}.`;
+      ? `khóa đã lưu được gửi tới ${policy.origin}`
+      : `khóa chưa dùng được (${status.keyProblem ?? "chưa có"}) nên bản đồ vẫn chỉ dùng nền ngoại tuyến; ${ENTER_KEY}`;
+  return `Ô bản đồ lấy từ ${policy.origin} (${policy.attribution}, zoom tối đa ${String(policy.maxZoom)}); ${key}. ${saved}`;
 }
 
 export function describeMapTileOutcome(outcome: MapTilePolicyRequestOutcome): string {
   switch (outcome.kind) {
     case "done":
-      return `Đã tắt ô bản đồ. ${describeMapTileStatus(outcome.status)}`;
+      return (
+        `${describeMapTileReceipt(outcome.policy, outcome.status)}. ${describeMapTileStatus(outcome.status)} ` +
+        "Người dùng hoàn tác được bằng nút Hoàn tác trong Cài đặt → Tiện ích → Ô bản đồ."
+      );
     case "approval-required":
       return (
         `Đã gửi thẻ duyệt: ${outcome.approval.operationDescription}. Chưa có gì thay đổi — người dùng phải bấm duyệt trên ` +
@@ -65,11 +73,12 @@ export function createMapTilesTool(input: MapTilesToolDeps): ToolDefinition {
     description:
       "Show, turn on or turn off provider map tiles for the maps on this node. Without a provider, maps draw only the " +
       "offline basemap. set names one tile provider: its https origin, a path template with {z}, {x} and {y}, the " +
-      "attribution the provider requires, its maximum zoom, and optionally the name of a secret holding its key with " +
-      "the header or query parameter it goes in. Never ask for or pass the key itself: ask the user for it with " +
-      `request_secret, consumer ${MAP_TILE_SECRET_CONSUMER}, and pass only the secret's name here. set always puts an ` +
-      "approval card in the conversation that only the user can approve; clear turns tiles off, and the execution " +
-      "policy may ask first. The result says what happened.",
+      "attribution the provider requires, its maximum zoom, and, when the provider needs a key, the header or query " +
+      "parameter the key goes in. Never ask for, pass or put the key itself anywhere, including in the template: the " +
+      "user enters it in Settings → Extensions → Map tiles, which binds it to that provider's origin, and the node sends " +
+      "it only there. A provider you set at another origin runs without the key until the user enters it again there. " +
+      "set and clear follow the node's execution policy: they may run at once (the user can undo them in Settings), put " +
+      "an approval card in the conversation that only the user can approve, or be refused. The result says which.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -77,15 +86,14 @@ export function createMapTilesTool(input: MapTilesToolDeps): ToolDefinition {
       properties: {
         action: { type: "string", enum: [...ACTIONS], description: "status, set a provider, or clear (tiles off)." },
         origin: { type: "string", description: "For set: the provider's origin, e.g. https://tiles.example.com (http only for a loopback address)." },
-        template: { type: "string", description: "For set: the tile path on that origin, e.g. /styles/basic/{z}/{x}/{y}.png" },
+        template: { type: "string", description: "For set: the tile path on that origin, e.g. /styles/basic/{z}/{x}/{y}.png — never with a key in it." },
         attribution: { type: "string", description: "For set: the attribution text the provider requires on the map." },
         maxZoom: { type: "integer", minimum: 0, maximum: 19, description: "For set: the provider's highest zoom." },
-        keySecret: { type: "string", description: "For set, optional: the name of the secret holding the provider's key (lower-case)." },
-        keyHeader: { type: "string", description: "With keySecret: the HTTP header the key goes in. Give this or keyQuery." },
-        keyQuery: { type: "string", description: "With keySecret: the query parameter the key goes in. Give this or keyHeader." },
+        keyHeader: { type: "string", description: "For set, when the provider needs a key: the HTTP header it goes in. Give this or keyQuery." },
+        keyQuery: { type: "string", description: "For set, when the provider needs a key: the query parameter it goes in. Give this or keyHeader." },
       },
     },
-    promptSnippet: "set_map_tiles — show, turn on (with the user's approval) or turn off provider map tiles",
+    promptSnippet: "set_map_tiles — show, turn on or turn off provider map tiles (the key is entered by the user in Settings)",
     execute: async (params: Record<string, unknown>): Promise<{ text: string; hostCard?: Record<string, unknown> }> => {
       const action = typeof params.action === "string" ? params.action : "";
       if (!(ACTIONS as readonly string[]).includes(action)) {
@@ -94,7 +102,6 @@ export function createMapTilesTool(input: MapTilesToolDeps): ToolDefinition {
       const deps = input.deps();
       if (action === "status") return { text: describeMapTileStatus(mapTilePolicyStatus(deps, deps.principalId)) };
       const source = input.channel() === "voice" ? "voice" : "agent";
-      const secret = text(params.keySecret);
       const header = text(params.keyHeader);
       const query = text(params.keyQuery);
       const value = action === "clear"
@@ -104,9 +111,10 @@ export function createMapTilesTool(input: MapTilesToolDeps): ToolDefinition {
             template: text(params.template) ?? "",
             attribution: text(params.attribution) ?? "",
             maxZoom: params.maxZoom,
-            ...(secret === undefined
+            // The secret is always the host's own; the model only says where the key goes.
+            ...(header === undefined && query === undefined
               ? {}
-              : { credential: { secret, ...(header === undefined ? {} : { header }), ...(query === undefined ? {} : { query }) } }),
+              : { credential: { secret: MAP_TILE_SECRET_NAME, ...(header === undefined ? {} : { header }), ...(query === undefined ? {} : { query }) } }),
           };
       const outcome = requestMapTilePolicy(deps, {
         value,

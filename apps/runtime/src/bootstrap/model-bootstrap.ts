@@ -399,7 +399,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           // A long-running capability starts through this conversation's widget binding to it, which follows the job.
           widgets: () => deps.services(),
         },
-        // "Show map tiles from X" or "turn map tiles off": the same write Settings makes; naming a provider is a card.
+        // "Show map tiles from X" or "turn map tiles off": the same write Settings makes, as the execution policy decides.
         mapTiles: {
           deps: () => ({
             db: deps.services().runtime.db,

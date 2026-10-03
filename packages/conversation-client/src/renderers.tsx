@@ -5004,7 +5004,15 @@ function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: Ren
           <span data-map-basemap-credit="true">{t("widgets.map.basemap")}</span>
           {provider === null ? (
             <span data-map-tiles="off" data-map-tiles-offline={offline}>
-              {t(offline === "key-unavailable" ? "widgets.map.tilesOffKey" : offline === "no-provider" ? "widgets.map.tilesOffNoProvider" : "widgets.map.tilesOff")}
+              {t(
+                offline === "key-origin-mismatch"
+                  ? "widgets.map.tilesOffKeyOrigin"
+                  : offline === "key-unavailable"
+                    ? "widgets.map.tilesOffKey"
+                    : offline === "no-provider"
+                      ? "widgets.map.tilesOffNoProvider"
+                      : "widgets.map.tilesOff",
+              )}
             </span>
           ) : (
             <span data-map-tiles="provider" data-map-tile-origin={provider.origin}>{fillMessage(t("widgets.map.tiles"), { origin: provider.origin, attribution: provider.attribution })}</span>

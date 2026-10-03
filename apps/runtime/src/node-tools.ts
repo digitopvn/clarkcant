@@ -239,8 +239,8 @@ export function createNodeTools(input: {
   /**
    * The maps' tile policy (`map-tiles-tool.ts`), when this turn belongs to a node that holds one.
    *
-   * Absent means `set_map_tiles` is not registered. Present, it writes through the same path Settings writes through;
-   * naming a provider is always a card the person decides.
+   * Absent means `set_map_tiles` is not registered. Present, it writes through the same path Settings writes through,
+   * as the execution policy decides; the key stays bound to the origin the person entered it for.
    */
   mapTiles?: MapTilesToolDeps;
 }): ToolDefinition[] {

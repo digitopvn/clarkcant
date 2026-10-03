@@ -2215,10 +2215,10 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * readiness that says the account is not connected, the policy and the egress broker are the node's own.
      */
     /*
-     * Clark turning the maps' provider tiles on or off. Scripted decision, real tool: naming a provider becomes the
-     * host's approval card, and turning tiles off follows the node's execution policy.
+     * Clark turning the maps' provider tiles on or off. Scripted decision, real tool: both follow the node's execution
+     * policy, which runs them or puts the host's approval card in the conversation.
      */
-    const tilesFrom = /^(?:hiện ô bản đồ từ|show map tiles from)\s+(\S+)$/iu.exec(input.text.trim());
+    const tilesFrom = /^(?:hiện ô bản đồ từ|show map tiles from)\s+(\S+)(?:\s+(?:với khóa header|with key header)\s+(\S+))?$/iu.exec(input.text.trim());
     if (tilesFrom !== null || /^(?:tắt ô bản đồ|turn map tiles off)$/iu.test(input.text.trim())) {
       const services = deps.services();
       const tool = createMapTilesTool({
@@ -2235,7 +2235,14 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       const answer = await tool.execute(
         tilesFrom === null
           ? { action: "clear" }
-          : { action: "set", origin: tilesFrom[1] ?? "", template: "/tiles/{z}/{x}/{y}.png", attribution: "© Fixture tiles", maxZoom: 19 },
+          : {
+              action: "set",
+              origin: tilesFrom[1] ?? "",
+              template: "/tiles/{z}/{x}/{y}.png",
+              attribution: "© Fixture tiles",
+              maxZoom: 19,
+              ...(tilesFrom[2] === undefined ? {} : { keyHeader: tilesFrom[2] }),
+            },
       );
       if (answer.hostCard !== undefined) {
         // SAFETY: the approval card `requestMapTilePolicy` built in the message-block union's shape; the node validates

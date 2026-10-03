@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type Instant, MAP_TILE_POLICY_PREFERENCE, MAP_TILE_SECRET_CONSUMER, type MapTileProvider } from "@clarkcant/contracts";
+import { type Instant, MAP_TILE_POLICY_PREFERENCE, MAP_TILE_SECRET_NAME, type MapTileProvider, mapTileKeyConsumer } from "@clarkcant/contracts";
 import { writeRegisteredPreference } from "@clarkcant/core";
 import { nodeStoreSecretBackend, putSecretMetadata } from "@clarkcant/storage";
 
@@ -30,6 +30,9 @@ const PROVIDER: MapTileProvider = {
   attribution: "© Example contributors",
   maxZoom: 17,
 };
+
+/** The consumer a key entered in Settings for the provider's origin is bound to. */
+const BOUND = mapTileKeyConsumer("https://tiles.example");
 
 const noKey: MapTileCredential = (use) => ({ ok: true, result: use(undefined) });
 const withKey: MapTileCredential = (use) => ({ ok: true, result: use(KEY) });
@@ -159,14 +162,14 @@ describe("the tile proxy", () => {
   it("adds the key as the header or query parameter the policy names, and returns it nowhere", async () => {
     const header = fakeFetch(png);
     const viaHeader = await createMapTileProxy({ fetch: header.fetch }).tile({
-      provider: { ...PROVIDER, credential: { secret: "tiles", header: "x-api-key" } },
+      provider: { ...PROVIDER, credential: { secret: MAP_TILE_SECRET_NAME, header: "x-api-key" } },
       z: 1, x: 0, y: 0, credential: withKey,
     });
     expect(header.seen[0]?.headers["x-api-key"]).toBe(KEY);
     expect(header.seen[0]?.url).not.toContain(KEY);
     const query = fakeFetch(png);
     const viaQuery = await createMapTileProxy({ fetch: query.fetch }).tile({
-      provider: { ...PROVIDER, credential: { secret: "tiles", query: "key" } },
+      provider: { ...PROVIDER, credential: { secret: MAP_TILE_SECRET_NAME, query: "key" } },
       z: 1, x: 0, y: 0, credential: withKey,
     });
     expect(new URL(query.seen[0]?.url ?? "").searchParams.get("key")).toBe(KEY);
@@ -195,16 +198,16 @@ function storeKey(consumers: string[]): void {
   putSecretMetadata(db, {
     secretId: "secret_tiles",
     principalId: owner(),
-    name: "tiles",
+    name: MAP_TILE_SECRET_NAME,
     description: "Tile provider key",
     kind: "token",
     backend: "node-store",
-    backendRef: "tiles",
+    backendRef: MAP_TILE_SECRET_NAME,
     allowedConsumers: consumers,
     injectionPolicy: "http-header",
     at: AT,
   });
-  nodeStoreSecretBackend(db, owner()).write("tiles", KEY, AT);
+  nodeStoreSecretBackend(db, owner()).write(MAP_TILE_SECRET_NAME, KEY, AT);
 }
 
 function setPolicy(value: unknown): void {
@@ -245,8 +248,8 @@ describe("the tile routes on a node", () => {
   });
 
   it("tells the page the provider and attribution but never its template or key", async () => {
-    storeKey([MAP_TILE_SECRET_CONSUMER]);
-    setPolicy({ ...PROVIDER, credential: { secret: "tiles", header: "x-api-key" } });
+    storeKey([BOUND]);
+    setPolicy({ ...PROVIDER, credential: { secret: MAP_TILE_SECRET_NAME, header: "x-api-key" } });
     const response = await route("/map-tiles");
     expect(response?.body).toEqual({ provider: { origin: "https://tiles.example", attribution: "© Example contributors", maxZoom: 17 } });
     expect(JSON.stringify(response)).not.toContain("styles/basic");
@@ -267,8 +270,8 @@ describe("the tile routes on a node", () => {
     expect(seen.map((entry) => entry.url)).toEqual(["https://tiles.example/styles/basic/2/3/1.png"]);
   });
 
-  it("sends the key only when the secret is stored for maps:tiles, and never returns it", async () => {
-    setPolicy({ ...PROVIDER, credential: { secret: "tiles", header: "x-api-key" } });
+  it("sends the key only to the origin it was entered for, and never returns it", async () => {
+    setPolicy({ ...PROVIDER, credential: { secret: MAP_TILE_SECRET_NAME, header: "x-api-key" } });
     const { fetch, seen } = fakeFetch(png);
     const proxy = createMapTileProxy({ fetch });
     const missing = await route("/map-tiles/1/0/0", "GET", proxy);
@@ -277,13 +280,23 @@ describe("the tile routes on a node", () => {
     // The page is told the maps are offline because of the key, so it does not ask for tiles that would all fail.
     expect((await route("/map-tiles"))?.body).toEqual({ provider: null, offline: "key-unavailable" });
 
-    storeKey(["command:git"]);
-    expect((await route("/map-tiles"))?.body).toEqual({ provider: null, offline: "key-unavailable" });
+    // A key entered for another origin is not sent to this one, and the page is told why.
+    storeKey([mapTileKeyConsumer("https://other.example")]);
+    expect((await route("/map-tiles"))?.body).toEqual({ provider: null, offline: "key-origin-mismatch" });
     const elsewhere = await route("/map-tiles/1/0/0", "GET", proxy);
-    expect(elsewhere).toMatchObject({ status: 503, body: { code: "MAP_TILE_KEY_UNAVAILABLE", message: `the secret tiles is not stored for ${MAP_TILE_SECRET_CONSUMER}` } });
+    expect(elsewhere).toMatchObject({
+      status: 503,
+      body: { code: "MAP_TILE_KEY_UNAVAILABLE", offline: "key-origin-mismatch", message: expect.stringContaining("entered for https://other.example, so it is not sent to https://tiles.example") },
+    });
     expect(seen).toHaveLength(0);
 
-    storeKey([MAP_TILE_SECRET_CONSUMER]);
+    // A key bound to no origin at all, or to a consumer that is not the maps', is not sent either.
+    storeKey(["command:git"]);
+    expect((await route("/map-tiles"))?.body).toEqual({ provider: null, offline: "key-unavailable" });
+    expect(await route("/map-tiles/1/0/0", "GET", proxy)).toMatchObject({ status: 503, body: { code: "MAP_TILE_KEY_UNAVAILABLE", offline: "key-unavailable" } });
+    expect(seen).toHaveLength(0);
+
+    storeKey([BOUND]);
     expect((await route("/map-tiles"))?.body).toMatchObject({ provider: { origin: "https://tiles.example" } });
     const tile = await route("/map-tiles/1/0/0", "GET", proxy);
     expect(tile?.status).toBe(200);
@@ -294,13 +307,13 @@ describe("the tile routes on a node", () => {
     expect(JSON.stringify(rows)).not.toContain(KEY);
   });
 
-  it("stops a cached tile as soon as its key is taken off maps:tiles, without waiting for the cache", async () => {
-    storeKey([MAP_TILE_SECRET_CONSUMER]);
-    setPolicy({ ...PROVIDER, credential: { secret: "tiles", header: "x-api-key" } });
+  it("stops a cached tile as soon as its key is bound to another origin, without waiting for the cache", async () => {
+    storeKey([BOUND]);
+    setPolicy({ ...PROVIDER, credential: { secret: MAP_TILE_SECRET_NAME, header: "x-api-key" } });
     const { fetch, seen } = fakeFetch(png);
     const proxy = createMapTileProxy({ fetch });
     expect((await route("/map-tiles/1/0/0", "GET", proxy))?.status).toBe(200);
-    storeKey(["command:git"]);
+    storeKey([mapTileKeyConsumer("https://other.example")]);
     expect(await route("/map-tiles/1/0/0", "GET", proxy)).toMatchObject({ status: 503, body: { code: "MAP_TILE_KEY_UNAVAILABLE" } });
     expect(seen).toHaveLength(1);
   });
@@ -339,8 +352,8 @@ describe("the credential runner", () => {
   });
 
   it("hands the value only to the callback", () => {
-    storeKey([MAP_TILE_SECRET_CONSUMER]);
-    const run = mapTileCredential({ db: services.runtime.db, principalId: owner(), now: () => AT }, { ...PROVIDER, credential: { secret: "tiles", header: "x-api-key" } });
+    storeKey([BOUND]);
+    const run = mapTileCredential({ db: services.runtime.db, principalId: owner(), now: () => AT }, { ...PROVIDER, credential: { secret: MAP_TILE_SECRET_NAME, header: "x-api-key" } });
     let seen = "";
     const outcome = run((value) => {
       seen = value ?? "";

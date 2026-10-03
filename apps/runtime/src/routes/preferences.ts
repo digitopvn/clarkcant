@@ -199,7 +199,7 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
     }
     // The map tile policy is written through the one path Clark's approved card uses too (`map-tile-policy.ts`).
     const outcome = requested === MAP_TILE_POLICY_PREFERENCE
-      ? writeMapTilePolicy(preferenceDeps, { principalId: runtime.identity.ownerPrincipalId, value: parsed.value.value })
+      ? writeMapTilePolicy(preferenceDeps, { principalId: runtime.identity.ownerPrincipalId, value: parsed.value.value, source: "click" })
       : writeRegisteredPreference(preferenceDeps, {
           principalId: runtime.identity.ownerPrincipalId,
           key: requested,

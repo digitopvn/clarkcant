@@ -473,15 +473,42 @@ export function mapSemantic(map: MapView, state: MapState, tiles: MapTileSource)
 
 /** The registered preference that holds the node's tile policy. Person-only to write: see `isPersonOnlyRoute`. */
 export const MAP_TILE_POLICY_PREFERENCE = "maps.tilePolicy";
-/** The consumer a tile provider's secret must name for the node to send it. */
+/**
+ * The consumer prefix of the tile provider's key. The stored key names exactly one consumer, `maps:tiles@<origin>`
+ * (`mapTileKeyConsumer`): the origin the person entered it for, and the only one the node sends it to.
+ */
 export const MAP_TILE_SECRET_CONSUMER = "maps:tiles";
+/**
+ * The one secret the tile provider's key is stored under, chosen by the host. A policy cannot name any other secret,
+ * so neither Settings nor a policy Clark proposes can reach, overwrite or send a secret stored for something else.
+ */
+export const MAP_TILE_SECRET_NAME = "maps:tiles";
 /** The highest zoom any provider is asked for, whatever its own maximum says. */
 export const MAP_TILE_MAX_ZOOM = 19;
 export const MAP_TILE_CONTENT_TYPES = ["image/png", "image/webp"] as const;
 
+/** The consumer that binds the stored key to the origin it was entered for. */
+export function mapTileKeyConsumer(origin: string): string {
+  return `${MAP_TILE_SECRET_CONSUMER}@${origin}`;
+}
+
+/** The origin a stored key is bound to, read from its consumers, or nothing when it is bound to none. */
+export function mapTileKeyOrigin(consumers: readonly string[]): string | undefined {
+  const prefix = `${MAP_TILE_SECRET_CONSUMER}@`;
+  const bound = consumers.filter((consumer) => consumer.startsWith(prefix));
+  // More than one binding is not a state Settings writes; a key bound to several origins is bound to none.
+  return bound.length === 1 ? bound[0]?.slice(prefix.length) : undefined;
+}
+
 const TEMPLATE_CHARACTERS = /^\/[A-Za-z0-9/._~{}=&?-]*$/u;
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/u;
 const QUERY_NAME = /^[A-Za-z0-9_.-]{1,64}$/u;
+/**
+ * Query parameter names that carry a credential. A template holding one would put a key in the plain-text policy — the
+ * card, the transcript, every preference read — and send it with no broker involved, so it is refused: the key goes in
+ * `credential`, which the node fills from the secret it holds.
+ */
+const CREDENTIAL_PARAMETER = /key|token|secret|sig|auth|pass|credential|session/iu;
 
 /** Why a tile path template is refused, or nothing: a path on the provider's origin with `{z}`, `{x}` and `{y}` once each. */
 export function mapTileTemplateProblem(template: string): string | undefined {
@@ -496,14 +523,22 @@ export function mapTileTemplateProblem(template: string): string | undefined {
     return "may hold no placeholder but {z}, {x} and {y}";
   }
   if (template.startsWith("//")) return "must be a path, not another host";
+  const query = template.includes("?") ? template.slice(template.indexOf("?") + 1) : "";
+  const names = query.split(/[&?]/u).map((pair) => pair.split("=")[0] ?? "").filter((name) => name !== "");
+  if (names.some((name) => CREDENTIAL_PARAMETER.test(name))) {
+    return "must not carry a key, token, secret or signature in its query; name the key's parameter in credential instead";
+  }
   return undefined;
 }
 
+/** A tile provider's origin: exactly `scheme://host[:port]`, https, or http for a loopback address. */
+export const mapTileOriginSchema = z.string().max(300).superRefine((value, ctx) => {
+  const problem = networkOriginProblem(value) ?? (/^https?:\/\//u.test(value) ? undefined : "must use https, or http for a loopback address");
+  if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+});
+
 const providerSchema = z.strictObject({
-  origin: z.string().max(300).superRefine((value, ctx) => {
-    const problem = networkOriginProblem(value) ?? (/^https?:\/\//u.test(value) ? undefined : "must use https, or http for a loopback address");
-    if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
-  }),
+  origin: mapTileOriginSchema,
   template: z.string().superRefine((value, ctx) => {
     const problem = mapTileTemplateProblem(value);
     if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
@@ -511,12 +546,15 @@ const providerSchema = z.strictObject({
   attribution: oneLineText(200, true),
   maxZoom: z.number().int().min(MAP_MIN_ZOOM).max(MAP_TILE_MAX_ZOOM),
   /**
-   * The provider's key, by the name of a secret this node holds. The node adds it to each tile request as the header
-   * or the query parameter named here; it never reaches the page, props, state, logs or the model.
+   * The provider's key: always the host's own secret `maps:tiles`, which only Settings writes and binds to the origin it
+   * was entered for. The node adds it to each tile request to that origin as the header or the query parameter named
+   * here; it never reaches the page, props, state, logs or the model.
    */
   credential: z
     .strictObject({
-      secret: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,63}$/u, "is a secret name: lower-case letters, digits, _ . -"),
+      secret: z
+        .string()
+        .refine((value) => value === MAP_TILE_SECRET_NAME, `is always ${MAP_TILE_SECRET_NAME}: a tile policy names no other secret`),
       header: z.string().regex(HEADER_NAME, "is an HTTP header name").optional(),
       query: z.string().regex(QUERY_NAME, "is a query parameter name").optional(),
     })
@@ -531,11 +569,14 @@ export const mapTilePolicySchema = providerSchema.nullable();
 export type MapTilePolicy = z.infer<typeof mapTilePolicySchema>;
 
 /**
- * Why a map shows the offline basemap only: no provider is set, or the provider's key is not usable on this node (not
- * provided, not stored for `maps:tiles`, or without a value). Said so a map, and Settings, can tell the person why.
+ * Why a map shows the offline basemap only: no provider is set; the provider's key is not usable on this node (never
+ * entered, or without a value); or the key was entered for another origin than the provider's, so the node does not send
+ * it there. Said so a map, and Settings, can tell the person why.
  */
-export const MAP_TILES_OFFLINE_REASONS = ["no-provider", "key-unavailable"] as const;
+export const MAP_TILES_OFFLINE_REASONS = ["no-provider", "key-unavailable", "key-origin-mismatch"] as const;
 export type MapTilesOfflineReason = (typeof MAP_TILES_OFFLINE_REASONS)[number];
+/** Why a keyed provider is offline: the reasons that are about its key. */
+export type MapTileKeyOfflineReason = Exclude<MapTilesOfflineReason, "no-provider">;
 
 /** What the page is told about the policy: whose tiles, and the attribution it must show. Never a path or a key. */
 export interface MapTilePolicyView {
@@ -548,9 +589,9 @@ export interface MapTilePolicyView {
  * The page's view of the policy. A provider whose key is unusable is not handed to the page — every tile would fail —
  * and the view says why instead; the provider's origin and the key's name stay out of it.
  */
-export function mapTilePolicyView(policy: MapTilePolicy, keyUsable = true): MapTilePolicyView {
+export function mapTilePolicyView(policy: MapTilePolicy, keyOffline?: MapTileKeyOfflineReason): MapTilePolicyView {
   if (policy === null) return { provider: null, offline: "no-provider" };
-  if (!keyUsable) return { provider: null, offline: "key-unavailable" };
+  if (keyOffline !== undefined) return { provider: null, offline: keyOffline };
   return { provider: { origin: policy.origin, attribution: policy.attribution, maxZoom: policy.maxZoom } };
 }
 

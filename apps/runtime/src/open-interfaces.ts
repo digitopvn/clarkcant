@@ -304,10 +304,31 @@ export function openApiDocument(): Record<string, unknown> {
         get: {
           summary: "Whether maps on this node show raster tiles, and whose",
           description:
-            "{ provider: { origin, attribution, maxZoom } | null, offline? } from the person-only maps.tilePolicy preference. " +
+            "{ provider: { origin, attribution, maxZoom } | null, offline? } from the maps.tilePolicy preference. " +
             "Never the provider's path template or key. null means maps draw their offline basemap only, and offline says " +
-            "why: no-provider (the default) or key-unavailable (the key the policy names cannot be used on this node).",
+            "why: no-provider (the default), key-unavailable (the policy needs a key and none is saved), or " +
+            "key-origin-mismatch (the saved key was entered for another origin, so the node does not send it to this one).",
           responses: { "200": ok("{ provider, offline? }"), ...refusals },
+        },
+      },
+      "/map-tiles/key": {
+        get: {
+          summary: "Whether a map tile provider key is saved, and the one origin it is sent to",
+          description: "{ key: { origin? } | null }. Never the value. A key with no origin is bound to none and is sent nowhere.",
+          responses: { "200": ok("{ key }"), ...refusals },
+        },
+        put: {
+          summary: "Enter the map tile provider key, bound to an origin",
+          description:
+            "{ origin, value }. Stored as the host's own secret maps:tiles, which the node sends only to that origin; entering " +
+            "it again for another origin moves the binding, and nothing else does. Answers { key: { origin } }, never the " +
+            "value. Person-only: 403 PERSON_ONLY on machine surfaces.",
+          responses: { "200": ok("{ key: { origin } }"), "403": ok("PERSON_ONLY on a machine surface"), ...refusals },
+        },
+        delete: {
+          summary: "Remove the map tile provider key",
+          description: "{ removed }. Person-only: 403 PERSON_ONLY on machine surfaces.",
+          responses: { "200": ok("{ removed }"), "403": ok("PERSON_ONLY on a machine surface"), ...refusals },
         },
       },
       "/map-tiles/{z}/{x}/{y}": {
@@ -316,8 +337,8 @@ export function openApiDocument(): Record<string, unknown> {
           description:
             "Only the provider the policy names, on its own path template; z up to its maxZoom (at most 19), x and y on " +
             "that zoom's grid. Redirects are not followed. Served only as image/png or image/webp, checked by the " +
-            "provider's type and the bytes, at most 512 KiB, with nosniff. A key the policy names is added by the node " +
-            "and never returned. 404 MAP_TILES_OFF with no policy, 400 MAP_TILE_OUT_OF_BOUNDS, 429 MAP_TILES_RATE_LIMITED, " +
+            "provider's type and the bytes, at most 512 KiB, with nosniff. The saved key is added by the node only when it " +
+            "was entered for the policy's origin, and never returned. 404 MAP_TILES_OFF with no policy, 400 MAP_TILE_OUT_OF_BOUNDS, 429 MAP_TILES_RATE_LIMITED, " +
             "502 MAP_TILE_FAILED or MAP_TILE_REFUSED, 503 MAP_TILE_KEY_UNAVAILABLE.",
           parameters: ["z", "x", "y"].map((name) => ({ name, in: "path", required: true, schema: { type: "integer", minimum: 0 } })),
           responses: { "200": { description: "The tile, as image/png or image/webp" }, ...refusals },

@@ -2022,6 +2022,29 @@ export class GatewayClient {
     return { provider: { origin, attribution, maxZoom } };
   }
 
+  /** Whether a map tile provider key is saved, and the one origin the node sends it to. Never the value. */
+  async mapTileKey(): Promise<{ origin?: string } | null> {
+    const body = (await this.#call("GET", "/map-tiles/key")) as { key?: unknown };
+    if (typeof body.key !== "object" || body.key === null) return null;
+    const origin = (body.key as { origin?: unknown }).origin;
+    return typeof origin === "string" ? { origin } : {};
+  }
+
+  /**
+   * Enter the map tile provider key, bound to the origin the person typed it for. The value travels once, in this
+   * request; the answer names the origin only.
+   */
+  async putMapTileKey(input: { origin: string; value: string }): Promise<{ origin: string }> {
+    const body = (await this.#call("PUT", "/map-tiles/key", input)) as { key?: { origin?: unknown } };
+    return { origin: typeof body.key?.origin === "string" ? body.key.origin : input.origin };
+  }
+
+  /** Remove the map tile provider key. */
+  async deleteMapTileKey(): Promise<{ removed: boolean }> {
+    const body = (await this.#call("DELETE", "/map-tiles/key")) as { removed?: unknown };
+    return { removed: body.removed === true };
+  }
+
   /**
    * One map tile, read through the node's own tile route with the bearer token. The page names a tile by `z/x/y` only;
    * where it comes from is the node's tile policy.
