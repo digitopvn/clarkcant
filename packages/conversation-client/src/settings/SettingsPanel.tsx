@@ -11,6 +11,7 @@ import { DeveloperSettings } from "./DeveloperSettings.tsx";
 import { DevicesVoiceSettings } from "./DevicesVoiceSettings.tsx";
 import { ExperienceSettings } from "./ExperienceSettings.tsx";
 import { ExtensionsSettings } from "./ExtensionsSettings.tsx";
+import { MapTilesSettings } from "./MapTilesSettings.tsx";
 import { MemorySettings } from "./MemorySettings.tsx";
 import { usePreferences } from "./controls/use-preferences.ts";
 import { useT } from "../i18n/locale-context.tsx";
@@ -383,7 +384,10 @@ export function SettingsPanel({
           />
         )}
         {tab === "extensions" && (
-          <ExtensionsSettings client={client} tools={tools} onOpenWidgetLibrary={openWidgetLibrary} />
+          <>
+            <ExtensionsSettings client={client} tools={tools} onOpenWidgetLibrary={openWidgetLibrary} />
+            <MapTilesSettings client={client} prefs={prefs} />
+          </>
         )}
         {tab === "devices" && <DevicesVoiceSettings client={client} prefs={prefs} facts={facts} />}
         {tab === "memory" && <MemorySettings client={client} />}

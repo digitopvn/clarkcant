@@ -4,9 +4,12 @@ import {
   type Instant,
   MAP_TILE_CONTENT_TYPES,
   MAP_TILE_POLICY_PREFERENCE,
-  MAP_TILE_SECRET_CONSUMER,
+  MAP_TILE_SECRET_NAME,
+  type MapTileKeyOfflineReason,
   type MapTilePolicy,
   type MapTileProvider,
+  mapTileKeyConsumer,
+  mapTileKeyOrigin,
   mapTilePolicySchema,
 } from "@clarkcant/contracts";
 import { readRegisteredPreference } from "@clarkcant/core";
@@ -24,9 +27,9 @@ import { readBounded } from "./service-egress.ts";
  *   - the provider's origin and path template come from the policy; a page asks for `z/x/y` and nothing else, so no
  *     prop, state or request can name another host;
  *   - `z/x/y` are bounded by the provider's maximum zoom and the grid at that zoom;
- *   - the provider's key, when there is one, is a secret this node holds for the explicit consumer `maps:tiles`; the
- *     node adds it to the request as the header or query parameter the policy names, and it is never part of what the
- *     page receives, the cache key, a log line or an error message;
+ *   - the provider's key, when there is one, is the host's own secret `maps:tiles`, bound to the one origin the person
+ *     entered it for in Settings; the node adds it, only to a request to that origin, as the header or query parameter
+ *     the policy names, and it is never part of what the page receives, the cache key, a log line or an error message;
  *   - a redirect is not followed, so the key never travels to another address;
  *   - only PNG or WebP is served back, checked by the provider's content type and by the bytes themselves, at most
  *     `MAP_TILE_LIMITS.maxBytes`, with only the content type and `nosniff` as headers;
@@ -56,34 +59,57 @@ export type MapTileCredential = <T>(use: (value: string | undefined) => T) => { 
 /**
  * The credential runner for a provider, from the node's own secret store.
  *
- * The secret must name `maps:tiles` among its consumers: an unrestricted secret stored for something else is not handed
- * to a tile provider just because the policy names it.
+ * The key is handed over only for the origin it was entered for: the broker is asked for consumer
+ * `maps:tiles@<the policy's origin>`, which the stored key names only when a person entered it for that origin.
  */
 export function mapTileCredential(deps: { db: Database; principalId: string; now: () => Instant }, provider: MapTileProvider): MapTileCredential {
   return (use) => {
     const credential = provider.credential;
     if (credential === undefined) return { ok: true, result: use(undefined) };
     const problem = mapTileCredentialProblem(deps, provider);
-    if (problem !== undefined) return { ok: false, message: problem };
+    if (problem !== undefined) return { ok: false, message: problem.message };
     // Recorded as `http-header` whether the policy puts the key in a header or in the query: either way it leaves only in
     // the node's own request to the policy's origin, and neither the URL nor the key is ever logged or returned.
-    const used = createSecretBroker(deps).withSecret({ name: credential.secret, consumer: MAP_TILE_SECRET_CONSUMER, exposure: "http-header" }, (value) => use(value));
+    const used = createSecretBroker(deps).withSecret(
+      { name: MAP_TILE_SECRET_NAME, consumer: mapTileKeyConsumer(provider.origin), exposure: "http-header" },
+      (value) => use(value),
+    );
     return used.ok ? used : { ok: false, message: `the tile provider's key could not be used (${used.code})` };
   };
 }
 
-/**
- * Why the key a provider's policy names cannot be used now, or nothing. Checked before a cached tile is served too, so a
- * key the person removed, or took `maps:tiles` off, stops its provider's tiles at once rather than when the cache expires.
- */
-export function mapTileCredentialProblem(deps: { db: Database; principalId: string }, provider: MapTileProvider): string | undefined {
-  const credential = provider.credential;
-  if (credential === undefined) return undefined;
-  const metadata = getSecretMetadata(deps.db, deps.principalId, credential.secret);
-  if (metadata === undefined) return `the secret ${credential.secret} the tile policy names has not been provided on this node`;
-  if (!metadata.allowedConsumers.includes(MAP_TILE_SECRET_CONSUMER)) return `the secret ${credential.secret} is not stored for ${MAP_TILE_SECRET_CONSUMER}`;
+/** The tile key this node holds: the origin it is bound to, or `null` when no key with a value is saved. */
+export function readMapTileKey(deps: { db: Database; principalId: string }): { origin?: string } | null {
+  const metadata = getSecretMetadata(deps.db, deps.principalId, MAP_TILE_SECRET_NAME);
+  if (metadata === undefined) return null;
   const backend = secretBackendFor(deps.db, deps.principalId, metadata.backend);
-  if (backend === undefined || !backend.has(metadata.backendRef)) return `the secret ${credential.secret} has no value on this node`;
+  if (backend === undefined || !backend.has(metadata.backendRef)) return null;
+  const origin = mapTileKeyOrigin(metadata.allowedConsumers);
+  return origin === undefined ? {} : { origin };
+}
+
+/**
+ * Why the provider's key cannot be sent now, or nothing. Checked before a cached tile is served too, so a key the person
+ * removed, or entered again for another origin, stops its provider's tiles at once rather than when the cache expires.
+ */
+export function mapTileCredentialProblem(
+  deps: { db: Database; principalId: string },
+  provider: MapTileProvider,
+): { offline: MapTileKeyOfflineReason; message: string } | undefined {
+  if (provider.credential === undefined) return undefined;
+  const key = readMapTileKey(deps);
+  if (key === null) {
+    return { offline: "key-unavailable", message: "no tile provider key has been entered on this node; enter it in Settings → Extensions → Map tiles" };
+  }
+  if (key.origin === undefined) {
+    return { offline: "key-unavailable", message: "the tile provider key is bound to no origin; enter it again in Settings → Extensions → Map tiles" };
+  }
+  if (key.origin !== provider.origin) {
+    return {
+      offline: "key-origin-mismatch",
+      message: `the tile provider key was entered for ${key.origin}, so it is not sent to ${provider.origin}; enter it again in Settings → Extensions → Map tiles to use it there`,
+    };
+  }
   return undefined;
 }
 
