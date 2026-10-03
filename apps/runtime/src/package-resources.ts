@@ -95,7 +95,7 @@ export function packageResourcesView(grant: ResourceGrant): PackageResourcesView
  * The caller reads the directory index once and passes it, so listing N packages is not N reads of the index.
  */
 export function installedManifest(
-  installed: { packageId: string; version: string; digest: string },
+  installed: { packageId: string; version: string; digest: string; snapshotDigest?: string | undefined },
   dataDir: string,
   index: DirectoryIndexState,
 ): PackageManifest | "unreadable" {

@@ -2721,7 +2721,7 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   execution policy quyết định; bản thân card không cài gì, nên một listing không bao giờ biến thành authorization. Một
   listing bằng đường dẫn trên máy này còn mang `contentDigest`, digest các tệp của nó lúc được liệt kê, mà nút gửi lại
   để lần cài bị từ chối nếu các tệp đã đổi từ đó; khi ấy dòng đó cho thấy chúng đã đổi và mời tìm lại thay vì cùng nút
-  Cài. Việc kiểm tra chỉ diễn ra lúc cài: gói vẫn được liên kết với đường dẫn của nó. Không có registry từ xa — search chỉ đọc thứ tồn tại trên máy hoặc ở URL người dùng chỉ định.
+  Cài. Lần cài sao chép các tệp vào cache package và package chạy từ bản sao đó, nên những chỉnh sửa sau này ở đường dẫn không thay đổi gì cho tới khi nó được cài lại; vòng chỉnh sửa trực tiếp là `clark widget dev`. Không có registry từ xa — search chỉ đọc thứ tồn tại trên máy hoặc ở URL người dùng chỉ định.
 - Script trong trang của dev host: nó thu thập fact và chuyển action, còn mọi quyết định nằm ở hàm đã test —
   nhưng bản thân script cần browser để chạy, và điều đó được nói ra thay vì ngụ ý rằng cả dev host đã được phủ.
 - Detach/attach: cửa sổ host tách rời của desktop **đã có thật** (`apps/desktop/src/main.mjs` mở nó qua
@@ -2893,6 +2893,21 @@ Cache được đánh địa chỉ theo nội dung: đường dẫn cache của 
 không bao giờ `rmSync` một artifact có thể đang sống), và bất kỳ nơi nào khác giữ cùng entry — route serve file,
 `findIsolatedFrame` — tính lại đúng path đó để phục vụ package git/npm đã fetch giống hệt package local
 (`resolveLocalSource`).
+
+Một package được liệt kê bằng đường dẫn trên máy này cũng được cache theo nội dung như vậy: `snapshotLocalPackage` sao
+chép đường dẫn vào `local/<sha256>` trong cache (`cachedLocalSnapshotPath`), và lần cài chạy từ bản sao đó như nó chạy
+một package git hay npm từ thư mục đã fetch. Bản sao được dựng trong một thư mục `.tmp-*`, duyệt với cùng giới hạn như
+digest của listing (5.000 tệp, 64 MiB) và cùng các lần từ chối như `digestOfDirectory` (symbolic link, junction, hard
+link, `.git` ở gốc bị bỏ ra), tính digest ở đó, so với digest người dùng đã được cho xem, rồi mới được đổi tên vào chỗ;
+nếu không khớp thì bản dựng dở bị bỏ. Mọi tệp được ghi với quyền ghi cho chủ sở hữu bất kể chế độ của tệp nguồn, nên một
+nguồn chỉ đọc không để lại bản sao mà cache không xoá được, và một tên mà hệ thống tệp không phân biệt hoa thường không
+thể giữ tách khỏi tên khác thì bị từ chối thay vì bị ghi đè. Generation ghi lại bản sao dưới dạng `snapshotDigest`, và
+mọi nơi đọc một package local đã cài (route tệp và frame, danh sách widget, registry theme, service, quyền đã cấp) đều
+tìm nó qua `resolveLocalSource(entry, cacheRoot, generation)` hoặc `installedDirectoryEntries`, vốn không bao giờ quay
+về đường dẫn: một snapshot đã rời khỏi cache là một package mà các tệp của nó đã mất. Cài lại đường dẫn sau khi sửa sẽ
+tạo một bản sao mới, và `artifactUrl` khác của nó tạo một plan và generation mới thay vì nhập vào cái cũ. Một generation
+được cài từ đường dẫn trước khi có snapshot thì không có `snapshotDigest` và vẫn đọc đường dẫn của nó cho tới khi được
+cài lại. Hiện chưa có gì dọn các mục cache không còn dùng, với snapshot cũng như với artifact git và npm.
 
 `digestOfDirectory` dùng `lstatSync`, không phải `statSync`: một symlink hay hard link trong artifact bị refuse
 theo tên (`ARTIFACT_SYMLINK_ESCAPE`) chứ không bị theo dõi (follow) hay bỏ qua âm thầm, và hàm không bao giờ throw

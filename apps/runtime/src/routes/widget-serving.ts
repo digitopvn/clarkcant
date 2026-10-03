@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 
 import {
+  activeGenerations,
   directoryIndexPath,
+  installedDirectoryEntries,
   readDirectoryIndex,
   readPackage,
   readPackageFile,
@@ -9,6 +12,7 @@ import {
   widgetDocument,
   widgetDocumentPolicy,
 } from "@clarkcant/core";
+import type { Database } from "@clarkcant/storage";
 
 import { type GatewayRequest, type GatewayResponse, fail } from "./http.ts";
 
@@ -25,6 +29,8 @@ export interface WidgetServingRouteDeps {
   segments: string[];
   /** The grant that was presented and verified, or `undefined` when none was. */
   grant: { packageId: string; version: string } | undefined;
+  /** Where the node keeps what it installed: a local package is served from the snapshot its generation records. */
+  runtime: { db: Database; identity: { nodeId: string }; dataDir: string };
 }
 
 /**
@@ -40,7 +46,13 @@ export function handleWidgetServingRoutes(deps: WidgetServingRouteDeps): Gateway
   if (index.kind !== "configured") {
     return fail(409, index.kind === "not-configured" ? "NO_DIRECTORY" : "DIRECTORY_UNREADABLE", index.reason);
   }
-  const entry = index.entries.find(
+  // A local package an active generation installed is served from that generation's snapshot, not from its path.
+  const entries = installedDirectoryEntries(
+    index.entries,
+    activeGenerations({ db: deps.runtime.db, nodeId: deps.runtime.identity.nodeId }),
+    join(deps.runtime.dataDir, "package-cache"),
+  );
+  const entry = entries.find(
     (candidate) => candidate.packageId === grant.packageId && candidate.version === grant.version,
   );
   if (entry === undefined) {

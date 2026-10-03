@@ -25,7 +25,9 @@ import {
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
 import {
+  activeGenerations,
   activePackageVersions,
+  installedDirectoryEntries,
   brokeredCapabilities,
   claimLiveOwner,
   decideApproval,
@@ -201,7 +203,9 @@ export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; id
   const isActive = (entry: DirectoryEntry) => idsOf(entry).some((id) => active.has(`${id}@${entry.version}`));
   const otherVersionActive = (entry: DirectoryEntry) =>
     !isActive(entry) && idsOf(entry).some((id) => activePackages.has(id));
-  const entries = index.kind === "configured" ? index.entries : [];
+  const cacheRoot = join(runtime.dataDir, "package-cache");
+  // A local package an active generation installed is read from that generation's snapshot, not from its path.
+  const entries = index.kind === "configured" ? installedDirectoryEntries(index.entries, activeGenerations(node), cacheRoot) : [];
   const found = findIsolatedFrame({
     /*
      * While a version of a package is active, only that version's code runs: after a rollback a definition that exists
@@ -213,7 +217,7 @@ export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; id
     widgetId,
     // A git/npm entry this node has fetched is served from its cache path exactly like a local package (H1); the
     // cache root here must match the one the install route fetched into.
-    cacheRoot: join(runtime.dataDir, "package-cache"),
+    cacheRoot,
   });
   if (!found.ok) return found;
   /*

@@ -2729,7 +2729,7 @@ This section states which parts of the document already have code, so that nobod
   the execution policy decides; the card installs nothing itself, so a listing never turns into authorization. A listing by a
   path on this machine also carries `contentDigest`, the digest of its files when they were listed, which the button sends
   back so the install is refused if the files changed since; the row then shows that they changed and offers a new
-  search instead of the same Install. The check is at install time only: the package stays linked to its path. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
+  search instead of the same Install. The install copies the files into the package cache and the package runs from that copy, so later edits to the path change nothing until it is installed again; the live editing loop is `clark widget dev`. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
 - The dev host's in-page script: it collects facts and forwards actions, while every decision lives in a tested function —
   but the script itself needs a browser to run, and that is stated instead of implying that the whole dev host is covered.
 - Detach/attach: the desktop's detached host window **really exists** (`apps/desktop/src/main.mjs` opens it via
@@ -2901,6 +2901,21 @@ to be stored separately. This solves two things at once: refetching the same `ur
 never an `rmSync` of an artifact that may be live), and any other place holding the same entry — the file-serving route,
 `findIsolatedFrame` — recomputes exactly that path to serve a fetched git/npm package the same way as a local package
 (`resolveLocalSource`).
+
+A package listed by a path on this machine is cached the same way, by content: `snapshotLocalPackage` copies the path
+into `local/<sha256>` under the cache (`cachedLocalSnapshotPath`), and the install runs from that copy as it runs a
+git or npm package from its fetched folder. The copy is staged in a `.tmp-*` folder, walked with the same bounds as the
+listing digest (5,000 files, 64 MiB) and the same refusals as `digestOfDirectory` (a symbolic link, a junction, a hard
+link, a root `.git` left out), digested there, compared with the digest the person was shown, and only then renamed into
+place; a mismatch discards the staged copy. Every file is written owner-writable whatever its source mode, so a read-only
+source does not leave a copy the cache cannot remove, and a name a case-insensitive filesystem cannot hold apart from
+another is refused rather than overwritten. The generation records the copy as `snapshotDigest`, and every reader of an
+installed local package (the file and frame routes, the widget list, the theme registry, services, capability grants)
+resolves it through `resolveLocalSource(entry, cacheRoot, generation)` or `installedDirectoryEntries`, which never fall
+back to the path: a snapshot gone from the cache is a package whose files are gone. Installing the path again after an
+edit makes a new copy, and its different `artifactUrl` makes a new plan and generation rather than joining the old one.
+A generation installed from a path before snapshots has no `snapshotDigest` and keeps reading its path until it is
+installed again. Nothing collects unused cache entries yet, for snapshots as for git and npm artifacts.
 
 `digestOfDirectory` uses `lstatSync`, not `statSync`: a symlink or hard link in the artifact is refused
 by name (`ARTIFACT_SYMLINK_ESCAPE`) rather than being followed or silently skipped, and the function never throws

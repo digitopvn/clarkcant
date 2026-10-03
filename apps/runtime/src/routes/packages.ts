@@ -201,7 +201,11 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
         const read = installedWidgets({
           packageId: listed.packageId,
           version: listed.version,
-          source: listed.source,
+          // A local install is read from the snapshot it runs from, not from the path it was copied from.
+          source:
+            listed.source.kind === "local"
+              ? resolveLocalSource(listed, join(runtime.dataDir, "package-cache"), entry)
+              : listed.source,
         });
         return read.ok
           ? {
@@ -445,7 +449,9 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
       );
     }
 
-    const resolvedSource = resolveLocalSource(entry, join(runtime.dataDir, "package-cache"));
+    // A local install is served from the snapshot its generation recorded, never from the path, whose files may have
+    // changed since they were digested.
+    const resolvedSource = resolveLocalSource(entry, join(runtime.dataDir, "package-cache"), generation);
     const entry_ = resolvedSource === entry.source ? entry : { ...entry, source: resolvedSource };
 
     const file = readPackageFile({ entry: entry_, relativePath: segments.slice(4).join("/") });

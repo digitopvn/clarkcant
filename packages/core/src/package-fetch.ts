@@ -1,10 +1,24 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
-import type { PackageSource } from "@clarkcant/contracts";
+import type { DirectoryEntry, PackageGeneration, PackageSource } from "@clarkcant/contracts";
 
 /**
  * Fetching a git or npm package source to an exact artifact this node holds.
@@ -238,18 +252,317 @@ export function cachedNpmPath(cacheRoot: string, name: string, version: string):
  * evicted), the entry's original `git`/`npm` source is returned unchanged, and the caller refuses it exactly the
  * way it always refused a non-local source.
  */
-export function resolveLocalSource(entry: { source: PackageSource }, cacheRoot: string): PackageSource {
+export function resolveLocalSource(
+  entry: { source: PackageSource },
+  cacheRoot: string,
+  /**
+   * The generation that installed this entry, when the caller has it. A package listed by a path on this machine is
+   * served from the snapshot its generation recorded (`snapshotDigest`), never from the path itself: the path holds
+   * whatever was written there since, and the snapshot holds the bytes that were digested and installed. A generation
+   * without one was installed before snapshots, and keeps reading its path until it is installed again.
+   */
+  installed?: { snapshotDigest?: string | undefined },
+): PackageSource {
+  if (entry.source.kind === "local") {
+    const snapshot = installed?.snapshotDigest === undefined ? undefined : cachedLocalSnapshotPath(cacheRoot, installed.snapshotDigest);
+    // Returned whether or not it still exists: a snapshot that left the cache is a package whose files are gone, and
+    // falling back to the live path would serve bytes nobody digested.
+    return snapshot === undefined ? entry.source : { kind: "local", path: snapshot };
+  }
   if (entry.source.kind === "git") {
     const path = cachedGitPath(cacheRoot, entry.source.url, entry.source.ref);
     if (existsSync(path)) return { kind: "local", path };
     return entry.source;
   }
-  if (entry.source.kind === "npm") {
-    const path = cachedNpmPath(cacheRoot, entry.source.name, entry.source.version);
-    if (existsSync(path)) return { kind: "local", path };
-    return entry.source;
-  }
+  const path = cachedNpmPath(cacheRoot, entry.source.name, entry.source.version);
+  if (existsSync(path)) return { kind: "local", path };
   return entry.source;
+}
+
+/* ------------------------------------------------------------------ *
+ * Snapshots of a package listed by a path on this machine
+ * ------------------------------------------------------------------ */
+
+/** A content digest a snapshot can be named by. Anything else names no folder, so it can never become a path. */
+const SNAPSHOT_DIGEST = /^sha256:([0-9a-f]{64})$/;
+
+/**
+ * The content-addressed cache location of a snapshot of a local package: a pure function of its content digest, so a
+ * generation that records the digest finds its bytes again with no mapping kept anywhere else. Undefined for a value
+ * that is not a sha256 digest.
+ */
+export function cachedLocalSnapshotPath(cacheRoot: string, digest: string): string | undefined {
+  const hex = SNAPSHOT_DIGEST.exec(digest)?.[1];
+  return hex === undefined ? undefined : join(cacheRoot, "local", hex);
+}
+
+/**
+ * A directory listing with every local entry an active generation installed from a snapshot re-pointed at that
+ * snapshot, so a reader that walks the listing reads the bytes that were installed rather than the path's.
+ *
+ * Matched the way `packageRootFrom` matches a generation to its entry: version and digest, and the package id or, for a
+ * generation recorded under its path before local packages took their listed name, that path. An entry no snapshotted
+ * generation matches is returned as it is.
+ */
+export function installedDirectoryEntries(
+  entries: readonly DirectoryEntry[],
+  generations: readonly Pick<PackageGeneration, "packageId" | "version" | "digest" | "snapshotDigest">[],
+  cacheRoot: string,
+): DirectoryEntry[] {
+  return entries.map((entry) => {
+    if (entry.source.kind !== "local") return entry;
+    const localPath = entry.source.path;
+    const generation = generations.find(
+      (candidate) =>
+        candidate.snapshotDigest !== undefined &&
+        candidate.version === entry.version &&
+        candidate.digest === entry.digest &&
+        (candidate.packageId === entry.packageId || candidate.packageId === localPath),
+    );
+    if (generation === undefined) return entry;
+    const source = resolveLocalSource(entry, cacheRoot, generation);
+    return source === entry.source ? entry : { ...entry, source };
+  });
+}
+
+export type SnapshotRefusal =
+  | "ARTIFACT_SYMLINK_ESCAPE"
+  | "ARTIFACT_TOO_LARGE"
+  | "ARTIFACT_DIGEST_MISMATCH"
+  | "CACHE_ESCAPE"
+  | "LOCAL_SOURCE_UNREADABLE";
+
+export type SnapshotOutcome =
+  | { ok: true; artifact: FetchedArtifact }
+  | { ok: false; code: SnapshotRefusal; message: string };
+
+/**
+ * Copy a package listed by a path on this machine into the node's package cache, and digest the copy.
+ *
+ * What an install of a local package runs is this copy, not the path: the path can be written to at any moment, so a
+ * digest of it says what it held once, while the copy holds exactly the bytes the digest names for as long as anything
+ * reads it. The same shape as a git or npm fetch (`path` + `digest`), and the same order: the copy is staged in a
+ * temporary folder, digested there, checked against `expectedDigest` when the caller has one, and only then renamed
+ * to its content-addressed name (`cachedLocalSnapshotPath`). Copying the same bytes again reuses the folder already
+ * there; a mismatch is refused and its staged copy discarded, so bytes nobody agreed to never reach a servable path.
+ *
+ * The walk refuses what `digestOfDirectory` refuses: a symlink or junction anywhere in the tree, and a regular file
+ * with more than one hard link. Each file is opened without following a final link and checked again on the open
+ * handle, and each folder's canonical path must stay inside the package's, so a link swapped in after the check is
+ * refused rather than copied through. It is bounded by `limits` the same way (`LOCAL_DIGEST_MAX_FILES`,
+ * `LOCAL_DIGEST_MAX_BYTES` at the install), counting both before a byte is read and as bytes arrive, so a file that
+ * grows during the copy cannot carry it past the bound. `.git` at the package root is left out, as the digest leaves
+ * it out.
+ *
+ * Portable by construction: names are compared and written as the filesystem gives them, a file is written with
+ * `wx` so two names a case-insensitive filesystem (Windows, macOS by default) cannot hold apart are refused rather
+ * than one silently replacing the other, and every copy is written owner-writable whatever the source's permissions
+ * or read-only attribute, so the node can always remove a copy it made.
+ */
+export function snapshotLocalPackage(input: {
+  path: string;
+  cacheRoot: string;
+  limits: { maxFiles: number; maxBytes: number };
+  expectedDigest?: string;
+}): SnapshotOutcome {
+  const snapshotsRoot = join(input.cacheRoot, "local");
+  const tempDest = join(snapshotsRoot, `.tmp-${fingerprint(`${input.path}#${String(Date.now())}#${String(Math.random())}`)}`);
+  const tempContained = containedOrRefuse(input.cacheRoot, tempDest);
+  if (!tempContained.ok) return { ok: false, code: "CACHE_ESCAPE", message: tempContained.message };
+
+  try {
+    mkdirSync(snapshotsRoot, { recursive: true });
+    mkdirSync(tempDest);
+    const copied = copyPackageTree(resolve(input.path), tempDest, input.limits);
+    if (!copied.ok) return copied;
+
+    const digest = digestOfDirectory(tempDest, { exclude: [".git"], limits: input.limits });
+    if (!digest.ok) return { ok: false, code: digest.code, message: digest.message };
+    if (input.expectedDigest !== undefined && digest.digest !== input.expectedDigest) {
+      return {
+        ok: false,
+        code: "ARTIFACT_DIGEST_MISMATCH",
+        message: `the files at ${input.path} hash to ${digest.digest}, not ${input.expectedDigest}`,
+      };
+    }
+
+    const dest = cachedLocalSnapshotPath(input.cacheRoot, digest.digest);
+    if (dest === undefined) return { ok: false, code: "CACHE_ESCAPE", message: "the snapshot digest names no cache folder" };
+    const destContained = containedOrRefuse(input.cacheRoot, dest);
+    if (!destContained.ok) return { ok: false, code: "CACHE_ESCAPE", message: destContained.message };
+
+    placeSnapshot(tempDest, dest, digest.digest, input.limits);
+    return { ok: true, artifact: { path: dest, digest: digest.digest } };
+  } catch (cause) {
+    return {
+      ok: false,
+      code: "LOCAL_SOURCE_UNREADABLE",
+      message: cause instanceof Error ? cause.message : String(cause),
+    };
+  } finally {
+    removeQuietly(tempDest);
+  }
+}
+
+type CopyOutcome = { ok: true } | { ok: false; code: SnapshotRefusal; message: string };
+
+/** Copies a package tree file by file, refusing links and stopping at the bounds; see `snapshotLocalPackage`. */
+function copyPackageTree(source: string, dest: string, limits: { maxFiles: number; maxBytes: number }): CopyOutcome {
+  const rootStat = lstatSync(source);
+  if (rootStat.isSymbolicLink()) {
+    return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `${source} is a symlink, which is refused rather than followed` };
+  }
+  if (!rootStat.isDirectory()) {
+    return { ok: false, code: "LOCAL_SOURCE_UNREADABLE", message: `${source} is not a folder` };
+  }
+  const realRoot = realpathSync(source);
+  let files = 0;
+  let totalBytes = 0;
+  const tooLarge = (): CopyOutcome => ({
+    ok: false,
+    code: "ARTIFACT_TOO_LARGE",
+    message: `it holds more than ${String(limits.maxFiles)} files or ${String(limits.maxBytes)} bytes`,
+  });
+
+  function walk(from: string, to: string, isRoot: boolean): CopyOutcome {
+    // A folder swapped for a link after its parent was read would be read through: its canonical path has to stay
+    // inside the package's own.
+    const realFrom = realpathSync(from);
+    if (realFrom !== realRoot && !realFrom.startsWith(realRoot + sep)) {
+      return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `"${relative(source, from)}" leads outside the package` };
+    }
+    for (const name of readdirSync(from).sort()) {
+      if (isRoot && name === ".git") continue;
+      const full = join(from, name);
+      const target = join(to, name);
+      const rel = relative(source, full);
+      const stat = lstatSync(full, { throwIfNoEntry: false });
+      if (stat === undefined) continue;
+      if (stat.isSymbolicLink()) {
+        return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `"${rel}" is a symlink, which is refused rather than followed` };
+      }
+      if (stat.isFile() && stat.nlink > 1) {
+        return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `"${rel}" is a hard link, which is refused rather than read` };
+      }
+      if (stat.isDirectory()) {
+        if (!createOnce(() => mkdirSync(target))) return nameClash(rel);
+        const sub = walk(full, target, false);
+        if (!sub.ok) return sub;
+        continue;
+      }
+      // Sockets, fifos and devices hold no package bytes, and the digest does not count them either.
+      if (!stat.isFile()) continue;
+
+      files += 1;
+      totalBytes += stat.size;
+      if (files > limits.maxFiles || totalBytes > limits.maxBytes) return tooLarge();
+
+      const read = readRegularFile(full, rel);
+      if (!read.ok) return read;
+      const bytes = read.bytes;
+      totalBytes += bytes.byteLength - stat.size;
+      if (totalBytes > limits.maxBytes) return tooLarge();
+      // Owner-writable whatever the source said (a read-only attribute on Windows, `0444` elsewhere), with the rest of
+      // its mode kept, so an executable stays executable and the node can always remove what it copied.
+      const mode = (stat.mode & 0o777) | 0o600;
+      if (!createOnce(() => writeFileSync(target, bytes, { flag: "wx", mode }))) return nameClash(rel);
+    }
+    return { ok: true };
+  }
+
+  return walk(source, dest, true);
+}
+
+/**
+ * Reads one file without following a final link, and checks it again on the handle that was read: the name may have
+ * been replaced by a link, a hard link or something that is not a file since the `lstat` that listed it.
+ */
+function readRegularFile(full: string, rel: string): { ok: true; bytes: Buffer } | { ok: false; code: SnapshotRefusal; message: string } {
+  const fd = openSync(full, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile()) {
+      return { ok: false, code: "LOCAL_SOURCE_UNREADABLE", message: `"${rel}" stopped being a file while it was copied` };
+    }
+    if (opened.nlink > 1) {
+      return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `"${rel}" is a hard link, which is refused rather than read` };
+    }
+    return { ok: true, bytes: readFileSync(fd) };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Runs a create that refuses an existing name, and answers false when the name was already taken. */
+function createOnce(create: () => void): boolean {
+  try {
+    create();
+    return true;
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw cause;
+  }
+}
+
+/** Two names in the package that this filesystem stores as one (`Theme.json` and `theme.json` on Windows or macOS). */
+function nameClash(rel: string): CopyOutcome {
+  return {
+    ok: false,
+    code: "LOCAL_SOURCE_UNREADABLE",
+    message: `"${rel}" has the same name as another entry on this file system, which does not tell letter case apart`,
+  };
+}
+
+/**
+ * Moves a digested staging folder to its content-addressed name.
+ *
+ * A folder already there under the same digest is reused when it still holds those bytes: the staged copy is the same
+ * content, and replacing a folder a running generation may be reading gains nothing. One that no longer does was
+ * changed after it was written, so it is set aside and the fresh copy takes its name. A rename that loses a race to an
+ * identical copy keeps the winner. Windows can refuse a rename for a moment while another process (an antivirus scan,
+ * an indexer) holds a file just written, so those refusals are retried briefly before they count.
+ */
+function placeSnapshot(tempDest: string, dest: string, digest: string, limits: { maxFiles: number; maxBytes: number }): void {
+  if (existsSync(dest)) {
+    const existing = digestOfDirectory(dest, { exclude: [".git"], limits });
+    if (existing.ok && existing.digest === digest) return;
+    const aside = join(dest, "..", `.stale-${fingerprint(`${dest}#${String(Date.now())}#${String(Math.random())}`)}`);
+    renameWithRetry(dest, aside);
+    removeQuietly(aside);
+  }
+  try {
+    renameWithRetry(tempDest, dest);
+  } catch (cause) {
+    if (existsSync(dest)) {
+      const winner = digestOfDirectory(dest, { exclude: [".git"], limits });
+      if (winner.ok && winner.digest === digest) return;
+    }
+    throw cause;
+  }
+}
+
+const TRANSIENT_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+function renameWithRetry(from: string, to: string): void {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code ?? "";
+      if (process.platform !== "win32" || !TRANSIENT_RENAME_CODES.has(code) || attempt >= 5 || existsSync(to)) throw cause;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * attempt);
+    }
+  }
+}
+
+/** Removes a folder the node made, and never throws: a leftover staging folder is garbage, not a failed install. */
+function removeQuietly(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 3 });
+  } catch {
+    // Left for the next cleanup; see the note on the package cache in docs/widget-development.md.
+  }
 }
 
 /** Schemes a git url is allowed to use. `https` always; `file` only when the caller explicitly opts in

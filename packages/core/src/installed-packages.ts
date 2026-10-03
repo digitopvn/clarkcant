@@ -45,6 +45,12 @@ export interface InstalledPackageView {
     | undefined;
   /** The version a rollback would make active again, when another version was ever active on this node. */
   previousVersion: string | undefined;
+  /**
+   * For a package listed by a path on this machine: the content digest of the snapshot of its files this generation
+   * runs from (`PackageGeneration.snapshotDigest`). Absent for a git or npm install and for a local one made before
+   * snapshots.
+   */
+  snapshotDigest?: string;
 }
 
 /**
@@ -101,6 +107,7 @@ export function listInstalledPackages(deps: InstallDeps): InstalledPackageView[]
       lockRef?: string;
       lockDigest?: string;
       lockCoverage?: string;
+      snapshotDigest?: string;
     }>(row.document, "package_generations.document");
 
     return {
@@ -125,6 +132,7 @@ export function listInstalledPackages(deps: InstallDeps): InstalledPackageView[]
               coverage: generation.lockCoverage ?? "unknown",
             },
       previousVersion: previousPackageVersion(deps, row.package_id),
+      ...(generation.snapshotDigest === undefined ? {} : { snapshotDigest: generation.snapshotDigest }),
     };
   });
 }
