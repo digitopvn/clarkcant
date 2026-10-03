@@ -570,6 +570,15 @@ describe("clark widget publish", () => {
     expect(await runCli(["widget", "publish", root])).toBe(0);
     const entry = JSON.parse(readFileSync(join(root, "dist", "directory-entry.json"), "utf8")) as Record<string, unknown>;
     expect(entry["resources"]).toEqual({ version: 1, profile: "interactive-heavy" });
+
+    // Asking for the default by name says nothing an absent field does not, so it is left out and a node from before
+    // the field can still read the index.
+    const named = await tempPackage();
+    const namedManifest = JSON.parse(readFileSync(join(named, "clarkcant.json"), "utf8")) as Record<string, unknown>;
+    namedManifest["resources"] = { version: 1, profile: "interactive-light" };
+    writeFileSync(join(named, "clarkcant.json"), JSON.stringify(namedManifest, null, 2));
+    expect(await runCli(["widget", "publish", named])).toBe(0);
+    expect(JSON.parse(readFileSync(join(named, "dist", "directory-entry.json"), "utf8"))).not.toHaveProperty("resources");
   });
 
   it("refuses to publish a package that fails conformance", async () => {

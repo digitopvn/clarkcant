@@ -310,9 +310,13 @@ lại một lần việc nền bị lỗi, bị dừng hoặc bị gián đoạn
 `POST /conversations/:id/questions/:questionId/ask-again` (hỏi lại một câu hỏi đã hết hạn thành câu hỏi mới),
 `update` là `POST /packages/install` thông thường với phiên bản mà thông báo nêu, và `review-update` mở Cài đặt.
 Thông báo cập nhật gói còn mang `reachChange` khi gói đã được cài: phạm vi tiếp cận mà listing của phiên bản được nêu
-có so với manifest đang cài, dạng `{ verdict: "wider" | "narrower" | "unchanged", profile?, origins, secrets,
-browserTokens, connectionScopes, connectionEndpoints }`, mỗi tập là `{ added, removed }` và `profile` gồm tên hai mức
-tài nguyên kèm từng giới hạn có đổi (`packages/contracts/src/reach-change.ts`). Thao
+có so với manifest đang cài, dạng `{ verdict: "wider" | "narrower" | "unchanged", profile?, gpu?, origins, secrets,
+keyDestinations, browserTokens, connectionScopes, connectionEndpoints }`, mỗi tập là `{ added, removed, addedMore?,
+removedMore? }` với tối đa 32 mục mỗi danh sách và phần còn lại được đếm, `keyDestinations` là từng cặp (key, origin) mà
+một key được gửi tới, và `profile` gồm tên hai mức tài nguyên kèm từng giới hạn có đổi; hoặc `{ verdict: "unknown" }`
+khi gói đang được cài ở phiên bản khác và không so sánh được hai bản (`packages/contracts/src/reach-change.ts`). Web
+client đọc `GET /inbox` theo từng mục, nên một mục không khớp hợp đồng bị bỏ ra và được đếm, thay vì làm hỏng cả hộp
+thư. Thao
 tác được liệt kê kèm `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) nói rõ vì
 sao lúc này không làm được. Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
 [system-architecture.vi.md](system-architecture.vi.md) ở phần hộp thư.

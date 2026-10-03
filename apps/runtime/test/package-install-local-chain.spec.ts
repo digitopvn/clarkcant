@@ -4,7 +4,14 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_EXECUTION_POLICY_CONFIG, inboxResponseSchema, type CapabilityRef, type Instant } from "@clarkcant/contracts";
+import {
+  DEFAULT_EXECUTION_POLICY_CONFIG,
+  inboxResponseSchema,
+  type CapabilityRef,
+  type Instant,
+  type ReachChange,
+  type ReachChangeView,
+} from "@clarkcant/contracts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, digestOfDirectory, invocationPreflight, writeRegisteredPreference } from "@clarkcant/core";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
@@ -348,6 +355,12 @@ describe("an update's install question and notice say what the new version reach
     if (!written.ok) throw new Error(written.message);
   }
 
+  /** The change itself, failing the test when the node could not compare the two versions. */
+  function compared(view: ReachChangeView | undefined): ReachChange {
+    if (view === undefined || view.verdict === "unknown") throw new Error(`the update was not compared: ${JSON.stringify(view)}`);
+    return view;
+  }
+
   async function askToUpdate() {
     const asked = await request({ method: "POST", path: "/packages/install", body: { packageId: PACKAGE_ID, version: NEXT } });
     expect(asked.status, JSON.stringify(asked.body)).toBe(202);
@@ -382,10 +395,11 @@ describe("an update's install question and notice say what the new version reach
 
     const { item, inbox } = await askToUpdate();
     expect(item.version).toBe(NEXT);
-    expect(item.reachChange?.verdict).toBe("wider");
-    expect(item.reachChange?.origins).toEqual({ added: [FORECAST], removed: [] });
-    expect(item.reachChange?.browserTokens).toEqual({ added: [{ provider: "example.maps", scope: "geocode:read" }], removed: [] });
-    expect(item.reachChange?.profile).toBeUndefined();
+    const change = compared(item.reachChange);
+    expect(change.verdict).toBe("wider");
+    expect(change.origins).toEqual({ added: [FORECAST], removed: [] });
+    expect(change.browserTokens).toEqual({ added: [{ provider: "example.maps", scope: "geocode:read" }], removed: [] });
+    expect(change.profile).toBeUndefined();
     // The notice the update came from says the same before anything is pressed.
     const notice = inbox.notices.find((entry) => entry.subject?.kind === "package" && entry.subject.version === NEXT);
     expect(notice?.reachChange).toEqual(item.reachChange);
@@ -400,10 +414,48 @@ describe("an update's install question and notice say what the new version reach
     askBeforeInstalling();
 
     const { item } = await askToUpdate();
-    expect(item.reachChange?.verdict).toBe("unchanged");
-    for (const set of [item.reachChange?.origins, item.reachChange?.secrets, item.reachChange?.browserTokens, item.reachChange?.connectionScopes, item.reachChange?.connectionEndpoints]) {
+    const change = compared(item.reachChange);
+    expect(change.verdict).toBe("unchanged");
+    for (const set of [change.origins, change.secrets, change.keyDestinations, change.browserTokens, change.connectionScopes, change.connectionEndpoints]) {
       expect(set).toEqual({ added: [], removed: [] });
     }
+  });
+
+  it("says it could not compare when the installed version's listing is gone, on the question and on the notice", async () => {
+    await installFirstVersion();
+    // Only the next version is listed: the files of the installed one can no longer be found through the directory.
+    writeIndex([directoryEntry({ version: NEXT, source: { kind: "local", path: nextRoot }, digest: nextDigest, declaredReach: { origins: [FORECAST], secrets: [], browserTokens: [] } })]);
+    askBeforeInstalling();
+    recordNodeNotice(services, {
+      sourceKind: "package",
+      category: "update",
+      severity: "info",
+      title: `Có bản cập nhật: ${PACKAGE_ID}`,
+      subject: { kind: "package", packageId: PACKAGE_ID, version: NEXT, source: "local" },
+      dedupKey: `update:local:${PACKAGE_ID}@${NEXT}`,
+      at: AT as Instant,
+    });
+
+    const { item, inbox } = await askToUpdate();
+    expect(item.reachChange).toEqual({ verdict: "unknown" });
+    const notice = inbox.notices.find((entry) => entry.subject?.kind === "package" && entry.subject.version === NEXT);
+    expect(notice?.reachChange).toEqual({ verdict: "unknown" });
+  });
+
+  it("says it could not compare on a notice whose version the directory no longer lists", async () => {
+    await installFirstVersion();
+    recordNodeNotice(services, {
+      sourceKind: "package",
+      category: "update",
+      severity: "info",
+      title: `Có bản cập nhật: ${PACKAGE_ID}`,
+      subject: { kind: "package", packageId: PACKAGE_ID, version: NEXT, source: "local" },
+      dedupKey: `update:local:${PACKAGE_ID}@${NEXT}`,
+      at: AT as Instant,
+    });
+    const inbox = inboxResponseSchema.parse((await request({ method: "GET", path: "/inbox" })).body);
+    const notice = inbox.notices.find((entry) => entry.subject?.kind === "package" && entry.subject.version === NEXT);
+    expect(notice?.reachChange).toEqual({ verdict: "unknown" });
   });
 
   it("says nothing about a change on the question for a package that is not installed", async () => {

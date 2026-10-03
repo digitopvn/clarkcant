@@ -104,6 +104,9 @@ test("the update notice and the install question show the origin 1.1.0 adds, bef
   await expect(notice).toHaveCount(1);
   const change = notice.locator('[data-reach-change="wider"]');
   await expect(change).toBeVisible();
+  // The list is named by the verdict sentence above it.
+  const verdictId = await change.locator("span[id]").first().getAttribute("id");
+  await expect(change.locator(`ul[aria-labelledby="${String(verdictId)}"]`)).toBeVisible();
   await expect(change.locator(`[data-reach-added-origin="${ADDED_ORIGIN}"]`)).toContainText(ADDED_ORIGIN);
   await expect(change.locator(`[data-reach-added-origin="${ADDED_ORIGIN}"]`)).toContainText("Reads the forecast for the week you look at.");
   expect(await installedVersions(request)).toEqual(["1.0.0"]);

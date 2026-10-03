@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { declaredReachSchema } from "./declared-reach.ts";
-import { reachChangeSchema } from "./reach-change.ts";
+import { reachChangeViewSchema } from "./reach-change.ts";
 import { riskLaneSchema } from "./directory.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 
@@ -248,9 +248,10 @@ export const noticeSchema = z.strictObject({
   actions: z.array(noticeActionSchema).max(12).optional(),
   /**
    * On a package update notice, what the version it offers reaches against the installed one, worked out by the node
-   * when it was read (`reach-change.ts`). Absent where nothing resolved it, or the installed manifest could not be read.
+   * when it was read (`reach-change.ts`). `{ verdict: "unknown" }` when the package is installed at another version and
+   * the two could not be compared; absent when the package is not installed or already runs that version.
    */
-  reachChange: reachChangeSchema.optional(),
+  reachChange: reachChangeViewSchema.optional(),
 });
 export type Notice = z.infer<typeof noticeSchema>;
 
@@ -427,10 +428,10 @@ export const waitingItemSchema = z.discriminatedUnion("kind", [
     reach: declaredReachSchema.optional(),
     /**
      * When the package is installed at another version, what this version reaches that the installed one does not, and
-     * what it no longer reaches (`reach-change.ts`). Absent for a first install. It decides nothing: the question is the
-     * one any install the policy asks about raises.
+     * what it no longer reaches (`reach-change.ts`), or `{ verdict: "unknown" }` when the two could not be compared.
+     * Absent for a first install. It decides nothing: the question is the one any install the policy asks about raises.
      */
-    reachChange: reachChangeSchema.optional(),
+    reachChange: reachChangeViewSchema.optional(),
     description: z.string(),
     operationDigest: z.string().min(1),
     requestedAt: instantSchema,

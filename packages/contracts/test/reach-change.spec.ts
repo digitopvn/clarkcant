@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  REACH_CHANGE_LIST_MAX,
   compareReach,
   declaredResourcesMismatch,
   directoryEntrySchema,
+  inboxResponseSchema,
   reachChangeSchema,
+  reachChangeViewSchema,
   reachSnapshotOfListing,
   reachSnapshotOfManifest,
   type DeclaredReach,
@@ -13,8 +16,8 @@ import {
 
 const NONE: DeclaredReach = { origins: [], secrets: [], browserTokens: [] };
 
-function snapshot(reach: Partial<DeclaredReach>, profile: ReachSnapshot["profile"] = "interactive-light"): ReachSnapshot {
-  return { reach: { ...NONE, ...reach }, profile };
+function snapshot(reach: Partial<DeclaredReach>, profile: ReachSnapshot["profile"] = "interactive-light", gpu = false): ReachSnapshot {
+  return { reach: { ...NONE, ...reach }, profile, gpu };
 }
 
 const lookup = { origin: "https://lookup.example.com", purpose: "Looks words up.", secret: "LOOKUP_API_KEY" };
@@ -38,6 +41,7 @@ describe("what an update changes in what a package reaches", () => {
       verdict: "unchanged",
       origins: { added: [], removed: [] },
       secrets: { added: [], removed: [] },
+      keyDestinations: { added: [], removed: [] },
       browserTokens: { added: [], removed: [] },
       connectionScopes: { added: [], removed: [] },
       connectionEndpoints: { added: [], removed: [] },
@@ -133,9 +137,102 @@ describe("what an update changes in what a package reaches", () => {
   });
 });
 
+describe("where an update sends a key", () => {
+  const a = { origin: "https://a.example.com", purpose: "Reads A." };
+  const b = { origin: "https://b.example.com", purpose: "Reads B." };
+  const x = { name: "X_KEY", purpose: "Signs requests in." };
+
+  it("is wider when a key moves to another origin, even though the origins and the keys are the same sets", () => {
+    const change = compareReach(
+      snapshot({ origins: [{ ...a, secret: "X_KEY" }, b], secrets: [x] }),
+      snapshot({ origins: [a, { ...b, secret: "X_KEY" }], secrets: [x] }),
+    );
+    expect(change.verdict).toBe("wider");
+    expect(change.origins).toEqual({ added: [], removed: [] });
+    expect(change.secrets).toEqual({ added: [], removed: [] });
+    expect(change.keyDestinations).toEqual({
+      added: [{ name: "X_KEY", origin: b.origin }],
+      removed: [{ name: "X_KEY", origin: a.origin }],
+    });
+  });
+
+  it("is wider when a key is also sent to one more origin, and says it is sent there as well", () => {
+    const change = compareReach(
+      snapshot({ origins: [{ ...a, secret: "X_KEY" }, b], secrets: [x] }),
+      snapshot({ origins: [{ ...a, secret: "X_KEY" }, { ...b, secret: "X_KEY" }], secrets: [x] }),
+    );
+    expect(change.verdict).toBe("wider");
+    expect(change.keyDestinations).toEqual({ added: [{ name: "X_KEY", origin: b.origin, also: true }], removed: [] });
+  });
+
+  it("is narrower when a key stops going to an origin it went to", () => {
+    const change = compareReach(snapshot({ origins: [{ ...a, secret: "X_KEY" }], secrets: [x] }), snapshot({ origins: [a], secrets: [x] }));
+    expect(change.verdict).toBe("narrower");
+    expect(change.keyDestinations).toEqual({ added: [], removed: [{ name: "X_KEY", origin: a.origin }] });
+  });
+});
+
+describe("a GPU request", () => {
+  it("is wider when an update starts asking for a GPU, with the same profile", () => {
+    const change = compareReach(snapshot({}, "media-workstation"), snapshot({}, "media-workstation", true));
+    expect(change.verdict).toBe("wider");
+    expect(change.gpu).toEqual({ from: false, to: true });
+    expect(change.profile).toBeUndefined();
+  });
+
+  it("is narrower when it stops asking for one, and absent when neither asks", () => {
+    expect(compareReach(snapshot({}, "media-workstation", true), snapshot({}, "media-workstation")).verdict).toBe("narrower");
+    expect(compareReach(snapshot({}), snapshot({}))).not.toHaveProperty("gpu");
+  });
+
+  it("is read from a listing and from a manifest", () => {
+    expect(reachSnapshotOfListing({ resources: { version: 1, profile: "media-workstation", gpu: true } }).gpu).toBe(true);
+    expect(reachSnapshotOfManifest({ facets: [], resources: { version: 1, profile: "media-workstation" } }).gpu).toBe(false);
+  });
+});
+
+describe("a change larger than one list holds", () => {
+  // As many browser-token pairs as one UI facet may declare: 8 providers with 16 scopes each.
+  const providers = Array.from({ length: 8 }, (_, p) => ({
+    provider: `example.p${String(p)}`,
+    scopes: Array.from({ length: 16 }, (_, s) => `scope${String(s).padStart(2, "0")}:read`),
+    purpose: "Draws something.",
+  }));
+
+  it("lists at most the cap, counts the rest, still says wider, and parses through the inbox contract", () => {
+    const change = compareReach(snapshot({}), snapshot({ browserTokens: providers }));
+    expect(change.verdict).toBe("wider");
+    expect(change.browserTokens.added).toHaveLength(REACH_CHANGE_LIST_MAX);
+    expect(change.browserTokens.addedMore).toBe(128 - REACH_CHANGE_LIST_MAX);
+    expect(change.browserTokens).not.toHaveProperty("removedMore");
+    expect(reachChangeSchema.safeParse(change).success).toBe(true);
+
+    const removed = compareReach(snapshot({ browserTokens: providers }), snapshot({}));
+    expect(removed.verdict).toBe("narrower");
+    expect(removed.browserTokens.removedMore).toBe(128 - REACH_CHANGE_LIST_MAX);
+
+    const notice = {
+      noticeId: "n1",
+      sourceKind: "system",
+      category: "update",
+      severity: "info",
+      title: "An update is available",
+      createdAt: "2026-10-03T00:00:00.000Z",
+      reachChange: change,
+    };
+    const inbox = inboxResponseSchema.safeParse({ waiting: [], notices: [notice], unread: 1, readAt: "2026-10-03T00:00:00.000Z" });
+    expect(inbox.error?.issues).toBeUndefined();
+  });
+
+  it("carries the could-not-compare state in the same field", () => {
+    expect(reachChangeViewSchema.safeParse({ verdict: "unknown" }).success).toBe(true);
+    expect(reachChangeViewSchema.safeParse({ verdict: "unknown", origins: { added: [], removed: [] } }).success).toBe(false);
+  });
+});
+
 describe("the reach of a listing and of a manifest", () => {
   it("reads an absent listing reach and profile as none and the default profile", () => {
-    expect(reachSnapshotOfListing({})).toEqual({ reach: NONE, profile: "interactive-light" });
+    expect(reachSnapshotOfListing({})).toEqual({ reach: NONE, profile: "interactive-light", gpu: false });
     expect(reachSnapshotOfListing({ resources: { version: 1, profile: "background-compute" } }).profile).toBe("background-compute");
     expect(reachSnapshotOfManifest({ facets: [], resources: { version: 1, profile: "media-workstation" } }).profile).toBe("media-workstation");
   });

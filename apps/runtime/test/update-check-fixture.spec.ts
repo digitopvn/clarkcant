@@ -113,7 +113,6 @@ describe("POST /update-check-fixture/run", () => {
     const inbox = inboxResponseSchema.parse((await send("GET", "/inbox")).body);
     const notice = inbox.notices.find((item) => item.category === "update" && item.subject?.kind === "package");
     expect(notice?.subject).toMatchObject({ packageId: PACKAGE_ID, version: "1.1.0" });
-    expect(notice?.reachChange?.verdict).toBe("wider");
-    expect(notice?.reachChange?.origins).toEqual({ added: [FORECAST], removed: [] });
+    expect(notice?.reachChange).toMatchObject({ verdict: "wider", origins: { added: [FORECAST], removed: [] } });
   });
 });

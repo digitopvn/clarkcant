@@ -6,7 +6,7 @@ import {
   type Principal,
   type WaitingItem,
 } from "@clarkcant/contracts";
-import { decideApproval, directoryIndexPath, readDirectoryIndex } from "@clarkcant/core";
+import { decideApproval, directoryIndexPath, readDirectoryIndex, type DirectoryIndexState } from "@clarkcant/core";
 import { allRows, oneRow } from "@clarkcant/storage";
 
 import {
@@ -33,9 +33,11 @@ import { reachChangeAgainstInstalled } from "../package-reach-change.ts";
 
 type InstallApprovalItem = Extract<WaitingItem, { kind: "install-approval" }>;
 
-/** The directory entry that lists `packageId@version` right now, or undefined when none does or none is configured. */
-function listedEntry(packageId: string, version: string): DirectoryEntry | undefined {
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+/**
+ * The directory entry that lists `packageId@version` in `index`, or undefined when none does or none is configured.
+ * The caller reads the index once, so listing N questions is not N reads of it.
+ */
+function listedEntry(index: DirectoryIndexState, packageId: string, version: string): DirectoryEntry | undefined {
   if (index.kind !== "configured") return undefined;
   return index.entries.find((candidate) => candidate.packageId === packageId && candidate.version === version);
 }
@@ -69,7 +71,7 @@ export function listPendingInstallApprovals(
   return rows.flatMap((row): InstallApprovalItem[] => {
     const asked = findInstallApprovalRequest(runtime.db, runtime.identity.nodeId, row.approval_id);
     if (asked === undefined || asked.digest !== row.operation_digest) return [];
-    const entry = listedEntry(asked.packageId, asked.version);
+    const entry = listedEntry(index, asked.packageId, asked.version);
     if (entry === undefined || entry.digest !== row.operation_digest) return [];
     // A listing by a path on this machine whose files changed since the question is left out the same way.
     if (!localFilesUnchanged(entry, asked.localDigest)) return [];
@@ -173,7 +175,7 @@ export async function decideInstallApproval(
   }
 
   if (input.decision === "granted") {
-    const entry = listedEntry(asked.packageId, asked.version);
+    const entry = listedEntry(readDirectoryIndex(directoryIndexPath(process.env)), asked.packageId, asked.version);
     if (entry === undefined || entry.digest !== asked.digest) {
       audit("refused", { code: "DIGEST_MISMATCH" });
       return {

@@ -306,9 +306,13 @@ stopped or interrupted background work again as new work in the same conversatio
 `POST /conversations/:id/questions/:questionId/ask-again` (asks an expired question again as a new one), `update` is
 the ordinary `POST /packages/install` with the version the notice names, and `review-update` opens Settings. A package
 update notice also carries `reachChange` when the package is installed: what the named version's listing reaches
-compared with the installed manifest, as `{ verdict: "wider" | "narrower" | "unchanged", profile?, origins, secrets,
-browserTokens, connectionScopes, connectionEndpoints }`, each set as `{ added, removed }` and `profile` as the two
-profile names with each bounded limit that changes (`packages/contracts/src/reach-change.ts`). An action
+compared with the installed manifest, as `{ verdict: "wider" | "narrower" | "unchanged", profile?, gpu?, origins, secrets,
+keyDestinations, browserTokens, connectionScopes, connectionEndpoints }`, each set as `{ added, removed, addedMore?,
+removedMore? }` with at most 32 items per list and the rest counted, `keyDestinations` as each (key, origin) pair a key
+is sent to, and `profile` as the two profile names with each bounded limit that changes; or `{ verdict: "unknown" }`
+when the package is installed at another version and the two cannot be compared
+(`packages/contracts/src/reach-change.ts`). The web client parses `GET /inbox` item by item, so one item that does not
+match the contract is left out and counted rather than failing the whole inbox. An action
 listed with `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) says why it cannot be
 taken now. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
 [system-architecture.md](system-architecture.md) under the inbox.
