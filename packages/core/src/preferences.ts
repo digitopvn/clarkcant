@@ -15,8 +15,11 @@ import { type Instant } from "@clarkcant/contracts";
 import { type Database, allRows, oneRow, toJson, parseJson, transaction } from "@clarkcant/storage";
 
 export type PreferenceScope = "global" | "node" | "conversation";
-/** Where a value came from, so an onboarding-set value can be found and undone as a group. */
-export type PreferenceSource = "user" | "default" | "onboarding";
+/**
+ * Where a value came from, so an onboarding-set value can be found and undone as a group, and a value Clark wrote under
+ * the execution policy is not recorded as the person's own click.
+ */
+export type PreferenceSource = "user" | "default" | "onboarding" | "agent";
 
 export interface PreferenceDeps {
   db: Database;

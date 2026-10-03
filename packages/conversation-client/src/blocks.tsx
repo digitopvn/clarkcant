@@ -818,7 +818,7 @@ export function ApprovalCardBlock({
           <CodeBlock
             code={commandOf(payload) ?? payload}
             {...(commandOf(payload) === undefined ? {} : { language: "bash" })}
-            label={t("blocks.approval.commandLabel")}
+            label={t(isTilePolicyPayload(payload) ? "blocks.approval.tilePolicyLabel" : "blocks.approval.commandLabel")}
           />
         )}
         {/* The digest is shown so an approved plan cannot be swapped for another one. */}
@@ -871,6 +871,15 @@ function commandOf(payload: string): string | undefined {
     return typeof parsed.command === "string" ? parsed.command : undefined;
   } catch {
     return undefined;
+  }
+}
+
+/** Whether a card's payload is a map tile policy, which is labelled as one rather than as a command. */
+function isTilePolicyPayload(payload: string): boolean {
+  try {
+    return (JSON.parse(payload) as { kind?: unknown }).kind === "map-tile-policy";
+  } catch {
+    return false;
   }
 }
 

@@ -1417,8 +1417,8 @@ Nền bản đồ là lớp đất liền Natural Earth tỉ lệ 1:110m, phiên
 dưới mỗi hình vẽ. Nền đi kèm client, nên khi không có tile policy, bản đồ không gửi yêu cầu nào ra ngoài node.
 
 Ô bản đồ raster chỉ xuất hiện khi node có tile policy, tức preference đã đăng ký `maps.tilePolicy`. Mặc định nó là
-`null`, và chỉ con người được ghi hoặc hoàn tác nó: AI client qua socket hay MCP đều bị từ chối (`isPersonOnlyRoute`).
-Một policy nêu đúng một nhà cung cấp:
+`null`. Con người ghi nó trong Cài đặt, còn Clark ghi qua công cụ của mình theo execution policy; AI client qua socket hay
+MCP không ghi hay hoàn tác trực tiếp được (`isPersonOnlyRoute`). Một policy nêu đúng một nhà cung cấp:
 
 ```json
 {
@@ -1426,13 +1426,15 @@ Một policy nêu đúng một nhà cung cấp:
   "template": "/styles/basic/{z}/{x}/{y}.png",
   "attribution": "© Example contributors",
   "maxZoom": 17,
-  "credential": { "secret": "tiles-key", "header": "x-api-key" }
+  "credential": { "secret": "maps:tiles", "header": "x-api-key" }
 }
 ```
 
 `origin` phải đúng dạng `scheme://host[:port]`: https, hoặc http chỉ với địa chỉ loopback. `template` là một đường dẫn
-trên origin đó, có `{z}`, `{x}` và `{y}`, mỗi thứ đúng một lần. Trang không bao giờ fetch nhà cung cấp. Nó hỏi node qua
-`GET /map-tiles/:z/:x/:y`, và node:
+trên origin đó, có `{z}`, `{x}` và `{y}`, mỗi thứ đúng một lần. Query của nó không được chứa khóa, token, secret hay chữ
+ký. `credential` là tùy chọn. Khi có, `secret` luôn là `maps:tiles`, khóa ô bản đồ riêng của host, và policy nêu bất kỳ
+secret nào khác đều bị từ chối. `header` hoặc `query` nói khóa được đặt ở đâu. Trang không bao giờ fetch nhà cung cấp. Nó
+hỏi node qua `GET /map-tiles/:z/:x/:y`, và node:
 
 - dựng địa chỉ từ policy;
 - kiểm tra z, x, y theo `maxZoom` (tối đa 19) và lưới ô;
@@ -1442,14 +1444,45 @@ trên origin đó, có `{z}`, `{x}` và `{y}`, mỗi thứ đúng một lần. T
 - cache tối đa 256 ô hoặc 24 MiB, trong một giờ.
 
 `GET /map-tiles` cho trang biết origin, attribution và zoom tối đa của nhà cung cấp, không bao giờ cho biết template
-hay khóa. Khi không có policy, mọi yêu cầu ô đều bị từ chối với `MAP_TILES_OFF` và không ai bị hỏi. Trang vẽ ô từ URL
-`blob:`, nên page policy không đổi.
+hay khóa. Khi không có policy, mọi yêu cầu ô đều bị từ chối với `MAP_TILES_OFF` và không ai bị hỏi. Khi bản đồ chỉ dùng
+nền ngoại tuyến, câu trả lời nói lý do trong `offline`:
 
-`credential` tùy chọn nêu tên một secret mà node giữ. Secret đó phải liệt kê consumer `maps:tiles`, và được chèn qua
-secret broker thành HTTP header hoặc query parameter mà policy chỉ định. Khóa không bao giờ đến trang, props, state, log,
-khóa cache, thông báo lỗi hay model. Dòng attribution dưới bản đồ nêu origin của ô và attribution của nó, và bản đồ
-không có huy hiệu "live".
+- `no-provider`: chưa đặt policy nào;
+- `key-unavailable`: policy cần khóa nhưng chưa có khóa nào được lưu;
+- `key-origin-mismatch`: khóa đã lưu được nhập cho một origin khác.
 
+Ở cả hai trường hợp về khóa, nhà cung cấp không được đưa cho trang, nên trang không xin ô nào chắc chắn sẽ lỗi, và một
+yêu cầu ô nhận `503 MAP_TILE_KEY_UNAVAILABLE` kèm cùng lý do `offline`. Dòng attribution của bản đồ nêu lý do và chỗ sửa.
+Trang vẽ ô từ URL `blob:`, nên page policy không đổi.
+
+**Khóa gắn với origin của nó.** Con người nhập khóa trong **Cài đặt → Tiện ích → Ô bản đồ**, nơi lưu nó qua route chỉ
+dành cho người `PUT /map-tiles/key` thành secret `maps:tiles` của node. Consumer duy nhất của secret là
+`maps:tiles@<origin>`, tức origin mà khóa được nhập cho. Proxy xin secret broker theo consumer của origin trong policy, nên
+khóa chỉ được gửi tới đúng origin đó, không đi đâu khác. `GET /map-tiles/key` trả `{ key: { origin } }` hoặc
+`{ key: null }`, không bao giờ trả giá trị, còn `DELETE /map-tiles/key` xóa khóa. Form credential chung
+(`POST /credentials`) từ chối tên `maps:tiles` và mọi consumer `maps:tiles`. Chỉ con người nhập khóa trong Cài đặt mới gắn
+được khóa, nên Clark không thể chuyển nó đi.
+
+Con người đặt và xóa policy trong cùng mục Cài đặt đó: địa chỉ nhà cung cấp, đường dẫn ô, ghi công, mức phóng to tối đa,
+và một khóa tùy chọn cùng header hoặc query parameter chứa nó. Mục này không bao giờ hiển thị lại khóa. Nó hiện
+"Đang kiểm tra…" cho tới khi node trả lời, sau đó cho biết đã lưu khóa chưa và khóa được gửi tới origin nào, và báo lỗi
+nếu node không trả lời được. **Tắt ô bản đồ** ghi `null`. **Xóa khóa** bỏ khóa khỏi policy và xóa nó. **Hoàn tác thay
+đổi gần nhất** khôi phục policy trước đó, dù ai đã ghi nó.
+
+Clark làm điều tương tự qua công cụ `set_map_tiles`, dùng cùng `writeMapTilePolicy`
+([map-tile-policy.ts](../apps/runtime/src/application/map-tile-policy.ts)). Đặt hay xóa policy là một tác động như mọi tác
+động khác, và execution policy quyết định nó. Ở chế độ Tự chủ, nó chạy, kèm bản ghi hoạt động và nút Hoàn tác trong Cài
+đặt. Ở chế độ Hỏi, nó là một thẻ duyệt do host sở hữu, và chỉ quyết định của con người trên route decide dành riêng cho
+người mới ghi nó. Khi mọi tác động đều bị cấm, nó bị từ chối, kể cả vào lúc thẻ được duyệt. Preference ghi lại ai đã ghi
+nó: `user` cho Cài đặt, `agent` cho Clark.
+
+Công cụ chỉ nhận tên header hoặc query, không bao giờ nhận khóa hay tên secret. Thẻ duyệt và kết quả nói khóa được gửi
+tới đâu: tới origin của policy, hoặc không đi đâu cả khi Clark đặt một nhà cung cấp ở origin khác với origin của khóa. Nhà
+cung cấp như vậy chỉ dùng nền ngoại tuyến cho tới khi con người nhập lại khóa cho nó. Widget không chạm được vào bất kỳ
+phần nào ở đây.
+
+Khóa không bao giờ đến trang, props, state, log, khóa cache, thông báo lỗi hay model. Dòng attribution dưới bản đồ nêu
+origin của ô và attribution của nó, và bản đồ không có huy hiệu "live".
 `map.select` mang `{ selectedId }` (rỗng để bỏ chọn), `map.view` mang `{ center, zoom }`. Node kiểm tra cả hai theo props
 hiện tại và giữ chúng làm state của widget. Một lần kéo bản đồ được ghi 400 ms sau khi dừng, nên một chuỗi phím chỉ là
 một lần ghi. `map.select` cũng là một sự kiện của composition graph, có trường `selectedId`.
@@ -1482,7 +1515,15 @@ Kiểm thử: [map-view.spec.ts](../packages/contracts/test/map-view.spec.ts) ki
 semantic, schema của tile policy và route chỉ dành cho người;
 [map-view.spec.ts](../apps/runtime/test/map-view.spec.ts) kiểm việc đặt, từ chối, state và semantic khi có và không có
 policy; [map-tiles.spec.ts](../apps/runtime/test/map-tiles.spec.ts) kiểm allowlist của proxy, content type, giới hạn
-kích thước và zoom, cache, tốc độ, việc từ chối redirect, và rằng khóa được thêm vào nhưng không bao giờ bị trả về;
+kích thước và zoom, cache, tốc độ, việc từ chối redirect, rằng khóa chỉ được gửi tới origin nó được gắn, và không bao giờ bị trả về;
+[map-tile-policy.spec.ts](../apps/runtime/test/map-tile-policy.spec.ts) kiểm việc Cài đặt và Clark đặt, xóa policy ở
+từng chế độ thực thi, ai được ghi là tác giả, thẻ duyệt, digest của nó, việc từ chối, việc gắn khóa với origin, việc từ
+chối policy nêu secret khác, và rằng khóa không bao giờ bị trả lại;
+[open-interfaces.spec.ts](../apps/runtime/test/open-interfaces.spec.ts) kiểm rằng relay từ chối việc ghi policy, việc hoàn
+tác nó và các route của khóa; [map-tile-settings.spec.ts](../apps/web/e2e/map-tile-settings.spec.ts) bật ô từ Cài đặt với
+một nhà cung cấp giả cục bộ từ chối yêu cầu không có khóa, thấy ô trên bản đồ, tắt đi rồi hoàn tác. Nó cũng để Clark đặt
+và xóa nhà cung cấp ở chế độ Tự chủ và qua một thẻ đã được duyệt ở chế độ Hỏi, và cho thấy một nhà cung cấp Clark đặt ở
+origin khác với origin của khóa chỉ dùng nền ngoại tuyến với `key-origin-mismatch`;
 [map-layout.spec.ts](../packages/conversation-client/test/map-layout.spec.ts) kiểm nguồn gốc của nền bản đồ, phép
 chiếu và lưới ô; [map-schemas.spec.ts](../packages/widget-catalog/test/map-schemas.spec.ts) kiểm fixture và sự khớp
 nhau giữa schema và runtime. Browser journey [map-view.spec.ts](../apps/web/e2e/map-view.spec.ts) bao quát:

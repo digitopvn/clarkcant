@@ -4613,10 +4613,12 @@ function tileMissing(cause: unknown): boolean {
  */
 function useMapTiles(host: MapTileHost | undefined, camera: MapCamera): {
   provider: MapTilePolicyView["provider"];
+  offline: MapTilePolicyView["offline"];
   tiles: { placement: MapTilePlacement; url: string }[];
   failed: boolean;
 } {
   const [provider, setProvider] = useState<MapTilePolicyView["provider"]>(null);
+  const [offline, setOffline] = useState<MapTilePolicyView["offline"]>(undefined);
   // Held pictures, least recently drawn first.
   const [pictures, setPictures] = useState<ReadonlyMap<string, string>>(new Map());
   // When a failed tile may be asked for again; never, for a tile the provider does not have.
@@ -4631,7 +4633,11 @@ function useMapTiles(host: MapTileHost | undefined, camera: MapCamera): {
     if (host === undefined) return undefined;
     let live = true;
     // A policy that cannot be read is no policy: the map stays on its offline basemap rather than guessing.
-    host.policy().then((view) => { if (live) setProvider(view.provider); }, () => { if (live) setProvider(null); });
+    host.policy().then((view) => {
+      if (!live) return;
+      setProvider(view.provider);
+      setOffline(view.provider === null ? view.offline : undefined);
+    }, () => { if (live) setProvider(null); });
     return () => { live = false; };
   }, [host]);
 
@@ -4729,7 +4735,7 @@ function useMapTiles(host: MapTileHost | undefined, camera: MapCamera): {
     return url === undefined ? [] : [{ placement, url }];
   });
   const failed = placements.some((placement) => !pictures.has(tileAddress(placement)) && failures.has(tileAddress(placement)));
-  return { provider, tiles, failed };
+  return { provider, offline, tiles, failed };
 }
 function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: RendererProps & { map: MapView; title: string }): ReactElement {
   const t = useT();
@@ -4765,7 +4771,7 @@ function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: Ren
   const [reduced, setReduced] = useState(false);
   const drag = useRef<{ pointerId: number; x: number; y: number; camera: MapCamera; moved: boolean } | undefined>(undefined);
   const dragged = useRef(false);
-  const { provider, tiles, failed } = useMapTiles(mapTiles, camera);
+  const { provider, offline, tiles, failed } = useMapTiles(mapTiles, camera);
   // What the live region says follows the view once it settles, not every frame of a drag or every repeated key.
   const announced = useSettled(camera, MAP_VIEW_WRITE_DELAY_MS);
 
@@ -5001,7 +5007,17 @@ function MapCanvas({ map, title, state, onAction, onStateChange, mapTiles }: Ren
         <div className="cc-map-attribution" data-map-attribution="true">
           <span data-map-basemap-credit="true">{t("widgets.map.basemap")}</span>
           {provider === null ? (
-            <span data-map-tiles="off">{t("widgets.map.tilesOff")}</span>
+            <span data-map-tiles="off" data-map-tiles-offline={offline}>
+              {t(
+                offline === "key-origin-mismatch"
+                  ? "widgets.map.tilesOffKeyOrigin"
+                  : offline === "key-unavailable"
+                    ? "widgets.map.tilesOffKey"
+                    : offline === "no-provider"
+                      ? "widgets.map.tilesOffNoProvider"
+                      : "widgets.map.tilesOff",
+              )}
+            </span>
           ) : (
             <span data-map-tiles="provider" data-map-tile-origin={provider.origin}>{fillMessage(t("widgets.map.tiles"), { origin: provider.origin, attribution: provider.attribution })}</span>
           )}

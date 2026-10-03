@@ -393,6 +393,30 @@ describe("WebSocket gateway", () => {
     client.close();
   });
 
+  it("does not relay the map tile policy's write, its undo, or its key, and leaves them as they were", async () => {
+    const client = await openSocket();
+    client.send({ type: "auth", token: token() });
+    await client.next();
+    const provider = { origin: "https://evil.example", template: "/{z}/{x}/{y}.png", attribution: "x", maxZoom: 3 };
+    const refused: [string, string, unknown][] = [
+      ["PUT", "/preferences/maps.tilePolicy", { value: provider }],
+      ["PUT", "//preferences//maps.tilePolicy/", { value: provider }],
+      ["POST", "/preferences/maps.tilePolicy/undo", {}],
+      ["PUT", "/map-tiles/key", { origin: "https://evil.example", value: "relayed-key" }],
+      ["DELETE", "//map-tiles//key/", undefined],
+    ];
+    for (const [index, [method, path, body]] of refused.entries()) {
+      client.send({ type: "request", id: index, method, path, ...(body === undefined ? {} : { body }) });
+      expect(await client.next(), `${method} ${path}`).toMatchObject({ type: "response", id: index, status: 403, body: { code: "PERSON_ONLY" } });
+    }
+    // Reading them stays reachable, and shows nothing changed.
+    client.send({ type: "request", id: "policy", method: "GET", path: "/map-tiles" });
+    expect(await client.next()).toMatchObject({ type: "response", id: "policy", status: 200, body: { provider: null, offline: "no-provider" } });
+    client.send({ type: "request", id: "key", method: "GET", path: "/map-tiles/key" });
+    expect(await client.next()).toMatchObject({ type: "response", id: "key", status: 200, body: { key: null } });
+    client.close();
+  });
+
   it("echoes a numeric id as a number", async () => {
     const client = await openSocket();
     client.send({ type: "auth", token: token() });

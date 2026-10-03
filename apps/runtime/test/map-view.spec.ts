@@ -176,7 +176,7 @@ describe("selection and view state", () => {
       {
         principalId: owner(),
         key: MAP_TILE_POLICY_PREFERENCE,
-        value: { origin: "https://tiles.example", template: "/{z}/{x}/{y}.png", attribution: "© Example", maxZoom: 17, credential: { secret: "tiles", header: "x-api-key" } },
+        value: { origin: "https://tiles.example", template: "/{z}/{x}/{y}.png", attribution: "© Example", maxZoom: 17, credential: { secret: "maps:tiles", header: "x-api-key" } },
       },
     );
     expect(written.ok).toBe(true);

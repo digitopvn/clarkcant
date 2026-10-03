@@ -101,6 +101,7 @@ import {
   isCapabilityPayload,
   runApprovedCapability,
 } from "../application/capability-invoke.ts";
+import { isMapTilePolicyPayload, runApprovedMapTilePolicy } from "../application/map-tile-policy.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -1868,12 +1869,15 @@ export async function decideApprovalForNode(
   if (!decided.ok) return { ok: false, code: decided.code, message: decided.message };
 
   const capabilityCall = isCapabilityPayload(payload);
+  const tilePolicyChange = isMapTilePolicyPayload(payload);
   if (input.decision === "denied") {
     // A record rather than a sentence, because the card reads its decision from the transcript: a refusal written
     // only as text left the card offering Approve and Deny again after it had been denied.
-    const refused = capabilityCall
-      ? "Đã từ chối gọi capability đó. Không có gì được chạy."
-      : "Đã từ chối chạy lệnh đó. Không có gì được chạy.";
+    const refused = tilePolicyChange
+      ? "Đã từ chối đổi chính sách ô bản đồ. Không có gì thay đổi."
+      : capabilityCall
+        ? "Đã từ chối gọi capability đó. Không có gì được chạy."
+        : "Đã từ chối chạy lệnh đó. Không có gì được chạy.";
     appendHostReply(services, {
       conversationId: input.conversationId,
       blocks: [
@@ -1891,6 +1895,33 @@ export async function decideApprovalForNode(
       at: input.at,
     });
     return { ok: true };
+  }
+
+  if (tilePolicyChange) {
+    // The map tile policy, which Clark may only propose: the person's grant here is what writes it, through the same
+    // writer Settings uses, after the card's payload is hashed again against the digest the decision covered.
+    const written = runApprovedMapTilePolicy(
+      { db: services.runtime.db, now: () => input.at },
+      {
+        payload,
+        expectedDigest: decided.approval.operationDigest,
+        approvalId: input.approvalId,
+        principalId: services.runtime.identity.ownerPrincipalId,
+      },
+    );
+    if (!written.ok) return { ok: false, code: written.code, message: written.message };
+    appendHostReply(services, { conversationId: input.conversationId, blocks: written.blocks, at: input.at });
+    appendAuditEvent(services.runtime.db, {
+      auditId: services.conductor.newId("audit"),
+      principalId: services.runtime.identity.ownerPrincipalId,
+      nodeId: services.runtime.identity.nodeId,
+      kind: "approval",
+      summary: written.description,
+      outcome: "done",
+      ref: input.approvalId,
+      at: input.at,
+    });
+    return { ok: true, outcome: written.description };
   }
 
   if (capabilityCall) {
