@@ -1420,8 +1420,22 @@ trên origin đó, có `{z}`, `{x}` và `{y}`, mỗi thứ đúng một lần. T
 - cache tối đa 256 ô hoặc 24 MiB, trong một giờ.
 
 `GET /map-tiles` cho trang biết origin, attribution và zoom tối đa của nhà cung cấp, không bao giờ cho biết template
-hay khóa. Khi không có policy, mọi yêu cầu ô đều bị từ chối với `MAP_TILES_OFF` và không ai bị hỏi. Trang vẽ ô từ URL
-`blob:`, nên page policy không đổi.
+hay khóa. Khi không có policy, mọi yêu cầu ô đều bị từ chối với `MAP_TILES_OFF` và không ai bị hỏi. Khi bản đồ chỉ dùng
+nền ngoại tuyến, câu trả lời nói lý do trong `offline`: `no-provider`, hoặc `key-unavailable` khi khóa mà policy nêu không
+dùng được trên node này (lúc đó nhà cung cấp không được đưa cho trang, nên trang không xin ô nào chắc chắn sẽ lỗi). Dòng
+attribution của bản đồ nêu lý do đó và chỗ bật ô. Trang vẽ ô từ URL `blob:`, nên page policy không đổi.
+
+Con người đặt và xóa policy trong **Cài đặt → Tiện ích → Ô bản đồ**: địa chỉ nhà cung cấp, đường dẫn ô, ghi công, mức phóng
+to tối đa, và một khóa tùy chọn cùng header hoặc query parameter chứa nó. Khóa được lưu thành secret của node cho
+`maps:tiles` (tên `map_tiles_key`, trừ khi policy đã nêu tên khác) và không bao giờ được hiển thị lại; mục này chỉ nói đã
+có khóa dùng được hay chưa. **Tắt ô bản đồ** ghi `null`, còn **Xóa khóa** bỏ khóa khỏi policy. Clark làm điều tương tự
+qua công cụ `set_map_tiles`, ghi qua cùng `writeMapTilePolicy`
+([map-tile-policy.ts](../apps/runtime/src/application/map-tile-policy.ts)). Việc nêu một nhà cung cấp luôn là một thẻ duyệt
+do host sở hữu, ở mọi chế độ thực thi, vì một lượt hội thoại có thể đến từ AI client qua `ask_clark` và nhà cung cấp sẽ
+nhận yêu cầu cùng khóa của node này; chỉ quyết định của con người trên route decide dành riêng cho người mới ghi nó. Tắt ô
+không gửi gì đi đâu, nên execution policy quyết định như mọi thay đổi cục bộ: chạy kèm bản ghi hoạt động, hoặc hỏi trước.
+Clark không bao giờ tự cầm khóa: nó xin khóa bằng `request_secret` với consumer `maps:tiles` và chỉ nêu tên secret. Widget
+không chạm được vào bất kỳ phần nào ở đây.
 
 `credential` tùy chọn nêu tên một secret mà node giữ. Secret đó phải liệt kê consumer `maps:tiles`, và được chèn qua
 secret broker thành HTTP header hoặc query parameter mà policy chỉ định. Khóa không bao giờ đến trang, props, state, log,
@@ -1461,6 +1475,10 @@ semantic, schema của tile policy và route chỉ dành cho người;
 [map-view.spec.ts](../apps/runtime/test/map-view.spec.ts) kiểm việc đặt, từ chối, state và semantic khi có và không có
 policy; [map-tiles.spec.ts](../apps/runtime/test/map-tiles.spec.ts) kiểm allowlist của proxy, content type, giới hạn
 kích thước và zoom, cache, tốc độ, việc từ chối redirect, và rằng khóa được thêm vào nhưng không bao giờ bị trả về;
+[map-tile-policy.spec.ts](../apps/runtime/test/map-tile-policy.spec.ts) kiểm việc Cài đặt và Clark đặt, xóa policy, thẻ
+duyệt, digest của nó, việc từ chối và execution policy, và rằng khóa không bao giờ bị trả lại;
+[map-tile-settings.spec.ts](../apps/web/e2e/map-tile-settings.spec.ts) bật ô từ Cài đặt với một nhà cung cấp giả cục bộ,
+thấy ô trên bản đồ, tắt đi, và để Clark đặt nhà cung cấp qua một thẻ đã được duyệt;
 [map-layout.spec.ts](../packages/conversation-client/test/map-layout.spec.ts) kiểm nguồn gốc của nền bản đồ, phép
 chiếu và lưới ô; [map-schemas.spec.ts](../packages/widget-catalog/test/map-schemas.spec.ts) kiểm fixture và sự khớp
 nhau giữa schema và runtime. Browser journey [map-view.spec.ts](../apps/web/e2e/map-view.spec.ts) bao quát:

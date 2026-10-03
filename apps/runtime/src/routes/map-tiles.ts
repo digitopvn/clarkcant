@@ -22,7 +22,8 @@ function coordinate(segment: string | undefined): number | undefined {
  * The map tile routes.
  *
  * `GET /map-tiles` says whether the node shows tiles and whose: the provider's origin, attribution and maximum zoom, or
- * `null`; this route never returns the path template or anything of the key (the person's own preference read shows the
+ * `null` with the reason the maps are offline-only (`no-provider`, or `key-unavailable` when the key the policy names
+ * cannot be used here, so the page does not ask for tiles that would all fail); this route never returns the path template or anything of the key (the person's own preference read shows the
  * policy, which names the secret but never holds its value). `GET /map-tiles/:z/:x/:y` is one tile from that provider, through the proxy in
  * `map-tiles.ts`. With no policy — the default — every tile request is refused with 404 and the node asks nobody.
  */
@@ -35,7 +36,10 @@ export async function handleMapTileRoutes(deps: MapTileRouteDeps): Promise<Gatew
   const now = (): Instant => deps.at() as Instant;
   const policy = readMapTilePolicy({ db: runtime.db, now }, principalId);
 
-  if (segments.length === 1) return json(200, mapTilePolicyView(policy));
+  if (segments.length === 1) {
+    const keyUsable = policy === null || mapTileCredentialProblem({ db: runtime.db, principalId }, policy) === undefined;
+    return json(200, mapTilePolicyView(policy, keyUsable));
+  }
   if (segments.length !== 4) return fail(404, "NOT_FOUND", "a tile is addressed as /map-tiles/:z/:x/:y");
   if (policy === null) {
     return fail(404, "MAP_TILES_OFF", "this node shows no map tiles: no tile provider is set, so maps draw the offline basemap only");

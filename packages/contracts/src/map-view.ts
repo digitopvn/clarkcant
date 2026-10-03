@@ -530,13 +530,28 @@ export type MapTileProvider = z.infer<typeof providerSchema>;
 export const mapTilePolicySchema = providerSchema.nullable();
 export type MapTilePolicy = z.infer<typeof mapTilePolicySchema>;
 
+/**
+ * Why a map shows the offline basemap only: no provider is set, or the provider's key is not usable on this node (not
+ * provided, not stored for `maps:tiles`, or without a value). Said so a map, and Settings, can tell the person why.
+ */
+export const MAP_TILES_OFFLINE_REASONS = ["no-provider", "key-unavailable"] as const;
+export type MapTilesOfflineReason = (typeof MAP_TILES_OFFLINE_REASONS)[number];
+
 /** What the page is told about the policy: whose tiles, and the attribution it must show. Never a path or a key. */
 export interface MapTilePolicyView {
   provider: { origin: string; attribution: string; maxZoom: number } | null;
+  /** Present when `provider` is `null`: why the maps are offline-only. */
+  offline?: MapTilesOfflineReason;
 }
 
-export function mapTilePolicyView(policy: MapTilePolicy): MapTilePolicyView {
-  return { provider: policy === null ? null : { origin: policy.origin, attribution: policy.attribution, maxZoom: policy.maxZoom } };
+/**
+ * The page's view of the policy. A provider whose key is unusable is not handed to the page — every tile would fail —
+ * and the view says why instead; the provider's origin and the key's name stay out of it.
+ */
+export function mapTilePolicyView(policy: MapTilePolicy, keyUsable = true): MapTilePolicyView {
+  if (policy === null) return { provider: null, offline: "no-provider" };
+  if (!keyUsable) return { provider: null, offline: "key-unavailable" };
+  return { provider: { origin: policy.origin, attribution: policy.attribution, maxZoom: policy.maxZoom } };
 }
 
 /** Why a tile address is out of bounds, or nothing: a whole zoom up to the provider's maximum, and x, y on that zoom's grid. */

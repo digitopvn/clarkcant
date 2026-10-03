@@ -25,6 +25,7 @@ import type {
 
 import {
   COMPOSER_SURFACE_HEADER,
+  MAP_TILES_OFFLINE_REASONS,
   appIntentDecisionSchema,
   conversationDeleteResultSchema,
   artifactRefSchema,
@@ -2005,16 +2006,19 @@ export class GatewayClient {
   }
 
   /**
-   * Whether this node shows map tiles, and whose: the provider's origin, attribution and maximum zoom, or `null`.
+   * Whether this node shows map tiles, and whose: the provider's origin, attribution and maximum zoom, or `null` with
+   * the reason the maps are offline-only when the node gives one.
    *
    * Only what the node's tile policy says to show. Never a path template or a key.
    */
   async mapTilePolicy(): Promise<MapTilePolicyView> {
-    const body = (await this.#call("GET", "/map-tiles")) as { provider?: unknown };
+    const body = (await this.#call("GET", "/map-tiles")) as { provider?: unknown; offline?: unknown };
+    const offline = MAP_TILES_OFFLINE_REASONS.find((reason) => reason === body.offline);
+    const none: MapTilePolicyView = offline === undefined ? { provider: null } : { provider: null, offline };
     const provider = body.provider;
-    if (typeof provider !== "object" || provider === null) return { provider: null };
+    if (typeof provider !== "object" || provider === null) return none;
     const { origin, attribution, maxZoom } = provider as Record<string, unknown>;
-    if (typeof origin !== "string" || typeof attribution !== "string" || typeof maxZoom !== "number") return { provider: null };
+    if (typeof origin !== "string" || typeof attribution !== "string" || typeof maxZoom !== "number") return none;
     return { provider: { origin, attribution, maxZoom } };
   }
 

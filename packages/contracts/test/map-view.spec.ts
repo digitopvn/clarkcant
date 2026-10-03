@@ -200,11 +200,16 @@ describe("tile policy", () => {
   });
 
   it("tells the page whose tiles and the attribution, never the path or the key", () => {
-    expect(mapTilePolicyView(null)).toEqual({ provider: null });
+    expect(mapTilePolicyView(null)).toEqual({ provider: null, offline: "no-provider" });
     const view = mapTilePolicyView(mapTilePolicySchema.parse(PROVIDER));
     expect(view).toEqual({ provider: { origin: "https://tiles.example", attribution: "© Example contributors", maxZoom: 17 } });
     expect(JSON.stringify(view)).not.toContain("tiles-key");
     expect(JSON.stringify(view)).not.toContain("styles/basic");
+  });
+
+  it("says why the maps are offline when the provider's key is not usable, without naming the provider or key", () => {
+    const view = mapTilePolicyView(mapTilePolicySchema.parse(PROVIDER), false);
+    expect(view).toEqual({ provider: null, offline: "key-unavailable" });
   });
 
   it("bounds tile addresses by zoom and grid", () => {

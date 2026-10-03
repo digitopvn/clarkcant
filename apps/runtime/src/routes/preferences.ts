@@ -1,4 +1,4 @@
-import { accentPreferenceSchema, parseThemeRef, type Instant } from "@clarkcant/contracts";
+import { MAP_TILE_POLICY_PREFERENCE, accentPreferenceSchema, parseThemeRef, type Instant } from "@clarkcant/contracts";
 import { CLARK_THEME, customizedTheme, themeDrawProblem } from "@clarkcant/design-tokens";
 import {
   BROWSER_PRESS_LABEL_MAX,
@@ -13,6 +13,7 @@ import {
 } from "@clarkcant/core";
 import { recentEvents } from "@clarkcant/storage";
 
+import { writeMapTilePolicy } from "../application/map-tile-policy.ts";
 import { readAppearanceCustomization, readThemeRegistry, resolveAppearance, resolveThemeRef, themeRegistryDeps, type ThemeServices } from "../application/themes.ts";
 import { projectPolicyPreference, undoPolicyPreference, writePolicyPreference } from "../autonomy-settings.ts";
 import { nodeWork } from "../work-supervisor.ts";
@@ -196,11 +197,14 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
         );
       }
     }
-    const outcome = writeRegisteredPreference(preferenceDeps, {
-      principalId: runtime.identity.ownerPrincipalId,
-      key: requested,
-      value: parsed.value.value,
-    });
+    // The map tile policy is written through the one path Clark's approved card uses too (`map-tile-policy.ts`).
+    const outcome = requested === MAP_TILE_POLICY_PREFERENCE
+      ? writeMapTilePolicy(preferenceDeps, { principalId: runtime.identity.ownerPrincipalId, value: parsed.value.value })
+      : writeRegisteredPreference(preferenceDeps, {
+          principalId: runtime.identity.ownerPrincipalId,
+          key: requested,
+          value: parsed.value.value,
+        });
     if (!outcome.ok) {
       // A key this node does not have is not found; a value it does not accept is a bad request.
       // The message names the field and never echoes what arrived.

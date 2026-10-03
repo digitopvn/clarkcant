@@ -4,6 +4,7 @@ import {
   type MessageBlock,
   advanceEffect,
   instantSchema,
+  nowInstant,
   platformForHost,
   widgetDefinitionSchema,
 } from "@clarkcant/contracts";
@@ -66,6 +67,7 @@ import { mediaPolicyFromEnv } from "../media-views.ts";
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps, indexDirectoryPath } from "../project-finder.ts";
 import { createInvokeCapabilityTool } from "../invoke-capability-tool.ts";
+import { createMapTilesTool } from "../map-tiles-tool.ts";
 import { createInspectUiTool } from "../inspect-ui-tool.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "../request-secret.ts";
 import { commandDigest } from "../run-command.ts";
@@ -2212,6 +2214,40 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * The agent calling the connected app's capabilities, the ones its buttons call. Scripted decision, real tool: the
      * readiness that says the account is not connected, the policy and the egress broker are the node's own.
      */
+    /*
+     * Clark turning the maps' provider tiles on or off. Scripted decision, real tool: naming a provider becomes the
+     * host's approval card, and turning tiles off follows the node's execution policy.
+     */
+    const tilesFrom = /^(?:hiện ô bản đồ từ|show map tiles from)\s+(\S+)$/iu.exec(input.text.trim());
+    if (tilesFrom !== null || /^(?:tắt ô bản đồ|turn map tiles off)$/iu.test(input.text.trim())) {
+      const services = deps.services();
+      const tool = createMapTilesTool({
+        deps: () => ({
+          db: services.runtime.db,
+          nodeId: services.runtime.identity.nodeId,
+          now: nowInstant,
+          newId: services.conductor.newId,
+          principalId: services.runtime.identity.ownerPrincipalId,
+        }),
+        conversationId: input.conversationId,
+        channel: () => input.channel ?? "chat",
+      });
+      const answer = await tool.execute(
+        tilesFrom === null
+          ? { action: "clear" }
+          : { action: "set", origin: tilesFrom[1] ?? "", template: "/tiles/{z}/{x}/{y}.png", attribution: "© Fixture tiles", maxZoom: 19 },
+      );
+      if (answer.hostCard !== undefined) {
+        // SAFETY: the approval card `requestMapTilePolicy` built in the message-block union's shape; the node validates
+        // it before storing.
+        return { text: answer.text, block: answer.hostCard as unknown as MessageBlock };
+      }
+      return {
+        text: "Fixture: tui gọi set_map_tiles (không phải model thật).",
+        block: { type: "text", format: "plain", content: answer.text, streaming: false },
+      };
+    }
+
     const renamed = /^(?:đổi tên công việc|rename task)\s+([\w-]+)\s*:\s*(.+)$/iu.exec(input.text.trim());
     if (renamed !== null || /^(?:đọc công việc|list my tasks)\b/iu.test(input.text.trim())) {
       const tool = createInvokeCapabilityTool({

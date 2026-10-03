@@ -1425,8 +1425,22 @@ origin with `{z}`, `{x}` and `{y}` once each. The page never fetches the provide
 - caches up to 256 tiles or 24 MiB, for an hour.
 
 `GET /map-tiles` tells the page the provider's origin, attribution and maximum zoom, never its template or key. With no
-policy, every tile request is refused with `MAP_TILES_OFF` and nobody is asked. The page draws tiles from `blob:` URLs,
-so the page policy is unchanged.
+policy, every tile request is refused with `MAP_TILES_OFF` and nobody is asked. When the maps are offline-only, the
+answer says why in `offline`: `no-provider`, or `key-unavailable` when the key the policy names cannot be used on this
+node (the provider is then not handed to the page, so it asks for no tile that would fail). The map's attribution line
+states that reason and where to turn tiles on. The page draws tiles from `blob:` URLs, so the page policy is unchanged.
+
+A person sets and clears the policy in **Settings → Extensions → Map tiles**: provider origin, tile path, attribution,
+maximum zoom, and an optional key with the header or query parameter it goes in. The key is stored as a node secret
+for `maps:tiles` (named `map_tiles_key` unless the policy already names one) and is never shown again; the section
+says only whether a key is saved and usable. **Turn tiles off** writes `null`, and **Remove key** drops the key from the
+policy. Clark does the same through its `set_map_tiles` tool, which writes through the same
+`writeMapTilePolicy` ([map-tile-policy.ts](../apps/runtime/src/application/map-tile-policy.ts)). Naming a provider is
+always a host-owned approval card, in every execution mode, because a conversation turn can come from an AI client
+through `ask_clark` and a provider receives this node's requests and key; only the person's decision on the person-only
+decide route writes it. Turning tiles off sends nothing anywhere, so the execution policy decides it like any local
+change: it runs with an activity record, or it asks. Clark never handles the key itself: it asks for it with
+`request_secret` and consumer `maps:tiles`, and names only the secret. A widget reaches none of this.
 
 An optional `credential` names a secret the node holds. That secret must list the consumer `maps:tiles`, and it is
 injected as the HTTP header or query parameter the policy names, through the secret broker. The key never reaches the
@@ -1466,6 +1480,10 @@ semantics, the tile policy schema and the person-only route;
 [map-view.spec.ts](../apps/runtime/test/map-view.spec.ts) checks placement, refusals, state and semantics with and
 without a policy; [map-tiles.spec.ts](../apps/runtime/test/map-tiles.spec.ts) checks the proxy's allowlist, content
 type, size and zoom bounds, cache, rate, redirect refusal, and that the key is added and never returned;
+[map-tile-policy.spec.ts](../apps/runtime/test/map-tile-policy.spec.ts) checks Settings and Clark setting and clearing
+the policy, the card, its digest, denial and the execution policy, and that the key is never answered back;
+[map-tile-settings.spec.ts](../apps/web/e2e/map-tile-settings.spec.ts) turns tiles on from Settings against a local fake
+provider, sees them on a map, turns them off, and has Clark set the provider through an approved card;
 [map-layout.spec.ts](../packages/conversation-client/test/map-layout.spec.ts) checks the basemap's provenance, the
 projection and the tile grid; [map-schemas.spec.ts](../packages/widget-catalog/test/map-schemas.spec.ts) checks the
 fixtures and the agreement between schema and runtime. The browser journey

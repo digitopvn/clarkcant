@@ -304,9 +304,10 @@ export function openApiDocument(): Record<string, unknown> {
         get: {
           summary: "Whether maps on this node show raster tiles, and whose",
           description:
-            "{ provider: { origin, attribution, maxZoom } | null } from the person-only maps.tilePolicy preference. " +
-            "Never the provider's path template or key. null, the default, means maps draw their offline basemap only.",
-          responses: { "200": ok("{ provider }"), ...refusals },
+            "{ provider: { origin, attribution, maxZoom } | null, offline? } from the person-only maps.tilePolicy preference. " +
+            "Never the provider's path template or key. null means maps draw their offline basemap only, and offline says " +
+            "why: no-provider (the default) or key-unavailable (the key the policy names cannot be used on this node).",
+          responses: { "200": ok("{ provider, offline? }"), ...refusals },
         },
       },
       "/map-tiles/{z}/{x}/{y}": {

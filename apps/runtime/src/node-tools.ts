@@ -55,6 +55,7 @@ import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
 import { createInvokeCapabilityTool, type InvokeCapabilityToolDeps } from "./invoke-capability-tool.ts";
 import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
+import { createMapTilesTool, type MapTilesToolDeps } from "./map-tiles-tool.ts";
 import { createReadInboxTool } from "./read-inbox-tool.ts";
 import { type ActOnNoticeToolDeps, createActOnNoticeTool } from "./act-on-notice-tool.ts";
 import { type InspectUiDeps, createInspectUiTool } from "./inspect-ui-tool.ts";
@@ -235,6 +236,13 @@ export function createNodeTools(input: {
    * Absent means `start_browser_task` is not registered: a node that runs no background task has no browser to give.
    */
   browserTasks?: BrowserTaskToolDeps;
+  /**
+   * The maps' tile policy (`map-tiles-tool.ts`), when this turn belongs to a node that holds one.
+   *
+   * Absent means `set_map_tiles` is not registered. Present, it writes through the same path Settings writes through;
+   * naming a provider is always a card the person decides.
+   */
+  mapTiles?: MapTilesToolDeps;
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -302,6 +310,7 @@ export function createNodeTools(input: {
     ...(input.ui === undefined ? [] : [createInspectUiTool(input.ui)]),
     ...(input.automations === undefined ? [] : createAutomationTools(input.automations)),
     ...(input.browserTasks === undefined ? [] : [createBrowserTaskTool(input.browserTasks)]),
+    ...(input.mapTiles === undefined ? [] : [createMapTilesTool(input.mapTiles)]),
   ];
 }
 

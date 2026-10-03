@@ -399,6 +399,18 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           // A long-running capability starts through this conversation's widget binding to it, which follows the job.
           widgets: () => deps.services(),
         },
+        // "Show map tiles from X" or "turn map tiles off": the same write Settings makes; naming a provider is a card.
+        mapTiles: {
+          deps: () => ({
+            db: deps.services().runtime.db,
+            nodeId: deps.services().runtime.identity.nodeId,
+            now: () => instantSchema.parse(new Date().toISOString()),
+            newId: deps.services().conductor.newId,
+            principalId: deps.services().runtime.identity.ownerPrincipalId,
+          }),
+          conversationId: turn.conversationId,
+          channel: turn.channel,
+        },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.

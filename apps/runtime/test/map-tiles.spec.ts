@@ -235,7 +235,7 @@ describe("the tile routes on a node", () => {
 
   it("has no policy by default, and then asks nobody for any tile", async () => {
     expect(readMapTilePolicy({ db: services.runtime.db, now: () => AT }, owner())).toBeNull();
-    expect(await route("/map-tiles")).toMatchObject({ status: 200, body: { provider: null } });
+    expect(await route("/map-tiles")).toMatchObject({ status: 200, body: { provider: null, offline: "no-provider" } });
     const { fetch, seen } = fakeFetch(png);
     const response = await route("/map-tiles/1/0/0", "GET", createMapTileProxy({ fetch }));
     expect(response).toMatchObject({ status: 404, body: { code: "MAP_TILES_OFF" } });
@@ -274,13 +274,17 @@ describe("the tile routes on a node", () => {
     const missing = await route("/map-tiles/1/0/0", "GET", proxy);
     expect(missing).toMatchObject({ status: 503, body: { code: "MAP_TILE_KEY_UNAVAILABLE" } });
     expect(seen).toHaveLength(0);
+    // The page is told the maps are offline because of the key, so it does not ask for tiles that would all fail.
+    expect((await route("/map-tiles"))?.body).toEqual({ provider: null, offline: "key-unavailable" });
 
     storeKey(["command:git"]);
+    expect((await route("/map-tiles"))?.body).toEqual({ provider: null, offline: "key-unavailable" });
     const elsewhere = await route("/map-tiles/1/0/0", "GET", proxy);
     expect(elsewhere).toMatchObject({ status: 503, body: { code: "MAP_TILE_KEY_UNAVAILABLE", message: `the secret tiles is not stored for ${MAP_TILE_SECRET_CONSUMER}` } });
     expect(seen).toHaveLength(0);
 
     storeKey([MAP_TILE_SECRET_CONSUMER]);
+    expect((await route("/map-tiles"))?.body).toMatchObject({ provider: { origin: "https://tiles.example" } });
     const tile = await route("/map-tiles/1/0/0", "GET", proxy);
     expect(tile?.status).toBe(200);
     expect(seen[0]?.headers["x-api-key"]).toBe(KEY);
