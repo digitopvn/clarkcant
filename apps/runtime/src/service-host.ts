@@ -1362,12 +1362,15 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
 /**
  * Where an active generation's files are, from the node's directory listing.
  *
- * The same join the frame route makes: a local entry is its own path, and a git or npm entry is the cache folder the
- * install fetched it into. Matched on version and digest, because a listing that now names different bytes for the
- * same version is not the code that was consented to.
+ * The same join the frame route makes: a local entry is the snapshot its generation was installed from (or its own path,
+ * for a generation installed before snapshots), and a git or npm entry is the cache folder the install fetched it into.
+ * Matched on version and digest, because a listing that now names different bytes for the same version is not the code
+ * that was consented to.
  */
 export function packageRootFrom(entries: readonly DirectoryEntry[], cacheRoot: string) {
-  return (generation: Pick<PackageGeneration, "packageId" | "version" | "digest">): string | undefined => {
+  return (
+    generation: Pick<PackageGeneration, "packageId" | "version" | "digest"> & { snapshotDigest?: string | undefined },
+  ): string | undefined => {
     const entry = entries.find(
       (candidate) =>
         candidate.version === generation.version &&
@@ -1376,7 +1379,7 @@ export function packageRootFrom(entries: readonly DirectoryEntry[], cacheRoot: s
           (candidate.source.kind === "local" && candidate.source.path === generation.packageId)),
     );
     if (entry === undefined) return undefined;
-    const source = entry.source.kind === "local" ? entry.source : resolveLocalSource(entry, cacheRoot);
+    const source = resolveLocalSource(entry, cacheRoot, generation);
     return source.kind === "local" ? source.path : undefined;
   };
 }

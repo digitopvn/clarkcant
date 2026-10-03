@@ -1,10 +1,23 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  type BigIntStats,
+  constants,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { type FileHandle, lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { gunzipSync } from "node:zlib";
 
-import type { PackageSource } from "@clarkcant/contracts";
+import type { DirectoryEntry, PackageGeneration, PackageSource } from "@clarkcant/contracts";
 
 /**
  * Fetching a git or npm package source to an exact artifact this node holds.
@@ -129,28 +142,40 @@ function containedOrRefuse(cacheRoot: string, dest: string): { ok: true } | { ok
  * component of the path it is asked about.
  *
  * `limits` bounds the work for a caller that digests a directory it did not fetch (a path on this machine, digested
- * when it is listed or installed): past `maxFiles` regular files or `maxBytes` of them in total, the walk stops before
- * a byte is read and the answer is `ARTIFACT_TOO_LARGE` rather than a digest.
+ * when it is listed or installed): past `maxFiles` regular files, `maxFiles` folders, `MAX_PACKAGE_DEPTH` levels of
+ * nesting or `maxBytes` of file bytes in total, the walk stops before a byte is read and the answer is
+ * `ARTIFACT_TOO_LARGE` rather than a digest.
+ *
+ * `excludeAnyCase` matches `exclude` in any letter case. A path on this machine sets it, because on Windows and macOS
+ * `.GIT` is the same folder as `.git`; a fetched artifact keeps the exact match its published digest was made with.
  */
 export function digestOfDirectory(
   dir: string,
-  options: { exclude?: readonly string[]; limits?: { maxFiles: number; maxBytes: number } } = {},
+  options: { exclude?: readonly string[]; excludeAnyCase?: boolean; limits?: { maxFiles: number; maxBytes: number } } = {},
 ): { ok: true; digest: string } | { ok: false; code: "ARTIFACT_SYMLINK_ESCAPE" | "ARTIFACT_TOO_LARGE"; message: string } {
   // `.git` (and any other caller-supplied exclusion) is only ever meaningful at the artifact root — a package that
   // legitimately ships a directory named `.git` deeper in its tree (a vendored git checkout, say) must not have it
   // silently dropped from the digest.
-  const exclude = new Set(options.exclude ?? []);
+  const anyCase = options.excludeAnyCase === true;
+  const exclude = new Set((options.exclude ?? []).map((name) => (anyCase ? name.toLowerCase() : name)));
   const limits = options.limits;
   const root = resolve(dir);
   const files: string[] = [];
+  let folders = 0;
   let totalBytes = 0;
+  const tooLarge = (): { ok: false; code: "ARTIFACT_TOO_LARGE"; message: string } => ({
+    ok: false,
+    code: "ARTIFACT_TOO_LARGE",
+    message: `it holds more than ${String(limits?.maxFiles)} files, ${String(limits?.maxFiles)} folders or ${String(limits?.maxBytes)} bytes, or folders nested more than ${String(MAX_PACKAGE_DEPTH)} deep`,
+  });
 
   function walk(
     current: string,
-    isRoot: boolean,
+    depth: number,
   ): { ok: true } | { ok: false; code: "ARTIFACT_SYMLINK_ESCAPE" | "ARTIFACT_TOO_LARGE"; message: string } {
+    if (limits !== undefined && depth > MAX_PACKAGE_DEPTH) return tooLarge();
     for (const name of readdirSync(current).sort()) {
-      if (isRoot && exclude.has(name)) continue;
+      if (depth === 0 && exclude.has(anyCase ? name.toLowerCase() : name)) continue;
       const full = join(current, name);
       const stat = lstatSync(full, { throwIfNoEntry: false });
       if (stat === undefined) continue;
@@ -174,26 +199,22 @@ export function digestOfDirectory(
         };
       }
       if (stat.isDirectory()) {
-        const sub = walk(full, false);
+        folders += 1;
+        if (limits !== undefined && folders > limits.maxFiles) return tooLarge();
+        const sub = walk(full, depth + 1);
         if (!sub.ok) return sub;
         continue;
       }
       if (stat.isFile()) {
         files.push(full);
         totalBytes += stat.size;
-        if (limits !== undefined && (files.length > limits.maxFiles || totalBytes > limits.maxBytes)) {
-          return {
-            ok: false,
-            code: "ARTIFACT_TOO_LARGE",
-            message: `it holds more than ${String(limits.maxFiles)} files or ${String(limits.maxBytes)} bytes`,
-          };
-        }
+        if (limits !== undefined && (files.length > limits.maxFiles || totalBytes > limits.maxBytes)) return tooLarge();
       }
     }
     return { ok: true };
   }
 
-  const walked = walk(root, true);
+  const walked = walk(root, 0);
   if (!walked.ok) return { ok: false, code: walked.code, message: walked.message };
   // The relative path is hashed with `/` separators and sorted in that form, so a package has one digest on every
   // OS: hashing `widgets\main\index.html` on Windows would never match the digest a directory published from POSIX.
@@ -238,18 +259,582 @@ export function cachedNpmPath(cacheRoot: string, name: string, version: string):
  * evicted), the entry's original `git`/`npm` source is returned unchanged, and the caller refuses it exactly the
  * way it always refused a non-local source.
  */
-export function resolveLocalSource(entry: { source: PackageSource }, cacheRoot: string): PackageSource {
+export function resolveLocalSource(
+  entry: { source: PackageSource },
+  cacheRoot: string,
+  /**
+   * The generation that installed this entry, when the caller has it. A package listed by a path on this machine is
+   * served from the snapshot its generation recorded (`snapshotDigest`), never from the path itself: the path holds
+   * whatever was written there since, and the snapshot holds the bytes that were digested and installed. A generation
+   * without one was installed before snapshots, and keeps reading its path until it is installed again.
+   */
+  installed?: { snapshotDigest?: string | undefined },
+): PackageSource {
+  if (entry.source.kind === "local") {
+    const snapshot = installed?.snapshotDigest === undefined ? undefined : cachedLocalSnapshotPath(cacheRoot, installed.snapshotDigest);
+    // Returned whether or not it still exists: a snapshot that left the cache is a package whose files are gone, and
+    // falling back to the live path would serve bytes nobody digested.
+    return snapshot === undefined ? entry.source : { kind: "local", path: snapshot };
+  }
   if (entry.source.kind === "git") {
     const path = cachedGitPath(cacheRoot, entry.source.url, entry.source.ref);
     if (existsSync(path)) return { kind: "local", path };
     return entry.source;
   }
-  if (entry.source.kind === "npm") {
-    const path = cachedNpmPath(cacheRoot, entry.source.name, entry.source.version);
-    if (existsSync(path)) return { kind: "local", path };
-    return entry.source;
-  }
+  const path = cachedNpmPath(cacheRoot, entry.source.name, entry.source.version);
+  if (existsSync(path)) return { kind: "local", path };
   return entry.source;
+}
+
+/* ------------------------------------------------------------------ *
+ * Snapshots of a package listed by a path on this machine
+ * ------------------------------------------------------------------ */
+
+/** A content digest a snapshot can be named by. Anything else names no folder, so it can never become a path. */
+const SNAPSHOT_DIGEST = /^sha256:([0-9a-f]{64})$/;
+
+/**
+ * The content-addressed cache location of a snapshot of a local package: a pure function of its content digest, so a
+ * generation that records the digest finds its bytes again with no mapping kept anywhere else. Undefined for a value
+ * that is not a sha256 digest.
+ */
+export function cachedLocalSnapshotPath(cacheRoot: string, digest: string): string | undefined {
+  const hex = SNAPSHOT_DIGEST.exec(digest)?.[1];
+  return hex === undefined ? undefined : join(cacheRoot, "local", hex);
+}
+
+/**
+ * Whether an install plan's artifact (`file:<package cache>/local/<hex>`) is the snapshot a generation recorded. An
+ * install of a local package plans its snapshot as the artifact, so this is how a plan and a generation are told to
+ * be the same bytes without knowing where the cache is.
+ */
+export function artifactIsSnapshot(artifactUrl: string, snapshotDigest: string): boolean {
+  const hex = SNAPSHOT_DIGEST.exec(snapshotDigest)?.[1];
+  if (hex === undefined) return false;
+  const segments = artifactUrl.split(/[\\/]/);
+  return segments.at(-1) === hex && segments.at(-2) === "local";
+}
+
+/** What `installedDirectoryEntries` needs to know about an active generation. */
+export type SnapshottedGeneration = Pick<PackageGeneration, "packageId" | "version" | "digest" | "snapshotDigest">;
+
+/**
+ * A directory listing as the node may read it, given what is installed: every local entry an active generation
+ * installed from a snapshot is re-pointed at that snapshot, so a reader that walks the listing reads the bytes that
+ * were installed rather than the path's.
+ *
+ * A local entry for a package whose active generation runs from a snapshot is never read from its path. When the
+ * listing no longer names exactly what that generation installed (the same version listed with another digest after a
+ * re-pack, or another version of the package), the entry is `withheld`: the generation's own snapshot is not what the
+ * entry describes, and its path holds bytes nobody digested or approved. A reader answers a withheld entry with
+ * `409 NOT_INSTALLED`, as the files route does, until the package is installed again.
+ *
+ * Matched the way `packageRootFrom` matches a generation to its entry: the package id or, for a generation recorded
+ * under its path before local packages took their listed name, that path. A generation installed before snapshots (no
+ * `snapshotDigest`) keeps reading its path, and an entry for a package with no such active generation is left as it is.
+ */
+export function installedDirectoryEntries<G extends SnapshottedGeneration>(
+  entries: readonly DirectoryEntry[],
+  generations: readonly G[],
+  cacheRoot: string,
+): { entries: DirectoryEntry[]; withheld: { entry: DirectoryEntry; generation: G }[] } {
+  const readable: DirectoryEntry[] = [];
+  const withheld: { entry: DirectoryEntry; generation: G }[] = [];
+  for (const entry of entries) {
+    if (entry.source.kind !== "local") {
+      readable.push(entry);
+      continue;
+    }
+    const localPath = entry.source.path;
+    const owning = generations.filter(
+      (candidate) =>
+        candidate.snapshotDigest !== undefined && (candidate.packageId === entry.packageId || candidate.packageId === localPath),
+    );
+    const [first] = owning;
+    if (first === undefined) {
+      readable.push(entry);
+      continue;
+    }
+    const installed = owning.find((candidate) => candidate.version === entry.version && candidate.digest === entry.digest);
+    if (installed === undefined) {
+      withheld.push({ entry, generation: first });
+      continue;
+    }
+    const source = resolveLocalSource(entry, cacheRoot, installed);
+    readable.push(source === entry.source ? entry : { ...entry, source });
+  }
+  return { entries: readable, withheld };
+}
+
+/** Why a withheld entry (`installedDirectoryEntries`) is not served: what failed, what was kept, and what to do next. */
+export function notInstalledAsListedMessage(packageId: string, version: string): string {
+  return `${packageId}@${version} is listed with files other than the copy installed on this node, so neither is served. Nothing was changed: the installed copy and its widgets' state are kept. Install the package again to run the files it lists now.`;
+}
+
+export type SnapshotRefusal =
+  | "ARTIFACT_SYMLINK_ESCAPE"
+  | "ARTIFACT_TOO_LARGE"
+  | "ARTIFACT_DIGEST_MISMATCH"
+  | "CACHE_ESCAPE"
+  | "LOCAL_SOURCE_UNREADABLE"
+  // The files at the path changed while they were being copied, and no expected digest says which version was meant.
+  | "LOCAL_SOURCE_CHANGED"
+  // The node could not write the copy into its own package cache; the files at the path are not at fault.
+  | "PACKAGE_CACHE_UNAVAILABLE";
+
+export type SnapshotOutcome =
+  | { ok: true; artifact: FetchedArtifact }
+  | { ok: false; code: SnapshotRefusal; message: string };
+
+type SnapshotRefused = { ok: false; code: SnapshotRefusal; message: string };
+
+/** How deep a package's folders may nest for the node to copy or digest it within bounds. */
+export const MAX_PACKAGE_DEPTH = 64;
+/** How old a staging or set-aside folder in the snapshot cache must be before a later install removes it. */
+const LEFTOVER_MIN_AGE_MS = 60 * 60 * 1000;
+/** How long, in total, Windows may refuse a rename in the cache (a scanner holding a file just written) before it counts. */
+const WINDOWS_RENAME_BUDGET_MS = 3_000;
+const COPY_CHUNK_BYTES = 64 * 1024;
+/** `O_NOFOLLOW` where the platform has it. Windows has none, which is why every open is also checked by identity. */
+const NO_FOLLOW: number = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+
+/**
+ * A failure on the cache's side of a snapshot: creating, writing, renaming or removing in the node's package cache.
+ * Kept apart from failures reading the path, so a full disk or a locked cache folder is not reported as the person's
+ * files being unreadable.
+ */
+class PackageCacheFailure extends Error {
+  constructor(what: string, cause: unknown) {
+    super(`${what}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.name = "PackageCacheFailure";
+  }
+}
+
+/**
+ * Copy a package listed by a path on this machine into the node's package cache, and digest the copy.
+ *
+ * What an install of a local package runs is this copy, not the path: the path can be written to at any moment, so a
+ * digest of it says what it held once, while the copy holds exactly the bytes the digest names for as long as anything
+ * reads it. The same shape as a git or npm fetch (`path` + `digest`), and the same order: the copy is staged in a
+ * temporary folder, digested from the very bytes written there, checked against `expectedDigest` when the caller has
+ * one, and only then renamed to its content-addressed name (`cachedLocalSnapshotPath`). Copying the same bytes again
+ * reuses the folder already there; a mismatch is refused and its staged copy discarded, so bytes nobody agreed to never
+ * reach a servable name.
+ *
+ * With no `expectedDigest`, nothing says which version of the files was meant, so a copy taken while they were being
+ * edited would be a tree that never existed at the path. The path is listed again after the copy, and any file or
+ * folder whose size, modification time or identity changed refuses the snapshot (`LOCAL_SOURCE_CHANGED`).
+ *
+ * The walk refuses what `digestOfDirectory` refuses: a symlink or junction anywhere in the tree, and a regular file
+ * with more than one hard link. Each file is opened without following a final link where the platform can do that
+ * (`O_NOFOLLOW`; Windows cannot), and on every platform the opened handle must be the same file (device and file id)
+ * as the one listed, so a name swapped for a link or another file after it was listed is refused rather than read
+ * through. Each folder's canonical path must stay inside the package's, and the folder must still be the one listed
+ * once it has been read. It is bounded by `limits` the same way (`LOCAL_DIGEST_MAX_FILES`, `LOCAL_DIGEST_MAX_BYTES` at
+ * the install): at most `maxFiles` files and `maxFiles` folders, nested at most `MAX_PACKAGE_DEPTH` deep, and at most
+ * `maxBytes` bytes, checked on each opened file's own size before it is read and read no further than that size, so a
+ * file that grows during the copy cannot carry it past the bound. `.git` at the package root, in any letter case, is
+ * left out, as the digest of a local path leaves it out.
+ *
+ * Asynchronous throughout, so a large package does not hold up the node while it is copied.
+ *
+ * Failures writing the cache are `PACKAGE_CACHE_UNAVAILABLE`, not `LOCAL_SOURCE_UNREADABLE`. Staging and set-aside
+ * folders a crash or a locked file left behind are removed by a later snapshot once they are an hour old.
+ *
+ * Portable by construction: names are compared and written as the filesystem gives them, a file is written with
+ * `wx` so two names a case-insensitive filesystem (Windows, macOS by default) cannot hold apart are refused rather
+ * than one silently replacing the other, and every copy is written owner-writable whatever the source's permissions
+ * or read-only attribute, so the node can always remove a copy it made.
+ */
+export async function snapshotLocalPackage(input: {
+  path: string;
+  cacheRoot: string;
+  limits: { maxFiles: number; maxBytes: number };
+  expectedDigest?: string;
+}): Promise<SnapshotOutcome> {
+  const snapshotsRoot = join(input.cacheRoot, "local");
+  const tempDest = join(snapshotsRoot, `.tmp-${fingerprint(`${input.path}#${String(Date.now())}#${String(Math.random())}`)}`);
+  const tempContained = containedOrRefuse(input.cacheRoot, tempDest);
+  if (!tempContained.ok) return { ok: false, code: "CACHE_ESCAPE", message: tempContained.message };
+  const source = resolve(input.path);
+
+  try {
+    const listed = await listPackageTree(source, input.limits);
+    if (!listed.ok) return listed;
+
+    await inCache(`could not create ${snapshotsRoot}`, () => mkdir(snapshotsRoot, { recursive: true }));
+    await sweepLeftovers(snapshotsRoot);
+    await inCache(`could not create ${tempDest}`, () => mkdir(tempDest));
+
+    const copied = await copyAndDigest(listed.tree, tempDest, input.limits);
+    if (!copied.ok) return copied;
+    if (input.expectedDigest !== undefined && copied.digest !== input.expectedDigest) {
+      return {
+        ok: false,
+        code: "ARTIFACT_DIGEST_MISMATCH",
+        message: `the files at ${input.path} hash to ${copied.digest}, not ${input.expectedDigest}`,
+      };
+    }
+    if (input.expectedDigest === undefined) {
+      const after = await listPackageTree(source, input.limits);
+      if (!after.ok || !sameTree(listed.tree, after.tree)) {
+        return { ok: false, code: "LOCAL_SOURCE_CHANGED", message: `the files at ${input.path} changed while they were being copied` };
+      }
+    }
+
+    const dest = cachedLocalSnapshotPath(input.cacheRoot, copied.digest);
+    if (dest === undefined) return { ok: false, code: "CACHE_ESCAPE", message: "the snapshot digest names no cache folder" };
+    const destContained = containedOrRefuse(input.cacheRoot, dest);
+    if (!destContained.ok) return { ok: false, code: "CACHE_ESCAPE", message: destContained.message };
+
+    await placeSnapshot(tempDest, dest, copied.digest, input.limits);
+    return { ok: true, artifact: { path: dest, digest: copied.digest } };
+  } catch (cause) {
+    if (cause instanceof PackageCacheFailure) return { ok: false, code: "PACKAGE_CACHE_UNAVAILABLE", message: cause.message };
+    return { ok: false, code: "LOCAL_SOURCE_UNREADABLE", message: cause instanceof Error ? cause.message : String(cause) };
+  } finally {
+    await removeQuietly(tempDest);
+  }
+}
+
+/** One regular file of a listed package, as it was when it was listed. */
+interface ListedFile {
+  /** Relative to the package root, with `/` separators: the form the digest hashes and sorts. */
+  rel: string;
+  full: string;
+  size: number;
+  mode: number;
+  dev: bigint;
+  ino: bigint;
+  mtimeNs: bigint;
+}
+
+interface ListedFolder {
+  rel: string;
+  dev: bigint;
+  ino: bigint;
+  mtimeNs: bigint;
+}
+
+interface ListedTree {
+  files: ListedFile[];
+  folders: ListedFolder[];
+}
+
+/** The order `digestOfDirectory` hashes files in: by relative path with `/` separators. */
+const byRel = (a: { rel: string }, b: { rel: string }): number => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0);
+
+const sameNode = (a: { dev: bigint; ino: bigint }, b: { dev: bigint; ino: bigint }): boolean => a.dev === b.dev && a.ino === b.ino;
+
+/** Lists a package's folders and regular files, refusing links and stopping at the bounds; see `snapshotLocalPackage`. */
+async function listPackageTree(
+  root: string,
+  limits: { maxFiles: number; maxBytes: number },
+): Promise<{ ok: true; tree: ListedTree } | SnapshotRefused> {
+  const rootStat = await lstat(root, { bigint: true });
+  if (rootStat.isSymbolicLink()) {
+    return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `${root} is a symlink, which is refused rather than followed` };
+  }
+  if (!rootStat.isDirectory()) return { ok: false, code: "LOCAL_SOURCE_UNREADABLE", message: `${root} is not a folder` };
+  const realRoot = await realpath(root);
+  const files: ListedFile[] = [];
+  const folders: ListedFolder[] = [];
+  let totalBytes = 0;
+  const tooLarge = (): SnapshotRefused => ({
+    ok: false,
+    code: "ARTIFACT_TOO_LARGE",
+    message: `it holds more than ${String(limits.maxFiles)} files, ${String(limits.maxFiles)} folders or ${String(limits.maxBytes)} bytes, or folders nested more than ${String(MAX_PACKAGE_DEPTH)} deep`,
+  });
+
+  // A folder swapped for a link after its parent was read would be read through: its canonical path has to stay
+  // inside the package's own.
+  async function inside(folder: string, rel: string): Promise<SnapshotRefused | undefined> {
+    const real = await realpath(folder);
+    return real === realRoot || real.startsWith(realRoot + sep)
+      ? undefined
+      : { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `"${rel}" leads outside the package` };
+  }
+
+  async function walk(folder: string, relParts: readonly string[], listed: BigIntStats): Promise<{ ok: true } | SnapshotRefused> {
+    if (relParts.length > MAX_PACKAGE_DEPTH) return tooLarge();
+    const rel = relParts.join("/");
+    const escaped = await inside(folder, rel);
+    if (escaped !== undefined) return escaped;
+    const names = (await readdir(folder)).sort();
+    // And it has to still be the folder that was listed once its names were read, not a link put in its place.
+    const after = await lstat(folder, { bigint: true });
+    if (after.isSymbolicLink() || !sameNode(after, listed)) {
+      return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `"${rel}" was replaced while it was read, which is refused rather than followed` };
+    }
+    const escapedAfter = await inside(folder, rel);
+    if (escapedAfter !== undefined) return escapedAfter;
+
+    for (const name of names) {
+      // `.git` only at the root, in any letter case: Windows and macOS treat `.GIT` as the same folder.
+      if (relParts.length === 0 && name.toLowerCase() === ".git") continue;
+      const full = join(folder, name);
+      const childRel = [...relParts, name].join("/");
+      const stat = await lstatIfPresent(full);
+      if (stat === undefined) continue;
+      if (stat.isSymbolicLink()) {
+        return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `"${childRel}" is a symlink, which is refused rather than followed` };
+      }
+      if (stat.isFile() && stat.nlink > 1n) {
+        return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `"${childRel}" is a hard link, which is refused rather than read` };
+      }
+      if (stat.isDirectory()) {
+        folders.push({ rel: childRel, dev: stat.dev, ino: stat.ino, mtimeNs: stat.mtimeNs });
+        if (folders.length > limits.maxFiles) return tooLarge();
+        const sub = await walk(full, [...relParts, name], stat);
+        if (!sub.ok) return sub;
+        continue;
+      }
+      // Sockets, fifos and devices hold no package bytes, and the digest does not count them either.
+      if (!stat.isFile()) continue;
+      const size = Number(stat.size);
+      files.push({ rel: childRel, full, size, mode: Number(stat.mode), dev: stat.dev, ino: stat.ino, mtimeNs: stat.mtimeNs });
+      totalBytes += size;
+      if (files.length > limits.maxFiles || totalBytes > limits.maxBytes) return tooLarge();
+    }
+    return { ok: true };
+  }
+
+  const walked = await walk(root, [], rootStat);
+  if (!walked.ok) return walked;
+  return { ok: true, tree: { files, folders } };
+}
+
+async function lstatIfPresent(path: string): Promise<BigIntStats | undefined> {
+  try {
+    return await lstat(path, { bigint: true });
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw cause;
+  }
+}
+
+/** Whether two listings of the same path name the same files and folders, unchanged. */
+function sameTree(before: ListedTree, after: ListedTree): boolean {
+  const sameFolders =
+    before.folders.length === after.folders.length &&
+    before.folders.every((folder, index) => {
+      const other = after.folders[index];
+      return other !== undefined && other.rel === folder.rel && sameNode(other, folder) && other.mtimeNs === folder.mtimeNs;
+    });
+  return (
+    sameFolders &&
+    before.files.length === after.files.length &&
+    before.files.every((file, index) => {
+      const other = after.files[index];
+      return other !== undefined && other.rel === file.rel && sameNode(other, file) && other.size === file.size && other.mtimeNs === file.mtimeNs;
+    })
+  );
+}
+
+/**
+ * Reads every listed file once, in digest order, hashing the bytes as they are read and, when `dest` is given, writing
+ * those same bytes there. The answer is the digest `digestOfDirectory` gives the copy, taken from the bytes that were
+ * written rather than from a second read.
+ */
+async function copyAndDigest(
+  tree: ListedTree,
+  dest: string | undefined,
+  limits: { maxFiles: number; maxBytes: number },
+): Promise<{ ok: true; digest: string } | SnapshotRefused> {
+  if (dest !== undefined) {
+    // A parent sorts before its children, so each folder's parent exists by the time it is made.
+    for (const folder of [...tree.folders].sort(byRel)) {
+      const made = await createInCache(`could not create a folder in ${dest}`, () => mkdir(join(dest, ...folder.rel.split("/"))));
+      if (!made.created) return nameClash(folder.rel);
+    }
+  }
+
+  const hash = createHash("sha256");
+  const chunk = Buffer.allocUnsafe(COPY_CHUNK_BYTES);
+  let totalBytes = 0;
+  for (const file of [...tree.files].sort(byRel)) {
+    const handle = await open(file.full, constants.O_RDONLY | NO_FOLLOW);
+    try {
+      const opened = await handle.stat({ bigint: true });
+      if (!opened.isFile()) {
+        return { ok: false, code: "LOCAL_SOURCE_UNREADABLE", message: `"${file.rel}" stopped being a file while it was copied` };
+      }
+      if (opened.nlink > 1n) {
+        return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: `"${file.rel}" is a hard link, which is refused rather than read` };
+      }
+      if (!sameNode(opened, file)) {
+        return {
+          ok: false,
+          code: "ARTIFACT_SYMLINK_ESCAPE",
+          message: `"${file.rel}" was replaced by a link or another file while it was copied, which is refused rather than read through`,
+        };
+      }
+      // Checked on the opened file's own size before a byte is read, and read no further than it.
+      const size = Number(opened.size);
+      totalBytes += size;
+      if (totalBytes > limits.maxBytes) {
+        return { ok: false, code: "ARTIFACT_TOO_LARGE", message: `it holds more than ${String(limits.maxBytes)} bytes` };
+      }
+
+      // Owner-writable whatever the source said (a read-only attribute on Windows, `0444` elsewhere), with the rest of
+      // its mode kept, so an executable stays executable and the node can always remove what it copied.
+      const target = dest === undefined ? undefined : join(dest, ...file.rel.split("/"));
+      const created =
+        target === undefined
+          ? undefined
+          : await createInCache(`could not write ${target}`, () => open(target, "wx", (file.mode & 0o777) | 0o600));
+      if (created !== undefined && !created.created) return nameClash(file.rel);
+      const out = created?.created === true ? created.value : undefined;
+      try {
+        hash.update(file.rel);
+        hash.update("\0");
+        hash.update(String(size));
+        hash.update("\0");
+        let read = 0;
+        while (read < size) {
+          const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, size - read), read);
+          if (bytesRead === 0) break;
+          const bytes = chunk.subarray(0, bytesRead);
+          hash.update(bytes);
+          if (out !== undefined) await inCache(`could not write ${String(target)}`, () => writeAll(out, bytes));
+          read += bytesRead;
+        }
+        const grew = read === size ? (await handle.read(Buffer.alloc(1), 0, 1, size)).bytesRead > 0 : false;
+        if (read !== size || grew) {
+          return { ok: false, code: "LOCAL_SOURCE_CHANGED", message: `"${file.rel}" changed size while it was copied` };
+        }
+      } finally {
+        if (out !== undefined) await inCache(`could not finish ${String(target)}`, () => out.close());
+      }
+    } finally {
+      await handle.close();
+    }
+  }
+  return { ok: true, digest: `sha256:${hash.digest("hex")}` };
+}
+
+async function writeAll(out: FileHandle, bytes: Buffer): Promise<void> {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesWritten } = await out.write(bytes, offset, bytes.length - offset);
+    offset += bytesWritten;
+  }
+}
+
+/** The digest of a snapshot folder already in the cache, or undefined when it cannot be read as one. */
+async function digestOfSnapshot(path: string, limits: { maxFiles: number; maxBytes: number }): Promise<string | undefined> {
+  try {
+    const listed = await listPackageTree(path, limits);
+    if (!listed.ok) return undefined;
+    const digested = await copyAndDigest(listed.tree, undefined, limits);
+    return digested.ok ? digested.digest : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Runs a step that writes the package cache, so its failure is reported as the cache's. */
+async function inCache<T>(what: string, step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (cause) {
+    throw cause instanceof PackageCacheFailure ? cause : new PackageCacheFailure(what, cause);
+  }
+}
+
+/** Runs a create in the cache that refuses an existing name, and answers `created: false` when the name was taken. */
+async function createInCache<T>(what: string, create: () => Promise<T>): Promise<{ created: true; value: T } | { created: false }> {
+  try {
+    return { created: true, value: await create() };
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "EEXIST") return { created: false };
+    throw new PackageCacheFailure(what, cause);
+  }
+}
+
+/** Two names in the package that this filesystem stores as one (`Theme.json` and `theme.json` on Windows or macOS). */
+function nameClash(rel: string): SnapshotRefused {
+  return {
+    ok: false,
+    code: "LOCAL_SOURCE_UNREADABLE",
+    message: `"${rel}" has the same name as another entry on this file system, which does not tell letter case apart`,
+  };
+}
+
+/**
+ * Moves a digested staging folder to its content-addressed name.
+ *
+ * A folder already there under the same digest is reused when it still holds those bytes: the staged copy is the same
+ * content, and replacing a folder a running generation may be reading gains nothing. One that no longer does was
+ * changed after it was written, so it is set aside and the fresh copy takes its name. A rename that loses a race to an
+ * identical copy keeps the winner. Windows can refuse a rename for a moment while another process (an antivirus scan,
+ * an indexer) holds a file just written, so those refusals are retried, for up to `WINDOWS_RENAME_BUDGET_MS`, before
+ * they count.
+ */
+async function placeSnapshot(tempDest: string, dest: string, digest: string, limits: { maxFiles: number; maxBytes: number }): Promise<void> {
+  if (existsSync(dest)) {
+    if ((await digestOfSnapshot(dest, limits)) === digest) return;
+    const aside = join(dest, "..", `.stale-${fingerprint(`${dest}#${String(Date.now())}#${String(Math.random())}`)}`);
+    await renameInCache(dest, aside);
+    await removeQuietly(aside);
+  }
+  try {
+    await renameInCache(tempDest, dest);
+  } catch (cause) {
+    if (existsSync(dest) && (await digestOfSnapshot(dest, limits)) === digest) return;
+    throw cause;
+  }
+}
+
+const TRANSIENT_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+async function renameInCache(from: string, to: string): Promise<void> {
+  const started = Date.now();
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code ?? "";
+      const transient =
+        process.platform === "win32" && TRANSIENT_RENAME_CODES.has(code) && !existsSync(to) && Date.now() - started < WINDOWS_RENAME_BUDGET_MS;
+      if (!transient) throw new PackageCacheFailure(`could not move ${from} to ${to}`, cause);
+      await delay(Math.min(50 * attempt, 250));
+    }
+  }
+}
+
+/**
+ * Removes staging (`.tmp-*`) and set-aside (`.stale-*`) folders left in the snapshot cache by a process that stopped
+ * mid-copy or a removal Windows refused while a file was still open. Only folders at least `LEFTOVER_MIN_AGE_MS` old,
+ * so a copy another install is making right now is never touched. Never throws.
+ */
+async function sweepLeftovers(snapshotsRoot: string): Promise<void> {
+  let names: string[];
+  try {
+    names = await readdir(snapshotsRoot);
+  } catch {
+    return;
+  }
+  const cutoff = Date.now() - LEFTOVER_MIN_AGE_MS;
+  for (const name of names) {
+    if (!name.startsWith(".tmp-") && !name.startsWith(".stale-")) continue;
+    const path = join(snapshotsRoot, name);
+    try {
+      if ((await lstat(path)).mtimeMs < cutoff) await removeQuietly(path);
+    } catch {
+      // Gone already, or not readable: the next sweep tries again.
+    }
+  }
+}
+
+/** Removes a folder the node made, and never throws: a leftover staging folder is garbage, not a failed install. */
+async function removeQuietly(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true, maxRetries: 3 });
+  } catch {
+    // Left for a later snapshot to sweep (`sweepLeftovers`).
+  }
 }
 
 /** Schemes a git url is allowed to use. `https` always; `file` only when the caller explicitly opts in

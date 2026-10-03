@@ -793,6 +793,13 @@ export const packageGenerationSchema = z.strictObject({
    * reports but does not refuse), the definition's, since that is the id an instance records.
    */
   widgetIds: z.array(z.string().min(1).max(160)).max(MAX_PACKAGE_FACETS * 2).optional(),
+  /**
+   * For a package listed by a path on this machine: the content digest of the copy of its files this generation runs
+   * from, kept in the node's package cache under that digest. Everything that reads the installed package reads that
+   * copy, so what runs is what was digested at install. Absent for a git or npm install, whose fetched copy is found
+   * from its source, and for a local install made before snapshots, which reads its path until it is installed again.
+   */
+  snapshotDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
 });
 export type PackageGeneration = z.infer<typeof packageGenerationSchema>;
 
