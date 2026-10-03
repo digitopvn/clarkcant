@@ -66,6 +66,28 @@ describe("the marketplace card search_directory builds", () => {
     }
   });
 
+  it("drops a field this node does not read from the row, and names it, so the card still parses", async () => {
+    // A field a newer directory added, at the top of the entry and inside a descriptive object.
+    const listing: Record<string, unknown> = {
+      ...lookupListing(),
+      rating: { stars: 5, secretValue: "never shown" },
+      publisher: { ...(lookupListing()["publisher"] as Record<string, unknown>), verifiedBy: "someone" },
+    };
+    const other = { ...lookupListing(), packageId: "com.example.plain", displayName: "Plain" };
+    const answer = await search([listing, other]);
+
+    const parsed = messageBlockSchema.safeParse(answer.hostCard);
+    expect(parsed.success, parsed.success ? "" : JSON.stringify(parsed.error.issues)).toBe(true);
+    const rows = (answer.hostCard?.["results"] ?? []) as Record<string, unknown>[];
+    expect(rows).toHaveLength(2);
+    const row = rows.find((candidate) => candidate["packageId"] === listing["packageId"]);
+    // Names only: the value of a field this node did not validate never reaches the card.
+    expect(row?.["unreadFields"]).toEqual({ count: 2, names: ["publisher.verifiedBy", "rating"] });
+    expect(JSON.stringify(answer.hostCard)).not.toContain("never shown");
+    expect(rows.find((candidate) => candidate["packageId"] === "com.example.plain")?.["unreadFields"]).toBeUndefined();
+    expect(answer.text).toContain("1 gói có thông tin mà bản Clark này không đọc được");
+  });
+
   it("parses when a listing repeats facets and platforms beyond the card's bounds", async () => {
     const listing = {
       ...lookupListing(),

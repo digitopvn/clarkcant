@@ -311,7 +311,9 @@ keyDestinations, browserTokens, connectionScopes, connectionEndpoints }`, each s
 removedMore? }` with at most 32 items per list and the rest counted, `keyDestinations` as each (key, origin) pair a key
 is sent to, and `profile` as the two profile names with each bounded limit that changes; or `{ verdict: "unknown" }`
 when the package is installed at another version and the two cannot be compared
-(`packages/contracts/src/reach-change.ts`). The web client parses `GET /inbox` item by item, so one item that does not
+(`packages/contracts/src/reach-change.ts`). It also carries `unreadFields` (`{ count, names }`) when the listing of the
+named version has fields this node does not read and dropped, so the change it shows does not pass for everything the
+listing says. The web client parses `GET /inbox` item by item, so one item that does not
 match the contract is left out and counted rather than failing the whole inbox. An action
 listed with `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) says why it cannot be
 taken now. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
@@ -526,9 +528,12 @@ npm artifacts, so a snapshot no generation uses any more stays on disk until the
 When the person's execution mode asks before installing, it answers `202` with
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
 `waiting` as `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions,
-description, operationDigest, requestedAt, expiresAt, reach?, reachChange? }`: `permissions` is what the listing says the package asks for,
+description, operationDigest, requestedAt, expiresAt, reach?, reachChange?, unreadFields? }`: `permissions` is what the listing says the package asks for,
 `reach` what it reaches outside its sandbox, `reachChange` (for an update of an installed package) what that version
-adds to or drops from the installed one's reach, in the same shape as on the update notice,
+adds to or drops from the installed one's reach, in the same shape as on the update notice, `unreadFields`
+(`{ count, names }`) the fields the listing carries that this node does not read and dropped, names only (the same
+field is on each `marketplace-results` row and on a package update notice; see
+[directory metadata](widget-development.md#18-directory-metadata)),
 and `operationDigest` the listed artifact's digest the question is about. It is listed only while the directory still
 lists that artifact; a package or version republished since is left out, and installing it again asks about what it is
 now. The person decides it with `POST /packages/approvals/:id/decision`

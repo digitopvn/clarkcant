@@ -138,6 +138,112 @@ export const directoryEntrySchema = z.strictObject({
 export type DirectoryEntry = z.infer<typeof directoryEntrySchema>;
 
 /**
+ * The parts of an entry a newer directory may add fields to without an older node refusing it: the entry itself and its
+ * descriptive objects. The binding ones (`source`, `isolations`, `declaredReach`, `resources`) and the claims a card
+ * repeats (`widgetAppearance`) stay strict: a node reads them completely or not at all.
+ */
+const OPEN_ENTRY_OBJECTS = {
+  publisher: Object.keys(directoryEntrySchema.shape.publisher.shape),
+  preview: Object.keys(directoryEntrySchema.shape.preview.shape),
+  hostApi: Object.keys(directoryEntrySchema.shape.hostApi.shape),
+} as const;
+const ENTRY_KEYS: readonly string[] = Object.keys(directoryEntrySchema.shape);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The fields of `value` the node knows, and the paths of the ones it does not, sorted. */
+function splitKnownFields(value: Record<string, unknown>): { known: Record<string, unknown>; unread: string[] } {
+  const known: Record<string, unknown> = {};
+  const unread: string[] = [];
+  for (const [key, field] of Object.entries(value)) {
+    if (!ENTRY_KEYS.includes(key)) {
+      unread.push(key);
+      continue;
+    }
+    const nestedKeys: readonly string[] | undefined = Object.hasOwn(OPEN_ENTRY_OBJECTS, key)
+      ? OPEN_ENTRY_OBJECTS[key as keyof typeof OPEN_ENTRY_OBJECTS]
+      : undefined;
+    if (nestedKeys === undefined || !isPlainObject(field)) {
+      known[key] = field;
+      continue;
+    }
+    const nested: Record<string, unknown> = {};
+    for (const [nestedKey, nestedField] of Object.entries(field)) {
+      if (nestedKeys.includes(nestedKey)) nested[nestedKey] = nestedField;
+      else unread.push(`${key}.${nestedKey}`);
+    }
+    known[key] = nested;
+  }
+  return { known, unread: unread.sort() };
+}
+
+/**
+ * Read one directory entry the way a node reads an index: tolerant of fields it does not know, strict about every
+ * field it does.
+ *
+ * A directory gains fields over time (`declaredReach`, then `resources`), and an index is shared by nodes of different
+ * ages. Refusing an entry for a field this node has never heard of made an older node read the whole directory as
+ * unreadable, losing search, updates and installs for every package. So a field outside this schema, at the top of the
+ * entry or inside `publisher`, `preview` or `hostApi`, is dropped and its path returned in `unreadFields`; it is never
+ * passed on, so nothing downstream (the marketplace card, the install question) carries a value nobody validated. Every
+ * known field is still checked against `directoryEntrySchema` with all its bounds, so a known field with a bad value
+ * refuses the entry as before.
+ *
+ * `unreadFields` exists so what was dropped is said rather than hidden: a field this node does not know may be one the
+ * newer directory treats as binding, and a listing shown without it would claim less than the listing says.
+ *
+ * Publishing stays strict: `clark widget publish` validates with `directoryEntrySchema`, where an unknown field is a
+ * mistake rather than a newer format.
+ */
+export function readDirectoryEntry(
+  candidate: unknown,
+): { success: true; data: DirectoryEntry; unreadFields: string[] } | { success: false; error: z.ZodError } {
+  if (!isPlainObject(candidate)) {
+    const result = directoryEntrySchema.safeParse(candidate);
+    return result.success ? { success: true, data: result.data, unreadFields: [] } : { success: false, error: result.error };
+  }
+  const { known, unread } = splitKnownFields(candidate);
+  const result = directoryEntrySchema.safeParse(known);
+  return result.success ? { success: true, data: result.data, unreadFields: unread } : { success: false, error: result.error };
+}
+
+/** The most field names a listing note carries; the count says how many there were in all. */
+export const UNREAD_FIELD_NAMES_MAX = 8;
+/** The longest field name a listing note carries; a longer one is shortened. */
+export const UNREAD_FIELD_NAME_MAX = 64;
+
+/**
+ * What a listing said that this node could not read, as a card, an install question or an update notice shows it:
+ * how many fields, and the names of the first few. Names only, never values. A name is the publisher's text, so it is
+ * bounded here like any other listing text.
+ */
+export const unreadListingFieldsSchema = z.strictObject({
+  count: z.int().positive(),
+  names: z.array(z.string().min(1).max(UNREAD_FIELD_NAME_MAX)).min(1).max(UNREAD_FIELD_NAMES_MAX),
+});
+export type UnreadListingFields = z.infer<typeof unreadListingFieldsSchema>;
+
+/** The note for `fields`, or undefined when the listing had none this node could not read. */
+export function unreadListingFields(fields: readonly string[]): UnreadListingFields | undefined {
+  if (fields.length === 0) return undefined;
+  return { count: fields.length, names: fields.slice(0, UNREAD_FIELD_NAMES_MAX).map(fitFieldName) };
+}
+
+/** A field name within the note's bound, cut between code points behind an ellipsis; an empty name is shown quoted. */
+function fitFieldName(name: string): string {
+  if (name === "") return '""';
+  if (name.length <= UNREAD_FIELD_NAME_MAX) return name;
+  let out = "";
+  for (const char of name) {
+    if (out.length + char.length > UNREAD_FIELD_NAME_MAX - 1) break;
+    out += char;
+  }
+  return `${out}…`;
+}
+
+/**
  * The lane a package runs in.
  *
  * The strongest facet wins, because a package is as trusted as its least isolated part: a declarative widget that

@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 
-import { directoryEntrySchema, type DirectoryEntry } from "@clarkcant/contracts";
+import {
+  readDirectoryEntry,
+  unreadListingFields,
+  type DirectoryEntry,
+  type UnreadListingFields,
+} from "@clarkcant/contracts";
 
 /**
  * Searching a directory index.
@@ -22,17 +27,46 @@ export function directoryIndexPath(env: NodeJS.ProcessEnv): string | undefined {
 }
 
 export type DirectoryIndexState =
-  | { kind: "configured"; directory: string; entries: DirectoryEntry[] }
+  | {
+      kind: "configured";
+      directory: string;
+      entries: DirectoryEntry[];
+      /**
+       * For each entry that carried fields this node does not read, their paths (`readDirectoryEntry`), keyed by
+       * `listingKey`. Absent or without a key means the node read all of that entry. Read it with `unreadFieldsOf`.
+       */
+      unreadFields?: ReadonlyMap<string, readonly string[]>;
+    }
   /** No index is configured. A state, not an empty result list: "nothing configured" is not "nothing found". */
   | { kind: "not-configured"; reason: string }
   /** An index is configured and could not be used. Named, because the fix is the user's. */
   | { kind: "unreadable"; directory: string; reason: string };
 
+/** Which listing a set of unread fields belongs to: the package, the version and the artifact it names. */
+function listingKey(entry: Pick<DirectoryEntry, "packageId" | "version" | "digest">): string {
+  return JSON.stringify([entry.packageId, entry.version, entry.digest]);
+}
+
+/**
+ * What `entry`'s listing carried that this node did not read, as a card, an install question or an update notice says
+ * it, or undefined when it read all of it.
+ */
+export function unreadFieldsOf(
+  index: DirectoryIndexState,
+  entry: Pick<DirectoryEntry, "packageId" | "version" | "digest">,
+): UnreadListingFields | undefined {
+  if (index.kind !== "configured" || index.unreadFields === undefined) return undefined;
+  return unreadListingFields(index.unreadFields.get(listingKey(entry)) ?? []);
+}
+
 /**
  * Read the configured index.
  *
- * An entry that does not validate is a refusal of the whole file rather than a silently dropped row: a directory
- * that half-loads would show a subset of what it holds and call it the answer.
+ * Each entry is read with `readDirectoryEntry`: a field this node does not know is dropped and remembered in
+ * `unreadFields`, so an index a newer directory wrote still serves every package, and what was left out is said where
+ * the listing is shown. A field it does know with a value that does not validate is still a refusal of the whole file
+ * rather than a silently dropped row: a directory that half-loads would show a subset of what it holds and call it the
+ * answer.
  */
 export function readDirectoryIndex(path: string | undefined): DirectoryIndexState {
   if (path === undefined) {
@@ -55,8 +89,9 @@ export function readDirectoryIndex(path: string | undefined): DirectoryIndexStat
     return { kind: "unreadable", directory: path, reason: "the directory index is not a JSON array of entries" };
   }
   const entries: DirectoryEntry[] = [];
+  const unreadFields = new Map<string, readonly string[]>();
   for (const candidate of parsed) {
-    const result = directoryEntrySchema.safeParse(candidate);
+    const result = readDirectoryEntry(candidate);
     if (!result.success) {
       const first = result.error.issues[0];
       return {
@@ -68,8 +103,13 @@ export function readDirectoryIndex(path: string | undefined): DirectoryIndexStat
       };
     }
     entries.push(result.data);
+    if (result.unreadFields.length > 0) {
+      const key = listingKey(result.data);
+      // The same listing twice keeps every field either copy carried, so neither is said to be read in full.
+      unreadFields.set(key, [...new Set([...(unreadFields.get(key) ?? []), ...result.unreadFields])].sort());
+    }
   }
-  return { kind: "configured", directory: path, entries };
+  return { kind: "configured", directory: path, entries, ...(unreadFields.size === 0 ? {} : { unreadFields }) };
 }
 
 /** How well an entry answers a query. Higher is better; 0 means it does not answer it. */
