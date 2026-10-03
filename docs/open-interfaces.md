@@ -415,7 +415,7 @@ carries a path.
 | GET | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/content?offset=&length=` | – `{ artifactRef, offset, eof, contentBase64 }`, at most 262,144 bytes |
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/chunks` | `{ offset, contentBase64 }` — at most 262,144 bytes, starting where the artifact ends |
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/finalize` | – fixes the bytes after checking them against the declared type |
-| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | – `201 { artifactRef, attachmentRef }` through the attachment pipeline; the person sends it with their next message |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | `{ name? }` – `201 { artifactRef, attachmentRef }` through the attachment pipeline; the person sends it with their next message. `name` is the widget's proposed file name, which the node sanitizes, as it sanitizes the artifact's own name when `name` is absent (a non-string `name` is `400 INVALID_SCHEMA`). The first attach decides the name: attaching the same artifact again returns that attachment, whatever `name` it proposes |
 | DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – discards a file this instance made, with its bytes unless an attachment or another record still points at them; another's is `403 ARTIFACT_NOT_CREATOR` |
 
 Package jobs a widget follows (`jobs@1`, [widget-development.md §10.2](widget-development.md#102-long-running-jobs-jobs1))

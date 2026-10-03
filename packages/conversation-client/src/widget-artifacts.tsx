@@ -151,7 +151,7 @@ export function useWidgetArtifactHost(input: WidgetArtifactHostInput): { broker:
             return await ask({ kind: "export", ref, suggestedName: request.suggestedName });
           }
           case "attach": {
-            const attached = await client.attachArtifact(conversationId, instanceId, request.artifactId);
+            const attached = await client.attachArtifact(conversationId, instanceId, request.artifactId, { name: request.name });
             latest.current.onAttach?.(attached.attachmentRef);
             setNotice({ tone: "info", text: t("widgets.artifacts.attached").replace("{name}", attached.attachmentRef.filename) });
             return { status: "ok", ref: attached.artifactRef };
