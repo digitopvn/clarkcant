@@ -50,7 +50,7 @@ const engine = await detectServiceEngine({ timeoutMs: 10_000 });
 const NOTES_PACKAGE = fileURLToPath(new URL("../../web/e2e/fixtures/notes-service/", import.meta.url));
 
 const PROBE = `
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 const tried = {};
 async function attempt(name, work) {
   try { await work(); tried[name] = "allowed"; } catch (error) { tried[name] = error.code ?? error.cause?.code ?? error.name; }
@@ -58,6 +58,11 @@ async function attempt(name, work) {
 await attempt("network", () => fetch("http://1.1.1.1", { signal: AbortSignal.timeout(3000) }));
 await attempt("writePackage", () => writeFileSync("/pkg/escaped.txt", "x"));
 await attempt("writeRoot", () => writeFileSync("/etc/escaped.txt", "x"));
+await attempt("writeRun", () => writeFileSync("/run/escaped.txt", "x"));
+await attempt("writeVarTmp", () => writeFileSync("/var/tmp/escaped.txt", "x"));
+tried.tmpfs = Object.fromEntries(
+  readFileSync("/proc/mounts", "utf8").split("\\n").map((line) => line.split(" ")).filter((fields) => fields[2] === "tmpfs").map((fields) => [fields[1], fields[3]]),
+);
 await attempt("writeData", () => writeFileSync("/data/kept.txt", "kept"));
 tried.uid = process.getuid();
 tried.env = Object.keys(process.env).filter((key) => key.startsWith("CC_") || key.includes("KEY") || key.includes("TOKEN"));
@@ -135,6 +140,16 @@ describe.skipIf(!engine.available)("a service container on a real engine", () =>
     expect(tried.network).not.toBe("allowed");
     expect(tried.writePackage).toBe("EROFS");
     expect(tried.writeRoot).toBe("EROFS");
+    // Podman's `--read-only` would mount writable tmpfs here, without the profile's size or `noexec`.
+    expect(tried.writeRun).toBe("EROFS");
+    expect(tried.writeVarTmp).toBe("EROFS");
+    const tmpfs = tried.tmpfs as Record<string, string>;
+    expect(tmpfs["/run"]).toBeUndefined();
+    expect(tmpfs["/var/tmp"]).toBeUndefined();
+    // The one scratch space is the profile's: its size, and nothing in it can be run.
+    const scratch = (tmpfs["/tmp"] ?? "").split(",");
+    expect(scratch).toContain("noexec");
+    expect(scratch).toContain(`size=${String(RESOURCE_PROFILES["interactive-light"].container.tmpfsMib * 1024)}k`);
     expect(tried.writeData).toBe("allowed");
     expect(readFileSync(join(dir, "data", "kept.txt"), "utf8")).toBe("kept");
     // Rootless Docker runs the service as its id 0, the one id it maps back to the person; anywhere else it is not root.
@@ -414,6 +429,8 @@ describe.skipIf(!engine.available)("the media render package's service on a real
           );
         });
       expect(await engineSays(["inspect", "--format", "{{.HostConfig.NetworkMode}}", name])).toBe("none");
+      // What it wrote to its standard output, the rendered clip's bytes included, is in no log the engine keeps.
+      expect(await engineSays(["inspect", "--format", "{{.HostConfig.LogConfig.Type}}", name])).toBe("none");
       // Asked for the refusal itself, so a probe that printed nothing cannot pass.
       expect(await engineSays(["exec", name, "node", "-e", NETWORK_PROBE])).toMatch(/^refused (ENETUNREACH|EHOSTUNREACH|ECONNREFUSED|EAI_AGAIN|TimeoutError)$/);
 

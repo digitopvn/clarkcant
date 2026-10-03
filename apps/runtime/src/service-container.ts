@@ -18,7 +18,8 @@ import { DEFAULT_RESOURCE_PROFILE, type EngineCapacity, RESOURCE_PROFILES, type 
  *
  *   - **No network.** `--network none`: the service cannot reach the internet, the machine, or a sibling on localhost.
  *   - **Its package, read-only**, at `/pkg`, and **one private folder**, read-write, at `/data`. The root filesystem is
- *     read-only; `/tmp` is a small memory-backed scratch space that cannot hold an executable.
+ *     read-only, `/run` and `/var/tmp` included under either engine; `/tmp` is a small memory-backed scratch space that
+ *     cannot hold an executable.
  *   - **No privilege.** A non-root user, every capability dropped, no privilege escalation, and bounded processes,
  *     memory and CPU. Under rootless Docker the user is the container's id 0, because that is the only id the daemon
  *     maps back to the person's own account; it holds none of those privileges either (`ROOTLESS_DOCKER_USER`).
@@ -362,10 +363,15 @@ export function serviceRunArgs(spec: ServiceContainerSpec): string[] {
     // Rootless Podman maps the container's ids into the user's own namespace; keeping the id is what lets the private
     // folder stay writable. Docker has no such flag: rootful Docker needs none, and rootless Docker is given the one id
     // that maps back to the person instead (`ROOTLESS_DOCKER_USER`).
-    ...(spec.engine === "podman" ? ["--userns", "keep-id"] : []),
-    // The service's stdout is the protocol, which carries what a person gave it. Docker would also keep a copy in its
-    // log files, unrotated, for as long as the container lives; the host reads the stream itself and needs no copy.
-    ...(spec.engine === "docker" ? ["--log-driver", "none"] : []),
+    // Podman's `--read-only` also mounts writable tmpfs on `/run`, `/var/tmp` and `/tmp` by default, with its own sizes
+    // and without `noexec`. Turned off, so `/tmp` above is the only scratch space, with the profile's size and `noexec`,
+    // and `/run` and `/var/tmp` stay read-only as they are under Docker.
+    ...(spec.engine === "podman" ? ["--userns", "keep-id", "--read-only-tmpfs=false"] : []),
+    // The service's stdout is the protocol, which carries what a person gave it. Either engine would also keep a copy:
+    // Docker in its log files, unrotated, for as long as the container lives; Podman in its log driver, which on a
+    // systemd host is the person's journal and outlives the container. The host reads the stream itself and needs none.
+    "--log-driver",
+    "none",
     "--user",
     `${String(user.uid)}:${String(user.gid)}`,
     // `--mount` rather than `--volume`: its fields are named, so a Windows path's drive-letter colon is not read as a
