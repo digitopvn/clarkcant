@@ -173,7 +173,7 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
      * answer needs. The words that come back are what the voice session reads aloud, which is why the
      * live model is told not to answer anything itself: this is the only answer in the room.
      */
-    answer: async ({ conversationId, text, at: spokenAt, onText, onAppIntent }) => {
+    answer: async ({ conversationId, text, at: spokenAt, onText, onAppIntent, onWidgetPerform }) => {
       const forwardText = onText === undefined ? undefined : accumulateAnswerText(onText);
       const outcome = await handleUserMessage(deps.services.conductor, {
         conversationId: conversationId as never,
@@ -196,7 +196,7 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         // frame has to carry the answer so far rather than the fragment that just arrived. `accumulateAnswerText`
         // holds the measurement that made this a function of its own. A `host-control` event — the app-control
         // tool's decision — is forwarded separately, over the wire frame the browser already knows how to run.
-        ...(forwardText === undefined && onAppIntent === undefined
+        ...(forwardText === undefined && onAppIntent === undefined && onWidgetPerform === undefined
           ? {}
           : {
               emit: (event) => {
@@ -205,6 +205,11 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
                   // The voice surface reports what it did, like the typed stream's page does.
                   deps.services.hostControl.expect(event.decision);
                   onAppIntent(event.decision);
+                }
+                if (event.type === "widget-perform" && onWidgetPerform !== undefined) {
+                  // Same canonical path as a typed turn: the page showing the widget asks its frame and reports back.
+                  deps.services.widgetPerforms.expect(event.request.performId);
+                  onWidgetPerform(event.request);
                 }
               },
             }),

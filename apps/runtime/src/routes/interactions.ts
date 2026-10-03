@@ -6,6 +6,8 @@ import {
   describeAppIntent,
   hostControlIdSchema,
   hostControlReportSchema,
+  widgetPerformIdSchema,
+  widgetPerformReportSchema,
 } from "@clarkcant/contracts";
 import { recordAppIntentEvent } from "@clarkcant/core";
 import { type Database } from "@clarkcant/storage";
@@ -21,6 +23,7 @@ import {
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { grantConversationDeletion } from "../application/conversation-delete.ts";
 import type { HostControlAcks } from "../host-control-acks.ts";
+import type { WidgetPerformAcks } from "../widget-perform-acks.ts";
 import { buildSuggestions } from "../suggestions.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
@@ -37,6 +40,7 @@ export interface InteractionRouteDeps {
     runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string }; dataDir?: string };
     conductor: { newId: (prefix: string) => string };
     hostControl: Pick<HostControlAcks, "settle">;
+    widgetPerforms: Pick<WidgetPerformAcks, "settle">;
     turnControl?: {running(): string[]};
   };
   request: GatewayRequest;
@@ -174,8 +178,24 @@ async function handleAppIntentRoutes(
     return json(200, { settled: true });
   }
 
-  if (segments.length === 2 && segments[1] === "confirm" && request.method === "POST") {
+  // POST /app-intents/widget-perform/:performId
+  //
+  // The page's report on an action Clark asked a widget's frame to perform: what the frame answered, or why the page
+  // could not ask it. Person-only (see `isPersonOnlyRoute`), for the same reason as the host-control report.
+  if (segments.length === 3 && segments[1] === "widget-perform" && request.method === "POST") {
+    const performId = widgetPerformIdSchema.safeParse(segments[2]);
+    if (!performId.success) return fail(400, "INVALID_SCHEMA", "a widget-perform report names the perform it reports on");
     const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const body = widgetPerformReportSchema.safeParse(parsed.value);
+    if (!body.success) return fail(400, "INVALID_SCHEMA", "a widget-perform report says what the widget answered");
+    if (!services.widgetPerforms.settle(performId.data, body.data)) {
+      return fail(404, "WIDGET_PERFORM_NOT_EXPECTED", "nothing is waiting for a report on this perform any more");
+    }
+    return json(200, { settled: true });
+  }
+
+  if (segments.length === 2 && segments[1] === "confirm" && request.method === "POST") {    const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
     const body = appIntentConfirmRequestSchema.safeParse(parsed.value);
     if (!body.success) {

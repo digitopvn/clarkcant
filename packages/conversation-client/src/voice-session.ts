@@ -1,4 +1,4 @@
-import { type AppIntentDecision, type VoiceState, appIntentDecisionSchema } from "@clarkcant/contracts";
+import { type AppIntentDecision, type VoiceState, type WidgetPerformRequest, appIntentDecisionSchema, widgetPerformRequestSchema } from "@clarkcant/contracts";
 
 import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS } from "./i18n/messages.ts";
@@ -64,6 +64,11 @@ export interface VoiceSessionEvents {
    * and the page has one executor for both a click and a voice. Only `kind: "intent"` may be run.
    */
   onAppIntent?(decision: AppIntentDecision): void;
+  /**
+   * An action Clark asked a widget on this page to perform while answering what was said. Passed on to whoever can
+   * reach the mounted frame, which reports what it answered over HTTP like the typed stream's page does.
+   */
+  onWidgetPerform?(request: WidgetPerformRequest): void;
   /**
    * The node's account of a spoken widget action, once it has run.
    *
@@ -299,6 +304,12 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
           // two independent checks that a page cannot act on a question.
           const parsed = appIntentDecisionSchema.safeParse(decision);
           if (parsed.success) events.onAppIntent?.(parsed.data);
+          return;
+        }
+        case "widget-perform": {
+          // Validated like a decision: a request that does not parse is not one to hand to a widget.
+          const parsedRequest = widgetPerformRequestSchema.safeParse(control["request"]);
+          if (parsedRequest.success) events.onWidgetPerform?.(parsedRequest.data);
           return;
         }
         case "widget-action-result": {

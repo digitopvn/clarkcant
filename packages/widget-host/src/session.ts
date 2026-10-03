@@ -1,5 +1,6 @@
 import { appearanceSnapshotSchema, type AppearanceSnapshot, type SemanticProposal } from "@clarkcant/contracts";
 import {
+  ACTIONS_PERFORM_EXTENSION,
   ARTIFACTS_EXTENSION,
   JOBS_EXTENSION,
   JOBS_LIST_EXTENSION,
@@ -60,7 +61,32 @@ export type FrameRefusal =
   | "TOKEN_BUSY"
   | "TOKEN_RATE_LIMITED"
   | "TOKEN_NOT_ALLOWED"
+  | "PERFORM_UNKNOWN"
   | "DISPOSED";
+
+/**
+ * What the frame answered one perform with (`actions.perform@1`).
+ *
+ * `done` and `refused` are the frame's own answers. `no-answer` is the host giving up waiting, or the frame going away
+ * mid-perform: the frame was asked and may have done it, so it is never reported as refused. A perform that was never
+ * sent — the frame not mounted, not ready, without the extension, or asked for an action it does not offer — is
+ * `refused` with the host's code, and nothing is queued for later.
+ */
+export type FramePerformOutcome =
+  | { status: "done"; output?: string | undefined }
+  | { status: "refused"; code: string; message: string }
+  | { status: "no-answer"; message: string };
+
+export interface FramePerformRequest {
+  performId: string;
+  action: string;
+  input: Record<string, unknown>;
+}
+
+/** How long a frame has to answer one perform before the host stops waiting. Below the node's own wait. */
+export const FRAME_PERFORM_TIMEOUT_MS = 6_000;
+/** Performs one frame may be asked at once. */
+const MAX_PERFORMS_IN_FLIGHT = 4;
 
 /**
  * What the host answered one artifact request with.
@@ -204,6 +230,13 @@ export interface FrameSessionInput {
    * again by the node against that declaration and the provider's support.
    */
   tokens?: FrameTokenBroker;
+  /**
+   * The names of the actions this widget's definition offers (`offeredActions`). Non-empty, `actions.perform@1` is
+   * advertised in `init` and `perform` may ask for one of these, and no other.
+   */
+  offeredActions?: readonly string[];
+  /** How long `perform` waits for the frame's answer. */
+  performTimeoutMs?: number;
   /** Overridable so a test can drive the budget without sending thousands of messages. */
   maxMessageBytes?: number;
   maxMessages?: number;
@@ -260,6 +293,11 @@ export interface FrameSession {
   announceActions(actions: readonly FrameActionAvailability[]): void;
   /** Restyle the existing frame without changing its instance or semantic revisions. */
   announceAppearance(appearance: AppearanceSnapshot): void;
+  /**
+   * Ask the frame to perform an action its definition offers, with input the node has already checked, and wait —
+   * bounded — for its answer. Refused at once, with nothing sent or queued, when the frame cannot be asked now.
+   */
+  perform(request: FramePerformRequest): Promise<FramePerformOutcome>;
   dispose(): void;
   status(): "awaiting-init" | "ready" | "suspended" | "disposed";
   /** What the frame said, in order — the latest `maxTranscriptEntries` of it. What a session records is what it is willing to be held to. */
@@ -374,7 +412,21 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   let announced = "";
   let appearance = input.appearance === undefined ? undefined : appearanceSnapshotSchema.parse(input.appearance);
   let appearanceRevision = "";
+  const offeredActions = new Set(input.offeredActions ?? []);
+  const performTimeoutMs = input.performTimeoutMs ?? FRAME_PERFORM_TIMEOUT_MS;
+  /** Performs asked and not yet answered, by id. Only one of these may be answered. */
+  const performs = new Map<string, { resolve: (outcome: FramePerformOutcome) => void; timer: ReturnType<typeof setTimeout> }>();
+  /** Whether the widget has said `ready`: before that, nothing in the frame is listening for a perform. */
+  let frameReady = false;
+  const settlePerform = (performId: string, outcome: FramePerformOutcome): void => {
+    const waiting = performs.get(performId);
+    if (waiting === undefined) return;
+    performs.delete(performId);
+    clearTimeout(waiting.timer);
+    waiting.resolve(outcome);
+  };
   const initExtensions = [
+    ...(offeredActions.size === 0 ? [] : [ACTIONS_PERFORM_EXTENSION]),
     ...(input.artifacts === undefined ? [] : [ARTIFACTS_EXTENSION]),
     // `jobs.list@1` is answered by the same broker, so it is offered with `jobs@1`; a widget asks `list` only when it sees it.
     ...(input.jobs === undefined ? [] : [JOBS_EXTENSION, JOBS_LIST_EXTENSION]),
@@ -508,8 +560,32 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const dispatch = (message: WidgetToHostMessage): FrameAcceptance => {
     switch (message.kind) {
       case "ready":
+        frameReady = true;
         record({ kind: "ready", detail: message.nonce });
         return { ok: true, kind: "ready" };
+
+      case "action.performed": {
+        if (!performs.has(message.performId)) {
+          // Only an answer the host is waiting for: a frame cannot report a perform nobody asked for.
+          return refuse("PERFORM_UNKNOWN", `no perform ${message.performId} is waiting for this frame's answer`);
+        }
+        if (carriesToken({ output: message.output, message: message.message })) {
+          settlePerform(message.performId, { status: "refused", code: "TOKEN_NOT_ALLOWED", message: TOKEN_LEAK });
+          return refuse("TOKEN_NOT_ALLOWED", TOKEN_LEAK);
+        }
+        settlePerform(
+          message.performId,
+          message.status === "done"
+            ? { status: "done", ...(message.output === undefined ? {} : { output: message.output }) }
+            : {
+                status: "refused",
+                code: message.code ?? "ACTION_REFUSED",
+                message: message.message ?? "the widget refused the action",
+              },
+        );
+        record({ kind: "action.performed", detail: `${message.performId} ${message.status}` });
+        return { ok: true, kind: "action.performed", detail: message.status };
+      }
 
       case "state.update": {
         if (carriesToken(message.patch)) {
@@ -845,7 +921,14 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       if (bytes > ceiling) {
         return refuse("TOO_LARGE", `message of ${String(bytes)} bytes exceeds ${String(ceiling)}`);
       }
-      if (!claimsArtifact && !claimsJob && !claimsToken) {
+      // An answer to a perform the host asked for is the host's request coming back, not the frame talking; it is bounded
+      // by how often the host asks, so it does not spend the frame's own message budget.
+      const answersPerform =
+        performs.size > 0 &&
+        typeof event.data === "object" &&
+        event.data !== null &&
+        (event.data as { kind?: unknown }).kind === "action.performed";
+      if (!claimsArtifact && !claimsJob && !claimsToken && !answersPerform) {
         messages += 1;
         if (messages > maxMessages) {
           return refuse("MESSAGE_BUDGET_EXCEEDED", `frame sent more than ${String(maxMessages)} messages`);
@@ -886,9 +969,48 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       input.post({ kind: "appearance.changed", nonce: input.nonce, revision: checked.revision, appearance: checked });
     },
 
+    perform(request) {
+      const refused = (code: string, message: string): Promise<FramePerformOutcome> =>
+        Promise.resolve({ status: "refused", code, message });
+      if (status === "disposed") return refused("FRAME_NOT_MOUNTED", "the widget's frame has been closed");
+      if (status === "suspended") return refused("FRAME_NOT_READY", "the widget's frame is suspended");
+      if (status === "awaiting-init" || !frameReady) return refused("FRAME_NOT_READY", "the widget's frame has not finished opening");
+      if (offeredActions.size === 0) {
+        return refused("EXTENSION_NOT_OFFERED", `this widget offers no actions, so ${ACTIONS_PERFORM_EXTENSION} is not open to it`);
+      }
+      if (!offeredActions.has(request.action)) {
+        return refused("ACTION_NOT_OFFERED", `this widget does not offer an action named "${request.action}"`);
+      }
+      if (performs.has(request.performId)) return refused("PERFORM_IN_PROGRESS", "this perform is already waiting for the widget's answer");
+      if (performs.size >= MAX_PERFORMS_IN_FLIGHT) {
+        return refused("PERFORM_BUSY", `the widget is already performing ${String(MAX_PERFORMS_IN_FLIGHT)} actions`);
+      }
+      return new Promise<FramePerformOutcome>((resolve) => {
+        const timer = setTimeout(() => {
+          settlePerform(request.performId, {
+            status: "no-answer",
+            message: `the widget did not answer within ${String(Math.ceil(performTimeoutMs / 1000))} s`,
+          });
+        }, performTimeoutMs);
+        performs.set(request.performId, { resolve, timer });
+        record({ kind: "action.perform", detail: `${request.performId} ${request.action}` });
+        input.post({
+          kind: "action.perform",
+          nonce: input.nonce,
+          performId: request.performId,
+          action: request.action,
+          input: request.input,
+        });
+      });
+    },
+
     dispose() {
       if (status === "disposed") return;
       status = "disposed";
+      // A perform the frame was sent may have run before it went: said as unknown, never as refused.
+      for (const performId of [...performs.keys()]) {
+        settlePerform(performId, { status: "no-answer", message: "the widget's frame closed before it answered" });
+      }
       // The node revokes what this frame was given; the values are forgotten here at once.
       issuedTokens.length = 0;
       input.tokens?.release();

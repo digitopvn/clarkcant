@@ -23,6 +23,7 @@ import {
   type FrameStateOutcome,
 } from "@clarkcant/widget-host/session";
 
+import { registerMountedFrame } from "./frame-performs.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { useWidgetAppearance } from "./use-widget-appearance.ts";
 import { createSemanticSettler, gatePress } from "./semantic-settle.ts";
@@ -91,6 +92,10 @@ export interface WidgetFrameProps {
   allowedOrigins: readonly string[];
   /** The bindings this instance holds. The frame may name one of these and nothing else. */
   knownActionBindings: readonly string[];
+  /**
+   * The actions the widget's package declared it offers to Clark, by name. Non-empty, the frame is offered`n   * `actions.perform@1` and registered on this page so a perform Clark asks for can reach it.
+   */
+  offeredActions?: readonly string[];
   /** Which service-backed bindings can run right now, as the node last said. Told to the frame when it changes. */
   actionAvailability?: readonly FrameActionAvailability[];
   invokeAction: (input: {
@@ -313,6 +318,7 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       brokeredCapabilities: latest.current.brokeredCapabilities,
       allowedOrigins: latest.current.allowedOrigins,
       knownActionBindings: latest.current.knownActionBindings,
+      ...((latest.current.offeredActions ?? []).length === 0 ? {} : { offeredActions: latest.current.offeredActions }),
       // The revision the surface was last told, so the widget's first action is not refused as stale.
       revision: latest.current.revision,
       /*
@@ -371,6 +377,8 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       post: (message) => frame.contentWindow?.postMessage(message, "*"),
     });
     session.current = live;
+    // Findable by instance for as long as this document is mounted, so Clark's perform reaches this frame and no other.
+    const unregister = registerMountedFrame(input.instanceId, live);
 
     const onMessage = (event: MessageEvent): void => {
       const matches = frame.contentWindow !== null && event.source === frame.contentWindow;
@@ -407,6 +415,7 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
     window.addEventListener("message", onMessage);
     return () => {
       window.removeEventListener("message", onMessage);
+      unregister();
       semantic.dispose();
       live.dispose();
       session.current = undefined;

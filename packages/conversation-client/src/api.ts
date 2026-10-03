@@ -27,6 +27,9 @@ import {
   COMPOSER_SURFACE_HEADER,
   MAP_TILES_OFFLINE_REASONS,
   appIntentDecisionSchema,
+  type WidgetPerformReport,
+  type WidgetPerformRequest,
+  widgetPerformRequestSchema,
   conversationDeleteResultSchema,
   artifactRefSchema,
   attachmentRefSchema,
@@ -144,6 +147,8 @@ export interface IsolatedFrameLiveResponse {
     offscreen?: "suspend" | "authorized-playback";
     /** The providers the widget's package declared browser tokens from. Absent: the frame is offered no tokens. */
     browserTokens?: readonly string[];
+    /** The actions the widget's package declared it offers to Clark, by name. Absent: Clark can perform none. */
+    offeredActions?: readonly string[];
   } | null;
   /** Present when `frame` is null: the widget's own text alternative, from its definition. */
   textFallback?: string;
@@ -489,7 +494,12 @@ export type ReplyStreamEvent =
    * something the page runs through `runAppIntent` and a tool result is text the transcript shows — the
    * two must not be read as the same thing by a caller that only looks at one of them.
    */
-  | { type: "host-control"; decision: AppIntentDecision };
+  | { type: "host-control"; decision: AppIntentDecision }
+  /**
+   * An action Clark asked a widget shown on this page to perform. The page hands it to the mounted frame and reports
+   * what the frame answered (`reportWidgetPerform`); the node is waiting for that report.
+   */
+  | { type: "widget-perform"; request: WidgetPerformRequest };
 
 /*
  * The event-stream parser lives in contracts so the node's WebSocket, the CLI and this client split a stream the
@@ -1124,6 +1134,10 @@ export class GatewayClient {
           // permission to run anything.
           const parsedDecision = appIntentDecisionSchema.safeParse(payload.decision);
           if (parsedDecision.success) listeners.onEvent({ type: "host-control", decision: parsedDecision.data });
+        } else if (frame.event === "widget-perform") {
+          // Validated like a decision: a request that does not parse is not one to hand to a widget.
+          const parsedRequest = widgetPerformRequestSchema.safeParse(payload.request);
+          if (parsedRequest.success) listeners.onEvent({ type: "widget-perform", request: parsedRequest.data });
         } else if (frame.event === "done") {
           finished = true;
           listeners.onDone({
@@ -2349,6 +2363,19 @@ export class GatewayClient {
     });
   }
 
+  /**
+   * Tell the node what a widget's frame on this page answered to an action Clark asked it to perform.
+   *
+   * Sent for every perform this page was handed, done or not: the node is waiting on it to tell Clark whether the widget
+   * changed. A node that stopped waiting answers 404, and Clark was already told the outcome is unknown.
+   */
+  async reportWidgetPerform(performId: string, report: WidgetPerformReport): Promise<void> {
+    await this.#fetch(`${this.#baseUrl}/app-intents/widget-perform/${encodeURIComponent(performId)}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify(report),
+    });
+  }
   /**
    * Starts one request in a worker of its own, so it happens while the conversation carries on.
    *

@@ -148,6 +148,30 @@
   "stateVersion": 0,
   "semanticDescription": "A text editor holding one file the person opened: its name, line count, whether it has unsaved changes, and the selected text.",
   "requestedCapabilities": [],
+  "offeredActions": [
+    {
+      "name": "replaceSelection",
+      "label": "Replace the selected text",
+      "description": "Replace the text selected in the editor with text. Give expected, the selected text you read, so a selection that changed since is not replaced. Ctrl+Z undoes it; the file is not saved.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "expected": {
+            "type": "string",
+            "maxLength": 400
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
   "sizing": {
     "compact": true,
     "expanded": true,

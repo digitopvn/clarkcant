@@ -72,6 +72,7 @@ import type { SessionSearchDeps } from "./session-search.ts";
 import type { BackgroundRunInput } from "./model-turn.ts";
 import { createTerminalRegistry, type TerminalRegistry } from "./terminal-sessions.ts";
 import { createHostControlAcks, type HostControlAcks } from "./host-control-acks.ts";
+import { createWidgetPerformAcks, type WidgetPerformAcks } from "./widget-perform-acks.ts";
 import { createPiSessionWatcher, defaultPiSessionRoots, type PiSessionWatcher } from "./pi-session-watch.ts";
 import {
   type SessionStoreDeps,
@@ -125,6 +126,8 @@ export interface NodeServices {
    * On the services for the same reason as the control sessions: a report belongs to this node's screens and turns.
    */
   hostControl: HostControlAcks;
+  /** The page's reports on actions Clark asked a widget's frame to perform, held per node like hostControl. */
+  widgetPerforms: WidgetPerformAcks;
   piSessions: PiSessionWatcher;
   conductor: ConductorDeps;
   /**
@@ -688,6 +691,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     controlSessions: createControlSessionRegistry(),
     terminals: createTerminalRegistry({ dataDir: runtime.dataDir }),
     hostControl: createHostControlAcks(),
+    widgetPerforms: createWidgetPerformAcks(),
     piSessions: createPiSessionWatcher({ roots: () => defaultPiSessionRoots(runtime.dataDir) }),
     conductor,
     model: options.model ?? null,

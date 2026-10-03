@@ -39,10 +39,13 @@ document bounded, describes itself to Clark, and applies a change Clark chose.
   the range selected at the press, which stays locked until the reply arrives; otherwise it says so visibly. At most
   32 formats are kept, and the status names one that had to go. "Undo format", or Ctrl+Z in the grid, takes back
   Clark's change. Before it runs the press, the host sends the widget's pending semantic document and waits until the
-  node holds it, so a press made straight after changing the selection still reaches Clark with that range. A request
-  typed in the
-  composer reaches Clark through the semantic document but cannot change the frame; that gap is tracked in
-  [#382](https://github.com/digitopvn/clarkcant/issues/382).
+  node holds it, so a press made straight after changing the selection still reaches Clark with that range.
+- **Formatting from the composer.** The widget offers Clark a `format` action (`{format: percent|number|plain,
+  range?}`) through `actions.perform@1`. A request typed in the composer, such as "format this as a percentage", lets
+  Clark call `perform_widget_action`; the sheet formats the given range, or the selection, says so in its status line
+  and refuses with `SHEET_BUSY`, `FORMAT_UNKNOWN` or `RANGE_INVALID` otherwise. "Undo format" takes it back. The
+  `place_widget` tool binds this action, and the `formatBinding` button when asked, in a real installation; see
+  [widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
 
 Keyboard: the grid is one tab stop, and Tab and Shift+Tab leave it. Arrows move, Shift+arrows extend the selection,
 Home/End and Ctrl+Home/End jump, Page Up/Down page, Enter or F2 edits, typing starts an edit, Escape cancels an edit or

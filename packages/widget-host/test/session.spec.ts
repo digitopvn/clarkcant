@@ -1032,3 +1032,69 @@ describe("tokens@1", () => {
     });
   });
 });
+
+describe("actions.perform@1", () => {
+  function ready(overrides: Partial<FrameSessionInput> = {}) {
+    const made = makeSession({ offeredActions: ["format"], ...overrides });
+    made.session.init();
+    made.session.accept(fromFrame({ kind: "ready" }));
+    return made;
+  }
+  const performOf = (posted: { kind: string; [key: string]: unknown }[]) => posted.find((message) => message.kind === "action.perform");
+
+  it("is advertised only to a frame whose widget offers actions", () => {
+    expect(makeSession().session.init().extensions ?? []).not.toContain("actions.perform@1");
+    expect(makeSession({ offeredActions: ["format"] }).session.init().extensions).toContain("actions.perform@1");
+  });
+
+  it("sends the checked input and resolves with the frame's answer", async () => {
+    const { session, posted } = ready();
+    const answer = session.perform({ performId: "perf_1", action: "format", input: { format: "percent" } });
+    expect(performOf(posted)).toMatchObject({ nonce: NONCE, performId: "perf_1", action: "format", input: { format: "percent" } });
+    expect(session.accept(fromFrame({ kind: "action.performed", performId: "perf_1", status: "done", output: "B2:B4 as percent" })).ok).toBe(true);
+    await expect(answer).resolves.toEqual({ status: "done", output: "B2:B4 as percent" });
+  });
+
+  it("passes the frame's refusal on with its code", async () => {
+    const { session } = ready();
+    const answer = session.perform({ performId: "perf_1", action: "format", input: {} });
+    session.accept(fromFrame({ kind: "action.performed", performId: "perf_1", status: "refused", code: "NO_SELECTION", message: "select cells first" }));
+    await expect(answer).resolves.toEqual({ status: "refused", code: "NO_SELECTION", message: "select cells first" });
+  });
+
+  it("refuses at once, sending nothing, when the frame cannot be asked", async () => {
+    const before = makeSession({ offeredActions: ["format"] });
+    before.session.init();
+    await expect(before.session.perform({ performId: "p", action: "format", input: {} })).resolves.toMatchObject({ status: "refused", code: "FRAME_NOT_READY" });
+
+    const { session, posted } = ready();
+    await expect(session.perform({ performId: "p", action: "rename", input: {} })).resolves.toMatchObject({ status: "refused", code: "ACTION_NOT_OFFERED" });
+    session.dispose();
+    await expect(session.perform({ performId: "p", action: "format", input: {} })).resolves.toMatchObject({ status: "refused", code: "FRAME_NOT_MOUNTED" });
+    expect(performOf(posted)).toBeUndefined();
+
+    const none = makeSession();
+    none.session.init();
+    none.session.accept(fromFrame({ kind: "ready" }));
+    await expect(none.session.perform({ performId: "p", action: "format", input: {} })).resolves.toMatchObject({ status: "refused", code: "EXTENSION_NOT_OFFERED" });
+  });
+
+  it("stops waiting after its bound, and says the frame may have done it rather than that it refused", async () => {
+    const { session } = ready({ performTimeoutMs: 10 });
+    await expect(session.perform({ performId: "perf_1", action: "format", input: {} })).resolves.toMatchObject({ status: "no-answer" });
+    // The late answer finds nobody waiting.
+    expect(session.accept(fromFrame({ kind: "action.performed", performId: "perf_1", status: "done" }))).toMatchObject({ ok: false, code: "PERFORM_UNKNOWN" });
+  });
+
+  it("settles a perform the frame was sent as unknown when the frame closes", async () => {
+    const { session } = ready();
+    const answer = session.perform({ performId: "perf_1", action: "format", input: {} });
+    session.dispose();
+    await expect(answer).resolves.toMatchObject({ status: "no-answer" });
+  });
+
+  it("refuses an answer nobody asked for", () => {
+    const { session } = ready();
+    expect(session.accept(fromFrame({ kind: "action.performed", performId: "made_up", status: "done" }))).toMatchObject({ ok: false, code: "PERFORM_UNKNOWN" });
+  });
+});

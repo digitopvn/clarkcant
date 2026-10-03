@@ -636,6 +636,8 @@ export async function createModelTurn(options: {
     onEvent: () => ((event: ModelTurnEvent) => void) | undefined;
     /** See `Turn.channel`; read the same way and for the same reason. */
     channel: () => "voice" | "chat";
+    /** The message this turn's answer is being written as, read at call time: a widget placed now is captured against it. */
+    messageId?: () => string | undefined;
   }) => readonly ToolDefinition[];
   /**
    * What was remembered, for the turn about to run.
@@ -695,6 +697,7 @@ export async function createModelTurn(options: {
       conversationId: turn.conversationId,
       onEvent: () => turn.onEvent,
       channel: () => turn.channel,
+      messageId: () => turn.messageId,
     }) ?? [];
   /*
    * The note about the screen for this turn, and the session's record of what it has now been told.

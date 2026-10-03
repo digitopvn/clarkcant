@@ -3,6 +3,7 @@ import type { IncomingMessage, Server } from "node:http";
 import {
   answerFromUtterance,
   type AppIntentDecision,
+  type WidgetPerformRequest,
   type AppIntentResolution,
   type ConfirmationDecision,
   type ConversationId,
@@ -54,6 +55,7 @@ import { focusedSemanticView } from "./widget-semantic.ts";
  *   `{ type: "transcript", role, text, final }`
  *   `{ type: "app-intent", decision }`          — the application's answer to a command it was given
  *   `{ type: "widget-action-result", instanceId, revision, ok, say }` — what came of a spoken widget action
+ *   `{ type: "widget-perform", request }`     — an action Clark asked a widget's frame to perform; the page reports back
  *   `{ type: "error", code, message }`
  *   `{ type: "ended", recordedMessages }`
  *   binary                                     — PCM16, 24 kHz, mono
@@ -146,6 +148,11 @@ export interface VoiceGatewayOptions {
      * over the SSE stream this socket has no part in.
      */
     onAppIntent?: (decision: AppIntentDecision) => void;
+    /**
+     * Forwards an action Clark asked a widget's frame to perform while answering this utterance. The page showing
+     * the widget hands it to the frame and reports what it answered over HTTP, exactly as for a typed turn.
+     */
+    onWidgetPerform?: (request: WidgetPerformRequest) => void;
   }) => Promise<VoiceAnswerResult | undefined>;
   /**
    * Record the user's spoken decision on an operation.
@@ -805,6 +812,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             // Reuses the same wire frame a deterministic spoken app-command already sends, so the browser
             // needs no new handler to run a `control_app` decision through `runAppIntent`.
             onAppIntent: (decision) => send({ type: "app-intent", decision }),
+            onWidgetPerform: (request) => send({ type: "widget-perform", request }),
           });
           if (result === undefined) return;
           answeredMessages += result.recordedMessages;

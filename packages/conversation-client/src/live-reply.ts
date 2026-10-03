@@ -34,7 +34,7 @@ export function applyLiveEvent(segments: readonly LiveSegment[], event: ReplyStr
   // Not a transcript fact: an app-control action is delivered to the executor by `useTurnSend`
   // directly (see its own `onEvent`), and it never becomes a segment - replaying it here would
   // repeat the side effect on every re-render of a reply that already finished.
-  if (event.type === "host-control") return [...segments];
+  if (event.type === "host-control" || event.type === "widget-perform") return [...segments];
 
   if (event.type === "tool-start") {
     return [

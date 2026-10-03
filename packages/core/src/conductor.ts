@@ -12,6 +12,7 @@ import {
   type ReferenceBlock,
   type TaskRecord,
   type WidgetDefinition,
+  type WidgetPerformRequest,
   assertBlockProvenance,
   attachmentRefSchema,
   isTerminal,
@@ -435,7 +436,13 @@ export type ModelTurnEvent =
    * rather than stored in a message block: replaying the transcript must not repeat the side effect,
    * so this travels only to a foreground stream that is watching the turn as it runs.
    */
-  | { type: "host-control"; decision: AppIntentDecision };
+  | { type: "host-control"; decision: AppIntentDecision }
+  /**
+   * An action an isolated widget offers, which Clark asked its frame to perform after the node's gate, input check and
+   * policy said yes. Ephemeral for the same reason: only the page showing the widget now can hand it to the frame, and a
+   * replayed transcript must not perform it again.
+   */
+  | { type: "widget-perform"; request: WidgetPerformRequest };
 
 /** What the conductor reports to a caller that is watching. */
 export type ConductorEmit = ModelTurnEvent;
