@@ -1948,11 +1948,13 @@ export class GatewayClient {
     conversationId: string,
     instanceId: string,
     artifactId: string,
+    options: { name?: string | undefined } = {},
   ): Promise<{ artifactRef: ArtifactRef; attachmentRef: AttachmentRef }> {
     const body = await this.#call<{ artifactRef?: unknown; attachmentRef?: unknown }>(
       "POST",
       this.#artifactPath(conversationId, instanceId, `/${encodeURIComponent(artifactId)}/attach`),
-      {},
+      // The widget's proposed name, passed on as it is: the node sanitizes it.
+      options.name === undefined ? {} : { name: options.name },
     );
     const attachment = attachmentRefSchema.safeParse(body.attachmentRef);
     if (!attachment.success) throw new GatewayError(502, "MALFORMED_RESPONSE", "the node attached the file but returned no attachment");

@@ -22,7 +22,9 @@ that draws the image itself.
 - **Language:** the widget's text is Vietnamese only, like the reference text editor's; the host translates its own
   chrome, not a widget's.
 - **Attach and export:** each gallery image can be put in the composer with `artifacts.attachToConversation` or
-  handed to the host with `artifacts.export`. The widget learns only whether the host took it.
+  handed to the host with `artifacts.export`. The widget learns only whether the host took it. Attach proposes a file
+  name from a slug of the prompt and the end of the job's id (`a-red-kite-over-a-green-sea-3f9a1c.png`), which the
+  node sanitizes, so two attached images never share a name.
 - **The provider's key:** the manifest declares one origin and one secret, `IMAGE_PROVIDER_KEY`. The person stores the
   key for this package; the node adds it as a bearer header to each request the service asks it to make
   (`clarkcant/egress.fetch`). The service, its container and the widget never receive the key. Until it is stored the
