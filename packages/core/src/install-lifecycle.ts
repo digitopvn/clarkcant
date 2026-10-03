@@ -13,6 +13,7 @@ import {
 
 import { type Database, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
+import { artifactIsSnapshot } from "./package-fetch.ts";
 import { bringBackUninstalledWidgets } from "./package-lifecycle.ts";
 
 /**
@@ -93,8 +94,19 @@ export function joinOrCreatePlan(deps: InstallDeps, plan: InstallPlan): JoinPlan
      * A finished plan stands for its generation only while that generation runs. Once it was uninstalled or another
      * version replaced it, joining the plan would answer "installed" and activate nothing, so the plan is retired — kept
      * as the record of that install — and this request plans a fresh one.
+     *
+     * The same goes for a finished plan whose artifact is not this one. The version and the listed digest can stay the
+     * same while the bytes change: a package listed by a path on this machine is installed from a snapshot of its files,
+     * and files edited since make a new snapshot. Joining would answer "installed" for bytes that were never installed,
+     * so the new snapshot gets its own plan and generation. A git or npm fetch lands at the same cache path for the same
+     * source, so its artifact never differs here and it joins as before.
      */
-    if (existing && isFinished(existing.state) && !generationRuns(deps, existing.candidate, plan.targetNodeId)) {
+    if (
+      existing &&
+      isFinished(existing.state) &&
+      (!generationRuns(deps, existing.candidate, plan.targetNodeId) ||
+        parseJson<InstallPlan["candidate"]>(existing.candidate, "install_plans.candidate").artifactUrl !== plan.candidate.artifactUrl)
+    ) {
       deps.db.prepare("UPDATE install_plans SET state = 'retired' WHERE plan_id = ?").run(existing.plan_id);
       savePlan(deps, plan);
       return { status: "created" as const, planId: plan.planId };
@@ -116,16 +128,21 @@ function isFinished(state: string): boolean {
   return state === "active" || state === "continuation_ready";
 }
 
-/** Whether the generation a plan's candidate names is the one active for its package on this node. */
+/**
+ * Whether the generation a plan's candidate names is the one active for its package on this node. For a local package
+ * that also means the same snapshot: the version and listed digest can stay the same while the bytes differ.
+ */
 function generationRuns(deps: InstallDeps, candidateJson: string, nodeId: string): boolean {
   const candidate = parseJson<InstallPlan["candidate"]>(candidateJson, "install_plans.candidate");
-  const running = oneRow<{ version: string; digest: string }>(
+  const running = oneRow<{ version: string; digest: string; document: string }>(
     deps.db,
-    "SELECT version, digest FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
+    "SELECT version, digest, document FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
     candidate.id,
     nodeId,
   );
-  return running !== undefined && running.version === candidate.version && running.digest === candidate.digest;
+  if (running === undefined || running.version !== candidate.version || running.digest !== candidate.digest) return false;
+  const { snapshotDigest } = parseJson<{ snapshotDigest?: string }>(running.document, "package_generations.document");
+  return snapshotDigest === undefined || artifactIsSnapshot(candidate.artifactUrl, snapshotDigest);
 }
 
 export function getPlan(deps: InstallDeps, planId: string): InstallRecord | undefined {
@@ -233,6 +250,8 @@ export function activateGeneration(
     uiOnlyFacets: string[];
     /** The widget ids the package declares, kept on the generation for uninstall; see `PackageGeneration.widgetIds`. */
     widgetIds?: readonly string[];
+    /** For a local install: the digest of the snapshot it runs from; see `PackageGeneration.snapshotDigest`. */
+    snapshotDigest?: string;
     nativeExtensionChanged: boolean;
     skillOrPromptChanged: boolean;
   },
@@ -266,6 +285,7 @@ export function activateGeneration(
       uiOnlyFacets: input.uiOnlyFacets,
       grantedCapabilities: input.currentPlan.grantedCapabilities,
       ...(input.widgetIds === undefined ? {} : { widgetIds: [...input.widgetIds] }),
+      ...(input.snapshotDigest === undefined ? {} : { snapshotDigest: input.snapshotDigest }),
       // Carried from the plan rather than re-derived: what is running and what was consented to are two rows.
       ...(input.currentPlan.lockRef === undefined
         ? {}

@@ -1,11 +1,12 @@
 import { join } from "node:path";
 
-import { nowInstant, type DirectoryEntry } from "@clarkcant/contracts";
+import { nowInstant, type DirectoryEntry, type PackageGeneration } from "@clarkcant/contracts";
 import {
   decideExecution,
   declaredWidgetIds,
   directoryIndexPath,
   listInstalledPackages,
+  packageGenerations,
   readDirectoryIndex,
   readExecutionPolicy,
   recordEffectExecution,
@@ -88,12 +89,19 @@ function entriesOf(entries: readonly DirectoryEntry[], packageId: string): Direc
  * uninstalling 2.0 must take that instance offline too. What the manifest declares rather than what loads: a widget
  * whose definition this node cannot read still has instances, and they must go offline with the rest. A version
  * whose files are not on this node adds nothing here; core adds the ids its generation recorded at install.
+ *
+ * A version listed by a path on this machine is read from what a generation of it installed: its snapshot, or the path
+ * for a generation installed before snapshots. Never from the path otherwise, whose files may have been edited since
+ * and could name another package's widgets. A local version never installed here has no instances to reach.
  */
-function widgetIdsOf(entries: readonly DirectoryEntry[], cacheRoot: string): string[] {
+function widgetIdsOf(entries: readonly DirectoryEntry[], cacheRoot: string, generations: readonly PackageGeneration[]): string[] {
   const ids = new Set<string>();
   for (const entry of entries) {
-    const source = resolveLocalSource(entry, cacheRoot);
-    if (source.kind === "local") for (const id of declaredWidgetIds(source.path)) ids.add(id);
+    const installs = entry.source.kind === "local" ? generations.filter((generation) => generation.version === entry.version) : [undefined];
+    for (const generation of installs) {
+      const source = resolveLocalSource(entry, cacheRoot, generation);
+      if (source.kind === "local") for (const id of declaredWidgetIds(source.path)) ids.add(id);
+    }
   }
   return [...ids];
 }
@@ -143,9 +151,9 @@ export function changePackage(
 
   const index = readDirectoryIndex(directoryIndexPath(process.env));
   const entries = index.kind === "configured" ? entriesOf(index.entries, input.packageId) : [];
-  const widgetIds = widgetIdsOf(entries, join(deps.runtime.dataDir, "package-cache"));
-  const available = availableIn(entries);
   const core = installDeps(deps);
+  const widgetIds = widgetIdsOf(entries, join(deps.runtime.dataDir, "package-cache"), packageGenerations(core, input.packageId));
+  const available = availableIn(entries);
 
   // Native code is judged on the generation that was running before an uninstall and on the one running after a
   // restore or rollback: either way, it is the code Pi has to load or unload.

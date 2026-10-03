@@ -610,9 +610,69 @@ describe("a package listed by a path on this machine", () => {
       expect(executedDescriptions()).toEqual([`install ${PACKAGE_ID}@${VERSION} files ${onDisk()}`]);
     });
 
-    it("claims no checked files for a client that named the identity itself and showed nothing", async () => {
+    it("records the snapshot it runs from even for a client that named the identity itself and showed nothing", async () => {
+      // The plan keeps the identity the client named; the record names the copy of the files that runs.
       expect((await install({ localDigest: "sha256:client-chosen" })).status).toBe(200);
-      expect(executedDescriptions()).toEqual([`install ${PACKAGE_ID}@${VERSION}`]);
+      expect(executedDescriptions()).toEqual([`install ${PACKAGE_ID}@${VERSION} files ${onDisk()}`]);
+    });
+
+    /** A file of the installed package, as the node serves it. */
+    async function served(relativePath: string): Promise<{ status: number; text?: string }> {
+      const response = await call("GET", `/packages/${PACKAGE_ID}/${VERSION}/files/${relativePath}`);
+      return response.binary === undefined ? { status: response.status } : { status: response.status, text: Buffer.from(response.binary.bytes).toString("utf8") };
+    }
+
+    const snapshotDigests = (): (string | undefined)[] =>
+      allRows<{ document: string }>(
+        services.runtime.db,
+        "SELECT document FROM package_generations WHERE package_id = ? ORDER BY rowid",
+        PACKAGE_ID,
+      ).map((row) => (JSON.parse(row.document) as { snapshotDigest?: string }).snapshotDigest);
+
+    it("serves the copy it installed, not the files edited on the path since", async () => {
+      const original = JSON.stringify({ id: PACKAGE_ID });
+      expect((await install({ contentDigest: onDisk() })).status).toBe(200);
+      expect(await served("widget.json")).toEqual({ status: 200, text: original });
+
+      writeFileSync(join(localDir, "widget.json"), JSON.stringify({ id: PACKAGE_ID, changed: true }));
+      writeFileSync(join(localDir, "extra.txt"), "added after the install");
+      expect(await served("widget.json")).toEqual({ status: 200, text: original });
+      expect((await served("extra.txt")).status).toBe(404);
+
+      // Removing the path entirely changes nothing either: the node holds its own copy.
+      rmSync(localDir, { recursive: true, force: true });
+      expect(await served("widget.json")).toEqual({ status: 200, text: original });
+    });
+
+    it("records on the generation the copy it runs from, the same files the record names", async () => {
+      const digest = onDisk();
+      expect((await install()).status).toBe(200);
+      expect(snapshotDigests()).toEqual([digest]);
+      expect(executedDescriptions()).toEqual([`install ${PACKAGE_ID}@${VERSION} files ${digest}`]);
+      const listedPackages = await call("GET", "/packages");
+      expect(JSON.stringify(listedPackages.body)).toContain(digest);
+    });
+
+    it("installs edited files again as a new copy and a new generation, and serves the new files", async () => {
+      expect((await install()).status).toBe(200);
+      const first = onDisk();
+
+      const edited = JSON.stringify({ id: PACKAGE_ID, changed: true });
+      writeFileSync(join(localDir, "widget.json"), edited);
+      const second = onDisk();
+      expect(second).not.toBe(first);
+      expect((await install({ contentDigest: second })).status).toBe(200);
+
+      expect(snapshotDigests()).toEqual([first, second]);
+      expect(await served("widget.json")).toEqual({ status: 200, text: edited });
+      expect(executedDescriptions()).toEqual([
+        `install ${PACKAGE_ID}@${VERSION} files ${first}`,
+        `install ${PACKAGE_ID}@${VERSION} files ${second}`,
+      ]);
+
+      // The same files installed once more are the same install, not a third generation.
+      expect((await install({ contentDigest: second })).status).toBe(200);
+      expect(snapshotDigests()).toEqual([first, second]);
     });
 
     it("lists no content digest for files too large to verify, and refuses to install them", async () => {

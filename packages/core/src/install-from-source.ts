@@ -80,6 +80,11 @@ export interface InstallFromSourceInput {
    * the plan or its consent: it names what the package ships, not anything it is allowed to do.
    */
   widgetIds?: readonly string[];
+  /**
+   * For a package listed by a path on this machine: the digest of the snapshot the caller copied its files into and
+   * installs from. Recorded on the generation, so everything that reads the installed package reads that copy.
+   */
+  snapshotDigest?: string;
 }
 
 export type InstallOutcome =
@@ -268,6 +273,7 @@ export function installFromSource(deps: InstallDeps, input: InstallFromSourceInp
       .filter((facet) => facet.isolation === "isolated-ui" || facet.isolation === "declarative")
       .map((facet) => facet.facetKind),
     ...(input.widgetIds === undefined ? {} : { widgetIds: input.widgetIds }),
+    ...(input.snapshotDigest === undefined ? {} : { snapshotDigest: input.snapshotDigest }),
     nativeExtensionChanged: input.isolationPlan.some((facet) => facet.isolation === "trusted-native"),
     skillOrPromptChanged: input.isolationPlan.some((facet) => facet.facetKind === "skills" || facet.facetKind === "prompts"),
   });
