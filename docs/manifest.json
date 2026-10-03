@@ -100,13 +100,13 @@
     },
     {
       "path": "platform-smoke.md",
-      "bytes": 4767,
-      "sha256": "e62e58e0361083f544717c14fdd45f1f5a70e4818a071e09fb67ed9896869459"
+      "bytes": 7582,
+      "sha256": "9d929e6a1f9327a7833f62a92041311359723342ec7a968ad28878d3fe0f3b9c"
     },
     {
       "path": "platform-smoke.vi.md",
-      "bytes": 5626,
-      "sha256": "626b1f50f25e4d5de0f9ae446c1c1ff779f7da34caaecc9d37819c1c4af76c38"
+      "bytes": 8857,
+      "sha256": "983b2f6dd1279a075889937a7d89ea690f14e27d2ea2838154185abe3651cfad"
     },
     {
       "path": "research-and-decisions.md",

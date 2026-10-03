@@ -81,6 +81,51 @@ differs from macOS and Linux.
   link back to the command, and it is not found. An example is the grandchild of a shim whose child exited first. A Job
   Object would reach it, but Node cannot create one without a native addon.
 
+## Service containers on macOS and Windows: covered by manual platform smoke
+
+A package's service runs only inside a Linux container (`apps/runtime/src/service-container.ts`). CI checks that
+boundary in real containers on Linux under three engines: rootful Docker (the `verify` job), rootless Docker
+(`service container (rootless docker)`) and rootless Podman (`service container (rootless podman)`). The same suite runs
+on the macOS and Windows CI runners too, but there it finds no engine and skips its real-container tests. So on those
+two systems the engines are **covered by manual platform smoke**, not by CI.
+
+**Why not in CI.** Docker Desktop and Podman machine both run Linux containers inside a Linux virtual machine. The
+GitHub-hosted macOS runners run on Apple silicon without nested virtualization, so that virtual machine cannot start.
+The GitHub-hosted Windows runner's Docker runs Windows containers only, and WSL 2, which both engines use on Windows,
+needs nested virtualization the hosted runner does not provide. Self-hosted runners are not used for this.
+
+**Missing condition: a macOS or Windows machine with Docker Desktop or Podman machine installed.**
+
+Run the suite once per engine. Only one engine may answer at a time. The node tries Docker before Podman, so quit
+Docker Desktop before the Podman run.
+
+```bash
+# Once: install
+corepack enable
+pnpm install
+
+# Docker Desktop. On Windows, switch it to Linux containers first.
+docker version --format '{{.Server.Os}}'     # expected: linux
+pnpm exec vitest run --reporter=verbose apps/runtime/test/service-container-engine.spec.ts apps/runtime/test/service-container.spec.ts
+
+# Podman machine, with Docker Desktop quit
+podman machine init                          # once
+podman machine start
+podman info --format '{{.Host.Security.Rootless}}'   # expected: true
+docker version                               # expected: fails, so the node finds Podman
+CC_EXPECT_ROOTLESS_PODMAN=1 pnpm exec vitest run --reporter=verbose apps/runtime/test/service-container-engine.spec.ts apps/runtime/test/service-container.spec.ts
+```
+
+On Windows PowerShell, set the variable before the last command with `$env:CC_EXPECT_ROOTLESS_PODMAN = "1"`, and
+remove it afterwards with `Remove-Item Env:CC_EXPECT_ROOTLESS_PODMAN`.
+
+Expected: every test in "a service container on a real engine", "a service's provider key on a real engine" and "the
+media render package's service on a real engine" passes, with none skipped. The two resource-limit tests run only when
+the engine reports that it enforces limits. If they are skipped, record that too.
+
+Record in the PR or in this section: the operating system and its version, the engine and its version, and the verbose
+test output. A failure is a finding for its own change. Do not adjust the test to fit the machine.
+
 ## Why there is no skipped test
 
 A `skip` test on this machine would make the test suite say "green" while the thing it was meant to check has never

@@ -397,6 +397,64 @@ jobs:
         if: failure()
         run: tail -n 100 "$RUNNER_TEMP/dockerd-rootless.log" || true
 
+  # The same suite under rootless Podman, the other engine a node runs services on. Podman ships on the runner and runs
+  # rootless as the runner's user with no daemon; its containers keep the person's id (`--userns keep-id`) instead of
+  # being given id 0 as under rootless Docker, so the private folder is written a different way and is checked again
+  # here, along with the media render package's service reading a picked file in a container with no network. Docker
+  # is found before Podman, so its daemon is stopped first and the suite is told to expect Podman: a Docker that still
+  # answered would otherwise be the engine every test ran on.
+  service-rootless-podman:
+    name: service container (rootless podman)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.19"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Ubuntu 24.04 lets AppArmor refuse unprivileged user namespaces, which rootless Podman is made of, so that
+      # restriction is lifted for this job only. Lingering starts the runner user's own systemd session, as on a desktop
+      # where the person is logged in: Podman puts each container in a systemd scope there, and only a delegated cgroup
+      # lets it apply a profile's memory and CPU limits.
+      - name: Set up rootless Podman
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo systemctl disable --now docker.service docker.socket
+          grep -q "^$(whoami):" /etc/subuid || echo "$(whoami):100000:65536" | sudo tee -a /etc/subuid
+          grep -q "^$(whoami):" /etc/subgid || echo "$(whoami):100000:65536" | sudo tee -a /etc/subgid
+
+          sudo loginctl enable-linger "$(whoami)"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 30); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+
+          podman system migrate
+          podman version
+          podman info --format '{{.Host.Security.Rootless}} {{json .Host.CgroupControllers}} {{.Host.CgroupManager}}'
+          if docker version > /dev/null 2>&1; then echo "Docker still answers; the suite would run on it" >&2; exit 1; fi
+
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+
+      - name: Service container suite on rootless Podman
+        env:
+          CC_EXPECT_ROOTLESS_PODMAN: "1"
+        # Verbose, so the log names each test that ran on Podman and each one skipped.
+        run: >-
+          pnpm exec vitest run --reporter=verbose apps/runtime/test/service-container-engine.spec.ts
+          apps/runtime/test/service-container.spec.ts
+
   # The desktop shell's own behaviour - the bounds it reports, the floor it
   # enforces, whether it is always on top -
   # can only be read back from a real window. Electron needs a display and a set

@@ -56,6 +56,8 @@ describe("the service container's command line", () => {
     expect(flag(args, "--label")).toBe("clarkcant.node=node_a");
     expect(args.at(-3)).toBe(SERVICE_IMAGE);
     expect(SERVICE_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/);
+    // Fully qualified, so Podman does not resolve it through the host's short-name configuration.
+    expect(SERVICE_IMAGE).toMatch(/^docker\.io\/library\/node@/);
     expect(args.slice(-2)).toEqual(["node", "/pkg/service/server.mjs"]);
   });
 
