@@ -590,6 +590,34 @@ function start() {
     say("applied", `Đã thay đoạn đã chọn. Thay đổi chưa được lưu vào tệp${undoable ? "; Ctrl+Z để hoàn tác" : ""}.`);
   });
 
+  /*
+   * The action this widget offers Clark (`offeredActions` in widget.json): replace the selected text. The host has
+   * already checked the input against the declared schema and the person's policy. The widget acts only on a selection
+   * Clark could read in full — the same rule as the ask button — and, when Clark says what it read, only while the
+   * selection still is that text. It goes in through the browser's editing, so Ctrl+Z takes it back like a typed change.
+   */
+  if (typeof api.actions.offer === "function") {
+    api.actions.offer("replaceSelection", (input) => {
+      if (busy || asking) throw new Error("EDITOR_BUSY: trình soạn thảo đang bận; không có gì thay đổi");
+      const ask = askableSelection(doc, selection);
+      if (!ask.ok) throw new Error(`NO_USABLE_SELECTION: ${TEXT.askReason[ask.reason] || "không có đoạn chọn dùng được"}; không có gì thay đổi`);
+      if (typeof input.expected === "string" && input.expected !== ask.text) {
+        throw new Error("SELECTION_CHANGED: đoạn đang chọn không còn là đoạn Clark đã đọc; không có gì thay đổi");
+      }
+      const replacement = String(input.text ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, "");
+      const applied = applyReplacement(doc, ask, replacement);
+      if (!applied.ok) throw new Error("SELECTION_CHANGED: đoạn đang chọn đã thay đổi; không có gì thay đổi");
+      const undoable = insertReplacement(ask, replacement, applied.doc.draft);
+      selection = applied.selection;
+      textarea.setSelectionRange(selection.start, selection.end);
+      render();
+      publish();
+      const said = `Clark đã thay đoạn đã chọn. Thay đổi chưa được lưu vào tệp${undoable ? "; Ctrl+Z để hoàn tác" : ""}.`;
+      say("applied", said);
+      return said;
+    });
+  }
+
   dismissButton.addEventListener("click", () => {
     proposalPanel.hidden = true;
     proposal = undefined;

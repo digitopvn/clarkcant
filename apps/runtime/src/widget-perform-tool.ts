@@ -200,8 +200,11 @@ export function createPerformWidgetActionTool(deps: PerformWidgetActionToolDeps)
   };
 }
 
+/** What placing a widget reads and writes: the node's records, its widgets, and the services bindings are checked against. */
+type PlaceServices = Pick<NodeServices, "runtime" | "conductor" | "serviceHost">;
+
 export interface PlaceWidgetToolDeps {
-  services: () => NodeServices;
+  services: () => PlaceServices;
   conversationId: string;
   /** The message this turn's answer is written as; a widget is captured against it. */
   messageId: () => string | undefined;
@@ -235,7 +238,7 @@ function buttonsOf(value: unknown): ButtonRequest[] | string {
 }
 
 /** The widgets of packages this node runs now, each read from its running generation. */
-function installedWidgets(services: NodeServices): { widgetId: string; summary: string }[] {
+function installedWidgets(services: PlaceServices): { widgetId: string; summary: string }[] {
   const node = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId };
   const ids = new Set(activeGenerations(node).flatMap((generation) => [...(generation.widgetIds ?? [])]));
   const rows: { widgetId: string; summary: string }[] = [];
@@ -315,7 +318,7 @@ export function createPlaceWidgetTool(deps: PlaceWidgetToolDeps): ToolDefinition
  * does not compile.
  */
 export function placeWidget(
-  services: NodeServices,
+  services: PlaceServices,
   deps: Pick<PlaceWidgetToolDeps, "messageId">,
   params: Record<string, unknown>,
 ): { text: string; hostBlocks?: Record<string, unknown>[] } {
