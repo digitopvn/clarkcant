@@ -54,6 +54,28 @@ export const riskLaneSchema = z.enum(["isolated-ui", "service", "declarative", "
 export type RiskLane = z.infer<typeof riskLaneSchema>;
 
 /**
+ * Which of a package's widgets keep a fixed look rather than following the person's appearance, as the publisher
+ * claims it. A discovery claim shown before install: the installed, digest-checked widget definition's
+ * `appearanceMode` is what the host applies. One schema for the directory entry and the marketplace card that
+ * repeats it, so the card can never be stricter than the listing it shows.
+ */
+export const widgetAppearanceClaimsSchema = z
+  .array(z.strictObject({ id: z.string().min(1).max(160), mode: z.enum(["adaptive", "fixed"]) }))
+  .max(64);
+export type WidgetAppearanceClaims = z.infer<typeof widgetAppearanceClaimsSchema>;
+
+/**
+ * The longest version a listing may carry. The marketplace card repeats the version and Install sends it back as it
+ * was listed, so it cannot be shortened on the way: a listing whose version is longer is refused here instead, where
+ * the reason can be named, rather than dropping the card that would have shown it. `semverSchema` itself stays
+ * unbounded because installed records and protocol versions already validate against it.
+ */
+export const DIRECTORY_VERSION_MAX = 80;
+export const directoryVersionSchema = semverSchema.max(DIRECTORY_VERSION_MAX, {
+  error: `must be a semantic version of at most ${String(DIRECTORY_VERSION_MAX)} characters`,
+});
+
+/**
  * The directory entry.
  *
  * The fields are the ones `docs/widget-development.md` §18 requires. `riskTier` is not derived from the publisher's
@@ -62,7 +84,7 @@ export type RiskLane = z.infer<typeof riskLaneSchema>;
  */
 export const directoryEntrySchema = z.strictObject({
   packageId: z.string().min(1).max(160),
-  version: semverSchema,
+  version: directoryVersionSchema,
   displayName: z.string().min(1).max(200),
   description: z.string().min(1).max(600),
   /**
@@ -80,7 +102,7 @@ export const directoryEntrySchema = z.strictObject({
   preview: z.strictObject({ imageUrl: z.string().min(1).max(1000).optional(), videoUrl: z.string().min(1).max(1000).optional() }),
   facets: z.array(facetKindSchema).min(1).max(64),
   /** Optional discovery claims; the installed, digest-checked widget definition remains authoritative. */
-  widgetAppearance: z.array(z.strictObject({ id: z.string().min(1).max(160), mode: z.enum(["adaptive", "fixed"]) })).max(64).optional(),
+  widgetAppearance: widgetAppearanceClaimsSchema.optional(),
   /**
    * Each facet with the lane it runs in.
    *
