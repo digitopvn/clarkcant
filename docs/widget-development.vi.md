@@ -1250,12 +1250,22 @@ tên ảnh theo cách con người đếm. Gallery hay carousel không nối dâ
 version 1 được migrate thành paused tại 0). Các lần ghi vị trí đi qua một bộ gộp playback dùng chung
 ([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), chính bộ mà trình phát âm thanh
 (§8.14) dùng lại: pause, seek và kết thúc ghi ngay; trong khi phát liên tục thì tối đa mỗi
-`MEDIA_PLAYBACK_WRITE_INTERVAL_MS` (ba giây) mới ghi một lần. Mỗi lần ghi là một view action có binding, nên nó cũng ghi
-một action invocation và trả về timeline của cuộc hội thoại; một đường chỉ-ghi-state nhẹ hơn sẽ cần route mới và không
-thuộc thay đổi này. Việc ghi khuếch đại đó, cùng thời gian giữ các bản ghi invocation, được theo dõi ở [#380](https://github.com/digitopvn/clarkcant/issues/380). Khi trang bị ẩn, player ghi vị trí hiện tại; khi rời trang hoặc player bị gỡ, nó tự ghi trạng thái
-dừng tại chỗ đã dừng. Lần ghi khi rời trang được gửi ngay với `keepalive`, không phải chờ sau một lần ghi đang chạy, và
-dùng revision mà lần ghi đó sẽ tạo ra. Mọi lần ghi này đều là best-effort: trang đang đóng vẫn có thể không gửi xong
-request, và lần ghi khi rời trang bị từ chối nếu lần ghi trước nó bị từ chối. Vì vậy node
+`MEDIA_PLAYBACK_WRITE_INTERVAL_MS` (ba giây) mới ghi một lần. Một giờ phát vẫn là khoảng 1.200 lần ghi, nên player gửi
+chúng bằng biến thể chỉ-ghi-state của lời gọi action (`variant: "view-state"` trên `POST …/widgets/{instanceId}/actions`,
+[#380](https://github.com/digitopvn/clarkcant/issues/380)). Node kiểm tra nó y như kiểm tra view action — chủ sở hữu,
+binding, revision, digest của binding, input — lưu state có giới hạn, và chỉ trả về
+`{ variant, duplicate, instanceId, revision, stateRevision, state }`. Nó không tăng revision của instance, không đánh dấu
+snapshot lịch sử là đã cũ, không dựng lại timeline, và trang không render lại gì vì nó. Binding giữ một bản ghi
+invocation, là lần ghi mới nhất, bị thay bởi mỗi lần ghi sau: thử lại đúng lần ghi đó thì nhận lại kết quả của nó, dùng lại
+id đó với input khác bị từ chối bằng `INVOCATION_KEY_REUSED`, và một giờ phát chỉ để lại một dòng trong
+`action_invocations` thay vì 1.200. Biến thể này chỉ dành cho state phát của `canvas.video@1` và `canvas.audio@1`: mọi
+binding khác, kể cả lựa chọn trong gallery, bị từ chối bằng `UNSUPPORTED_ACTION`, một variant lạ bị từ chối bằng
+`400 INVALID_SCHEMA`, còn các action có tác động giữ nguyên ledger, provenance và bản ghi của chúng. Một frame cô lập không
+gửi được nó: cầu nối của frame dựng lời gọi thường, và state riêng của frame đi qua `…/state`. Khi trang bị ẩn, player
+ghi vị trí hiện tại; khi rời trang hoặc player bị gỡ, nó tự ghi trạng thái dừng tại chỗ đã dừng. Lần ghi khi rời trang
+được gửi ngay với `keepalive`, không phải chờ sau một lần ghi đang chạy; lần ghi chỉ-state không làm đổi revision, nên nó
+được kiểm tra theo revision trang đang giữ. Mọi lần ghi này đều là best-effort: trang đang đóng vẫn có thể không gửi xong
+request. Vì vậy node
 cũng thôi tin một "playing" đã lưu khi nó cũ hơn `MEDIA_PLAYING_FRESH_MS` (hai khoảng ghi cộng hai giây dư, tính từ
 `updated_at` của dòng state): khi đó semantic document báo video dừng ở vị trí đã lưu cuối cùng. Một lần ghi playback bị
 từ chối được nói ngay bên cạnh player, player không bị tua đi, và lần ghi kế tiếp vẫn được gửi dù player chưa di chuyển.
@@ -1273,7 +1283,9 @@ cuộc hội thoại mở lại với state đã lưu.
 Unit test nằm ở [media-view.spec.ts](../packages/contracts/test/media-view.spec.ts) (gồm khoảng thời gian còn tin
 "playing"),
 [playback-coalescer.spec.ts](../packages/conversation-client/test/playback-coalescer.spec.ts) (gồm số lần ghi trong một phút
-phát liên tục và các lần ghi khi trang bị ẩn, bị rời đi hoặc player bị gỡ),
+phát liên tục, các lần ghi khi trang bị ẩn, bị rời đi hoặc player bị gỡ, và biến thể chỉ-state mà client gửi),
+[view-state-writes.spec.ts](../apps/runtime/test/view-state-writes.spec.ts) (phát liên tục không dựng timeline và không
+đánh dấu snapshot nào là đã cũ, chỉ một bản ghi invocation sau một giờ phát giả lập, và cùng một cổng kiểm tra),
 [media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts) (gồm thông báo từ chối),
 [widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts) (gồm một "playing" đã cũ, một gallery được đặt
 không có binding, và giới hạn ở props lớn nhất được chấp nhận) và

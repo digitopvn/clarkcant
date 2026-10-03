@@ -286,6 +286,18 @@ export interface ActionInvocationResult {
   workflow?: ActionWorkflowReport;
 }
 
+/** The answer to a state-only view write: the state the node now holds, and nothing to re-render. */
+export interface ViewStateWriteResult {
+  variant?: "view-state";
+  duplicate: boolean;
+  instanceId: string;
+  revision: number;
+  stateRevision: number;
+  state: Record<string, unknown>;
+  /** Sent only by a node from before the variant, which handled the write as an ordinary action. */
+  timeline?: Timeline;
+}
+
 /** What a workflow action's run came to, step by step (`WorkflowRunReport` on the node). */
 export interface ActionWorkflowReport {
   completed: boolean;
@@ -1452,6 +1464,33 @@ export class GatewayClient {
       "POST",
       `/conversations/${conversationId}/widgets/${instanceId}/actions`,
       { instanceId, ...invocation },
+      options.keepalive === true ? { keepalive: true } : {},
+    );
+  }
+
+  /**
+   * Write a host-held player's playback state through the state-only variant of the action call.
+   *
+   * The node checks it as it checks a view action and answers with the state alone: the instance revision does not move
+   * and no timeline comes back, so the page has nothing to re-render. Only the host's own players send it; a frame's
+   * bridge has no way to. A node from before the variant answers as it does an ordinary call, with a timeline.
+   */
+  writeViewState(
+    conversationId: string,
+    instanceId: string,
+    invocation: {
+      actionBindingId: string;
+      expectedRevision: number;
+      expectedBindingDigest: string;
+      input: Record<string, unknown>;
+      invocationId: string;
+    },
+    options: { keepalive?: boolean } = {},
+  ): Promise<ViewStateWriteResult> {
+    return this.#call(
+      "POST",
+      `/conversations/${conversationId}/widgets/${instanceId}/actions`,
+      { instanceId, ...invocation, variant: "view-state" },
       options.keepalive === true ? { keepalive: true } : {},
     );
   }

@@ -258,8 +258,11 @@ export interface RendererProps {
   dataset?: RendererDataset | undefined;
   state?: Record<string, unknown> | undefined;
   /** Reports the revision the user saw, so a stale action is refused server-side. */
-  /** `leaving` marks a write sent as the page goes away: the host sends it at once, with `keepalive`. */
-  onAction?: ((action: string, payload: Record<string, unknown>, options?: { leaving?: boolean }) => void) | undefined;
+  /**
+   * `leaving` marks a write sent as the page goes away: the host sends it at once, with `keepalive`. `stateOnly` marks a
+   * player's playback state, which the host sends as the state-only write: nothing is re-rendered for it.
+   */
+  onAction?: ((action: string, payload: Record<string, unknown>, options?: { leaving?: boolean; stateOnly?: boolean }) => void) | undefined;
   onStateChange?: ((patch: Record<string, unknown>) => void) | undefined;
   /**
    * Resolves an imported image to a fetchable URL, or `undefined` while it is not available.
@@ -2477,7 +2480,8 @@ function useMediaPlayback<E extends HTMLMediaElement>(
   const playback = readMediaPlayback(state);
   // Made once for the player's life: it remembers what was last written, so a new one each render would forget it.
   const [coalescer] = useState<PlaybackCoalescer>(() => createPlaybackCoalescer({
-    write: (next, { leaving }) => callbackRef.current?.(MEDIA_VIEW_OPERATION, { ...next }, leaving ? { leaving: true } : undefined),
+    // Where the player is changes nothing else on the page, so it goes as the state-only write.
+    write: (next, { leaving }) => callbackRef.current?.(MEDIA_VIEW_OPERATION, { ...next }, leaving ? { leaving: true, stateOnly: true } : { stateOnly: true }),
   }));
   // Where the player last said it was, kept for when it goes away: by then the element itself may be gone.
   const lastKnown = useRef<MediaPlaybackState | undefined>(undefined);

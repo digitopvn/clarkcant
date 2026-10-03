@@ -521,6 +521,14 @@ generationId, state, pendingCapabilities, deniedCapabilities }`. Quyết định
 báo rằng chưa có gì được cài. Mọi kết quả (`asked`, `installed`, `denied`, `expired`, `refused` hoặc `failed`, kèm mã)
 đều được ghi thành một sự kiện `package.install-approval`.
 
+Lời gọi action của widget, `POST /conversations/{id}/widgets/{instanceId}/actions`, nhận một `variant` tuỳ chọn
+(`actionInvocationSchema` trong `packages/contracts/src/widgets.ts`). Không có `variant` là lời gọi thường, được trả về
+kết quả cùng timeline của cuộc hội thoại. `"view-state"` là lần ghi chỉ-state cho trạng thái phát của trình phát do host
+giữ (`canvas.video@1`, `canvas.audio@1`): cùng các bước kiểm tra chủ sở hữu, binding, revision, digest và input, rồi trả
+`200 { variant, duplicate, instanceId, revision, stateRevision, state }`, không kèm timeline, không đổi revision của
+instance và chỉ giữ một bản ghi invocation cho mỗi binding. Mọi binding khác nhận `400 UNSUPPORTED_ACTION`, và mọi giá trị
+`variant` khác nhận `400 INVALID_SCHEMA`. Xem [phát triển widget §8.11](widget-development.vi.md#811-widget-media-và-trạng-thái-semantic).
+
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
 

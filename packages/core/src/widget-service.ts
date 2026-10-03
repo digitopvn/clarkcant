@@ -66,6 +66,7 @@ import {
   BOARD_APPROVAL_OPERATION,
   BOARD_RESOLVE_OPERATION,
   BOARD_ACKNOWLEDGE_OPERATION,
+  MEDIA_PLAYER_DEFINITION_IDS,
   MEDIA_STATE_VERSION,
   MEDIA_VIEW_OPERATION,
   MAP_ID,
@@ -1289,24 +1290,24 @@ function readActionRecord(db: Database, invocationId: string): ActionRecord | un
   }
 }
 
-/**
- * Invoke a bound view action.
- *
- * The order of the checks is the whole design:
- *
- * 1. **Idempotency first.** A duplicate arrives *after* the first call bumped the revision, so a
- *    revision check placed before this would refuse the retry as stale instead of returning the
- *    outcome it already produced (T43).
- * 2. **Authorization.** The principal on the instance, not the one in the request body.
- * 3. **Binding shape.** Only view operations reach the write path.
- * 4. **Revision and digest.** A click on a view the user never saw is refused rather than applied
- *    to a target they did not look at.
- *
- * Everything that changes state then happens in one transaction: the state row, the instance
- * revision, the staleness of older snapshots, and — for a save — the pin. A crash between those
- * writes would leave a surface whose revision says one thing and whose state says another.
- */
-export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequest): MiniAppActionOutcome {
+/** What one invocation asks for, so the same id arriving with anything else in it is told apart from a retry. */
+function invocationDigest(request: MiniAppActionRequest): string {
+  return payloadDigest(
+    asJsonValue({
+      instanceId: request.instanceId,
+      actionBindingId: request.actionBindingId,
+      expectedRevision: request.expectedRevision,
+      expectedBindingDigest: request.expectedBindingDigest,
+      input: request.input,
+    }),
+  );
+}
+
+/** The instance and the binding a request names, when the instance is the requester's and holds the binding. */
+function ownedBinding(
+  deps: WidgetDeps,
+  request: MiniAppActionRequest,
+): { ok: true; instance: WidgetInstance; binding: ActionBinding } | Extract<MiniAppActionOutcome, { ok: false }> {
   const instance = getInstance(deps, request.instanceId);
   if (instance === undefined) {
     return { ok: false, code: "INSTANCE_UNKNOWN", message: `widget instance ${request.instanceId} does not exist` };
@@ -1327,6 +1328,30 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
       message: `action binding ${request.actionBindingId} is not on this instance`,
     };
   }
+  return { ok: true, instance, binding };
+}
+
+/**
+ * Invoke a bound view action.
+ *
+ * The order of the checks is the whole design:
+ *
+ * 1. **Idempotency first.** A duplicate arrives *after* the first call bumped the revision, so a
+ *    revision check placed before this would refuse the retry as stale instead of returning the
+ *    outcome it already produced (T43).
+ * 2. **Authorization.** The principal on the instance, not the one in the request body.
+ * 3. **Binding shape.** Only view operations reach the write path.
+ * 4. **Revision and digest.** A click on a view the user never saw is refused rather than applied
+ *    to a target they did not look at.
+ *
+ * Everything that changes state then happens in one transaction: the state row, the instance
+ * revision, the staleness of older snapshots, and — for a save — the pin. A crash between those
+ * writes would leave a surface whose revision says one thing and whose state says another.
+ */
+export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequest): MiniAppActionOutcome {
+  const owned = ownedBinding(deps, request);
+  if (!owned.ok) return owned;
+  const { instance, binding } = owned;
   if (binding.proposal.kind !== "view") {
     /*
      * Whether this needs an approval is the policy's decision, not a flag frozen when the binding was
@@ -1371,15 +1396,7 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
     };
   }
 
-  const digest = payloadDigest(
-    asJsonValue({
-      instanceId: request.instanceId,
-      actionBindingId: request.actionBindingId,
-      expectedRevision: request.expectedRevision,
-      expectedBindingDigest: request.expectedBindingDigest,
-      input: request.input,
-    }),
-  );
+  const digest = invocationDigest(request);
 
   const prior = readActionRecord(deps.db, request.invocationId);
   if (prior !== undefined) {
@@ -1621,6 +1638,122 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
       state: body,
       ...(pinId === undefined ? {} : { pinId }),
     };
+  });
+}
+
+/** Where a binding's latest state-only write is recorded: one row per binding, replaced by the next write. */
+export function viewStateRecordKey(actionBindingId: string): string {
+  return `view-state:${actionBindingId}`;
+}
+
+interface ViewStateRecord {
+  digest: string;
+  invocationId: string;
+  stateOnly: true;
+  result: { revision: number; stateRevision: number; state: Record<string, unknown> };
+}
+
+function readViewStateRecord(db: Database, actionBindingId: string): ViewStateRecord | undefined {
+  const row = oneRow<{ outcome: string }>(db, "SELECT outcome FROM action_invocations WHERE invocation_id = ?", viewStateRecordKey(actionBindingId));
+  if (row === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(row.outcome) as ViewStateRecord;
+    return parsed?.stateOnly === true && typeof parsed.invocationId === "string" && typeof parsed.digest === "string" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Write a host-held player's playback state, and nothing else.
+ *
+ * A playing video or audio player writes where it is every few seconds, an hour of play is about 1,200 writes, and each
+ * of them only changes what the node says about the player. So this takes the same gate a view action does — the
+ * instance is the requester's, the binding is on it and is a `media.view` binding, the revision and the binding digest
+ * are the ones the page was shown, the input is checked against the player — and then stores the bounded state and
+ * stops:
+ *
+ * - the instance revision does not move, so the history snapshots of the widget stay current and the page's next write
+ *   is made at the revision it already holds;
+ * - the binding keeps one invocation record, the latest, replaced by each write: a retry of that write is answered
+ *   with its outcome, a reused id with different input is refused, and an hour of play leaves one row, not 1,200.
+ *
+ * Only the players take it: what they store is semantic state that no other widget, history entry or service reads as
+ * an effect. Every other write, and every effectful action, goes through `invokeMiniAppAction` or its own path with its
+ * ledger and records unchanged.
+ */
+export function writeViewState(deps: WidgetDeps, request: MiniAppActionRequest): MiniAppActionOutcome {
+  const owned = ownedBinding(deps, request);
+  if (!owned.ok) return owned;
+  const { instance, binding } = owned;
+  if (
+    binding.proposal.kind !== "view" ||
+    binding.proposal.operation !== MEDIA_VIEW_OPERATION ||
+    !MEDIA_PLAYER_DEFINITION_IDS.includes(instance.definitionRef.id)
+  ) {
+    return {
+      ok: false,
+      code: "UNSUPPORTED_ACTION",
+      message: "only a host-held player's playback state is written state-only; send this as an ordinary action",
+    };
+  }
+
+  const digest = invocationDigest(request);
+  const prior = readViewStateRecord(deps.db, binding.actionBindingId);
+  if (prior !== undefined && prior.invocationId === request.invocationId) {
+    if (prior.digest !== digest) {
+      return {
+        ok: false,
+        code: "INVOCATION_KEY_REUSED",
+        message: "the same invocation id was reused with different input; use a new id for a new operation",
+      };
+    }
+    return { ok: true, duplicate: true, instanceId: instance.instanceId, ...prior.result };
+  }
+
+  const validation = mediaViewPatch(instance, request.input);
+  if (!validation.ok) return { ok: false, code: "INVALID_INPUT", message: validation.message };
+
+  const precheck = precheckInvocation(deps, request);
+  if (!precheck.ok) {
+    return {
+      ok: false,
+      code: precheck.code === "REVISION_MISMATCH" ? "REVISION_MISMATCH" : "BINDING_STALE",
+      message: precheck.message,
+      currentRevision: instance.revision,
+    };
+  }
+
+  return transaction(deps.db, (): MiniAppActionOutcome => {
+    const at = deps.now();
+    const current = readWidgetStateRow(deps.db, instance.instanceId);
+    const state = validation.patch;
+    const stateRevision = (current?.revision ?? 0) + 1;
+    if (current === undefined) {
+      deps.db
+        .prepare(
+          `INSERT INTO widget_state
+             (instance_id, state_version, state_revision, document, draft, draft_revision, draft_saved_at, updated_at)
+           VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?)`,
+        )
+        .run(instance.instanceId, MEDIA_STATE_VERSION, stateRevision, toJson(state), at);
+    } else {
+      deps.db
+        .prepare("UPDATE widget_state SET state_version = ?, state_revision = ?, document = ?, updated_at = ? WHERE instance_id = ?")
+        .run(MEDIA_STATE_VERSION, stateRevision, toJson(state), at, instance.instanceId);
+    }
+    const result: ViewStateRecord["result"] = { revision: instance.revision, stateRevision, state };
+    const record: ViewStateRecord = { digest, invocationId: request.invocationId, stateOnly: true, result };
+    deps.db
+      .prepare(
+        `INSERT INTO action_invocations (invocation_id, action_binding_id, instance_id, outcome, recorded_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(invocation_id) DO UPDATE SET
+           action_binding_id = excluded.action_binding_id, instance_id = excluded.instance_id,
+           outcome = excluded.outcome, recorded_at = excluded.recorded_at`,
+      )
+      .run(viewStateRecordKey(binding.actionBindingId), binding.actionBindingId, instance.instanceId, toJson(record), at);
+    return { ok: true, duplicate: false, instanceId: instance.instanceId, ...result };
   });
 }
 

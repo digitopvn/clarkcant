@@ -518,6 +518,14 @@ decided in time is settled as expired by the node's periodic sweep, which leaves
 installed. Every outcome (`asked`, `installed`, `denied`, `expired`, `refused` or `failed`, with its code) is recorded
 as a `package.install-approval` event.
 
+The widget action call, `POST /conversations/{id}/widgets/{instanceId}/actions`, takes an optional `variant`
+(`actionInvocationSchema` in `packages/contracts/src/widgets.ts`). Absent is the ordinary invocation, answered with the
+outcome and the conversation timeline. `"view-state"` is the state-only write of a host-held player's playback state
+(`canvas.video@1`, `canvas.audio@1`): the same owner, binding, revision, digest and input checks, then
+`200 { variant, duplicate, instanceId, revision, stateRevision, state }` with no timeline, an unmoved instance revision
+and one invocation record per binding. Any other binding is `400 UNSUPPORTED_ACTION`, and any other `variant` value is
+`400 INVALID_SCHEMA`. See [widget development §8.11](widget-development.md#811-media-widgets-and-semantic-state).
+
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.
 

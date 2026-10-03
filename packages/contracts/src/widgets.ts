@@ -397,8 +397,21 @@ export const actionInvocationSchema = z.strictObject({
   input: z.record(z.string(), z.unknown()),
   /** Client-generated so a double click produces one accepted effect. */
   invocationId: z.string().min(1).max(128),
+  /**
+   * `view-state` asks for the state-only write of a host-held player's playback state: the same gate, the bounded state
+   * stored, and the new state as the whole answer. Absent is the ordinary invocation.
+   */
+  variant: z.literal("view-state").optional(),
 });
 export type ActionInvocation = z.infer<typeof actionInvocationSchema>;
+
+/**
+ * The action-call variant for a state-only view write.
+ *
+ * It is taken only for view state that is semantic and nothing else (`MEDIA_PLAYER_DEFINITION_IDS`): it leaves the
+ * instance revision and history snapshots alone, answers with no timeline, and keeps one invocation record per binding.
+ */
+export const VIEW_STATE_WRITE_VARIANT = "view-state";
 
 export type ActionCompileResult =
   | { ok: true; binding: ActionBinding }

@@ -1252,12 +1252,22 @@ composed surface keeps its choice on the page only.
 version-1 state migrates to paused at 0). Position writes go through one shared playback coalescer
 ([playback-coalescer.ts](../packages/conversation-client/src/playback-coalescer.ts)), which the audio player (§8.14) reuses:
 pause, seek and end flush immediately, while continuous playback writes at most once per
-`MEDIA_PLAYBACK_WRITE_INTERVAL_MS` (three seconds). Each write is one bound view action, so it also records an action
-invocation and returns the conversation timeline; a lighter state-only path would need a new route and is not part of
-this change. That write amplification, and how long those invocation records are kept, are tracked in [#380](https://github.com/digitopvn/clarkcant/issues/380). When the page is hidden, the player writes where it is; when the page is left or the player is removed, it
-writes itself paused where it stopped. The write made as the page is left is sent at once with `keepalive`, not behind
-a write still in flight, at the revision that write leads to. All of these writes are best-effort: an unloading page may
-still not finish the request, and a leaving write is refused if the one before it was. So the node also stops believing a stored "playing" once it is older than `MEDIA_PLAYING_FRESH_MS` (two
+`MEDIA_PLAYBACK_WRITE_INTERVAL_MS` (three seconds). An hour of play is still about 1,200 writes, so the player sends them
+as the state-only variant of the action call (`variant: "view-state"` on `POST …/widgets/{instanceId}/actions`,
+[#380](https://github.com/digitopvn/clarkcant/issues/380)). The node checks it exactly as it checks the view action —
+owner, binding, revision, binding digest, input — stores the bounded state, and answers with
+`{ variant, duplicate, instanceId, revision, stateRevision, state }` only. It does not move the instance revision, mark
+history snapshots superseded or rebuild the timeline, and the page re-renders nothing for it. The binding keeps one
+invocation record, the latest write, replaced by each new one: a retry of that write gets its outcome back, its id reused
+with other input is refused with `INVOCATION_KEY_REUSED`, and an hour of play leaves one row in `action_invocations`
+instead of 1,200. The variant is taken only for `canvas.video@1` and `canvas.audio@1` playback state: any other binding,
+including a gallery selection, is refused with `UNSUPPORTED_ACTION`, an unknown variant with `400 INVALID_SCHEMA`, and
+effectful actions keep their ledger, provenance and records unchanged. An isolated frame cannot send it: the frame bridge
+builds the ordinary call, and a frame's own state goes through `…/state`. When the page is hidden, the player writes
+where it is; when the page is left or the player is removed, it writes itself paused where it stopped. The write made as
+the page is left is sent at once with `keepalive`, not behind a write still in flight; a state-only write does not move
+the revision, so it is checked at the one the page holds. All of these writes are best-effort: an unloading page may
+still not finish the request. So the node also stops believing a stored "playing" once it is older than `MEDIA_PLAYING_FRESH_MS` (two
 intervals plus two seconds of slack, from the state row's `updated_at`): the semantic document then reports the video
 paused at the last stored position. A refused playback write is said beside the player, which is not moved, and the
 next write is sent even if the player has not moved since. A restored player
@@ -1274,7 +1284,10 @@ one widget in the conversation reopens with the stored state.
 The unit coverage is in [media-view.spec.ts](../packages/contracts/test/media-view.spec.ts) (including the freshness
 window),
 [playback-coalescer.spec.ts](../packages/conversation-client/test/playback-coalescer.spec.ts) (including the write count over a
-minute of continuous play and the writes when the page is hidden, left, or the player removed),
+minute of continuous play and the writes when the page is hidden, left, or the player removed, and the state-only
+variant the client sends),
+[view-state-writes.spec.ts](../apps/runtime/test/view-state-writes.spec.ts) (no timeline built and no snapshot marked
+superseded by continuous playback, one invocation record after an hour of simulated play, and the same gate),
 [media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts) (including the refusal message),
 [widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts) (including a stale "playing", a gallery placed
 without a binding, and the bounds at the largest accepted props) and

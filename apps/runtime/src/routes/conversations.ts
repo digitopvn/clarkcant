@@ -16,6 +16,7 @@ import {
   type ResourceProfile,
   type ResourceRequest,
   COMPOSER_SURFACE_HEADER,
+  VIEW_STATE_WRITE_VARIANT,
   capabilityRefSchema,
   conversationDeleteRequestSchema,
   commandEnvelopeSchema,
@@ -79,7 +80,7 @@ import { activeGenerationWithResolvedGrants } from "../application/package-insta
 import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../application/stop-turn.ts";
 import { bindingAvailability } from "../application/action-bindings.ts";
 import { settleActionEffect } from "../application/action-effects.ts";
-import { actionLedgerHooks, invokeWidgetAction, settleCallOutcome } from "../application/widget-actions.ts";
+import { actionLedgerHooks, invokeWidgetAction, settleCallOutcome, writeWidgetViewState } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
 import { resolveComposerReferences } from "../composer-references.ts";
 import { type InteractionDeps, answerQuestion, askQuestionAgain, cancelQuestion } from "../interactions.ts";
@@ -1477,7 +1478,13 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       return fail(400, "INSTANCE_MISMATCH", "the body names a different instance than the path");
     }
 
-    const result = await invokeWidgetAction(services, {
+    // A typed variant of this call, not a second route: absent is the ordinary invocation, `view-state` the state-only
+    // write of a player's playback state. Anything else is refused rather than read as the ordinary call.
+    const variant = parsed.value.variant;
+    if (variant !== undefined && variant !== VIEW_STATE_WRITE_VARIANT) {
+      return fail(400, "INVALID_SCHEMA", `the action call's variant must be absent or "${VIEW_STATE_WRITE_VARIANT}"`);
+    }
+    const invocation = {
       conversationId,
       principalId: runtime.identity.ownerPrincipalId,
       instanceId,
@@ -1489,7 +1496,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
           ? (parsed.value.input as Record<string, unknown>)
           : {},
       invocationId: typeof parsed.value.invocationId === "string" ? parsed.value.invocationId : "",
-    });
+    };
+    const result = variant === VIEW_STATE_WRITE_VARIANT ? writeWidgetViewState(services, invocation) : await invokeWidgetAction(services, invocation);
 
     if (result.ok) {
       touchWidget(runtime.db, conversationId, instanceId);

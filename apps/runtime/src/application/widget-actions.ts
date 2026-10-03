@@ -6,6 +6,7 @@ import {
   type ListItem,
   type WidgetInstance,
   type WorkflowRunReport,
+  VIEW_STATE_WRITE_VARIANT,
   checkFormValues,
   describeFieldValue,
 } from "@clarkcant/contracts";
@@ -23,6 +24,7 @@ import {
   readWidgetStateRow,
   recordInvokeAction,
   settleInvokeAction,
+  writeViewState,
 } from "@clarkcant/core";
 import { appendAuditEvent, listConversationInstanceIds } from "@clarkcant/storage";
 
@@ -946,6 +948,45 @@ export async function invokeWidgetAction(
       // The whole page comes back after a mutation, so the client does not have to guess whether
       // its cursor is still valid.
       timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),
+    },
+  };
+}
+
+/**
+ * The state-only write of a host-held player's playback state (`variant: "view-state"` on the action call).
+ *
+ * The same gate as a view action — owner, binding, revision, digest, input — and then the bounded state is stored and
+ * the answer is that state alone: no timeline is rebuilt, no history snapshot is marked superseded, and the page has
+ * nothing to re-render. Nothing else is accepted on this path (`writeViewState`), so it is never a way around an
+ * action's ledger, and a frame's own bridge never sends it: an isolated widget writes its state through its own route.
+ */
+export function writeWidgetViewState(
+  services: Pick<NodeServices, "conductor">,
+  request: WidgetActionRequest,
+): WidgetActionResult {
+  if (!Number.isFinite(request.expectedRevision)) {
+    return { ok: false, status: 400, code: "INVALID_SCHEMA", message: "a state write needs the expectedRevision the client saw" };
+  }
+  const outcome = writeViewState(services.conductor, request);
+  if (!outcome.ok) {
+    return {
+      ok: false,
+      status: statusOf(outcome.code),
+      code: outcome.code,
+      message: outcome.message,
+      ...(outcome.currentRevision === undefined ? {} : { currentRevision: outcome.currentRevision }),
+    };
+  }
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      variant: VIEW_STATE_WRITE_VARIANT,
+      duplicate: outcome.duplicate,
+      instanceId: outcome.instanceId,
+      revision: outcome.revision,
+      stateRevision: outcome.stateRevision,
+      state: outcome.state,
     },
   };
 }
