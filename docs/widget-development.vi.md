@@ -1730,13 +1730,15 @@ Mỗi lời gọi làm gì:
   cho phép, kích thước và hạn mức được kiểm tra lại. Kết quả là một chip sẵn sàng trong ô soạn tin, người dùng gửi nó
   cùng tin nhắn kế tiếp như mọi tệp họ tự đính kèm. Model sau đó đọc nó theo đúng cách đó. Mỗi tệp chỉ được đính
   kèm một lần: yêu cầu lại sẽ trả về đúng tệp đính kèm đó.
-  `name` (tuỳ chọn) đề xuất tên tệp cho tệp đính kèm, tối đa 200 ký tự trên bridge. Đó chỉ là đề xuất: node chỉ giữ
-  phần cuối của bất cứ thứ gì trông như đường dẫn, bỏ các ký tự điều khiển, ký tự định dạng và ký tự đổi hướng chữ,
-  đổi mọi ký tự không phải chữ cái, chữ số, dấu cách và `. _ - ( )` thành dấu gạch ngang, gộp `..` lại, cắt dấu chấm,
-  dấu gạch ngang và dấu cách ở hai đầu, rồi rút tên xuống còn 100 ký tự. Node cũng buộc phần mở rộng theo kiểu của các
-  byte, nên một ảnh PNG được đề xuất là `anh.exe` sẽ được đính kèm thành `anh.png`. Khi không còn gì dùng được, node
-  dùng tên mặc định của kiểu đó, như `untitled.png`. Không có `name`, tệp đính kèm giữ tên của artifact như trước. Lần
-  đính kèm đầu tiên quyết định tên.
+  `name` (tuỳ chọn) đề xuất tên tệp cho tệp đính kèm. Tên được rút gọn chứ không bị từ chối: runtime bỏ qua tên rỗng
+  và cắt tên dài xuống 200 ký tự của bridge trước khi gửi. Sau đó node chỉ giữ phần cuối của bất cứ thứ gì trông như
+  đường dẫn, bỏ các ký tự điều khiển, ký tự định dạng, ký tự đổi hướng chữ và ký tự vô hình (default-ignorable), đổi
+  mọi ký tự không phải chữ cái, chữ số, dấu cách và `. _ - ( )` thành dấu gạch ngang, gộp `..` lại, cắt dấu chấm, dấu
+  gạch ngang và dấu cách ở hai đầu, rồi rút tên xuống còn 100 ký tự. Node cũng buộc phần mở rộng theo kiểu của các
+  byte: một ảnh PNG được đề xuất là `anh.exe` sẽ được đính kèm thành `anh.png`, còn `kite-v2.1` thành
+  `kite-v2.1.png`. Khi không còn gì dùng được, node dùng tên mặc định của kiểu đó, như `untitled.png`. Không có
+  `name`, tệp đính kèm lấy tên riêng của artifact, cũng được làm sạch theo cùng cách. Lần đính kèm đầu tiên quyết định
+  tên: đính kèm lại cùng tệp đó sẽ trả về đúng tệp đính kèm ấy, dù lần sau đề xuất tên nào.
 - `discard(ref)` bỏ một tệp mà instance này đã tạo, dù đang ghi hay đã cố định: bản ghi và các grant của nó bị xoá, và
   byte cũng bị xoá trừ khi một tệp đính kèm hoặc bản ghi khác vẫn trỏ tới chúng. Nó chờ các lần ghi đang dở của ref
   xong trước. Tệp người dùng đã chọn, hoặc tệp do widget khác tạo, bị từ chối với `ARTIFACT_NOT_CREATOR`.

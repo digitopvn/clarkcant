@@ -103,6 +103,8 @@ function progress(token, current, total, message) {
   send({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: current, total, message } });
 }
 
+// The widget reads the prompt back from this wording (`OUTPUT_PROMPT` in `widgets/main/main.js`) to name an image it
+// attaches: change both together.
 function result(prompt, png) {
   return {
     content: [

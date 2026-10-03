@@ -171,7 +171,7 @@ export const artifactRequestSchema = z.discriminatedUnion("op", [
   /**
    * Offer a finalized file to the conversation. `name` is optional and only a proposal: the host makes it safe — the
    * last part of a path, safe characters, bounded length, the bytes' type's extension — and falls back to its own
-   * default name. Absent unless the widget proposes one, so a request without it means what it always meant; the
+   * default name. The first attach of an artifact decides its attachment's name. Absent unless the widget proposes one, so a request without it means what it always meant; the
    * runtime a host serves predates the field only together with that host, and then drops the proposal unsent.
    */
   z.strictObject({ op: z.literal("attach"), artifactId: artifactIdWire, name: nameWire.optional() }),
@@ -540,8 +540,10 @@ export interface WidgetAuthorApi {
     export(ref: ArtifactRef, options: { suggestedName: string }): Promise<boolean>;
     /**
      * Offer a finalized artifact to the conversation. The person sends it with their next message. `name` proposes the
-     * attachment's file name (at most 200 characters); the host sanitizes it and forces the extension of the bytes'
-     * type, and without it the attachment keeps the artifact's name.
+     * attachment's file name. It is reduced, never refused: an empty one is left out and a long one is cut to 200
+     * characters before it is sent, and the host then sanitizes it and forces the extension of the bytes' type. Without
+     * it the attachment takes the artifact's name, sanitized the same way. The first attach of an artifact decides the
+     * name: attaching it again returns the same attachment, under that name, whatever `name` the later call proposes.
      */
     attachToConversation(ref: ArtifactRef, options?: { name?: string }): Promise<void>;
     /**

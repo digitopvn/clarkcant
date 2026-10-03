@@ -410,29 +410,40 @@ const UNSAFE_NAME_CHARACTERS = /[^\p{L}\p{M}\p{N} ._()-]+/gu;
  *
  * The proposal is a widget's data, never trusted, so it is reduced rather than refused — a widget offering a bad name
  * still gets its file attached, under a name the node chose. In order: only the last part of anything that looks like
- * a path is kept; control, format and direction characters go; every character outside a small safe set becomes a
- * dash; a run of dots becomes one, and dots, dashes and spaces are trimmed from both ends, so nothing is `..`, hidden
- * or ends in a dot; the extension becomes the bytes' type's (a PNG proposed as `anh.exe` is `anh.png`); the stem is
- * shortened by code point to `proposedNameMaxChars`; and what is left empty becomes `defaultArtifactName`. The node
- * calls this on its canonical attach path, so every widget gets the same rule.
+ * a path is kept; control, format, direction and default-ignorable characters go; every character outside a small
+ * safe set becomes a dash; a run of dots becomes one, and dots, dashes and spaces are trimmed from both ends, so
+ * nothing is `..`, hidden or ends in a dot; the extension becomes the bytes' type's (a PNG proposed as `anh.exe` is
+ * `anh.png`, and `kite-v2.1` is `kite-v2.1.png`); the stem is shortened by code point to `proposedNameMaxChars`; and
+ * what is left empty becomes `defaultArtifactName`. The node calls this on its canonical attach path, for a proposal
+ * and for the artifact's own name alike, so every widget gets the same rule.
  */
 export function sanitizeProposedArtifactName(proposed: unknown, mimeType: string): string {
   const fallback = defaultArtifactName(mimeType);
   if (typeof proposed !== "string") return fallback;
   const cleaned = stripBidiControls(proposed.slice(0, PROPOSED_NAME_INPUT_MAX))
     .normalize("NFC")
-    .replace(/[\p{Cc}\p{Cf}]/gu, "");
+    // Default-ignorable code points are drawn as nothing (U+3164, U+034F, variation selectors…): a name made of them
+    // looks empty, and one with them in it looks like another name.
+    .replace(/[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, "");
   // A path's directories are not part of a name: only its last part is.
   const base = cleaned.split(/[\\/]/u).pop() ?? "";
-  const safe = base
+  const reduced = base
     .replace(UNSAFE_NAME_CHARACTERS, "-")
     .replace(/\.{2,}/gu, ".")
     .replace(/ {2,}/gu, " ")
-    .replace(/-{2,}/gu, "-")
-    .replace(/^[ .-]+|[ .-]+$/gu, "");
+    .replace(/-{2,}/gu, "-");
+  // A name that is only an extension (`.png`, or `ㅤ.png` once the filler is gone) has no stem to keep.
+  if (/^[ -]*\.[^.]*$/u.test(reduced)) return fallback;
+  const safe = reduced.replace(/^[ .-]+|[ .-]+$/gu, "");
   const extensions = ARTIFACT_EXTENSIONS[mimeType] ?? [];
   const dot = safe.lastIndexOf(".");
-  const hasExtension = dot > 0 && /^[\p{L}\p{N}_-]{1,16}$/u.test(safe.slice(dot + 1));
+  /*
+   * What follows the last dot is an extension only when it starts with a letter, so `kite-v2.1` keeps its `.1` and
+   * becomes `kite-v2.1.png`. An extension that is not the type's is replaced, never kept in front of the right one: a
+   * PNG proposed as `hoa-don.exe` is `hoa-don.png`, not `hoa-don.exe.png`, which a system hiding known extensions shows
+   * as `hoa-don.exe`.
+   */
+  const hasExtension = dot > 0 && /^\p{L}[\p{L}\p{N}_-]{0,15}$/u.test(safe.slice(dot + 1));
   const proposedExtension = hasExtension ? safe.slice(dot + 1).toLowerCase() : "";
   const extension = extensions.includes(proposedExtension) ? proposedExtension : (extensions[0] ?? "bin");
   const stem = (hasExtension ? safe.slice(0, dot) : safe).replace(/[ .-]+$/u, "");

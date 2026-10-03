@@ -605,17 +605,31 @@ describe("the simulated file picker", () => {
       code: "ARTIFACT_NOT_WRITABLE",
     });
     expect(await simulated.handle({ op: "export", artifactId, suggestedName: "ban-sao.txt" })).toMatchObject({ status: "ok" });
-    expect(await simulated.handle({ op: "attach", artifactId })).toMatchObject({ status: "ok" });
     // A proposed name is logged as the node would store it: sanitized, with the bytes' type's extension.
     expect(await simulated.handle({ op: "attach", artifactId, name: "../tom tat.exe" })).toMatchObject({ status: "ok" });
+    // As on a node, the first attach decides the name: a later one, with or without a proposal, keeps it.
+    expect(await simulated.handle({ op: "attach", artifactId })).toMatchObject({ status: "ok" });
+    expect(await simulated.handle({ op: "attach", artifactId, name: "khac.txt" })).toMatchObject({ status: "ok" });
 
     expect(simulated.events().map((event) => `${event.op} ${event.name}`)).toEqual([
       "create bao-cao.txt",
       "finalize bao-cao.txt",
       "export ban-sao.txt",
-      "attach bao-cao.txt",
+      "attach tom tat.txt",
+      "attach tom tat.txt",
       "attach tom tat.txt",
     ]);
+  });
+
+  it("attaches without a proposal under the artifact's own name, sanitized as a node does", async () => {
+    const simulated = broker({ current: "" });
+    const created = await simulated.handle({ op: "create", mimeType: "text/plain", name: "hoa​don.exe" });
+    const artifactId = created.status === "ok" ? (created.ref?.artifactId ?? "") : "";
+    await simulated.handle({ op: "write", artifactId, offset: 0, chunkBase64: "YWJj" });
+    await simulated.handle({ op: "finalize", artifactId });
+
+    expect(await simulated.handle({ op: "attach", artifactId })).toMatchObject({ status: "ok" });
+    expect(simulated.events().at(-1)).toMatchObject({ op: "attach", name: "hoadon.txt" });
   });
 
   it("discards a file the widget made, and refuses one the person chose, as the node does", async () => {

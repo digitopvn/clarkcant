@@ -621,8 +621,9 @@ export function exportArtifactBytes(
  *
  * `name` is the widget's proposal for the attachment's file name. It is data from the widget and never trusted:
  * `sanitizeProposedArtifactName` reduces it to a safe name with the extension of the bytes' type, or the type's default
- * name when nothing usable is left. Without one the attachment keeps the artifact's own name. The first attach decides
- * the name, since asking again returns the attachment already made.
+ * name when nothing usable is left. Without one the attachment takes the artifact's own name, sanitized the same way,
+ * because that name came from a widget too. The first attach decides the name, since asking again returns the
+ * attachment already made, whatever name the later request proposes.
  */
 export function attachArtifact(
   deps: ArtifactBrokerDeps,
@@ -643,7 +644,9 @@ export function attachArtifact(
   const sniffed = sniffContentType(blob.bytes, record.mimeType);
   if (!sniffed.ok) return refuseAsAttachment(sniffed);
   const checked = validateAttachmentCandidate({
-    filename: input.name === undefined ? record.name : sanitizeProposedArtifactName(input.name, sniffed.mime),
+    // Sanitized either way: the artifact's own name is also a widget's (`create({ name })`), and it becomes the name the
+    // model reads, `read_attachment` reports and a download is saved under.
+    filename: sanitizeProposedArtifactName(input.name ?? record.name, sniffed.mime),
     mime: sniffed.mime,
     sizeBytes: blob.bytes.byteLength,
     usedBytes: storedBytesForPrincipal(deps.db, input.principalId),

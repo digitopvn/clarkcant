@@ -697,10 +697,11 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         return true;
       },
       attachToConversation: async (ref, options) => {
+        const name = boundedProposedName(options?.name);
         const result = await artifactRequest({
           op: "attach",
           artifactId: ref.artifactId,
-          ...(options?.name === undefined ? {} : { name: options.name }),
+          ...(name === undefined ? {} : { name }),
         });
         if (result.status !== "ok") throw artifactError(result);
       },
@@ -795,6 +796,21 @@ interface JobSubscription {
 const JOB_POLL = Object.freeze({ intervalMs: 1000, maxFailures: 30 });
 /** Refusals that will not change by asking again: the job is not this widget's, or the host does not offer jobs. */
 const FINAL_JOB_REFUSALS = new Set(["JOB_NOT_FOUND", "EXTENSION_NOT_OFFERED"]);
+
+/**
+ * A proposed attachment name as the bridge carries it: reduced, never refused, so a name the widget got wrong still
+ * attaches the file. An empty or blank one is left out, which lets the host name the file; a long one is cut by code
+ * point, never through a character, to the bridge's bound. The host sanitizes whatever arrives.
+ */
+function boundedProposedName(name: unknown): string | undefined {
+  if (typeof name !== "string" || name.trim() === "") return undefined;
+  let kept = "";
+  for (const character of name) {
+    if (kept.length + character.length > ARTIFACT_BRIDGE_LIMITS.nameMaxChars) break;
+    kept += character;
+  }
+  return kept.trim() === "" ? undefined : kept;
+}
 
 function isTerminalJob(status: JobSnapshot["status"]): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";

@@ -233,7 +233,9 @@ describe("a name a widget proposes for a file it attaches", () => {
     expect(sanitizeProposedArtifactName("https://evil.example/x/anh.png", "image/png")).toBe("anh.png");
     expect(sanitizeProposedArtifactName("..", "image/png")).toBe("untitled.png");
     expect(sanitizeProposedArtifactName("a..b...png", "image/png")).toBe("a.b.png");
-    expect(sanitizeProposedArtifactName(".hidden", "text/plain")).toBe("hidden.txt");
+    // A name that is only an extension, a hidden file's, has no stem to keep.
+    expect(sanitizeProposedArtifactName(".hidden", "text/plain")).toBe("untitled.txt");
+    expect(sanitizeProposedArtifactName(".png", "image/png")).toBe("untitled.png");
     for (const proposed of ["../x", "/abs/y.png", "C:z.png", "javascript:alert(1)", "data:text/html,x", "file:///etc/passwd"]) {
       const name = sanitizeProposedArtifactName(proposed, "image/png");
       expect(name, proposed).not.toMatch(/[\\/:]|\.\./u);
@@ -246,6 +248,20 @@ describe("a name a widget proposes for a file it attaches", () => {
     expect(sanitizeProposedArtifactName("anh\u0000\u0007\n\tmoi\u200B.png", "image/png")).toBe("anhmoi.png");
     expect(sanitizeProposedArtifactName("a<b>c|d?e*f\"g'h.png", "image/png")).toBe("a-b-c-d-e-f-g-h.png");
     expect(sanitizeProposedArtifactName("con mèo 🐱 bay", "image/png")).toBe("con mèo - bay.png");
+  });
+
+  it("removes characters drawn as nothing, so a name cannot look empty or like another", () => {
+    // U+3164 Hangul filler, U+034F combining grapheme joiner, a variation selector, a soft hyphen.
+    expect(sanitizeProposedArtifactName("ㅤ.png", "image/png")).toBe("untitled.png");
+    expect(sanitizeProposedArtifactName("ㅤ͏️", "image/png")).toBe("untitled.png");
+    expect(sanitizeProposedArtifactName("an͏h️-mo­i.png", "image/png")).toBe("anh-moi.png");
+  });
+
+  it("keeps a dotted stem whose tail is not an extension, and appends the type's", () => {
+    expect(sanitizeProposedArtifactName("kite-v2.1", "image/png")).toBe("kite-v2.1.png");
+    expect(sanitizeProposedArtifactName("ban 1.2.3", "text/markdown")).toBe("ban 1.2.3.md");
+    // A tail that is an extension of another type is replaced, never kept in front: no `hoa-don.exe.png`.
+    expect(sanitizeProposedArtifactName("hoa-don.exe", "image/png")).toBe("hoa-don.png");
   });
 
   it("keeps letters of any script, composed", () => {

@@ -110,16 +110,21 @@ function slugOf(text) {
     .replace(/-+$/, "");
 }
 
-/** How the service names the prompt in a finished job's output: `Image for “…” (…)`. */
+/**
+ * The prompt in a finished job's output, for a job this frame did not start (Clark, voice, another view, a reload): a
+ * job snapshot carries the output, not the input. It depends on the wording of `result()` in `service/server.mjs`,
+ * `Image for “<prompt>” (<size> PNG).` — change both together. When it does not match, the name falls back to `anh`.
+ */
 const OUTPUT_PROMPT = /“([^”]*)”/u;
 
 /**
  * The file name this widget proposes when it attaches an image: a slug of the prompt, the end of the job's id so two
- * images never share a name, and the image's number when one job made several. Only a proposal: the host makes it safe
- * and decides the extension from the bytes.
+ * images never share a name, and the image's number when one job made several. The prompt is the one this frame sent
+ * when it started the job, and otherwise the one in the job's output. Only a proposal: the host makes it safe and
+ * decides the extension from the bytes.
  */
-function proposedName(job, ref, indexInJob) {
-  const prompt = OUTPUT_PROMPT.exec(job.output ?? "")?.[1] ?? "";
+function proposedName(job, ref, indexInJob, sentPrompt) {
+  const prompt = sentPrompt ?? OUTPUT_PROMPT.exec(job.output ?? "")?.[1] ?? "";
   const slug = slugOf(prompt) || "anh";
   const suffix = job.jobId.replace(/^job_/, "").replace(/[^A-Za-z0-9]/g, "").slice(-NAME_SUFFIX_CHARS).toLowerCase();
   const parts = [slug, suffix, indexInJob > 0 ? String(indexInJob + 1) : ""].filter((part) => part !== "");
@@ -230,6 +235,8 @@ function start() {
   /** Images read so far, by artifact id: a data URL, or the reason it could not be read. */
   const images = new Map();
   const outcomes = new Map();
+  /** The prompt this frame sent for each job it started, by JobRef: what an attached image is named after. */
+  const sentPrompts = new Map();
   let lastSummary = "";
 
   const upsert = (snapshot) => {
@@ -401,7 +408,7 @@ function start() {
       attach.disabled = true;
       const indexInJob = job.resultRefs.filter((candidate) => IMAGE_TYPES.includes(candidate.mimeType)).indexOf(ref);
       void api.artifacts
-        .attachToConversation(ref, { name: proposedName(job, ref, indexInJob) })
+        .attachToConversation(ref, { name: proposedName(job, ref, indexInJob, sentPrompts.get(job.jobId)) })
         .then(() => said(TEXT.attached, "attached"))
         .catch((error) => said(errorText(error), "refused"))
         .finally(() => { attach.disabled = false; });
@@ -489,6 +496,7 @@ function start() {
       .invoke(binding, { prompt }, crypto.randomUUID())
       .then((jobId) => {
         if (typeof jobId !== "string") throw new Error("host trả lời mà không kèm job");
+        sentPrompts.set(jobId, prompt);
         status.textContent = "";
         status.setAttribute("data-image-state", "started");
         follow(jobId);

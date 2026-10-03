@@ -616,9 +616,38 @@ describe("handing a finalized artifact to the conversation", () => {
     const malformed = await call("POST", widget(`/${third}/attach`), { name: 42 });
     expect(malformed.status).toBe(400);
     expect(malformed.body).toMatchObject({ code: "INVALID_SCHEMA" });
-    // Without a proposal the attachment keeps the artifact's own name.
+    // Without a proposal the attachment takes the artifact's own name, which is already safe here.
     const plain = await call("POST", widget(`/${third}/attach`));
     expect((plain.body as { attachmentRef: { filename: string } }).attachmentRef.filename).toBe("tom-tat.md");
+  });
+
+  it("sanitizes the artifact's own name too when the widget proposes none", async () => {
+    // The widget named the file when it created it, and that name is the widget's as much as a proposal is.
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+    const artifactId = await create("image/png", "hoa​-don\n.exe");
+    await write(artifactId, 0, png);
+    expect((await call("POST", widget(`/${artifactId}/finalize`))).status).toBe(200);
+
+    const attached = await call("POST", widget(`/${artifactId}/attach`));
+    expect(attached.status).toBe(201);
+    const { attachmentRef } = attached.body as { attachmentRef: { attachmentId: string; filename: string } };
+    expect(attachmentRef.filename).toBe("hoa-don.png");
+    // The name the model is told is the sanitized one.
+    const brief = attachmentBrief({ refs: [attachmentRef as never], dataDir: dir });
+    expect(brief).toContain("hoa-don.png");
+    expect(brief).not.toContain(".exe");
+  });
+
+  it("keeps the name of the first attach when the same file is attached again under another", async () => {
+    const artifactId = await finalized("# Lần đầu\n");
+    const first = await call("POST", widget(`/${artifactId}/attach`), { name: "lan-dau.md" });
+    const again = await call("POST", widget(`/${artifactId}/attach`), { name: "lan-sau.md" });
+    const bare = await call("POST", widget(`/${artifactId}/attach`));
+    const named = (response: GatewayResponse) => (response.body as { attachmentRef: { attachmentId: string; filename: string } }).attachmentRef;
+
+    expect(named(first).filename).toBe("lan-dau.md");
+    expect(named(again)).toEqual(named(first));
+    expect(named(bare)).toEqual(named(first));
   });
 
   it("saves as a download on the person's route only once it is finalized, under a name and never a path", async () => {

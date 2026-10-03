@@ -1735,13 +1735,15 @@ What each call does:
   the allowlist, size and quota are checked. The result is a ready chip in the composer, which the person sends with
   their next message like any file they attached. The model then reads it the same way. A file is attached once:
   asking again returns the same attachment.
-  The optional `name` proposes the attachment's file name, up to 200 characters on the bridge. It is only a
-  proposal: the node keeps the last part of anything that looks like a path, drops control, format and direction
-  characters, turns every character other than letters, digits, space and `. _ - ( )` into a dash, collapses `..`,
-  trims dots, dashes and spaces from both ends, and shortens the name to 100 characters. It also forces the
-  extension of the bytes' type, so a PNG proposed as `anh.exe` is attached as `anh.png`. When nothing usable is left,
-  the node uses the type's default name, such as `untitled.png`. Without `name`, the attachment keeps the artifact's
-  name, as before. The first attach decides the name.
+  The optional `name` proposes the attachment's file name. It is reduced, never refused: the runtime leaves out an
+  empty name and cuts a long one to the bridge's 200 characters before it sends it. The node then keeps the last part
+  of anything that looks like a path, and drops control, format, direction and invisible (default-ignorable)
+  characters. It turns every character other than letters, digits, space and `. _ - ( )` into a dash, collapses `..`,
+  trims dots, dashes and spaces from both ends, and shortens the name to 100 characters. It also forces the extension
+  of the bytes' type: a PNG proposed as `anh.exe` is attached as `anh.png`, and one proposed as `kite-v2.1` as
+  `kite-v2.1.png`. When nothing usable is left, the node uses the type's default name, such as `untitled.png`.
+  Without `name`, the attachment takes the artifact's own name, sanitized the same way. The first attach decides the
+  name: attaching the same file again returns that attachment, whatever name the later call proposes.
 - `discard(ref)` lets go of a file this instance made, working or finalized: its record and grants go, and its bytes
   go too unless an attachment or another record still points at them. It waits for the ref's pending writes first. A
   file the person picked, or one another widget made, is refused with `ARTIFACT_NOT_CREATOR`.

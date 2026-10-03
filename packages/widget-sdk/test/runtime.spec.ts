@@ -574,7 +574,7 @@ describe("the artifacts@1 extension", () => {
     await expect(finalized).resolves.toMatchObject({ kind: "finalized", sizeBytes: 5 });
   });
 
-  it("attaches with a proposed name only when the widget gives one, and refuses one too long for the bridge", async () => {
+  it("attaches with a proposed name only when the widget gives one", async () => {
     const { runtime, requests, answer } = ready(["artifacts@1"]);
     const api = runtime.api().artifacts;
 
@@ -588,9 +588,28 @@ describe("the artifacts@1 extension", () => {
     for (const sent of requests()) answer(sent.requestId ?? "", { status: "ok", ref: ref(5, "finalized") });
     await expect(plain).resolves.toBeUndefined();
     await expect(named).resolves.toBeUndefined();
+  });
 
-    await expect(api.attachToConversation(ref(5, "finalized"), { name: "x".repeat(201) })).rejects.toThrow(/không hợp lệ/);
-    expect(requests()).toHaveLength(2);
+  it("reduces a proposed name the bridge cannot carry instead of losing the attach", async () => {
+    const { runtime, requests, answer } = ready(["artifacts@1"]);
+    const api = runtime.api().artifacts;
+
+    const attaching = [
+      api.attachToConversation(ref(5, "finalized"), { name: "" }),
+      api.attachToConversation(ref(5, "finalized"), { name: "   " }),
+      api.attachToConversation(ref(5, "finalized"), { name: "x".repeat(250) }),
+      // 199 single units, then a character of two: cut before it, never through it.
+      api.attachToConversation(ref(5, "finalized"), { name: `${"a".repeat(199)}😀b` }),
+    ];
+    await flush();
+    const sent = requests().map((message) => message.request as { op: string; name?: string });
+    expect(sent.map((request) => request.op)).toEqual(["attach", "attach", "attach", "attach"]);
+    expect(sent[0]).not.toHaveProperty("name");
+    expect(sent[1]).not.toHaveProperty("name");
+    expect(sent[2]?.name).toBe("x".repeat(200));
+    expect(sent[3]?.name).toBe("a".repeat(199));
+    for (const message of requests()) answer(message.requestId ?? "", { status: "ok", ref: ref(5, "finalized") });
+    for (const attach of attaching) await expect(attach).resolves.toBeUndefined();
   });
 
   it("refuses a chunk larger than one bridge message before sending it", async () => {

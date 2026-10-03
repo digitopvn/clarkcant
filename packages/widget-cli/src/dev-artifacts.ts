@@ -109,6 +109,8 @@ export interface DevArtifactEvent {
 interface HeldArtifact {
   ref: ArtifactRef;
   chunks: Uint8Array[];
+  /** The name its first attach gave it, which every later attach keeps, as on a node. */
+  attachedName?: string;
 }
 
 const refuse = (code: string, message: string): FrameArtifactOutcome => ({ status: "refused", code, message });
@@ -247,14 +249,16 @@ export function createDevArtifactBroker(input: {
         if (artifact.ref.kind === "working") {
           return refuse("ARTIFACT_NOT_FINALIZED", `finalize the artifact before ${request.op === "export" ? "saving" : "attaching"} it`);
         }
-        // An attach is logged under the name a node would give it: the widget's proposal, sanitized as the node does.
-        const recorded =
-          request.op === "export"
-            ? { ...artifact.ref, name: request.suggestedName }
-            : request.name === undefined
-              ? artifact.ref
-              : { ...artifact.ref, name: sanitizeProposedArtifactName(request.name, artifact.ref.mimeType) };
-        record(request.op, recorded);
+        if (request.op === "export") {
+          record("export", { ...artifact.ref, name: request.suggestedName });
+          return { status: "ok", ref: artifact.ref };
+        }
+        /*
+         * Named as a node names it: the widget's proposal, or the artifact's own name, sanitized either way — and only on
+         * the first attach, because a node answers a repeated attach with the attachment it already made.
+         */
+        artifact.attachedName ??= sanitizeProposedArtifactName(request.name ?? artifact.ref.name, artifact.ref.mimeType);
+        record("attach", { ...artifact.ref, name: artifact.attachedName });
         return { status: "ok", ref: artifact.ref };
       }
       case "discard": {

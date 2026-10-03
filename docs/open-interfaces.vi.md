@@ -418,7 +418,7 @@ câu trả lời nào mang đường dẫn.
 | GET | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/content?offset=&length=` | – `{ artifactRef, offset, eof, contentBase64 }`, tối đa 262.144 byte |
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/chunks` | `{ offset, contentBase64 }` — tối đa 262.144 byte, bắt đầu đúng chỗ artifact đang kết thúc |
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/finalize` | – cố định các byte sau khi đối chiếu chúng với kiểu đã khai báo |
-| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | `{ name? }` – `201 { artifactRef, attachmentRef }` qua luồng đính kèm; người dùng gửi nó cùng tin nhắn kế tiếp. `name` là tên tệp widget đề xuất, được node làm sạch (`name` không phải chuỗi sẽ nhận `400 INVALID_SCHEMA`) |
+| POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | `{ name? }` – `201 { artifactRef, attachmentRef }` qua luồng đính kèm; người dùng gửi nó cùng tin nhắn kế tiếp. `name` là tên tệp widget đề xuất, được node làm sạch, giống như node làm sạch tên riêng của artifact khi không có `name` (`name` không phải chuỗi sẽ nhận `400 INVALID_SCHEMA`). Lần đính kèm đầu tiên quyết định tên: đính kèm lại cùng artifact đó sẽ trả về đúng tệp đính kèm ấy, dù đề xuất `name` nào |
 | DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – bỏ một tệp instance này đã tạo, cùng byte của nó trừ khi một tệp đính kèm hoặc bản ghi khác vẫn trỏ tới; tệp của instance khác là `403 ARTIFACT_NOT_CREATOR` |
 
 Các job của package mà widget theo dõi (`jobs@1`, [widget-development.vi.md §10.2](widget-development.vi.md#102-job-chạy-lâu-jobs1))
