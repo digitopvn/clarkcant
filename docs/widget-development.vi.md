@@ -2587,7 +2587,8 @@ Widget không publish-ready nếu thiếu các test sau:
 Directory entry cần:
 
 - package id;
-- current version;
+- current version: một phiên bản semantic dài tối đa 80 ký tự, vì card marketplace hiển thị nó và Install gửi lại nó
+  nguyên vẹn; một index có phiên bản dài hơn sẽ bị từ chối khi đọc, kèm lý do;
 - display name;
 - one-line description;
 - author/publisher;
@@ -2743,7 +2744,11 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   execution policy quyết định; bản thân card không cài gì, nên một listing không bao giờ biến thành authorization. Một
   listing bằng đường dẫn trên máy này còn mang `contentDigest`, digest các tệp của nó lúc được liệt kê, mà nút gửi lại
   để lần cài bị từ chối nếu các tệp đã đổi từ đó; khi ấy dòng đó cho thấy chúng đã đổi và mời tìm lại thay vì cùng nút
-  Cài. Việc kiểm tra chỉ diễn ra lúc cài: gói vẫn được liên kết với đường dẫn của nó. Không có registry từ xa — search chỉ đọc thứ tồn tại trên máy hoặc ở URL người dùng chỉ định.
+  Cài. Việc kiểm tra chỉ diễn ra lúc cài: gói vẫn được liên kết với đường dẫn của nó. Mỗi dòng còn lặp lại
+  `declaredReach` (những gì gói được phép chạm tới khi cài) và các khai báo `widgetAppearance` của listing, theo đúng
+  schema của mục trong directory, nên dòng đó hiển thị chúng trước khi bấm Cài. Một card không khớp với contract của nó
+  bị bỏ khỏi câu trả lời, và node ghi log `host card dropped` kèm loại card và đường dẫn các trường lỗi, không bao giờ
+  kèm giá trị. Không có registry từ xa — search chỉ đọc thứ tồn tại trên máy hoặc ở URL người dùng chỉ định.
 - Script trong trang của dev host: nó thu thập fact và chuyển action, còn mọi quyết định nằm ở hàm đã test —
   nhưng bản thân script cần browser để chạy, và điều đó được nói ra thay vì ngụ ý rằng cả dev host đã được phủ.
 - Detach/attach: cửa sổ host tách rời của desktop **đã có thật** (`apps/desktop/src/main.mjs` mở nó qua
