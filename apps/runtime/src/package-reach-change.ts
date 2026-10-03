@@ -5,8 +5,9 @@ import {
   type DirectoryEntry,
   type Notice,
   type ReachChangeView,
+  type UnreadListingFields,
 } from "@clarkcant/contracts";
-import type { DirectoryIndexState } from "@clarkcant/core";
+import { unreadFieldsOf, type DirectoryIndexState } from "@clarkcant/core";
 import { oneRow, type Database } from "@clarkcant/storage";
 
 import { installedManifest } from "./package-resources.ts";
@@ -14,6 +15,23 @@ import { installedManifest } from "./package-resources.ts";
 type Runtime = { db: Database; dataDir: string; identity: { nodeId: string } };
 
 const UNKNOWN: ReachChangeView = { verdict: "unknown" };
+
+/** The listing of the version a package update notice names, when the directory lists it. */
+function noticeEntry(notice: Notice, index: DirectoryIndexState): DirectoryEntry | undefined {
+  const subject = notice.subject;
+  if (notice.category !== "update" || subject?.kind !== "package" || subject.version === undefined) return undefined;
+  if (index.kind !== "configured") return undefined;
+  return index.entries.find((candidate) => candidate.packageId === subject.packageId && candidate.version === subject.version);
+}
+
+/**
+ * On a package update notice, what the listing of the version it offers says that this node does not read, so the
+ * notice does not show the change as all of it. Undefined for any other notice and when the version is not listed.
+ */
+export function noticeUnreadFields(notice: Notice, index: DirectoryIndexState): UnreadListingFields | undefined {
+  const entry = noticeEntry(notice, index);
+  return entry === undefined ? undefined : unreadFieldsOf(index, entry);
+}
 
 function installedVersion(runtime: Runtime, packageId: string): { package_id: string; version: string; digest: string } | undefined {
   return oneRow<{ package_id: string; version: string; digest: string }>(
@@ -60,10 +78,7 @@ export function reachChangeAgainstInstalled(
 export function noticeReachChange(runtime: Runtime, notice: Notice, index: DirectoryIndexState): ReachChangeView | undefined {
   const subject = notice.subject;
   if (notice.category !== "update" || subject?.kind !== "package" || subject.version === undefined) return undefined;
-  const entry =
-    index.kind === "configured"
-      ? index.entries.find((candidate) => candidate.packageId === subject.packageId && candidate.version === subject.version)
-      : undefined;
+  const entry = noticeEntry(notice, index);
   if (entry !== undefined) return reachChangeAgainstInstalled(runtime, entry, index);
   const installed = installedVersion(runtime, subject.packageId);
   return installed === undefined || installed.version === subject.version ? undefined : UNKNOWN;

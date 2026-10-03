@@ -23,7 +23,7 @@ import { listPendingInstallApprovals } from "./application/install-approval.ts";
 import { listPendingCapabilityApprovals } from "./application/package-install.ts";
 import { QUESTION_TTL_MS, pendingForConversation } from "./interactions.ts";
 import { noticeActionsFor } from "./notice-actions.ts";
-import { noticeReachChange } from "./package-reach-change.ts";
+import { noticeReachChange, noticeUnreadFields } from "./package-reach-change.ts";
 import { interactionDepsFor } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
 
@@ -256,12 +256,14 @@ export function readInbox(services: InboxServices, now: Instant, limit = 50): In
   let index: DirectoryIndexState | undefined;
   const directory = (): DirectoryIndexState => (index ??= readDirectoryIndex(directoryIndexPath(process.env)));
   const withActions = (notice: Notice): Notice => {
-    const reachChange =
-      notice.category === "update" && notice.subject?.kind === "package" ? noticeReachChange(services.runtime, notice, directory()) : undefined;
+    const isPackageUpdate = notice.category === "update" && notice.subject?.kind === "package";
+    const reachChange = isPackageUpdate ? noticeReachChange(services.runtime, notice, directory()) : undefined;
+    const unreadFields = isPackageUpdate ? noticeUnreadFields(notice, directory()) : undefined;
     return {
       ...notice,
       actions: noticeActionsFor(db, principalId, notice, context),
       ...(reachChange === undefined ? {} : { reachChange }),
+      ...(unreadFields === undefined ? {} : { unreadFields }),
     };
   };
   return {
