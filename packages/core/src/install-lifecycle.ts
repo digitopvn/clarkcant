@@ -13,6 +13,7 @@ import {
 
 import { type Database, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
+import { artifactIsSnapshot } from "./package-fetch.ts";
 import { bringBackUninstalledWidgets } from "./package-lifecycle.ts";
 
 /**
@@ -127,16 +128,21 @@ function isFinished(state: string): boolean {
   return state === "active" || state === "continuation_ready";
 }
 
-/** Whether the generation a plan's candidate names is the one active for its package on this node. */
+/**
+ * Whether the generation a plan's candidate names is the one active for its package on this node. For a local package
+ * that also means the same snapshot: the version and listed digest can stay the same while the bytes differ.
+ */
 function generationRuns(deps: InstallDeps, candidateJson: string, nodeId: string): boolean {
   const candidate = parseJson<InstallPlan["candidate"]>(candidateJson, "install_plans.candidate");
-  const running = oneRow<{ version: string; digest: string }>(
+  const running = oneRow<{ version: string; digest: string; document: string }>(
     deps.db,
-    "SELECT version, digest FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
+    "SELECT version, digest, document FROM package_generations WHERE package_id = ? AND node_id = ? AND superseded_at IS NULL",
     candidate.id,
     nodeId,
   );
-  return running !== undefined && running.version === candidate.version && running.digest === candidate.digest;
+  if (running === undefined || running.version !== candidate.version || running.digest !== candidate.digest) return false;
+  const { snapshotDigest } = parseJson<{ snapshotDigest?: string }>(running.document, "package_generations.document");
+  return snapshotDigest === undefined || artifactIsSnapshot(candidate.artifactUrl, snapshotDigest);
 }
 
 export function getPlan(deps: InstallDeps, planId: string): InstallRecord | undefined {

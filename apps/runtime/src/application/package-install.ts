@@ -364,6 +364,8 @@ export function localContentDigest(
   try {
     const digest = digestOfDirectory(entry.source.path, {
       exclude: [".git"],
+      // As the snapshot leaves it out: `.GIT` is the same folder as `.git` on Windows and macOS.
+      excludeAnyCase: true,
       limits: { maxFiles: LOCAL_DIGEST_MAX_FILES, maxBytes: LOCAL_DIGEST_MAX_BYTES },
     });
     return digest.ok
@@ -509,8 +511,11 @@ export async function installPackage(
    *
    * The snapshot's digest is the one every check compares: the content an approval pinned when the person was asked
    * (other files install nothing), and the `contentDigest` a listing showed for a direct install (files that changed
-   * since the list was made are refused). A copy that does not match is discarded rather than cached. A path that
-   * cannot be copied (unreadable, holding a link, or too large to verify) is refused.
+   * since the list was made are refused). A copy that does not match is discarded rather than cached. With neither, a
+   * path whose files changed while they were copied is refused too (409), since the copy would be a mix of two versions.
+   * A path that cannot be copied (unreadable, holding a link, or too large to verify) is refused (400), and a copy the
+   * node could not write into its own cache (a full disk, a locked or unwritable cache folder) is refused as the cache's
+   * failure (503), not the files'.
    *
    * Deliberately before the policy decides: these are facts about the files, not decisions, so a person whose mode
    * would deny the install still learns that the files changed (409) or cannot be read (400) rather than only that the
@@ -520,7 +525,7 @@ export async function installPackage(
   let snapshot: { path: string; digest: string } | undefined;
   if (entry.source.kind === "local") {
     const expectedDigest = approved?.localDigest ?? request.contentDigest;
-    const taken = snapshotLocalPackage({
+    const taken = await snapshotLocalPackage({
       path: entry.source.path,
       cacheRoot,
       limits: { maxFiles: LOCAL_DIGEST_MAX_FILES, maxBytes: LOCAL_DIGEST_MAX_BYTES },
@@ -532,6 +537,22 @@ export async function installPackage(
         status: 409,
         code: "DIGEST_MISMATCH",
         message: approved === undefined ? localFilesChangedSinceListingMessage(packageId, version) : localFilesChangedMessage(packageId, version),
+      };
+    }
+    if (!taken.ok && taken.code === "LOCAL_SOURCE_CHANGED") {
+      return {
+        kind: "refused",
+        status: 409,
+        code: "DIGEST_MISMATCH",
+        message: `${packageId}@${version}'s files on this machine changed while they were being copied, so nothing was installed and the files were left as they are. Install it again once they have stopped changing.`,
+      };
+    }
+    if (!taken.ok && (taken.code === "PACKAGE_CACHE_UNAVAILABLE" || taken.code === "CACHE_ESCAPE")) {
+      return {
+        kind: "refused",
+        status: 503,
+        code: "PACKAGE_CACHE_UNAVAILABLE",
+        message: `${packageId}@${version} was not installed: this node could not write its copy of the files into its package cache (${taken.message}). The files on this machine were not changed, and whatever was installed before keeps running. Try again; if it keeps failing, check the free space and permissions of ${cacheRoot}.`,
       };
     }
     if (!taken.ok) {

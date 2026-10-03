@@ -28,6 +28,7 @@ import {
   activeGenerations,
   activePackageVersions,
   installedDirectoryEntries,
+  notInstalledAsListedMessage,
   brokeredCapabilities,
   claimLiveOwner,
   decideApproval,
@@ -204,8 +205,12 @@ export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; id
   const otherVersionActive = (entry: DirectoryEntry) =>
     !isActive(entry) && idsOf(entry).some((id) => activePackages.has(id));
   const cacheRoot = join(runtime.dataDir, "package-cache");
-  // A local package an active generation installed is read from that generation's snapshot, not from its path.
-  const entries = index.kind === "configured" ? installedDirectoryEntries(index.entries, activeGenerations(node), cacheRoot) : [];
+  /*
+   * A local package an active generation installed is read from that generation's snapshot, never from its path. A
+   * listing that no longer names what that generation installed is withheld, not read from the path.
+   */
+  const installed = installedDirectoryEntries(index.kind === "configured" ? index.entries : [], activeGenerations(node), cacheRoot);
+  const { entries } = installed;
   const found = findIsolatedFrame({
     /*
      * While a version of a package is active, only that version's code runs: after a rollback a definition that exists
@@ -219,7 +224,18 @@ export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; id
     // cache root here must match the one the install route fetched into.
     cacheRoot,
   });
-  if (!found.ok) return found;
+  if (!found.ok) {
+    // A widget whose running package is withheld is refused as not installed, rather than reported as unknown.
+    const held = installed.withheld.find(({ generation }) => generation.widgetIds?.includes(widgetId) === true);
+    if (found.code === "NO_SUCH_WIDGET" && held !== undefined) {
+      return {
+        ok: false as const,
+        code: "NOT_INSTALLED" as const,
+        message: notInstalledAsListedMessage(held.entry.packageId, held.generation.version),
+      };
+    }
+    return found;
+  }
   /*
    * Whether the code found is the version this node is running, rather than a listing kept to describe an instance
    * whose package is gone. A frame is still described either way; only a running package is given anything new.
@@ -286,6 +302,9 @@ function resolveLiveWidget(
    * this route answers with, and a client that had to guess would be a client that guessed wrong once.
    */
   const isolated = locateIsolatedFrame(runtime, instance.definitionRef.id);
+  // The running package's listing changed under it: neither its installed copy nor the path is served (409, as the
+  // frame and files routes answer), and the instance and its state are kept for the reinstall.
+  if (!isolated.ok && isolated.code === "NOT_INSTALLED") return fail(409, isolated.code, isolated.message);
   if (isolated.ok) {
     /*
      * What the frame is actually brokered is the *granted* set, not the requested one.
@@ -1534,7 +1553,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     const isolated = locateIsolatedFrame(runtime, instance.definitionRef.id);
     if (!isolated.ok) {
       return fail(
-        isolated.code === "NOT_AN_ISOLATED_APP" ? 409 : 404,
+        isolated.code === "NOT_AN_ISOLATED_APP" || isolated.code === "NOT_INSTALLED" ? 409 : 404,
         isolated.code,
         isolated.code === "NOT_AN_ISOLATED_APP"
           ? "this widget changes its state through its bound actions, not by writing it directly"
@@ -1577,6 +1596,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     // A built-in or composed surface is described by the host from the state it stores; only a frame, whose state the
     // host cannot read the meaning of, says what it shows.
     const isolated = locateIsolatedFrame(runtime, instance.definitionRef.id);
+    if (!isolated.ok && isolated.code === "NOT_INSTALLED") return fail(409, isolated.code, isolated.message);
     if (!isolated.ok) {
       return fail(409, "NOT_AN_ISOLATED_APP", "this widget is described by the host from its own state");
     }

@@ -2904,18 +2904,32 @@ never an `rmSync` of an artifact that may be live), and any other place holding 
 
 A package listed by a path on this machine is cached the same way, by content: `snapshotLocalPackage` copies the path
 into `local/<sha256>` under the cache (`cachedLocalSnapshotPath`), and the install runs from that copy as it runs a
-git or npm package from its fetched folder. The copy is staged in a `.tmp-*` folder, walked with the same bounds as the
-listing digest (5,000 files, 64 MiB) and the same refusals as `digestOfDirectory` (a symbolic link, a junction, a hard
-link, a root `.git` left out), digested there, compared with the digest the person was shown, and only then renamed into
-place; a mismatch discards the staged copy. Every file is written owner-writable whatever its source mode, so a read-only
-source does not leave a copy the cache cannot remove, and a name a case-insensitive filesystem cannot hold apart from
-another is refused rather than overwritten. The generation records the copy as `snapshotDigest`, and every reader of an
-installed local package (the file and frame routes, the widget list, the theme registry, services, capability grants)
-resolves it through `resolveLocalSource(entry, cacheRoot, generation)` or `installedDirectoryEntries`, which never fall
-back to the path: a snapshot gone from the cache is a package whose files are gone. Installing the path again after an
-edit makes a new copy, and its different `artifactUrl` makes a new plan and generation rather than joining the old one.
-A generation installed from a path before snapshots has no `snapshotDigest` and keeps reading its path until it is
-installed again. Nothing collects unused cache entries yet, for snapshots as for git and npm artifacts.
+git or npm package from its fetched folder. The copy is asynchronous, so the node keeps serving while it runs. The path
+is listed first, with the same bounds as the listing digest (5,000 files, 5,000 folders, 64 levels deep, 64 MiB) and
+the same refusals as `digestOfDirectory` (a symbolic link, a junction, a hard link, a root `.git` left out in any letter
+case). Each file is then opened (with `O_NOFOLLOW` where the platform has it; Windows has none), and the opened handle
+must be the same file, by device and file id, as the one listed, so a name replaced by a link or another file in between
+is refused on every platform; its own size is checked against the remaining byte bound before it is read, and it is read
+no further than that size. The bytes are written to a `.tmp-*` folder and hashed as they are written, in digest order,
+so the digest is of the copy without reading it again; it is compared with the digest the person was shown, and only
+then is the folder renamed into place; a mismatch discards the staged copy. With no digest to compare (a notice's
+`update`, an older card), the path is listed again after the copy, and a file or folder whose size, modification time or
+identity changed refuses the snapshot (`LOCAL_SOURCE_CHANGED`, answered as `409 DIGEST_MISMATCH`). A failure writing the
+cache (creating, writing, renaming or removing there, including a rename Windows still refuses after about three seconds
+of retries) is `PACKAGE_CACHE_UNAVAILABLE` (`503`), never `LOCAL_SOURCE_UNREADABLE`. Every file is written
+owner-writable whatever its source mode, so a read-only source does not leave a copy the cache cannot remove, and a name
+a case-insensitive filesystem cannot hold apart from another is refused rather than overwritten. The generation records
+the copy as `snapshotDigest`, and every reader of an installed local package (the file and frame routes, the
+conversation's frame lookup, the widget list, the theme registry, services, capability grants, and the widget ids an
+uninstall or restore reaches) resolves it through `resolveLocalSource(entry, cacheRoot, generation)` or
+`installedDirectoryEntries`, which never fall back to the path: a snapshot gone from the cache is a package whose files
+are gone. `installedDirectoryEntries` withholds a local listing whose package runs from a snapshot but which no longer
+names exactly that generation's version and digest (the same version re-packed, or another version), and readers answer
+it `409 NOT_INSTALLED`. Installing the path again after an edit makes a new copy, and its different `artifactUrl` makes a
+new plan and generation rather than joining the old one; a finished plan is joined only while the running generation's
+snapshot is that plan's artifact. A generation installed from a path before snapshots has no `snapshotDigest` and keeps
+reading its path until it is installed again. A snapshot sweeps `.tmp-*` and `.stale-*` folders older than an hour from
+the cache; nothing else collects unused cache entries yet, for snapshots as for git and npm artifacts.
 
 `digestOfDirectory` uses `lstatSync`, not `statSync`: a symlink or hard link in the artifact is refused
 by name (`ARTIFACT_SYMLINK_ESCAPE`) rather than being followed or silently skipped, and the function never throws

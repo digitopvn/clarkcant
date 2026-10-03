@@ -479,28 +479,38 @@ restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refus
 
 For a package listed by a path on this machine the node copies its files into its package cache
 (`<dataDir>/package-cache/local/<sha256>`) and digests the copy (`digestOfDirectory`, the digest a git or npm fetch
-computes), so the request needs no digest from the client. The copy is staged in a temporary folder, digested there and
-only then renamed to its content-addressed name; the same bytes installed again reuse the copy already there. The
-`marketplace-results` card carries the digest of the files as each local listing's `contentDigest`, computed when the
-node listed them, and the Install button sends it back as `{ "contentDigest" }`. If the copy differs from it (the files
-changed since the list was made, including while the install was copying them), the install is refused with
-`409 DIGEST_MISMATCH` and a reason that says so and tells the person to search again; nothing is installed, asked or
-cached, and the card marks that row as changed rather than offering the same refused install again. The installed
-package runs from the copy, not the path: its files, widgets, themes and services are read from the snapshot its
-generation records (`snapshotDigest` on the generation and in `GET /packages`), so later edits to the path change
-nothing until the package is installed again, which copies and checks the files anew and activates a new generation.
-A request without `contentDigest` (a card from before the field, or a notice's `update`) installs the files as they
-are when it arrives. A path whose files cannot be copied is refused with `400 LOCAL_SOURCE_UNREADABLE`: unreadable,
-holding a symbolic link, junction or hard link (which the copy refuses rather than follows), or too large to verify
-(more than 5,000 files or 64 MiB, the bound that keeps a search's digests cheap; the card then carries no
-`contentDigest` for it). These checks run before the execution policy decides, so a person whose mode would deny the
-install still gets the `409` or `400` rather than `403 POLICY_REFUSED`; the copy a refused or asked install made stays
-in the cache and is reused. The `effect.executed` record of a local install names the copy it runs (`files sha256:…`
-in its description). A local install's plan and generation carry the listing's `digest`; a client that sends
-`{ "localDigest" }` names that identity itself, as before, and its install still runs from a copy. A package installed
-from a path before snapshots keeps reading its path until it is installed again; nothing is migrated or deleted. The
-package cache has no garbage collection, for snapshots as for git and npm artifacts, so a snapshot no generation uses
-any more stays on disk until the cache is cleared by hand.
+computes), so the request needs no digest from the client. The copy is staged in a temporary folder, digested from the
+bytes written there and only then renamed to its content-addressed name; the same bytes installed again reuse the copy
+already there. The copy does not hold up the node while it runs. The `marketplace-results` card carries the digest of
+the files as each local listing's `contentDigest`, computed when the node listed them, and the Install button sends it
+back as `{ "contentDigest" }`. If the copy differs from it (the files changed since the list was made, including while
+the install was copying them), the install is refused with `409 DIGEST_MISMATCH` and a reason that says so and tells
+the person to search again; nothing is installed, asked or cached, and the card marks that row as changed rather than
+offering the same refused install again. A request without `contentDigest` (a card from before the field, or a notice's
+`update`) installs the files as they are when it arrives: the node lists the path again after the copy, and if any file
+or folder changed its size, modification time or identity while it was being copied, the install is refused with
+`409 DIGEST_MISMATCH` and a reason saying so, so a copy is never a mix of two versions. The installed package runs from
+the copy, not the path: its files, frames, widgets, themes and services are read from the snapshot its generation
+records (`snapshotDigest` on the generation and in `GET /packages`), so later edits to the path never run until the
+package is installed again, which copies and checks the files anew and activates a new generation. If the listing
+changes under an installed package instead (the same version listed again with another `digest`, or another version
+listed), neither the copy nor the path is served for that listing: `GET /packages/:id/:version/files/…`, the frame route
+and the conversation's widget read answer `409 NOT_INSTALLED` until the package is installed again, and its widgets keep
+their state. A path whose files cannot be copied is refused with `400 LOCAL_SOURCE_UNREADABLE`: unreadable, holding a
+symbolic link, junction or hard link (which the copy refuses rather than follows; on every platform a file replaced by a
+link or another file after it was listed is refused too), or too large to verify (more than 5,000 files, 5,000 folders,
+folders 64 deep or 64 MiB, the bound that keeps a search's digests cheap; the card then carries no `contentDigest` for
+it). A `.git` folder at the root is left out in any letter case. A copy the node cannot write into its own cache (a full
+disk, a cache folder it may not write, a rename Windows keeps refusing) is refused with `503 PACKAGE_CACHE_UNAVAILABLE`
+and a reason saying the files were not changed and to try again. These checks run before the execution policy decides,
+so a person whose mode would deny the install still gets the `409`, `400` or `503` rather than `403 POLICY_REFUSED`;
+the copy a refused or asked install made stays in the cache and is reused. The `effect.executed` record of a local
+install names the copy it runs (`files sha256:…` in its description). A local install's plan and generation carry the
+listing's `digest`; a client that sends `{ "localDigest" }` names that identity itself, as before, and its install
+still runs from a copy. A package installed from a path before snapshots keeps reading its path until it is installed
+again; nothing is migrated or deleted. Temporary folders a stopped install left in the cache are removed by a later
+install once they are an hour old; otherwise the package cache has no garbage collection, for snapshots as for git and
+npm artifacts, so a snapshot no generation uses any more stays on disk until the cache is cleared by hand.
 
 When the person's execution mode asks before installing, it answers `202` with
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
