@@ -1301,6 +1301,30 @@ imported picture. The page policy therefore allows `media-src 'self' blob:` in b
 ([#374](https://github.com/digitopvn/clarkcant/issues/374)). A YouTube embed is a frame, governed by `frame-src`, not
 by this directive.
 
+**When a player's bytes are read.** Pictures, a video's poster included, are read as soon as the conversation lists
+them: a poster is a still picture under the same import limit as any other, and it is what stands in for the player. A
+video's or an audio file's bytes are read through the same authenticated client, as an object URL, but only when they
+are needed ([#403](https://github.com/digitopvn/clarkcant/issues/403)): when the player comes within half a screen of
+the visible transcript (an `IntersectionObserver` rooted at the transcript's own scroll area), or when the person
+presses the host's Play button that stands in for the player until then. Pressing it says the bytes are loading, with no
+invented progress, and keeps the focus on the button. Once the bytes arrive, the native player takes its place and the
+focus, restores the stored position, and plays because the person asked, but only if that press is still current: if
+another player started meanwhile, or the person moved the focus elsewhere, it stays paused. Starting any host player
+pauses the one that was playing, so there is one active playback owner. Without an observer nothing is read until Play
+is pressed. A source that cannot be read says so in a status that takes the focus the Play button had: what failed,
+that the conversation is unchanged, and that opening it again tries again. The object URLs follow the
+picture rules in [use-object-urls.ts](../packages/conversation-client/src/use-object-urls.ts): one fetch and one owner
+per reference, released when the reference leaves the conversation, and a late arrival released rather than stored.
+Tests: [object-urls.spec.ts](../packages/conversation-client/test/object-urls.spec.ts),
+[near-viewport.spec.ts](../packages/conversation-client/test/near-viewport.spec.ts),
+[playback-owner.spec.ts](../packages/conversation-client/test/playback-owner.spec.ts),
+[media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts) and the browser journey
+[lazy-media.spec.ts](../apps/web/e2e/lazy-media.spec.ts). The journey counts every media read: none when a conversation
+with three videos and an audio player opens; one when a player comes within the margin, before it is visible; one for
+the audio player scrolled to; and one when a player is played with no observer. It also checks that the paused position
+comes back after a reload and that Play starts from it, that a stale press does not start a player, that starting one
+pauses another, and that a refused source is said and takes the focus.
+
 ### 8.12 Diagrams and graphs
 
 `canvas.diagram@1` draws a bounded node-and-edge graph (a flowchart, a dependency graph, a small tree) as SVG the
@@ -1472,7 +1496,8 @@ checks it under the media content policy (§14.5) and stores only what it checke
 The node fills in `audioRef` (`artifact:<id>` or `attachment:<id>`, never a URL), `mimeType`, `durationSeconds`,
 `sizeBytes` and, for a fetched file, `sourceOrigin`. A model that supplies any of these is refused, so a player never
 claims a type or a length nobody checked. The page plays the file from the node through the same authenticated object
-URL as a picture, with the browser's own controls (keyboard included) and `preload="metadata"`. It never plays by
+URL as a picture, read only once the player is needed (§8.11), with the browser's own controls (keyboard included) and
+`preload="metadata"`. It never plays by
 itself, on first draw or on restore. The transcript is drawn as text in a disclosure, with any hidden character shown
 as a marker. Playback state is the video's: `status`, `position` and `duration` through the `media.view` binding
 (state version 2), written through the shared playback coalescer and restored paused at the stored position. Its

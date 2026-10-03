@@ -23,3 +23,17 @@ export function followsBottom(
 ): boolean {
 	return distanceFromBottom(metrics) <= slack;
 }
+
+/**
+ * How the view should travel to the bottom.
+ *
+ * Following a growing reply moves the view a few lines at a time, and a smooth scroll keeps that easy to read.
+ * A longer jump, such as opening a stored conversation from its top, is a change of place rather than a follow:
+ * animating it would sweep the whole transcript past the screen, which shows nothing readable and makes every
+ * player on the way count as near the viewport, so it reads all of their bytes. Anything further than one
+ * screen therefore jumps. A shorter one is "auto", which leaves the stylesheet to decide, so reduced motion
+ * still turns the glide off.
+ */
+export function followScrollBehavior(metrics: { scrollHeight: number; scrollTop: number; clientHeight: number }): "instant" | "auto" {
+	return distanceFromBottom(metrics) > metrics.clientHeight ? "instant" : "auto";
+}

@@ -1298,6 +1298,30 @@ policy cho phép `media-src 'self' blob:` ở cả [apps/web/index.html](../apps
 ([#374](https://github.com/digitopvn/clarkcant/issues/374)). Embed YouTube là một frame, do `frame-src` quản lý, không
 thuộc directive này.
 
+**Khi nào bytes của player được đọc.** Ảnh, kể cả ảnh poster của video, được đọc ngay khi cuộc hội thoại liệt kê chúng:
+poster là một ảnh tĩnh chịu cùng giới hạn nhập như mọi ảnh khác, và là thứ đứng thay player. Bytes của video hay tệp
+âm thanh được đọc qua cùng client có xác thực, thành object URL, nhưng chỉ khi thật sự cần
+([#403](https://github.com/digitopvn/clarkcant/issues/403)): khi player tới trong phạm vi nửa màn hình quanh phần
+transcript đang hiển thị (một `IntersectionObserver` gốc tại chính vùng cuộn của transcript), hoặc khi người dùng bấm
+nút Phát của host đứng thay player cho tới lúc đó. Bấm nút sẽ báo bytes đang tải, không bịa ra tiến độ, và giữ focus
+trên nút. Khi bytes về, player gốc thế chỗ và nhận focus, khôi phục vị trí đã lưu, rồi phát vì người dùng đã yêu cầu,
+nhưng chỉ khi lần bấm đó vẫn còn hiệu lực: nếu trong lúc chờ có player khác đã phát, hoặc người dùng đã chuyển focus
+sang chỗ khác, player vẫn dừng. Phát bất kỳ player nào của host sẽ dừng player đang phát, nên chỉ có một nơi phát tại
+một thời điểm. Khi không có observer, không gì được đọc cho tới khi bấm Phát. Nguồn không đọc được thì báo trong một
+status nhận lại focus của nút Phát: điều gì đã hỏng, cuộc hội thoại vẫn giữ nguyên, và mở lại hội thoại để thử lại.
+Các object URL theo đúng quy tắc của ảnh trong
+[use-object-urls.ts](../packages/conversation-client/src/use-object-urls.ts): mỗi tham chiếu một lần fetch và một chủ
+sở hữu, được giải phóng khi tham chiếu rời cuộc hội thoại, và lần trả về muộn bị giải phóng chứ không được lưu.
+Test: [object-urls.spec.ts](../packages/conversation-client/test/object-urls.spec.ts),
+[near-viewport.spec.ts](../packages/conversation-client/test/near-viewport.spec.ts),
+[playback-owner.spec.ts](../packages/conversation-client/test/playback-owner.spec.ts),
+[media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts) và browser journey
+[lazy-media.spec.ts](../apps/web/e2e/lazy-media.spec.ts). Journey đếm mọi lần đọc media: không lần nào khi mở một cuộc
+hội thoại có ba video và một player âm thanh; một lần khi một player vào trong phạm vi lề, trước khi nó hiện ra; một lần
+cho player âm thanh khi cuộn tới; và một lần khi phát một player lúc không có observer. Nó cũng kiểm tra vị trí đã dừng
+quay lại sau khi tải lại và nút Phát bắt đầu từ vị trí đó, một lần bấm đã cũ không tự phát player, phát một player sẽ
+dừng player khác, và nguồn bị từ chối được thông báo và nhận focus.
+
 ### 8.12 Sơ đồ và đồ thị
 
 `canvas.diagram@1` vẽ một đồ thị node và cạnh có giới hạn kích thước (lưu đồ, đồ thị phụ thuộc, một cây nhỏ) dưới dạng
@@ -1466,9 +1490,9 @@ chính sách nội dung media (§14.5) và chỉ lưu những gì đã kiểm tr
 Node tự điền `audioRef` (`artifact:<id>` hoặc `attachment:<id>`, không bao giờ là URL), `mimeType`, `durationSeconds`,
 `sizeBytes` và, với tệp được fetch, `sourceOrigin`. Model nào tự đưa các trường này đều bị từ chối, nên player không bao
 giờ tuyên bố một kiểu hay một độ dài mà chưa ai kiểm tra. Trang phát tệp từ node qua cùng object URL có xác thực như ảnh,
-với điều khiển gốc của trình duyệt (dùng được bằng bàn phím) và `preload="metadata"`. Nó không bao giờ tự phát, kể cả
-lần vẽ đầu hay khi khôi phục. Bản ghi lời được vẽ thành chữ trong một khối mở/đóng, mọi ký tự ẩn hiện thành dấu đánh
-dấu. Trạng thái phát giống video: `status`, `position` và `duration` qua binding `media.view` (state version 2), ghi qua
+chỉ được đọc khi player thật sự cần (§8.11), với điều khiển gốc của trình duyệt (dùng được bằng bàn phím) và
+`preload="metadata"`. Nó không bao giờ tự phát, kể cả lần vẽ đầu hay khi khôi phục. Bản ghi lời được vẽ thành chữ trong
+một khối mở/đóng, mọi ký tự ẩn hiện thành dấu đánh dấu. Trạng thái phát giống video: `status`, `position` và `duration` qua binding `media.view` (state version 2), ghi qua
 bộ gộp playback dùng chung và khôi phục ở trạng thái dừng tại vị trí đã lưu. Semantic document báo trạng thái, vị trí và
 thời lượng làm tròn tới một phần mười giây, tiêu đề và việc có bản ghi lời hay không; khi player chưa báo thời lượng,
 độ dài node đọc được từ tệp được dùng thay.

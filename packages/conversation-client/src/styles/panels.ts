@@ -464,6 +464,17 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-audio { margin: 0; display: flex; flex-direction: column; gap: var(--cc-space-xxs); }
 .cc-audio audio { width: 100%; max-width: 100%; display: block; }
 .cc-audio audio:focus-visible, .cc-video video:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* A player whose bytes are not read yet: its poster, the host's Play button, and the loading status once pressed. */
+.cc-media-wait { display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-xs); }
+.cc-media-wait [data-media-loading]:empty { margin: 0; }
+/* A waiting video keeps the 16:9 box a player usually fills (as an embed does), so its arrival moves nothing below it. */
+.cc-video.cc-media-wait { align-items: stretch; }
+.cc-media-stage {
+  position: relative; aspect-ratio: 16 / 9; width: 100%; display: grid; place-items: center;
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card); overflow: hidden; background: var(--cc-card);
+}
+.cc-media-stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.cc-media-stage button { position: relative; }
 .cc-audio-transcript summary { cursor: pointer; border-radius: var(--cc-radius-badge); }
 .cc-audio-transcript summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-audio-transcript-text, .cc-document-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

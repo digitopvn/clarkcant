@@ -164,6 +164,7 @@ export function Conversation({
     refreshTimeline,
     instanceById,
     imageUrl,
+    mediaUrls,
   } = useConversationTimeline(client, initialConversationId, onTimelineChange);
 
   const blocks = timeline?.messages ?? [];
@@ -436,6 +437,7 @@ export function Conversation({
     datasets,
     refreshDataset,
     imageUrl,
+    mediaUrls,
     applyTimeline,
     setError,
     liveTrigger,

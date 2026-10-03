@@ -2975,12 +2975,20 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * binding. The node has no video import yet: the browser journey answers this one reference's authenticated fetch
      * with a real WebM clip, and everything after the bytes — the object URL, the page's media policy, the player and
      * the state the node holds — is the production path.
+     *
+     * "đặt video cục bộ <n>" places a numbered clip under its own reference (`video_e2e_lazy_<n>`), so a journey can
+     * place several players and count which of their sources the page asked for.
      */
-    if (/^(?:đặt|place)\s+(?:video cục bộ|local video)$/iu.test(input.text.trim())) {
+    const localVideo = /^(?:đặt|place)\s+(?:video cục bộ|local video)(?:\s+(\d{1,2}))?$/iu.exec(input.text.trim());
+    if (localVideo !== null) {
       const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.video@1");
       if (view === undefined) return undefined;
+      const numbered = localVideo[1];
       const block = await view.build({
-        props: { videoRef: "video_e2e_local_clip", alt: "Đoạn phim thử tám giây", title: "Video cục bộ (fixture)" },
+        props:
+          numbered === undefined
+            ? { videoRef: "video_e2e_local_clip", alt: "Đoạn phim thử tám giây", title: "Video cục bộ (fixture)" }
+            : { videoRef: `video_e2e_lazy_${numbered}`, alt: `Đoạn phim thử số ${numbered}`, title: `Video cục bộ ${numbered} (fixture)` },
         caption: "",
         at: instantSchema.parse(new Date().toISOString()),
         principal: input.principal as never,

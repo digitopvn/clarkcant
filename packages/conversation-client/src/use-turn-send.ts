@@ -5,7 +5,7 @@ import { readyAttachmentIds, type AttachmentChip } from "./attachments.ts";
 import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
-import { followsBottom } from "./follow-bottom.ts";
+import { followScrollBehavior, followsBottom } from "./follow-bottom.ts";
 import type { AppIntentDecision, ComposerReference } from "@clarkcant/contracts";
 
 /** The node's own sentence for a refused send; the code in front of it belongs in a log, not the status line. */
@@ -142,7 +142,8 @@ export function useTurnSend({
   useEffect(() => {
     const node = scroller.current;
     if (node === null || !followBottom.current) return;
-    node.scrollTop = node.scrollHeight;
+    const metrics = { scrollHeight: node.scrollHeight, scrollTop: node.scrollTop, clientHeight: node.clientHeight };
+    node.scrollTo({ top: node.scrollHeight, behavior: followScrollBehavior(metrics) });
     // The streamed reply is as much a reason to follow the bottom as a stored message is: without
     // it the answer grows below the fold while the view stays where the question was. It is
     // conditional because that is a reason to follow, not a licence to interrupt someone reading

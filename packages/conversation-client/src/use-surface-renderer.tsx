@@ -39,6 +39,7 @@ import { tableExportRequestFrom } from "./table-model.ts";
 import { desktopDialogLabels } from "./artifact-messages.ts";
 import { downloadBlob, saveForPerson } from "./download.ts";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
+import type { ObjectUrls } from "./use-object-urls.ts";
 
 /**
  * Turn a captured bundle into what the surface renders.
@@ -176,6 +177,8 @@ export interface SurfaceRendererDeps {
   datasets: Record<string, ResolvedDataset>;
   refreshDataset: (datasetId: string) => void;
   imageUrl: (imageRef: string) => string | undefined;
+  /** A player's source, read only when the player is near the screen or the person presses play. */
+  mediaUrls: ObjectUrls;
   applyTimeline: (next: Timeline) => void;
   setError: (message: string | undefined) => void;
   liveTrigger: RefObject<HTMLElement | null>;
@@ -201,6 +204,7 @@ export function useSurfaceRenderer({
   datasets,
   refreshDataset,
   imageUrl,
+  mediaUrls,
   applyTimeline,
   setError,
   liveTrigger,
@@ -604,6 +608,7 @@ export function useSurfaceRenderer({
               // this out made every picture widget show its text alternative while the bytes sat
               // unread on the node.
               imageUrl={imageUrl}
+              mediaUrls={mediaUrls}
               {...(widgetState === undefined ? {} : { state: widgetState })}
               {...(keepsView
                 ? {
@@ -743,6 +748,7 @@ export function useSurfaceRenderer({
       imageUrl,
       instanceById,
       liveTrigger,
+      mediaUrls,
       runAction,
       sendView,
       setError,
