@@ -989,3 +989,88 @@ describe("what a turn asks the model for", () => {
     expect(outcome.resolution).toBe("model");
   });
 });
+
+/**
+ * A host card that fails its own contract.
+ *
+ * A tool the host registered built it, so the failure is the node's bug. It is left out of the reply, as before, but
+ * reported to the operator by where it failed — never with a value it held — instead of vanishing.
+ */
+describe("a host card that fails its own contract", () => {
+  const marketCard = (row: Record<string, unknown>) => ({
+    type: "marketplace-results",
+    owner: "host",
+    cardId: "market_1",
+    query: "lookup",
+    directory: "directory.json",
+    results: [
+      {
+        packageId: "com.example.lookup",
+        version: "1.0.0",
+        displayName: "Lookup",
+        description: "Looks words up.",
+        source: { kind: "local", path: "/packages/lookup" },
+        digest: "sha256:lookup",
+        riskTier: "service",
+        facets: ["ui"],
+        platforms: ["web"],
+        ...row,
+      },
+    ],
+  });
+
+  async function turnWith(block: Record<string, unknown>) {
+    const reports: unknown[] = [];
+    const outcome = await handleUserMessage(
+      {
+        ...deps,
+        sampleRecipes: [],
+        reportRejectedHostCard: (diagnostic: unknown) => reports.push(diagnostic),
+        respondWithModel: async () => ({
+          text: "Đây là kết quả.",
+          segments: [
+            { kind: "text", text: "Đây là kết quả." },
+            { kind: "host-card", block },
+          ],
+          provider: "test",
+          model: "test",
+          elapsedMs: 1,
+        }),
+      } as never,
+      { conversationId: "conv_1" as never, principal: USER, text: "tìm gói lookup", at: AT },
+    );
+    const blocks = outcome.messages.flatMap((message) => (message as { blocks: { type: string }[] }).blocks);
+    return { reports, types: blocks.map((entry) => entry.type) };
+  }
+
+  it("is left out of the reply and reported by where it failed, without its values", async () => {
+    const { reports, types } = await turnWith(marketCard({ secretValue: "sk-live-should-not-be-logged" }));
+
+    expect(types).not.toContain("marketplace-results");
+    // The model's words still reach the person; no schema internals are drawn for them.
+    expect(types).toContain("text");
+    expect(reports).toEqual([
+      {
+        conversationId: "conv_1",
+        messageId: expect.any(String) as unknown,
+        blockType: "marketplace-results",
+        issues: [{ path: "results.0", code: "unrecognized_keys", keys: ["secretValue"] }],
+        issueCount: 1,
+      },
+    ]);
+    expect(JSON.stringify(reports)).not.toContain("sk-live");
+  });
+
+  it("names no type it cannot trust, and bounds what it lists", async () => {
+    const { reports } = await turnWith({ type: "Marketplace\nResults", ...Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`k${String(i)}`, i])) });
+    const [report] = reports as { blockType: string; issues: unknown[]; issueCount: number }[];
+    expect(report?.blockType).toBe("unknown");
+    expect(report?.issues.length).toBeLessThanOrEqual(10);
+  });
+
+  it("reports nothing for a card that matches its contract", async () => {
+    const { reports, types } = await turnWith(marketCard({}));
+    expect(reports).toEqual([]);
+    expect(types).toContain("marketplace-results");
+  });
+});

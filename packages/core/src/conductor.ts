@@ -152,6 +152,69 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
     intent: string;
     candidates: readonly { capabilityRef: string; executionNodeId: string; effectCategory: string }[];
   }) => Promise<{ capabilityRef: string; executionNodeId: string } | undefined>;
+  /**
+   * Told when a card a host tool built during a model turn fails its own contract and is left out of the reply.
+   *
+   * That is a node bug, not something the person did or can fix, so it is reported to whoever runs the node instead
+   * of being drawn: the reply keeps the model's words, and the person is not shown schema internals. The diagnostic
+   * names where the card failed and never carries a value from it.
+   */
+  reportRejectedHostCard?: (diagnostic: RejectedHostCardDiagnostic) => void;
+}
+
+/**
+ * Why a host card was left out of a reply, without anything it held.
+ *
+ * Paths and zod issue codes are the node's own field names; an unrecognised key is named, because "the card carries a
+ * key its contract does not declare" is the usual cause and the key is what to fix. Values never appear.
+ */
+export interface RejectedHostCardDiagnostic {
+  conversationId: ConversationId;
+  messageId: string;
+  /** The card's `type` when it is a plain short name, otherwise `"unknown"`. */
+  blockType: string;
+  issues: { path: string; code: string; keys?: string[] }[];
+  /** How many issues there were, when there were more than `issues` lists. */
+  issueCount: number;
+}
+
+/** The parts of a zod issue a diagnostic reads; the message is left out because it can quote a value. */
+interface ZodIssueLike {
+  code: string;
+  path: readonly PropertyKey[];
+  keys?: readonly string[];
+}
+
+const DIAGNOSTIC_MAX_ISSUES = 10;
+const DIAGNOSTIC_MAX_KEYS = 10;
+const DIAGNOSTIC_NAME_MAX = 120;
+
+/** A field name fit for a log line: bounded, and only printable characters. */
+function diagnosticName(value: string): string {
+  const printable = Array.from(value, (char) => {
+    const code = char.charCodeAt(0);
+    return code < 0x20 || code === 0x7f ? "?" : char;
+  }).join("");
+  return printable.length <= DIAGNOSTIC_NAME_MAX ? printable : `${printable.slice(0, DIAGNOSTIC_NAME_MAX)}…`;
+}
+
+export function rejectedHostCardDiagnostic(
+  context: { conversationId: ConversationId; messageId: string },
+  block: Record<string, unknown>,
+  issues: readonly ZodIssueLike[],
+): RejectedHostCardDiagnostic {
+  const type = block["type"];
+  return {
+    conversationId: context.conversationId,
+    messageId: context.messageId,
+    blockType: typeof type === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(type) ? type : "unknown",
+    issues: issues.slice(0, DIAGNOSTIC_MAX_ISSUES).map((issue) => ({
+      path: diagnosticName(issue.path.map((segment) => (typeof segment === "symbol" ? "?" : String(segment))).join(".")),
+      code: diagnosticName(issue.code),
+      ...(issue.keys === undefined ? {} : { keys: issue.keys.slice(0, DIAGNOSTIC_MAX_KEYS).map(diagnosticName) }),
+    })),
+    issueCount: issues.length,
+  };
 }
 
 /** What a model turn is asked to answer. */
@@ -833,7 +896,11 @@ async function runModelTurn(
       // It is bookkeeping: which model, how long it took. At the top of a reply it is the first thing
       // read and it is not the answer — the interface then leads with provenance and buries the text.
       // The renderer draws it as one muted line that expands (see `SystemCardBlock`).
-      ...modelSegmentsToBlocks(reply),
+      ...modelSegmentsToBlocks(reply, (block, issues) =>
+        deps.reportRejectedHostCard?.(
+          rejectedHostCardDiagnostic({ conversationId: input.conversationId, messageId }, block, issues),
+        ),
+      ),
       modelReplyCard(deps, reply, input.at),
     ],
     { at: input.at, messageId },
@@ -894,7 +961,10 @@ export function modelReplyCard(deps: Pick<ConductorDeps, "newId">, reply: ModelT
  * turn, and marking them host-built because the node happened to assemble the array would make
  * the check agree with itself and prove nothing.
  */
-function modelSegmentsToBlocks(reply: ModelTurnReply): MessageBlock[] {
+function modelSegmentsToBlocks(
+  reply: ModelTurnReply,
+  onRejectedHostCard: (block: Record<string, unknown>, issues: readonly ZodIssueLike[]) => void,
+): MessageBlock[] {
   const blocks: MessageBlock[] = [];
 
   for (const segment of reply.segments) {
@@ -912,6 +982,8 @@ function modelSegmentsToBlocks(reply: ModelTurnReply): MessageBlock[] {
       // because the screen protects against model output, and this is not model output.
       const parsed = messageBlockSchema.safeParse(segment.block);
       if (parsed.success) blocks.push(parsed.data as MessageBlock);
+      // A host card failing its own contract is a node bug: reported, not drawn and not silently lost.
+      else onRejectedHostCard(segment.block, parsed.error.issues);
       continue;
     }
 

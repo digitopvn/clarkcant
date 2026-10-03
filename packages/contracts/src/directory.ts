@@ -54,6 +54,17 @@ export const riskLaneSchema = z.enum(["isolated-ui", "service", "declarative", "
 export type RiskLane = z.infer<typeof riskLaneSchema>;
 
 /**
+ * Which of a package's widgets keep a fixed look rather than following the person's appearance, as the publisher
+ * claims it. A discovery claim shown before install: the installed, digest-checked widget definition's
+ * `appearanceMode` is what the host applies. One schema for the directory entry and the marketplace card that
+ * repeats it, so the card can never be stricter than the listing it shows.
+ */
+export const widgetAppearanceClaimsSchema = z
+  .array(z.strictObject({ id: z.string().min(1).max(160), mode: z.enum(["adaptive", "fixed"]) }))
+  .max(64);
+export type WidgetAppearanceClaims = z.infer<typeof widgetAppearanceClaimsSchema>;
+
+/**
  * The directory entry.
  *
  * The fields are the ones `docs/widget-development.md` §18 requires. `riskTier` is not derived from the publisher's
@@ -80,7 +91,7 @@ export const directoryEntrySchema = z.strictObject({
   preview: z.strictObject({ imageUrl: z.string().min(1).max(1000).optional(), videoUrl: z.string().min(1).max(1000).optional() }),
   facets: z.array(facetKindSchema).min(1).max(64),
   /** Optional discovery claims; the installed, digest-checked widget definition remains authoritative. */
-  widgetAppearance: z.array(z.strictObject({ id: z.string().min(1).max(160), mode: z.enum(["adaptive", "fixed"]) })).max(64).optional(),
+  widgetAppearance: widgetAppearanceClaimsSchema.optional(),
   /**
    * Each facet with the lane it runs in.
    *

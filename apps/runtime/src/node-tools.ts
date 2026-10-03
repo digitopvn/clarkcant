@@ -1416,12 +1416,13 @@ export function createSearchDirectoryTool(input: {
           results.length === 0
             ? `Không có gói nào trong ${state.directory} khớp “${query}”.`
             : `Tìm thấy ${results.length} gói trong ${state.directory}.`,
+        // Every value is fitted to the card contract here, because the conductor drops a host card that fails it.
         hostCard: {
           type: "marketplace-results",
           owner: "host",
           cardId: input.newId("market"),
-          query,
-          directory: state.directory,
+          query: query.slice(0, CARD_QUERY_MAX),
+          directory: fitDirectoryName(state.directory),
           results: results.map((entry) => ({
             packageId: entry.packageId,
             version: entry.version,
@@ -1437,13 +1438,23 @@ export function createSearchDirectoryTool(input: {
             ...(entry.declaredReach === undefined || declaredReachIsEmpty(entry.declaredReach)
               ? {}
               : { declaredReach: canonicalReach(entry.declaredReach) }),
-            facets: entry.facets,
-            platforms: entry.platforms,
+            // A directory entry may repeat a kind; the card lists each once, which also keeps it within its bound.
+            facets: [...new Set(entry.facets)],
+            platforms: [...new Set(entry.platforms)],
           })),
         },
       };
     },
   };
+}
+
+/** The card's bounds for the echoed query and the directory's name (`marketplaceResultsBlockSchema`). */
+const CARD_QUERY_MAX = 200;
+const CARD_DIRECTORY_MAX = 300;
+
+/** A directory path too long for the card keeps its end, which names the index, behind an ellipsis. */
+function fitDirectoryName(directory: string): string {
+  return directory.length <= CARD_DIRECTORY_MAX ? directory : `…${directory.slice(directory.length - (CARD_DIRECTORY_MAX - 1))}`;
 }
 
 /**
