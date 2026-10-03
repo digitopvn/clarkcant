@@ -1,4 +1,4 @@
-import { PERSON_ONLY_REFUSAL } from "@clarkcant/contracts";
+import { MAP_TILES_OFFLINE_REASONS, PERSON_ONLY_REFUSAL } from "@clarkcant/contracts";
 
 /**
  * The node's open interfaces, described in the formats other tools already read.
@@ -338,10 +338,30 @@ export function openApiDocument(): Record<string, unknown> {
             "Only the provider the policy names, on its own path template; z up to its maxZoom (at most 19), x and y on " +
             "that zoom's grid. Redirects are not followed. Served only as image/png or image/webp, checked by the " +
             "provider's type and the bytes, at most 512 KiB, with nosniff. The saved key is added by the node only when it " +
-            "was entered for the policy's origin, and never returned. 404 MAP_TILES_OFF with no policy, 400 MAP_TILE_OUT_OF_BOUNDS, 429 MAP_TILES_RATE_LIMITED, " +
-            "502 MAP_TILE_FAILED or MAP_TILE_REFUSED, 503 MAP_TILE_KEY_UNAVAILABLE.",
+            "was entered for the policy's origin, and never returned. 404 MAP_TILES_OFF with no policy, 404 MAP_TILE_MISSING " +
+            "when the provider has no tile at that address, 400 MAP_TILE_OUT_OF_BOUNDS, 429 MAP_TILES_RATE_LIMITED, " +
+            "502 MAP_TILE_FAILED or MAP_TILE_REFUSED, 503 MAP_TILE_KEY_UNAVAILABLE. The 503 carries offline " +
+            "(key-unavailable or key-origin-mismatch, as GET /map-tiles says) when the saved key is missing or bound to " +
+            "another origin; when the key is in place but the node's secret store refuses to hand it over, the 503 has no offline.",
           parameters: ["z", "x", "y"].map((name) => ({ name, in: "path", required: true, schema: { type: "integer", minimum: 0 } })),
-          responses: { "200": { description: "The tile, as image/png or image/webp" }, ...refusals },
+          responses: {
+            "200": { description: "The tile, as image/png or image/webp" },
+            ...refusals,
+            "404": { ...refusals["404"], description: "MAP_TILES_OFF with no tile policy, or MAP_TILE_MISSING when the provider has no tile there" },
+            "503": {
+              description: "MAP_TILE_KEY_UNAVAILABLE: offline is present when the key is missing or bound to another origin, absent when the secret store refuses it",
+              content: {
+                "application/json": {
+                  schema: {
+                    allOf: [
+                      { $ref: "#/components/schemas/Error" },
+                      { properties: { offline: { type: "string", enum: MAP_TILES_OFFLINE_REASONS.filter((reason) => reason !== "no-provider") } } },
+                    ],
+                  },
+                },
+              },
+            },
+          },
         },
       },
       "/artifacts/{artifactId}": {
