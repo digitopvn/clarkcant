@@ -145,6 +145,8 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
 /* A failure sentence is longer than the card's row: the card wraps rather than pushing its button out of view. */
 div.cc-attachment { flex-wrap: wrap; }
 .cc-attachment-status { min-width: 0; overflow-wrap: anywhere; }
+/* A read that failed is an error, in the error tone every other failure uses, not metadata beside the size. */
+.cc-attachment-status[data-attachment-status="failed"] { color: var(--cc-danger); }
 .cc-attachment-open { margin-left: auto; }
 /*
  * The composer's frame, and the light that travels around it.

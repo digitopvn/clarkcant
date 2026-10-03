@@ -63,7 +63,8 @@ async function controlReads(page: Page): Promise<{ hold: (id: string) => () => v
         await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "the file could not be read" }) });
         return;
       }
-      await route.continue();
+      // A held read the page has since given up on (a stall it timed out) is aborted, and cannot be continued.
+      await route.continue().catch(() => undefined);
     },
   );
   return {
@@ -178,6 +179,12 @@ test("attachment cards read no bytes until one is downloaded, then read only tha
   await page.keyboard.press("Enter");
   const failure = third.locator("[data-attachment-status]");
   await expect(failure).toHaveAttribute("data-attachment-status", "failed", { timeout: 15_000 });
+  // An error, in the error tone, not muted like the size beside it.
+  const tones = await third.evaluate((element) => ({
+    failure: getComputedStyle(element.querySelector("[data-attachment-status]") as Element).color,
+    size: getComputedStyle(element.querySelector(".cc-attachment-size") as Element).color,
+  }));
+  expect(tones.failure).not.toBe(tones.size);
   await expect(failure).toHaveText(
     /^(?:Không đọc được ba\.txt từ node\. Chưa có gì được tải về và cuộc hội thoại vẫn giữ nguyên; bấm Thử lại để thử lại\.|Could not read ba\.txt from the node\. Nothing was downloaded and the conversation is unchanged; press Try again to retry\.)$/u,
   );
@@ -209,4 +216,28 @@ test("attachment cards read no bytes until one is downloaded, then read only tha
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
   await page.screenshot({ path: testInfo.outputPath("lazy-attachment-failed-390-light.png") });
   node.refuse(undefined);
+
+  // A node that accepts the read and never starts answering: once the client's 30-second bound on the first response
+  // passes, the card fails the same way, and Try again reads the file once more. The page's clock is driven, so the
+  // suite does not wait the bound out.
+  await reopen(page, reads);
+  await page.clock.install();
+  const stalled = card(page, FILES[2].name);
+  const stalledId = await cardId(page, FILES[2].name);
+  const letGo = node.hold(stalledId);
+  const stalledButton = stalled.locator("[data-attachment-download]");
+  await stalledButton.click();
+  const stalledStatus = stalled.locator("[data-attachment-status]");
+  await expect(stalledStatus).toHaveAttribute("data-attachment-status", "opening");
+  await expect.poll(() => reads).toEqual([stalledId]);
+  await page.clock.fastForward(30_000);
+  await expect(stalledStatus).toHaveAttribute("data-attachment-status", "failed");
+  await expect(stalledButton).toHaveAccessibleName(/^(?:Thử lại|Try again)$/u);
+  await expect(stalledButton).toHaveAttribute("aria-disabled", "false");
+  letGo();
+  const afterStall = page.waitForEvent("download");
+  await stalledButton.click();
+  expect((await afterStall).suggestedFilename()).toBe(FILES[2].name);
+  await expect(stalledStatus).toHaveText("");
+  expect(reads, "a stalled read is read again only because the person asked").toEqual([stalledId, stalledId]);
 });

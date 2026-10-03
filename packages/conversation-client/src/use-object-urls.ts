@@ -53,7 +53,10 @@ export interface ObjectUrlSet {
    * reference leaving the list. A reference that did not fail, or is not listed on request, is left as it is.
    */
   retry: (reference: string) => void;
-  /** Releases every URL and forgets every request; a request still in flight is released when it arrives. */
+  /**
+   * Releases every URL and forgets every request. A read still in flight is aborted, and a URL it still produces is
+   * released when it arrives.
+   */
   release: () => void;
 }
 
@@ -72,12 +75,14 @@ export type ObjectUrlStatus = "ready" | "loading" | "idle" | "failed" | "unliste
 
 /** The bookkeeping behind `useObjectUrls`, without React, so what it fetches and releases can be counted. */
 export function createObjectUrlSet(input: {
-  fetchUrl: (reference: string) => Promise<string>;
+  /** `signal` is aborted when the set is released, so a read still in flight stops rather than streaming on. */
+  fetchUrl: (reference: string, signal: AbortSignal) => Promise<string>;
   revoke: (url: string) => void;
   onChange: () => void;
 }): ObjectUrlSet {
   const urls = new Map<string, string>();
-  const inFlight = new Set<string>();
+  /** Each read in flight, by the controller that can abort it; a settled read whose entry is gone was aborted. */
+  const inFlight = new Map<string, AbortController>();
   const failed = new Set<string>();
   const requested = new Set<string>();
   let now = new Set<string>();
@@ -86,11 +91,17 @@ export function createObjectUrlSet(input: {
 
   const fetchOne = (reference: string): void => {
     if (urls.has(reference) || inFlight.has(reference)) return;
-    inFlight.add(reference);
+    const controller = new AbortController();
+    inFlight.set(reference, controller);
     failed.delete(reference);
     void input
-      .fetchUrl(reference)
+      .fetchUrl(reference, controller.signal)
       .then((url) => {
+        if (inFlight.get(reference) !== controller) {
+          // Released while it was read: nothing owns this URL.
+          input.revoke(url);
+          return;
+        }
         inFlight.delete(reference);
         if (!wanted.has(reference)) {
           input.revoke(url);
@@ -101,7 +112,8 @@ export function createObjectUrlSet(input: {
       })
       .catch(() => {
         // The renderer shows its own message with the name it has, which is what a reader gets either way
-        // - bytes that cannot be fetched are a description, not a blank.
+        // - bytes that cannot be fetched are a description, not a blank. A read aborted by `release` is no failure.
+        if (inFlight.get(reference) !== controller) return;
         inFlight.delete(reference);
         if (!wanted.has(reference)) return;
         failed.add(reference);
@@ -166,6 +178,8 @@ export function createObjectUrlSet(input: {
       wanted = new Set();
       requested.clear();
       failed.clear();
+      for (const controller of inFlight.values()) controller.abort();
+      inFlight.clear();
       for (const url of urls.values()) input.revoke(url);
       urls.clear();
     },
@@ -181,7 +195,7 @@ export interface ObjectUrls {
 }
 
 export function useObjectUrls(
-  fetchUrl: (reference: string) => Promise<string>,
+  fetchUrl: (reference: string, signal: AbortSignal) => Promise<string>,
   references: readonly string[],
 ): (reference: string) => string | undefined {
   return useObjectUrlSet(fetchUrl, references, []).get;
@@ -194,7 +208,7 @@ export function useObjectUrls(
  * through it is rebuilt.
  */
 export function useObjectUrlSet(
-  fetchUrl: (reference: string) => Promise<string>,
+  fetchUrl: (reference: string, signal: AbortSignal) => Promise<string>,
   references: readonly string[],
   onRequest: readonly string[],
 ): ObjectUrls {
@@ -213,7 +227,7 @@ export function useObjectUrlSet(
   fetchRef.current = fetchUrl;
   const [set] = useState(() =>
     createObjectUrlSet({
-      fetchUrl: (reference) => fetchRef.current(reference),
+      fetchUrl: (reference, signal) => fetchRef.current(reference, signal),
       revoke: (url) => URL.revokeObjectURL(url),
       onChange: () => setVersion((current) => current + 1),
     }),

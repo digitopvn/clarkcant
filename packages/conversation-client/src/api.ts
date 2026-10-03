@@ -719,6 +719,21 @@ function messageBody(text: string, options: MessageOptions): Record<string, unkn
   };
 }
 
+/**
+ * How long a read of node-owned bytes (a picture, a player's source, an attached file) waits for the node to start
+ * answering.
+ *
+ * Only the wait for the response's headers is bounded, never the body: a large file on a slow link may take minutes to
+ * arrive and still be arriving, but a node that has not begun to answer in this long has stalled - a sleeping laptop, a
+ * relay hop that dropped, a half-open connection after a network switch. Without a bound such a read waits forever,
+ * and whatever is waiting on it (a card preparing a download, a player, a picture) waits with it. With one, the stall
+ * becomes the failure that surface already explains and recovers from.
+ */
+export const FIRST_RESPONSE_TIMEOUT_MS = 30_000;
+
+/** The code a read carries when the node did not start answering within `FIRST_RESPONSE_TIMEOUT_MS`. */
+export const NODE_NOT_ANSWERING = "NODE_NOT_ANSWERING";
+
 export class GatewayClient {
   readonly #baseUrl: string;
   readonly #token: string;
@@ -775,6 +790,43 @@ export class GatewayClient {
 
   terminalCommands(terminalId: string): Promise<{ terminalId: string; commands: TerminalCommandView[] }> {
     return this.#call("GET", `/terminals/${encodeURIComponent(terminalId)}/commands`);
+  }
+
+  /**
+   * An authenticated GET for node-owned bytes, resolved once the node has answered with its headers.
+   *
+   * The wait for those headers is bounded by `FIRST_RESPONSE_TIMEOUT_MS`, and a stall rejects with `NODE_NOT_ANSWERING`
+   * and aborts the request. The body, which the caller reads, is not bounded. `signal` aborts the request at any point,
+   * the body included.
+   */
+  async #readBytes(path: string, signal?: AbortSignal): Promise<Response> {
+    const controller = new AbortController();
+    const abort = (): void => controller.abort(signal?.reason);
+    if (signal?.aborted === true) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stalled = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const error = new GatewayError(
+          504,
+          NODE_NOT_ANSWERING,
+          `the node did not start answering within ${String(FIRST_RESPONSE_TIMEOUT_MS / 1000)} seconds`,
+        );
+        controller.abort(error);
+        reject(error);
+      }, FIRST_RESPONSE_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([
+        this.#fetch(`${this.#baseUrl}${path}`, {
+          headers: { authorization: `Bearer ${this.#token}` },
+          signal: controller.signal,
+        }),
+        stalled,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -1720,10 +1772,8 @@ export class GatewayClient {
    * authenticated client and handed to the DOM as a blob URL. The caller owns the URL and must
    * revoke it; the runtime is the only thing that ever sees the token.
    */
-  async imageObjectUrl(imageId: string): Promise<string> {
-    const response = await this.#fetch(`${this.#baseUrl}/images/${imageId}`, {
-      headers: { authorization: `Bearer ${this.#token}` },
-    });
+  async imageObjectUrl(imageId: string, signal?: AbortSignal): Promise<string> {
+    const response = await this.#readBytes(`/images/${imageId}`, signal);
     if (!response.ok) {
       throw new GatewayError(response.status, "IMAGE_UNAVAILABLE", "that image could not be read");
     }
@@ -1803,11 +1853,12 @@ export class GatewayClient {
    * The same reason `imageObjectUrl` exists: an `<img src="/attachments/x/content">` cannot carry the
    * bearer token, so the bytes come through the authenticated client and the DOM gets a blob URL. The
    * caller owns the URL and must revoke it.
+   *
+   * `signal` aborts the read, for a caller that no longer wants the bytes. A node that does not start answering within
+   * `FIRST_RESPONSE_TIMEOUT_MS` fails the read (see `#readBytes`).
    */
-  async attachmentObjectUrl(attachmentId: string): Promise<string> {
-    const response = await this.#fetch(`${this.#baseUrl}/attachments/${encodeURIComponent(attachmentId)}/content`, {
-      headers: { authorization: `Bearer ${this.#token}` },
-    });
+  async attachmentObjectUrl(attachmentId: string, signal?: AbortSignal): Promise<string> {
+    const response = await this.#readBytes(`/attachments/${encodeURIComponent(attachmentId)}/content`, signal);
     if (!response.ok) {
       throw new GatewayError(response.status, "ATTACHMENT_UNAVAILABLE", "that attachment could not be read");
     }
@@ -1976,10 +2027,8 @@ export class GatewayClient {
    *
    * A blob rather than a URL for the same reason as `attachmentObjectUrl`: the route needs the bearer token.
    */
-  async artifactContent(artifactId: string): Promise<Blob> {
-    const response = await this.#fetch(`${this.#baseUrl}/artifacts/${encodeURIComponent(artifactId)}/content`, {
-      headers: { authorization: `Bearer ${this.#token}` },
-    });
+  async artifactContent(artifactId: string, signal?: AbortSignal): Promise<Blob> {
+    const response = await this.#readBytes(`/artifacts/${encodeURIComponent(artifactId)}/content`, signal);
     if (!response.ok) throw await this.#binaryRefusal(response, "ARTIFACT_UNAVAILABLE", "that file could not be read");
     return response.blob();
   }

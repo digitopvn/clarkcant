@@ -10,11 +10,11 @@ import { type ObjectUrls, useObjectUrlSet } from "./use-object-urls.ts";
  * Every one is read through the authenticated client from the node, so a page never asks anywhere else for the bytes a
  * widget shows.
  */
-export async function hostObjectUrl(client: GatewayClient, ref: string): Promise<string> {
+export async function hostObjectUrl(client: GatewayClient, ref: string, signal?: AbortSignal): Promise<string> {
   const file = parseHostFileRef(ref);
-  if (file === undefined) return client.imageObjectUrl(ref);
-  if (file.kind === "attachment") return client.attachmentObjectUrl(file.id);
-  return URL.createObjectURL(await client.artifactContent(file.id));
+  if (file === undefined) return client.imageObjectUrl(ref, signal);
+  if (file.kind === "attachment") return client.attachmentObjectUrl(file.id, signal);
+  return URL.createObjectURL(await client.artifactContent(file.id, signal));
 }
 
 /**
@@ -41,5 +41,5 @@ export function useHostObjectUrls(
   refs: readonly string[],
   onRequest: readonly string[],
 ): ObjectUrls {
-  return useObjectUrlSet((ref) => hostObjectUrl(client, ref), refs, onRequest);
+  return useObjectUrlSet((ref, signal) => hostObjectUrl(client, ref, signal), refs, onRequest);
 }

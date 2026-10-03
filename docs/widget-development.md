@@ -1332,15 +1332,22 @@ conversation reads none of its files, and pressing Download reads that one file 
 The page never holds the node's attachment route as a link, only the object URL the client made. Pressing it again
 downloads the bytes already read, with no second read. The card keeps its download behaviour: once the bytes land they
 go to the browser's download flow under the file's name, which opens no window, so a popup blocker does not apply after
-the awaited read, and the desktop shell handles it through Electron's own download flow. While the file is read, a
-polite status says the download is being prepared, with no invented progress, and the button keeps the focus
-(`aria-disabled`, not `disabled`). If the node does not give the bytes, the status says what failed, that nothing was
-downloaded and the conversation is unchanged, and the same focused button becomes Try again, which reads that file once
-more. Tests: [attachment-open.spec.ts](../packages/conversation-client/test/attachment-open.spec.ts),
-[object-urls.spec.ts](../packages/conversation-client/test/object-urls.spec.ts) and the browser journey
+the awaited read. The desktop shell leaves it to Electron's default download flow, which asks where to save the file; no
+test exercises the desktop or WebKit download yet. While the file is read, a polite status says the download is being
+prepared, with no invented progress, and the button keeps the focus (`aria-disabled`, not `disabled`). If the node does
+not give the bytes, the status says, in the error tone, what failed, that nothing was downloaded and the conversation is
+unchanged, and the same focused button becomes Try again, which reads that file once more. A node that accepts the read
+but does not start answering within 30 seconds (`FIRST_RESPONSE_TIMEOUT_MS` in
+[api.ts](../packages/conversation-client/src/api.ts)) fails it the same way, so a stalled read never leaves the card
+preparing forever. Only the wait for the first response is bounded, so a large file that arrives slowly is never cut
+off. Pictures and players read through the same bounded path and show their own failure states, and a read still in
+flight is aborted when the view that wanted it goes away. Tests:
+[attachment-open.spec.ts](../packages/conversation-client/test/attachment-open.spec.ts),
+[object-urls.spec.ts](../packages/conversation-client/test/object-urls.spec.ts),
+[node-read-timeout.spec.ts](../packages/conversation-client/test/node-read-timeout.spec.ts) and the browser journey
 [lazy-attachments.spec.ts](../apps/web/e2e/lazy-attachments.spec.ts), which counts every attachment read: none when a
 conversation with three attached files opens, one for the card downloaded, none for a second download, and one more
-only when a refused file is tried again.
+only when a refused file, or one whose read stalled past the bound, is tried again.
 
 ### 8.12 Diagrams and graphs
 

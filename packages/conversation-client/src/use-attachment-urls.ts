@@ -21,10 +21,10 @@ export function useAttachmentUrls(
   // No client means no bytes. Saying that once, here, keeps every renderer from deciding for itself what to
   // do about a view that is not connected to a node.
   return useObjectUrlSet(
-    (attachmentId) =>
+    (attachmentId, signal) =>
       client === undefined
         ? Promise.reject(new Error("this view has no node connection"))
-        : client.attachmentObjectUrl(attachmentId),
+        : client.attachmentObjectUrl(attachmentId, signal),
     client === undefined ? [] : attachmentIds,
     client === undefined ? [] : onRequest,
   );
