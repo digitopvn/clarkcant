@@ -480,7 +480,18 @@ một tên dài hơn 120 ký tự được rút ngắn ở phần trước phầ
 **Cài một gói chỉ dành cho người dùng.** `POST /packages/install` `{ "packageId", "version" }` là route mà nút Cài
 của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói (tool quản lý gói chỉ
 liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
-`403 PERSON_ONLY`. Khi chế độ thực thi của người dùng yêu cầu hỏi trước khi cài, route trả `202` với
+`403 PERSON_ONLY`. Với một gói được liệt kê bằng đường dẫn trên máy này, node tự tính digest các tệp của nó
+(`digestOfDirectory`, cùng digest mà một lần fetch git hay npm tính), nên request không cần client gửi digest nào. Card
+`marketplace-results` mang digest đó trong `contentDigest` của mỗi listing cục bộ, tính lúc node liệt kê nó, và nút Cài
+gửi lại nó dưới dạng `{ "contentDigest" }`: khi các tệp không còn cho ra digest đó, lần cài bị từ chối với
+`409 DIGEST_MISMATCH` kèm lý do rằng các tệp đã đổi, không cài và không hỏi gì, nên cài từ một listing là cài đúng các
+tệp mà listing đó đã hiển thị. Một request không có `contentDigest` (card có từ trước khi có trường này, hoặc thao tác
+`update` của một thông báo) cài các tệp như chúng đang có lúc request tới. Một đường dẫn không tính được digest các tệp
+(không đọc được, hoặc chứa symbolic link hay hard link, thứ mà digest từ chối thay vì đi theo) bị từ chối với
+`400 LOCAL_SOURCE_UNREADABLE`. Plan và generation của một lần
+cài cục bộ mang `digest` của listing; client nào gửi `{ "localDigest" }` thì tự đặt định danh đó như trước, và không bị
+tính lại digest trừ khi nó gửi kèm `contentDigest`. Khi chế độ thực thi của người dùng yêu cầu hỏi trước khi cài, route
+trả `202` với
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` và không cài gì. Câu hỏi đó chờ trong `GET /inbox`, ở `waiting`, dưới
 dạng `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions, description,
 operationDigest, requestedAt, expiresAt }`: `permissions` là những quyền mà listing nói gói xin, còn `operationDigest`

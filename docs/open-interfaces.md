@@ -476,6 +476,17 @@ name, and a name longer than 120 characters is shortened before its extension, w
 **Installing a package is person-only.** `POST /packages/install` `{ "packageId", "version" }` is what the app's own
 Install button and a notice's `update` call; no agent tool installs a package (the package tool lists, uninstalls,
 restores and rolls back), and the WebSocket relay, `clarkcant api` and MCP refuse the route with `403 PERSON_ONLY`.
+For a package listed by a path on this machine the node digests its files itself (`digestOfDirectory`, the digest a git
+or npm fetch computes), so the request needs no digest from the client. The `marketplace-results` card carries that
+digest as each local listing's `contentDigest`, computed when the node listed it, and the Install button sends it back
+as `{ "contentDigest" }`: when the files no longer hash to it the install is refused with `409 DIGEST_MISMATCH` and a
+reason saying they changed, installing nothing and asking nothing, so an install from a listing installs the files that
+listing showed. A request without `contentDigest` (a card from before the field, or a notice's `update`) installs the
+files as they are when it arrives. A path whose files cannot be digested (unreadable, or holding a symbolic or hard
+link, which the digest refuses rather than follows) is refused with `400 LOCAL_SOURCE_UNREADABLE`. A local install's
+plan and generation carry
+the listing's `digest`; a client that sends `{ "localDigest" }` names that identity itself, as before, and is not
+re-digested unless it also sends `contentDigest`.
 When the person's execution mode asks before installing, it answers `202` with
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
 `waiting` as `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions,

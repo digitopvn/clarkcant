@@ -1679,10 +1679,14 @@ export class GatewayClient {
    * Refusals are thrown, like every other call here: a caller that has to tell "refused" from "installed" by reading
    * a field inside a resolved promise is a caller that will one day not. An approval is not a refusal and arrives as
    * an ordinary answer with `code: "APPROVAL_REQUIRED"`, because nothing failed — the next step is a decision.
+   *
+   * `contentDigest` is what a listing by a path on this machine showed of its files, sent back so the node installs
+   * those files or refuses (`DIGEST_MISMATCH`) when they changed since. The node digests the files itself either way.
    */
   installPackage(
     packageId: string,
     version: string,
+    contentDigest?: string,
   ): Promise<{
     installed?: { packageId: string; version: string };
     code?: string;
@@ -1692,7 +1696,9 @@ export class GatewayClient {
     /** What the node actually checked. `digest-only` means the plan was bound to a published digest. */
     verified?: string;
   }> {
-    return this.#changedPackages(this.#call("POST", "/packages/install", { packageId, version }));
+    return this.#changedPackages(
+      this.#call("POST", "/packages/install", { packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) }),
+    );
   }
 
   claimLiveOwner(

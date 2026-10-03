@@ -1913,11 +1913,22 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * A package listed by a path on this machine, as the real directory search lists it: the card carries what the node
+     * read of its files, and its Install button sends that back.
+     */
+    if (/tìm gói trên máy|find the local package/i.test(input.text)) {
+      const tool = createSearchDirectoryTool({ indexPath: directoryIndexPath(process.env), newId: (prefix) => `${prefix}_local` });
+      const answer = await tool.execute({ query: "harbor" });
+      if (answer.hostCard === undefined) return undefined;
+      return { text: answer.text, block: answer.hostCard as unknown as MessageBlock };
+    }
+
+    /*
      * The marketplace-results card, produced without a directory on disk.
      *
      * A fixture proves the wiring, not the provider: the search itself is covered by the core tests, and what the
-     * browser has to be shown is that this card renders its source, version, digest and risk lane — and that it
-     * offers no install button of its own.
+     * browser has to be shown is that this card renders its source, version, digest and risk lane, and that each row's
+     * Install control acts through the one install route rather than installing anything itself.
      */
     if (/tìm gói|marketplace|search package/i.test(input.text)) {
       return {

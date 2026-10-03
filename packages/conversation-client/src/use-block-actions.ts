@@ -295,9 +295,9 @@ export function useBlockActions({
   const [packageInstall, setPackageInstall] = useState<Record<string, PackageInstallState>>({});
 
   const installPackage = useCallback(
-    ({ packageId, version }: { packageId: string; version: string }) => {
+    ({ packageId, version, contentDigest }: { packageId: string; version: string; contentDigest?: string }) => {
       setPackageInstall((current) => ({ ...current, [packageId]: { status: "installing" } }));
-      void client.installPackage(packageId, version).then(
+      void client.installPackage(packageId, version, contentDigest).then(
         (answer) => {
           setPackageInstall((current) => ({
             ...current,

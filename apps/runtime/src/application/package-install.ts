@@ -114,8 +114,16 @@ export function packageInstallDepsOf(services: {
 export interface PackageInstallRequest {
   packageId: string;
   version: string;
-  /** A digest the caller computed for a local source, when it sent one. */
+  /**
+   * The identity a caller chose for a local source's plan, when it sent one. Kept for API clients that send it: the plan
+   * and the generation carry it as given. Left out, the node uses the listing's digest, as an approved install does.
+   */
   localDigest?: string;
+  /**
+   * For a listing by a path on this machine: the content digest of its files the listing showed (the
+   * `marketplace-results` card's `contentDigest`). The install is refused when the files no longer hash to it.
+   */
+  contentDigest?: string;
   requestedCapabilityRefs?: string[];
 }
 
@@ -356,6 +364,16 @@ export function localFilesChangedMessage(packageId: string, version: string): st
   return `${packageId}@${version}'s files on this machine changed after you were asked, so nothing was installed; install it again to be asked about what they are now`;
 }
 
+/** Why a local install was refused before anything was decided: its files could not be digested. */
+function localSourceUnreadable(packageId: string, version: string, message: string): PackageInstallOutcome {
+  return {
+    kind: "refused",
+    status: 400,
+    code: "LOCAL_SOURCE_UNREADABLE",
+    message: `${packageId}@${version}'s files on this machine could not be read: ${message}`,
+  };
+}
+
 export async function installPackage(
   deps: PackageInstallDeps,
   request: PackageInstallRequest,
@@ -446,6 +464,22 @@ export async function installPackage(
   if (approved !== undefined && !localFilesUnchanged(entry, approved.localDigest)) {
     return { kind: "refused", status: 409, code: "DIGEST_MISMATCH", message: localFilesChangedMessage(packageId, version) };
   }
+  /*
+   * The same rule for an install a person asks for directly, from a listing by a path on this machine: the node digests
+   * the files itself rather than requiring the caller to. A listing that showed the content of its files (the
+   * `contentDigest` the node put on it when it listed them) installs those files or nothing, and a path whose files
+   * cannot be read is refused before the policy decides, since no answer could install it. Both hold whichever way the
+   * policy then goes, and a question it asks pins this same digest. A caller that names the plan's identity itself
+   * (`localDigest`) and showed nothing is left as it was.
+   */
+  const local =
+    approved === undefined && (request.localDigest === undefined || request.contentDigest !== undefined)
+      ? localContentDigest(entry)
+      : undefined;
+  if (local !== undefined && !local.ok) return localSourceUnreadable(packageId, version, local.message);
+  if (local !== undefined && request.contentDigest !== undefined && local.digest !== request.contentDigest) {
+    return { kind: "refused", status: 409, code: "DIGEST_MISMATCH", message: localFilesChangedMessage(packageId, version) };
+  }
 
   const principalId = runtime.identity.ownerPrincipalId;
   // Read at the request rather than captured at boot, so a mode the user just changed applies to this install.
@@ -487,16 +521,9 @@ export async function installPackage(
      * later installs those files and not whatever the path holds by then. A path whose files cannot be digested is
      * refused now: no answer to the question could install it.
      */
-    const local = localContentDigest(entry);
-    if (local !== undefined && !local.ok) {
-      return {
-        kind: "refused",
-        status: 400,
-        code: "LOCAL_SOURCE_UNREADABLE",
-        message: `${packageId}@${version}'s files on this machine could not be read: ${local.message}`,
-      };
-    }
-    const localDigest = local?.digest;
+    const pinned = local ?? localContentDigest(entry);
+    if (pinned !== undefined && !pinned.ok) return localSourceUnreadable(packageId, version, pinned.message);
+    const localDigest = pinned?.digest;
     /*
      * Asking to install the same artifact again while its approval still waits is the same question, not a new one:
      * reuse the pending row for this digest, as the capability approvals below do, so a second press or a repeated
@@ -709,11 +736,12 @@ export async function installPackage(
       : request.localDigest !== undefined
         ? { localDigest: request.localDigest }
         : /*
-           * An approved local listing, whose files were checked above against the content the approval pinned. The plan
-           * and the generation carry the listing's digest - the one the person was shown and approved - as a local
-           * install that sends it does, so everything that finds a package by its listing finds this one.
+           * A local listing whose files were checked above: against the content an approval pinned, or digested by the
+           * node itself for a direct install. The plan and the generation carry the listing's digest - the one the person
+           * was shown - as a local install that sends it does, so everything that finds a package by its listing finds
+           * this one.
            */
-          approved !== undefined && entry.source.kind === "local"
+          entry.source.kind === "local"
           ? { localDigest: entry.digest }
           : {}),
     ...(request.requestedCapabilityRefs === undefined

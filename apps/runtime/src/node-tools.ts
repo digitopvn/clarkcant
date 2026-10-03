@@ -17,6 +17,7 @@ import {
   settingsTabSchema,
   type AppIntentDecision,
   type ConversationId,
+  type DirectoryEntry,
   type ExecutionPolicyConfig,
   type GuardrailConstraint,
   type InboxResponse,
@@ -67,6 +68,7 @@ import { type BrowserTaskToolDeps, createBrowserTaskTool } from "./browser-task-
 import { createWorkTools } from "./work-tools.ts";
 import type { HostControlAcks } from "./host-control-acks.ts";
 import { checkThemeChoice } from "./application/appearance-intents.ts";
+import { localContentDigest } from "./application/package-install.ts";
 import { preferredAppIntentLocale } from "./app-intents.ts";
 import type { ThemeRegistry } from "./application/themes.ts";
 
@@ -1360,6 +1362,16 @@ export function createRememberTool(input: {
 
 
 /**
+ * The content digest of a listing's files on this machine, as the card shows it, for the Install button to send back.
+ * Nothing for a git or npm listing, whose fetch checks the published digest, or for a path that cannot be read now: the
+ * install then digests the files itself and refuses the unreadable path by name.
+ */
+function listedContentDigest(entry: DirectoryEntry): { contentDigest?: string } {
+  const local = localContentDigest(entry);
+  return local?.ok === true ? { contentDigest: local.digest } : {};
+}
+
+/**
  * Searching the package directory.
  *
  * The producer for the marketplace-results card, and the reason that card is host-owned: a result asserts a digest
@@ -1417,6 +1429,8 @@ export function createSearchDirectoryTool(input: {
             description: entry.description,
             source: entry.source,
             digest: entry.digest,
+            // A path on this machine is shown with the content of its files now, so Install installs these files or nothing.
+            ...listedContentDigest(entry),
             riskTier: entry.riskTier,
             ...(entry.widgetAppearance === undefined ? {} : { widgetAppearance: entry.widgetAppearance }),
             // What installing lets it reach, shown before the Install press; the install refuses an artifact that differs.

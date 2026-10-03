@@ -474,7 +474,7 @@ export interface BlockActions {
    * control is not rendered at all in that case rather than rendered and refused, which is the difference between a
    * disabled button with a reason and a button that looks usable and is not.
    */
-  onInstallPackage?: (input: { packageId: string; version: string }) => void;
+  onInstallPackage?: (input: { packageId: string; version: string; contentDigest?: string }) => void;
   /** The attempt for each package id, so the card shows an outcome instead of a spinner that never ends. */
   packageInstall?: Record<string, PackageInstallState>;
   /**
@@ -1943,6 +1943,8 @@ export function MarketplaceResultsBlock({
             const displayName = typeof result.displayName === "string" ? result.displayName : packageId;
             const description = typeof result.description === "string" ? result.description : "";
             const digest = typeof result.digest === "string" ? result.digest : "";
+            // What a listing by a path on this machine showed of its files, sent back so the install is of these files.
+            const contentDigest = typeof result.contentDigest === "string" && result.contentDigest !== "" ? result.contentDigest : undefined;
             const lane = typeof result.riskTier === "string" ? result.riskTier : "";
             const installState = actions?.packageInstall?.[packageId];
             return (
@@ -1978,7 +1980,9 @@ export function MarketplaceResultsBlock({
                       className="cc-chip"
                       data-install-package={packageId}
                       disabled={installState?.status === "installing"}
-                      onClick={() => actions.onInstallPackage?.({ packageId, version })}
+                      onClick={() =>
+                        actions.onInstallPackage?.({ packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) })
+                      }
                     >
                       {installState?.status === "installing" ? t("blocks.marketplace.installing") : t("blocks.marketplace.install")}
                     </button>

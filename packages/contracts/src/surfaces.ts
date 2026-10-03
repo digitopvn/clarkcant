@@ -236,6 +236,13 @@ export const marketplaceResultSchema = z.strictObject({
   description: z.string().max(1000),
   source: packageSourceSchema,
   digest: z.string().min(1).max(200),
+  /**
+   * For a listing by a path on this machine: the content digest of its files (`digestOfDirectory`) the node computed
+   * when it listed them. The Install button sends it back, and the node refuses the install (`409 DIGEST_MISMATCH`) when
+   * the files no longer hash to it, so an install from this listing installs the files it showed. Absent for a git or
+   * npm listing, whose fetch checks `digest`, and for a path whose files could not be read when they were listed.
+   */
+  contentDigest: z.string().min(1).max(200).optional(),
   riskTier: riskLaneSchema,
   facets: z.array(facetKindSchema).max(10),
   platforms: z.array(platformSchema).max(10),
