@@ -56,6 +56,8 @@ describe("the service container's command line", () => {
     expect(flag(args, "--label")).toBe("clarkcant.node=node_a");
     expect(args.at(-3)).toBe(SERVICE_IMAGE);
     expect(SERVICE_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/);
+    // Fully qualified, so Podman does not resolve it through the host's short-name configuration.
+    expect(SERVICE_IMAGE).toMatch(/^docker\.io\/library\/node@/);
     expect(args.slice(-2)).toEqual(["node", "/pkg/service/server.mjs"]);
   });
 
@@ -84,8 +86,9 @@ describe("the service container's command line", () => {
   });
 
   it("gives the engine's command line only what it needs to find itself, not the node's provider keys", () => {
-    const env = engineEnvironment({ PATH: "/usr/bin", HOME: "/home/a", DOCKER_HOST: "unix:///x", OPENAI_API_KEY: "secret", CC_TOKEN: "t" });
-    expect(env).toEqual({ PATH: "/usr/bin", HOME: "/home/a", DOCKER_HOST: "unix:///x" });
+    const bus = "unix:path=/run/user/1000/bus";
+    const env = engineEnvironment({ PATH: "/usr/bin", HOME: "/home/a", DOCKER_HOST: "unix:///x", DBUS_SESSION_BUS_ADDRESS: bus, OPENAI_API_KEY: "secret", CC_TOKEN: "t" });
+    expect(env).toEqual({ PATH: "/usr/bin", HOME: "/home/a", DOCKER_HOST: "unix:///x", DBUS_SESSION_BUS_ADDRESS: bus });
   });
 
   it("keeps the user's ids under rootless Podman, and joins a Windows-style entry as a Linux path", () => {
