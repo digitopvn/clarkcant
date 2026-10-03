@@ -58,6 +58,7 @@ export * from "./service-connection.ts";
 export * from "./service-artifacts.ts";
 export * from "./browser-token.ts";
 export * from "./declared-reach.ts";
+export * from "./reach-change.ts";
 export * from "./composer-references.ts";
 export * from "./app-intents.ts";
 export * from "./conversation-deletion.ts";

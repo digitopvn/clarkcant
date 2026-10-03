@@ -558,7 +558,10 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
       báo; chỉ có `review-update` với nguồn `local`, vì cài từ một thư mục cần digest của nó. "Cập nhật" gọi
       `POST /packages/install` thông thường với bản mà thông báo nêu, nên mọi bước kiểm tra khi cài đều áp dụng. "Xem"
       mở Cài đặt → Tiện ích. Nếu gói đã được cập nhật hoặc gỡ từ đó, thông báo liệt kê `update` với lý do
-      `already-current` hoặc `package-gone`.
+      `already-current` hoặc `package-gone`. Thông báo và câu hỏi cài đặt mà bản cập nhật tạo ra mang
+      `reachChange`, tính lúc đọc hộp thư: listing của phiên bản đó so với manifest đang cài, theo từng origin, key,
+      origin mà mỗi key được gửi tới, scope token, scope và endpoint tài khoản, yêu cầu GPU, và từng giới hạn của
+      resource profile; là `unknown` khi không so sánh được hai bản. Nó không quyết định gì.
     - `skip-version` (trong menu) ở thông báo cập nhật `package` hoặc `pi-update`.
       `POST /inbox/notices/:id/skip-version` đọc phiên bản từ subject đã lưu — bỏ qua body —, ghi một dòng
       `skipped_versions` cho principal này và bỏ thông báo; `unskip-version` xoá dòng đó và đưa thông báo trở lại.

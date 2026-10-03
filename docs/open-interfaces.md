@@ -304,7 +304,15 @@ stored as given, not provenance; who answered is the authenticated principal. A 
 also offer operations on the thing itself, each backed by a route: `retry` is `POST /work/:id/retry` (runs failed,
 stopped or interrupted background work again as new work in the same conversation, once), `ask-again` is
 `POST /conversations/:id/questions/:questionId/ask-again` (asks an expired question again as a new one), `update` is
-the ordinary `POST /packages/install` with the version the notice names, and `review-update` opens Settings. An action
+the ordinary `POST /packages/install` with the version the notice names, and `review-update` opens Settings. A package
+update notice also carries `reachChange` when the package is installed: what the named version's listing reaches
+compared with the installed manifest, as `{ verdict: "wider" | "narrower" | "unchanged", profile?, gpu?, origins, secrets,
+keyDestinations, browserTokens, connectionScopes, connectionEndpoints }`, each set as `{ added, removed, addedMore?,
+removedMore? }` with at most 32 items per list and the rest counted, `keyDestinations` as each (key, origin) pair a key
+is sent to, and `profile` as the two profile names with each bounded limit that changes; or `{ verdict: "unknown" }`
+when the package is installed at another version and the two cannot be compared
+(`packages/contracts/src/reach-change.ts`). The web client parses `GET /inbox` item by item, so one item that does not
+match the contract is left out and counted rather than failing the whole inbox. An action
 listed with `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) says why it cannot be
 taken now. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
 [system-architecture.md](system-architecture.md) under the inbox.
@@ -457,7 +465,9 @@ Refusals: `403 TOKEN_PROVIDER_NOT_DECLARED` or `TOKEN_SCOPE_NOT_DECLARED`, `409 
 `TOKEN_SESSION_ENDED`, `422 TOKEN_PROVIDER_UNSCOPED`, `TOKEN_SCOPE_NOT_SUPPORTED` or `TOKEN_TTL_TOO_LONG`,
 `502 TOKEN_ISSUE_FAILED`, and `503 TOKEN_PROVIDER_UNAVAILABLE` on a node without an adapter for the provider. No
 provider adapter ships yet. A node started with `CC_BROWSER_TOKEN_FIXTURE=1` registers in-process fixture providers for
-the browser suite and answers `GET /browser-token-fixture/issued`; without it, that route is `404`.
+the browser suite and answers `GET /browser-token-fixture/issued`; without it, that route is `404`. A node started
+with `CC_UPDATE_CHECK_FIXTURE=1` answers `POST /update-check-fixture/run` by running the package update check once
+(`{ packageUpdates }`), so the browser suite can be offered an update after installing; without it, that route is `404`.
 
 The bridge side (`tokens@1`) is offered in `init.extensions` only to a frame whose package declared browser tokens.
 `token.request` is answered with `token-result`; the SDK and the host's frame session refuse a `state.update`,
@@ -516,7 +526,9 @@ npm artifacts, so a snapshot no generation uses any more stays on disk until the
 When the person's execution mode asks before installing, it answers `202` with
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` and installs nothing. The question then waits in `GET /inbox` under
 `waiting` as `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions,
-description, operationDigest, requestedAt, expiresAt }`: `permissions` is what the listing says the package asks for,
+description, operationDigest, requestedAt, expiresAt, reach?, reachChange? }`: `permissions` is what the listing says the package asks for,
+`reach` what it reaches outside its sandbox, `reachChange` (for an update of an installed package) what that version
+adds to or drops from the installed one's reach, in the same shape as on the update notice,
 and `operationDigest` the listed artifact's digest the question is about. It is listed only while the directory still
 lists that artifact; a package or version republished since is left out, and installing it again asks about what it is
 now. The person decides it with `POST /packages/approvals/:id/decision`

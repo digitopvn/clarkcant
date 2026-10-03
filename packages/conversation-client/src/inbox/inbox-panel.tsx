@@ -11,10 +11,11 @@ import type {
   WaitingItem,
 } from "@clarkcant/contracts";
 
-import type { GatewayClient, Timeline } from "../api.ts";
+import type { GatewayClient, InboxRead, Timeline } from "../api.ts";
 import { riskLaneLabel } from "../blocks.tsx";
 import { Modal } from "../Modal.tsx";
 import { PackageReach } from "../package-reach.tsx";
+import { PackageReachChange } from "../package-reach-change.tsx";
 import { useLocaleState, useT } from "../i18n/locale-context.tsx";
 import {
   UNAVAILABLE_KEYS,
@@ -107,7 +108,7 @@ export interface InboxPanelProps {
   onTargetShown?: () => void;
 }
 
-type Load = { state: "loading" } | { state: "failed"; reason: string } | { state: "ready"; inbox: InboxResponse };
+type Load = { state: "loading" } | { state: "failed"; reason: string } | { state: "ready"; inbox: InboxRead };
 
 /**
  * The outcome line. After a dismissal, a snooze or quieting a kind it carries what "Undo" reverses: bringing the notice
@@ -1152,6 +1153,12 @@ export function InboxPanel({
             <p className="cc-freshness" data-inbox-read-at={load.inbox.readAt} style={{ margin: 0 }}>
               {t("inbox.readAt").replace("{time}", readAt ?? "")}
             </p>
+            {load.inbox.unreadable !== undefined && (
+              // Items the node sent that this surface could not read; the rest are shown as they are.
+              <p className="cc-panel-note" role="status" data-inbox-unreadable={load.inbox.unreadable} style={{ margin: 0 }}>
+                {t("inbox.unreadable").replace("{n}", String(load.inbox.unreadable))}
+              </p>
+            )}
 
             <section className="cc-inbox-section" aria-labelledby="cc-inbox-waiting">
               <h3 id="cc-inbox-waiting" className="cc-inbox-heading">
@@ -1279,6 +1286,8 @@ export function InboxPanel({
                               </p>
                               {/* Each origin, key and browser-token provider approving agrees to; the install refuses anything else. */}
                               <PackageReach reach={item.reach} />
+                              {/* For an update: what this version adds to or drops from what the installed one reaches. */}
+                              <PackageReachChange change={item.reachChange} />
                               <p style={{ margin: 0 }}>{t("inbox.install.lane").replace("{lane}", riskLaneLabel(t, item.riskTier))}</p>
                               <p className="cc-freshness" style={{ margin: 0 }}>
                                 {t("inbox.install.note")}
@@ -1426,6 +1435,8 @@ export function InboxPanel({
                         </div>
                         <p className="cc-inbox-notice-title">{notice.title}</p>
                         {notice.body !== undefined && <p className="cc-inbox-notice-body">{notice.body}</p>}
+                        {/* An update notice says what the new version reaches beyond the installed one before Update is pressed. */}
+                        <PackageReachChange change={notice.reachChange} />
                         {noticeKindQuieted(notice) && (
                           // Says why a notice of this kind arrived already read, in words rather than by its look alone.
                           <p className="cc-freshness" data-inbox-quiet-kind={notice.noticeId} style={{ margin: 0 }}>
