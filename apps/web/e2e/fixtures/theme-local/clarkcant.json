@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 2,
+  "id": "com.example.theme-local",
+  "version": "1.0.0",
+  "displayName": "Harbor theme",
+  "description": "A theme listed by a path on this machine, installed from the listing's own Install button.",
+  "hostApi": {
+    "min": 1,
+    "max": 1
+  },
+  "facets": [
+    {
+      "kind": "themes",
+      "id": "harbor",
+      "entry": "themes/harbor.json",
+      "isolation": "declarative"
+    }
+  ],
+  "requestedCapabilities": [],
+  "permissions": {
+    "networkOrigins": [],
+    "filesystem": [],
+    "microphone": false,
+    "camera": false,
+    "lifecycleScripts": []
+  },
+  "platforms": [
+    "darwin-arm64",
+    "linux-x64",
+    "win32-x64",
+    "web"
+  ],
+  "publisher": {
+    "id": "example",
+    "sourceUrl": "https://example.com",
+    "license": "MIT"
+  }
+}

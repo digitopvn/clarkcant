@@ -2700,9 +2700,11 @@ This section states which parts of the document already have code, so that nobod
 - **Directory search** — implemented at the level of reading an index: `CC_DIRECTORY_INDEX` points to a JSON file of entries per
   §18, and `search_directory` returns a `marketplace-results` card showing **source, version, digest and risk lane**,
   along with the name of the directory the results came from. An unconfigured index is a *state* that is stated, distinct from "nothing
-  found". The card **has no install button**: installation goes through the one install path where the digest is checked and consent
-  is recorded; a button here would be a second entry point for installing, and the only place a listing could turn into
-  authorization. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
+  found". Each row's Install button calls the one install path (`POST /packages/install`), where the digest is checked and
+  the execution policy decides; the card installs nothing itself, so a listing never turns into authorization. A listing by a
+  path on this machine also carries `contentDigest`, the digest of its files when they were listed, which the button sends
+  back so the install is refused if the files changed since; the row then shows that they changed and offers a new
+  search instead of the same Install. The check is at install time only: the package stays linked to its path. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
 - The dev host's in-page script: it collects facts and forwards actions, while every decision lives in a tested function —
   but the script itself needs a browser to run, and that is stated instead of implying that the whole dev host is covered.
 - Detach/attach: the desktop's detached host window **really exists** (`apps/desktop/src/main.mjs` opens it via

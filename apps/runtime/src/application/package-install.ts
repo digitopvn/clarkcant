@@ -114,8 +114,16 @@ export function packageInstallDepsOf(services: {
 export interface PackageInstallRequest {
   packageId: string;
   version: string;
-  /** A digest the caller computed for a local source, when it sent one. */
+  /**
+   * The identity a caller chose for a local source's plan, when it sent one. Kept for API clients that send it: the plan
+   * and the generation carry it as given. Left out, the node uses the listing's digest, as an approved install does.
+   */
   localDigest?: string;
+  /**
+   * For a listing by a path on this machine: the content digest of its files the listing showed (the
+   * `marketplace-results` card's `contentDigest`). The install is refused when the files no longer hash to it.
+   */
+  contentDigest?: string;
   requestedCapabilityRefs?: string[];
 }
 
@@ -325,6 +333,11 @@ export interface ApprovedInstall {
   localDigest?: string;
 }
 
+/** The most regular files a path on this machine may hold for the node to digest it (`localContentDigest`). */
+export const LOCAL_DIGEST_MAX_FILES = 5_000;
+/** The most bytes, in total, the files at a path on this machine may hold for the node to digest them. */
+export const LOCAL_DIGEST_MAX_BYTES = 64 * 1024 * 1024;
+
 /**
  * The content digest of a package listed by a path on this machine, computed the way a git or npm fetch digests the
  * bytes it holds (`digestOfDirectory`, with `.git` left out). Undefined for a git or npm listing, whose bytes the fetch
@@ -333,15 +346,27 @@ export interface ApprovedInstall {
  * A local listing's own `digest` is what its publisher packed, not a hash of the files at the path now, and nothing
  * stops those files changing after the person was asked. This is what an install question about such a listing pins,
  * so an approval installs the files it was given for or nothing.
+ *
+ * Bounded, because it runs on every local row a search lists (ten by default), every install question the inbox shows
+ * and every install: a path past `LOCAL_DIGEST_MAX_FILES` files or `LOCAL_DIGEST_MAX_BYTES` bytes is not digested at
+ * all (`tooLarge`). Nothing is skipped to fit: the digest covers every file the listing's own digest covers, so it can
+ * be compared with what a publisher packed.
  */
-export function localContentDigest(entry: DirectoryEntry): { ok: true; digest: string } | { ok: false; message: string } | undefined {
+export function localContentDigest(
+  entry: DirectoryEntry,
+): { ok: true; digest: string } | { ok: false; tooLarge: boolean; message: string } | undefined {
   if (entry.source.kind !== "local") return undefined;
   try {
-    const digest = digestOfDirectory(entry.source.path, { exclude: [".git"] });
-    return digest.ok ? { ok: true, digest: digest.digest } : { ok: false, message: digest.message };
+    const digest = digestOfDirectory(entry.source.path, {
+      exclude: [".git"],
+      limits: { maxFiles: LOCAL_DIGEST_MAX_FILES, maxBytes: LOCAL_DIGEST_MAX_BYTES },
+    });
+    return digest.ok
+      ? { ok: true, digest: digest.digest }
+      : { ok: false, tooLarge: digest.code === "ARTIFACT_TOO_LARGE", message: digest.message };
   } catch (cause) {
     // A path that is gone or unreadable has no digest, and so cannot be the files anybody approved.
-    return { ok: false, message: cause instanceof Error ? cause.message : String(cause) };
+    return { ok: false, tooLarge: false, message: cause instanceof Error ? cause.message : String(cause) };
   }
 }
 
@@ -354,6 +379,30 @@ export function localFilesUnchanged(entry: DirectoryEntry, pinned: string | unde
 /** Why an approved local install was refused: its files are not the ones the person was asked about. */
 export function localFilesChangedMessage(packageId: string, version: string): string {
   return `${packageId}@${version}'s files on this machine changed after you were asked, so nothing was installed; install it again to be asked about what they are now`;
+}
+
+/**
+ * Why a direct install from a listing was refused: the files changed after the list that showed them was made. Pressing
+ * Install on that list again sends the same digest and is refused again, so the way forward is a new search.
+ */
+export function localFilesChangedSinceListingMessage(packageId: string, version: string): string {
+  return `${packageId}@${version}'s files on this machine changed after this list was made, so nothing was installed. Search again to list them as they are now, then install.`;
+}
+
+/** Why a local install was refused before anything was decided: its files could not be digested. */
+function localSourceUnreadable(
+  packageId: string,
+  version: string,
+  failure: { tooLarge: boolean; message: string },
+): PackageInstallOutcome {
+  return {
+    kind: "refused",
+    status: 400,
+    code: "LOCAL_SOURCE_UNREADABLE",
+    message: failure.tooLarge
+      ? `${packageId}@${version}'s files on this machine are too large to verify: ${failure.message}`
+      : `${packageId}@${version}'s files on this machine could not be read: ${failure.message}`,
+  };
 }
 
 export async function installPackage(
@@ -446,6 +495,33 @@ export async function installPackage(
   if (approved !== undefined && !localFilesUnchanged(entry, approved.localDigest)) {
     return { kind: "refused", status: 409, code: "DIGEST_MISMATCH", message: localFilesChangedMessage(packageId, version) };
   }
+  /*
+   * The same rule for an install a person asks for directly, from a listing by a path on this machine: the node digests
+   * the files itself rather than requiring the caller to. A listing that showed the content of its files (the
+   * `contentDigest` the node put on it when it listed them) is refused when they no longer hash to it, and a path whose
+   * files cannot be digested (unreadable, linked, or too large to verify) is refused too.
+   *
+   * Deliberately before the policy decides: these are facts about the files, not decisions, so a person whose mode
+   * would deny the install still learns that the files changed (409) or cannot be read (400) rather than only that the
+   * policy refused (403), and a question the policy asks pins this same digest. A caller that names the plan's identity
+   * itself (`localDigest`) and showed nothing is left as it was.
+   *
+   * The check is at install time only. A local package stays linked to its path rather than copied, so what it serves
+   * later is whatever the path holds then; the files are not re-checked after this.
+   */
+  const local =
+    approved === undefined && (request.localDigest === undefined || request.contentDigest !== undefined)
+      ? localContentDigest(entry)
+      : undefined;
+  if (local !== undefined && !local.ok) return localSourceUnreadable(packageId, version, local);
+  if (local !== undefined && request.contentDigest !== undefined && local.digest !== request.contentDigest) {
+    return {
+      kind: "refused",
+      status: 409,
+      code: "DIGEST_MISMATCH",
+      message: localFilesChangedSinceListingMessage(packageId, version),
+    };
+  }
 
   const principalId = runtime.identity.ownerPrincipalId;
   // Read at the request rather than captured at boot, so a mode the user just changed applies to this install.
@@ -487,16 +563,9 @@ export async function installPackage(
      * later installs those files and not whatever the path holds by then. A path whose files cannot be digested is
      * refused now: no answer to the question could install it.
      */
-    const local = localContentDigest(entry);
-    if (local !== undefined && !local.ok) {
-      return {
-        kind: "refused",
-        status: 400,
-        code: "LOCAL_SOURCE_UNREADABLE",
-        message: `${packageId}@${version}'s files on this machine could not be read: ${local.message}`,
-      };
-    }
-    const localDigest = local?.digest;
+    const pinned = local ?? localContentDigest(entry);
+    if (pinned !== undefined && !pinned.ok) return localSourceUnreadable(packageId, version, pinned);
+    const localDigest = pinned?.digest;
     /*
      * Asking to install the same artifact again while its approval still waits is the same question, not a new one:
      * reuse the pending row for this digest, as the capability approvals below do, so a second press or a repeated
@@ -583,6 +652,14 @@ export async function installPackage(
   }
 
   /*
+   * For a listing by a path on this machine, the content digest of the files this install checked: the one digested
+   * above, or the one an approval pinned (checked against the files above). The record keeps it next to the listing's
+   * digest, so what was installed can be told apart from what was published under that name. A caller that named the
+   * identity itself (`localDigest`) had nothing checked, and nothing is claimed.
+   */
+  const checkedFiles = local?.ok === true ? local.digest : approved?.localDigest;
+
+  /*
    * Autonomy without a record is the one combination this node refuses, the same way `run_command` does: an effect
    * nobody approved and nobody can find afterwards is worse than a question. Recorded only once the artifact this
    * node is about to install is actually in hand (M4) — a fetch failure above returns before this line runs, and
@@ -594,7 +671,7 @@ export async function installPackage(
     decision,
     category: "local-write",
     operationDigest: entry.digest,
-    description: `install ${entry.packageId}@${entry.version}`,
+    description: `install ${entry.packageId}@${entry.version}${checkedFiles === undefined ? "" : ` files ${checkedFiles}`}`,
   });
 
   /*
@@ -709,11 +786,12 @@ export async function installPackage(
       : request.localDigest !== undefined
         ? { localDigest: request.localDigest }
         : /*
-           * An approved local listing, whose files were checked above against the content the approval pinned. The plan
-           * and the generation carry the listing's digest - the one the person was shown and approved - as a local
-           * install that sends it does, so everything that finds a package by its listing finds this one.
+           * A local listing whose files were checked above: against the content an approval pinned, or digested by the
+           * node itself for a direct install. The plan and the generation carry the listing's digest - the one the person
+           * was shown - as a local install that sends it does, so everything that finds a package by its listing finds
+           * this one.
            */
-          approved !== undefined && entry.source.kind === "local"
+          entry.source.kind === "local"
           ? { localDigest: entry.digest }
           : {}),
     ...(request.requestedCapabilityRefs === undefined

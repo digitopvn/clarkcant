@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,15 +10,24 @@ import {
   PERSON_ONLY_REFUSAL,
   inboxResponseSchema,
   isPersonOnlyRoute,
+  messageBlockSchema,
   platformForHost,
 } from "@clarkcant/contracts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, digestOfDirectory, writeRegisteredPreference } from "@clarkcant/core";
 import { allRows } from "@clarkcant/storage";
 
 import { expireInstallApprovals } from "../src/application/install-approval.ts";
-import { INSTALL_APPROVAL_STREAM, installPackage, packageInstallDepsOf } from "../src/application/package-install.ts";
+import {
+  INSTALL_APPROVAL_STREAM,
+  LOCAL_DIGEST_MAX_BYTES,
+  installPackage,
+  localFilesChangedMessage,
+  localFilesChangedSinceListingMessage,
+  packageInstallDepsOf,
+} from "../src/application/package-install.ts";
 import { sweepExpired } from "../src/expiry-notices.ts";
 import { createManagePackageTool } from "../src/manage-package-tool.ts";
+import { createSearchDirectoryTool } from "../src/node-tools.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { SURFACE_HEADER } from "../src/routes/http.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -415,6 +424,12 @@ describe("a package listed by a path on this machine", () => {
     return digest.digest;
   };
 
+  /** What the audit trail says each executed install did, in its own fixed words. */
+  const executedDescriptions = (): string[] =>
+    allRows<{ document: string }>(services.runtime.db, "SELECT document FROM events WHERE kind = 'effect.executed' ORDER BY rowid").map(
+      (row) => (JSON.parse(row.document) as { description: string }).description,
+    );
+
   const generationDigests = (): string[] =>
     allRows<{ digest: string }>(services.runtime.db, "SELECT digest FROM package_generations WHERE package_id = ?", PACKAGE_ID).map(
       (row) => row.digest,
@@ -439,6 +454,8 @@ describe("a package listed by a path on this machine", () => {
     // The generation carries the listing's digest, as a local install that sent it does, so everything that finds a
     // package by its listing (its files, its themes, its capability approvals) finds this one.
     expect(generationDigests()).toEqual([LISTED_DIGEST]);
+    // The record names the files the question pinned, which the install checked again before it ran.
+    expect(executedDescriptions()).toEqual([`install ${PACKAGE_ID}@${VERSION} files ${onDisk()}`]);
     expect(approvalDecision(approvalId)).toBe("granted");
     expect(audit().map((event) => event.result)).toEqual(["asked", "installed"]);
   });
@@ -488,6 +505,194 @@ describe("a package listed by a path on this machine", () => {
     );
     expect(unpinned).toMatchObject({ kind: "refused", status: 409, code: "DIGEST_MISMATCH" });
     expect(installedVersions()).toEqual([]);
+  });
+
+  describe("installed straight from the listing, in a mode that does not ask first", () => {
+    beforeEach(() => writePolicy(DEFAULT_EXECUTION_POLICY_CONFIG));
+
+    const install = (body: Record<string, unknown> = {}) =>
+      call("POST", "/packages/install", { packageId: PACKAGE_ID, version: VERSION, ...body });
+    const approvals = () => allRows(services.runtime.db, "SELECT approval_id FROM approvals");
+
+    /** The listing as the app shows it: the node's own search card, with what it showed of the files. */
+    async function listed(): Promise<Record<string, unknown> | undefined> {
+      const tool = createSearchDirectoryTool({ indexPath, newId: () => "market_local" });
+      const answer = await tool.execute({ query: "" });
+      return (answer.hostCard?.["results"] as Record<string, unknown>[] | undefined)?.[0];
+    }
+
+    it("installs with no digest from the client, under the listing's digest, without asking", async () => {
+      const installed = await install();
+      expect(installed.status).toBe(200);
+      expect(installed.body).toMatchObject({ installed: { packageId: PACKAGE_ID, version: VERSION }, state: "active" });
+      expect(installedVersions()).toEqual([VERSION]);
+      // The same identity an approved install of this listing records, so both find the package by its listing.
+      expect(generationDigests()).toEqual([LISTED_DIGEST]);
+      expect(approvals()).toEqual([]);
+    });
+
+    it("installs the files the listing showed, sent back as the listing carried them", async () => {
+      const result = await listed();
+      expect(result).toMatchObject({ packageId: PACKAGE_ID, digest: LISTED_DIGEST, contentDigest: onDisk() });
+
+      const installed = await install({ contentDigest: result?.contentDigest });
+      expect(installed.status).toBe(200);
+      expect(installedVersions()).toEqual([VERSION]);
+      expect(generationDigests()).toEqual([LISTED_DIGEST]);
+    });
+
+    it("installs nothing when the files changed after they were listed, whatever the mode", async () => {
+      const shown = (await listed())?.contentDigest;
+      writeFileSync(join(localDir, "widget.json"), JSON.stringify({ id: PACKAGE_ID, changed: true }));
+
+      const refused = await install({ contentDigest: shown });
+      expect(refused.status).toBe(409);
+      expect(codeOf(refused)).toBe("DIGEST_MISMATCH");
+      // Says the list is out of date and how to go on, not "after you were asked": nobody was.
+      expect((refused.body as { message: string }).message).toBe(localFilesChangedSinceListingMessage(PACKAGE_ID, VERSION));
+      expect(localFilesChangedSinceListingMessage(PACKAGE_ID, VERSION)).not.toBe(localFilesChangedMessage(PACKAGE_ID, VERSION));
+      expect(installedVersions()).toEqual([]);
+
+      // Pressing the same row again sends the same digest, and is refused the same way.
+      const again = await install({ contentDigest: shown });
+      expect(again.status).toBe(409);
+      expect(codeOf(again)).toBe("DIGEST_MISMATCH");
+      expect(installedVersions()).toEqual([]);
+
+      // A mode that asks refuses it the same way, rather than asking about files nobody was shown.
+      askBeforeInstalling();
+      const asked = await install({ contentDigest: shown });
+      expect(asked.status).toBe(409);
+      expect(codeOf(asked)).toBe("DIGEST_MISMATCH");
+      expect((asked.body as { message: string }).message).toBe(localFilesChangedSinceListingMessage(PACKAGE_ID, VERSION));
+      expect(approvals()).toEqual([]);
+      expect(installedVersions()).toEqual([]);
+
+      // A new search lists the files as they are now, and that listing installs.
+      writePolicy(DEFAULT_EXECUTION_POLICY_CONFIG);
+      const relisted = (await listed())?.contentDigest;
+      expect(relisted).toBe(onDisk());
+      expect(relisted).not.toBe(shown);
+      expect((await install({ contentDigest: relisted })).status).toBe(200);
+      expect(installedVersions()).toEqual([VERSION]);
+    });
+
+    it("checks the files before the policy decides, so a mode that denies still says why the files cannot install", async () => {
+      writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, prohibition: "all" });
+      const shown = (await listed())?.contentDigest;
+
+      // Unchanged files reach the policy, which refuses.
+      const denied = await install({ contentDigest: shown });
+      expect(denied.status).toBe(403);
+      expect(codeOf(denied)).toBe("POLICY_REFUSED");
+
+      writeFileSync(join(localDir, "extra.txt"), "added after the listing");
+      const changed = await install({ contentDigest: shown });
+      expect(changed.status).toBe(409);
+      expect(codeOf(changed)).toBe("DIGEST_MISMATCH");
+
+      rmSync(localDir, { recursive: true, force: true });
+      const unreadable = await install();
+      expect(unreadable.status).toBe(400);
+      expect(codeOf(unreadable)).toBe("LOCAL_SOURCE_UNREADABLE");
+      expect(installedVersions()).toEqual([]);
+      expect(approvals()).toEqual([]);
+    });
+
+    it("records the files it checked next to the listing's digest", async () => {
+      const shown = (await listed())?.contentDigest;
+      expect((await install({ contentDigest: shown })).status).toBe(200);
+      expect(executedDescriptions()).toEqual([`install ${PACKAGE_ID}@${VERSION} files ${onDisk()}`]);
+    });
+
+    it("records the files it digested itself when the client sent no digest", async () => {
+      expect((await install()).status).toBe(200);
+      expect(executedDescriptions()).toEqual([`install ${PACKAGE_ID}@${VERSION} files ${onDisk()}`]);
+    });
+
+    it("claims no checked files for a client that named the identity itself and showed nothing", async () => {
+      expect((await install({ localDigest: "sha256:client-chosen" })).status).toBe(200);
+      expect(executedDescriptions()).toEqual([`install ${PACKAGE_ID}@${VERSION}`]);
+    });
+
+    it("lists no content digest for files too large to verify, and refuses to install them", async () => {
+      // Sparse: past the bound by its size alone, which the walk reads before a byte of it.
+      const big = join(localDir, "big.bin");
+      writeFileSync(big, "");
+      truncateSync(big, LOCAL_DIGEST_MAX_BYTES + 1);
+      expect(await listed()).not.toHaveProperty("contentDigest");
+
+      const refused = await install();
+      expect(refused.status).toBe(400);
+      expect(codeOf(refused)).toBe("LOCAL_SOURCE_UNREADABLE");
+      expect((refused.body as { message: string }).message).toContain("too large to verify");
+      expect(installedVersions()).toEqual([]);
+
+      // Asked about in a mode that asks, it is refused the same way rather than pinned to nothing.
+      askBeforeInstalling();
+      const asked = await install();
+      expect(asked.status).toBe(400);
+      expect(codeOf(asked)).toBe("LOCAL_SOURCE_UNREADABLE");
+      expect(approvals()).toEqual([]);
+    });
+
+    it("refuses a path whose files cannot be read, and installs nothing", async () => {
+      rmSync(localDir, { recursive: true, force: true });
+      // Nothing to show either: the listing carries no content digest for files it could not read.
+      expect(await listed()).not.toHaveProperty("contentDigest");
+
+      const refused = await install();
+      expect(refused.status).toBe(400);
+      expect(codeOf(refused)).toBe("LOCAL_SOURCE_UNREADABLE");
+      expect(installedVersions()).toEqual([]);
+      expect(approvals()).toEqual([]);
+    });
+
+    it("reads an empty contentDigest as none sent, and digests the files itself", async () => {
+      expect((await install({ contentDigest: "" })).status).toBe(200);
+      expect(executedDescriptions()).toEqual([`install ${PACKAGE_ID}@${VERSION} files ${onDisk()}`]);
+    });
+
+    it("reads a contentDigest that is not a string as none sent", async () => {
+      expect((await install({ contentDigest: 42 })).status).toBe(200);
+      expect(installedVersions()).toEqual([VERSION]);
+    });
+
+    it("still installs for a client that names the plan's digest itself, under the digest it named", async () => {
+      const installed = await install({ localDigest: "sha256:client-chosen" });
+      expect(installed.status).toBe(200);
+      expect(installedVersions()).toEqual([VERSION]);
+      expect(generationDigests()).toEqual(["sha256:client-chosen"]);
+    });
+
+    it("refuses such a client too when it also sends what the listing showed and the files changed since", async () => {
+      const shown = (await listed())?.contentDigest;
+      writeFileSync(join(localDir, "extra.txt"), "added after the listing");
+
+      const refused = await install({ localDigest: "sha256:client-chosen", contentDigest: shown });
+      expect(refused.status).toBe(409);
+      expect(codeOf(refused)).toBe("DIGEST_MISMATCH");
+      expect(installedVersions()).toEqual([]);
+    });
+
+    it("asks about the files the listing showed in a mode that asks, once however often Install is pressed", async () => {
+      askBeforeInstalling();
+      const shown = (await listed())?.contentDigest;
+
+      const asked = await install({ contentDigest: shown });
+      expect(asked.status).toBe(202);
+      const approvalId = (asked.body as { approvalId: string }).approvalId;
+      expect(audit()).toEqual([expect.objectContaining({ approvalId, result: "asked", digest: LISTED_DIGEST, localDigest: shown })]);
+      expect(((await install({ contentDigest: shown })).body as { approvalId: string }).approvalId).toBe(approvalId);
+      expect(installedVersions()).toEqual([]);
+    });
+
+    it("is a card the conversation accepts as a host card", async () => {
+      const tool = createSearchDirectoryTool({ indexPath, newId: () => "market_local" });
+      const answer = await tool.execute({ query: "" });
+      // The same check a tool's host card passes before it is drawn; a shape it refuses is dropped from the turn.
+      expect(messageBlockSchema.safeParse(answer.hostCard).success).toBe(true);
+    });
   });
 });
 

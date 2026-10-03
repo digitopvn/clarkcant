@@ -133,6 +133,8 @@ export const MESSAGES_SHELL_VI = {
   "shell.package.installed": "Đã cài.",
   "shell.package.approvalRequired": "Chế độ thực thi của bạn hỏi trước khi cài. Việc này đang chờ bạn trong Hộp thư, ở mục Đang chờ bạn; chưa cài gì cả.",
   "shell.package.installFailed": "Không cài được gói này.",
+  "shell.package.filesChangedSinceListing":
+    "Các tệp của gói này trên máy đã đổi sau khi danh sách này được tạo, nên chưa cài gì. Hãy tìm lại để liệt kê chúng như hiện tại, rồi cài.",
   "shell.control.sessionChangeFailed": "Không đổi được phiên browser này.",
   "shell.model.nextGeneration": "Generation tiếp theo dùng {alias}.",
   "shell.model.switchHint": "{shortcut} để đổi",
@@ -350,6 +352,8 @@ export const MESSAGES_SHELL_EN = {
   "shell.package.installed": "Installed.",
   "shell.package.approvalRequired": "Your execution mode asks before installing. It is waiting for you in the inbox, under Waiting for you; nothing is installed yet.",
   "shell.package.installFailed": "Could not install this package.",
+  "shell.package.filesChangedSinceListing":
+    "This package's files on this machine changed after this list was made, so nothing was installed. Search again to list them as they are now, then install.",
   "shell.control.sessionChangeFailed": "Could not change this browser session.",
   "shell.model.nextGeneration": "The next generation uses {alias}.",
   "shell.model.switchHint": "{shortcut} to switch",

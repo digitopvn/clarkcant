@@ -527,6 +527,45 @@
     "digest": "sha256:14dc35f5d507f28c9fa0c516274e0a61ba4e857fe35a987443621dd16a416b69"
   },
   {
+    "packageId": "com.example.theme-local",
+    "version": "1.0.0",
+    "displayName": "Harbor theme",
+    "description": "A theme listed by a path on this machine, installed from the listing's own Install button.",
+    "source": {
+      "kind": "local",
+      "path": "apps/web/e2e/fixtures/theme-local"
+    },
+    "publisher": {
+      "id": "example",
+      "sourceUrl": "https://example.com",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "themes"
+    ],
+    "isolations": [
+      {
+        "facetKind": "themes",
+        "isolation": "declarative"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "declarative",
+    "sizeBytes": 1024,
+    "digest": "sha256:2a0c2a261c9ec230d9a19990f0bab6abcbc5a59fc525b47eb9b707258918f58d"
+  },
+  {
     "packageId": "com.example.theme-hostile",
     "version": "1.0.0",
     "displayName": "Hostile themes",
