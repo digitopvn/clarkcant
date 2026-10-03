@@ -180,3 +180,36 @@ describe("sending the write a page makes as it goes away", () => {
     expect(inits[1]?.keepalive).toBeUndefined();
   });
 });
+
+describe("the state-only write a player sends", () => {
+  it("goes to the same action route as its typed variant, and is kept alive past the page only when told to", async () => {
+    const sent: { url: string; body: unknown; keepalive: boolean | undefined }[] = [];
+    const client = new GatewayClient({
+      baseUrl: "http://127.0.0.1:8765",
+      token: "tok",
+      fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
+        sent.push({ url: String(input), body: JSON.parse(String(init?.body)), keepalive: init?.keepalive });
+        return new Response(
+          JSON.stringify({ variant: "view-state", duplicate: false, instanceId: "winst_1", revision: 4, stateRevision: 7, state: { status: "playing", position: 3, duration: 60 } }),
+          { status: 200 },
+        );
+      }) as typeof fetch,
+    });
+    const invocation = {
+      actionBindingId: "act_view",
+      expectedRevision: 4,
+      expectedBindingDigest: "sha256:x",
+      input: { status: "playing", position: 3, duration: 60 },
+      invocationId: "inv_1",
+      sequence: 1_000,
+    };
+    const result = await client.writeViewState("conv_1", "winst_1", invocation);
+    await client.writeViewState("conv_1", "winst_1", { ...invocation, invocationId: "inv_2", sequence: 1_001 }, { keepalive: true });
+    expect(sent[0]?.url).toMatch(/\/conversations\/conv_1\/widgets\/winst_1\/actions$/u);
+    expect(sent[0]?.body).toEqual({ instanceId: "winst_1", ...invocation, variant: "view-state" });
+    expect([sent[0]?.keepalive, sent[1]?.keepalive]).toEqual([undefined, true]);
+    // The answer is the state alone: the revision the page holds and nothing to re-render.
+    expect(result).toMatchObject({ revision: 4, stateRevision: 7, state: { position: 3 } });
+    expect(result.timeline).toBeUndefined();
+  });
+});

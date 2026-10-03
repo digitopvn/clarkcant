@@ -140,23 +140,23 @@
     },
     {
       "path": "widget-development.md",
-      "bytes": 253744,
-      "sha256": "9be7a05ec4365e8909436b8caf57873d433915b988e639d0a66e7df2e349b0b1"
+      "bytes": 256132,
+      "sha256": "97a8f5149c8017fcec5a29348ad5c067dceba18d3945dbafc70d378554b0e09b"
     },
     {
       "path": "widget-development.vi.md",
-      "bytes": 305518,
-      "sha256": "c036e98069bdbe22b27688cb98f0f2545fe507fba52cbdae3fbdef3da539ef73"
+      "bytes": 308328,
+      "sha256": "40c31819f306fe8eb39be720c6eec83be8509dd31d41fc19d5375fd837384194"
     },
     {
       "path": "widgets-and-extensions.md",
-      "bytes": 75746,
-      "sha256": "956d1e59939212ed708f7b1f0943c0a8a9518b913a1039969e2a281360a24ba5"
+      "bytes": 76128,
+      "sha256": "32711f4ff4e0324a237cc66ee1aeda5cbbadae9ab8425b7ad450374e64f95b7f"
     },
     {
       "path": "widgets-and-extensions.vi.md",
-      "bytes": 85515,
-      "sha256": "3708400f88b086ffbb0d17e4dffef1ab579b6d5547925acfceed72163512d311"
+      "bytes": 85946,
+      "sha256": "a6797c879371563e7fdeb06f9107ac98db198559204ae8aeb7ae5dac100dffc2"
     },
     {
       "path": "mini-app/jev-configuration.md",

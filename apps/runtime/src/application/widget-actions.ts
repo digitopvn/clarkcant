@@ -6,6 +6,7 @@ import {
   type ListItem,
   type WidgetInstance,
   type WorkflowRunReport,
+  VIEW_STATE_WRITE_VARIANT,
   checkFormValues,
   describeFieldValue,
 } from "@clarkcant/contracts";
@@ -22,7 +23,9 @@ import {
   readExecutionPolicy,
   readWidgetStateRow,
   recordInvokeAction,
+  reservedInvocationIdRefusal,
   settleInvokeAction,
+  writeViewState,
 } from "@clarkcant/core";
 import { appendAuditEvent, listConversationInstanceIds } from "@clarkcant/storage";
 
@@ -134,6 +137,8 @@ export interface WidgetActionRequest {
   expectedBindingDigest: string;
   input: Record<string, unknown>;
   invocationId: string;
+  /** A player's write sequence, carried only by the state-only write (`writeWidgetViewState`). */
+  sequence?: number;
 }
 
 /**
@@ -899,6 +904,9 @@ export async function invokeWidgetAction(
       message: "an action invocation needs the expectedRevision the client saw",
     };
   }
+  // The node's own state-only records share the ledger's key space, so no caller may name one, whatever the action.
+  const reserved = reservedInvocationIdRefusal(request.invocationId);
+  if (reserved !== undefined) return refusal(reserved.code, reserved.message);
 
   // The binding decides what the action is; the request only names it. An unknown binding falls through to the view path,
   // whose gate refuses it with the reason.
@@ -946,6 +954,47 @@ export async function invokeWidgetAction(
       // The whole page comes back after a mutation, so the client does not have to guess whether
       // its cursor is still valid.
       timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),
+    },
+  };
+}
+
+/**
+ * The state-only write of a host-held player's playback state (`variant: "view-state"` on the action call).
+ *
+ * The same gate as a view action — owner, binding, revision, digest, input — and then the bounded state is stored and
+ * the answer is that state alone: no timeline is rebuilt, no history snapshot is marked superseded, and the page has
+ * nothing to re-render. Nothing else is accepted on this path (`writeViewState`), so it is never a way around an
+ * action's ledger, and a frame's own bridge never sends it: an isolated widget writes its state through its own route.
+ */
+export function writeWidgetViewState(
+  services: Pick<NodeServices, "conductor">,
+  request: WidgetActionRequest,
+): WidgetActionResult {
+  if (!Number.isFinite(request.expectedRevision)) {
+    return { ok: false, status: 400, code: "INVALID_SCHEMA", message: "a state write needs the expectedRevision the client saw" };
+  }
+  const outcome = writeViewState(services.conductor, request);
+  if (!outcome.ok) {
+    return {
+      ok: false,
+      status: statusOf(outcome.code),
+      code: outcome.code,
+      message: outcome.message,
+      ...(outcome.currentRevision === undefined ? {} : { currentRevision: outcome.currentRevision }),
+    };
+  }
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      variant: VIEW_STATE_WRITE_VARIANT,
+      duplicate: outcome.duplicate,
+      // A write older than the one the node holds wrote nothing; the state below is the node's current one.
+      ...(outcome.stale === true ? { stale: true } : {}),
+      instanceId: outcome.instanceId,
+      revision: outcome.revision,
+      stateRevision: outcome.stateRevision,
+      state: outcome.state,
     },
   };
 }
