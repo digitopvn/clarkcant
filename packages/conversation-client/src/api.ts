@@ -36,6 +36,8 @@ import {
   effectReconcileResponseSchema,
   parseSseChunk,
   inboxResponseSchema,
+  noticeSchema,
+  waitingItemSchema,
   inboxSummarySchema,
   memoryListSchema,
   noticeOperationResponseSchema,
@@ -705,6 +707,46 @@ export class GatewayError extends Error {
     this.details = details;
     this.reason = message;
   }
+}
+
+/** `GET /inbox` as read: the response, and how many of its items did not match the contract and were left out. */
+export type InboxRead = InboxResponse & { unreadable?: number };
+
+/**
+ * `GET /inbox`, parsed item by item.
+ *
+ * The envelope is parsed whole, so a response that is not an inbox at all still fails. Each waiting item and notice is
+ * then parsed on its own: one that does not match the contract (a newer node's field, or a node bug) is left out and
+ * counted, rather than hiding every question and approval behind one bad row. Items that do parse are exactly what the
+ * contract says, so no button is built from a field that was not there.
+ */
+export function parseInboxResponse(raw: unknown): InboxRead {
+  const body = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : undefined;
+  const waiting = body?.["waiting"];
+  const notices = body?.["notices"];
+  const snoozed = body?.["snoozed"] ?? [];
+  // Not an inbox: the whole response fails, with the contract's own error.
+  if (body === undefined || !Array.isArray(waiting) || !Array.isArray(notices) || !Array.isArray(snoozed)) {
+    return inboxResponseSchema.parse(raw);
+  }
+  const envelope = inboxResponseSchema.parse({ ...body, waiting: [], notices: [], snoozed: [] });
+  let unreadable = 0;
+  const each = <T,>(items: unknown[], parse: (item: unknown) => { success: true; data: T } | { success: false; error: unknown }): T[] =>
+    items.flatMap((item) => {
+      const result = parse(item);
+      if (result.success) return [result.data];
+      unreadable += 1;
+      // A schema failure has no sentence fit for a person to read; the panel says how many were left out.
+      console.error("inbox: an item does not match the contract and is not shown", result.error);
+      return [];
+    });
+  return {
+    ...envelope,
+    waiting: each(waiting, (item) => waitingItemSchema.safeParse(item)),
+    notices: each(notices, (item) => noticeSchema.safeParse(item)),
+    snoozed: each(snoozed, (item) => noticeSchema.safeParse(item)),
+    ...(unreadable === 0 ? {} : { unreadable }),
+  };
 }
 
 /** What a message carries besides its text. */
@@ -2321,10 +2363,11 @@ export class GatewayClient {
    * What is waiting for the person, and the notices from work that finished while nobody was looking.
    *
    * Parsed against the contract rather than cast: the inbox puts approve buttons on screen, and a button built from a
-   * field that was not there is a button that sends the wrong digest.
+   * field that was not there is a button that sends the wrong digest. Parsed item by item (`parseInboxResponse`), so
+   * one item that does not match leaves the rest readable.
    */
-  async inbox(): Promise<InboxResponse> {
-    return inboxResponseSchema.parse(await this.#call("GET", "/inbox"));
+  async inbox(): Promise<InboxRead> {
+    return parseInboxResponse(await this.#call("GET", "/inbox"));
   }
 
   /** The two counts the header mark polls, without the lists behind them. */

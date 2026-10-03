@@ -23,8 +23,12 @@ afterEach(() => {
 const FIXTURE = JSON.parse(readFileSync("apps/web/e2e/fixtures/directory.json", "utf8")) as Record<string, unknown>[];
 
 function lookupListing(): Record<string, unknown> {
-  const listing = FIXTURE.find((entry) => entry["declaredReach"] !== undefined);
-  if (listing === undefined) throw new Error("the directory fixture has no listing that declares a reach");
+  // The listing whose reach names a secret, so the card is checked with the widest reach the fixture declares.
+  const listing = FIXTURE.find((entry) => {
+    const secrets = (entry["declaredReach"] as Record<string, unknown> | undefined)?.["secrets"];
+    return Array.isArray(secrets) && secrets.length > 0;
+  });
+  if (listing === undefined) throw new Error("the directory fixture has no listing whose reach names a secret");
   return listing;
 }
 

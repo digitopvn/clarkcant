@@ -2165,7 +2165,30 @@ and package details in Settings → Extensions list each origin with its purpose
 (never a value), each browser-token provider with its scopes and purpose, and each account connection with its
 provider, scopes and endpoints (§14.6), before anything is granted. An artifact
 whose manifest declares a different reach than its listing shows is refused with `409 DECLARED_REACH_MISMATCH` before
-anything is recorded, so consent covers what was shown. The update notice does not list the reach yet.
+anything is recorded, so consent covers what was shown.
+
+A directory entry may also state the resource profile the package requests in `resources` (`{ version: 1, profile, gpu? }`,
+the same shape as the manifest's); a listing without it means `interactive-light` and no GPU, and `clark widget publish`
+writes it from the manifest only when the request is not that default. It binds the same way: an artifact that requests
+another profile is refused with `409 DECLARED_REACH_MISMATCH`. A node released before this field refuses a whole
+directory index that holds an entry field it does not know, so an index that lists a non-default `resources` needs
+nodes at least as new as this field.
+
+**What an update shows.** A package update notice, and the install question an update raises when the execution mode
+asks first, carry `reachChange` ([reach-change.ts](../packages/contracts/src/reach-change.ts)): the new version's listing
+compared with the installed version's manifest. It lists each origin, key, browser-token scope, account scope and account
+endpoint the new version adds or drops; each origin a key is now sent to or no longer sent to, so moving a key to
+another origin, or sending it to one more, is wider even when the origins and keys are the same; a GPU request, which
+this node never grants, so asking for one means the version will not run here; and, when the profile changes, each
+bounded limit that changes (memory, CPUs, processes, `/tmp`, call and job deadlines, concurrent jobs, result and input
+sizes, input media length) with both values,
+and the offscreen behaviour when it changes. Profiles are not ranked: each limit is compared on its own. The verdict is
+`wider` when anything is added or any limit goes up, even if something else goes down; `narrower` when something is only
+dropped or lowered; `unchanged` otherwise, including a changed purpose sentence. It is computed when the inbox is read,
+so it always compares against what is installed then. It is absent when the package is not installed, and is
+`{ verdict: "unknown" }`, shown as "Could not compare with the installed version", when the installed manifest or the
+new version's listing cannot be read. Each list holds at most 32 items and counts the rest, which the notice shows as
+"…and N more". It informs the decision and decides nothing: an update is decided by the execution policy like any install.
 
 Not built: a proxied network for services that need raw sockets. Giving a container a network would weaken an isolation
 default, so it waits for that decision.

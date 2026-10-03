@@ -550,7 +550,10 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
       notice's `version`; only `review-update` for a `local` source, since installing from a folder needs its
       digest. "Update" calls the ordinary `POST /packages/install` with the notice's version, so every install check
       applies. "Review" opens Settings → Extensions. Updated or removed since, the notice lists `update` as
-      `already-current` or `package-gone`.
+      `already-current` or `package-gone`. The notice and the install question an update raises carry
+      `reachChange`, computed when the inbox is read: the version's listing against the installed manifest, per origin,
+      key, origin each key is sent to, token scope, account scope and endpoint, GPU request, and per resource-profile
+      limit; `unknown` when the two cannot be compared. It decides nothing.
     - `skip-version` (menu) on a `package` or `pi-update` update notice. `POST /inbox/notices/:id/skip-version`
       reads the version from the stored subject — the body is ignored — writes a `skipped_versions` row for this
       principal, and dismisses the notice; `unskip-version` deletes the row and restores the notice. `checkForUpdates`

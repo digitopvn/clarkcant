@@ -6,7 +6,7 @@ import {
   type Principal,
   type WaitingItem,
 } from "@clarkcant/contracts";
-import { decideApproval, directoryIndexPath, readDirectoryIndex } from "@clarkcant/core";
+import { decideApproval, directoryIndexPath, readDirectoryIndex, type DirectoryIndexState } from "@clarkcant/core";
 import { allRows, oneRow } from "@clarkcant/storage";
 
 import {
@@ -17,6 +17,7 @@ import {
   localFilesUnchanged,
   type PackageInstallDeps,
 } from "./package-install.ts";
+import { reachChangeAgainstInstalled } from "../package-reach-change.ts";
 
 /**
  * An install the person's execution policy asked about, from the question to the answer.
@@ -32,9 +33,11 @@ import {
 
 type InstallApprovalItem = Extract<WaitingItem, { kind: "install-approval" }>;
 
-/** The directory entry that lists `packageId@version` right now, or undefined when none does or none is configured. */
-function listedEntry(packageId: string, version: string): DirectoryEntry | undefined {
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
+/**
+ * The directory entry that lists `packageId@version` in `index`, or undefined when none does or none is configured.
+ * The caller reads the index once, so listing N questions is not N reads of it.
+ */
+function listedEntry(index: DirectoryIndexState, packageId: string, version: string): DirectoryEntry | undefined {
   if (index.kind !== "configured") return undefined;
   return index.entries.find((candidate) => candidate.packageId === packageId && candidate.version === version);
 }
@@ -64,13 +67,16 @@ export function listPendingInstallApprovals(
       ORDER BY requested_at, approval_id`,
     now,
   );
+  const index = readDirectoryIndex(directoryIndexPath(process.env));
   return rows.flatMap((row): InstallApprovalItem[] => {
     const asked = findInstallApprovalRequest(runtime.db, runtime.identity.nodeId, row.approval_id);
     if (asked === undefined || asked.digest !== row.operation_digest) return [];
-    const entry = listedEntry(asked.packageId, asked.version);
+    const entry = listedEntry(index, asked.packageId, asked.version);
     if (entry === undefined || entry.digest !== row.operation_digest) return [];
     // A listing by a path on this machine whose files changed since the question is left out the same way.
     if (!localFilesUnchanged(entry, asked.localDigest)) return [];
+    // An update says what it changes against the version that runs now; the question itself is the same as any install's.
+    const reachChange = reachChangeAgainstInstalled(runtime, entry, index);
     return [
       {
         kind: "install-approval",
@@ -83,6 +89,7 @@ export function listPendingInstallApprovals(
         ...(entry.declaredReach === undefined || declaredReachIsEmpty(entry.declaredReach)
           ? {}
           : { reach: canonicalReach(entry.declaredReach) }),
+        ...(reachChange === undefined ? {} : { reachChange }),
         description: row.operation_description,
         operationDigest: row.operation_digest,
         requestedAt: row.requested_at as InstallApprovalItem["requestedAt"],
@@ -168,7 +175,7 @@ export async function decideInstallApproval(
   }
 
   if (input.decision === "granted") {
-    const entry = listedEntry(asked.packageId, asked.version);
+    const entry = listedEntry(readDirectoryIndex(directoryIndexPath(process.env)), asked.packageId, asked.version);
     if (entry === undefined || entry.digest !== asked.digest) {
       audit("refused", { code: "DIGEST_MISMATCH" });
       return {

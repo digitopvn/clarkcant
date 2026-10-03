@@ -143,6 +143,12 @@ export default defineConfig({
                */
               CC_BROWSER_TOKEN_FIXTURE: "1",
               /*
+               * `CC_UPDATE_CHECK_FIXTURE` adds a route that runs the package update check once, when the update journey
+               * has installed a version and wants the notice for the next one. A fixture node never runs the periodic
+               * check, and the node answers 404 on that route when started without it.
+               */
+              CC_UPDATE_CHECK_FIXTURE: "1",
+              /*
                * Every variable `apps/runtime/src/readiness.ts` counts as a configured credential, blanked. Playwright
                * starts this node with the developer's shell environment underneath `env`, so a provider key exported
                * locally made the node report a credential CI's node does not have, and the credentials specs failed

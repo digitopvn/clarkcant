@@ -3,8 +3,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { checkThemeDocument, type ThemeDocument } from "@clarkcant/contracts";
-import { digestOfDirectory } from "@clarkcant/core";
+import { checkThemeDocument, declaredReachOf, type DeclaredReach, type ThemeDocument } from "@clarkcant/contracts";
+import { digestOfDirectory, readPackage } from "@clarkcant/core";
 import { themeDrawProblem } from "@clarkcant/design-tokens";
 
 /**
@@ -29,6 +29,7 @@ interface FixtureEntry {
   version: string;
   source: { kind: string; path?: string };
   digest: string;
+  declaredReach?: DeclaredReach;
 }
 
 describe("the browser suite's theme packages", () => {
@@ -58,5 +59,23 @@ describe("the browser suite's theme packages", () => {
     const blackout = themeDrawProblem(theme("theme-hostile/themes/blackout.json"));
     expect(blackout?.code).toBe("THEME_PROTECTED");
     if (blackout?.code === "THEME_PROTECTED") expect(blackout.protected.map((failure) => failure.check)).toEqual(["orb-visible"]);
+  });
+});
+
+/*
+ * The update journey installs one version of the forecast package from the fixture npm registry and is offered the next,
+ * whose listing says it reaches one more origin. Each listing is the digest of the bytes the registry serves, and the
+ * reach it shows is what that version's manifest declares, so the install of either would be accepted.
+ */
+describe("the browser suite's forecast package, in two versions", () => {
+  const entries = JSON.parse(readFileSync(join(ROOT, "apps/web/e2e/fixtures/directory.json"), "utf8")) as FixtureEntry[];
+
+  it.each(["1.0.0", "1.1.0"])("lists %s under the digest of its bytes, with the reach its manifest declares", (version) => {
+    const entry = entries.find((candidate) => candidate.packageId === "com.acme.forecast" && candidate.version === version);
+    const root = join(ROOT, "apps/web/e2e/fixtures/forecast-widget", version);
+    expect(digestOfDirectory(root)).toEqual({ ok: true, digest: entry?.digest });
+    const pkg = readPackage(root);
+    expect(pkg.problems).toEqual([]);
+    expect(entry?.declaredReach ?? { origins: [], secrets: [], browserTokens: [] }).toEqual(declaredReachOf(pkg.manifest));
   });
 });

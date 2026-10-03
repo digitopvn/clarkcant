@@ -2159,7 +2159,30 @@ tiết package trong Settings → Extensions liệt kê từng origin kèm mục
 hiện giá trị), từng nhà cung cấp token trình duyệt kèm scope và mục đích, và từng kết nối tài khoản kèm nhà cung cấp,
 scope và endpoint (§14.6), trước khi cấp bất cứ thứ gì. Artifact có
 manifest khai báo phạm vi khác với mục trong thư mục bị từ chối với `409 DECLARED_REACH_MISMATCH` trước khi ghi lại bất cứ
-thứ gì, nên sự đồng ý bao gồm đúng những gì đã hiện. Thông báo cập nhật chưa liệt kê phạm vi này.
+thứ gì, nên sự đồng ý bao gồm đúng những gì đã hiện.
+
+Một mục trong thư mục cũng có thể nêu mức tài nguyên package yêu cầu trong `resources` (`{ version: 1, profile, gpu? }`,
+cùng dạng với trong manifest); mục không có trường này nghĩa là `interactive-light` và không có GPU, và
+`clark widget publish` chỉ ghi trường này từ manifest khi yêu cầu khác mặc định đó. Trường này ràng buộc theo cùng cách:
+artifact yêu cầu mức khác bị từ chối với `409 DECLARED_REACH_MISMATCH`. Node phát hành trước khi có trường này từ chối cả
+chỉ mục thư mục nếu có một mục mang trường nó không biết, nên chỉ mục liệt kê `resources` khác mặc định cần các node ít
+nhất mới bằng trường này.
+
+**Bản cập nhật hiện những gì.** Thông báo cập nhật package, và câu hỏi cài đặt mà bản cập nhật tạo ra khi chế độ thực thi
+hỏi trước, mang `reachChange` ([reach-change.ts](../packages/contracts/src/reach-change.ts)): mục trong thư mục của bản mới
+so với manifest của bản đang cài. Nó liệt kê từng origin, key, scope token trình duyệt, scope tài khoản và endpoint tài
+khoản mà bản mới thêm hoặc bỏ; từng origin mà một key giờ được gửi tới hoặc không còn được gửi tới, nên chuyển key sang
+origin khác, hoặc gửi nó tới thêm một origin, là `wider` kể cả khi tập origin và tập key không đổi; yêu cầu GPU, thứ node
+này không bao giờ cấp, nên xin GPU nghĩa là bản đó sẽ không chạy ở đây; và khi mức tài nguyên đổi thì liệt kê từng giới
+hạn có đổi (bộ nhớ, CPU, số tiến trình, `/tmp`, thời hạn mỗi lần gọi và mỗi việc chạy nền, số việc chạy cùng lúc, kích
+thước kết quả và đầu vào, độ dài media đầu vào) kèm cả hai giá trị, và cách chạy khi khuất màn hình nếu đổi.
+Các mức không được xếp hạng: mỗi giới hạn được so riêng.
+Kết luận là `wider` khi có gì được thêm hoặc có giới hạn nào tăng, kể cả khi thứ khác giảm; `narrower` khi chỉ có bỏ bớt
+hoặc giảm; còn lại là `unchanged`, kể cả khi chỉ câu mục đích đổi. Nó được tính lúc đọc hộp thư, nên luôn so với bản đang
+cài lúc đó. Nó không có khi package chưa được cài, và là `{ verdict: "unknown" }`, hiện thành "Không so sánh được với bản
+đang cài", khi không đọc được manifest đang cài hoặc mục trong thư mục của bản mới. Mỗi danh sách có tối đa 32 mục và
+đếm phần còn lại, thông báo hiện thành "…và N mục khác". Nó giúp quyết định chứ không quyết định gì: bản cập nhật được
+chính sách thực thi quyết định như mọi lần cài.
 
 Chưa xây: mạng qua proxy cho service cần socket thô. Cho container có mạng sẽ làm yếu một mặc định cô lập, nên việc này
 chờ quyết định đó.

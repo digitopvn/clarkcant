@@ -40,6 +40,101 @@
     "digest": "sha256:ef8eb8dd74e61d7d083d347f43ba696fff56b4037d1045849cb04da333192281"
   },
   {
+    "packageId": "com.acme.forecast",
+    "version": "1.0.0",
+    "displayName": "Forecast",
+    "description": "The week's forecast.",
+    "source": {
+      "kind": "npm",
+      "name": "com.acme.forecast",
+      "version": "1.0.0"
+    },
+    "publisher": {
+      "id": "acme",
+      "sourceUrl": "https://example.com/acme",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "ui"
+    ],
+    "isolations": [
+      {
+        "facetKind": "ui",
+        "isolation": "isolated-ui"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "isolated-ui",
+    "sizeBytes": 40960,
+    "digest": "sha256:e62ca3fa5efb2c6a71a0891018f3b8a200cac9d7525608c59b57536d9ff00f85"
+  },
+  {
+    "packageId": "com.acme.forecast",
+    "version": "1.1.0",
+    "displayName": "Forecast",
+    "description": "The week's forecast.",
+    "source": {
+      "kind": "npm",
+      "name": "com.acme.forecast",
+      "version": "1.1.0"
+    },
+    "publisher": {
+      "id": "acme",
+      "sourceUrl": "https://example.com/acme",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "ui",
+      "tools"
+    ],
+    "isolations": [
+      {
+        "facetKind": "ui",
+        "isolation": "isolated-ui"
+      },
+      {
+        "facetKind": "tools",
+        "isolation": "service"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "declaredReach": {
+      "origins": [
+        {
+          "origin": "https://forecast.example.com",
+          "purpose": "Reads the forecast for the week you look at."
+        }
+      ],
+      "secrets": [],
+      "browserTokens": []
+    },
+    "riskTier": "service",
+    "sizeBytes": 40960,
+    "digest": "sha256:395b583fb10f780365ea5461ec2056960ab93d58f0020b17e29b2f8961b36c9c"
+  },
+  {
     "packageId": "com.example.frame-widget",
     "version": "1.0.0",
     "displayName": "Frame widget",
@@ -274,6 +369,7 @@
       "max": 1
     },
     "permissionsSummary": [],
+    "resources": { "version": 1, "profile": "media-workstation" },
     "riskTier": "isolated-ui",
     "sizeBytes": 2048,
     "digest": "sha256:playback-widget-digest"
@@ -345,6 +441,7 @@
         }
       ]
     },
+    "resources": { "version": 1, "profile": "interactive-heavy" },
     "riskTier": "service",
     "sizeBytes": 8192,
     "digest": "sha256:lookup-service-digest"
@@ -767,6 +864,7 @@
       "max": 1
     },
     "permissionsSummary": [],
+    "resources": { "version": 1, "profile": "background-compute" },
     "riskTier": "service",
     "sizeBytes": 65536,
     "digest": "sha256:media-render-reference-digest"
