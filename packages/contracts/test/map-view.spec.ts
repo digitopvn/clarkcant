@@ -12,8 +12,11 @@ import {
   checkCompositionGraph,
   fitMapCamera,
   graphValues,
+  MAP_TILE_SECRET_NAME,
   isPersonOnlyRoute,
   mapCamera,
+  mapTileKeyConsumer,
+  mapTileKeyOrigin,
   mapProblems,
   mapSelectProblems,
   mapSemantic,
@@ -174,8 +177,24 @@ describe("tile policy", () => {
     template: "/styles/basic/{z}/{x}/{y}.png",
     attribution: "© Example contributors",
     maxZoom: 17,
-    credential: { secret: "tiles-key", header: "x-api-key" },
+    credential: { secret: "maps:tiles", header: "x-api-key" },
   };
+
+  it("names only the host's own tile secret, never another one", () => {
+    expect(MAP_TILE_SECRET_NAME).toBe("maps:tiles");
+    for (const secret of ["github_token", "tiles-key", "maps:tiles2", "MAPS:TILES"]) {
+      const parsed = mapTilePolicySchema.safeParse({ ...PROVIDER, credential: { secret, header: "x-api-key" } });
+      expect(parsed.success, secret).toBe(false);
+    }
+  });
+
+  it("binds the key to one origin through its consumer", () => {
+    expect(mapTileKeyConsumer("https://tiles.example")).toBe("maps:tiles@https://tiles.example");
+    expect(mapTileKeyOrigin(["maps:tiles@https://tiles.example"])).toBe("https://tiles.example");
+    expect(mapTileKeyOrigin(["maps:tiles"])).toBeUndefined();
+    expect(mapTileKeyOrigin(["command:git"])).toBeUndefined();
+    expect(mapTileKeyOrigin(["maps:tiles@https://a.example", "maps:tiles@https://b.example"])).toBeUndefined();
+  });
 
   it("is off by default and accepts one provider with a path template on its origin", () => {
     expect(mapTilePolicySchema.safeParse(null).success).toBe(true);
@@ -199,12 +218,33 @@ describe("tile policy", () => {
     expect(mapTileTemplateProblem("/@evil/{z}/{x}/{y}")).toBeDefined();
   });
 
+  it("refuses a template that would carry a key in plain text", () => {
+    for (const template of [
+      "/{z}/{x}/{y}.png?api_key=abc123",
+      "/{z}/{x}/{y}.png?key=abc123",
+      "/{z}/{x}/{y}.png?style=dark&access_token=abc",
+      "/{z}/{x}/{y}.png?Signature=abc",
+      "/{z}/{x}/{y}.png?secret",
+      "/{z}/{x}/{y}.png?apikey=abc",
+    ]) {
+      expect(mapTileTemplateProblem(template), template).toMatch(/must not carry a key/u);
+      expect(mapTilePolicySchema.safeParse({ ...PROVIDER, template }).success, template).toBe(false);
+    }
+    expect(mapTileTemplateProblem("/{z}/{x}/{y}.png?style=dark&lang=vi")).toBeUndefined();
+  });
+
   it("tells the page whose tiles and the attribution, never the path or the key", () => {
-    expect(mapTilePolicyView(null)).toEqual({ provider: null });
+    expect(mapTilePolicyView(null)).toEqual({ provider: null, offline: "no-provider" });
     const view = mapTilePolicyView(mapTilePolicySchema.parse(PROVIDER));
     expect(view).toEqual({ provider: { origin: "https://tiles.example", attribution: "© Example contributors", maxZoom: 17 } });
-    expect(JSON.stringify(view)).not.toContain("tiles-key");
+    expect(JSON.stringify(view)).not.toContain("maps:tiles");
     expect(JSON.stringify(view)).not.toContain("styles/basic");
+  });
+
+  it("says why the maps are offline when the provider's key is not usable, without naming the provider or key", () => {
+    const policy = mapTilePolicySchema.parse(PROVIDER);
+    expect(mapTilePolicyView(policy, "key-unavailable")).toEqual({ provider: null, offline: "key-unavailable" });
+    expect(mapTilePolicyView(policy, "key-origin-mismatch")).toEqual({ provider: null, offline: "key-origin-mismatch" });
   });
 
   it("bounds tile addresses by zoom and grid", () => {
@@ -221,6 +261,11 @@ describe("tile policy", () => {
     expect(isPersonOnlyRoute("PUT", "//preferences//maps.tilePolicy/")).toBe(true);
     expect(isPersonOnlyRoute("POST", "/preferences/maps.tilePolicy/undo")).toBe(true);
     expect(isPersonOnlyRoute("GET", "/preferences/maps.tilePolicy")).toBe(false);
+    // Entering or removing the key binds it to an origin, which only the person does, in Settings.
+    expect(isPersonOnlyRoute("PUT", "/map-tiles/key")).toBe(true);
+    expect(isPersonOnlyRoute("DELETE", "//map-tiles//key/")).toBe(true);
+    expect(isPersonOnlyRoute("GET", "/map-tiles/key")).toBe(false);
+    expect(isPersonOnlyRoute("GET", "/map-tiles")).toBe(false);
   });
 });
 

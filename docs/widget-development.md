@@ -1400,8 +1400,8 @@ The basemap is Natural Earth 1:110m land, version 5.1.2, which is in the public 
 under every drawing. It ships with the client, so a map with no tile policy makes no request beyond the node.
 
 Raster tiles appear only under the node's tile policy, the registered preference `maps.tilePolicy`. It is `null` by
-default, and only a person can write or undo it: AI clients over the socket or MCP are refused
-(`isPersonOnlyRoute`). A policy names one provider:
+default. A person writes it in Settings, and Clark writes it through its tool under the execution policy; an AI client
+over the socket or MCP cannot write or undo it directly (`isPersonOnlyRoute`). A policy names one provider:
 
 ```json
 {
@@ -1409,13 +1409,15 @@ default, and only a person can write or undo it: AI clients over the socket or M
   "template": "/styles/basic/{z}/{x}/{y}.png",
   "attribution": "© Example contributors",
   "maxZoom": 17,
-  "credential": { "secret": "tiles-key", "header": "x-api-key" }
+  "credential": { "secret": "maps:tiles", "header": "x-api-key" }
 }
 ```
 
 `origin` is exactly `scheme://host[:port]`: https, or http only for a loopback address. `template` is a path on that
-origin with `{z}`, `{x}` and `{y}` once each. The page never fetches the provider. It asks the node for
-`GET /map-tiles/:z/:x/:y`, and the node:
+origin with `{z}`, `{x}` and `{y}` once each. Its query may not carry a key, token, secret or signature. `credential`
+is optional. When present, `secret` is always `maps:tiles`, the host's own tile key, and a policy naming any other
+secret is refused. `header` or `query` says where the key goes. The page never fetches the provider. It asks the node
+for `GET /map-tiles/:z/:x/:y`, and the node:
 
 - builds the address from the policy;
 - checks z, x and y against `maxZoom` (at most 19) and the grid;
@@ -1425,14 +1427,44 @@ origin with `{z}`, `{x}` and `{y}` once each. The page never fetches the provide
 - caches up to 256 tiles or 24 MiB, for an hour.
 
 `GET /map-tiles` tells the page the provider's origin, attribution and maximum zoom, never its template or key. With no
-policy, every tile request is refused with `MAP_TILES_OFF` and nobody is asked. The page draws tiles from `blob:` URLs,
-so the page policy is unchanged.
+policy, every tile request is refused with `MAP_TILES_OFF` and nobody is asked. When the maps are offline-only, the
+answer says why in `offline`:
 
-An optional `credential` names a secret the node holds. That secret must list the consumer `maps:tiles`, and it is
-injected as the HTTP header or query parameter the policy names, through the secret broker. The key never reaches the
-page, props, state, logs, the cache key, an error message or the model. The attribution line under the map names the
-tile origin and its attribution, and the map shows no "live" badge.
+- `no-provider`: no policy is set;
+- `key-unavailable`: the policy needs a key and none is saved;
+- `key-origin-mismatch`: the saved key was entered for another origin.
 
+In either key case the provider is not handed to the page, so it asks for no tile that would fail, and a tile request
+gets `503 MAP_TILE_KEY_UNAVAILABLE` with the same `offline` reason. The map's attribution line states the reason and
+where to fix it. The page draws tiles from `blob:` URLs, so the page policy is unchanged.
+
+**The key is bound to its origin.** A person enters the key in **Settings → Extensions → Map tiles**, which stores it
+through the person-only `PUT /map-tiles/key` as the node secret `maps:tiles`. The secret's only consumer is
+`maps:tiles@<origin>`, the origin the key was entered for. The proxy asks the secret broker for the consumer of the
+policy's origin, so the key is sent to that exact origin and nowhere else. `GET /map-tiles/key` answers `{ key: { origin } }`
+or `{ key: null }`, never the value, and `DELETE /map-tiles/key` removes the key. The generic credential form
+(`POST /credentials`) refuses the name `maps:tiles` and any `maps:tiles` consumer. Nothing but a person entering the key
+in Settings binds it, so Clark cannot move it.
+
+A person sets and clears the policy in the same Settings section: provider origin, tile path, attribution, maximum zoom,
+and an optional key with the header or query parameter it goes in. The section never shows the key again. It says
+"Checking…" until the node answers, then whether a key is saved and which origin it goes to, and it shows an error if
+the node cannot say. **Turn tiles off** writes `null`. **Remove key** drops the key from the policy and deletes it.
+**Undo last change** restores the previous policy, whoever wrote it.
+
+Clark does the same through its `set_map_tiles` tool, which uses the same `writeMapTilePolicy`
+([map-tile-policy.ts](../apps/runtime/src/application/map-tile-policy.ts)). Setting or clearing the policy is an effect
+like any other, and the execution policy decides it. In Autonomous mode it runs, with an activity record and the
+Settings Undo. In Ask mode it is a host-owned approval card that only the person's decision, on the person-only decide
+route, writes. A refusal to run any effect refuses it, including at the moment a card is granted. The preference
+records who wrote it: `user` for Settings, `agent` for Clark.
+
+The tool takes only the header or query name, never the key or a secret name. The card and the result say where the
+key goes: to the policy's origin, or, for a provider Clark sets at another origin than the key's, nowhere. Such a
+provider runs offline-only until the person enters the key again for it. A widget reaches none of this.
+
+The key never reaches the page, props, state, logs, the cache key, an error message or the model. The attribution line
+under the map names the tile origin and its attribution, and the map shows no "live" badge.
 `map.select` carries `{ selectedId }` (empty to clear) and `map.view` carries `{ center, zoom }`. The node checks both
 against the current props and keeps them as widget state. A pan is written 400 ms after it settles, so a run of key
 presses is one write. `map.select` is also a composition-graph event with a `selectedId` field.
@@ -1465,7 +1497,15 @@ Tests: [map-view.spec.ts](../packages/contracts/test/map-view.spec.ts) checks bo
 semantics, the tile policy schema and the person-only route;
 [map-view.spec.ts](../apps/runtime/test/map-view.spec.ts) checks placement, refusals, state and semantics with and
 without a policy; [map-tiles.spec.ts](../apps/runtime/test/map-tiles.spec.ts) checks the proxy's allowlist, content
-type, size and zoom bounds, cache, rate, redirect refusal, and that the key is added and never returned;
+type, size and zoom bounds, cache, rate, redirect refusal, that the key goes only to its bound origin, and that it is never returned;
+[map-tile-policy.spec.ts](../apps/runtime/test/map-tile-policy.spec.ts) checks Settings and Clark setting and clearing
+the policy under each execution mode, who is recorded as its author, the card, its digest, denial, the key's origin
+binding, the refusal of a policy naming another secret, and that the key is never answered back;
+[open-interfaces.spec.ts](../apps/runtime/test/open-interfaces.spec.ts) checks that the relay refuses the policy write,
+its undo and the key routes; [map-tile-settings.spec.ts](../apps/web/e2e/map-tile-settings.spec.ts) turns tiles on from
+Settings against a local fake provider that refuses requests without the key, sees them on a map, turns them off and
+undoes it. It also has Clark set and clear the provider in Autonomous mode and through an approved card in Ask mode, and
+shows a provider Clark sets at another origin than the key's running offline with `key-origin-mismatch`;
 [map-layout.spec.ts](../packages/conversation-client/test/map-layout.spec.ts) checks the basemap's provenance, the
 projection and the tile grid; [map-schemas.spec.ts](../packages/widget-catalog/test/map-schemas.spec.ts) checks the
 fixtures and the agreement between schema and runtime. The browser journey
@@ -2573,7 +2613,8 @@ A widget is not publish-ready if any of the following tests are missing:
 A directory entry needs:
 
 - package id;
-- current version;
+- current version: a semantic version of at most 80 characters, because the marketplace card shows it and Install
+  sends it back unchanged; an index with a longer one is refused when it is read, with the reason;
 - display name;
 - one-line description;
 - author/publisher;
@@ -2729,7 +2770,12 @@ This section states which parts of the document already have code, so that nobod
   the execution policy decides; the card installs nothing itself, so a listing never turns into authorization. A listing by a
   path on this machine also carries `contentDigest`, the digest of its files when they were listed, which the button sends
   back so the install is refused if the files changed since; the row then shows that they changed and offers a new
-  search instead of the same Install. The install copies the files into the package cache and the package runs from that copy, so later edits to the path change nothing until it is installed again; the live editing loop is `clark widget dev`. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
+  search instead of the same Install. The install copies the files into the package cache and the package runs from that
+  copy, so later edits to the path change nothing until it is installed again; the live editing loop is `clark widget dev`.
+  A row also repeats the listing's `declaredReach` (what installing lets the package reach) and `widgetAppearance` claims, under the
+  same schemas as the directory entry, so the row shows them before the Install press. A card that does not match its
+  contract is left out of the reply and the node logs `host card dropped` with the card type and the failing field
+  paths, never a value. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
 - The dev host's in-page script: it collects facts and forwards actions, while every decision lives in a tested function —
   but the script itself needs a browser to run, and that is stated instead of implying that the whole dev host is covered.
 - Detach/attach: the desktop's detached host window **really exists** (`apps/desktop/src/main.mjs` opens it via

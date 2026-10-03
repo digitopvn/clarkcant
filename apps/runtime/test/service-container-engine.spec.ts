@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -11,12 +11,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { type CapabilityRef, type Instant, RESOURCE_PROFILES, type ResourceProfile } from "@clarkcant/contracts";
 import { StdioMcpTransport } from "@clarkcant/mcp-adapters";
-import { migrate, openDatabase } from "@clarkcant/storage";
+import { createConversation, createPin, migrate, openDatabase } from "@clarkcant/storage";
 
+import { invokeCapability } from "../src/application/capability-invoke.ts";
 import { storeCredentialFields } from "../src/application/credential-vault.ts";
+import { type ArtifactBrokerDeps, readArtifactRange, storePickedArtifact } from "../src/artifact-broker.ts";
+import { createPackageJobHost } from "../src/job-host.ts";
 import { createSecretBroker } from "../src/secret-broker.ts";
 import { egressSecretProblem } from "../src/service-egress.ts";
 import { containerLauncher, createServiceHost, engineContainers } from "../src/service-host.ts";
+import { createWorkSupervisor } from "../src/work-supervisor.ts";
+import { WAV_HEADER_BYTES, applyGain, fixtureClip, parseWavHeader, renderPlan, wavHeader } from "../../../examples/reference-apps/media-render/service/wav.mjs";
 
 import {
   detectServiceEngine,
@@ -24,6 +29,7 @@ import {
   prepareServiceDataDir,
   readEngineCapacity,
   removeServiceContainer,
+  runEngine,
   serviceContainerName,
   serviceRunArgs,
 } from "../src/service-container.ts";
@@ -34,8 +40,9 @@ import {
  * `service-container.spec.ts` reads the command line; this runs it. A probe in place of a service tries each thing the
  * boundary exists to refuse and reports what happened, so a flag an engine ignores is caught here rather than trusted.
  *
- * Needs an engine that runs Linux containers. The Linux CI runners have Docker; a machine without one (the macOS
- * runner, Windows in Windows-containers mode) has nothing this can check, and the suite says so by skipping.
+ * Needs an engine that runs Linux containers. CI runs it on Linux under rootful Docker, rootless Docker and rootless
+ * Podman; a machine without one (the macOS and Windows runners) has nothing this can check, and the suite says so by
+ * skipping. Docker Desktop and Podman machine on macOS and Windows are checked by hand (`docs/platform-smoke.md`).
  */
 
 const engine = await detectServiceEngine({ timeoutMs: 10_000 });
@@ -253,6 +260,186 @@ describe.runIf(process.env.CC_EXPECT_ROOTLESS_DOCKER === "1")("the rootless Dock
   it("is the engine a service runs on", () => {
     expect(engine).toMatchObject({ available: true, engine: "docker", rootless: true });
   });
+});
+
+/**
+ * The same for a job that set up rootless Podman: a Docker daemon still answering would otherwise be found first. It
+ * must also enforce limits, read the way the limit tests above are gated, or those two would skip and the job stay green.
+ */
+describe.runIf(process.env.CC_EXPECT_ROOTLESS_PODMAN === "1")("the rootless Podman this job set up", () => {
+  it("is the engine a service runs on, runs rootless, and enforces a profile's limits", async () => {
+    expect(engine).toMatchObject({ available: true, engine: "podman" });
+    const answer = await runEngine("podman", ["info", "--format", "{{.Host.Security.Rootless}}"], 30_000);
+    expect(answer.status, answer.stderr).toBe(0);
+    expect(answer.stdout.trim()).toBe("true");
+    expect(capacity).toMatchObject({ enforcesLimits: true });
+  });
+});
+
+/**
+ * The reference media render package's real service, run in a real container by a real host, started as a job the way
+ * a widget press starts it. The clip reaches the service only through the host's reads over standard streams; the
+ * container has no network, and what comes back is exactly the render of the clip that was picked.
+ */
+describe.skipIf(!engine.available)("the media render package's service on a real engine", () => {
+  const PACKAGE = "com.clarkcant.reference.media-render";
+  const GENERATION = `${PACKAGE}@1.0.0:code_1`;
+  const RENDER = "com.clarkcant.reference.media-render.render@1" as CapabilityRef;
+  const MEDIA = fileURLToPath(new URL("../../../examples/reference-apps/media-render/", import.meta.url));
+  const NODE_ID = `node_media_${String(Date.now())}`;
+  const PRINCIPAL = "prin_owner";
+  const CONVERSATION = "conv_render";
+  const INSTANCE = "winst_render";
+  const BINDING = "binding_media_render";
+  const NETWORK_PROBE = `fetch("http://1.1.1.1", { signal: AbortSignal.timeout(3000) }).then(
+  () => process.stdout.write("allowed"),
+  (error) => process.stdout.write("refused " + String(error.cause?.code ?? error.name)),
+);`;
+
+  it("renders a picked clip streamed into a container with no network, and refuses a file the widget holds no grant on", async () => {
+    if (!engine.available) throw new Error("unreachable");
+    const work = mkdtempSync(join(tmpdir(), "cc-service-media-"));
+    const packageRoot = join(work, "media-render");
+    cpSync(MEDIA, packageRoot, { recursive: true, filter: (source) => !source.includes(join(MEDIA, "test")) });
+    const db = openDatabase({ path: ":memory:" });
+    migrate(db);
+    let counter = 0;
+    const newId = (prefix: string): string => `${prefix}_${String(++counter)}`;
+    const at = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO package_generations
+         (generation_id, package_id, version, digest, node_id, code_generation, activated_at, document)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      GENERATION,
+      PACKAGE,
+      "1.0.0",
+      "sha256:media-render-digest",
+      NODE_ID,
+      "code_1",
+      at,
+      JSON.stringify({ generationId: GENERATION, packageId: PACKAGE, version: "1.0.0", digest: "sha256:media-render-digest", nodeId: NODE_ID, codeGeneration: "code_1", activatedAt: at, uiOnlyFacets: [], grantedCapabilities: [] }),
+    );
+    // The widget a person presses is one this conversation holds, pinned there.
+    createConversation(db, { conversationId: CONVERSATION, homeNodeId: NODE_ID, at: at as never });
+    db.prepare(
+      `INSERT INTO widget_instances
+         (instance_id, definition_id, definition_version, package_digest, owner_node_id, owner_principal_id,
+          revision, presentation_revision, data_revision, action_binding_revision, lifecycle, document, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(INSTANCE, "media.render@1", "1.0.0", "sha256:fixture", NODE_ID, PRINCIPAL, 1, 1, 1, 1, "active", "{}", at);
+    createPin(db, { pinId: "pin_render", conversationId: CONVERSATION, instanceId: INSTANCE, displayMode: "expanded", position: 0, refreshPolicy: "manual", createdAt: at } as never);
+
+    const broker: ArtifactBrokerDeps = { db, dataDir: work, nodeId: NODE_ID, newId, now: () => new Date() };
+    const supervisor = createWorkSupervisor();
+    const jobs = createPackageJobHost({ db, nodeId: NODE_ID, nodeBootId: "boot_1", newId, supervisor, artifactBroker: broker });
+    const names: string[] = [];
+    const logs: string[] = [];
+    const host = createServiceHost({
+      registry: { db, nodeId: NODE_ID },
+      dataDir: work,
+      engine: async () => engine,
+      packageRoot: (generation) => (generation.packageId === PACKAGE ? packageRoot : undefined),
+      launcher: (spec) => {
+        names.push(spec.name);
+        return containerLauncher(spec);
+      },
+      containers: engineContainers,
+      log: (line) => logs.push(line),
+    });
+    const pick = (bytes: Uint8Array, instanceId: string) => {
+      const stored = storePickedArtifact(broker, { principalId: PRINCIPAL, conversationId: CONVERSATION, instanceId, name: "clip.wav", mimeType: "audio/wav", bytes, accept: ["audio/wav"] });
+      if (!stored.ok) throw new Error(stored.message);
+      return stored.ref;
+    };
+    const press = (args: Record<string, unknown>) =>
+      invokeCapability(
+        { db, nodeId: NODE_ID, principalId: PRINCIPAL, newId, serviceHost: host, packageJobs: jobs, dataDir: work },
+        { ref: RENDER, args, source: "widget", conversationId: CONVERSATION, bindingGeneration: GENERATION, jobOrigin: { instanceId: INSTANCE, actionBindingId: BINDING } },
+      );
+    const owner = { ownerPrincipalId: PRINCIPAL, instanceId: INSTANCE, actionBindingId: BINDING, packageGeneration: GENERATION };
+
+    try {
+      await host.reconcile();
+      const started = Date.now();
+      while (!host.status().some((entry) => entry.state === "running")) {
+        if (Date.now() - started > 240_000) throw new Error(`the service did not start: ${logs.join(" | ")}`);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+
+      // Larger than one 256 KiB chunk, so the service has to ask for it a range at a time.
+      const clip = fixtureClip({ seconds: 24 });
+      expect(clip.byteLength).toBeGreaterThan(262_144);
+      const parameters = { gainDb: -6, trimStartMs: 250, trimEndMs: 250 };
+      const outcome = await press({ source: pick(clip, INSTANCE).artifactId, ...parameters });
+      if (outcome.kind !== "job") throw new Error(`expected a job, got ${JSON.stringify(outcome)}; log: ${logs.join(" | ")}`);
+      const ended = await (async () => {
+        const waited = Date.now();
+        for (;;) {
+          const job = jobs.get(outcome.job.jobId, owner);
+          if (job !== undefined && job.status !== "running" && job.status !== "queued") return job;
+          if (Date.now() - waited > 120_000) throw new Error(`the render did not end; log: ${logs.join(" | ")}`);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      })();
+      expect(ended.status, JSON.stringify(ended)).toBe("completed");
+      const result = ended.resultRefs[0];
+      if (result === undefined) throw new Error("no result");
+
+      // What the widget is given is exactly the render of the clip it picked, computed here from the transform alone.
+      const header = parseWavHeader(clip.subarray(0, WAV_HEADER_BYTES), clip.byteLength);
+      if (!header.ok) throw new Error(header.reason);
+      const plan = renderPlan(header, parameters);
+      if (!plan.ok) throw new Error(plan.reason);
+      const expected = new Uint8Array(44 + plan.end - plan.start);
+      expected.set(wavHeader(header.format, plan.end - plan.start), 0);
+      expected.set(applyGain(clip.subarray(plan.start, plan.end), plan.gain), 44);
+      const digest = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+      expect(result.sizeBytes).toBe(expected.byteLength);
+      expect(result.digest).toBe(`sha256:${digest(expected)}`);
+      const kept = new Uint8Array(result.sizeBytes);
+      for (let offset = 0; offset < result.sizeBytes; offset += 262_144) {
+        const read = readArtifactRange(broker, { principalId: PRINCIPAL, instanceId: INSTANCE, artifactId: result.artifactId, offset, length: 262_144 });
+        if (!read.ok) throw new Error(read.message);
+        kept.set(read.bytes, offset);
+      }
+      expect(digest(kept)).toBe(digest(expected));
+
+      // The container that rendered it has no network, as the engine records it and as a request from inside finds.
+      const name = names.at(-1) ?? "";
+      const engineSays = (args: string[]): Promise<string> =>
+        new Promise((settle, fail) => {
+          execFile(engine.engine, args, { encoding: "utf8", timeout: 60_000 }, (error, stdout, stderr) =>
+            error === null ? settle(stdout.trim()) : fail(new Error(`${error.message}\n${stderr}`)),
+          );
+        });
+      expect(await engineSays(["inspect", "--format", "{{.HostConfig.NetworkMode}}", name])).toBe("none");
+      // Asked for the refusal itself, so a probe that printed nothing cannot pass.
+      expect(await engineSays(["exec", name, "node", "-e", NETWORK_PROBE])).toMatch(/^refused (ENETUNREACH|EHOSTUNREACH|ECONNREFUSED|EAI_AGAIN|TimeoutError)$/);
+
+      // The clip was streamed, not handed over: no copy of it is in the service's private folder.
+      const sample = Buffer.from(clip.subarray(WAV_HEADER_BYTES, WAV_HEADER_BYTES + 4096));
+      const holding = (folder: string): string[] =>
+        readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+          const file = join(folder, entry.name);
+          if (entry.isDirectory()) return holding(file);
+          return readFileSync(file).includes(sample) ? [file] : [];
+        });
+      expect(holding(join(work, "services"))).toEqual([]);
+
+      // A file the pressing widget holds no grant on is refused before anything starts.
+      const theirs = pick(fixtureClip({ seconds: 1 }), "winst_someone_else");
+      expect(await press({ source: theirs.artifactId, gainDb: 0 })).toMatchObject({ kind: "refused", status: 403, code: "ARTIFACT_INPUT_REFUSED" });
+    } finally {
+      try {
+        jobs.stopAll();
+        await host.stopAll();
+      } finally {
+        db.close();
+        rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      }
+    }
+  }, 600_000);
 });
 
 /**

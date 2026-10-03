@@ -2,7 +2,8 @@ import { z } from "zod";
 
 import { attachmentRefSchema } from "./attachments.ts";
 import { referenceBlockSchema, referenceToken } from "./composer-references.ts";
-import { packageSourceSchema, riskLaneSchema } from "./directory.ts";
+import { declaredReachSchema } from "./declared-reach.ts";
+import { DIRECTORY_VERSION_MAX, packageSourceSchema, riskLaneSchema, widgetAppearanceClaimsSchema } from "./directory.ts";
 import { facetKindSchema } from "./install.ts";
 import { instantSchema, platformSchema } from "./primitives.ts";
 import { widgetSnapshotSchema } from "./widgets.ts";
@@ -231,7 +232,8 @@ export type TerminalSessionCard = z.infer<typeof terminalSessionCardSchema>;
  */
 export const marketplaceResultSchema = z.strictObject({
   packageId: z.string().min(1).max(200),
-  version: z.string().min(1).max(80),
+  /** The listing's own bound (`directoryVersionSchema`), so a listed version always fits the card that shows it. */
+  version: z.string().min(1).max(DIRECTORY_VERSION_MAX),
   displayName: z.string().min(1).max(200),
   description: z.string().max(1000),
   source: packageSourceSchema,
@@ -246,6 +248,17 @@ export const marketplaceResultSchema = z.strictObject({
    */
   contentDigest: z.string().min(1).max(200).optional(),
   riskTier: riskLaneSchema,
+  /**
+   * The listing's widget appearance claims (`widgetAppearanceClaimsSchema`), so a row can say a widget keeps a fixed
+   * look before it is installed. A claim, never authority: the installed widget definition decides.
+   */
+  widgetAppearance: widgetAppearanceClaimsSchema.optional(),
+  /**
+   * What installing lets the package reach (`declaredReachSchema`): origins, secrets by name, browser-token providers
+   * and accounts, each with its purpose, shown before the Install press. Absent means it reaches none. Binding, unlike
+   * the claims: the install refuses an artifact whose manifest declares a different reach.
+   */
+  declaredReach: declaredReachSchema.optional(),
   facets: z.array(facetKindSchema).max(10),
   platforms: z.array(platformSchema).max(10),
 });
