@@ -112,6 +112,8 @@ import {
   readBoard,
   readBoardState,
   type BoardMove,
+  type BoardState,
+  type BoardView,
   type TreeNode,
   readTree,
   readTreeState,
@@ -5074,11 +5076,24 @@ function BoardWidgetView({ props, state, onAction }: RendererProps): ReactElemen
   const board = useMemo(() => readBoard(props), [props]);
   const stored = useMemo(() => board === undefined ? undefined : readBoardState(state, board), [board, state]);
   const [boardState, setBoardState] = useState(stored);
-  const [pickup, setPickup] = useState<{ cardId: string; origin: NonNullable<typeof stored> }>();
+  const [pickup, setPickup] = useState<BoardPickup>();
   const cardNodes = useRef(new Map<string, HTMLDivElement>());
   const pointer = useRef<{ cardId: string; fromColumnId: string; fromPosition: number; targetColumnId: string; position: number } | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
-  useEffect(() => setBoardState(stored), [stored]);
+  // The node's view is adopted whenever it arrives. A card the person is moving with the keyboard stays picked up and
+  // stays where they moved it, on top of that view: the answer to an earlier move can arrive in the middle of this one.
+  const pickupRef = useRef(pickup);
+  pickupRef.current = pickup;
+  useEffect(() => {
+    const moving = pickupRef.current;
+    if (board === undefined || stored === undefined || moving === undefined) {
+      setBoardState(stored);
+      return;
+    }
+    const rebased = { ...moving, origin: stored };
+    setPickup(rebased);
+    setBoardState(boardPickupPreview(board, rebased));
+  }, [board, stored]);
   useEffect(() => {
     if (pickup !== undefined) cardNodes.current.get(pickup.cardId)?.focus();
   }, [boardState, pickup]);
@@ -5101,7 +5116,9 @@ function BoardWidgetView({ props, state, onAction }: RendererProps): ReactElemen
   };
   const movePreview = (columnId: string, position: number): void => {
     if (pickup === undefined || boardMoveProblems(board, pickup.origin, { cardId: pickup.cardId, fromColumnId: boardColumnForBoardState(pickup.origin, pickup.cardId), toColumnId: columnId, position }).length > 0) return;
-    setBoardState(moveBoardCard(board, pickup.origin, { cardId: pickup.cardId, fromColumnId: boardColumnForBoardState(pickup.origin, pickup.cardId), toColumnId: columnId, position }));
+    const moved = { ...pickup, target: { columnId, position } };
+    setPickup(moved);
+    setBoardState(boardPickupPreview(board, moved));
     setAnnouncement(`${t("widgets.board.moving")} ${board.cards.find((card) => card.id === pickup.cardId)?.title ?? ""} — ${board.columns.find((column) => column.id === columnId)?.title ?? ""}, ${String(position + 1)}`);
   };
   const cancelPickup = (): void => {
@@ -5207,6 +5224,21 @@ function BoardWidgetView({ props, state, onAction }: RendererProps): ReactElemen
       </div>
     </Frame>
   );
+}
+
+/** A card picked up from the keyboard: the view it was picked up from, and where it has been moved to so far. */
+interface BoardPickup {
+  cardId: string;
+  origin: BoardState;
+  target?: { columnId: string; position: number };
+}
+
+/** The board as the person sees it while a card is picked up: the origin, with the card where they moved it if it still fits there. */
+function boardPickupPreview(board: BoardView, pickup: BoardPickup): BoardState {
+  const picked = { ...pickup.origin, selectedCardId: pickup.cardId };
+  if (pickup.target === undefined) return picked;
+  const move = { cardId: pickup.cardId, fromColumnId: boardColumnForBoardState(pickup.origin, pickup.cardId), toColumnId: pickup.target.columnId, position: pickup.target.position };
+  return boardMoveProblems(board, pickup.origin, move).length > 0 ? picked : moveBoardCard(board, pickup.origin, move);
 }
 
 function boardColumnForBoardState(state: { order: Record<string, string[]> }, cardId: string): string {
