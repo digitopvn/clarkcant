@@ -696,8 +696,12 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         if (result.status !== "ok") throw artifactError(result);
         return true;
       },
-      attachToConversation: async (ref) => {
-        const result = await artifactRequest({ op: "attach", artifactId: ref.artifactId });
+      attachToConversation: async (ref, options) => {
+        const result = await artifactRequest({
+          op: "attach",
+          artifactId: ref.artifactId,
+          ...(options?.name === undefined ? {} : { name: options.name }),
+        });
         if (result.status !== "ok") throw artifactError(result);
       },
       discard: async (ref) => {

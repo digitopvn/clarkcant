@@ -600,6 +600,27 @@ describe("handing a finalized artifact to the conversation", () => {
     expect(usage()).toBe(afterFirst);
   });
 
+  it("attaches under the name the widget proposes, made safe by the node", async () => {
+    const first = await finalized("# Kế hoạch\n");
+    const named = await call("POST", widget(`/${first}/attach`), { name: "../../etc/Kế hoạch‮.exe" });
+    expect(named.status).toBe(201);
+    expect((named.body as { attachmentRef: { filename: string } }).attachmentRef.filename).toBe("Kế hoạch.md");
+
+    // Nothing usable left: the type's default name, still attached.
+    const second = await finalized("# Hai\n");
+    const emptied = await call("POST", widget(`/${second}/attach`), { name: "/// .." });
+    expect((emptied.body as { attachmentRef: { filename: string } }).attachmentRef.filename).toBe("untitled.md");
+
+    // A proposal that is not a string is a malformed request, refused before anything is attached.
+    const third = await finalized("# Ba\n");
+    const malformed = await call("POST", widget(`/${third}/attach`), { name: 42 });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body).toMatchObject({ code: "INVALID_SCHEMA" });
+    // Without a proposal the attachment keeps the artifact's own name.
+    const plain = await call("POST", widget(`/${third}/attach`));
+    expect((plain.body as { attachmentRef: { filename: string } }).attachmentRef.filename).toBe("tom-tat.md");
+  });
+
   it("saves as a download on the person's route only once it is finalized, under a name and never a path", async () => {
     const working = await create();
     await write(working, 0, "chua xong");

@@ -574,6 +574,25 @@ describe("the artifacts@1 extension", () => {
     await expect(finalized).resolves.toMatchObject({ kind: "finalized", sizeBytes: 5 });
   });
 
+  it("attaches with a proposed name only when the widget gives one, and refuses one too long for the bridge", async () => {
+    const { runtime, requests, answer } = ready(["artifacts@1"]);
+    const api = runtime.api().artifacts;
+
+    const plain = api.attachToConversation(ref(5, "finalized"));
+    const named = api.attachToConversation(ref(5, "finalized"), { name: "a-red-kite-3f9a1c.txt" });
+    await flush();
+    expect(requests().map((sent) => sent.request)).toEqual([
+      { op: "attach", artifactId: "art_one" },
+      { op: "attach", artifactId: "art_one", name: "a-red-kite-3f9a1c.txt" },
+    ]);
+    for (const sent of requests()) answer(sent.requestId ?? "", { status: "ok", ref: ref(5, "finalized") });
+    await expect(plain).resolves.toBeUndefined();
+    await expect(named).resolves.toBeUndefined();
+
+    await expect(api.attachToConversation(ref(5, "finalized"), { name: "x".repeat(201) })).rejects.toThrow(/không hợp lệ/);
+    expect(requests()).toHaveLength(2);
+  });
+
   it("refuses a chunk larger than one bridge message before sending it", async () => {
     const { runtime, requests } = ready(["artifacts@1"]);
 

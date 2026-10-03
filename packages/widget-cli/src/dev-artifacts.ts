@@ -9,6 +9,7 @@ import {
   artifactNameSchema,
   checkArtifactRange,
   defaultArtifactName,
+  sanitizeProposedArtifactName,
 } from "@clarkcant/contracts";
 import type { FrameArtifactOutcome } from "@clarkcant/widget-host";
 import { artifactRequestSchema, type ArtifactRef } from "@clarkcant/widget-sdk";
@@ -246,7 +247,13 @@ export function createDevArtifactBroker(input: {
         if (artifact.ref.kind === "working") {
           return refuse("ARTIFACT_NOT_FINALIZED", `finalize the artifact before ${request.op === "export" ? "saving" : "attaching"} it`);
         }
-        const recorded = request.op === "export" ? { ...artifact.ref, name: request.suggestedName } : artifact.ref;
+        // An attach is logged under the name a node would give it: the widget's proposal, sanitized as the node does.
+        const recorded =
+          request.op === "export"
+            ? { ...artifact.ref, name: request.suggestedName }
+            : request.name === undefined
+              ? artifact.ref
+              : { ...artifact.ref, name: sanitizeProposedArtifactName(request.name, artifact.ref.mimeType) };
         record(request.op, recorded);
         return { status: "ok", ref: artifact.ref };
       }

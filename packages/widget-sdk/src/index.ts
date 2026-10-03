@@ -168,7 +168,13 @@ export const artifactRequestSchema = z.discriminatedUnion("op", [
   z.strictObject({ op: z.literal("finalize"), artifactId: artifactIdWire }),
   /** Save As. The host's own dialog; the widget suggests a name and learns only whether the person saved. */
   z.strictObject({ op: z.literal("export"), artifactId: artifactIdWire, suggestedName: nameWire }),
-  z.strictObject({ op: z.literal("attach"), artifactId: artifactIdWire }),
+  /**
+   * Offer a finalized file to the conversation. `name` is optional and only a proposal: the host makes it safe — the
+   * last part of a path, safe characters, bounded length, the bytes' type's extension — and falls back to its own
+   * default name. Absent unless the widget proposes one, so a request without it means what it always meant; the
+   * runtime a host serves predates the field only together with that host, and then drops the proposal unsent.
+   */
+  z.strictObject({ op: z.literal("attach"), artifactId: artifactIdWire, name: nameWire.optional() }),
   /**
    * Give back a file this widget made, freeing its share of the node's space. Only the widget that created it may; a
    * file the person chose is theirs, and one already sent in a message keeps its bytes for that message.
@@ -532,8 +538,12 @@ export interface WidgetAuthorApi {
      * `true` once the file was saved or its download started, `false` when the person declined.
      */
     export(ref: ArtifactRef, options: { suggestedName: string }): Promise<boolean>;
-    /** Offer a finalized artifact to the conversation. The person sends it with their next message. */
-    attachToConversation(ref: ArtifactRef): Promise<void>;
+    /**
+     * Offer a finalized artifact to the conversation. The person sends it with their next message. `name` proposes the
+     * attachment's file name (at most 200 characters); the host sanitizes it and forces the extension of the bytes'
+     * type, and without it the attachment keeps the artifact's name.
+     */
+    attachToConversation(ref: ArtifactRef, options?: { name?: string }): Promise<void>;
     /**
      * Give back a file this frame's widget made, freeing its share of the node's space (128 MiB per widget). Only the
      * widget that created it may; a file the person chose is theirs. Bytes already sent in a message stay with it.

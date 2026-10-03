@@ -606,12 +606,15 @@ describe("the simulated file picker", () => {
     });
     expect(await simulated.handle({ op: "export", artifactId, suggestedName: "ban-sao.txt" })).toMatchObject({ status: "ok" });
     expect(await simulated.handle({ op: "attach", artifactId })).toMatchObject({ status: "ok" });
+    // A proposed name is logged as the node would store it: sanitized, with the bytes' type's extension.
+    expect(await simulated.handle({ op: "attach", artifactId, name: "../tom tat.exe" })).toMatchObject({ status: "ok" });
 
     expect(simulated.events().map((event) => `${event.op} ${event.name}`)).toEqual([
       "create bao-cao.txt",
       "finalize bao-cao.txt",
       "export ban-sao.txt",
       "attach bao-cao.txt",
+      "attach tom tat.txt",
     ]);
   });
 

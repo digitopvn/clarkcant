@@ -1602,7 +1602,7 @@ Author-facing target:
     artifacts.write(ref, chunk)
     artifacts.finalize(ref)
     artifacts.export(ref, { suggestedName })
-    artifacts.attachToConversation(ref)
+    artifacts.attachToConversation(ref, { name? })
     artifacts.discard(ref)
 
     lifecycle.onMount()
@@ -1730,6 +1730,13 @@ Mỗi lời gọi làm gì:
   cho phép, kích thước và hạn mức được kiểm tra lại. Kết quả là một chip sẵn sàng trong ô soạn tin, người dùng gửi nó
   cùng tin nhắn kế tiếp như mọi tệp họ tự đính kèm. Model sau đó đọc nó theo đúng cách đó. Mỗi tệp chỉ được đính
   kèm một lần: yêu cầu lại sẽ trả về đúng tệp đính kèm đó.
+  `name` (tuỳ chọn) đề xuất tên tệp cho tệp đính kèm, tối đa 200 ký tự trên bridge. Đó chỉ là đề xuất: node chỉ giữ
+  phần cuối của bất cứ thứ gì trông như đường dẫn, bỏ các ký tự điều khiển, ký tự định dạng và ký tự đổi hướng chữ,
+  đổi mọi ký tự không phải chữ cái, chữ số, dấu cách và `. _ - ( )` thành dấu gạch ngang, gộp `..` lại, cắt dấu chấm,
+  dấu gạch ngang và dấu cách ở hai đầu, rồi rút tên xuống còn 100 ký tự. Node cũng buộc phần mở rộng theo kiểu của các
+  byte, nên một ảnh PNG được đề xuất là `anh.exe` sẽ được đính kèm thành `anh.png`. Khi không còn gì dùng được, node
+  dùng tên mặc định của kiểu đó, như `untitled.png`. Không có `name`, tệp đính kèm giữ tên của artifact như trước. Lần
+  đính kèm đầu tiên quyết định tên.
 - `discard(ref)` bỏ một tệp mà instance này đã tạo, dù đang ghi hay đã cố định: bản ghi và các grant của nó bị xoá, và
   byte cũng bị xoá trừ khi một tệp đính kèm hoặc bản ghi khác vẫn trỏ tới chúng. Nó chờ các lần ghi đang dở của ref
   xong trước. Tệp người dùng đã chọn, hoặc tệp do widget khác tạo, bị từ chối với `ARTIFACT_NOT_CREATOR`.
@@ -3163,7 +3170,9 @@ khi service gọi tới nhà cung cấp bằng một key mà nó không bao gi�
   ảnh đã xong dưới dạng `ArtifactRef` theo từng đoạn 256 KiB; tải lại trang hay mở trên thiết bị khác vẫn thấy cùng các
   job, vì chúng thuộc về node. Trên host không có extension đó, thư viện ảnh chỉ giữ các job được khởi chạy trong lúc
   widget đang mở và nói rõ điều đó. Mỗi ảnh có thể được đính kèm vào cuộc trò chuyện hoặc xuất ra qua host
-  ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)).
+  ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)). Khi đính kèm, widget đề xuất một tên ghép từ slug ngắn của prompt và
+  phần cuối mã job, như `a-red-kite-over-a-green-sea-3f9a1c.png`, nên hai ảnh được đính kèm có hai tên khác nhau; node
+  làm sạch tên đó.
 - **Widget, Clark và giọng nói.** Nút là một action binding `invoke` có tên trong props là `generateBinding`. Binding
   lấy `prompt` từ bản nháp trong widget state, và từ input của lần bấm khi có. Nói nhãn của nút khi widget đang mở sẽ
   bấm nó với bản nháp, và câu trả lời nói job đã bắt đầu. Công cụ `invoke_capability` của Clark khởi động một capability

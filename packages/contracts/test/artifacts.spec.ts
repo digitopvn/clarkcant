@@ -16,6 +16,8 @@ import {
   defaultArtifactName,
   isPersonOnlyRoute,
   readArtifactViewer,
+  sanitizeProposedArtifactName,
+  validateAttachmentCandidate,
 } from "../src/index.ts";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -211,6 +213,73 @@ describe("accept lists and names", () => {
     expect(Array.from(emoji)).toHaveLength(ARTIFACT_LIMITS.nameMaxChars);
     // No lone surrogate: the name survives a round trip through UTF-8 unchanged.
     expect(new TextDecoder().decode(new TextEncoder().encode(emoji))).toBe(emoji);
+  });
+});
+
+describe("a name a widget proposes for a file it attaches", () => {
+  const attachable = (name: string, mime: string): boolean =>
+    validateAttachmentCandidate({ filename: name, mime, sizeBytes: 1, usedBytes: 0 }).ok;
+
+  it("keeps a descriptive name and the extension the bytes' type has", () => {
+    expect(sanitizeProposedArtifactName("a-red-kite-3f9a1c.png", "image/png")).toBe("a-red-kite-3f9a1c.png");
+    expect(sanitizeProposedArtifactName("Ảnh.JPEG", "image/jpeg")).toBe("Ảnh.jpeg");
+    expect(sanitizeProposedArtifactName("bao cao (ban 2)", "text/markdown")).toBe("bao cao (ban 2).md");
+  });
+
+  it("keeps only the last part of a path, and never a parent step", () => {
+    expect(sanitizeProposedArtifactName("../../etc/passwd", "text/plain")).toBe("passwd.txt");
+    expect(sanitizeProposedArtifactName("..\\..\\Windows\\win.ini", "text/plain")).toBe("win.txt");
+    expect(sanitizeProposedArtifactName("C:\\Users\\an\\anh.png", "image/png")).toBe("anh.png");
+    expect(sanitizeProposedArtifactName("https://evil.example/x/anh.png", "image/png")).toBe("anh.png");
+    expect(sanitizeProposedArtifactName("..", "image/png")).toBe("untitled.png");
+    expect(sanitizeProposedArtifactName("a..b...png", "image/png")).toBe("a.b.png");
+    expect(sanitizeProposedArtifactName(".hidden", "text/plain")).toBe("hidden.txt");
+    for (const proposed of ["../x", "/abs/y.png", "C:z.png", "javascript:alert(1)", "data:text/html,x", "file:///etc/passwd"]) {
+      const name = sanitizeProposedArtifactName(proposed, "image/png");
+      expect(name, proposed).not.toMatch(/[\\/:]|\.\./u);
+      expect(attachable(name, "image/png"), proposed).toBe(true);
+    }
+  });
+
+  it("removes control, format and direction characters, and turns anything else unsafe into a dash", () => {
+    expect(sanitizeProposedArtifactName("hoa-don\u202Egpj.exe", "image/png")).toBe("hoa-dongpj.png");
+    expect(sanitizeProposedArtifactName("anh\u0000\u0007\n\tmoi\u200B.png", "image/png")).toBe("anhmoi.png");
+    expect(sanitizeProposedArtifactName("a<b>c|d?e*f\"g'h.png", "image/png")).toBe("a-b-c-d-e-f-g-h.png");
+    expect(sanitizeProposedArtifactName("con mèo 🐱 bay", "image/png")).toBe("con mèo - bay.png");
+  });
+
+  it("keeps letters of any script, composed", () => {
+    // Decomposed Vietnamese (as macOS writes it) comes out composed, so the same name is one name.
+    expect(sanitizeProposedArtifactName("Ke\u0302\u0301 hoa\u0323ch.md", "text/markdown")).toBe("Kế hoạch.md");
+    expect(sanitizeProposedArtifactName("東京の夜.png", "image/png")).toBe("東京の夜.png");
+  });
+
+  it("gives the bytes' type its extension, whatever the widget said", () => {
+    expect(sanitizeProposedArtifactName("chay-toi.exe", "image/png")).toBe("chay-toi.png");
+    expect(sanitizeProposedArtifactName("anh.jpg", "image/png")).toBe("anh.png");
+    expect(sanitizeProposedArtifactName("anh", "image/webp")).toBe("anh.webp");
+    expect(sanitizeProposedArtifactName("anh.tar.gz", "image/gif")).toBe("anh.tar.gif");
+  });
+
+  it("limits the length by code point, never cutting through a character", () => {
+    const long = sanitizeProposedArtifactName(`${"ệ".repeat(500)}.png`, "image/png");
+    expect(Array.from(long)).toHaveLength(ARTIFACT_LIMITS.proposedNameMaxChars);
+    expect(long.endsWith("ệ.png")).toBe(true);
+    expect(attachable(long, "image/png")).toBe(true);
+    // A cut that lands on a separator does not leave the stem ending in one.
+    const spaced = sanitizeProposedArtifactName(`${"a".repeat(95)} ${"b".repeat(50)}`, "image/png");
+    expect(spaced).toBe(`${"a".repeat(95)}.png`);
+    // A proposal far past any limit is read only so far.
+    expect(Array.from(sanitizeProposedArtifactName("x".repeat(100_000), "image/png"))).toHaveLength(ARTIFACT_LIMITS.proposedNameMaxChars);
+  });
+
+  it("falls back to the default name when nothing usable is left", () => {
+    for (const proposed of ["", "   ", "...", "///", "\u202E\u0000", "-- .", "🐱🐱"]) {
+      expect(sanitizeProposedArtifactName(proposed, "image/png"), JSON.stringify(proposed)).toBe("untitled.png");
+    }
+    for (const proposed of [undefined, null, 42, { name: "x.png" }]) {
+      expect(sanitizeProposedArtifactName(proposed, "image/png")).toBe("untitled.png");
+    }
   });
 });
 

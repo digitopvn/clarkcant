@@ -1608,7 +1608,7 @@ Author-facing target:
     artifacts.write(ref, chunk)
     artifacts.finalize(ref)
     artifacts.export(ref, { suggestedName })
-    artifacts.attachToConversation(ref)
+    artifacts.attachToConversation(ref, { name? })
     artifacts.discard(ref)
 
     lifecycle.onMount()
@@ -1735,6 +1735,13 @@ What each call does:
   the allowlist, size and quota are checked. The result is a ready chip in the composer, which the person sends with
   their next message like any file they attached. The model then reads it the same way. A file is attached once:
   asking again returns the same attachment.
+  The optional `name` proposes the attachment's file name, up to 200 characters on the bridge. It is only a
+  proposal: the node keeps the last part of anything that looks like a path, drops control, format and direction
+  characters, turns every character other than letters, digits, space and `. _ - ( )` into a dash, collapses `..`,
+  trims dots, dashes and spaces from both ends, and shortens the name to 100 characters. It also forces the
+  extension of the bytes' type, so a PNG proposed as `anh.exe` is attached as `anh.png`. When nothing usable is left,
+  the node uses the type's default name, such as `untitled.png`. Without `name`, the attachment keeps the artifact's
+  name, as before. The first attach decides the name.
 - `discard(ref)` lets go of a file this instance made, working or finalized: its record and grants go, and its bytes
   go too unless an attachment or another record still points at them. It waits for the ref's pending writes first. A
   file the person picked, or one another widget made, is refused with `ARTIFACT_NOT_CREATOR`.
@@ -3165,6 +3172,8 @@ service reaches a provider with a key it never holds.
   finished images as `ArtifactRef`s in 256 KiB chunks; a reload or another device shows the same jobs, because they
   are the node's. On a host without it, the gallery holds the jobs started while the widget is open and says so. Each
   image can be attached to the conversation or exported through the host ([§10.1](#101-files-by-reference-artifacts1)).
+  Attach proposes a name made from a slug of the prompt and the end of the job's id, such as
+  `a-red-kite-over-a-green-sea-3f9a1c.png`, so two attached images get two names; the node sanitizes it.
 - **Widget, Clark and voice.** The button is an `invoke` action binding named in props as `generateBinding`. It fills
   `prompt` from the draft in widget state, and from the press's input when there is one. Saying the button's label
   with the widget open presses it with the draft, and the reply says the job started. Clark's `invoke_capability` tool

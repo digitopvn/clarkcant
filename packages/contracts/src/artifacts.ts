@@ -64,6 +64,11 @@ export const ARTIFACT_LIMITS = Object.freeze({
    */
   instanceQuotaBytes: 134_217_728,
   nameMaxChars: ATTACHMENT_LIMITS.filenameMaxChars,
+  /**
+   * Characters (code points) in a name a widget proposes when it attaches a file, extension included. Shorter than
+   * `nameMaxChars` because the name labels a chip in the composer, and so a name of any characters stays within it.
+   */
+  proposedNameMaxChars: 100,
   /** Entries in a picker's accept list. */
   maxAccept: 16,
 });
@@ -392,6 +397,53 @@ export function normalizePickedType(declared: string, name: string): string {
 /** A default display name for a working artifact created without one. */
 export function defaultArtifactName(mimeType: string): string {
   return `untitled.${ARTIFACT_EXTENSIONS[mimeType]?.[0] ?? "bin"}`;
+}
+
+/** How much of a proposed name is looked at, so a huge proposal costs no more than a long one. */
+const PROPOSED_NAME_INPUT_MAX = 1_000;
+
+/** Characters a proposed name keeps: letters with their marks, digits, space and `. _ - ( )`. Anything else is a dash. */
+const UNSAFE_NAME_CHARACTERS = /[^\p{L}\p{M}\p{N} ._()-]+/gu;
+
+/**
+ * The name a file a widget attaches is given: the widget's proposal, made safe, or the default for its type.
+ *
+ * The proposal is a widget's data, never trusted, so it is reduced rather than refused — a widget offering a bad name
+ * still gets its file attached, under a name the node chose. In order: only the last part of anything that looks like
+ * a path is kept; control, format and direction characters go; every character outside a small safe set becomes a
+ * dash; a run of dots becomes one, and dots, dashes and spaces are trimmed from both ends, so nothing is `..`, hidden
+ * or ends in a dot; the extension becomes the bytes' type's (a PNG proposed as `anh.exe` is `anh.png`); the stem is
+ * shortened by code point to `proposedNameMaxChars`; and what is left empty becomes `defaultArtifactName`. The node
+ * calls this on its canonical attach path, so every widget gets the same rule.
+ */
+export function sanitizeProposedArtifactName(proposed: unknown, mimeType: string): string {
+  const fallback = defaultArtifactName(mimeType);
+  if (typeof proposed !== "string") return fallback;
+  const cleaned = stripBidiControls(proposed.slice(0, PROPOSED_NAME_INPUT_MAX))
+    .normalize("NFC")
+    .replace(/[\p{Cc}\p{Cf}]/gu, "");
+  // A path's directories are not part of a name: only its last part is.
+  const base = cleaned.split(/[\\/]/u).pop() ?? "";
+  const safe = base
+    .replace(UNSAFE_NAME_CHARACTERS, "-")
+    .replace(/\.{2,}/gu, ".")
+    .replace(/ {2,}/gu, " ")
+    .replace(/-{2,}/gu, "-")
+    .replace(/^[ .-]+|[ .-]+$/gu, "");
+  const extensions = ARTIFACT_EXTENSIONS[mimeType] ?? [];
+  const dot = safe.lastIndexOf(".");
+  const hasExtension = dot > 0 && /^[\p{L}\p{N}_-]{1,16}$/u.test(safe.slice(dot + 1));
+  const proposedExtension = hasExtension ? safe.slice(dot + 1).toLowerCase() : "";
+  const extension = extensions.includes(proposedExtension) ? proposedExtension : (extensions[0] ?? "bin");
+  const stem = (hasExtension ? safe.slice(0, dot) : safe).replace(/[ .-]+$/u, "");
+  // By code point, so a long Vietnamese or emoji name is never cut through a character.
+  const kept = Array.from(stem)
+    .slice(0, ARTIFACT_LIMITS.proposedNameMaxChars - extension.length - 1)
+    .join("")
+    .replace(/[ .-]+$/u, "");
+  if (kept === "") return fallback;
+  const name = `${kept}.${extension}`;
+  return looksLikePathOrUrl(name) ? fallback : name;
 }
 
 /**

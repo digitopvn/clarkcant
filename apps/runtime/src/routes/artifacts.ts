@@ -279,8 +279,15 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
     return finalized.ok ? json(200, { artifactRef: finalized.ref }) : refused(finalized);
   }
 
+  // POST …/attach — `{ name? }`: a name the widget proposes, which the broker makes safe; never taken as it is.
   if (segments.length === 7 && segments[6] === "attach" && request.method === "POST") {
-    const attached = attachArtifact(broker, target);
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const proposed = parsed.value.name;
+    if (proposed !== undefined && typeof proposed !== "string") {
+      return fail(400, "INVALID_SCHEMA", "a proposed name for the attachment is a string");
+    }
+    const attached = attachArtifact(broker, { ...target, name: proposed });
     return attached.ok
       ? json(201, { artifactRef: attached.ref, attachmentRef: attached.attachmentRef })
       : refused(attached);
