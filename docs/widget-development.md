@@ -2573,7 +2573,8 @@ A widget is not publish-ready if any of the following tests are missing:
 A directory entry needs:
 
 - package id;
-- current version;
+- current version: a semantic version of at most 80 characters, because the marketplace card shows it and Install
+  sends it back unchanged; an index with a longer one is refused when it is read, with the reason;
 - display name;
 - one-line description;
 - author/publisher;
@@ -2729,7 +2730,11 @@ This section states which parts of the document already have code, so that nobod
   the execution policy decides; the card installs nothing itself, so a listing never turns into authorization. A listing by a
   path on this machine also carries `contentDigest`, the digest of its files when they were listed, which the button sends
   back so the install is refused if the files changed since; the row then shows that they changed and offers a new
-  search instead of the same Install. The check is at install time only: the package stays linked to its path. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
+  search instead of the same Install. The check is at install time only: the package stays linked to its path. A row also
+  repeats the listing's `declaredReach` (what installing lets the package reach) and `widgetAppearance` claims, under the
+  same schemas as the directory entry, so the row shows them before the Install press. A card that does not match its
+  contract is left out of the reply and the node logs `host card dropped` with the card type and the failing field
+  paths, never a value. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
 - The dev host's in-page script: it collects facts and forwards actions, while every decision lives in a tested function —
   but the script itself needs a browser to run, and that is stated instead of implying that the whole dev host is covered.
 - Detach/attach: the desktop's detached host window **really exists** (`apps/desktop/src/main.mjs` opens it via
