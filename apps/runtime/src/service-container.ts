@@ -26,10 +26,12 @@ import { DEFAULT_RESOURCE_PROFILE, type EngineCapacity, RESOURCE_PROFILES, type 
  *     port is opened and there is nothing for a widget frame, or anything else on the machine, to connect to.
  *
  * The image is Node's official one, pinned by digest, because a service facet's entry is JavaScript and an image named
- * only by a tag is whatever the registry says it is on the day it is pulled.
+ * only by a tag is whatever the registry says it is on the day it is pulled. Its registry is named too: Docker reads a
+ * bare `node` as Docker Hub's, but Podman resolves a short name through the host's own registry configuration, which
+ * differs between Linux distributions and Podman machines and can refuse it or ask which registry is meant.
  */
 
-export const SERVICE_IMAGE = "node@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402";
+export const SERVICE_IMAGE = "docker.io/library/node@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402";
 
 /** Label every service container carries, so a node can find the ones it started even after it crashed. */
 export const SERVICE_NODE_LABEL = "clarkcant.node";
@@ -92,6 +94,8 @@ const ENGINE_ENV_ALLOWLIST = [
   "TMPDIR",
   "XDG_RUNTIME_DIR",
   "XDG_CONFIG_HOME",
+  // The user's session bus, which rootless Podman asks systemd through to place a container in a scope it can limit.
+  "DBUS_SESSION_BUS_ADDRESS",
   "DOCKER_HOST",
   "DOCKER_CONTEXT",
   "DOCKER_CONFIG",

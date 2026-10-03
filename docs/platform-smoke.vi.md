@@ -81,8 +81,56 @@ với macOS và Linux.
   của shim đã thoát trước. Một Job Object sẽ tới được nó, nhưng Node không tạo được Job Object nếu không có native
   addon.
 
+## Service container trên macOS và Windows: được phủ bằng smoke nền tảng thủ công
+
+Service của một package chỉ chạy bên trong một Linux container (`apps/runtime/src/service-container.ts`). CI kiểm
+ranh giới đó trong container thật trên Linux với ba engine: Docker rootful (job `verify`), Docker rootless
+(`service container (rootless docker)`) và Podman rootless (`service container (rootless podman)`). Cùng bộ test đó
+cũng chạy trên runner macOS và Windows của CI, nhưng ở đó nó không tìm thấy engine nào nên skip các test chạy container
+thật. Vì vậy trên hai hệ điều hành này, các engine được **phủ bằng smoke nền tảng thủ công**, không phải bằng CI.
+
+**Vì sao không chạy trong CI.** Docker Desktop và Podman machine đều chạy Linux container bên trong một máy ảo Linux.
+Runner macOS do GitHub cung cấp chạy trên Apple silicon và không có ảo hóa lồng nhau, nên máy ảo đó không khởi động
+được. Docker trên runner Windows do GitHub cung cấp chỉ chạy Windows container, còn WSL 2, thứ cả hai engine dùng trên
+Windows, cần ảo hóa lồng nhau mà runner đó không có. Không dùng runner tự host cho việc này.
+
+**Điều kiện còn thiếu: một máy macOS hoặc Windows đã cài Docker Desktop hoặc Podman machine.**
+
+Chạy bộ test một lần cho mỗi engine. Mỗi lúc chỉ được có một engine trả lời. Node thử Docker trước Podman, nên hãy
+thoát Docker Desktop trước khi chạy với Podman.
+
+```bash
+# Một lần: cài đặt
+corepack enable
+pnpm install
+
+# Docker Desktop. Trên Windows, chuyển nó sang Linux containers trước.
+docker version --format '{{.Server.Os}}'     # mong đợi: linux
+pnpm exec vitest run --reporter=verbose apps/runtime/test/service-container-engine.spec.ts apps/runtime/test/service-container.spec.ts
+
+# Podman machine, khi Docker Desktop đã thoát
+podman machine init                          # một lần
+podman machine start
+podman info --format '{{.Host.Security.Rootless}}'   # mong đợi: true
+docker version                               # mong đợi: lỗi, để node tìm thấy Podman
+CC_EXPECT_ROOTLESS_PODMAN=1 pnpm exec vitest run --reporter=verbose apps/runtime/test/service-container-engine.spec.ts apps/runtime/test/service-container.spec.ts
+```
+
+Trên Windows PowerShell, đặt biến trước lệnh cuối bằng `$env:CC_EXPECT_ROOTLESS_PODMAN = "1"`, và xóa nó sau đó bằng
+`Remove-Item Env:CC_EXPECT_ROOTLESS_PODMAN`.
+
+Mong đợi: mọi test trong "a service container on a real engine", "a service's provider key on a real engine" và "the
+media render package's service on a real engine" đều pass. Chỉ hai test giới hạn tài nguyên được phép bị skip, và chỉ
+khi engine báo rằng nó không áp dụng giới hạn; hãy ghi lại test nào. Ở lần chạy với Podman,
+`CC_EXPECT_ROOTLESS_PODMAN=1` sẽ khiến bộ test thất bại nếu Podman không báo rằng các giới hạn được áp dụng.
+
+Ghi lại vào PR hoặc vào mục này: hệ điều hành và phiên bản của nó, engine và phiên bản của engine, cùng output verbose
+của bộ test. Một lỗi là một finding cho change riêng của nó. Đừng chỉnh test cho vừa máy.
+
 ## Vì sao không có test bị skip
 
 Một test `skip` trên máy này sẽ khiến bộ kiểm tra nói "xanh" trong khi thứ nó định kiểm chưa từng chạy. Thứ đúng
-là: không có test nào tồn tại cho ba mục trên, và tài liệu này nói rõ điều kiện còn thiếu cùng cách chạy chúng ở
-nơi chạy được.
+là: không có test nào tồn tại cho ba mục macOS trong phần "Ba thứ không kiểm được ở nơi khác", và tài liệu này nói rõ
+điều kiện còn thiếu cùng cách chạy chúng ở nơi chạy được. Bộ test service container là ngoại lệ đã nêu ở trên: nó có
+tồn tại, chạy trong CI ở mọi nơi có engine trả lời, và chỉ skip ở nơi không có engine nào, điều mà lần chạy thủ công
+trong phần "Service container trên macOS và Windows" phủ.

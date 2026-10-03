@@ -6,6 +6,8 @@ import {
   declaredReachOf,
   declaredReachSchema,
   directoryEntrySchema,
+  marketplaceResultSchema,
+  messageBlockSchema,
   type ReachFacet,
 } from "../src/index.ts";
 
@@ -143,5 +145,47 @@ describe("the reach a directory entry carries", () => {
       declaredReachSchema.safeParse({ origins: [], secrets: [], browserTokens: [{ provider: "Not A Provider", scopes: ["a"], purpose: "x" }] })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("the reach and appearance a marketplace card row carries", () => {
+  const row = {
+    packageId: "com.example.lookup",
+    version: "1.0.0",
+    displayName: "Lookup",
+    description: "Looks words up.",
+    source: { kind: "local", path: "/packages/lookup" },
+    digest: "sha256:lookup",
+    riskTier: "service",
+    facets: ["ui", "tools"],
+    platforms: ["web"],
+  };
+  const card = (result: Record<string, unknown>) => ({
+    type: "marketplace-results",
+    owner: "host",
+    cardId: "market_1",
+    query: "lookup",
+    directory: "directory.json",
+    results: [result],
+  });
+
+  it("accepts the same reach and appearance claims a directory entry may carry", () => {
+    const reach = declaredReachOf({ facets: [service, frame] });
+    const appearance = [{ id: "main", mode: "fixed" }];
+    expect(marketplaceResultSchema.safeParse(row).success).toBe(true);
+    expect(marketplaceResultSchema.safeParse({ ...row, declaredReach: reach, widgetAppearance: appearance }).success).toBe(true);
+    expect(messageBlockSchema.safeParse(card({ ...row, declaredReach: reach, widgetAppearance: appearance })).success).toBe(true);
+  });
+
+  it("holds them to the directory's own bounds: no key's value, no appearance mode the host does not know", () => {
+    const withValue = { origins: [], browserTokens: [], secrets: [{ name: "LOOKUP_API_KEY", purpose: "Signs.", value: "fake" }] };
+    expect(messageBlockSchema.safeParse(card({ ...row, declaredReach: withValue })).success).toBe(false);
+    expect(messageBlockSchema.safeParse(card({ ...row, widgetAppearance: [{ id: "main", mode: "privileged" }] })).success).toBe(false);
+    expect(
+      messageBlockSchema.safeParse(card({ ...row, widgetAppearance: Array.from({ length: 65 }, (_, i) => ({ id: `w${String(i)}`, mode: "fixed" })) }))
+        .success,
+    ).toBe(false);
+    // Still a strict row: a key neither contract declares is refused.
+    expect(marketplaceResultSchema.safeParse({ ...row, permissions: ["network"] }).success).toBe(false);
   });
 });

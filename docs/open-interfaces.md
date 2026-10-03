@@ -362,7 +362,8 @@ includes `appearance` in init with `appearance@1`, then sends source/nonce-check
 deeply frozen `appearance.current()` / `subscribe(handler)`; no state write or capability accompanies the snapshot.
 The desktop detached bootstrap/event relay carries the same checked revision without credentials. Widget definitions
 may declare `appearanceMode: "adaptive" | "fixed"` (absent means adaptive); directory entries optionally carry
-`widgetAppearance: [{ id, mode }]` as discovery claims, never authority. See
+`widgetAppearance: [{ id, mode }]` as discovery claims, never authority, and each `marketplace-results` card row
+repeats them under the same schema. See
 [widget authoring and bridge compatibility](widget-development.md#appearance-appearance1).
 
 A theme document declaring `appearanceApi.min` 2 may also choose the rest of the look, always by name or bounded number

@@ -481,6 +481,10 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     // Forwarded explicitly: accepting an option in the API and not wiring it into the conductor is
     // how a test seam silently does nothing.
     ...(options.composeFromIntent === undefined ? {} : { composeFromIntent: options.composeFromIntent }),
+    // A host card that fails its own contract is a node bug; the operator's log says which card and where, never a value.
+    reportRejectedHostCard: (diagnostic) => {
+      process.stderr.write(`host card dropped: it does not match its contract ${JSON.stringify(diagnostic)}\n`);
+    },
     /**
      * Route A: when more than one capability could do the work, Jev picks which one.
      *

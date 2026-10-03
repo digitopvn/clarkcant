@@ -366,7 +366,7 @@ SDK không phụ thuộc DOM cung cấp `appearance.current()` / `subscribe(hand
 lệnh ghi state hay cấp capability đi kèm. Relay bootstrap/event của desktop tách cửa sổ mang cùng revision đã kiểm
 tra và không mang thông tin xác thực. Định nghĩa widget có thể khai báo `appearanceMode: "adaptive" | "fixed"`
 (thiếu nghĩa là thích ứng); directory có thể mang `widgetAppearance: [{ id, mode }]` như khai báo khám phá, không phải
-nguồn cấp quyền. Xem [cách viết widget và tương thích bridge](widget-development.vi.md#diện-mạo-appearance1).
+nguồn cấp quyền, và mỗi dòng của card `marketplace-results` lặp lại chúng theo cùng schema đó. Xem [cách viết widget và tương thích bridge](widget-development.vi.md#diện-mạo-appearance1).
 
 Tài liệu theme khai báo `appearanceApi.min` là 2 còn có thể chọn phần còn lại của diện mạo, luôn bằng tên hoặc số có
 giới hạn và không bao giờ bằng CSS: `typography` (bộ phông và độ đậm tiêu đề), `border`, `shadow`, `motion` (tốc độ và
