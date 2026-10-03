@@ -439,6 +439,14 @@ test("a paused local video is read back by inspect_ui and restored without playi
   page.on("request", (request) => {
     if (request.method() === "POST" && request.url().endsWith(`/widgets/${instanceId}/actions`)) writes.push(request.postData() ?? "");
   });
+  // Each answer is the state alone: no conversation timeline is rebuilt and sent back for a position.
+  const answers: Promise<Record<string, unknown>>[] = [];
+  page.on("response", (response) => {
+    const request = response.request();
+    if (request.method() === "POST" && request.url().endsWith(`/widgets/${instanceId}/actions`) && response.ok()) {
+      answers.push(response.json().catch(() => ({})) as Promise<Record<string, unknown>>);
+    }
+  });
   await video.evaluate((element: HTMLVideoElement) => {
     const counted = element as HTMLVideoElement & { clockTicks?: number };
     counted.clockTicks = 0;
@@ -458,6 +466,19 @@ test("a paused local video is read back by inspect_ui and restored without playi
   expect(ticks).toBeGreaterThanOrEqual(10);
   expect(writesWhilePlaying).toBeGreaterThanOrEqual(1);
   expect(writesWhilePlaying).toBeLessThanOrEqual(3);
+  // Every playback write is the action call's state-only variant, answered without a timeline at an unmoved revision.
+  for (const write of writes) expect(JSON.parse(write)).toMatchObject({ variant: "view-state" });
+  // Each carries the player's write sequence, growing in the order the player made them.
+  const sequences = writes.map((write) => (JSON.parse(write) as { sequence: number }).sequence);
+  expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
+  expect(new Set(sequences).size).toBe(sequences.length);
+  await expect.poll(() => answers.length).toBeGreaterThanOrEqual(writesWhilePlaying);
+  const answered = await Promise.all(answers);
+  for (const answer of answered) {
+    expect(answer).toMatchObject({ variant: "view-state" });
+    expect(answer).not.toHaveProperty("timeline");
+  }
+  expect(new Set(answered.map((answer) => answer.revision)).size).toBe(1);
   testInfo.annotations.push({ type: "local-video-writes", description: `${String(writesWhilePlaying)} writes for ${String(ticks)} clock ticks over ${pausedAt.toFixed(1)} s` });
 
   // The pause is flushed at once, not held for the next interval.

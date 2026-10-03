@@ -389,15 +389,73 @@ export type ActionBinding = z.infer<typeof actionBindingSchema>;
  * instance moved underneath it, and the invocation is refused rather than
  * applied to a target the user never saw.
  */
-export const actionInvocationSchema = z.strictObject({
-  instanceId: z.string().min(1).max(128),
-  actionBindingId: z.string().min(1).max(128),
-  expectedRevision: z.int().nonnegative(),
-  expectedBindingDigest: z.string().min(1).max(120),
-  input: z.record(z.string(), z.unknown()),
-  /** Client-generated so a double click produces one accepted effect. */
-  invocationId: z.string().min(1).max(128),
-});
+/**
+ * The action-call variant for a state-only view write.
+ *
+ * It is taken only for view state that is semantic and nothing else (`MEDIA_PLAYER_DEFINITION_IDS`): it leaves the
+ * instance revision and history snapshots alone, answers with no timeline, and keeps one invocation record per binding.
+ */
+export const VIEW_STATE_WRITE_VARIANT = "view-state";
+
+/**
+ * The prefix of the node's own invocation records for state-only writes, one per binding (`view-state:<bindingId>`).
+ * The ledger is one key space, so no client-chosen invocation id may start with it.
+ */
+export const VIEW_STATE_RECORD_PREFIX = "view-state:";
+
+/** Whether a client-chosen invocation id would land in the node's reserved state-only record space. */
+export function isReservedInvocationId(invocationId: string): boolean {
+  return invocationId.startsWith(VIEW_STATE_RECORD_PREFIX);
+}
+
+/**
+ * How far a state-only write's `sequence` may run ahead of the node's clock, in milliseconds.
+ *
+ * The sequence is time-ordered (see `actionInvocationSchema.sequence`), so a value far past the node's clock is a broken
+ * clock or a broken client, and accepting it would refuse every later write from a working one as stale.
+ */
+export const VIEW_STATE_SEQUENCE_MAX_LEAD_MS = 24 * 60 * 60 * 1000;
+
+export const actionInvocationSchema = z
+  .strictObject({
+    instanceId: z.string().min(1).max(128),
+    actionBindingId: z.string().min(1).max(128),
+    expectedRevision: z.int().nonnegative(),
+    expectedBindingDigest: z.string().min(1).max(120),
+    input: z.record(z.string(), z.unknown()),
+    /**
+     * Client-generated so a double click produces one accepted effect. Ids starting with `view-state:` are the node's
+     * own (`VIEW_STATE_RECORD_PREFIX`) and are refused.
+     */
+    invocationId: z
+      .string()
+      .min(1)
+      .max(128)
+      .refine((value) => !isReservedInvocationId(value), { message: `invocation ids starting with "${VIEW_STATE_RECORD_PREFIX}" are reserved` }),
+    /**
+     * `view-state` asks for the state-only write of a host-held player's playback state: the same gate, the bounded state
+     * stored, and the new state as the whole answer. Absent is the ordinary invocation.
+     */
+    variant: z.literal(VIEW_STATE_WRITE_VARIANT).optional(),
+    /**
+     * The order of a player's state-only writes, required with `variant: "view-state"` and refused without it.
+     *
+     * A positive integer that grows with every write one player makes and keeps growing across page loads: the host
+     * sends `max(now in milliseconds, previous + 1)`. The node stores the last one it accepted beside the binding's
+     * record and answers a write whose sequence is not newer as a no-op with the state it holds, so an older write that
+     * arrives late, or is replayed, cannot roll the state back. At most `VIEW_STATE_SEQUENCE_MAX_LEAD_MS` past the node's
+     * clock.
+     */
+    sequence: z.int().positive().optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.variant === VIEW_STATE_WRITE_VARIANT && value.sequence === undefined) {
+      context.addIssue({ code: "custom", path: ["sequence"], message: "a state-only write carries the player's write sequence" });
+    }
+    if (value.variant === undefined && value.sequence !== undefined) {
+      context.addIssue({ code: "custom", path: ["sequence"], message: "only a state-only write carries a sequence" });
+    }
+  });
 export type ActionInvocation = z.infer<typeof actionInvocationSchema>;
 
 export type ActionCompileResult =

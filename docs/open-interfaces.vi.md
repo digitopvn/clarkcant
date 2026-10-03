@@ -552,6 +552,21 @@ generationId, state, pendingCapabilities, deniedCapabilities }`. Quyết định
 báo rằng chưa có gì được cài. Mọi kết quả (`asked`, `installed`, `denied`, `expired`, `refused` hoặc `failed`, kèm mã)
 đều được ghi thành một sự kiện `package.install-approval`.
 
+Lời gọi action của widget, `POST /conversations/{id}/widgets/{instanceId}/actions`, nhận một body được route kiểm bằng
+`actionInvocationSchema` (`packages/contracts/src/widgets.ts`); body nằm ngoài schema nhận `400 INVALID_SCHEMA`, và một
+`invocationId` bắt đầu bằng `view-state:` cũng vậy, vì tiền tố này dành riêng cho bản ghi của chính node. Một `variant`
+tuỳ chọn chọn loại lời gọi. Không có `variant` là lời gọi thường, được trả về kết quả cùng timeline của cuộc hội thoại.
+`"view-state"` là lần ghi chỉ-state cho trạng thái phát của trình phát do host giữ (`canvas.video@1`, `canvas.audio@1`),
+và bắt buộc kèm `sequence`: một số nguyên dương tăng theo mỗi lần ghi của trình phát, kể cả qua các lần tải lại trang,
+không vượt quá đồng hồ của node quá một ngày (host gửi `max(thời điểm hiện tại tính bằng mili giây, giá trị trước + 1)`).
+Lần ghi này qua cùng các bước kiểm tra chủ sở hữu, binding, revision, digest và input, rồi trả
+`200 { variant, duplicate, instanceId, revision, stateRevision, state }`, không kèm timeline, không đổi revision của
+instance và chỉ giữ một bản ghi invocation cho mỗi binding. Lần ghi có `sequence` không mới hơn giá trị node đã nhận gần
+nhất, kể cả lần thử lại hay một id cũ bị phát lại, không ghi gì và được trả `duplicate: true` (kèm `stale: true` khi đó là
+lần ghi cũ hơn) cùng state và revision node đang giữ. `sequence` không kèm variant, hoặc variant không kèm `sequence`,
+nhận `400 INVALID_SCHEMA`; mọi binding khác nhận `400 UNSUPPORTED_ACTION`, và mọi giá trị `variant` khác nhận
+`400 INVALID_SCHEMA`. Xem [phát triển widget §8.11](widget-development.vi.md#811-widget-media-và-trạng-thái-semantic).
+
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
 

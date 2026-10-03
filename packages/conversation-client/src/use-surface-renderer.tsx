@@ -35,6 +35,7 @@ import {
 import { actionRefusalMessage, actionResultMessage, bindingUnavailableMessage } from "./action-messages.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { type ArtifactFileHost, type MapTileHost, resolveRenderer, toRendererDataset } from "./renderers.tsx";
+import { createStateOnlyWriter, type StateOnlyWriter } from "./state-only-writes.ts";
 import { tableExportRequestFrom } from "./table-model.ts";
 import { desktopDialogLabels } from "./artifact-messages.ts";
 import { downloadBlob, saveForPerson } from "./download.ts";
@@ -284,6 +285,34 @@ export function useSurfaceRenderer({
   const viewQueues = useRef(new Map<string, ViewQueue>());
   /** A refusal said beside a widget, and how many there have been: each one sets the widget back to the node's view. */
   const [viewRefusals, setViewRefusals] = useState<Record<string, { message: string; count: number }>>({});
+  const clearViewRefusal = useCallback((instanceId: string): void => {
+    setViewRefusals((current) => {
+      const refusal = current[instanceId];
+      return refusal === undefined || refusal.message === "" ? current : { ...current, [instanceId]: { message: "", count: refusal.count } };
+    });
+  }, []);
+  /*
+   * A refused view write is said beside the widget in the person's language — the node's own sentence is English,
+   * written for the model and the logs — and the widget draws the node's view again. A change that went through while a
+   * later one waited was not applied yet, so the timeline is read back rather than trusted; and the node checked the view
+   * against the rows it holds now, which may not be the rows this page was given, so those are read again too.
+   */
+  const refuseView = useCallback(
+    (conversation: string, instanceId: string, datasetRef: string | undefined, cause: unknown, refused: MessageKey): void => {
+      const code = cause instanceof GatewayError ? cause.code : undefined;
+      const message =
+        code === "REVISION_MISMATCH"
+          ? t("widgets.action.revisionMismatch")
+          : (bindingUnavailableMessage(t, code) ?? t(refused));
+      setViewRefusals((current) => ({ ...current, [instanceId]: { message, count: (current[instanceId]?.count ?? 0) + 1 } }));
+      if (datasetRef !== undefined) refreshDataset(datasetRef);
+      void client
+        .timeline(conversation)
+        .then(applyTimeline)
+        .catch(() => undefined);
+    },
+    [applyTimeline, client, refreshDataset, t],
+  );
   const sendView = useCallback(
     (conversation: string, instanceId: string, datasetRef: string | undefined, action: TimelineAction, revision: number, view: Record<string, unknown>, refused: MessageKey, onSettled?: (timeline: Timeline) => void, leaving = false): void => {
       const queue = viewQueues.current.get(instanceId);
@@ -329,10 +358,7 @@ export function useSurfaceRenderer({
         return;
       }
       viewQueues.current.set(instanceId, { inFlight: true, revision: plan.expectedRevision, ...(queue?.queued === undefined ? {} : { queued: queue.queued }) });
-      setViewRefusals((current) => {
-        const refusal = current[instanceId];
-        return refusal === undefined || refusal.message === "" ? current : { ...current, [instanceId]: { message: "", count: refusal.count } };
-      });
+      clearViewRefusal(instanceId);
       void client
         .invokeAction(
           conversation,
@@ -354,24 +380,41 @@ export function useSurfaceRenderer({
         })
         .catch((cause: unknown) => {
           viewQueues.current.set(instanceId, { inFlight: false });
-          const code = cause instanceof GatewayError ? cause.code : undefined;
-          // Said in the person's language: the node's own sentence is English, written for the model and the logs.
-          const message =
-            code === "REVISION_MISMATCH"
-              ? t("widgets.action.revisionMismatch")
-              : (bindingUnavailableMessage(t, code) ?? t(refused));
-          setViewRefusals((current) => ({ ...current, [instanceId]: { message, count: (current[instanceId]?.count ?? 0) + 1 } }));
-          // The node's view is what the widget draws again. A change that went through while a later one waited was not
-          // applied yet, so the timeline is read back rather than trusted; and the node checked the view against the rows it
-          // holds now, which may not be the rows this page was given, so those are read again too.
-          if (datasetRef !== undefined) refreshDataset(datasetRef);
-          void client
-            .timeline(conversation)
-            .then(applyTimeline)
-            .catch(() => undefined);
+          refuseView(conversation, instanceId, datasetRef, cause, refused);
         });
     },
-    [applyTimeline, client, refreshDataset, t],
+    [applyTimeline, clearViewRefusal, client, refuseView],
+  );
+
+  /*
+   * A player's playback state goes as the state-only write (`createStateOnlyWriter`): the node stores it and answers
+   * with the state alone, so nothing in the conversation is rebuilt or re-rendered for it. The writer is made once for
+   * the page, so its queues and its players' write sequences outlive a render; what it calls is read at the call.
+   */
+  const writerDeps = useRef({ applyTimeline, clearViewRefusal, client, refuseView });
+  writerDeps.current = { applyTimeline, clearViewRefusal, client, refuseView };
+  const [stateWriter] = useState<StateOnlyWriter>(() =>
+    createStateOnlyWriter({
+      send: (write, invocationId, { keepalive }) =>
+        writerDeps.current.client.writeViewState(
+          write.conversation,
+          write.instanceId,
+          {
+            actionBindingId: write.action.actionBindingId,
+            expectedRevision: write.revision,
+            expectedBindingDigest: write.action.bindingDigest,
+            input: write.view,
+            invocationId,
+            sequence: write.sequence,
+          },
+          keepalive ? { keepalive: true } : {},
+        ),
+      newInvocationId,
+      onSending: (instanceId) => writerDeps.current.clearViewRefusal(instanceId),
+      // A node from before the variant took it as an ordinary action and moved the revision: its timeline says so.
+      onTimeline: (timeline) => writerDeps.current.applyTimeline(timeline),
+      onRefused: (write, cause) => writerDeps.current.refuseView(write.conversation, write.instanceId, undefined, cause, write.refused),
+    }),
   );
 
   const [actionRuns, setActionRuns] = useState<Record<string, ActionRun>>({});
@@ -564,11 +607,13 @@ export function useSurfaceRenderer({
             ? [MEDIA_VIEW_OPERATION]
             : viewOperation === undefined ? [] : [viewOperation];
       const viewRefusal = viewRefusals[instance.instanceId];
+      // A player's own state-only writes are answered without a timeline, so the newest of the two is the node's view.
+      const nodeState = stateWriter.nodeState(instance.instanceId, instance.stateRevision, instance.state);
       const widgetState: Record<string, unknown> | undefined =
         viewOperations.length > 0
         ? {
             // The view the node holds; the widget draws a change at once and adopts this when it moves.
-            ...(instance.state ?? {}),
+            ...(nodeState ?? {}),
             ...(definitionId === BOARD_ID && boundAction !== undefined ? { externalBound: true } : {}),
             ...(definitionId === BOARD_ID && actionRun?.message !== undefined ? { actionMessage: actionRun.message, actionTone: actionRun.tone } : {}),
             ...(viewRefusal === undefined ? {} : { message: viewRefusal.message, viewReset: viewRefusal.count }),
@@ -632,7 +677,7 @@ export function useSurfaceRenderer({
               {...(needsBinding && !actionReady
                 ? {}
                 : {
-                    onAction: (action: string, payload: Record<string, unknown>, options?: { leaving?: boolean }) => {
+                    onAction: (action: string, payload: Record<string, unknown>, options?: { leaving?: boolean; stateOnly?: boolean }) => {
                       // A table's export is a read the node answers with a file, through its own person-only route.
                       if (isTable && action === "export.requested" && conversationId !== undefined) {
                         if (exportStatus !== "pending") exportTable(conversationId, instance.instanceId, payload);
@@ -648,6 +693,20 @@ export function useSurfaceRenderer({
                           const viewInput = definitionId === BOARD_ID && action === BOARD_MOVE_OPERATION
                             ? { ...payload, external: boundAction !== undefined }
                             : payload;
+                          if (options?.stateOnly === true && viewAction === MEDIA_VIEW_OPERATION) {
+                            stateWriter.send(
+                              {
+                                conversation: conversationId,
+                                instanceId: instance.instanceId,
+                                revision: instance.revision,
+                                action: matchingAction,
+                                view: viewInput,
+                                refused: VIEW_REFUSED[viewAction] ?? "widgets.action.refusedGeneric",
+                              },
+                              options.leaving === true,
+                            );
+                            return;
+                          }
                           if (options?.leaving === true) {
                             sendView(conversationId, instance.instanceId, typeof datasetRef === "string" ? datasetRef : undefined, matchingAction, instance.revision, viewInput, VIEW_REFUSED[viewAction] ?? "widgets.xyChart.viewRefused", undefined, true);
                             return;
@@ -753,6 +812,7 @@ export function useSurfaceRenderer({
       sendView,
       setError,
       snapshots,
+      stateWriter,
       t,
       timeline,
       viewRefusals,

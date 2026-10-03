@@ -11,6 +11,12 @@ export const MEDIA_PLAYBACK_WRITE_INTERVAL_MS = 3_000;
  */
 export const MEDIA_PLAYING_FRESH_MS = 2 * MEDIA_PLAYBACK_WRITE_INTERVAL_MS + 2_000;
 
+/**
+ * The host-held players whose `media.view` state is only where playback is. A write of that state changes no other
+ * widget, no history and nothing outside the node, so it may take the state-only write (`VIEW_STATE_WRITE_VARIANT`).
+ */
+export const MEDIA_PLAYER_DEFINITION_IDS: readonly string[] = ["canvas.video@1", "canvas.audio@1"];
+
 export const MEDIA_SELECTION_MIGRATION = {
   from: 1,
   to: 2,
