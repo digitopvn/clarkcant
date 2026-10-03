@@ -25,6 +25,7 @@ import type {
 
 import {
   COMPOSER_SURFACE_HEADER,
+  MAP_TILES_OFFLINE_REASONS,
   appIntentDecisionSchema,
   conversationDeleteResultSchema,
   artifactRefSchema,
@@ -2005,17 +2006,43 @@ export class GatewayClient {
   }
 
   /**
-   * Whether this node shows map tiles, and whose: the provider's origin, attribution and maximum zoom, or `null`.
+   * Whether this node shows map tiles, and whose: the provider's origin, attribution and maximum zoom, or `null` with
+   * the reason the maps are offline-only when the node gives one.
    *
    * Only what the node's tile policy says to show. Never a path template or a key.
    */
   async mapTilePolicy(): Promise<MapTilePolicyView> {
-    const body = (await this.#call("GET", "/map-tiles")) as { provider?: unknown };
+    const body = (await this.#call("GET", "/map-tiles")) as { provider?: unknown; offline?: unknown };
+    const offline = MAP_TILES_OFFLINE_REASONS.find((reason) => reason === body.offline);
+    const none: MapTilePolicyView = offline === undefined ? { provider: null } : { provider: null, offline };
     const provider = body.provider;
-    if (typeof provider !== "object" || provider === null) return { provider: null };
+    if (typeof provider !== "object" || provider === null) return none;
     const { origin, attribution, maxZoom } = provider as Record<string, unknown>;
-    if (typeof origin !== "string" || typeof attribution !== "string" || typeof maxZoom !== "number") return { provider: null };
+    if (typeof origin !== "string" || typeof attribution !== "string" || typeof maxZoom !== "number") return none;
     return { provider: { origin, attribution, maxZoom } };
+  }
+
+  /** Whether a map tile provider key is saved, and the one origin the node sends it to. Never the value. */
+  async mapTileKey(): Promise<{ origin?: string } | null> {
+    const body = (await this.#call("GET", "/map-tiles/key")) as { key?: unknown };
+    if (typeof body.key !== "object" || body.key === null) return null;
+    const origin = (body.key as { origin?: unknown }).origin;
+    return typeof origin === "string" ? { origin } : {};
+  }
+
+  /**
+   * Enter the map tile provider key, bound to the origin the person typed it for. The value travels once, in this
+   * request; the answer names the origin only.
+   */
+  async putMapTileKey(input: { origin: string; value: string }): Promise<{ origin: string }> {
+    const body = (await this.#call("PUT", "/map-tiles/key", input)) as { key?: { origin?: unknown } };
+    return { origin: typeof body.key?.origin === "string" ? body.key.origin : input.origin };
+  }
+
+  /** Remove the map tile provider key. */
+  async deleteMapTileKey(): Promise<{ removed: boolean }> {
+    const body = (await this.#call("DELETE", "/map-tiles/key")) as { removed?: unknown };
+    return { removed: body.removed === true };
   }
 
   /**

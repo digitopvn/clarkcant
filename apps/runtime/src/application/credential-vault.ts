@@ -1,5 +1,13 @@
-import { MAP_TILE_SECRET_CONSUMER, nowInstant } from "@clarkcant/contracts";
-import { credentialNames, putCredential, putSecretMetadata, secretKindOr } from "@clarkcant/storage";
+import { MAP_TILE_SECRET_CONSUMER, MAP_TILE_SECRET_NAME, mapTileKeyConsumer, mapTileOriginSchema, nowInstant } from "@clarkcant/contracts";
+import {
+  credentialNames,
+  deleteCredential,
+  deleteSecretMetadata,
+  putCredential,
+  putSecretMetadata,
+  secretKindOr,
+  transaction,
+} from "@clarkcant/storage";
 import type { Database } from "@clarkcant/storage";
 
 /**
@@ -51,7 +59,7 @@ export function consumersOf(value: unknown): string[] {
  */
 export function injectionPolicyFor(consumers: readonly string[]): "tool-only" | "process-env" | "http-header" {
   if (consumers.some((consumer) => consumer.startsWith("command:"))) return "process-env";
-  if (consumers.some((consumer) => consumer.startsWith("package:") || consumer === MAP_TILE_SECRET_CONSUMER)) return "http-header";
+  if (consumers.some((consumer) => consumer.startsWith("package:") || isMapTileConsumer(consumer))) return "http-header";
   return "tool-only";
 }
 
@@ -69,13 +77,26 @@ export function storeCredentialFields(
   if (!Array.isArray(fields) || fields.length === 0) {
     return { ok: false, code: "INVALID_SCHEMA", message: "a credential request must carry at least one field" };
   }
-  const at = nowInstant();
+  // Every field is checked before any is stored, so a refused request leaves no half of itself behind.
   for (const field of fields as CredentialFieldInput[]) {
     const name = typeof field.name === "string" ? field.name.trim() : "";
     const value = typeof field.value === "string" ? field.value : "";
     if (name === "" || value === "") {
       return { ok: false, code: "INVALID_SCHEMA", message: "every credential field needs a name and a value" };
     }
+    /*
+     * The map tile key is bound to the origin a person entered it for, and only Settings binds it (`storeMapTileKey`).
+     * A generic store — a form, `request_secret`, a machine surface — could otherwise replace it, or bind a value to an
+     * origin nobody chose, so it is refused here whatever it is called or whichever consumer it names.
+     */
+    if (name === MAP_TILE_SECRET_NAME || consumersOf(field.consumer).some(isMapTileConsumer)) {
+      return { ok: false, code: "MAP_TILE_KEY_IN_SETTINGS", message: MAP_TILE_KEY_IN_SETTINGS };
+    }
+  }
+  const at = nowInstant();
+  for (const field of fields as CredentialFieldInput[]) {
+    const name = typeof field.name === "string" ? field.name.trim() : "";
+    const value = typeof field.value === "string" ? field.value : "";
     putCredential(deps.db, { principalId: deps.ownerPrincipalId, name, value, at });
     /*
      * The consumer is recorded as the form said it. It is what the broker checks before handing the value to
@@ -97,4 +118,59 @@ export function storeCredentialFields(
     });
   }
   return { ok: true, names: credentialNames(deps.db, deps.ownerPrincipalId) };
+}
+
+const MAP_TILE_KEY_IN_SETTINGS =
+  "the map tile provider's key is entered in Settings → Extensions → Map tiles, which binds it to the provider's origin; it is not stored here";
+
+function isMapTileConsumer(consumer: string): boolean {
+  return consumer === MAP_TILE_SECRET_CONSUMER || consumer.startsWith(`${MAP_TILE_SECRET_CONSUMER}@`);
+}
+
+/**
+ * Store the map tile provider's key a person typed in Settings, bound to the origin they typed it for.
+ *
+ * Always the host's own secret `maps:tiles`, so no other secret is ever overwritten, and always exactly one consumer,
+ * `maps:tiles@<origin>`, so the node sends the key to that origin and nowhere else. Entering it again for another origin
+ * moves the binding; nothing else does. The answer names the origin, never the value.
+ */
+export function storeMapTileKey(
+  deps: CredentialVaultDeps,
+  input: { origin: unknown; value: unknown },
+): { ok: true; origin: string } | { ok: false; code: string; message: string } {
+  const origin = mapTileOriginSchema.safeParse(input.origin);
+  if (!origin.success) {
+    return { ok: false, code: "INVALID_SCHEMA", message: `origin: ${origin.error.issues[0]?.message ?? "is not a tile provider origin"}` };
+  }
+  const value = typeof input.value === "string" ? input.value : "";
+  if (value === "" || value.length > 4_096) {
+    return { ok: false, code: "INVALID_SCHEMA", message: "the key must be between 1 and 4096 characters" };
+  }
+  const at = nowInstant();
+  transaction(deps.db, () => {
+    putCredential(deps.db, { principalId: deps.ownerPrincipalId, name: MAP_TILE_SECRET_NAME, value, at });
+    putSecretMetadata(deps.db, {
+      secretId: deps.newId("secret"),
+      principalId: deps.ownerPrincipalId,
+      name: MAP_TILE_SECRET_NAME,
+      description: `Map tile provider key, sent only to ${origin.data}`,
+      kind: "api-key",
+      backend: "node-store",
+      backendRef: MAP_TILE_SECRET_NAME,
+      allowedConsumers: [mapTileKeyConsumer(origin.data)],
+      injectionPolicy: "http-header",
+      nodeId: deps.nodeId,
+      at,
+    });
+  });
+  return { ok: true, origin: origin.data };
+}
+
+/** Remove the map tile key, value and binding together. Whether there was one to remove is the answer. */
+export function removeMapTileKey(deps: Pick<CredentialVaultDeps, "db" | "ownerPrincipalId">): { removed: boolean } {
+  return transaction(deps.db, () => {
+    const value = deleteCredential(deps.db, deps.ownerPrincipalId, MAP_TILE_SECRET_NAME);
+    const metadata = deleteSecretMetadata(deps.db, deps.ownerPrincipalId, MAP_TILE_SECRET_NAME);
+    return { removed: value || metadata };
+  });
 }
