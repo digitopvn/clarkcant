@@ -49,6 +49,7 @@ import {
   recordEffectExecution,
   requestApproval,
   resolveLocalSource,
+  snapshotLocalPackage,
   type CoordinationDeps,
 } from "@clarkcant/core";
 import { type Database, allRows, appendEvent, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
@@ -334,9 +335,12 @@ export interface ApprovedInstall {
   localDigest?: string;
 }
 
-/** The most regular files a path on this machine may hold for the node to digest it (`localContentDigest`). */
+/**
+ * The most regular files a path on this machine may hold for the node to digest it (`localContentDigest`) or copy it
+ * into a snapshot to install (`snapshotLocalPackage`).
+ */
 export const LOCAL_DIGEST_MAX_FILES = 5_000;
-/** The most bytes, in total, the files at a path on this machine may hold for the node to digest them. */
+/** The most bytes, in total, the files at a path on this machine may hold for the node to digest or copy them. */
 export const LOCAL_DIGEST_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
@@ -344,12 +348,13 @@ export const LOCAL_DIGEST_MAX_BYTES = 64 * 1024 * 1024;
  * bytes it holds (`digestOfDirectory`, with `.git` left out). Undefined for a git or npm listing, whose bytes the fetch
  * itself checks against the listing.
  *
- * A local listing's own `digest` is what its publisher packed, not a hash of the files at the path now, and nothing
- * stops those files changing after the person was asked. This is what an install question about such a listing pins,
- * so an approval installs the files it was given for or nothing.
+ * A local listing's own `digest` is what its publisher packed, not a hash of the files at the path now. This is what a
+ * search shows for such a listing (`contentDigest`) and what the inbox checks an install question against. An install
+ * does not use it: it copies the files into a snapshot and digests the copy (`snapshotLocalPackage`), which equals
+ * this digest for the same files, so a listing's `contentDigest` and an approval's pin compare with it directly.
  *
- * Bounded, because it runs on every local row a search lists (ten by default), every install question the inbox shows
- * and every install: a path past `LOCAL_DIGEST_MAX_FILES` files or `LOCAL_DIGEST_MAX_BYTES` bytes is not digested at
+ * Bounded, because it runs on every local row a search lists (ten by default) and every install question the inbox
+ * shows: a path past `LOCAL_DIGEST_MAX_FILES` files or `LOCAL_DIGEST_MAX_BYTES` bytes is not digested at
  * all (`tooLarge`). Nothing is skipped to fit: the digest covers every file the listing's own digest covers, so it can
  * be compared with what a publisher packed.
  */
@@ -360,6 +365,8 @@ export function localContentDigest(
   try {
     const digest = digestOfDirectory(entry.source.path, {
       exclude: [".git"],
+      // As the snapshot leaves it out: `.GIT` is the same folder as `.git` on Windows and macOS.
+      excludeAnyCase: true,
       limits: { maxFiles: LOCAL_DIGEST_MAX_FILES, maxBytes: LOCAL_DIGEST_MAX_BYTES },
     });
     return digest.ok
@@ -490,38 +497,69 @@ export async function installPackage(
   }
   /*
    * The same rule for a listing by a path on this machine, whose listed digest says nothing about the files there now:
-   * the approval pinned their content when the person was asked, and other files - or an approval that pinned none -
-   * install nothing.
+   * the approval pinned their content when the person was asked, and an approval that pinned none installs nothing.
    */
-  if (approved !== undefined && !localFilesUnchanged(entry, approved.localDigest)) {
+  if (approved !== undefined && entry.source.kind === "local" && approved.localDigest === undefined) {
     return { kind: "refused", status: 409, code: "DIGEST_MISMATCH", message: localFilesChangedMessage(packageId, version) };
   }
+
+  const cacheRoot = join(runtime.dataDir, "package-cache");
   /*
-   * The same rule for an install a person asks for directly, from a listing by a path on this machine: the node digests
-   * the files itself rather than requiring the caller to. A listing that showed the content of its files (the
-   * `contentDigest` the node put on it when it listed them) is refused when they no longer hash to it, and a path whose
-   * files cannot be digested (unreadable, linked, or too large to verify) is refused too.
+   * A listing by a path on this machine is installed from a snapshot, not from the path: the node copies the files into
+   * its content-addressed package cache, digests the copy, and everything the install reads (the manifest, its reach,
+   * its widgets) and everything that later serves the package reads that copy. Edits to the path after this change
+   * nothing that runs until the package is installed again, which makes a new snapshot checked like this one.
+   *
+   * The snapshot's digest is the one every check compares: the content an approval pinned when the person was asked
+   * (other files install nothing), and the `contentDigest` a listing showed for a direct install (files that changed
+   * since the list was made are refused). A copy that does not match is discarded rather than cached. With neither, a
+   * path whose files changed while they were copied is refused too (409), since the copy would be a mix of two versions.
+   * A path that cannot be copied (unreadable, holding a link, or too large to verify) is refused (400), and a copy the
+   * node could not write into its own cache (a full disk, a locked or unwritable cache folder) is refused as the cache's
+   * failure (503), not the files'.
    *
    * Deliberately before the policy decides: these are facts about the files, not decisions, so a person whose mode
    * would deny the install still learns that the files changed (409) or cannot be read (400) rather than only that the
-   * policy refused (403), and a question the policy asks pins this same digest. A caller that names the plan's identity
-   * itself (`localDigest`) and showed nothing is left as it was.
-   *
-   * The check is at install time only. A local package stays linked to its path rather than copied, so what it serves
-   * later is whatever the path holds then; the files are not re-checked after this.
+   * policy refused (403), and a question the policy asks pins this same digest. A snapshot made for an install the
+   * policy then refuses or asks about stays in the cache, where an install of the same bytes reuses it.
    */
-  const local =
-    approved === undefined && (request.localDigest === undefined || request.contentDigest !== undefined)
-      ? localContentDigest(entry)
-      : undefined;
-  if (local !== undefined && !local.ok) return localSourceUnreadable(packageId, version, local);
-  if (local !== undefined && request.contentDigest !== undefined && local.digest !== request.contentDigest) {
-    return {
-      kind: "refused",
-      status: 409,
-      code: "DIGEST_MISMATCH",
-      message: localFilesChangedSinceListingMessage(packageId, version),
-    };
+  let snapshot: { path: string; digest: string } | undefined;
+  if (entry.source.kind === "local") {
+    const expectedDigest = approved?.localDigest ?? request.contentDigest;
+    const taken = await snapshotLocalPackage({
+      path: entry.source.path,
+      cacheRoot,
+      limits: { maxFiles: LOCAL_DIGEST_MAX_FILES, maxBytes: LOCAL_DIGEST_MAX_BYTES },
+      ...(expectedDigest === undefined ? {} : { expectedDigest }),
+    });
+    if (!taken.ok && taken.code === "ARTIFACT_DIGEST_MISMATCH") {
+      return {
+        kind: "refused",
+        status: 409,
+        code: "DIGEST_MISMATCH",
+        message: approved === undefined ? localFilesChangedSinceListingMessage(packageId, version) : localFilesChangedMessage(packageId, version),
+      };
+    }
+    if (!taken.ok && taken.code === "LOCAL_SOURCE_CHANGED") {
+      return {
+        kind: "refused",
+        status: 409,
+        code: "DIGEST_MISMATCH",
+        message: `${packageId}@${version}'s files on this machine changed while they were being copied, so nothing was installed and the files were left as they are. Install it again once they have stopped changing.`,
+      };
+    }
+    if (!taken.ok && (taken.code === "PACKAGE_CACHE_UNAVAILABLE" || taken.code === "CACHE_ESCAPE")) {
+      return {
+        kind: "refused",
+        status: 503,
+        code: "PACKAGE_CACHE_UNAVAILABLE",
+        message: `${packageId}@${version} was not installed: this node could not write its copy of the files into its package cache (${taken.message}). The files on this machine were not changed, and whatever was installed before keeps running. Try again; if it keeps failing, check the free space and permissions of ${cacheRoot}.`,
+      };
+    }
+    if (!taken.ok) {
+      return localSourceUnreadable(packageId, version, { tooLarge: taken.code === "ARTIFACT_TOO_LARGE", message: taken.message });
+    }
+    snapshot = taken.artifact;
   }
 
   const principalId = runtime.identity.ownerPrincipalId;
@@ -560,13 +598,10 @@ export async function installPackage(
 
   if (decision.kind === "ask") {
     /*
-     * A listing by a path on this machine is asked about together with the content of its files, so approving it
-     * later installs those files and not whatever the path holds by then. A path whose files cannot be digested is
-     * refused now: no answer to the question could install it.
+     * A listing by a path on this machine is asked about together with the digest of the snapshot taken above, so
+     * approving it later installs those files and not whatever the path holds by then.
      */
-    const pinned = local ?? localContentDigest(entry);
-    if (pinned !== undefined && !pinned.ok) return localSourceUnreadable(packageId, version, pinned);
-    const localDigest = pinned?.digest;
+    const localDigest = snapshot?.digest;
     /*
      * Asking to install the same artifact again while its approval still waits is the same question, not a new one:
      * reuse the pending row for this digest, as the capability approvals below do, so a second press or a repeated
@@ -623,16 +658,21 @@ export async function installPackage(
    * entry at the cache directory means the digest that reaches the install plan is computed over the bytes this
    * node actually holds, and a mismatch is refused here, before a plan is even proposed, rather than discovered
    * after consent.
+   *
+   * A local listing was already copied above, and is re-pointed at its snapshot the same way.
    */
-  const cacheRoot = join(runtime.dataDir, "package-cache");
-  const fetched = await fetchRemoteArtifact(entry, cacheRoot);
+  const fetched: RemoteFetchOutcome =
+    snapshot === undefined
+      ? await fetchRemoteArtifact(entry, cacheRoot)
+      : { ok: true, entry: { ...entry, source: { kind: "local", path: snapshot.path } } };
   if (!fetched.ok) return { kind: "refused", status: fetched.status, code: fetched.code, message: fetched.message };
   const { entry: resolvedEntry, localDigest: fetchedLocalDigest } = fetched;
   const directoryForInstall = index.entries.map((candidate) => (candidate === entry ? resolvedEntry : candidate));
 
   /*
-   * The manifest inside the artifact this node just fetched and digest-verified. A resolved entry is always `local` by
-   * this point (the fetch re-points git and npm sources at the cache path), so this is the package's own word.
+   * The manifest inside the artifact this node just fetched or copied and digested. A resolved entry is always `local`
+   * by this point (git and npm sources are re-pointed at their cache path, local ones at their snapshot), so this is
+   * the package's own word, read from the bytes that will run.
    */
   const fetchedManifest = resolvedEntry.source.kind === "local" ? readPackage(resolvedEntry.source.path).manifest : undefined;
 
@@ -656,12 +696,11 @@ export async function installPackage(
   }
 
   /*
-   * For a listing by a path on this machine, the content digest of the files this install checked: the one digested
-   * above, or the one an approval pinned (checked against the files above). The record keeps it next to the listing's
-   * digest, so what was installed can be told apart from what was published under that name. A caller that named the
-   * identity itself (`localDigest`) had nothing checked, and nothing is claimed.
+   * For a listing by a path on this machine, the digest of the snapshot this install runs from. The record keeps it next
+   * to the listing's digest, so what was installed can be told apart from what was published under that name, and it
+   * names the bytes that run rather than what the path held at one moment.
    */
-  const checkedFiles = local?.ok === true ? local.digest : approved?.localDigest;
+  const checkedFiles = snapshot?.digest;
 
   /*
    * Autonomy without a record is the one combination this node refuses, the same way `run_command` does: an effect
@@ -804,6 +843,8 @@ export async function installPackage(
     grantedCapabilities: grant.granted,
     // Kept on the generation, so uninstalling can still reach these widgets' instances once the files are gone.
     ...(resolvedEntry.source.kind === "local" ? { widgetIds: declaredWidgetIds(resolvedEntry.source.path) } : {}),
+    // Recorded on the generation, so every later read of this package finds the snapshot rather than the path.
+    ...(snapshot === undefined ? {} : { snapshotDigest: snapshot.digest }),
   });
 
   if (!outcome.ok) return { kind: "refused", status: 400, code: outcome.code, message: outcome.message };
@@ -1301,7 +1342,7 @@ export function resolveGenerationGrantedCapabilities(
   if (entry === undefined) return [];
 
   const cacheRoot = join(runtime.dataDir, "package-cache");
-  const resolvedSource = resolveLocalSource(entry, cacheRoot);
+  const resolvedSource = resolveLocalSource(entry, cacheRoot, generation);
   if (resolvedSource.kind !== "local") return []; // Not fetched onto this node (yet); nothing to read a manifest from.
 
   const requested = readPackage(resolvedSource.path)

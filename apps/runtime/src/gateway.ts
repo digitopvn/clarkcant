@@ -356,7 +356,12 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
    * The grant was verified above and is handed on unchanged: this is the only route that serves package bytes to
    * a navigation, and the module refuses anything the grant does not name.
    */
-  const widgetResponse = handleWidgetServingRoutes({ request, segments, grant: grantCovers ? grant : undefined });
+  const widgetResponse = handleWidgetServingRoutes({
+    request,
+    segments,
+    grant: grantCovers ? grant : undefined,
+    runtime: services.runtime,
+  });
   if (widgetResponse !== undefined) return widgetResponse;
 
   if (request.method === "POST" && request.path === "/command") {

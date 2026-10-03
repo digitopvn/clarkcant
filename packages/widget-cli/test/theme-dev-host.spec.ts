@@ -38,8 +38,11 @@ describe("the production theme author dev host", () => {
       const path = join(root, "themes/main.json");
       const theme = JSON.parse(readFileSync(path, "utf8"));
       theme.displayName = "Live edit";
-      writeFileSync(path, JSON.stringify(theme));
-      await viWait(() => host.reloads() > 0);
+      // fs.watch returns before macOS FSEvents has started its stream, so a write made at once can land before the
+      // watcher is live and is never reported. Repeat the same real edit until the host reports one.
+      const edit = () => writeFileSync(path, JSON.stringify(theme));
+      edit();
+      await viWait(() => host.reloads() > 0, edit);
       expect(readThemeDevView(root).themes[0]?.document.displayName).toBe("Live edit");
       writeFileSync(path, "{ incomplete JSON");
       const invalid = readThemeDevView(root);
@@ -53,8 +56,12 @@ describe("the production theme author dev host", () => {
   });
 });
 
-async function viWait(predicate: () => boolean): Promise<void> {
+async function viWait(predicate: () => boolean, retry?: () => void): Promise<void> {
   const end = Date.now() + 3000;
-  while (!predicate() && Date.now() < end) await new Promise((done) => setTimeout(done, 25));
+  let nextRetry = Date.now() + 250;
+  while (!predicate() && Date.now() < end) {
+    await new Promise((done) => setTimeout(done, 25));
+    if (retry !== undefined && Date.now() >= nextRetry && !predicate()) { retry(); nextRetry = Date.now() + 250; }
+  }
   expect(predicate()).toBe(true);
 }

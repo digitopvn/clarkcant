@@ -35,6 +35,9 @@ const POLICY_KEY = "execution.policy";
  * it, so the addition changes nothing but the content digest.
  */
 const CHANGED_FILE = join(process.cwd(), "apps", "web", "e2e", "fixtures", "theme-local", "changed-after-listing.txt");
+/** The fixture's theme file, which the copy test edits after the install and puts back afterwards whatever happens. */
+const THEME_FILE = join(process.cwd(), "apps", "web", "e2e", "fixtures", "theme-local", "themes", "harbor.json");
+const THEME_BYTES = readFileSync(THEME_FILE);
 
 function token(): string {
   const parsed = JSON.parse(readFileSync(join(DATA_DIR, "identity.json"), "utf8")) as { localToken?: unknown };
@@ -73,8 +76,14 @@ async function uninstall(request: APIRequestContext): Promise<void> {
 
 let previousPolicy: Record<string, unknown> | undefined;
 
-test.beforeEach(async ({ request }) => {
+/** Put the fixture back as committed: an attempt that died midway must not leave a retry, or another spec, edited files. */
+function restoreFixture(): void {
   rmSync(CHANGED_FILE, { force: true });
+  writeFileSync(THEME_FILE, THEME_BYTES);
+}
+
+test.beforeEach(async ({ request }) => {
+  restoreFixture();
   await uninstall(request);
   previousPolicy = await storedPolicy(request);
   /*
@@ -86,7 +95,7 @@ test.beforeEach(async ({ request }) => {
 });
 
 test.afterEach(async ({ request }) => {
-  rmSync(CHANGED_FILE, { force: true });
+  restoreFixture();
   if (previousPolicy !== undefined) await writePolicy(request, previousPolicy);
   await uninstall(request);
 });
@@ -117,6 +126,58 @@ test("Install on a listing by a path on this machine installs it, without asking
   await expect(state).toHaveAttribute("data-install-state", "installed", { timeout: 20_000 });
   await expect(listed.locator("[data-install-open-inbox]")).toHaveCount(0);
   expect(await installed(request)).toEqual(["1.0.0"]);
+});
+
+test("an installed package runs from the copy the node made, so edits to its path change nothing until it is installed again", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  const composer = page.locator("[data-composer='true']");
+  await composer.waitFor();
+  await composer.fill("tìm gói trên máy");
+  await composer.press("Enter");
+
+  const listed = page.locator(`[data-marketplace-package='${PACKAGE}']`).last();
+  await expect(listed).toBeVisible({ timeout: 20_000 });
+  await listed.locator(`[data-install-package='${PACKAGE}']`).click();
+  await expect(listed.locator("[data-install-state]")).toHaveAttribute("data-install-state", "installed", { timeout: 20_000 });
+
+  const served = async (relativePath: string) =>
+    request.get(`${GATEWAY}/packages/${encodeURIComponent(PACKAGE)}/1.0.0/files/${relativePath}`, { headers: headers() });
+  const harborName = async (): Promise<string | undefined> => {
+    const listedThemes = (await (await request.get(`${GATEWAY}/themes`, { headers: headers() })).json()) as {
+      themes: { displayName: string; provider: { kind: string; packageId?: string } }[];
+    };
+    return listedThemes.themes.find((theme) => theme.provider.packageId === PACKAGE)?.displayName;
+  };
+  const original = THEME_BYTES.toString("utf8");
+  expect(await (await served("themes/harbor.json")).text()).toBe(original);
+  expect(await harborName()).toBe("Harbor");
+
+  // The files on the path change after the install: one is edited and one is added.
+  const edited = original.replace('"displayName": "Harbor"', '"displayName": "Harbor Edited"');
+  expect(edited).not.toBe(original);
+  writeFileSync(THEME_FILE, edited);
+  writeFileSync(CHANGED_FILE, "added after the install\n");
+
+  // What is served, and the theme the appearance offers, are the installed copy's.
+  const after = await served("themes/harbor.json");
+  expect(after.status()).toBe(200);
+  expect(await after.text()).toBe(original);
+  expect((await served("changed-after-listing.txt")).status()).toBe(404);
+  expect(await harborName()).toBe("Harbor");
+
+  // Installing again checks the files as they are now and runs them from a new copy.
+  const reinstalled = await request.post(`${GATEWAY}/packages/install`, {
+    headers: headers(),
+    data: { packageId: PACKAGE, version: "1.0.0" },
+  });
+  expect(reinstalled.ok(), await reinstalled.text()).toBe(true);
+  expect(await (await served("themes/harbor.json")).text()).toBe(edited);
+  expect(await (await served("changed-after-listing.txt")).text()).toBe("added after the install\n");
+  expect(await harborName()).toBe("Harbor Edited");
 });
 
 test("a row whose files changed after the list was made goes out of date, and its search again lists them anew", async ({
