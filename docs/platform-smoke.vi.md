@@ -120,8 +120,9 @@ Trên Windows PowerShell, đặt biến trước lệnh cuối bằng `$env:CC_E
 `Remove-Item Env:CC_EXPECT_ROOTLESS_PODMAN`.
 
 Mong đợi: mọi test trong "a service container on a real engine", "a service's provider key on a real engine" và "the
-media render package's service on a real engine" đều pass, không test nào bị skip. Hai test giới hạn tài nguyên chỉ
-chạy khi engine báo rằng nó áp dụng giới hạn. Nếu chúng bị skip, hãy ghi lại cả điều đó.
+media render package's service on a real engine" đều pass. Chỉ hai test giới hạn tài nguyên được phép bị skip, và chỉ
+khi engine báo rằng nó không áp dụng giới hạn; hãy ghi lại test nào. Ở lần chạy với Podman,
+`CC_EXPECT_ROOTLESS_PODMAN=1` sẽ khiến bộ test thất bại nếu Podman không báo rằng các giới hạn được áp dụng.
 
 Ghi lại vào PR hoặc vào mục này: hệ điều hành và phiên bản của nó, engine và phiên bản của engine, cùng output verbose
 của bộ test. Một lỗi là một finding cho change riêng của nó. Đừng chỉnh test cho vừa máy.
@@ -129,5 +130,7 @@ của bộ test. Một lỗi là một finding cho change riêng của nó. Đ�
 ## Vì sao không có test bị skip
 
 Một test `skip` trên máy này sẽ khiến bộ kiểm tra nói "xanh" trong khi thứ nó định kiểm chưa từng chạy. Thứ đúng
-là: không có test nào tồn tại cho ba mục trên, và tài liệu này nói rõ điều kiện còn thiếu cùng cách chạy chúng ở
-nơi chạy được.
+là: không có test nào tồn tại cho ba mục macOS trong phần "Ba thứ không kiểm được ở nơi khác", và tài liệu này nói rõ
+điều kiện còn thiếu cùng cách chạy chúng ở nơi chạy được. Bộ test service container là ngoại lệ đã nêu ở trên: nó có
+tồn tại, chạy trong CI ở mọi nơi có engine trả lời, và chỉ skip ở nơi không có engine nào, điều mà lần chạy thủ công
+trong phần "Service container trên macOS và Windows" phủ.

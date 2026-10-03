@@ -262,13 +262,17 @@ describe.runIf(process.env.CC_EXPECT_ROOTLESS_DOCKER === "1")("the rootless Dock
   });
 });
 
-/** The same for a job that set up rootless Podman: a Docker daemon still answering would otherwise be found first. */
+/**
+ * The same for a job that set up rootless Podman: a Docker daemon still answering would otherwise be found first. It
+ * must also enforce limits, read the way the limit tests above are gated, or those two would skip and the job stay green.
+ */
 describe.runIf(process.env.CC_EXPECT_ROOTLESS_PODMAN === "1")("the rootless Podman this job set up", () => {
-  it("is the engine a service runs on, and runs rootless", async () => {
+  it("is the engine a service runs on, runs rootless, and enforces a profile's limits", async () => {
     expect(engine).toMatchObject({ available: true, engine: "podman" });
     const answer = await runEngine("podman", ["info", "--format", "{{.Host.Security.Rootless}}"], 30_000);
     expect(answer.status, answer.stderr).toBe(0);
     expect(answer.stdout.trim()).toBe("true");
+    expect(capacity).toMatchObject({ enforcesLimits: true });
   });
 });
 
@@ -289,7 +293,7 @@ describe.skipIf(!engine.available)("the media render package's service on a real
   const BINDING = "binding_media_render";
   const NETWORK_PROBE = `fetch("http://1.1.1.1", { signal: AbortSignal.timeout(3000) }).then(
   () => process.stdout.write("allowed"),
-  (error) => process.stdout.write(String(error.cause?.code ?? error.name)),
+  (error) => process.stdout.write("refused " + String(error.cause?.code ?? error.name)),
 );`;
 
   it("renders a picked clip streamed into a container with no network, and refuses a file the widget holds no grant on", async () => {
@@ -410,7 +414,8 @@ describe.skipIf(!engine.available)("the media render package's service on a real
           );
         });
       expect(await engineSays(["inspect", "--format", "{{.HostConfig.NetworkMode}}", name])).toBe("none");
-      expect(await engineSays(["exec", name, "node", "-e", NETWORK_PROBE])).not.toBe("allowed");
+      // Asked for the refusal itself, so a probe that printed nothing cannot pass.
+      expect(await engineSays(["exec", name, "node", "-e", NETWORK_PROBE])).toMatch(/^refused (ENETUNREACH|EHOSTUNREACH|ECONNREFUSED|EAI_AGAIN|TimeoutError)$/);
 
       // The clip was streamed, not handed over: no copy of it is in the service's private folder.
       const sample = Buffer.from(clip.subarray(WAV_HEADER_BYTES, WAV_HEADER_BYTES + 4096));
@@ -426,10 +431,13 @@ describe.skipIf(!engine.available)("the media render package's service on a real
       const theirs = pick(fixtureClip({ seconds: 1 }), "winst_someone_else");
       expect(await press({ source: theirs.artifactId, gainDb: 0 })).toMatchObject({ kind: "refused", status: 403, code: "ARTIFACT_INPUT_REFUSED" });
     } finally {
-      jobs.stopAll();
-      await host.stopAll();
-      db.close();
-      rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      try {
+        jobs.stopAll();
+        await host.stopAll();
+      } finally {
+        db.close();
+        rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      }
     }
   }, 600_000);
 });

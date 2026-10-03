@@ -405,7 +405,8 @@ jobs:
   # answered would otherwise be the engine every test ran on.
   service-rootless-podman:
     name: service container (rootless podman)
-    runs-on: ubuntu-latest
+    # Pinned, because the setup below is written for this image's Podman and AppArmor; a newer image is checked on purpose.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -437,11 +438,14 @@ jobs:
           sudo loginctl enable-linger "$(whoami)"
           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
           for _ in $(seq 30); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done
+          [ -S "$XDG_RUNTIME_DIR/bus" ] || { echo "The runner user's systemd session has no bus; Podman would fall back to cgroupfs" >&2; exit 1; }
           export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 
           podman system migrate
           podman version
           podman info --format '{{.Host.Security.Rootless}} {{json .Host.CgroupControllers}} {{.Host.CgroupManager}}'
+          manager="$(podman info --format '{{.Host.CgroupManager}}')"
+          [ "$manager" = systemd ] || { echo "Podman's cgroup manager is $manager, not systemd" >&2; exit 1; }
           if docker version > /dev/null 2>&1; then echo "Docker still answers; the suite would run on it" >&2; exit 1; fi
 
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"

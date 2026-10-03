@@ -94,6 +94,8 @@ const ENGINE_ENV_ALLOWLIST = [
   "TMPDIR",
   "XDG_RUNTIME_DIR",
   "XDG_CONFIG_HOME",
+  // The user's session bus, which rootless Podman asks systemd through to place a container in a scope it can limit.
+  "DBUS_SESSION_BUS_ADDRESS",
   "DOCKER_HOST",
   "DOCKER_CONTEXT",
   "DOCKER_CONFIG",

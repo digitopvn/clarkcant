@@ -120,8 +120,9 @@ On Windows PowerShell, set the variable before the last command with `$env:CC_EX
 remove it afterwards with `Remove-Item Env:CC_EXPECT_ROOTLESS_PODMAN`.
 
 Expected: every test in "a service container on a real engine", "a service's provider key on a real engine" and "the
-media render package's service on a real engine" passes, with none skipped. The two resource-limit tests run only when
-the engine reports that it enforces limits. If they are skipped, record that too.
+media render package's service on a real engine" passes. The only tests that may be skipped are the two resource-limit
+tests, and only when the engine reports that it does not enforce limits; record which. On the Podman run,
+`CC_EXPECT_ROOTLESS_PODMAN=1` fails the suite instead when Podman does not report the limits enforced.
 
 Record in the PR or in this section: the operating system and its version, the engine and its version, and the verbose
 test output. A failure is a finding for its own change. Do not adjust the test to fit the machine.
@@ -129,5 +130,7 @@ test output. A failure is a finding for its own change. Do not adjust the test t
 ## Why there is no skipped test
 
 A `skip` test on this machine would make the test suite say "green" while the thing it was meant to check has never
-run. The right thing is: no test exists for the three items above, and this document states the missing condition and
-how to run them where they can run.
+run. The right thing is: no test exists for the three macOS items in "Three things that cannot be checked elsewhere",
+and this document states the missing condition and how to run them where they can run. The service container suite is
+the exception named above: it does exist, runs in CI wherever an engine answers, and skips only where none does, which
+the manual run in "Service containers on macOS and Windows" covers.
