@@ -1258,15 +1258,26 @@ as the state-only variant of the action call (`variant: "view-state"` on `POST �
 owner, binding, revision, binding digest, input — stores the bounded state, and answers with
 `{ variant, duplicate, instanceId, revision, stateRevision, state }` only. It does not move the instance revision, mark
 history snapshots superseded or rebuild the timeline, and the page re-renders nothing for it. The binding keeps one
-invocation record, the latest write, replaced by each new one: a retry of that write gets its outcome back, its id reused
-with other input is refused with `INVOCATION_KEY_REUSED`, and an hour of play leaves one row in `action_invocations`
-instead of 1,200. The variant is taken only for `canvas.video@1` and `canvas.audio@1` playback state: any other binding,
+invocation record under the node's own key, `view-state:<bindingId>`, replaced by each new write, and an hour of play
+leaves one row in `action_invocations` instead of 1,200. No client invocation id may start with `view-state:` on any
+action path (`400 INVALID_SCHEMA` at the route), and the write only ever replaces a record it wrote itself, so it cannot
+overwrite another action's ledger row. Each write also carries the player's `sequence`, which the page stamps when the
+player makes the write as `max(now in milliseconds, previous + 1)`, so it grows across page loads too. The record keeps
+the newest sequence accepted, and a write whose sequence is not newer writes nothing: a retry of the latest write, an
+older write that arrives late, or a replayed older id is answered `duplicate: true` (`stale: true` for an older one)
+with the state and revision the node holds now, and an id reused with other input is refused with
+`INVOCATION_KEY_REUSED`. A sequence more than a day past the node's clock is refused, so one broken clock cannot freeze
+the player's state. The variant is taken only for `canvas.video@1` and `canvas.audio@1` playback state: any other binding,
 including a gallery selection, is refused with `UNSUPPORTED_ACTION`, an unknown variant with `400 INVALID_SCHEMA`, and
 effectful actions keep their ledger, provenance and records unchanged. An isolated frame cannot send it: the frame bridge
 builds the ordinary call, and a frame's own state goes through `…/state`. When the page is hidden, the player writes
-where it is; when the page is left or the player is removed, it writes itself paused where it stopped. The write made as
-the page is left is sent at once with `keepalive`, not behind a write still in flight; a state-only write does not move
-the revision, so it is checked at the one the page holds. All of these writes are best-effort: an unloading page may
+where it is; when the page is left or the player is removed, it writes itself paused where it stopped. The page keeps
+one state-only write per player in flight and sends only the latest one waiting
+([state-only-writes.ts](../packages/conversation-client/src/state-only-writes.ts)). The write made as the page is left is
+sent at once with `keepalive`, not behind a write still in flight, and it drops the write that was waiting, so nothing
+older is sent after it; if the write in flight reaches the node after it, its older sequence writes nothing. A
+state-only write does not move the revision, so it is checked at the one the page holds. All of these writes are
+best-effort: an unloading page may
 still not finish the request. So the node also stops believing a stored "playing" once it is older than `MEDIA_PLAYING_FRESH_MS` (two
 intervals plus two seconds of slack, from the state row's `updated_at`): the semantic document then reports the video
 paused at the last stored position. A refused playback write is said beside the player, which is not moved, and the

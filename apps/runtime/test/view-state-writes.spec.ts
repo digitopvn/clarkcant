@@ -4,13 +4,14 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { type Instant, MEDIA_PLAYBACK_WRITE_INTERVAL_MS } from "@clarkcant/contracts";
+import { type Instant, MEDIA_PLAYBACK_WRITE_INTERVAL_MS, VIEW_STATE_SEQUENCE_MAX_LEAD_MS } from "@clarkcant/contracts";
 import { getActionBinding, getInstance, liveStateOf, viewStateRecordKey } from "@clarkcant/core";
 import { insertLocalImage } from "@clarkcant/storage";
 
 import { invokeWidgetAction, writeWidgetViewState } from "../src/application/widget-actions.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { conversationUiContext } from "../src/widget-semantic.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
 
 /**
@@ -76,6 +77,12 @@ function request(instanceId: string, input: Record<string, unknown>, invocationI
   };
 }
 
+/** A state-only write: the same request with the player's write sequence, which grows with every write unless given. */
+let sequence = 0;
+function stateRequest(instanceId: string, input: Record<string, unknown>, invocationId?: string, at = ++sequence) {
+  return { ...request(instanceId, input, invocationId), sequence: at };
+}
+
 function count(sql: string, ...params: string[]): number {
   return (services.runtime.db.prepare(sql).get(...params) as { n: number }).n;
 }
@@ -106,6 +113,7 @@ beforeEach(() => {
     .prepare("INSERT INTO conversations (conversation_id, title, home_node_id, created_at, updated_at) VALUES (?, NULL, ?, ?, ?)")
     .run(CONVERSATION, services.runtime.identity.nodeId, AT, AT);
   counts.timelines = 0;
+  sequence = 0;
 });
 
 afterEach(() => {
@@ -120,7 +128,7 @@ describe("continuous playback through the state-only write", () => {
     expect(count("SELECT COUNT(*) AS n FROM widget_snapshots WHERE instance_id = ?", videoId)).toBe(1);
 
     for (let tick = 0; tick < 100; tick += 1) {
-      const written = writeWidgetViewState(services, request(videoId, { status: "playing", position: tick * 3, duration: 600 }));
+      const written = writeWidgetViewState(services, stateRequest(videoId, { status: "playing", position: tick * 3, duration: 600 }));
       expect(written.ok).toBe(true);
     }
     expect(counts.timelines).toBe(0);
@@ -145,7 +153,7 @@ describe("continuous playback through the state-only write", () => {
 
     expect(HOUR_OF_WRITES).toBe(1_200);
     for (let write = 0; write < HOUR_OF_WRITES; write += 1) {
-      const outcome = writeWidgetViewState(services, request(videoId, { status: "playing", position: write * 3, duration: 3_600 }));
+      const outcome = writeWidgetViewState(services, stateRequest(videoId, { status: "playing", position: write * 3, duration: 3_600 }));
       if (!outcome.ok) throw new Error(outcome.message);
     }
     // One row for the ordinary write, one for the whole hour of play.
@@ -159,33 +167,48 @@ describe("continuous playback through the state-only write", () => {
     expect(counts.timelines).toBe(1);
   });
 
-  it("answers a retry of the latest write with its outcome, and refuses its id reused with other input", async () => {
+  it("answers a retry of the latest write with the state and revision the node holds now, and refuses its id reused with other input", async () => {
     const videoId = await place("canvas.video@1", { videoRef: "video-ref", alt: "A film" });
-    const first = writeWidgetViewState(services, request(videoId, { status: "playing", position: 3, duration: 60 }, "inv_same"));
-    const again = writeWidgetViewState(services, request(videoId, { status: "playing", position: 3, duration: 60 }, "inv_same"));
+    const latest = stateRequest(videoId, { status: "playing", position: 3, duration: 60 }, "inv_same", 1);
+    const first = writeWidgetViewState(services, latest);
     expect(first).toMatchObject({ ok: true, body: { duplicate: false, stateRevision: 1 } });
-    expect(again).toMatchObject({ ok: true, body: { duplicate: true, stateRevision: 1 } });
-    const reused = writeWidgetViewState(services, request(videoId, { status: "paused", position: 4, duration: 60 }, "inv_same"));
+    // An ordinary action moves the revision after the write; the retry answers at the revision the instance is at now.
+    const ordinary = await invokeWidgetAction(services, request(videoId, { status: "paused", position: 5, duration: 60 }));
+    expect(ordinary.ok).toBe(true);
+    const revisionNow = getInstance(services.conductor, videoId)?.revision;
+    const again = writeWidgetViewState(services, latest);
+    expect(again).toMatchObject({
+      ok: true,
+      body: { duplicate: true, revision: revisionNow, stateRevision: 2, state: { status: "paused", position: 5, duration: 60 } },
+    });
+    const reused = writeWidgetViewState(services, { ...latest, input: { status: "paused", position: 4, duration: 60 } });
     expect(reused).toMatchObject({ ok: false, code: "INVOCATION_KEY_REUSED" });
-    expect(liveStateOf(services.conductor, videoId)?.body).toEqual({ status: "playing", position: 3, duration: 60 });
+    expect(liveStateOf(services.conductor, videoId)?.body).toEqual({ status: "paused", position: 5, duration: 60 });
   });
 
-  it("holds the write to the same gate: input, revision, digest and owner", async () => {
+  it("holds the write to the same gate: input, revision, digest, owner and the write sequence", async () => {
     const videoId = await place("canvas.video@1", { videoRef: "video-ref", alt: "A film" });
-    expect(writeWidgetViewState(services, request(videoId, { status: "playing", position: 61, duration: 60 }))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
-    expect(writeWidgetViewState(services, { ...request(videoId, { status: "paused", position: 1, duration: 60 }), expectedRevision: 99 })).toMatchObject({
+    expect(writeWidgetViewState(services, stateRequest(videoId, { status: "playing", position: 61, duration: 60 }))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(writeWidgetViewState(services, { ...stateRequest(videoId, { status: "paused", position: 1, duration: 60 }), expectedRevision: 99 })).toMatchObject({
       ok: false,
       code: "REVISION_MISMATCH",
       status: 409,
     });
-    expect(writeWidgetViewState(services, { ...request(videoId, { status: "paused", position: 1, duration: 60 }), expectedBindingDigest: "sha256:other" })).toMatchObject({
+    expect(writeWidgetViewState(services, { ...stateRequest(videoId, { status: "paused", position: 1, duration: 60 }), expectedBindingDigest: "sha256:other" })).toMatchObject({
       ok: false,
       code: "BINDING_STALE",
     });
-    expect(writeWidgetViewState(services, { ...request(videoId, { status: "paused", position: 1, duration: 60 }), principalId: "prin_someone_else" })).toMatchObject({
+    expect(writeWidgetViewState(services, { ...stateRequest(videoId, { status: "paused", position: 1, duration: 60 }), principalId: "prin_someone_else" })).toMatchObject({
       ok: false,
       code: "NOT_AUTHORIZED",
       status: 403,
+    });
+    // No sequence, a sequence that is not a positive integer, or one far past the node's clock.
+    expect(writeWidgetViewState(services, request(videoId, { status: "paused", position: 1, duration: 60 }))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(writeWidgetViewState(services, stateRequest(videoId, { status: "paused", position: 1, duration: 60 }, undefined, 1.5))).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(writeWidgetViewState(services, stateRequest(videoId, { status: "paused", position: 1, duration: 60 }, undefined, Date.now() + 2 * VIEW_STATE_SEQUENCE_MAX_LEAD_MS))).toMatchObject({
+      ok: false,
+      code: "INVALID_INPUT",
     });
     expect(liveStateOf(services.conductor, videoId)).toBeUndefined();
     expect(invocationRows(videoId)).toBe(0);
@@ -207,9 +230,81 @@ describe("continuous playback through the state-only write", () => {
       createdAt: AT,
     } as never);
     const galleryId = await place("canvas.gallery@1", { imageRefs: ["image_view_state"], alts: ["A leaf"] });
-    const refused = writeWidgetViewState(services, request(galleryId, { selectedIndex: 0 }));
+    const refused = writeWidgetViewState(services, stateRequest(galleryId, { selectedIndex: 0 }));
     expect(refused).toMatchObject({ ok: false, code: "UNSUPPORTED_ACTION" });
     expect(liveStateOf(services.conductor, galleryId)).toBeUndefined();
+  });
+});
+
+describe("the order of a player's writes", () => {
+  it("keeps the leaving write when the seek and the write in flight before it arrive after it", async () => {
+    const videoId = await place("canvas.video@1", { videoRef: "video-ref", alt: "A film" });
+    // Stamped in the order the player made them: a tick in flight, a seek waiting, then the page leaving.
+    const tick = stateRequest(videoId, { status: "playing", position: 100, duration: 600 }, "inv_tick", 1_000);
+    const seek = stateRequest(videoId, { status: "playing", position: 240, duration: 600 }, "inv_seek", 1_001);
+    const leave = stateRequest(videoId, { status: "paused", position: 241, duration: 600 }, "inv_leave", 1_002);
+
+    // The keepalive request reaches the node first; the slow tick and the seek come after it.
+    expect(writeWidgetViewState(services, leave)).toMatchObject({ ok: true, body: { duplicate: false } });
+    expect(writeWidgetViewState(services, tick)).toMatchObject({ ok: true, body: { duplicate: true, stale: true, state: { status: "paused", position: 241 } } });
+    expect(writeWidgetViewState(services, seek)).toMatchObject({ ok: true, body: { duplicate: true, stale: true, state: { status: "paused", position: 241 } } });
+    expect(liveStateOf(services.conductor, videoId)).toMatchObject({ revision: 1, body: { status: "paused", position: 241, duration: 600 } });
+  });
+
+  it("does not roll the state back for a replayed older id or an older sequence under a new id", async () => {
+    const videoId = await place("canvas.video@1", { videoRef: "video-ref", alt: "A film" });
+    const older = stateRequest(videoId, { status: "playing", position: 30, duration: 600 }, "inv_older", 2_000);
+    writeWidgetViewState(services, older);
+    writeWidgetViewState(services, stateRequest(videoId, { status: "paused", position: 90, duration: 600 }, "inv_newer", 2_001));
+
+    expect(writeWidgetViewState(services, older)).toMatchObject({ ok: true, body: { duplicate: true, stale: true, stateRevision: 2 } });
+    expect(writeWidgetViewState(services, stateRequest(videoId, { status: "playing", position: 10, duration: 600 }, "inv_other", 2_001))).toMatchObject({
+      ok: true,
+      body: { stale: true },
+    });
+    expect(liveStateOf(services.conductor, videoId)).toMatchObject({ revision: 2, body: { status: "paused", position: 90 } });
+  });
+});
+
+describe("the node's state-only record and other actions' ledger rows", () => {
+  it("leaves an effectful row stored under the player's record key as it was, and writes nothing", async () => {
+    const videoId = await place("canvas.video@1", { videoRef: "video-ref", alt: "A film" });
+    const bindingId = getInstance(services.conductor, videoId)?.actionBindingIds[0] ?? "";
+    const key = viewStateRecordKey(bindingId);
+    // A row the reserved prefix now keeps out, written as an effectful invoke action records itself.
+    const effectful = JSON.stringify({ digest: "sha256:effect", result: { kind: "approval-required", approvalId: "appr_1" } });
+    services.runtime.db
+      .prepare("INSERT INTO action_invocations (invocation_id, action_binding_id, instance_id, outcome, recorded_at) VALUES (?, ?, ?, ?, ?)")
+      .run(key, "act_effect", videoId, effectful, AT);
+
+    const write = writeWidgetViewState(services, stateRequest(videoId, { status: "paused", position: 12, duration: 60 }));
+    expect(write).toMatchObject({ ok: false, code: "INVOCATION_KEY_REUSED", status: 409 });
+    const row = services.runtime.db.prepare("SELECT action_binding_id, outcome FROM action_invocations WHERE invocation_id = ?").get(key) as {
+      action_binding_id: string;
+      outcome: string;
+    };
+    expect(row).toEqual({ action_binding_id: "act_effect", outcome: effectful });
+    expect(liveStateOf(services.conductor, videoId)).toBeUndefined();
+  });
+
+  it("refuses a client id in the node's record space on the ordinary and the state-only path", async () => {
+    const videoId = await place("canvas.video@1", { videoRef: "video-ref", alt: "A film" });
+    const bindingId = getInstance(services.conductor, videoId)?.actionBindingIds[0] ?? "";
+    const reserved = viewStateRecordKey(bindingId);
+    expect(await invokeWidgetAction(services, request(videoId, { status: "paused", position: 1, duration: 60 }, reserved))).toMatchObject({
+      ok: false,
+      code: "INVALID_INPUT",
+      status: 400,
+    });
+    expect(writeWidgetViewState(services, stateRequest(videoId, { status: "paused", position: 1, duration: 60 }, reserved))).toMatchObject({
+      ok: false,
+      code: "INVALID_INPUT",
+    });
+    const target = request(videoId, { status: "paused", position: 1, duration: 60 }, reserved);
+    const response = await post(videoId, { ...target, conversationId: undefined, principalId: undefined });
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(response.body)).toContain("INVALID_SCHEMA");
+    expect(invocationRows(videoId)).toBe(0);
   });
 });
 
@@ -217,7 +312,7 @@ describe("the action route's view-state variant", () => {
   it("answers with the state alone, no timeline, at the revision the page holds", async () => {
     const videoId = await place("canvas.video@1", { videoRef: "video-ref", alt: "A film" });
     const target = request(videoId, { status: "paused", position: 12, duration: 60 });
-    const response = await post(videoId, { ...target, conversationId: undefined, principalId: undefined, variant: "view-state" });
+    const response = await post(videoId, { ...target, conversationId: undefined, principalId: undefined, variant: "view-state", sequence: 1 });
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       variant: "view-state",
@@ -230,12 +325,37 @@ describe("the action route's view-state variant", () => {
     expect(counts.timelines).toBe(0);
   });
 
-  it("refuses a variant it does not know rather than reading it as the ordinary call", async () => {
+  it("changes what the next turn reads about the player", async () => {
     const videoId = await place("canvas.video@1", { videoRef: "video-ref", alt: "A film" });
-    const target = request(videoId, { status: "paused", position: 12, duration: 60 });
-    const response = await post(videoId, { ...target, conversationId: undefined, principalId: undefined, variant: "light" });
-    expect(response.status).toBe(400);
-    expect(JSON.stringify(response.body)).toContain("INVALID_SCHEMA");
+    const send = (position: number, at: number) =>
+      post(videoId, {
+        ...request(videoId, { status: "paused", position, duration: 60 }),
+        conversationId: undefined,
+        principalId: undefined,
+        variant: "view-state",
+        sequence: at,
+      });
+    const playerIn = () => conversationUiContext(services.conductor, CONVERSATION).find((entry) => entry.doc.instanceId === videoId)?.doc;
+
+    expect((await send(12, 1)).status).toBe(200);
+    expect(playerIn()?.values).toMatchObject({ status: "paused", position: 12 });
+    expect((await send(40, 2)).status).toBe(200);
+    expect(playerIn()?.values).toMatchObject({ status: "paused", position: 40 });
+  });
+
+  it("refuses a body outside the contract: an unknown variant, a variant without its sequence, a sequence without the variant", async () => {
+    const videoId = await place("canvas.video@1", { videoRef: "video-ref", alt: "A film" });
+    const target = { ...request(videoId, { status: "paused", position: 12, duration: 60 }), conversationId: undefined, principalId: undefined };
+    for (const body of [
+      { ...target, variant: "light", sequence: 1 },
+      { ...target, variant: "view-state" },
+      { ...target, sequence: 1 },
+      { ...target, variant: "view-state", sequence: 1, extra: true },
+    ]) {
+      const response = await post(videoId, body);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+      expect(JSON.stringify(response.body)).toContain("INVALID_SCHEMA");
+    }
     expect(liveStateOf(services.conductor, videoId)).toBeUndefined();
   });
 });

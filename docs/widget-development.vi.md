@@ -1256,15 +1256,25 @@ chúng bằng biến thể chỉ-ghi-state của lời gọi action (`variant: "
 binding, revision, digest của binding, input — lưu state có giới hạn, và chỉ trả về
 `{ variant, duplicate, instanceId, revision, stateRevision, state }`. Nó không tăng revision của instance, không đánh dấu
 snapshot lịch sử là đã cũ, không dựng lại timeline, và trang không render lại gì vì nó. Binding giữ một bản ghi
-invocation, là lần ghi mới nhất, bị thay bởi mỗi lần ghi sau: thử lại đúng lần ghi đó thì nhận lại kết quả của nó, dùng lại
-id đó với input khác bị từ chối bằng `INVOCATION_KEY_REUSED`, và một giờ phát chỉ để lại một dòng trong
-`action_invocations` thay vì 1.200. Biến thể này chỉ dành cho state phát của `canvas.video@1` và `canvas.audio@1`: mọi
+invocation dưới khoá riêng của node, `view-state:<bindingId>`, bị thay bởi mỗi lần ghi sau, và một giờ phát chỉ để lại
+một dòng trong `action_invocations` thay vì 1.200. Không id invocation nào của client được bắt đầu bằng `view-state:` trên
+bất kỳ đường action nào (route trả `400 INVALID_SCHEMA`), và lần ghi chỉ thay bản ghi do chính nó viết, nên không thể ghi
+đè dòng ledger của action khác. Mỗi lần ghi còn kèm `sequence` của player, được trang đóng dấu ngay khi player tạo lần
+ghi, bằng `max(thời điểm hiện tại tính bằng mili giây, giá trị trước + 1)`, nên nó vẫn tăng qua các lần tải lại trang.
+Bản ghi giữ sequence mới nhất đã nhận, và lần ghi có sequence không mới hơn thì không ghi gì: thử lại lần ghi mới nhất,
+một lần ghi cũ hơn tới muộn, hay một id cũ bị phát lại đều được trả `duplicate: true` (kèm `stale: true` với lần ghi cũ
+hơn) cùng state và revision node đang giữ, còn id dùng lại với input khác bị từ chối bằng `INVOCATION_KEY_REUSED`. Một
+sequence vượt đồng hồ của node quá một ngày bị từ chối, để một đồng hồ hỏng không thể đóng băng state của player. Biến
+thể này chỉ dành cho state phát của `canvas.video@1` và `canvas.audio@1`: mọi
 binding khác, kể cả lựa chọn trong gallery, bị từ chối bằng `UNSUPPORTED_ACTION`, một variant lạ bị từ chối bằng
 `400 INVALID_SCHEMA`, còn các action có tác động giữ nguyên ledger, provenance và bản ghi của chúng. Một frame cô lập không
 gửi được nó: cầu nối của frame dựng lời gọi thường, và state riêng của frame đi qua `…/state`. Khi trang bị ẩn, player
-ghi vị trí hiện tại; khi rời trang hoặc player bị gỡ, nó tự ghi trạng thái dừng tại chỗ đã dừng. Lần ghi khi rời trang
-được gửi ngay với `keepalive`, không phải chờ sau một lần ghi đang chạy; lần ghi chỉ-state không làm đổi revision, nên nó
-được kiểm tra theo revision trang đang giữ. Mọi lần ghi này đều là best-effort: trang đang đóng vẫn có thể không gửi xong
+ghi vị trí hiện tại; khi rời trang hoặc player bị gỡ, nó tự ghi trạng thái dừng tại chỗ đã dừng. Trang giữ mỗi player
+một lần ghi chỉ-state đang chạy và chỉ gửi lần ghi chờ mới nhất
+([state-only-writes.ts](../packages/conversation-client/src/state-only-writes.ts)). Lần ghi khi rời trang được gửi ngay
+với `keepalive`, không phải chờ sau một lần ghi đang chạy, và nó bỏ lần ghi đang chờ, nên không gì cũ hơn được gửi sau
+nó; nếu lần ghi đang chạy tới node sau nó, sequence cũ hơn của lần đó không ghi gì. Lần ghi chỉ-state không làm đổi
+revision, nên nó được kiểm tra theo revision trang đang giữ. Mọi lần ghi này đều là best-effort: trang đang đóng vẫn có thể không gửi xong
 request. Vì vậy node
 cũng thôi tin một "playing" đã lưu khi nó cũ hơn `MEDIA_PLAYING_FRESH_MS` (hai khoảng ghi cộng hai giây dư, tính từ
 `updated_at` của dòng state): khi đó semantic document báo video dừng ở vị trí đã lưu cuối cùng. Một lần ghi playback bị

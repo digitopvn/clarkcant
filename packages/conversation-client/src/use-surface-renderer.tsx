@@ -35,6 +35,7 @@ import {
 import { actionRefusalMessage, actionResultMessage, bindingUnavailableMessage } from "./action-messages.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { type ArtifactFileHost, type MapTileHost, resolveRenderer, toRendererDataset } from "./renderers.tsx";
+import { createStateOnlyWriter, type StateOnlyWriter } from "./state-only-writes.ts";
 import { tableExportRequestFrom } from "./table-model.ts";
 import { desktopDialogLabels } from "./artifact-messages.ts";
 import { downloadBlob, saveForPerson } from "./download.ts";
@@ -139,16 +140,6 @@ export interface ViewQueue {
   inFlight: boolean;
   revision?: number;
   queued?: { action?: TimelineAction; view: Record<string, unknown>; onSettled?: (timeline: Timeline) => void }[];
-}
-
-/** One state-only write of a player's playback state: where it goes, the revision it is checked at, what it says. */
-interface StateOnlyWrite {
-  conversation: string;
-  instanceId: string;
-  revision: number;
-  action: TimelineAction;
-  view: Record<string, unknown>;
-  refused: MessageKey;
 }
 
 /**
@@ -396,60 +387,34 @@ export function useSurfaceRenderer({
   );
 
   /*
-   * A player's playback state goes as the state-only write: the node stores it and answers with the state alone, so
-   * nothing in the conversation is rebuilt or re-rendered for it, and the instance revision it is checked at does not
-   * move. One write per player is in flight; a change made meanwhile waits, and only the latest waiting one is sent. A
-   * write made as the page goes away is sent at once with `keepalive`: it does not depend on the one in flight. What the
-   * node answered is kept here, so a player drawn again later starts from it rather than from an older timeline; a
-   * timeline the node sends with a newer state wins.
+   * A player's playback state goes as the state-only write (`createStateOnlyWriter`): the node stores it and answers
+   * with the state alone, so nothing in the conversation is rebuilt or re-rendered for it. The writer is made once for
+   * the page, so its queues and its players' write sequences outlive a render; what it calls is read at the call.
    */
-  const stateQueues = useRef(new Map<string, { inFlight: boolean; waiting?: StateOnlyWrite }>());
-  const heldStates = useRef(new Map<string, { stateRevision: number; state: Record<string, unknown> }>());
-  const sendStateOnly = useCallback(
-    (write: StateOnlyWrite, leaving: boolean): void => {
-      const { conversation, instanceId } = write;
-      const queue = stateQueues.current.get(instanceId);
-      if (queue?.inFlight === true && !leaving) {
-        stateQueues.current.set(instanceId, { inFlight: true, waiting: write });
-        return;
-      }
-      if (!leaving) {
-        stateQueues.current.set(instanceId, { inFlight: true });
-        clearViewRefusal(instanceId);
-      }
-      void client
-        .writeViewState(
-          conversation,
-          instanceId,
+  const writerDeps = useRef({ applyTimeline, clearViewRefusal, client, refuseView });
+  writerDeps.current = { applyTimeline, clearViewRefusal, client, refuseView };
+  const [stateWriter] = useState<StateOnlyWriter>(() =>
+    createStateOnlyWriter({
+      send: (write, invocationId, { keepalive }) =>
+        writerDeps.current.client.writeViewState(
+          write.conversation,
+          write.instanceId,
           {
             actionBindingId: write.action.actionBindingId,
             expectedRevision: write.revision,
             expectedBindingDigest: write.action.bindingDigest,
             input: write.view,
-            invocationId: newInvocationId(),
+            invocationId,
+            sequence: write.sequence,
           },
-          leaving ? { keepalive: true } : {},
-        )
-        .then((result) => {
-          // A node from before the variant took it as an ordinary action and moved the revision: its timeline says so.
-          if (result.timeline !== undefined) applyTimeline(result.timeline);
-          const held = heldStates.current.get(instanceId);
-          if (held === undefined || held.stateRevision < result.stateRevision) {
-            heldStates.current.set(instanceId, { stateRevision: result.stateRevision, state: result.state });
-          }
-          if (leaving) return;
-          const next = stateQueues.current.get(instanceId)?.waiting;
-          stateQueues.current.set(instanceId, { inFlight: false });
-          if (next !== undefined) sendStateOnly({ ...next, revision: result.revision }, false);
-        })
-        .catch((cause: unknown) => {
-          // Best-effort on a page that is unloading; the node stops believing an old "playing" on its own.
-          if (leaving) return;
-          stateQueues.current.set(instanceId, { inFlight: false });
-          refuseView(conversation, instanceId, undefined, cause, write.refused);
-        });
-    },
-    [applyTimeline, clearViewRefusal, client, refuseView],
+          keepalive ? { keepalive: true } : {},
+        ),
+      newInvocationId,
+      onSending: (instanceId) => writerDeps.current.clearViewRefusal(instanceId),
+      // A node from before the variant took it as an ordinary action and moved the revision: its timeline says so.
+      onTimeline: (timeline) => writerDeps.current.applyTimeline(timeline),
+      onRefused: (write, cause) => writerDeps.current.refuseView(write.conversation, write.instanceId, undefined, cause, write.refused),
+    }),
   );
 
   const [actionRuns, setActionRuns] = useState<Record<string, ActionRun>>({});
@@ -643,8 +608,7 @@ export function useSurfaceRenderer({
             : viewOperation === undefined ? [] : [viewOperation];
       const viewRefusal = viewRefusals[instance.instanceId];
       // A player's own state-only writes are answered without a timeline, so the newest of the two is the node's view.
-      const held = heldStates.current.get(instance.instanceId);
-      const nodeState = held !== undefined && held.stateRevision > (instance.stateRevision ?? 0) ? held.state : instance.state;
+      const nodeState = stateWriter.nodeState(instance.instanceId, instance.stateRevision, instance.state);
       const widgetState: Record<string, unknown> | undefined =
         viewOperations.length > 0
         ? {
@@ -730,7 +694,7 @@ export function useSurfaceRenderer({
                             ? { ...payload, external: boundAction !== undefined }
                             : payload;
                           if (options?.stateOnly === true && viewAction === MEDIA_VIEW_OPERATION) {
-                            sendStateOnly(
+                            stateWriter.send(
                               {
                                 conversation: conversationId,
                                 instanceId: instance.instanceId,
@@ -845,10 +809,10 @@ export function useSurfaceRenderer({
       liveTrigger,
       mediaUrls,
       runAction,
-      sendStateOnly,
       sendView,
       setError,
       snapshots,
+      stateWriter,
       t,
       timeline,
       viewRefusals,

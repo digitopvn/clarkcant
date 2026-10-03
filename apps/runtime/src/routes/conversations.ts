@@ -17,6 +17,7 @@ import {
   type ResourceRequest,
   COMPOSER_SURFACE_HEADER,
   VIEW_STATE_WRITE_VARIANT,
+  actionInvocationSchema,
   capabilityRefSchema,
   conversationDeleteRequestSchema,
   commandEnvelopeSchema,
@@ -1478,24 +1479,22 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       return fail(400, "INSTANCE_MISMATCH", "the body names a different instance than the path");
     }
 
-    // A typed variant of this call, not a second route: absent is the ordinary invocation, `view-state` the state-only
-    // write of a player's playback state. Anything else is refused rather than read as the ordinary call.
-    const variant = parsed.value.variant;
-    if (variant !== undefined && variant !== VIEW_STATE_WRITE_VARIANT) {
-      return fail(400, "INVALID_SCHEMA", `the action call's variant must be absent or "${VIEW_STATE_WRITE_VARIANT}"`);
+    // The body is the contract's `actionInvocationSchema`, the path's instance filling in an absent `instanceId`. Its
+    // typed `variant` makes this one call, not a second route: absent is the ordinary invocation, `view-state` the
+    // state-only write of a player's playback state with its write `sequence`. Anything else is refused rather than read
+    // as the ordinary call, and so is an invocation id in the node's own record space.
+    const body = actionInvocationSchema.safeParse({ ...parsed.value, instanceId });
+    if (!body.success) {
+      return fail(400, "INVALID_SCHEMA", "the action call does not match the contract", {
+        issues: body.error.issues.slice(0, 8).map((issue) => `${issue.path.join(".")}: ${issue.message}`),
+      });
     }
+    const { variant, sequence, ...fields } = body.data;
     const invocation = {
+      ...fields,
       conversationId,
       principalId: runtime.identity.ownerPrincipalId,
-      instanceId,
-      actionBindingId: typeof parsed.value.actionBindingId === "string" ? parsed.value.actionBindingId : "",
-      expectedRevision: typeof parsed.value.expectedRevision === "number" ? parsed.value.expectedRevision : Number.NaN,
-      expectedBindingDigest: typeof parsed.value.expectedBindingDigest === "string" ? parsed.value.expectedBindingDigest : "",
-      input:
-        typeof parsed.value.input === "object" && parsed.value.input !== null && !Array.isArray(parsed.value.input)
-          ? (parsed.value.input as Record<string, unknown>)
-          : {},
-      invocationId: typeof parsed.value.invocationId === "string" ? parsed.value.invocationId : "",
+      ...(sequence === undefined ? {} : { sequence }),
     };
     const result = variant === VIEW_STATE_WRITE_VARIANT ? writeWidgetViewState(services, invocation) : await invokeWidgetAction(services, invocation);
 

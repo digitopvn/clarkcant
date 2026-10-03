@@ -23,6 +23,7 @@ import {
   readExecutionPolicy,
   readWidgetStateRow,
   recordInvokeAction,
+  reservedInvocationIdRefusal,
   settleInvokeAction,
   writeViewState,
 } from "@clarkcant/core";
@@ -136,6 +137,8 @@ export interface WidgetActionRequest {
   expectedBindingDigest: string;
   input: Record<string, unknown>;
   invocationId: string;
+  /** A player's write sequence, carried only by the state-only write (`writeWidgetViewState`). */
+  sequence?: number;
 }
 
 /**
@@ -901,6 +904,9 @@ export async function invokeWidgetAction(
       message: "an action invocation needs the expectedRevision the client saw",
     };
   }
+  // The node's own state-only records share the ledger's key space, so no caller may name one, whatever the action.
+  const reserved = reservedInvocationIdRefusal(request.invocationId);
+  if (reserved !== undefined) return refusal(reserved.code, reserved.message);
 
   // The binding decides what the action is; the request only names it. An unknown binding falls through to the view path,
   // whose gate refuses it with the reason.
@@ -983,6 +989,8 @@ export function writeWidgetViewState(
     body: {
       variant: VIEW_STATE_WRITE_VARIANT,
       duplicate: outcome.duplicate,
+      // A write older than the one the node holds wrote nothing; the state below is the node's current one.
+      ...(outcome.stale === true ? { stale: true } : {}),
       instanceId: outcome.instanceId,
       revision: outcome.revision,
       stateRevision: outcome.stateRevision,

@@ -201,9 +201,10 @@ describe("the state-only write a player sends", () => {
       expectedBindingDigest: "sha256:x",
       input: { status: "playing", position: 3, duration: 60 },
       invocationId: "inv_1",
+      sequence: 1_000,
     };
     const result = await client.writeViewState("conv_1", "winst_1", invocation);
-    await client.writeViewState("conv_1", "winst_1", { ...invocation, invocationId: "inv_2" }, { keepalive: true });
+    await client.writeViewState("conv_1", "winst_1", { ...invocation, invocationId: "inv_2", sequence: 1_001 }, { keepalive: true });
     expect(sent[0]?.url).toMatch(/\/conversations\/conv_1\/widgets\/winst_1\/actions$/u);
     expect(sent[0]?.body).toEqual({ instanceId: "winst_1", ...invocation, variant: "view-state" });
     expect([sent[0]?.keepalive, sent[1]?.keepalive]).toEqual([undefined, true]);

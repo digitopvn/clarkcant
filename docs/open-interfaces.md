@@ -518,12 +518,19 @@ decided in time is settled as expired by the node's periodic sweep, which leaves
 installed. Every outcome (`asked`, `installed`, `denied`, `expired`, `refused` or `failed`, with its code) is recorded
 as a `package.install-approval` event.
 
-The widget action call, `POST /conversations/{id}/widgets/{instanceId}/actions`, takes an optional `variant`
-(`actionInvocationSchema` in `packages/contracts/src/widgets.ts`). Absent is the ordinary invocation, answered with the
-outcome and the conversation timeline. `"view-state"` is the state-only write of a host-held player's playback state
-(`canvas.video@1`, `canvas.audio@1`): the same owner, binding, revision, digest and input checks, then
+The widget action call, `POST /conversations/{id}/widgets/{instanceId}/actions`, takes a body the route validates with
+`actionInvocationSchema` (`packages/contracts/src/widgets.ts`); anything outside it is `400 INVALID_SCHEMA`, and so is
+an `invocationId` starting with `view-state:`, which is reserved for the node's own records. An optional `variant`
+picks the call. Absent is the ordinary invocation, answered with the outcome and the conversation timeline.
+`"view-state"` is the state-only write of a host-held player's playback state (`canvas.video@1`, `canvas.audio@1`),
+and it carries a required `sequence`: a positive integer that grows with every write the player makes, across page
+loads, at most a day past the node's clock (the host sends `max(now in milliseconds, previous + 1)`). It takes the same
+owner, binding, revision, digest and input checks, then answers
 `200 { variant, duplicate, instanceId, revision, stateRevision, state }` with no timeline, an unmoved instance revision
-and one invocation record per binding. Any other binding is `400 UNSUPPORTED_ACTION`, and any other `variant` value is
+and one invocation record per binding. A write whose `sequence` is not newer than the last one accepted, including a
+retry or a replayed older id, writes nothing and is answered `duplicate: true` (with `stale: true` when it was an older
+write) with the state and revision the node holds now. A `sequence` without the variant, or the variant without one, is
+`400 INVALID_SCHEMA`; any other binding is `400 UNSUPPORTED_ACTION`, and any other `variant` value is
 `400 INVALID_SCHEMA`. See [widget development §8.11](widget-development.md#811-media-widgets-and-semantic-state).
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet

@@ -468,6 +468,10 @@ test("a paused local video is read back by inspect_ui and restored without playi
   expect(writesWhilePlaying).toBeLessThanOrEqual(3);
   // Every playback write is the action call's state-only variant, answered without a timeline at an unmoved revision.
   for (const write of writes) expect(JSON.parse(write)).toMatchObject({ variant: "view-state" });
+  // Each carries the player's write sequence, growing in the order the player made them.
+  const sequences = writes.map((write) => (JSON.parse(write) as { sequence: number }).sequence);
+  expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
+  expect(new Set(sequences).size).toBe(sequences.length);
   await expect.poll(() => answers.length).toBeGreaterThanOrEqual(writesWhilePlaying);
   const answered = await Promise.all(answers);
   for (const answer of answered) {

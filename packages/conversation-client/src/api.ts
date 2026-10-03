@@ -290,6 +290,8 @@ export interface ActionInvocationResult {
 export interface ViewStateWriteResult {
   variant?: "view-state";
   duplicate: boolean;
+  /** The write's sequence was not newer than the one the node holds, so nothing was written; state is the node's. */
+  stale?: true;
   instanceId: string;
   revision: number;
   stateRevision: number;
@@ -1484,6 +1486,8 @@ export class GatewayClient {
       expectedBindingDigest: string;
       input: Record<string, unknown>;
       invocationId: string;
+      /** The player's write sequence: the node writes nothing for one that is not newer than the last it accepted. */
+      sequence: number;
     },
     options: { keepalive?: boolean } = {},
   ): Promise<ViewStateWriteResult> {

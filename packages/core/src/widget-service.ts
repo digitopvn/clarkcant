@@ -67,6 +67,9 @@ import {
   BOARD_RESOLVE_OPERATION,
   BOARD_ACKNOWLEDGE_OPERATION,
   MEDIA_PLAYER_DEFINITION_IDS,
+  VIEW_STATE_RECORD_PREFIX,
+  VIEW_STATE_SEQUENCE_MAX_LEAD_MS,
+  isReservedInvocationId,
   MEDIA_STATE_VERSION,
   MEDIA_VIEW_OPERATION,
   MAP_ID,
@@ -1265,8 +1268,17 @@ export type MiniAppActionOutcome =
       stateRevision: number;
       state: Record<string, unknown>;
       pinId?: string;
+      /** A state-only write whose sequence was not newer than the one the node holds: nothing was written. */
+      stale?: true;
     }
   | { ok: false; code: MiniAppActionCode; message: string; currentRevision?: number };
+
+/** The refusal of a client-chosen invocation id in the node's own record space, the same on every action path. */
+export function reservedInvocationIdRefusal(invocationId: string): Extract<MiniAppActionOutcome, { ok: false }> | undefined {
+  return isReservedInvocationId(invocationId)
+    ? { ok: false, code: "INVALID_INPUT", message: `invocation ids starting with "${VIEW_STATE_RECORD_PREFIX}" are reserved for the node` }
+    : undefined;
+}
 
 interface ActionRecord {
   digest: string;
@@ -1349,6 +1361,8 @@ function ownedBinding(
  * writes would leave a surface whose revision says one thing and whose state says another.
  */
 export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequest): MiniAppActionOutcome {
+  const reserved = reservedInvocationIdRefusal(request.invocationId);
+  if (reserved !== undefined) return reserved;
   const owned = ownedBinding(deps, request);
   if (!owned.ok) return owned;
   const { instance, binding } = owned;
@@ -1643,26 +1657,41 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
 
 /** Where a binding's latest state-only write is recorded: one row per binding, replaced by the next write. */
 export function viewStateRecordKey(actionBindingId: string): string {
-  return `view-state:${actionBindingId}`;
+  return `${VIEW_STATE_RECORD_PREFIX}${actionBindingId}`;
 }
 
 interface ViewStateRecord {
   digest: string;
   invocationId: string;
   stateOnly: true;
+  /** The newest write sequence accepted for this binding; a write that is not newer changes nothing. */
+  sequence: number;
   result: { revision: number; stateRevision: number; state: Record<string, unknown> };
 }
 
-function readViewStateRecord(db: Database, actionBindingId: string): ViewStateRecord | undefined {
+/**
+ * The binding's state-only record: `absent`, the record, or `foreign` when the key holds a row this path did not write.
+ * Client ids may not use the prefix, so `foreign` is a row from before that rule, and it is never replaced.
+ */
+function readViewStateRecord(db: Database, actionBindingId: string): { kind: "absent" } | { kind: "foreign" } | { kind: "record"; record: ViewStateRecord } {
   const row = oneRow<{ outcome: string }>(db, "SELECT outcome FROM action_invocations WHERE invocation_id = ?", viewStateRecordKey(actionBindingId));
-  if (row === undefined) return undefined;
+  if (row === undefined) return { kind: "absent" };
   try {
-    const parsed = JSON.parse(row.outcome) as ViewStateRecord;
-    return parsed?.stateOnly === true && typeof parsed.invocationId === "string" && typeof parsed.digest === "string" ? parsed : undefined;
+    const parsed = JSON.parse(row.outcome) as Partial<ViewStateRecord> | null;
+    if (parsed?.stateOnly !== true || typeof parsed.invocationId !== "string" || typeof parsed.digest !== "string" || parsed.result === undefined) {
+      return { kind: "foreign" };
+    }
+    return { kind: "record", record: { ...(parsed as ViewStateRecord), sequence: typeof parsed.sequence === "number" ? parsed.sequence : 0 } };
   } catch {
-    return undefined;
+    return { kind: "foreign" };
   }
 }
+
+const FOREIGN_RECORD_REFUSAL = {
+  ok: false,
+  code: "INVOCATION_KEY_REUSED",
+  message: "this player's state-only record is held by another action's invocation; nothing was written",
+} as const satisfies MiniAppActionOutcome;
 
 /**
  * Write a host-held player's playback state, and nothing else.
@@ -1675,14 +1704,21 @@ function readViewStateRecord(db: Database, actionBindingId: string): ViewStateRe
  *
  * - the instance revision does not move, so the history snapshots of the widget stay current and the page's next write
  *   is made at the revision it already holds;
- * - the binding keeps one invocation record, the latest, replaced by each write: a retry of that write is answered
- *   with its outcome, a reused id with different input is refused, and an hour of play leaves one row, not 1,200.
+ * - the binding keeps one invocation record, the latest, replaced by each write, and an hour of play leaves one row, not
+ *   1,200. The record is the node's own (`view-state:<bindingId>`): client ids may not use that prefix, and the upsert
+ *   only ever replaces a record this path wrote, so it cannot overwrite another action's ledger row;
+ * - each write carries the player's write sequence, and the record keeps the newest one accepted. A write whose
+ *   sequence is not newer — a retry of the latest write, an older write that arrived late, a replayed older id — writes
+ *   nothing and is answered with the state the node holds now, at the current revision. A reused id with different
+ *   input is refused.
  *
  * Only the players take it: what they store is semantic state that no other widget, history entry or service reads as
  * an effect. Every other write, and every effectful action, goes through `invokeMiniAppAction` or its own path with its
  * ledger and records unchanged.
  */
 export function writeViewState(deps: WidgetDeps, request: MiniAppActionRequest): MiniAppActionOutcome {
+  const reserved = reservedInvocationIdRefusal(request.invocationId);
+  if (reserved !== undefined) return reserved;
   const owned = ownedBinding(deps, request);
   if (!owned.ok) return owned;
   const { instance, binding } = owned;
@@ -1697,9 +1733,37 @@ export function writeViewState(deps: WidgetDeps, request: MiniAppActionRequest):
       message: "only a host-held player's playback state is written state-only; send this as an ordinary action",
     };
   }
+  const sequence = request.sequence;
+  const nowMs = Date.parse(deps.now());
+  if (
+    sequence === undefined ||
+    !Number.isSafeInteger(sequence) ||
+    sequence < 1 ||
+    (Number.isFinite(nowMs) && sequence > nowMs + VIEW_STATE_SEQUENCE_MAX_LEAD_MS)
+  ) {
+    return {
+      ok: false,
+      code: "INVALID_INPUT",
+      message: "a state-only write carries a positive write sequence no more than a day past the node's clock",
+    };
+  }
 
-  const digest = invocationDigest(request);
-  const prior = readViewStateRecord(deps.db, binding.actionBindingId);
+  const stored = readViewStateRecord(deps.db, binding.actionBindingId);
+  if (stored.kind === "foreign") return FOREIGN_RECORD_REFUSAL;
+  const prior = stored.kind === "record" ? stored.record : undefined;
+  const digest = payloadDigest(asJsonValue({ invocation: invocationDigest(request), sequence }));
+  // What the node holds now, at the revision the instance is at now: the answer to a write that changes nothing.
+  const current = (): Extract<MiniAppActionOutcome, { ok: true }> => {
+    const row = readWidgetStateRow(deps.db, instance.instanceId);
+    return {
+      ok: true,
+      duplicate: true,
+      instanceId: instance.instanceId,
+      revision: instance.revision,
+      stateRevision: row?.revision ?? prior?.result.stateRevision ?? 0,
+      state: row?.body ?? prior?.result.state ?? {},
+    };
+  };
   if (prior !== undefined && prior.invocationId === request.invocationId) {
     if (prior.digest !== digest) {
       return {
@@ -1708,11 +1772,13 @@ export function writeViewState(deps: WidgetDeps, request: MiniAppActionRequest):
         message: "the same invocation id was reused with different input; use a new id for a new operation",
       };
     }
-    return { ok: true, duplicate: true, instanceId: instance.instanceId, ...prior.result };
+    return current();
   }
 
   const validation = mediaViewPatch(instance, request.input);
   if (!validation.ok) return { ok: false, code: "INVALID_INPUT", message: validation.message };
+
+  if (prior !== undefined && sequence <= prior.sequence) return { ...current(), stale: true };
 
   const precheck = precheckInvocation(deps, request);
   if (!precheck.ok) {
@@ -1726,10 +1792,24 @@ export function writeViewState(deps: WidgetDeps, request: MiniAppActionRequest):
 
   return transaction(deps.db, (): MiniAppActionOutcome => {
     const at = deps.now();
-    const current = readWidgetStateRow(deps.db, instance.instanceId);
+    const currentRow = readWidgetStateRow(deps.db, instance.instanceId);
     const state = validation.patch;
-    const stateRevision = (current?.revision ?? 0) + 1;
-    if (current === undefined) {
+    const stateRevision = (currentRow?.revision ?? 0) + 1;
+    const result: ViewStateRecord["result"] = { revision: instance.revision, stateRevision, state };
+    const record: ViewStateRecord = { digest, invocationId: request.invocationId, stateOnly: true, sequence, result };
+    // The record first: it replaces only a row this path wrote, so a key held by anything else writes nothing at all.
+    const recorded = deps.db
+      .prepare(
+        `INSERT INTO action_invocations (invocation_id, action_binding_id, instance_id, outcome, recorded_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(invocation_id) DO UPDATE SET
+           action_binding_id = excluded.action_binding_id, instance_id = excluded.instance_id,
+           outcome = excluded.outcome, recorded_at = excluded.recorded_at
+         WHERE json_extract(action_invocations.outcome, '$.stateOnly') = 1`,
+      )
+      .run(viewStateRecordKey(binding.actionBindingId), binding.actionBindingId, instance.instanceId, toJson(record), at);
+    if (Number(recorded.changes) === 0) return FOREIGN_RECORD_REFUSAL;
+    if (currentRow === undefined) {
       deps.db
         .prepare(
           `INSERT INTO widget_state
@@ -1742,17 +1822,6 @@ export function writeViewState(deps: WidgetDeps, request: MiniAppActionRequest):
         .prepare("UPDATE widget_state SET state_version = ?, state_revision = ?, document = ?, updated_at = ? WHERE instance_id = ?")
         .run(MEDIA_STATE_VERSION, stateRevision, toJson(state), at, instance.instanceId);
     }
-    const result: ViewStateRecord["result"] = { revision: instance.revision, stateRevision, state };
-    const record: ViewStateRecord = { digest, invocationId: request.invocationId, stateOnly: true, result };
-    deps.db
-      .prepare(
-        `INSERT INTO action_invocations (invocation_id, action_binding_id, instance_id, outcome, recorded_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(invocation_id) DO UPDATE SET
-           action_binding_id = excluded.action_binding_id, instance_id = excluded.instance_id,
-           outcome = excluded.outcome, recorded_at = excluded.recorded_at`,
-      )
-      .run(viewStateRecordKey(binding.actionBindingId), binding.actionBindingId, instance.instanceId, toJson(record), at);
     return { ok: true, duplicate: false, instanceId: instance.instanceId, ...result };
   });
 }
@@ -1869,6 +1938,8 @@ export function checkBoundAction(
   request: MiniAppActionRequest,
   kind: ActionProposal["kind"],
 ): BoundActionCheck {
+  const reserved = reservedInvocationIdRefusal(request.invocationId);
+  if (reserved !== undefined) return reserved;
   const instance = getInstance(deps, request.instanceId);
   if (instance === undefined) {
     return { ok: false, code: "INSTANCE_UNKNOWN", message: `widget instance ${request.instanceId} does not exist` };
