@@ -85,13 +85,16 @@ describe("the artifact calls a frame's host makes", () => {
       sha256: `sha256:${"a".repeat(64)}`,
       blobRef: `${"a".repeat(32)}.txt`,
     };
-    const { client } = clientAnswering(() =>
+    const { client, calls } = clientAnswering(() =>
       json(201, { artifactRef: { ...REF, kind: "finalized", digest: `sha256:${"a".repeat(64)}` }, attachmentRef }),
     );
 
     const attached = await client.attachArtifact("conv_1", "winst_1", "art_one");
+    // A widget's proposed name travels to the node as it was proposed: the node is what makes it safe.
+    await client.attachArtifact("conv_1", "winst_1", "art_one", { name: "../ghi chú.txt" });
 
     expect(attached.attachmentRef).toEqual(attachmentRef);
+    expect(calls.map((call) => call.body)).toEqual([{}, { name: "../ghi chú.txt" }]);
   });
 
   it("exports as the person and saves under the name the node settled on", async () => {

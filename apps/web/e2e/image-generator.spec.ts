@@ -138,6 +138,9 @@ async function generate(widget: FrameLocator, prompt: string): Promise<string> {
 /** The panel of one job, by its JobRef. */
 const jobPanel = (widget: FrameLocator, jobId: string) => widget.locator(`[data-image-job][data-image-job-id="${jobId}"]`);
 
+/** The end of a job's id the widget puts in the file name it proposes, so two images never share one. */
+const jobSuffix = (jobId: string): string => jobId.replace(/^job_/u, "").replace(/[^A-Za-z0-9]/gu, "").slice(-6).toLowerCase();
+
 /** Every request reached the provider with the key the node added. Starting an image was a POST; the rest were reads. */
 function expectProviderRequestsSigned(): void {
   const requests = fake().requests;
@@ -352,13 +355,14 @@ test("a prompt becomes a job whose progress survives a reload, and its image lan
   expect(fake().requests.filter((entry) => entry.method === "POST")).toHaveLength(1);
   expectProviderRequestsSigned();
 
-  // Attach puts the image in the composer; the person decides whether to send it.
+  // Attach puts the image in the composer; the person decides whether to send it. It is named after its prompt and its
+  // job, as the widget proposed and the node sanitized, not `untitled.png`.
   const item = widget.locator("[data-image-item]").first();
   await item.locator("[data-image-attach]").click();
   await expect(item.locator("[data-image-item-status]")).toHaveAttribute("data-image-item-state", "attached", { timeout: 20_000 });
   const chip = page.locator("[data-attachment-chip]").last();
   await expect(chip).toHaveAttribute("data-attachment-state", "ready", { timeout: 20_000 });
-  await expect(chip).toHaveAttribute("data-attachment-chip", /\.png$/);
+  await expect(chip).toHaveAttribute("data-attachment-chip", `a-red-kite-over-a-green-sea-${jobSuffix(jobId)}.png`);
   await chip.locator("[data-attachment-remove]").click();
   await expect(page.locator("[data-attachment-chip]")).toHaveCount(0);
 
@@ -470,6 +474,24 @@ test("Clark and a spoken request start the same job through the widget, which fo
   expect(await imageCount(widget)).toBeGreaterThanOrEqual(before + 2);
   await expect(widget.locator("[data-image-job]")).toBeHidden({ timeout: 60_000 });
   expectProviderRequestsSigned();
+
+  // Two images attached together get two names, each after its own prompt and job.
+  const chips = page.locator("[data-attachment-chip]");
+  await expect(chips).toHaveCount(0);
+  for (const caption of ["a paper boat on a river", "a snowy mountain at dawn"]) {
+    const item = widget.locator("[data-image-item]").filter({ hasText: caption }).first();
+    await item.locator("[data-image-attach]").click();
+    await expect(item.locator("[data-image-item-status]")).toHaveAttribute("data-image-item-state", "attached", { timeout: 20_000 });
+  }
+  await expect(chips).toHaveCount(2, { timeout: 20_000 });
+  const names = await chips.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-attachment-chip") ?? ""));
+  expect(names.find((name) => name.startsWith("a-paper-boat"))).toMatch(/^a-paper-boat-on-a-river-[0-9a-z]{6}\.png$/u);
+  expect(names.find((name) => name.startsWith("a-snowy-mountain"))).toMatch(/^a-snowy-mountain-at-dawn-[0-9a-z]{6}\.png$/u);
+  expect(new Set(names).size).toBe(2);
+  for (let left = 2; left > 0; left -= 1) {
+    await chips.last().locator("[data-attachment-remove]").click();
+    await expect(chips).toHaveCount(left - 1);
+  }
 
   await expectKeyNowhere(page, widget, request);
 });

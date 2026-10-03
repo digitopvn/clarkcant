@@ -16,6 +16,7 @@ import {
   defaultArtifactName,
   normalizePickedType,
   redactSecrets,
+  sanitizeProposedArtifactName,
   stripBidiControls,
   validateAttachmentCandidate,
 } from "@clarkcant/contracts";
@@ -617,10 +618,16 @@ export function exportArtifactBytes(
  * change. The attachment counts against the widget's share as well as the person's quota, and keeps counting after the
  * widget discards the file, because the conversation still keeps the bytes. Without both, one finalized file attached
  * over and over would fill the person's quota with copies of itself.
+ *
+ * `name` is the widget's proposal for the attachment's file name. It is data from the widget and never trusted:
+ * `sanitizeProposedArtifactName` reduces it to a safe name with the extension of the bytes' type, or the type's default
+ * name when nothing usable is left. Without one the attachment takes the artifact's own name, sanitized the same way,
+ * because that name came from a widget too. The first attach decides the name, since asking again returns the
+ * attachment already made, whatever name the later request proposes.
  */
 export function attachArtifact(
   deps: ArtifactBrokerDeps,
-  input: { principalId: string; instanceId: string; artifactId: string },
+  input: { principalId: string; instanceId: string; artifactId: string; name?: string | undefined },
 ): BrokerResult<{ ref: ArtifactRef; attachmentRef: AttachmentRef }> {
   const allowed = authorize(deps, { ...input, need: "read" });
   if (!allowed.ok) return allowed;
@@ -637,7 +644,9 @@ export function attachArtifact(
   const sniffed = sniffContentType(blob.bytes, record.mimeType);
   if (!sniffed.ok) return refuseAsAttachment(sniffed);
   const checked = validateAttachmentCandidate({
-    filename: record.name,
+    // Sanitized either way: the artifact's own name is also a widget's (`create({ name })`), and it becomes the name the
+    // model reads, `read_attachment` reports and a download is saved under.
+    filename: sanitizeProposedArtifactName(input.name ?? record.name, sniffed.mime),
     mime: sniffed.mime,
     sizeBytes: blob.bytes.byteLength,
     usedBytes: storedBytesForPrincipal(deps.db, input.principalId),
