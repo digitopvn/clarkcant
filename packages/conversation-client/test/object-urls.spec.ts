@@ -187,6 +187,18 @@ describe("object URLs read on request, for a player's source", () => {
     expect(run.fetched).toEqual(["clip"]);
   });
 
+  it("reads only the reference asked for, and does not retry a picture that failed", async () => {
+    const run = failingHarness();
+    run.set.want(["poster"], ["clip"]);
+    await run.fail("poster");
+    expect(run.set.status("poster")).toBe("failed");
+    run.set.request("clip");
+    expect(run.fetched).toEqual(["poster", "clip"]);
+    // A change of list is still what tries a failed picture again.
+    run.set.want(["poster"], ["clip"]);
+    expect(run.fetched).toEqual(["poster", "clip", "poster"]);
+  });
+
   it("releases every URL and forgets every request when its owner goes", async () => {
     const run = failingHarness();
     run.set.want(["poster"], ["clip"]);

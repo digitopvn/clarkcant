@@ -196,6 +196,7 @@ import {
 import { vendorEmbedUrl } from "./media-embed.ts";
 import { createPlaybackCoalescer, flushPlaybackOnLeave, type PlaybackCoalescer, type PlaybackWriteReason } from "./playback-coalescer.ts";
 import { useNearViewport } from "./near-viewport.ts";
+import { playbackOwner, pressStillCurrent } from "./playback-owner.ts";
 import type { ObjectUrls } from "./use-object-urls.ts";
 import { fillMessage } from "./i18n/fill-message.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
@@ -2446,17 +2447,22 @@ function YouTubeEmbed({ props }: RendererProps): ReactElement {
  * interval, and the last position when the page goes away. The stored position is applied once, when the player first
  * knows its duration; the seek that causes is the host's own state coming back, so it is not written again. A restore
  * never starts playback: `play()` is called only for a press of the host's own Play button that arrived before the
- * bytes did (see `usePlayerSource`).
+ * bytes did (see `usePlayerSource`), and only while that press is still current (`pressStillCurrent`). Starting a
+ * player pauses any other host player that was playing: there is one active playback owner.
  */
 function useMediaPlayback<E extends HTMLMediaElement>(
   state: Record<string, unknown> | undefined,
   onAction: RendererProps["onAction"],
-  /** Set when the person pressed play before the bytes were read: playback starts once the player knows its length. */
-  playWhenLoaded: { current: boolean },
+  /**
+   * When the person pressed play before the bytes were read, how many players had started by then
+   * (`playbackOwner.starts()`); `undefined` when nobody pressed.
+   */
+  pressedPlay: { current: number | undefined },
 ): {
   mediaRef: { current: E | null };
   handlers: {
     onLoadedMetadata: (event: { currentTarget: E }) => void;
+    onPlay: (event: { currentTarget: E }) => void;
     onPlaying: (event: { currentTarget: E }) => void;
     onTimeUpdate: (event: { currentTarget: E }) => void;
     onPause: (event: { currentTarget: E }) => void;
@@ -2518,12 +2524,22 @@ function useMediaPlayback<E extends HTMLMediaElement>(
       onLoadedMetadata: (event) => {
         const media = event.currentTarget;
         restorePosition(media);
-        if (!playWhenLoaded.current) return;
+        const pressedAt = pressedPlay.current;
+        if (pressedAt === undefined) return;
+        pressedPlay.current = undefined;
         // The person pressed play while the bytes were on their way: this is their press arriving, not autoplay, and it
-        // starts from the restored position. A browser that still refuses leaves the player paused where it is.
-        playWhenLoaded.current = false;
-        void media.play().catch(() => undefined);
+        // starts from the restored position. Not if they have since started another player or moved on: then the
+        // player stays paused. A browser that still refuses leaves it paused where it is.
+        const current = pressStillCurrent({
+          pressedAt,
+          startsNow: playbackOwner.starts(),
+          active: document.activeElement,
+          body: document.body,
+          media,
+        });
+        if (current) void media.play().catch(() => undefined);
       },
+      onPlay: (event) => playbackOwner.claim(event.currentTarget),
       onPlaying: (event) => report(playbackFrom(event.currentTarget, "playing"), "playing"),
       onTimeUpdate: (event) => {
         // The restore seek reports the clock before it settles; that is the node's own position coming back.
@@ -2544,8 +2560,11 @@ function useMediaPlayback<E extends HTMLMediaElement>(
   };
 }
 
-/** Where a player's source is: drawable, not read yet (or still being read), or not available at all. */
-type PlayerSource = { kind: "ready"; url: string } | { kind: "waiting" } | { kind: "unavailable" };
+/**
+ * Where a player's source is: drawable, not read yet (or still being read), named but refused when read, or not
+ * available at all.
+ */
+type PlayerSource = { kind: "ready"; url: string } | { kind: "waiting" } | { kind: "failed" } | { kind: "unavailable" };
 
 /**
  * A player's source, read only when it is needed, shared by the video and the audio player.
@@ -2565,11 +2584,11 @@ function usePlayerSource(
   started: boolean;
   start: () => void;
   observe: (element: Element | null) => void;
-  playWhenLoaded: { current: boolean };
+  pressedPlay: { current: number | undefined };
 } {
   const [element, observe] = useState<Element | null>(null);
   const [started, setStarted] = useState(false);
-  const playWhenLoaded = useRef(false);
+  const pressedPlay = useRef<number | undefined>(undefined);
   const status = ref === "" ? "unlisted" : mediaUrls?.status(ref);
   const waiting = status === "idle" || status === "loading";
   const near = useNearViewport(element, mediaUrls !== undefined && waiting && !started);
@@ -2577,7 +2596,7 @@ function usePlayerSource(
     if (mediaUrls !== undefined && status === "idle" && (near || started)) mediaUrls.request(ref);
   }, [mediaUrls, near, ref, started, status]);
   const start = useCallback(() => {
-    playWhenLoaded.current = true;
+    pressedPlay.current = playbackOwner.starts();
     setStarted(true);
   }, []);
 
@@ -2590,24 +2609,42 @@ function usePlayerSource(
     source = url === undefined ? { kind: "unavailable" } : { kind: "ready", url };
   } else if (waiting) {
     source = { kind: "waiting" };
+  } else if (status === "failed") {
+    source = { kind: "failed" };
   } else {
     source = { kind: "unavailable" };
   }
-  return { source, started, start, observe, playWhenLoaded };
+  return { source, started, start, observe, pressedPlay };
 }
 
 /**
- * Hands the keyboard to the real player when it replaces the Play button the person pressed.
+ * Hands the keyboard to what replaces the Play button the person pressed: the real player, or the message that says it
+ * could not be read.
  *
  * Only when focus was left with nobody (the button it was on is gone): a person who moved on while the bytes were on
  * their way keeps the focus where they put it.
  */
-function useFocusWhenReady(media: { current: HTMLMediaElement | null }, ready: boolean, started: boolean): void {
+function useFocusWhenShown(target: { current: HTMLElement | null }, shown: boolean, started: boolean): void {
   useEffect(() => {
-    if (!ready || !started) return;
+    if (!shown || !started) return;
     const active = document.activeElement;
-    if (active === null || active === document.body) media.current?.focus();
-  }, [media, ready, started]);
+    if (active === null || active === document.body) target.current?.focus();
+  }, [target, shown, started]);
+}
+
+/**
+ * Said in place of a player whose bytes the node did not give: what failed, that nothing else changed, and how to try
+ * again. A polite status, and the keyboard moves to it when it replaces the Play button the person pressed, so the
+ * failure is heard either way rather than focus falling to the page.
+ */
+function PlayerFailed({ message, started }: { message: string; started: boolean }): ReactElement {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useFocusWhenShown(ref, true, started);
+  return (
+    <p ref={ref} className="cc-freshness" role="status" tabIndex={-1} data-media-failed="" style={{ margin: 0 }}>
+      {message}
+    </p>
+  );
 }
 
 /**
@@ -2631,6 +2668,20 @@ function PlayerWaiting(props: {
   const t = useT();
   const play = props.name === "video" ? t("widgets.video.play") : t("widgets.audio.play");
   const loading = props.name === "video" ? t("widgets.video.loading") : t("widgets.audio.loading");
+  const button = (
+    <button
+      type="button"
+      className="cc-action"
+      data-media-play={props.name}
+      aria-label={`${play}: ${props.title}`}
+      aria-disabled={props.started}
+      onClick={() => {
+        if (!props.started) props.onStart();
+      }}
+    >
+      {play}
+    </button>
+  );
   return (
     <figure
       ref={props.observe}
@@ -2639,19 +2690,15 @@ function PlayerWaiting(props: {
       data-media-ref={props.reference}
       {...(props.name === "audio" ? { "data-audio-state": props.started ? "loading" : "waiting" } : {})}
     >
-      {props.poster !== undefined && <img src={props.poster} alt="" data-media-poster="" />}
-      <button
-        type="button"
-        className="cc-action"
-        data-media-play={props.name}
-        aria-label={`${play}: ${props.title}`}
-        aria-disabled={props.started}
-        onClick={() => {
-          if (!props.started) props.onStart();
-        }}
-      >
-        {play}
-      </button>
+      {props.name === "video" ? (
+        // The box the video will fill, so its arrival moves nothing below it.
+        <div className="cc-media-stage">
+          {props.poster !== undefined && <img src={props.poster} alt="" data-media-poster="" />}
+          {button}
+        </div>
+      ) : (
+        button
+      )}
       <p className="cc-freshness" role="status" aria-live="polite" data-media-loading={props.name}>
         {props.started ? loading : ""}
       </p>
@@ -2666,15 +2713,17 @@ function LocalVideo({ props, imageUrl, mediaUrls, state, onAction }: RendererPro
   const alt = String(props.alt ?? "");
   const title = String(props.title ?? t("widgets.video.title"));
   const posterRef = typeof props.posterRef === "string" ? props.posterRef : "";
-  const { source, started, start, observe, playWhenLoaded } = usePlayerSource(ref, imageUrl, mediaUrls);
+  const { source, started, start, observe, pressedPlay } = usePlayerSource(ref, imageUrl, mediaUrls);
   const poster = posterRef === "" ? undefined : imageUrl?.(posterRef);
-  const { mediaRef, handlers } = useMediaPlayback<HTMLVideoElement>(state, onAction, playWhenLoaded);
-  useFocusWhenReady(mediaRef, source.kind === "ready", started);
+  const { mediaRef, handlers } = useMediaPlayback<HTMLVideoElement>(state, onAction, pressedPlay);
+  useFocusWhenShown(mediaRef, source.kind === "ready", started);
 
   return (
     <Frame title={title} dataset={undefined} role="media">
       {source.kind === "unavailable" ? (
         <Unavailable reason={t("widgets.video.notPlayable").replace("{alt}", alt)} />
+      ) : source.kind === "failed" ? (
+        <PlayerFailed message={t("widgets.video.readFailed").replace("{alt}", alt)} started={started} />
       ) : source.kind === "waiting" ? (
         <PlayerWaiting
           name="video"
@@ -2725,9 +2774,9 @@ function clockText(seconds: number): string {
 function LocalAudio({ props, imageUrl, mediaUrls, state, onAction }: RendererProps): ReactElement {
   const t = useT();
   const audio = readAudio(props);
-  const { source, started, start, observe, playWhenLoaded } = usePlayerSource(audio?.audioRef ?? "", imageUrl, mediaUrls);
-  const { mediaRef, handlers } = useMediaPlayback<HTMLAudioElement>(state, onAction, playWhenLoaded);
-  useFocusWhenReady(mediaRef, source.kind === "ready", started);
+  const { source, started, start, observe, pressedPlay } = usePlayerSource(audio?.audioRef ?? "", imageUrl, mediaUrls);
+  const { mediaRef, handlers } = useMediaPlayback<HTMLAudioElement>(state, onAction, pressedPlay);
+  useFocusWhenShown(mediaRef, source.kind === "ready", started);
   const describe = useCallback(
     (hidden: HiddenCharacter) => t(HIDDEN_TITLE[hidden.kind]).replace("{codePoint}", hidden.codePoint),
     [t],
@@ -2747,6 +2796,8 @@ function LocalAudio({ props, imageUrl, mediaUrls, state, onAction }: RendererPro
         <Unavailable reason={t("widgets.audio.unreadable")} />
       ) : source.kind === "unavailable" ? (
         <Unavailable reason={t("widgets.audio.notPlayable").replace("{title}", audio.title)} />
+      ) : source.kind === "failed" ? (
+        <PlayerFailed message={t("widgets.audio.readFailed").replace("{title}", audio.title)} started={started} />
       ) : source.kind === "waiting" ? (
         <PlayerWaiting
           name="audio"

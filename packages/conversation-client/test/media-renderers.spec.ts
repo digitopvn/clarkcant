@@ -140,8 +140,12 @@ describe("media renderers", () => {
       expect(ready).toContain("blob:lazy/");
       expect(ready).not.toMatch(/autoplay/i);
       expect(ready).not.toContain("data-media-play");
-      // A source the node refused says so, as it always did.
-      expect(renderWith(definitionId, props, lazy("failed"))).not.toContain("data-media-play");
+      // A source the node refused says what failed and what happens next, in a status the keyboard can be handed to.
+      const failed = renderWith(definitionId, props, lazy("failed"));
+      expect(failed).not.toContain("data-media-play");
+      expect(failed).not.toContain(`<${name}`);
+      expect(failed).toMatch(/<p[^>]*role="status"[^>]*tabindex="-1"[^>]*data-media-failed=""/);
+      expect(failed).toMatch(/(?:Không đọc được|could not be read)[^<]*(?:mở lại hội thoại để thử lại|open it again to try again)/);
     }
     // The poster is a picture, drawn while the video waits; the Play button is named for what it plays.
     const waiting = renderWith("canvas.video@1", videoProps, lazy("idle"));

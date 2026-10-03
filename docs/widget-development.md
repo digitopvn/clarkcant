@@ -1308,16 +1308,22 @@ are needed ([#403](https://github.com/digitopvn/clarkcant/issues/403)): when the
 the visible transcript (an `IntersectionObserver` rooted at the transcript's own scroll area), or when the person
 presses the host's Play button that stands in for the player until then. Pressing it says the bytes are loading, with no
 invented progress, and keeps the focus on the button. Once the bytes arrive, the native player takes its place and the
-focus, restores the stored position, and plays because the person asked. Without an observer nothing is read until Play
-is pressed. A source that cannot be read says the player cannot be played, as before. The object URLs follow the
+focus, restores the stored position, and plays because the person asked, but only if that press is still current: if
+another player started meanwhile, or the person moved the focus elsewhere, it stays paused. Starting any host player
+pauses the one that was playing, so there is one active playback owner. Without an observer nothing is read until Play
+is pressed. A source that cannot be read says so in a status that takes the focus the Play button had: what failed,
+that the conversation is unchanged, and that opening it again tries again. The object URLs follow the
 picture rules in [use-object-urls.ts](../packages/conversation-client/src/use-object-urls.ts): one fetch and one owner
 per reference, released when the reference leaves the conversation, and a late arrival released rather than stored.
 Tests: [object-urls.spec.ts](../packages/conversation-client/test/object-urls.spec.ts),
 [near-viewport.spec.ts](../packages/conversation-client/test/near-viewport.spec.ts),
+[playback-owner.spec.ts](../packages/conversation-client/test/playback-owner.spec.ts),
 [media-renderers.spec.ts](../packages/conversation-client/test/media-renderers.spec.ts) and the browser journey
 [lazy-media.spec.ts](../apps/web/e2e/lazy-media.spec.ts). The journey counts every media read: none when a conversation
-with three players opens, one when a player is scrolled into view, and one when a player is played with no observer.
-It also checks that the paused position comes back after a reload.
+with three videos and an audio player opens; one when a player comes within the margin, before it is visible; one for
+the audio player scrolled to; and one when a player is played with no observer. It also checks that the paused position
+comes back after a reload and that Play starts from it, that a stale press does not start a player, that starting one
+pauses another, and that a refused source is said and takes the focus.
 
 ### 8.12 Diagrams and graphs
 

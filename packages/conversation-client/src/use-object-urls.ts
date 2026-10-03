@@ -139,7 +139,10 @@ export function createObjectUrlSet(input: {
       if (reference === "" || requested.has(reference)) return;
       requested.add(reference);
       if (!onRequest.has(reference)) return;
-      settle();
+      // Only the reference asked for: a picture that failed is tried again when the list changes, not because a player
+      // came near the screen.
+      wanted.add(reference);
+      fetchOne(reference);
       input.onChange();
     },
     release: () => {
