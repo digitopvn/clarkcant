@@ -4,8 +4,10 @@ import { attachmentRefSchema, referenceBlockSchema, referenceToken, type Attachm
 
 import { CodeBlock, Markdown, linkedText } from "./markdown.tsx";
 import { formatFileSize } from "./attachments.ts";
+import { attachmentDownloadState, pressAttachmentDownload, settleAttachmentDownload } from "./attachment-open.ts";
+import { downloadObjectUrl } from "./download.ts";
 import { useAttachmentUrls } from "./use-attachment-urls.ts";
-import { useObjectUrls } from "./use-object-urls.ts";
+import { type ObjectUrls, useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
@@ -1557,11 +1559,14 @@ function AttachmentCard({
   client: GatewayClient | undefined;
 }): ReactElement {
   const t = useT();
-  const resolve = useAttachmentUrls(client, [attachment.attachmentId]);
-  const url = resolve(attachment.attachmentId);
+  const id = attachment.attachmentId;
+  const picture = attachment.kind === "image";
+  // A picture is read as soon as it is drawn, as every picture is; a file is read only when the person downloads it.
+  const urls = useAttachmentUrls(client, picture ? [id] : [], picture ? [] : [id]);
   const size = formatFileSize(attachment.sizeBytes);
 
-  if (attachment.kind === "image") {
+  if (picture) {
+    const url = urls.get(id);
     return (
       <figure
         className="cc-attachment"
@@ -1584,27 +1589,73 @@ function AttachmentCard({
     );
   }
 
-  // Text and PDF: a card with a way to open it. A pdf is not rendered in place, because the node serves it as
+  // Text, PDF and audio: a card with a way to open it. A pdf is not rendered in place, because the node serves it as
   // a download and drawing it inline here would claim a preview this node does not produce.
   return (
-    <div
-      className="cc-attachment"
-      data-attachment-block="true"
-      data-attachment-kind={attachment.kind}
-      data-attachment-id={attachment.attachmentId}
-    >
+    <div className="cc-attachment" data-attachment-block="true" data-attachment-kind={attachment.kind} data-attachment-id={id}>
       <span className="cc-attachment-name">{attachment.filename}</span>
       <span className="cc-attachment-size">{size}</span>
-      {url === undefined ? (
+      {client === undefined ? (
         <span className="cc-attachment-missing" data-attachment-missing="true">
           {t("blocks.attachment.fileMissing")}
         </span>
       ) : (
-        <a className="cc-attachment-open" href={url} download={attachment.filename} data-attachment-download="true">
-          {t("blocks.attachment.download")}
-        </a>
+        // Keyed by the attachment, so a card that comes to stand for another file does not keep waiting for the first.
+        <AttachmentDownload key={id} urls={urls} attachmentId={id} filename={attachment.filename} />
       )}
     </div>
+  );
+}
+
+/**
+ * A file card's Download control, which reads the file only when pressed.
+ *
+ * The same button throughout, kept focusable while the read is in flight (`aria-disabled`, not `disabled`) so the focus
+ * that pressed it is never dropped. A polite status beside it says the download is being prepared, with no invented
+ * progress, and, if the node does not give the bytes, what failed, that nothing was downloaded or changed, and that
+ * pressing again tries again; the button then says Try again.
+ */
+function AttachmentDownload({
+  urls,
+  attachmentId,
+  filename,
+}: {
+  urls: ObjectUrls;
+  attachmentId: string;
+  filename: string;
+}): ReactElement {
+  const t = useT();
+  const [waiting, setWaiting] = useState(false);
+  const status = urls.status(attachmentId);
+  useEffect(() => {
+    if (!waiting) return;
+    if (!settleAttachmentDownload(urls, attachmentId, (url) => downloadObjectUrl(url, filename))) setWaiting(false);
+  }, [attachmentId, filename, status, urls, waiting]);
+  const state = attachmentDownloadState(status, waiting);
+  const message =
+    state === "opening"
+      ? t("blocks.attachment.opening")
+      : state === "failed"
+        ? t("blocks.attachment.openFailed").replace("{filename}", filename)
+        : "";
+  return (
+    <>
+      <span className="cc-attachment-status" role="status" aria-live="polite" data-attachment-status={state}>
+        {message}
+      </span>
+      <button
+        type="button"
+        className="cc-action cc-attachment-open"
+        data-attachment-download="true"
+        aria-disabled={state === "opening"}
+        onClick={() => {
+          if (state === "opening") return;
+          if (pressAttachmentDownload(urls, attachmentId, (url) => downloadObjectUrl(url, filename))) setWaiting(true);
+        }}
+      >
+        {state === "failed" ? t("blocks.attachment.retry") : t("blocks.attachment.download")}
+      </button>
+    </>
   );
 }
 

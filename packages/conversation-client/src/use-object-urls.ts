@@ -26,7 +26,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
  * **Read now, or read on request.** A picture is read as soon as it is listed: it is what the reader sees. A player's
  * bytes are listed *on request*: the reference is known, but nothing is fetched until something asks for it with
  * `request` - the player coming near the screen, or the person pressing play. A conversation with several long
- * recordings therefore reads none of them until one is about to be seen. A reference read on request is wanted, for
+ * recordings therefore reads none of them until one is about to be seen. An attached file's bytes are listed the same
+ * way and asked for only when the person downloads it. A reference read on request is wanted, for
  * the three rules above, from the moment it is requested until it leaves the list; leaving the list forgets the
  * request, so a reference that comes back is read only when it is asked for again.
  */
@@ -46,6 +47,12 @@ export interface ObjectUrlSet {
    * reference not listed yet is kept, and read when the list names it.
    */
   request: (reference: string) => void;
+  /**
+   * Read again a reference listed on request whose read failed, because the person asked to try again. Nothing else
+   * reads a refused reference again (see `failed` in `ObjectUrlStatus`), so this is the one way back without the
+   * reference leaving the list. A reference that did not fail, or is not listed on request, is left as it is.
+   */
+  retry: (reference: string) => void;
   /** Releases every URL and forgets every request; a request still in flight is released when it arrives. */
   release: () => void;
 }
@@ -57,7 +64,8 @@ export interface ObjectUrlSet {
  * - `loading`: its bytes are being read.
  * - `idle`: listed on request and not asked for yet.
  * - `failed`: its bytes could not be read. A reference read on request is not read again until it leaves the list
- *   and comes back; one read now is tried again the next time the list changes, as it always was.
+ *   and comes back, or the person asks again through `retry`; one read now is tried again the next time the list
+ *   changes, as it always was.
  * - `unlisted`: nobody listed it, so nothing will be read.
  */
 export type ObjectUrlStatus = "ready" | "loading" | "idle" | "failed" | "unlisted";
@@ -145,6 +153,13 @@ export function createObjectUrlSet(input: {
       fetchOne(reference);
       input.onChange();
     },
+    retry: (reference) => {
+      if (!failed.has(reference) || !onRequest.has(reference)) return;
+      requested.add(reference);
+      wanted.add(reference);
+      fetchOne(reference);
+      input.onChange();
+    },
     release: () => {
       now = new Set();
       onRequest = new Set();
@@ -162,6 +177,7 @@ export interface ObjectUrls {
   get: (reference: string) => string | undefined;
   status: (reference: string) => ObjectUrlStatus;
   request: (reference: string) => void;
+  retry: (reference: string) => void;
 }
 
 export function useObjectUrls(
@@ -224,5 +240,6 @@ export function useObjectUrlSet(
     [key, lazyKey, set, version],
   );
   const request = useCallback((reference: string) => set.request(reference), [set]);
-  return useMemo(() => ({ get, status, request }), [get, status, request]);
+  const retry = useCallback((reference: string) => set.retry(reference), [set]);
+  return useMemo(() => ({ get, status, request, retry }), [get, status, request, retry]);
 }

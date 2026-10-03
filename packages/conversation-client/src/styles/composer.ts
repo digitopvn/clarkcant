@@ -141,8 +141,11 @@ figure.cc-attachment { display: block; }
 .cc-attachment img { display: block; max-width: 100%; max-height: 320px; border-radius: var(--cc-radius-button); }
 figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--cc-text-muted); font-size: var(--cc-text-label); }
 .cc-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cc-attachment-size, .cc-attachment-missing { color: var(--cc-text-muted); font-size: var(--cc-text-label); }
-.cc-attachment-open { margin-left: auto; color: var(--cc-accent); }
+.cc-attachment-size, .cc-attachment-missing, .cc-attachment-status { color: var(--cc-text-muted); font-size: var(--cc-text-label); }
+/* A failure sentence is longer than the card's row: the card wraps rather than pushing its button out of view. */
+div.cc-attachment { flex-wrap: wrap; }
+.cc-attachment-status { min-width: 0; overflow-wrap: anywhere; }
+.cc-attachment-open { margin-left: auto; }
 /*
  * The composer's frame, and the light that travels around it.
  *

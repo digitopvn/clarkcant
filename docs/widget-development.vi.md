@@ -1322,6 +1322,22 @@ cho player âm thanh khi cuộn tới; và một lần khi phát một player l�
 quay lại sau khi tải lại và nút Phát bắt đầu từ vị trí đó, một lần bấm đã cũ không tự phát player, phát một player sẽ
 dừng player khác, và nguồn bị từ chối được thông báo và nhận focus.
 
+**Khi nào bytes của tệp đính kèm được đọc.** Ảnh đính kèm được đọc khi cuộc hội thoại liệt kê nó, như mọi ảnh khác. Mọi
+tệp đính kèm khác (văn bản, PDF, âm thanh) được liệt kê theo yêu cầu trong cùng tập object URL và chỉ được đọc khi người
+dùng bấm nút Tải về trên thẻ của nó ([#417](https://github.com/digitopvn/clarkcant/issues/417)): mở một cuộc hội thoại
+không đọc tệp nào, và bấm Tải về đọc đúng tệp đó một lần qua client có xác thực. Trang không bao giờ giữ route tệp đính
+kèm của node dưới dạng liên kết, chỉ giữ object URL do client tạo. Bấm lại sẽ tải về bytes đã đọc, không đọc lần hai.
+Thẻ giữ nguyên cách tải về: khi bytes về, chúng được giao cho luồng tải về của trình duyệt dưới tên của tệp, việc này
+không mở cửa sổ nào nên trình chặn popup không áp dụng sau lần đọc bất đồng bộ, và ứng dụng desktop xử lý qua luồng tải
+về của chính Electron. Trong lúc đọc tệp, một status lịch sự báo đang chuẩn bị tải về, không bịa ra tiến độ, và nút giữ
+focus (`aria-disabled`, không phải `disabled`). Nếu node không trả bytes, status nói điều gì đã hỏng, chưa có gì được tải
+về và cuộc hội thoại vẫn giữ nguyên, và chính nút đang có focus đổi thành Thử lại, bấm vào sẽ đọc tệp đó thêm một lần.
+Test: [attachment-open.spec.ts](../packages/conversation-client/test/attachment-open.spec.ts),
+[object-urls.spec.ts](../packages/conversation-client/test/object-urls.spec.ts) và browser journey
+[lazy-attachments.spec.ts](../apps/web/e2e/lazy-attachments.spec.ts), journey đếm mọi lần đọc tệp đính kèm: không lần nào
+khi mở một cuộc hội thoại có ba tệp đính kèm, một lần cho thẻ được tải về, không lần nào cho lần tải về thứ hai, và thêm
+một lần chỉ khi thử lại một tệp bị từ chối.
+
 ### 8.12 Sơ đồ và đồ thị
 
 `canvas.diagram@1` vẽ một đồ thị node và cạnh có giới hạn kích thước (lưu đồ, đồ thị phụ thuộc, một cây nhỏ) dưới dạng

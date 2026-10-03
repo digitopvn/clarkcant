@@ -114,6 +114,10 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.attachment.imageMissing": "Không hiện được ảnh {filename}.",
   "blocks.attachment.fileMissing": "Không tải được tệp đính kèm.",
   "blocks.attachment.download": "Tải về",
+  "blocks.attachment.opening": "Đang chuẩn bị tải về…",
+  "blocks.attachment.openFailed":
+    "Không đọc được {filename} từ node. Chưa có gì được tải về và cuộc hội thoại vẫn giữ nguyên; bấm Thử lại để thử lại.",
+  "blocks.attachment.retry": "Thử lại",
 
   // blocks.tsx — form card
   "blocks.form.missingFieldsLabel": "Còn thiếu",
@@ -1035,6 +1039,10 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.attachment.imageMissing": "Could not display the image {filename}.",
   "blocks.attachment.fileMissing": "Could not load the attachment.",
   "blocks.attachment.download": "Download",
+  "blocks.attachment.opening": "Preparing the download…",
+  "blocks.attachment.openFailed":
+    "Could not read {filename} from the node. Nothing was downloaded and the conversation is unchanged; press Try again to retry.",
+  "blocks.attachment.retry": "Try again",
 
   "blocks.form.missingFieldsLabel": "Missing",
 

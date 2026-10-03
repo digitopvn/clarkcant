@@ -117,6 +117,7 @@ describe("media renderers", () => {
       get: (ref) => (status === "ready" ? `blob:lazy/${ref}` : undefined),
       status: () => status,
       request: (ref) => requested.push(ref),
+      retry: () => undefined,
     });
     const audioProps = { title: "Brief", audioRef: "artifact:art_1", mimeType: "audio/ogg", durationSeconds: 75 };
     const videoProps = { videoRef: "clip", alt: "A short clip", posterRef: "still" };
