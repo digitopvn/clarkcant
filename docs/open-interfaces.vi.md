@@ -480,7 +480,26 @@ một tên dài hơn 120 ký tự được rút ngắn ở phần trước phầ
 **Cài một gói chỉ dành cho người dùng.** `POST /packages/install` `{ "packageId", "version" }` là route mà nút Cài
 của chính ứng dụng và thao tác `update` của một thông báo gọi; không tool nào của agent cài gói (tool quản lý gói chỉ
 liệt kê, gỡ, khôi phục và quay lại bản trước), và relay WebSocket, `clarkcant api` cùng MCP từ chối route này với
-`403 PERSON_ONLY`. Khi chế độ thực thi của người dùng yêu cầu hỏi trước khi cài, route trả `202` với
+`403 PERSON_ONLY`.
+
+Với một gói được liệt kê bằng đường dẫn trên máy này, node tự tính digest các tệp của nó (`digestOfDirectory`, cùng
+digest mà một lần fetch git hay npm tính), nên request không cần client gửi digest nào. Card `marketplace-results` mang
+digest đó trong `contentDigest` của mỗi listing cục bộ, tính lúc node liệt kê nó, và nút Cài gửi lại nó dưới dạng
+`{ "contentDigest" }`. Nếu các tệp đã đổi kể từ lúc danh sách được tạo, lần cài bị từ chối với `409 DIGEST_MISMATCH`
+kèm lý do nói rõ điều đó và bảo người dùng tìm lại; không có gì được cài hay được hỏi, và card đánh dấu dòng đó là đã
+đổi thay vì mời bấm lại đúng lần cài vừa bị từ chối. Việc kiểm tra chỉ diễn ra lúc cài: một gói cục bộ vẫn được liên kết
+với đường dẫn của nó chứ không được sao chép, nên nó tiếp tục được đọc từ đó và những chỉnh sửa sau này với các tệp của
+nó không được kiểm tra lại. Một request không có `contentDigest` (card có từ trước khi có trường này, hoặc thao tác
+`update` của một thông báo) cài các tệp như chúng đang có lúc request tới. Một đường dẫn không tính được digest các tệp
+bị từ chối với `400 LOCAL_SOURCE_UNREADABLE`: không đọc được, chứa symbolic link hay hard link (thứ mà digest từ chối
+thay vì đi theo), hoặc quá lớn để xác minh (hơn 5.000 tệp hay 64 MiB, giới hạn giữ cho các digest của một lần tìm kiếm
+rẻ; khi đó card không mang `contentDigest` cho nó). Các kiểm tra này chạy trước khi chính sách thực thi quyết định, nên
+một người có chế độ sẽ từ chối lần cài vẫn nhận `409` hay `400` thay vì `403 POLICY_REFUSED`. Bản ghi `effect.executed`
+của một lần cài cục bộ nêu các tệp nó đã kiểm tra (`files sha256:…` trong phần mô tả). Plan và generation của một lần
+cài cục bộ mang `digest` của listing; client nào gửi `{ "localDigest" }` thì tự đặt định danh đó như trước, và không bị
+tính lại digest trừ khi nó gửi kèm `contentDigest`.
+
+Khi chế độ thực thi của người dùng yêu cầu hỏi trước khi cài, route trả `202` với
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` và không cài gì. Câu hỏi đó chờ trong `GET /inbox`, ở `waiting`, dưới
 dạng `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions, description,
 operationDigest, requestedAt, expiresAt }`: `permissions` là những quyền mà listing nói gói xin, còn `operationDigest`

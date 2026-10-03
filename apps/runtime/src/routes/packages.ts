@@ -243,6 +243,10 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
         packageId,
         version,
         ...(typeof parsed.value.localDigest === "string" ? { localDigest: parsed.value.localDigest } : {}),
+        // Only ever a reason to refuse: the node digests the files itself and compares, so a forged value installs nothing.
+        ...(typeof parsed.value.contentDigest === "string" && parsed.value.contentDigest !== ""
+          ? { contentDigest: parsed.value.contentDigest }
+          : {}),
         ...(Array.isArray(parsed.value.requestedCapabilityRefs)
           ? {
               requestedCapabilityRefs: parsed.value.requestedCapabilityRefs.filter(

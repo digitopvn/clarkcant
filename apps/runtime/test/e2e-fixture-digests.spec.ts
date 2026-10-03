@@ -21,6 +21,7 @@ const THEME_PACKAGES = [
   "apps/web/e2e/fixtures/theme-dusk-dim",
   "apps/web/e2e/fixtures/theme-depth",
   "apps/web/e2e/fixtures/theme-hostile",
+  "apps/web/e2e/fixtures/theme-local",
 ];
 
 interface FixtureEntry {

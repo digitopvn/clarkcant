@@ -331,8 +331,8 @@ test("an installed package's widget becomes a card, rendered by the catalog", as
     body: JSON.stringify({
       packageId: "com.example.chart-widget",
       version: "1.0.0",
-      // A local package has no published digest, so the caller hashes it and the digest becomes its identity. The
-      // route requires one, and without it the honest answer is LOCAL_DIGEST_REQUIRED.
+      // The identity this caller names for the local package's plan. Without it the node digests the files itself and
+      // records the listing's digest instead.
       localDigest: "sha256:chart-widget-digest",
     }),
   });
