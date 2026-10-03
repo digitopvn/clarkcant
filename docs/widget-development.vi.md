@@ -1344,6 +1344,29 @@ cho player âm thanh khi cuộn tới; và một lần khi phát một player l�
 quay lại sau khi tải lại và nút Phát bắt đầu từ vị trí đó, một lần bấm đã cũ không tự phát player, phát một player sẽ
 dừng player khác, và nguồn bị từ chối được thông báo và nhận focus.
 
+**Khi nào bytes của tệp đính kèm được đọc.** Ảnh đính kèm được đọc khi cuộc hội thoại liệt kê nó, như mọi ảnh khác. Mọi
+tệp đính kèm khác (văn bản, PDF, âm thanh) được liệt kê theo yêu cầu trong cùng tập object URL và chỉ được đọc khi người
+dùng bấm nút Tải về trên thẻ của nó ([#417](https://github.com/digitopvn/clarkcant/issues/417)): mở một cuộc hội thoại
+không đọc tệp nào, và bấm Tải về đọc đúng tệp đó một lần qua client có xác thực. Trang không bao giờ giữ route tệp đính
+kèm của node dưới dạng liên kết, chỉ giữ object URL do client tạo. Bấm lại sẽ tải về bytes đã đọc, không đọc lần hai.
+Thẻ giữ nguyên cách tải về: khi bytes về, chúng được giao cho luồng tải về của trình duyệt dưới tên của tệp, việc này
+không mở cửa sổ nào nên trình chặn popup không áp dụng sau lần đọc bất đồng bộ. Ứng dụng desktop để luồng tải về mặc
+định của Electron xử lý, luồng này hỏi nơi lưu tệp; chưa có test nào chạy tải về trên desktop hoặc WebKit. Trong lúc đọc
+tệp, một status lịch sự báo đang chuẩn bị tải về, không bịa ra tiến độ, và nút giữ focus (`aria-disabled`, không phải
+`disabled`). Nếu node không trả bytes, status nói bằng màu báo lỗi điều gì đã hỏng, chưa có gì được tải về và cuộc hội
+thoại vẫn giữ nguyên, và chính nút đang có focus đổi thành Thử lại, bấm vào sẽ đọc tệp đó thêm một lần. Node nhận lần
+đọc nhưng không bắt đầu trả lời trong 30 giây (`FIRST_RESPONSE_TIMEOUT_MS` trong
+[api.ts](../packages/conversation-client/src/api.ts)) cũng làm lần đọc thất bại theo cùng cách đó, nên một lần đọc bị
+treo không bao giờ để thẻ đứng mãi ở trạng thái chuẩn bị. Chỉ thời gian chờ phản hồi đầu tiên bị giới hạn, nên một tệp
+lớn về chậm không bao giờ bị cắt ngang. Ảnh và player đọc qua cùng đường có giới hạn này và hiện trạng thái lỗi của riêng
+chúng, và một lần đọc còn dang dở sẽ bị hủy khi giao diện cần nó không còn nữa. Test:
+[attachment-open.spec.ts](../packages/conversation-client/test/attachment-open.spec.ts),
+[object-urls.spec.ts](../packages/conversation-client/test/object-urls.spec.ts),
+[node-read-timeout.spec.ts](../packages/conversation-client/test/node-read-timeout.spec.ts) và browser journey
+[lazy-attachments.spec.ts](../apps/web/e2e/lazy-attachments.spec.ts), journey đếm mọi lần đọc tệp đính kèm: không lần nào
+khi mở một cuộc hội thoại có ba tệp đính kèm, một lần cho thẻ được tải về, không lần nào cho lần tải về thứ hai, và thêm
+một lần chỉ khi thử lại một tệp bị từ chối, hoặc một tệp có lần đọc bị treo quá giới hạn.
+
 ### 8.12 Sơ đồ và đồ thị
 
 `canvas.diagram@1` vẽ một đồ thị node và cạnh có giới hạn kích thước (lưu đồ, đồ thị phụ thuộc, một cây nhỏ) dưới dạng

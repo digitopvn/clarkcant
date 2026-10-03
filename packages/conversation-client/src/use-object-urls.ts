@@ -26,7 +26,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
  * **Read now, or read on request.** A picture is read as soon as it is listed: it is what the reader sees. A player's
  * bytes are listed *on request*: the reference is known, but nothing is fetched until something asks for it with
  * `request` - the player coming near the screen, or the person pressing play. A conversation with several long
- * recordings therefore reads none of them until one is about to be seen. A reference read on request is wanted, for
+ * recordings therefore reads none of them until one is about to be seen. An attached file's bytes are listed the same
+ * way and asked for only when the person downloads it. A reference read on request is wanted, for
  * the three rules above, from the moment it is requested until it leaves the list; leaving the list forgets the
  * request, so a reference that comes back is read only when it is asked for again.
  */
@@ -46,7 +47,16 @@ export interface ObjectUrlSet {
    * reference not listed yet is kept, and read when the list names it.
    */
   request: (reference: string) => void;
-  /** Releases every URL and forgets every request; a request still in flight is released when it arrives. */
+  /**
+   * Read again a reference listed on request whose read failed, because the person asked to try again. Nothing else
+   * reads a refused reference again (see `failed` in `ObjectUrlStatus`), so this is the one way back without the
+   * reference leaving the list. A reference that did not fail, or is not listed on request, is left as it is.
+   */
+  retry: (reference: string) => void;
+  /**
+   * Releases every URL and forgets every request. A read still in flight is aborted, and a URL it still produces is
+   * released when it arrives.
+   */
   release: () => void;
 }
 
@@ -57,19 +67,22 @@ export interface ObjectUrlSet {
  * - `loading`: its bytes are being read.
  * - `idle`: listed on request and not asked for yet.
  * - `failed`: its bytes could not be read. A reference read on request is not read again until it leaves the list
- *   and comes back; one read now is tried again the next time the list changes, as it always was.
+ *   and comes back, or the person asks again through `retry`; one read now is tried again the next time the list
+ *   changes, as it always was.
  * - `unlisted`: nobody listed it, so nothing will be read.
  */
 export type ObjectUrlStatus = "ready" | "loading" | "idle" | "failed" | "unlisted";
 
 /** The bookkeeping behind `useObjectUrls`, without React, so what it fetches and releases can be counted. */
 export function createObjectUrlSet(input: {
-  fetchUrl: (reference: string) => Promise<string>;
+  /** `signal` is aborted when the set is released, so a read still in flight stops rather than streaming on. */
+  fetchUrl: (reference: string, signal: AbortSignal) => Promise<string>;
   revoke: (url: string) => void;
   onChange: () => void;
 }): ObjectUrlSet {
   const urls = new Map<string, string>();
-  const inFlight = new Set<string>();
+  /** Each read in flight, by the controller that can abort it; a settled read whose entry is gone was aborted. */
+  const inFlight = new Map<string, AbortController>();
   const failed = new Set<string>();
   const requested = new Set<string>();
   let now = new Set<string>();
@@ -78,11 +91,17 @@ export function createObjectUrlSet(input: {
 
   const fetchOne = (reference: string): void => {
     if (urls.has(reference) || inFlight.has(reference)) return;
-    inFlight.add(reference);
+    const controller = new AbortController();
+    inFlight.set(reference, controller);
     failed.delete(reference);
     void input
-      .fetchUrl(reference)
+      .fetchUrl(reference, controller.signal)
       .then((url) => {
+        if (inFlight.get(reference) !== controller) {
+          // Released while it was read: nothing owns this URL.
+          input.revoke(url);
+          return;
+        }
         inFlight.delete(reference);
         if (!wanted.has(reference)) {
           input.revoke(url);
@@ -93,7 +112,8 @@ export function createObjectUrlSet(input: {
       })
       .catch(() => {
         // The renderer shows its own message with the name it has, which is what a reader gets either way
-        // - bytes that cannot be fetched are a description, not a blank.
+        // - bytes that cannot be fetched are a description, not a blank. A read aborted by `release` is no failure.
+        if (inFlight.get(reference) !== controller) return;
         inFlight.delete(reference);
         if (!wanted.has(reference)) return;
         failed.add(reference);
@@ -145,12 +165,21 @@ export function createObjectUrlSet(input: {
       fetchOne(reference);
       input.onChange();
     },
+    retry: (reference) => {
+      if (!failed.has(reference) || !onRequest.has(reference)) return;
+      requested.add(reference);
+      wanted.add(reference);
+      fetchOne(reference);
+      input.onChange();
+    },
     release: () => {
       now = new Set();
       onRequest = new Set();
       wanted = new Set();
       requested.clear();
       failed.clear();
+      for (const controller of inFlight.values()) controller.abort();
+      inFlight.clear();
       for (const url of urls.values()) input.revoke(url);
       urls.clear();
     },
@@ -162,10 +191,11 @@ export interface ObjectUrls {
   get: (reference: string) => string | undefined;
   status: (reference: string) => ObjectUrlStatus;
   request: (reference: string) => void;
+  retry: (reference: string) => void;
 }
 
 export function useObjectUrls(
-  fetchUrl: (reference: string) => Promise<string>,
+  fetchUrl: (reference: string, signal: AbortSignal) => Promise<string>,
   references: readonly string[],
 ): (reference: string) => string | undefined {
   return useObjectUrlSet(fetchUrl, references, []).get;
@@ -178,7 +208,7 @@ export function useObjectUrls(
  * through it is rebuilt.
  */
 export function useObjectUrlSet(
-  fetchUrl: (reference: string) => Promise<string>,
+  fetchUrl: (reference: string, signal: AbortSignal) => Promise<string>,
   references: readonly string[],
   onRequest: readonly string[],
 ): ObjectUrls {
@@ -197,7 +227,7 @@ export function useObjectUrlSet(
   fetchRef.current = fetchUrl;
   const [set] = useState(() =>
     createObjectUrlSet({
-      fetchUrl: (reference) => fetchRef.current(reference),
+      fetchUrl: (reference, signal) => fetchRef.current(reference, signal),
       revoke: (url) => URL.revokeObjectURL(url),
       onChange: () => setVersion((current) => current + 1),
     }),
@@ -224,5 +254,6 @@ export function useObjectUrlSet(
     [key, lazyKey, set, version],
   );
   const request = useCallback((reference: string) => set.request(reference), [set]);
-  return useMemo(() => ({ get, status, request }), [get, status, request]);
+  const retry = useCallback((reference: string) => set.retry(reference), [set]);
+  return useMemo(() => ({ get, status, request, retry }), [get, status, request, retry]);
 }

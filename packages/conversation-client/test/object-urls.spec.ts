@@ -199,6 +199,41 @@ describe("object URLs read on request, for a player's source", () => {
     expect(run.fetched).toEqual(["poster", "clip", "poster"]);
   });
 
+  it("reads a refused reference again only when the person retries it, and only that one", async () => {
+    const run = failingHarness();
+    run.set.want(["poster"], ["file", "other"]);
+    run.set.request("file");
+    await run.fail("file");
+    expect(run.set.status("file")).toBe("failed");
+    // A retry of something that did not fail, or is not listed on request, reads nothing.
+    run.set.retry("other");
+    run.set.retry("poster");
+    run.set.retry("elsewhere");
+    expect(run.fetched).toEqual(["poster", "file"]);
+
+    const before = run.changes();
+    run.set.retry("file");
+    expect(run.set.status("file")).toBe("loading");
+    expect(run.changes()).toBeGreaterThan(before);
+    run.set.retry("file");
+    expect(run.fetched).toEqual(["poster", "file", "file"]);
+    await run.answer("file");
+    expect(run.set.get("file")).toBe("blob:file");
+    expect(run.set.status("other")).toBe("idle");
+  });
+
+  it("releases a retried URL that lands after its reference left the list", async () => {
+    const run = failingHarness();
+    run.set.want([], ["file"]);
+    run.set.request("file");
+    await run.fail("file");
+    run.set.retry("file");
+    run.set.want([], []);
+    await run.answer("file");
+    expect(run.revoked).toEqual(["blob:file"]);
+    expect(run.set.get("file")).toBeUndefined();
+  });
+
   it("releases every URL and forgets every request when its owner goes", async () => {
     const run = failingHarness();
     run.set.want(["poster"], ["clip"]);

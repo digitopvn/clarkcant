@@ -12,6 +12,19 @@ import { toBase64 } from "./attachments.ts";
 /** Hand a file to the browser's download flow, then release the object URL. */
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
+  downloadObjectUrl(url, filename);
+  // The click starts the download synchronously; the URL is released once the browser has read it.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
+/**
+ * Hand an object URL someone else owns to the browser's download flow, under a name.
+ *
+ * A download, not a navigation: no window is opened, so a popup blocker has nothing to block when it follows an awaited
+ * read, which is how a table export already saves. The desktop shell takes the same path, through Electron's own
+ * download handling. The URL is not released here; its owner does that.
+ */
+export function downloadObjectUrl(url: string, filename: string): void {
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
@@ -20,8 +33,6 @@ export function downloadBlob(blob: Blob, filename: string): void {
   document.body.append(link);
   link.click();
   link.remove();
-  // The click starts the download synchronously; the URL is released once the browser has read it.
-  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
 /**
