@@ -65,6 +65,17 @@ export const widgetAppearanceClaimsSchema = z
 export type WidgetAppearanceClaims = z.infer<typeof widgetAppearanceClaimsSchema>;
 
 /**
+ * The longest version a listing may carry. The marketplace card repeats the version and Install sends it back as it
+ * was listed, so it cannot be shortened on the way: a listing whose version is longer is refused here instead, where
+ * the reason can be named, rather than dropping the card that would have shown it. `semverSchema` itself stays
+ * unbounded because installed records and protocol versions already validate against it.
+ */
+export const DIRECTORY_VERSION_MAX = 80;
+export const directoryVersionSchema = semverSchema.max(DIRECTORY_VERSION_MAX, {
+  error: `must be a semantic version of at most ${String(DIRECTORY_VERSION_MAX)} characters`,
+});
+
+/**
  * The directory entry.
  *
  * The fields are the ones `docs/widget-development.md` §18 requires. `riskTier` is not derived from the publisher's
@@ -73,7 +84,7 @@ export type WidgetAppearanceClaims = z.infer<typeof widgetAppearanceClaimsSchema
  */
 export const directoryEntrySchema = z.strictObject({
   packageId: z.string().min(1).max(160),
-  version: semverSchema,
+  version: directoryVersionSchema,
   displayName: z.string().min(1).max(200),
   description: z.string().min(1).max(600),
   /**

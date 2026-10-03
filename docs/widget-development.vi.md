@@ -2565,7 +2565,8 @@ Widget không publish-ready nếu thiếu các test sau:
 Directory entry cần:
 
 - package id;
-- current version;
+- current version: một phiên bản semantic dài tối đa 80 ký tự, vì card marketplace hiển thị nó và Install gửi lại nó
+  nguyên vẹn; một index có phiên bản dài hơn sẽ bị từ chối khi đọc, kèm lý do;
 - display name;
 - one-line description;
 - author/publisher;

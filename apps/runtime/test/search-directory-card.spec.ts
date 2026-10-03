@@ -85,7 +85,42 @@ describe("the marketplace card search_directory builds", () => {
     const directory = String(answer.hostCard?.["directory"]);
     expect(directory.startsWith("…")).toBe(true);
     expect(directory.endsWith(join(folders[5] ?? "", "directory.json"))).toBe(true);
-    expect(String(answer.hostCard?.["query"])).toHaveLength(200);
+    // A shortened query says so, rather than reading as what was searched.
+    const query = String(answer.hostCard?.["query"]);
+    expect(query).toHaveLength(200);
+    expect(query).toBe(`${"q".repeat(199)}…`);
+  });
+
+  it("shortens the query and the path between characters, never inside one", async () => {
+    // Each folder ends in one plain letter, so a cut by UTF-16 units would land inside the emoji before it.
+    const folders = Array.from({ length: 4 }, () => `${"😀".repeat(49)}x`);
+    const answer = await search([lookupListing()], "😀".repeat(150), folders);
+    const parsed = messageBlockSchema.safeParse(answer.hostCard);
+    expect(parsed.success, parsed.success ? "" : JSON.stringify(parsed.error.issues)).toBe(true);
+    const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    const query = String(answer.hostCard?.["query"]);
+    const directory = String(answer.hostCard?.["directory"]);
+    expect(query).toBe(`${"😀".repeat(99)}…`);
+    expect(loneSurrogate.test(query)).toBe(false);
+    expect(directory.startsWith("…")).toBe(true);
+    expect(directory.length).toBeLessThanOrEqual(300);
+    expect(loneSurrogate.test(directory)).toBe(false);
+  });
+
+  it("carries a listed version of the card's full length unchanged, because Install sends it back", async () => {
+    const version = `1.0.0-rc.${"a".repeat(71)}`;
+    expect(version).toHaveLength(80);
+    const answer = await search([{ ...lookupListing(), version }]);
+    expect(messageBlockSchema.safeParse(answer.hostCard).success).toBe(true);
+    const [row] = (answer.hostCard?.["results"] ?? []) as Record<string, unknown>[];
+    expect(row?.["version"]).toBe(version);
+  });
+
+  it("refuses a listing whose version is longer than the card allows, saying why, rather than dropping the card", async () => {
+    const answer = await search([{ ...lookupListing(), version: `1.0.0-rc.${"a".repeat(80)}` }]);
+    expect(answer.hostCard).toBeUndefined();
+    expect(answer.text).toContain("does not match the directory schema: version");
+    expect(answer.text).toContain("at most 80 characters");
   });
 
   it("still refuses a reach the contract does not allow, rather than carrying it to the card", async () => {

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { attachmentRefSchema } from "./attachments.ts";
 import { referenceBlockSchema, referenceToken } from "./composer-references.ts";
 import { declaredReachSchema } from "./declared-reach.ts";
-import { packageSourceSchema, riskLaneSchema, widgetAppearanceClaimsSchema } from "./directory.ts";
+import { DIRECTORY_VERSION_MAX, packageSourceSchema, riskLaneSchema, widgetAppearanceClaimsSchema } from "./directory.ts";
 import { facetKindSchema } from "./install.ts";
 import { instantSchema, platformSchema } from "./primitives.ts";
 import { widgetSnapshotSchema } from "./widgets.ts";
@@ -232,7 +232,8 @@ export type TerminalSessionCard = z.infer<typeof terminalSessionCardSchema>;
  */
 export const marketplaceResultSchema = z.strictObject({
   packageId: z.string().min(1).max(200),
-  version: z.string().min(1).max(80),
+  /** The listing's own bound (`directoryVersionSchema`), so a listed version always fits the card that shows it. */
+  version: z.string().min(1).max(DIRECTORY_VERSION_MAX),
   displayName: z.string().min(1).max(200),
   description: z.string().max(1000),
   source: packageSourceSchema,

@@ -1019,13 +1019,16 @@ describe("a host card that fails its own contract", () => {
     ],
   });
 
-  async function turnWith(block: Record<string, unknown>) {
+  async function turnWith(block: Record<string, unknown>, options: { reporterThrows?: boolean } = {}) {
     const reports: unknown[] = [];
     const outcome = await handleUserMessage(
       {
         ...deps,
         sampleRecipes: [],
-        reportRejectedHostCard: (diagnostic: unknown) => reports.push(diagnostic),
+        reportRejectedHostCard: (diagnostic: unknown) => {
+          reports.push(diagnostic);
+          if (options.reporterThrows === true) throw new Error("the log sink is gone");
+        },
         respondWithModel: async () => ({
           text: "Đây là kết quả.",
           segments: [
@@ -1061,11 +1064,35 @@ describe("a host card that fails its own contract", () => {
     expect(JSON.stringify(reports)).not.toContain("sk-live");
   });
 
-  it("names no type it cannot trust, and bounds what it lists", async () => {
-    const { reports } = await turnWith({ type: "Marketplace\nResults", ...Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`k${String(i)}`, i])) });
-    const [report] = reports as { blockType: string; issues: unknown[]; issueCount: number }[];
+  it("names no type it cannot trust", async () => {
+    const { reports } = await turnWith({ type: "Marketplace\nResults" });
+    const [report] = reports as { blockType: string }[];
     expect(report?.blockType).toBe("unknown");
-    expect(report?.issues.length).toBeLessThanOrEqual(10);
+  });
+
+  it("lists at most ten unrecognised keys of an issue", async () => {
+    const extra = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`k${String(i)}`, i]));
+    const { reports } = await turnWith(marketCard(extra));
+    const [report] = reports as { issues: { code: string; keys?: string[] }[]; issueCount: number }[];
+    expect(report?.issueCount).toBe(1);
+    expect(report?.issues[0]?.code).toBe("unrecognized_keys");
+    expect(report?.issues[0]?.keys).toEqual(Array.from({ length: 10 }, (_, i) => `k${String(i)}`));
+  });
+
+  it("lists at most ten issues, and counts them all", async () => {
+    const card = marketCard({ version: "" });
+    const { reports } = await turnWith({ ...card, results: Array.from({ length: 12 }, () => card.results[0]) });
+    const [report] = reports as { issues: { path: string }[]; issueCount: number }[];
+    expect(report?.issueCount).toBe(12);
+    expect(report?.issues).toHaveLength(10);
+    expect(report?.issues.map((issue) => issue.path)).toEqual(Array.from({ length: 10 }, (_, i) => `results.${String(i)}.version`));
+  });
+
+  it("keeps the reply when the reporter throws", async () => {
+    const { reports, types } = await turnWith(marketCard({ secretValue: "x" }), { reporterThrows: true });
+    expect(reports).toHaveLength(1);
+    expect(types).toContain("text");
+    expect(types).not.toContain("marketplace-results");
   });
 
   it("reports nothing for a card that matches its contract", async () => {

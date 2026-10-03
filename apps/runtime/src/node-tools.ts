@@ -1416,12 +1416,14 @@ export function createSearchDirectoryTool(input: {
           results.length === 0
             ? `Không có gói nào trong ${state.directory} khớp “${query}”.`
             : `Tìm thấy ${results.length} gói trong ${state.directory}.`,
-        // Every value is fitted to the card contract here, because the conductor drops a host card that fails it.
+        // The conductor drops a host card that fails its contract, so every value here fits it: the query and the
+        // directory name are shortened, and every row field already has the same or a tighter bound in the directory
+        // entry, `version` included (`directoryVersionSchema`); a listing whose version is longer is refused when read.
         hostCard: {
           type: "marketplace-results",
           owner: "host",
           cardId: input.newId("market"),
-          query: query.slice(0, CARD_QUERY_MAX),
+          query: fitCardQuery(query),
           directory: fitDirectoryName(state.directory),
           results: results.map((entry) => ({
             packageId: entry.packageId,
@@ -1452,9 +1454,42 @@ export function createSearchDirectoryTool(input: {
 const CARD_QUERY_MAX = 200;
 const CARD_DIRECTORY_MAX = 300;
 
+/**
+ * A query too long for the card keeps its start behind an ellipsis, so the "no match" note does not show a cut query
+ * as what was searched. The search itself used the whole query.
+ */
+function fitCardQuery(query: string): string {
+  return query.length <= CARD_QUERY_MAX ? query : `${headWithin(query, CARD_QUERY_MAX - 1)}…`;
+}
+
 /** A directory path too long for the card keeps its end, which names the index, behind an ellipsis. */
 function fitDirectoryName(directory: string): string {
-  return directory.length <= CARD_DIRECTORY_MAX ? directory : `…${directory.slice(directory.length - (CARD_DIRECTORY_MAX - 1))}`;
+  return directory.length <= CARD_DIRECTORY_MAX ? directory : `…${tailWithin(directory, CARD_DIRECTORY_MAX - 1)}`;
+}
+
+/**
+ * The longest start of `value` that fits `max` UTF-16 units, the unit the card schema counts, cut between code points
+ * so a character that takes two units is never split in half.
+ */
+function headWithin(value: string, max: number): string {
+  let out = "";
+  for (const char of value) {
+    if (out.length + char.length > max) break;
+    out += char;
+  }
+  return out;
+}
+
+/** The longest end of `value` that fits `max` UTF-16 units, cut between code points like `headWithin`. */
+function tailWithin(value: string, max: number): string {
+  const chars = Array.from(value);
+  let out = "";
+  for (let index = chars.length - 1; index >= 0; index -= 1) {
+    const char = chars[index] ?? "";
+    if (out.length + char.length > max) break;
+    out = char + out;
+  }
+  return out;
 }
 
 /**

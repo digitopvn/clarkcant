@@ -2573,7 +2573,8 @@ A widget is not publish-ready if any of the following tests are missing:
 A directory entry needs:
 
 - package id;
-- current version;
+- current version: a semantic version of at most 80 characters, because the marketplace card shows it and Install
+  sends it back unchanged; an index with a longer one is refused when it is read, with the reason;
 - display name;
 - one-line description;
 - author/publisher;

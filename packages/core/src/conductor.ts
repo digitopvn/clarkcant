@@ -896,11 +896,17 @@ async function runModelTurn(
       // It is bookkeeping: which model, how long it took. At the top of a reply it is the first thing
       // read and it is not the answer — the interface then leads with provenance and buries the text.
       // The renderer draws it as one muted line that expands (see `SystemCardBlock`).
-      ...modelSegmentsToBlocks(reply, (block, issues) =>
-        deps.reportRejectedHostCard?.(
-          rejectedHostCardDiagnostic({ conversationId: input.conversationId, messageId }, block, issues),
-        ),
-      ),
+      ...modelSegmentsToBlocks(reply, (block, issues) => {
+        // The report is a side channel: the card is dropped either way, and a reporter that throws must not
+        // cost the person the reply it was reporting on.
+        try {
+          deps.reportRejectedHostCard?.(
+            rejectedHostCardDiagnostic({ conversationId: input.conversationId, messageId }, block, issues),
+          );
+        } catch {
+          // Nothing to fall back to: reporting is what failed.
+        }
+      }),
       modelReplyCard(deps, reply, input.at),
     ],
     { at: input.at, messageId },
