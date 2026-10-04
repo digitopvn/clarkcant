@@ -197,12 +197,15 @@ function subjectOperations(
       const state = askAgainState(questionBlocks(db, subject.conversationId, subject.questionId), subject.questionId, context.now);
       return state === "expired" ? { lead: ["ask-again"], menu: [], unavailable: [] } : NONE;
     }
+    case undefined:
+      // A Pi SDK notice written before notices named their subject still asks nothing of the person; it only has no
+      // version to skip.
+      return notice.sourceKind === "pi" && notice.category === "update" ? { ...NONE, askable: false } : NONE;
     case "task":
     case "peer":
     case "automation":
     case "signal-source":
     case "conversation":
-    case undefined:
       return NONE;
     default: {
       // A notice kind added later has to decide here what can be done about it, rather than silently offering nothing.

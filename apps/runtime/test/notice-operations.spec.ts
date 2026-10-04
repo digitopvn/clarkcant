@@ -424,6 +424,12 @@ describe("an update notice", () => {
     expect(pi.actions?.filter((action) => action.id === "dismiss")).toHaveLength(1);
     expect(pi.actions?.map((action) => action.id)).not.toContain("update");
     expect(pi.body).toMatch(/không cần làm gì/);
+    // One written before notices named their subject is treated the same, without a version to skip.
+    const { subject: _subject, actions: _actions, ...older } = pi;
+    const olderActions = noticeActionsFor(services.runtime.db, owner(), older, { nodeId: services.runtime.identity.nodeId, now: now as Instant });
+    expect(olderActions[0]).toEqual({ id: "dismiss", placement: "primary" });
+    expect(olderActions).toContainEqual({ id: "ask-clark", placement: "menu" });
+    expect(olderActions.map((action) => action.id)).not.toContain("skip-version");
 
     const skipped = await request("POST", `/inbox/notices/${pi.noticeId}/skip-version`);
     expect(skipped.body).toMatchObject({ skipped: true, subjectKind: "pi", version: "1.2.0" });
