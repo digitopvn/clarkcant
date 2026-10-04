@@ -36,6 +36,7 @@ import {
   type ExecutionAuditDeps,
   readDirectoryIndex,
   searchDirectory,
+  unreadFieldsOf,
 } from "@clarkcant/core";
 import type { Database } from "@clarkcant/storage";
 
@@ -1438,11 +1439,16 @@ export function createSearchDirectoryTool(input: {
       if (state.kind === "unreadable") return { text: `Không đọc được directory: ${state.reason}` };
 
       const results = searchDirectory({ entries: state.entries, query });
+      // A listing with fields this node does not read is shown without them, and said so on its row and here.
+      const partlyRead = results.filter((entry) => unreadFieldsOf(state, entry) !== undefined).length;
       return {
         text:
-          results.length === 0
+          (results.length === 0
             ? `Không có gói nào trong ${state.directory} khớp “${query}”.`
-            : `Tìm thấy ${results.length} gói trong ${state.directory}.`,
+            : `Tìm thấy ${results.length} gói trong ${state.directory}.`) +
+          (partlyRead === 0
+            ? ""
+            : ` ${partlyRead} gói có thông tin mà bản Clark này không đọc được; thẻ kết quả ghi rõ, và bản Clark mới hơn sẽ hiện đủ.`),
         // The conductor drops a host card that fails its contract, so every value here fits it: the query and the
         // directory name are shortened, and every row field already has the same or a tighter bound in the directory
         // entry, `version` included (`directoryVersionSchema`); a listing whose version is longer is refused when read.
@@ -1452,7 +1458,10 @@ export function createSearchDirectoryTool(input: {
           cardId: input.newId("market"),
           query: fitCardQuery(query),
           directory: fitDirectoryName(state.directory),
-          results: results.map((entry) => ({
+          results: results.map((entry) => {
+            // The names of what the listing says that this node does not read, never their values.
+            const unreadFields = unreadFieldsOf(state, entry);
+            return {
             packageId: entry.packageId,
             version: entry.version,
             displayName: entry.displayName,
@@ -1467,10 +1476,12 @@ export function createSearchDirectoryTool(input: {
             ...(entry.declaredReach === undefined || declaredReachIsEmpty(entry.declaredReach)
               ? {}
               : { declaredReach: canonicalReach(entry.declaredReach) }),
+            ...(unreadFields === undefined ? {} : { unreadFields }),
             // A directory entry may repeat a kind; the card lists each once, which also keeps it within its bound.
             facets: [...new Set(entry.facets)],
             platforms: [...new Set(entry.platforms)],
-          })),
+            };
+          }),
         },
       };
     },

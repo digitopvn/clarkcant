@@ -16,6 +16,7 @@ import {
   startUpdateCheckTimer,
   type UpdateCandidate,
 } from "../src/update-checks.ts";
+import { readInbox } from "../src/inbox.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 /**
@@ -419,8 +420,12 @@ describe("runUpdateCheckOnce", () => {
     expect(report.packageUpdates).toBe(0);
   });
 
-  it("finds a package update through a real directory index file, mapping the entry's riskTier to the notice's lane", async () => {
-    const packageId = "com.example.native-tool";
+  /**
+   * A real index file listing `packageId@2.0.0` (with `extra` fields), and that package installed at 1.0.0 the same way
+   * other runtime tests seed `listInstalledPackages` (installed-widgets-route.spec.ts): a direct insert into
+   * `package_generations`, since there is no public writer for a generation outside the full install lifecycle.
+   */
+  function listedUpdate(packageId: string, extra: Record<string, unknown> = {}): string {
     const indexPath = join(dir, "directory-index.json");
     writeFileSync(
       indexPath,
@@ -441,13 +446,10 @@ describe("runUpdateCheckOnce", () => {
           riskTier: "trusted-native",
           sizeBytes: 2048,
           digest: "sha256:native-tool-directory-fixture",
+          ...extra,
         },
       ]),
     );
-
-    // One installed package generation, the same way other runtime tests seed `listInstalledPackages`
-    // (installed-widgets-route.spec.ts): a direct insert into `package_generations`, since there is no public
-    // writer for a generation outside the full install lifecycle.
     services.runtime.db
       .prepare(
         `INSERT INTO package_generations
@@ -474,8 +476,11 @@ describe("runUpdateCheckOnce", () => {
           grantedCapabilities: [],
         }),
       );
+    return indexPath;
+  }
 
-    const report = await runUpdateCheckOnce({
+  const checkOnce = (indexPath: string) =>
+    runUpdateCheckOnce({
       services,
       installDeps: {
         db: services.runtime.db,
@@ -490,6 +495,10 @@ describe("runUpdateCheckOnce", () => {
       platform: HOST,
     });
 
+  it("finds a package update through a real directory index file, mapping the entry's riskTier to the notice's lane", async () => {
+    const packageId = "com.example.native-tool";
+    const report = await checkOnce(listedUpdate(packageId));
+
     expect(report.packageUpdates).toBe(1);
     const notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
     const notice = notices.find((n) => n.sourceKind === "package");
@@ -500,8 +509,26 @@ describe("runUpdateCheckOnce", () => {
     // isolated-widget one.
     expect(notice?.body).toContain("extension Pi gốc");
   });
-});
 
+  it("finds an update in a listing with a field this node does not read, and the notice names it", async () => {
+    const packageId = "com.example.native-tool";
+    const indexPath = listedUpdate(packageId, { futureBinding: { gpu: "required" } });
+    const report = await checkOnce(indexPath);
+    expect(report.packageUpdates).toBe(1);
+
+    const previous = process.env["CC_DIRECTORY_INDEX"];
+    process.env["CC_DIRECTORY_INDEX"] = indexPath;
+    try {
+      const notice = readInbox(services, AT).notices.find((n) => n.sourceKind === "package");
+      expect(notice?.title).toContain(packageId);
+      // Said on the notice, so the change it shows does not pass for all the listing says.
+      expect(notice?.unreadFields).toEqual({ count: 1, names: ["futureBinding"] });
+    } finally {
+      if (previous === undefined) delete process.env["CC_DIRECTORY_INDEX"];
+      else process.env["CC_DIRECTORY_INDEX"] = previous;
+    }
+  });
+});
 describe("startUpdateCheckTimer", () => {
   it("runs once shortly after start, then never overlaps a second pass while the first is still pending", async () => {
     vi.useFakeTimers();

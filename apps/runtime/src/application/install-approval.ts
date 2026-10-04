@@ -6,7 +6,13 @@ import {
   type Principal,
   type WaitingItem,
 } from "@clarkcant/contracts";
-import { decideApproval, directoryIndexPath, readDirectoryIndex, type DirectoryIndexState } from "@clarkcant/core";
+import {
+  decideApproval,
+  directoryIndexPath,
+  readDirectoryIndex,
+  unreadFieldsOf,
+  type DirectoryIndexState,
+} from "@clarkcant/core";
 import { allRows, oneRow } from "@clarkcant/storage";
 
 import {
@@ -77,6 +83,8 @@ export function listPendingInstallApprovals(
     if (!localFilesUnchanged(entry, asked.localDigest)) return [];
     // An update says what it changes against the version that runs now; the question itself is the same as any install's.
     const reachChange = reachChangeAgainstInstalled(runtime, entry, index);
+    // What the listing says that this node does not read, so the question does not claim to show all of it.
+    const unreadFields = unreadFieldsOf(index, entry);
     return [
       {
         kind: "install-approval",
@@ -90,6 +98,7 @@ export function listPendingInstallApprovals(
           ? {}
           : { reach: canonicalReach(entry.declaredReach) }),
         ...(reachChange === undefined ? {} : { reachChange }),
+        ...(unreadFields === undefined ? {} : { unreadFields }),
         description: row.operation_description,
         operationDigest: row.operation_digest,
         requestedAt: row.requested_at as InstallApprovalItem["requestedAt"],
