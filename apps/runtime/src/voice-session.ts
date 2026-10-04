@@ -348,7 +348,7 @@ export interface VoiceAnswerResult {
  */
 export function interpretDecision(text: string): "granted" | "denied" | undefined {
   const normalised = text.normalize("NFC").toLowerCase();
-  if (/[?？]/u.test(normalised)) return undefined;
+  if (/[?？‽]/u.test(normalised)) return undefined;
   const words = normalised.split(/[^\p{L}\p{M}\p{N}]+/u).filter((word) => word !== "");
   let granted = false;
   let denied = false;
@@ -401,6 +401,8 @@ const DENIED_PHRASES = [
   "không đồng ý",
   "khong dong y",
   "không cho phép",
+  "dạ không",
+  "vâng không",
   "khong cho phep",
   "không",
   "khong",
@@ -426,7 +428,8 @@ const DENIED_PHRASES = [
   "refuse",
   "deny",
 ];
-const FILLER_PHRASES = ["please", "thanks", "thank you", "now", "nhé", "nhe", "nha", "đi", "di", "luôn", "luon", "rồi", "roi", "à", "ạ", "ơi"];
+/** No "à": a sentence ending in it ("được à", "ok à") asks, it does not answer. */
+const FILLER_PHRASES = ["please", "thanks", "thank you", "now", "nhé", "nhe", "nha", "đi", "di", "luôn", "luon", "rồi", "roi", "ạ", "ơi"];
 /** Longest phrase first, so "không được" is read as one refusal rather than a refusal and a grant. */
 const DECISION_PHRASES = [
   ...GRANTED_PHRASES.map((phrase) => ({ phrase, kind: "granted" as const })),
@@ -434,7 +437,8 @@ const DECISION_PHRASES = [
   ...FILLER_PHRASES.map((phrase) => ({ phrase, kind: "filler" as const })),
 ]
   .map(({ phrase, kind }) => ({ words: phrase.normalize("NFC").split(" "), kind }))
-  .sort((left, right) => right.words.length - left.words.length);/** Close codes. 1008 is a policy refusal; 1013 is "try again when something changes". */
+  .sort((left, right) => right.words.length - left.words.length);
+/** Close codes. 1008 is a policy refusal; 1013 is "try again when something changes". */
 const CLOSE_POLICY = 1008;
 const CLOSE_TRY_LATER = 1013;
 
@@ -872,7 +876,13 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             ...(answer.optionIds === undefined ? {} : { optionIds: answer.optionIds }),
             ...(answer.confirmed === undefined ? {} : { confirmed: answer.confirmed }),
           });
-          const said = recorded.ok ? "Đã ghi câu trả lời của bạn." : `Không ghi được câu trả lời: ${recorded.message}`;
+          const said = recorded.ok
+            ? locale() === "en"
+              ? "I recorded your answer."
+              : "Đã ghi câu trả lời của bạn."
+            : locale() === "en"
+              ? `Could not record the answer: ${recorded.message}`
+              : `Không ghi được câu trả lời: ${recorded.message}`;
           send({ type: "transcript", role: "assistant", text: said, final: true });
           say(said);
         });

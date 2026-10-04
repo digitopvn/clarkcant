@@ -939,7 +939,7 @@ describe("reading a spoken decision", () => {
     for (const granted of ["ok", "okay", "yes please", "yeah sure", "go ahead", "do it", "ok luôn", "được", "làm đi nhé", "ừ", "có ạ", "vâng", "Đồng ý nhé!"]) {
       expect(interpretDecision(granted), granted).toBe("granted");
     }
-    for (const denied of ["no", "nope", "cancel", "stop", "don't", "no thanks", "không", "thôi", "đừng", "hủy", "khỏi", "không được", "thôi nhé"]) {
+    for (const denied of ["no", "nope", "cancel", "stop", "don't", "no thanks", "không", "thôi", "đừng", "hủy", "khỏi", "không được", "thôi nhé", "dạ không", "vâng không", "dạ không ạ"]) {
       expect(interpretDecision(denied), denied).toBe("denied");
     }
   });
@@ -969,7 +969,7 @@ describe("reading a spoken decision", () => {
   });
 
   it("decides nothing on a question", () => {
-    for (const question of ["is it ok", "what does yes do", "what happens if I say yes", "ok what is this", "ok chưa?", "được không?", "ok?"]) {
+    for (const question of ["is it ok", "what does yes do", "what happens if I say yes", "ok what is this", "ok chưa?", "được không?", "ok?", "ok‽", "được à", "ok à", "có à", "đồng ý à", "được rồi à"]) {
       expect(interpretDecision(question), question).toBeUndefined();
     }
   });
