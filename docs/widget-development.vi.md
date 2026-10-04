@@ -2014,8 +2014,9 @@ prop cùng nhãn. Sau đó nút hoặc nhờ Clark, với một ý định và `
 - Capability phải do thế hệ đang hoạt động của package chứa definition của widget phục vụ: package mà node tải frame
   của widget từ đó, khớp theo id và phiên bản của package. Id widget không có namespace, nên một package khác khai báo
   cùng id widget không được cấp gì. Một widget không bao giờ được gắn với service của package khác. `list` chỉ cho thấy
-  một widget cùng các capability của chính package nó. Một package được ghi lại trước khi node lưu id widget của nó
-  được liệt kê là cần cài lại hoặc cập nhật.
+  một widget cùng các capability của chính package nó. Một package có widget được ghi lại trước khi node lưu id widget
+  của nó được nêu tên, sau các widget, là cần cài lại hoặc cập nhật để liệt kê được widget; các widget của nó vẫn đặt
+  được theo id.
 - Host biên dịch nút thành một binding `invoke`. Effect category lấy từ registry, binding được ghim vào thế hệ đang phục
   vụ, và input schema được ghi lại là schema của chính capability, chỉ giữ các khoá trong `inputs`. Nếu service chưa
   liệt kê các tool của nó, chỉ tên các khoá được ghi lại; mỗi lời gọi vẫn được kiểm tra theo schema của chính capability

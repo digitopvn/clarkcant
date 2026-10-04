@@ -2016,8 +2016,9 @@ the label. It then either asks Clark, with an intent and optional `contextRefs`,
 - The capability must be served by the active generation of the package the widget's definition is read from: the
   package the node loads the widget's frame from, matched by package id and version. Widget ids are not namespaced, so
   another package that declares the same widget id grants nothing. A widget is never bound to another package's
-  service. `list` shows a widget only under its own package's capabilities. A package recorded before the node kept
-  its widget ids is listed as one to reinstall or update.
+  service. `list` shows a widget only under its own package's capabilities. A package with widgets that was recorded
+  before the node kept its widget ids is named, after the widgets, as one to reinstall or update to list them; its
+  widgets still place by id.
 - The host compiles the button as an `invoke` binding. The effect category comes from the registry, the binding is
   pinned to the serving generation, and the recorded input schema is the capability's own, cut down to `inputs`. If the
   service has not listed its tools yet, only the names are recorded; every call is still checked against the
