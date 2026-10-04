@@ -102,6 +102,15 @@ export const TIMELINE_CSS = `
  * room up rather than the note under the chips, which otherwise sank behind the composer on a laptop-height window.
  */
 .cc-empty:has(> .cc-setup-card) > .cc-hero-orb { --cc-hero-orb-size: min(394px, max(197px, calc(100vh - 530px))); }
+/*
+ * On a phone the four suggestions take two rows of two, and the same orb would be most of the screen: at 375 by 812
+ * it was 392px across, wider than the page, and the start screen scrolled so that the orb sat under the header. The
+ * orb takes what the screen has left once the words and the chips are placed (the chips' two rows are in voice).
+ */
+@media (max-width: 480px) {
+  .cc-hero-orb { --cc-hero-orb-size: min(260px, max(140px, calc(100vh - 470px))); }
+  .cc-empty:has(> .cc-setup-card) > .cc-hero-orb { --cc-hero-orb-size: min(260px, max(120px, calc(100vh - 610px))); }
+}
 .cc-empty-orb {
   border-radius: var(--cc-radius-pill);
   display: block;

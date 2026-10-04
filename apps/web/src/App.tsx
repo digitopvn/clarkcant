@@ -340,9 +340,10 @@ export function App(): ReactElement {
       /*
        * What the node still needs, so the conversation can offer it where a turn actually needs it. The
        * wizard used to ask this before anything had been tried; this asks it in the place the answer is
-       * used, and only when the answer is missing.
+       * used, and only when the answer is missing. Once the node has answered, a model it has is said too, so the
+       * start screen stops hedging about one that might be missing.
        */
-      {...(readiness?.model === false ? { needsModel: true } : {})}
+      {...(readiness === undefined ? {} : { needsModel: !readiness.model })}
       // The orb is drawn by this host, so this host is what re-resolves it after a settings write.
       onOrbChange={refreshOrbProfile}
     />

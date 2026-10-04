@@ -179,7 +179,7 @@ test("on a phone the settings tab strip fades only the edges that have more beyo
   await expect.poll(fades).toEqual([expect.not.stringMatching(/^0px$/), "0px"]);
 });
 test("the start screen is one composition: everything above the composer, and the composer right under it", async ({ page }) => {
-  for (const [width, height] of [[1280, 720], [1280, 820], [768, 1024]] as const) {
+  for (const [width, height] of [[1280, 720], [1280, 820], [768, 1024], [375, 812]] as const) {
     await page.setViewportSize({ width, height });
     await openApp(page);
     // This node has no model, so the setup card is the extra block the start screen has to make room for.
@@ -197,6 +197,41 @@ test("the start screen is one composition: everything above the composer, and th
     expect(lastBottom).toBeLessThanOrEqual(scrollBottom);
     // Under the chips, not at the foot of a tall window with a screen of nothing between them.
     expect(composerTop - lastBottom).toBeLessThan(64);
+  }
+});
+test("on a phone the start screen's suggestions take two even rows and the orb fits the page", async ({ page }) => {
+  for (const model of [false, true]) {
+    // Both start screens: with the setup card, and with a model, when nothing hedges about a missing one.
+    await page.route("**/readiness", (route) => route.fulfill({ json: { model, credentials: [] } }));
+    await page.setViewportSize({ width: 375, height: 812 });
+    await openApp(page);
+    await expect(page.locator("[data-needs-model='true']")).toHaveCount(model ? 0 : 1);
+    await expect(page.locator("[data-suggestion-static='true'] > .cc-chip")).toHaveCount(4);
+    // Measured once the chips have finished arriving: each one rises into place on its own delay.
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll("[data-suggestion-static='true'] > .cc-chip")].every((chip) =>
+        chip.getAnimations().every((animation) => animation.playState === "finished"),
+      ),
+    );
+    const layout = await page.evaluate(() => {
+      const chips = [...document.querySelectorAll("[data-suggestion-static='true'] > .cc-chip")].map((chip) => chip.getBoundingClientRect());
+      const scroll = document.querySelector(".cc-scroll") as HTMLElement;
+      return {
+        tops: [...new Set(chips.map((box) => Math.round(box.top)))].length,
+        widths: [...new Set(chips.map((box) => Math.round(box.width)))].length,
+        tallest: Math.max(...chips.map((box) => box.height)),
+        orb: document.querySelector(".cc-hero-orb")?.getBoundingClientRect().width ?? Infinity,
+        spills: scroll.scrollHeight - scroll.clientHeight,
+      };
+    });
+    expect(layout.tops).toBe(2);
+    expect(layout.widths).toBe(1);
+    // One line of label and one of note: a third line means the pill's ends squeezed the words.
+    expect(layout.tallest).toBeLessThan(64);
+    expect(layout.orb).toBeLessThanOrEqual(375 - 32);
+    expect(layout.spills).toBeLessThanOrEqual(1);
+    await expect(page.locator(".cc-empty > p.cc-freshness")).toHaveCount(0);
+    await page.unroute("**/readiness");
   }
 });
 test("the orb is centred on the screen it is drawn over", async ({ page }) => {

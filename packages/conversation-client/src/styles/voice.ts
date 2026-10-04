@@ -251,6 +251,13 @@ export const VOICE_CSS = `
  * before they click, not after.
  */
 .cc-chip-row { display: flex; gap: var(--cc-space-sm); flex-wrap: wrap; justify-content: center; }
+/* On a phone the start screen's suggestions share two rows evenly, rather than wrapping one, one, then two by the
+   length of their labels. */
+@media (max-width: 480px) {
+  .cc-empty > .cc-chip-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  /* Half a phone is too narrow for the pill's wide ends: they wrapped each label and its note onto a second line. */
+  .cc-empty > .cc-chip-row > .cc-chip { padding-inline: var(--cc-space-lg); }
+}
 .cc-chip {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
   cursor: pointer; font: inherit; text-align: left;
