@@ -140,8 +140,8 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
   chương trình đó. Người dùng chỉ duyệt đúng một tác động, không duyệt phần còn lại trong kế hoạch của chương trình, nên
   với `"ask"` bước rủi ro tiếp theo vẫn được hỏi lại. Dòng audit và hoạt động của tác động đã duyệt cũng giữ nguồn gốc.
 - Trên route `/messages` thường, một tin nhắn tới khi có lượt đang trả lời được quyết định ngay tại đó: nhập (steer) vào
-  lượt đang chạy, ngắt lượt đó, hoặc chạy nền. Một tin nhắn có nguồn gốc khác với lượt đang chạy, hoặc một tin nhắn gõ
-  trong lúc đang có lượt nói bằng giọng, không bao giờ được nhập (steer) vào lượt đó. Khi steer được chọn cho một tin
+  lượt đang chạy, ngắt lượt đó, hoặc chạy nền. Một tin nhắn có nguồn gốc khác với lượt đang chạy, một tin nhắn gõ
+  trong lúc đang có lượt nói bằng giọng, hoặc một tin nhắn có tệp đính kèm, không bao giờ được nhập (steer) vào lượt đó. Khi steer được chọn cho một tin
   nhắn như vậy, nó cũng không ngắt lượt đang chạy: nó chờ và được trả lời thành một lượt riêng với nguồn gốc của chính
   nó, và Stop hủy được nó trong lúc chờ. Lượt đang chạy chỉ bị ngắt khi bộ quyết định chọn ngắt, khi tin nhắn mới có
   tham chiếu, hoặc khi chạy nền mà không có worker nào nhận. Tin nhắn được chuyển sang làn chạy nền được ghi vào nhật ký audit cùng nguồn

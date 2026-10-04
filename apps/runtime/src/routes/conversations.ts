@@ -1194,9 +1194,14 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
        * beside the person's turn, or a typed one during a spoken turn — waits and is answered as a turn of its own, and
        * Stop still cancels it while it waits. It does not cut the running turn off: joining was what the decider chose,
        * and taking the running turn's place was not.
+       *
+       * A message with attachments is not joined at all: a steer carries only its words, so it waits the same way, and
+       * is stored with its files and answered in a turn of its own that reads them.
        */
       if (action === "steer") {
-        if (await control.steer(conversationId, text, composerSurface(request).origin)) {
+        const ids: unknown = parsed.value.attachmentIds;
+        const attachedFiles = Array.isArray(ids) && ids.length > 0;
+        if (!attachedFiles && (await control.steer(conversationId, text, composerSurface(request).origin))) {
           return json(202, {
             accepted: true,
             resolution: "steered",

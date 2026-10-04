@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationId, Principal } from "@clarkcant/contracts";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
 
+import { attachmentRefsForLastUserMessage } from "../src/attachments.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { createModelTurn } from "../src/model-turn.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -34,7 +35,8 @@ describe("a steer the running turn refuses on the plain route", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("waits for a turn of its own and does not cut off the spoken turn it could not join", async () => {
+  /** A node whose model turn runs on the fake adapter, with its first run held until `open` is called. */
+  async function start() {
     dir = mkdtempSync(join(tmpdir(), "clarkcant-refused-steer-"));
     services = bootNodeServices({ dataDir: dir, label: "test node" });
     const deps: GatewayDeps = { services, now: () => AT, newConversationId: () => "conv_refused_steer" };
@@ -78,6 +80,11 @@ describe("a steer the running turn refuses on the plain route", () => {
       kind: "user",
       nodeId: services.runtime.identity.nodeId,
     };
+    return { steered, turn, interrupted, call, conversationId, principal, open: () => open() };
+  }
+
+  it("waits for a turn of its own and does not cut off the spoken turn it could not join", async () => {
+    const { steered, turn, interrupted, call, conversationId, principal, open } = await start();
     const spoken = turn.answer({
       conversationId: conversationId as ConversationId,
       principal,
@@ -102,5 +109,45 @@ describe("a steer the running turn refuses on the plain route", () => {
     expect(answered.status).toBe(200);
     expect(JSON.stringify(answered.body)).toContain("câu trả lời cho tin gõ");
     expect(interrupted).not.toHaveBeenCalled();
+  });
+
+  it("does not join a message with attachments to the running turn, and stores it with its file", async () => {
+    const { steered, turn, interrupted, call, conversationId, principal, open } = await start();
+    const uploaded = await call("POST", "/attachments", {
+      conversationId,
+      filename: "ghi-chu.md",
+      mime: "text/markdown",
+      contentBase64: Buffer.from("# Ghi chú\n").toString("base64"),
+    });
+    expect(uploaded.status).toBe(201);
+    const { attachmentRef } = uploaded.body as { attachmentRef: { attachmentId: string } };
+    // A typed turn of the same origin and channel as the plain route's message, which would take a steer of bare words.
+    const first = turn.answer({
+      conversationId: conversationId as ConversationId,
+      principal,
+      text: "kể cho tôi nghe",
+      messageId: "msg_first",
+      origin: "cli-api",
+    });
+    await vi.waitFor(() => expect(turn.answering()).toEqual([conversationId]));
+
+    const typed = call("POST", `/conversations/${conversationId}/messages`, {
+      text: "xem tệp này",
+      attachmentIds: [attachmentRef.attachmentId],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // Not joined to the running turn, and not put in its place.
+    expect(steered).not.toHaveBeenCalled();
+    expect(interrupted).not.toHaveBeenCalled();
+    expect(turn.answering()).toEqual([conversationId]);
+
+    open();
+    expect((await first).stopped).toBeUndefined();
+    const answered = await typed;
+    expect(answered.status).toBe(200);
+    expect(JSON.stringify(answered.body)).toContain("câu trả lời cho tin gõ");
+    // Stored as a message of its own, with the file it was sent with.
+    const stored = attachmentRefsForLastUserMessage({ db: services.runtime.db, conversationId });
+    expect(stored.map((ref) => ref.attachmentId)).toEqual([attachmentRef.attachmentId]);
   });
 });

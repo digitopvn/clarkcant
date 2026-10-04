@@ -138,7 +138,8 @@ The origin stays with the work it started:
   is asked about again under `"ask"`. The approved effect's audit and activity rows keep the origin too.
 - On the plain `/messages` route, a message that arrives while a turn is answering is decided there: it joins the
   running turn (a steer), interrupts it, or runs in the background. A message whose origin differs from the running
-  turn's, or a typed message during a spoken turn, is never steered into it. When a steer was chosen for such a
+  turn's, a typed message during a spoken turn, or a message that carries attachments, is never steered into it. When
+  a steer was chosen for such a
   message, it does not interrupt the running turn either: it waits and is answered as a turn of its own, with its own
   origin, and Stop cancels it while it waits. A running turn is interrupted only when the decider chose that, when the
   new message carries references, or when a background run has no worker to take it. A message sent to the background lane is recorded in the audit log with its
