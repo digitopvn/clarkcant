@@ -826,6 +826,26 @@ export class RealPiAdapter implements PiAdapter {
    */
   async prompt(sessionId: string, text: string): Promise<void> {
     const entry = this.#require(sessionId);
+    await this.#bounded(sessionId, () => entry.session.prompt(text));
+  }
+
+  hasQueuedMessages(sessionId: string): boolean {
+    return this.#require(sessionId).session.agent.hasQueuedMessages();
+  }
+
+  /**
+   * Run again on a steer the last run did not take. Pi's agent loop reads its steering queue between model calls; a
+   * steer that lands after its last read stays queued once the run settles, and `continue()` is the SDK's way to have
+   * the model answer it. Bounded and checked exactly as a prompt is.
+   */
+  async continueQueued(sessionId: string): Promise<void> {
+    const entry = this.#require(sessionId);
+    if (!entry.session.agent.hasQueuedMessages()) return;
+    await this.#bounded(sessionId, () => entry.session.agent.continue());
+  }
+
+  async #bounded(sessionId: string, start: () => Promise<void>): Promise<void> {
+    const entry = this.#require(sessionId);
     const budgetMs = entry.brief.maxWallClockMs;
 
     let timer: NodeJS.Timeout | undefined;
@@ -839,7 +859,7 @@ export class RealPiAdapter implements PiAdapter {
 
     entry.turns += 1;
     try {
-      await entry.session.prompt(text);
+      await start();
       await entry.session.agent.waitForIdle();
     } finally {
       if (timer !== undefined) clearTimeout(timer);

@@ -280,7 +280,18 @@ export interface PiAdapter {
 
   subscribe(sessionId: string, listener: (event: WorkerEvent) => void): () => void;
 
+  /**
+   * Add a message to the run in progress. Pi queues it and the agent loop takes it at its next check; a steer that
+   * lands after the loop's last check stays queued once `prompt` has resolved, which is what `hasQueuedMessages` and
+   * `continueQueued` are for.
+   */
   steer(sessionId: string, text: string): Promise<void>;
+
+  /** Whether the session still holds a steered message its last run did not take. */
+  hasQueuedMessages(sessionId: string): boolean;
+
+  /** Run the session again on what it still holds queued, and resolve once that run has settled. */
+  continueQueued(sessionId: string): Promise<void>;
 
   abort(sessionId: string, reason: string): Promise<void>;
 
