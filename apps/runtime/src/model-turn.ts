@@ -261,6 +261,11 @@ interface Turn {
   /** The message this turn is being written into. Set before the prompt. */
   messageId?: string;
   /**
+   * The stored message this turn answers, when the caller knows it. What that message references is read from it, not
+   * from whatever message was stored last: a turn that waited behind another one answers its own words.
+   */
+  userMessageId?: string | undefined;
+  /**
    * Where events go while the turn is still running, when somebody is watching.
    *
    * Held per turn rather than per session because it belongs to the request that is waiting, and a
@@ -1168,6 +1173,7 @@ export async function createModelTurn(options: {
     try {
       const section = options.instructions({
         conversationId,
+        ...(turn.userMessageId === undefined ? {} : { messageId: turn.userMessageId }),
         touched: turn.touched,
         stated: turn.stated,
         allowed: turn.allowed,
@@ -1778,6 +1784,7 @@ export async function createModelTurn(options: {
       turn.reasoning.length = 0;
       turn.segments.length = 0;
       turn.messageId = input.messageId;
+      turn.userMessageId = input.userMessageId;
       turn.onEvent = input.onEvent;
       turn.channel = input.channel ?? "chat";
       turn.origin = input.origin;

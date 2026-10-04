@@ -4,6 +4,7 @@ import type { ConversationId, Principal } from "@clarkcant/contracts";
 import type { ModelTurnEvent } from "@clarkcant/core";
 import { FakePiAdapter, type WorkerBrief, type WorkerSessionHandle } from "@clarkcant/pi-adapter";
 
+import { turnInstructions } from "../src/conditional-instructions.ts";
 import { SESSION_POLICY_LIMITS } from "../src/session-policy.ts";
 import { createModelTurn, redactLocalPaths, type ViewDescriptor } from "../src/model-turn.ts";
 
@@ -601,6 +602,52 @@ describe("the edges of a running turn", () => {
     expect(reply.steered).toBeUndefined();
     expect(reply.text).toBe("hai");
     expect(adapter.promptsFor("fake-session-1")).toHaveLength(2);
+  });
+
+  it("states the instructions of the message a waiting turn answers, not of the message stored after it", async () => {
+    const adapter = new CountingAdapter({ script: ["một", "hai"] });
+    const held = holdNextPrompt(adapter);
+    // What each stored message references; the last one stored is a later message the person sent while the second waited.
+    const skillsOf: Record<string, string[]> = { u_1: [], u_2: ["skill-of-the-waiting-message"], u_3: ["skill-of-a-later-message"] };
+    const asked: (string | undefined)[] = [];
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => FIRST,
+      instructions: turnInstructions({
+        instructions: {
+          active: (state) =>
+            state.skills.map((skill) => ({ id: skill, source: `rules/${skill}.md`, text: `Instruction for ${skill}.`, pin: false })),
+        },
+        referenced: (_conversationId, messageId) => {
+          asked.push(messageId);
+          return { places: [], skills: skillsOf[messageId ?? "u_3"] ?? [] };
+        },
+      }),
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    const spoken = turn.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "một",
+      messageId: "msg_1",
+      userMessageId: "u_1",
+      channel: "voice",
+    });
+    await vi.waitFor(() => expect(adapter.isProcessing("fake-session-1")).toBe(true));
+    // Typed during a spoken turn, so it waits for a turn of its own.
+    const waiting = turn.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "hai", messageId: "msg_2", userMessageId: "u_2" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    held.open();
+    await spoken;
+    expect((await waiting).text).toBe("hai");
+
+    expect(asked).toEqual(["u_1", "u_2"]);
+    const second = adapter.promptsFor("fake-session-1")[1] ?? "";
+    expect(second).toContain("Instruction for skill-of-the-waiting-message.");
+    expect(second).not.toContain("skill-of-a-later-message");
   });
 
   it("starts nothing once the node is shutting down, and stops what was waiting", async () => {

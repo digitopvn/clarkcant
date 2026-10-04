@@ -551,6 +551,8 @@ export function rememberTouch(touched: InstructionTouch[], touch: InstructionTou
 /** What a conversation's turn asks: the instructions to state now, for what its session has touched. */
 export type TurnInstructions = (input: {
   conversationId: string;
+  /** The stored message the turn answers; absent means the conversation's last user message. */
+  messageId?: string;
   touched: readonly InstructionTouch[];
   stated: ReadonlySet<string>;
   allowed: readonly DataClass[];
@@ -566,10 +568,13 @@ export type TurnInstructions = (input: {
  */
 export function turnInstructions(deps: {
   instructions: ConditionalInstructions;
-  referenced: (conversationId: string) => { places: readonly { path: string; folder: boolean }[]; skills: readonly string[] };
+  referenced: (
+    conversationId: string,
+    messageId: string | undefined,
+  ) => { places: readonly { path: string; folder: boolean }[]; skills: readonly string[] };
 }): TurnInstructions {
   return (input) => {
-    const referenced = deps.referenced(input.conversationId);
+    const referenced = deps.referenced(input.conversationId, input.messageId);
     const touched: InstructionTouch[] = [
       ...input.touched,
       ...referenced.places.map((place) => ({ path: place.path, operation: "read" as const, scope: place.folder })),

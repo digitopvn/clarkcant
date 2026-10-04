@@ -372,10 +372,14 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
       : {
           instructions: turnInstructions({
             instructions: { active: (state) => nodeConditionalInstructions(deps.env, deps.services())?.active(state) ?? [] },
-            referenced: (conversationId) =>
+            // The turn's own message, so a turn that waited behind another one reads what it was asked, not what was
+            // stored after it.
+            referenced: (conversationId, messageId) =>
               referencedWork(
                 deps.services().projects,
-                referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
+                messageId === undefined
+                  ? referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId })
+                  : referencesForMessage({ db: deps.services().runtime.db, conversationId, messageId }),
               ),
           }),
         }),
