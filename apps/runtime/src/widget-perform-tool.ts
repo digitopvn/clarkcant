@@ -143,6 +143,12 @@ function inertBlock(text: string): string {
 /** What the model is told about a perform. Never more than the frame reported. */
 function describePerform(label: string, result: WidgetActionResult): string {
   if (result.ok) {
+    if (result.body.outcome === "approval-required" && result.body.alreadyWaiting === true) {
+      return (
+        `Waiting: a card asking the person about exactly this “${label}” is already in the conversation, so no second ` +
+        "card was drawn. Nothing has been sent to the widget. You cannot approve it, and you must not ask again or say it is done."
+      );
+    }
     if (result.body.outcome === "approval-required") {
       return (
         `Waiting: the person's execution policy asks before “${label}” runs, so a host card now asks them. Nothing has been ` +

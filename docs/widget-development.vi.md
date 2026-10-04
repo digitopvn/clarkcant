@@ -2014,11 +2014,15 @@ làm việc đó trực tiếp. Binding perform không nằm trong danh sách n�
 bằng giọng nói đều không bấm được nó.
 
 **Chính sách quyết định, người dùng phê duyệt.** Chính sách từ chối thì trả `POLICY_REFUSED`. Chính sách muốn hỏi thì
-đặt một thẻ phê duyệt do host sở hữu vào hội thoại, và không có gì được gửi cho tới khi người dùng phê duyệt. Khi được
-phê duyệt, frame được hỏi lúc đó, nhưng chỉ khi một màn hình đang chạy hội thoại vẫn hiện widget. Nếu không, biên nhận
-cho biết việc đã được duyệt nhưng không được thực hiện, và không có gì được gửi. Lần phê duyệt kiểm tra lại payload
-của thẻ với digest đã được quyết định, binding, input, chính sách và sổ hiệu ứng. Cả widget lẫn model đều không phê
-duyệt được.
+đặt một thẻ phê duyệt do host sở hữu vào hội thoại, và không có gì được gửi cho tới khi người dùng phê duyệt. Thẻ hiện
+toàn bộ input: phần mô tả của thẻ mang nó cho hộp thư và câu hỏi bằng giọng nói, và thẻ trình bày nó đầy đủ. Input dài
+hơn 1.200 ký tự khi viết dạng JSON bị từ chối với `PERFORM_INPUT_TOO_LONG` thay vì chỉ hiện một phần. Hỏi lại cùng hành
+động với cùng input trong lúc thẻ của nó còn chờ thì nhận lại phê duyệt của thẻ đó, không có thẻ thứ hai, và một hội
+thoại giữ tối đa 8 thẻ perform đang chờ (quá mức đó thì trả `PERFORM_CARDS_WAITING`). Khi được phê duyệt, frame được
+hỏi lúc đó, nhưng chỉ khi màn hình bạn phê duyệt vẫn hiện widget; phê duyệt từ hộp thư, hoặc từ một trang không có
+widget, được trả lời "đã duyệt nhưng không thực hiện", và không có gì được gửi. Lần phê duyệt kiểm tra lại payload của
+thẻ với digest đã được quyết định (digest bao gồm hội thoại, widget, binding, hành động và input), binding, input,
+chính sách và sổ hiệu ứng. Cả widget lẫn model đều không phê duyệt được.
 
 **Frame làm việc đó.** Node chỉ gửi sự kiện `widget-perform` có phiên bản (`v: 1`) tới bên gọi đã nói là mình chạy được
 nó:
@@ -2031,16 +2035,18 @@ của frame tại `POST /app-intents/widget-perform/{performId}` ([giao diện m
 
 ```js
 const stop = api.actions.offer("format", async (input) => {
-  if (busy) throw new Error("SHEET_BUSY: bảng đang bận; hãy thử lại sau giây lát.");
+  if (busy) throw api.actions.refuse("SHEET_BUSY", "bảng đang bận; hãy thử lại sau giây lát.");
   applyFormat(input.format);
   return `Đã định dạng ${selection} thành ${input.format}.`; // điều Clark được báo, tối đa 4.000 ký tự
 });
 ```
 
-Handler nhận một bản sao đã đóng băng của input đã kiểm tra. Chuỗi trả về là kết quả của công cụ. Một lỗi
-`"CODE: message"` được ném ra là lời từ chối có chủ ý của widget: node trả `WIDGET_REFUSED`, với mã riêng của widget
-trong `widgetCode`, tách khỏi các mã của host. Chỉ ném lỗi có mã trước khi thay đổi bất cứ điều gì. Mọi lỗi khác được
-báo là `failed`, và Clark coi đó là kết quả không chắc chắn, vì handler có thể đã thay đổi điều gì đó. Hành động không
+Handler nhận một bản sao đã đóng băng của input đã kiểm tra. Chuỗi trả về là kết quả của công cụ. Một lỗi do
+`api.actions.refuse(code, message)` tạo ra là lời từ chối có chủ ý của widget: node trả `WIDGET_REFUSED`, với mã riêng
+của widget trong `widgetCode`, tách khỏi các mã của host. Chỉ ném nó trước khi thay đổi bất cứ điều gì. Mọi lỗi khác
+được báo là `failed`, và Clark coi đó là kết quả không chắc chắn, vì handler có thể đã thay đổi điều gì đó. Điều này
+gồm cả lỗi mà thông điệp chỉ trông như có mã, và các lời từ chối của chính SDK, như một lần ghi state bị từ chối
+(`STATE_REVISION_STALE: …`) hay một yêu cầu artifact bị từ chối, dù chúng mang mã. Hành động không
 có handler bị từ chối với `ACTION_NOT_OFFERED`. Output mang token bị bỏ đi, và kết quả trở thành không chắc chắn.
 
 **Không mở thì không thực hiện.** Một lần perform bị từ chối với `FRAME_NOT_MOUNTED` trong các trường hợp sau:

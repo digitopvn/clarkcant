@@ -12,6 +12,7 @@ import {
   PAGE_PERFORM_REFUSAL_CODES,
   VIEW_STATE_WRITE_VARIANT,
   WIDGET_PERFORM_VERSION,
+  approvalCardBlockSchema,
   checkFormValues,
   describeFieldValue,
 } from "@clarkcant/contracts";
@@ -39,7 +40,7 @@ import { appendAuditEvent, asJsonValue, hasUnsettledEffect, listConversationInst
 import { preferredAppIntentLocale } from "../app-intents.ts";
 
 import { readArtifactForContext } from "../artifact-broker.ts";
-import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
+import { appendHostReply, blocksOfConversation, startBackgroundWork } from "../routes/conversations.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { AGENT_ITEM_KEY } from "./action-bindings.ts";
@@ -201,8 +202,10 @@ function statusOf(code: string): number {
       return 409;
     case "RATE_LIMITED":
     case "JOB_LIMIT_REACHED":
+    case "PERFORM_CARDS_WAITING":
       return 429;
     case "ARTIFACT_INPUT_TOO_LARGE":
+    case "PERFORM_INPUT_TOO_LONG":
       return 413;
     case "SERVICE_TOOL_FAILED":
       return 502;
@@ -912,9 +915,74 @@ export interface WidgetActionOptions {
 /** How long a person has to answer the card a perform's policy asked for: as long as any other host card. */
 const PERFORM_APPROVAL_TTL_MS = 15 * 60_000;
 
-/** The digest the policy and the approval card see for one perform: which widget, which action, with what. */
-function performDigest(instanceId: string, action: string, input: Record<string, unknown>): string {
-  return `sha256:${payloadDigest(asJsonValue({ kind: "widget-perform", instanceId, action, input: input as never }))}`;
+/** What one perform's digest covers: the conversation it was asked in, the widget, the binding as it was, the action and the input. */
+interface PerformOperation {
+  conversationId: string;
+  instanceId: string;
+  actionBindingId: string;
+  bindingDigest: string;
+  action: string;
+  input: Record<string, unknown>;
+}
+
+/**
+ * The digest the policy and the approval card see for one perform. The conversation and the binding are part of it, so
+ * a card approves this action of this widget as it was offered, in this conversation, and two requests for the same
+ * operation are recognised as one.
+ */
+function performDigest(operation: PerformOperation): string {
+  return `sha256:${payloadDigest(asJsonValue({ kind: "widget-perform", ...operation, input: operation.input as never }))}`;
+}
+
+/**
+ * The longest input, written as JSON, an approval card shows. The card's description carries the whole input — the
+ * inbox and a spoken question read only the description — so a longer one is refused rather than shown in part: the
+ * person approves only what they can read.
+ */
+export const PERFORM_CARD_INPUT_MAX_CHARS = 1_200;
+
+/** How many perform cards may wait for the person at once in one conversation, so a looping model cannot fill it. */
+export const PERFORM_CARDS_WAITING_MAX = 8;
+
+/** The perform cards this process minted, by approval id, with their conversation: counted before the turn is written. */
+const mintedPerformCards = new WeakMap<object, Map<string, string>>();
+
+/** A perform card still waiting for exactly this operation, so asking again is answered with it, never a second card. */
+function waitingPerformCard(services: WidgetActionServices, digest: string, at: Instant): string | undefined {
+  return (
+    services.runtime.db
+      .prepare(
+        `SELECT approval_id FROM approvals
+          WHERE operation_digest = ? AND decision = 'pending' AND expires_at > ? AND task_id IS NULL
+          ORDER BY requested_at DESC LIMIT 1`,
+      )
+      .get(digest, at) as { approval_id: string } | undefined
+  )?.approval_id;
+}
+
+/**
+ * The perform cards still waiting in a conversation: those this process minted (the turn that shows them may not be
+ * written yet) and those already in the conversation (minted before a restart), each counted once and only while its
+ * approval is pending and unexpired.
+ */
+function waitingPerformCards(services: WidgetActionServices, conversationId: string, at: Instant): number {
+  const minted = mintedPerformCards.get(services.runtime.db) ?? new Map<string, string>();
+  mintedPerformCards.set(services.runtime.db, minted);
+  const ids = new Set<string>();
+  for (const [approvalId, conversation] of minted) if (conversation === conversationId) ids.add(approvalId);
+  for (const block of blocksOfConversation(services, conversationId)) {
+    if (block.type === "approval-card" && typeof block.approvalId === "string" && typeof block.payload === "string" && isWidgetPerformPayload(block.payload)) {
+      ids.add(block.approvalId);
+    }
+  }
+  const read = services.runtime.db.prepare("SELECT decision, expires_at FROM approvals WHERE approval_id = ?");
+  let waiting = 0;
+  for (const approvalId of ids) {
+    const row = read.get(approvalId) as { decision: string; expires_at: string } | undefined;
+    if (row !== undefined && row.decision === "pending" && row.expires_at > at) waiting += 1;
+    else minted.delete(approvalId);
+  }
+  return waiting;
 }
 
 /** The ledger's name for an action a widget offers, as `capabilityRef`: the widget and the action, never the instance. */
@@ -1114,9 +1182,11 @@ async function runPerform(
   });
 }
 
-/** The words on the host's card for a perform the policy asked about, in the person's language. */
-function performApprovalDescription(locale: "vi" | "en", label: string, widgetId: string, input: Record<string, unknown>): string {
-  const sent = Object.keys(input).length === 0 ? "" : JSON.stringify(input).slice(0, 300);
+/**
+ * The words on the host's card for a perform the policy asked about, in the person's language, with the whole input:
+ * never cut, because the inbox and a spoken question read only these words (`PERFORM_CARD_INPUT_MAX_CHARS`).
+ */
+function performApprovalDescription(locale: "vi" | "en", label: string, widgetId: string, sent: string): string {
   return locale === "en"
     ? `Clark asks the widget ${widgetId} to ${label}${sent === "" ? "" : ` with ${sent}`}`
     : `Clark muốn widget ${widgetId} thực hiện “${label}”${sent === "" ? "" : ` với ${sent}`}`;
@@ -1151,7 +1221,8 @@ export function isWidgetPerformPayload(payload: string): boolean {
  * is not repeated, then the person's execution policy decides on a `local-write`: the widget never approves its own
  * action, and the model never approves on its behalf. A policy that asks puts a host-owned card in the conversation
  * (`approval-required`, the card in `body.card` for the caller to place); approving it asks the frame then, through
- * `runApprovedPerform`, if a screen still shows it.
+ * `runApprovedPerform`, if the screen the person approves on still shows it. The same operation asked for again while
+ * its card waits gets that card, not a second one, and a conversation holds at most `PERFORM_CARDS_WAITING_MAX`.
  *
  * Inside the effect ledger like a service call: written down as handed off before the page is asked, settled on the
  * frame's answer. A frame that was asked and did not answer in time, failed while performing, or a Stop while waiting,
@@ -1170,7 +1241,14 @@ async function invokePerformAction(
 
   const now = (): Instant => new Date().toISOString() as Instant;
   const policy = readExecutionPolicy({ db: services.runtime.db, now }, services.runtime.identity.ownerPrincipalId);
-  const operationDigest = performDigest(request.instanceId, proposal.action, request.input);
+  const operationDigest = performDigest({
+    conversationId: request.conversationId,
+    instanceId: request.instanceId,
+    actionBindingId: request.actionBindingId,
+    bindingDigest: checked.binding.bindingDigest,
+    action: proposal.action,
+    input: request.input,
+  });
   const decided = decideExecution({
     policy,
     action: { kind: "effect", category: "local-write", operationDigest: operationDigest as never },
@@ -1182,7 +1260,43 @@ async function invokePerformAction(
   }
   if (decided.kind === "ask") {
     // The person chose to be asked: a host-owned card, answered by them alone. Nothing is sent until they approve, and
-    // then only to a screen that still shows the widget.
+    // then only to the screen they approve on, if it still shows the widget.
+    const at = now();
+    const waiting = waitingPerformCard(services, operationDigest, at);
+    if (waiting !== undefined) {
+      // The same operation already waits on a card: one card, one decision, one run. No second card is drawn.
+      recordInvokeAction(services.conductor, {
+        invocationId: request.invocationId,
+        actionBindingId: request.actionBindingId,
+        instanceId: checked.instance.instanceId,
+        digest: checked.digest,
+        result: { kind: "approval-required", approvalId: waiting },
+      });
+      return {
+        ok: true,
+        status: 202,
+        body: actionBody(services, checked, request.conversationId, false, {
+          outcome: "approval-required",
+          approvalRequired: { approvalId: waiting },
+          alreadyWaiting: true,
+        }),
+      };
+    }
+    const inputText = Object.keys(request.input).length === 0 ? "" : JSON.stringify(request.input);
+    if (inputText.length > PERFORM_CARD_INPUT_MAX_CHARS) {
+      return refusal(
+        "PERFORM_INPUT_TOO_LONG",
+        `the input is ${String(inputText.length)} characters, more than the ${String(PERFORM_CARD_INPUT_MAX_CHARS)} an approval card shows in full, and the person approves only what they can read. Nothing was sent; perform it in smaller steps.`,
+        { outcome: "refused" },
+      );
+    }
+    if (waitingPerformCards(services, request.conversationId, at) >= PERFORM_CARDS_WAITING_MAX) {
+      return refusal(
+        "PERFORM_CARDS_WAITING",
+        `${String(PERFORM_CARDS_WAITING_MAX)} approval cards for widget actions already wait for the person in this conversation. Nothing was sent; wait for their answers before asking again.`,
+        { outcome: "refused" },
+      );
+    }
     const locale = preferredAppIntentLocale({ db: services.runtime.db, now }, services.runtime.identity.ownerPrincipalId);
     const payload: PerformApprovalPayload = {
       kind: "widget-perform",
@@ -1193,15 +1307,30 @@ async function invokePerformAction(
       label,
       input: request.input,
     };
+    const operationDescription = performApprovalDescription(locale, label, checked.instance.definitionRef.id, inputText);
+    const cardOf = (approval: { approvalId: string; expiresAt: string; decision: string }) => ({
+      type: "approval-card" as const,
+      owner: "host" as const,
+      approvalId: approval.approvalId,
+      operationDescription,
+      operationDigest,
+      payload: JSON.stringify(payload),
+      effectCategory: "local-write" as const,
+      expiresAt: approval.expiresAt,
+      decider: "user" as const,
+      decision: approval.decision,
+    });
+    // Checked against the block schema before an approval exists, so a card that could not be drawn never waits unseen.
+    if (!approvalCardBlockSchema.safeParse(cardOf({ approvalId: "appr_check", expiresAt: at, decision: "pending" })).success) {
+      return refusal("PERFORM_INPUT_TOO_LONG", "the approval card for this action could not be drawn in full. Nothing was sent; perform it in smaller steps.", {
+        outcome: "refused",
+      });
+    }
     const approval = requestApproval(
       { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now, newId: services.conductor.newId },
-      {
-        operationDigest,
-        operationDescription: performApprovalDescription(locale, label, checked.instance.definitionRef.id, request.input),
-        effectCategory: "local-write",
-        ttlMs: PERFORM_APPROVAL_TTL_MS,
-      },
+      { operationDigest, operationDescription, effectCategory: "local-write", ttlMs: PERFORM_APPROVAL_TTL_MS },
     );
+    mintedPerformCards.get(services.runtime.db)?.set(approval.approvalId, request.conversationId);
     recordInvokeAction(services.conductor, {
       invocationId: request.invocationId,
       actionBindingId: request.actionBindingId,
@@ -1209,18 +1338,7 @@ async function invokePerformAction(
       digest: checked.digest,
       result: { kind: "approval-required", approvalId: approval.approvalId },
     });
-    const card = {
-      type: "approval-card",
-      owner: "host",
-      approvalId: approval.approvalId,
-      operationDescription: approval.operationDescription,
-      operationDigest: approval.operationDigest,
-      payload: JSON.stringify(payload),
-      effectCategory: "local-write",
-      expiresAt: approval.expiresAt,
-      decider: approval.decider,
-      decision: approval.decision,
-    };
+    const card = cardOf(approval);
     return {
       ok: true,
       status: 202,
@@ -1273,7 +1391,15 @@ export async function runApprovedPerform(
   ) {
     return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload names no widget action" };
   }
-  if (performDigest(instanceId, action, performInput) !== input.expectedDigest) {
+  const shownDigest = performDigest({
+    conversationId: input.conversationId,
+    instanceId,
+    actionBindingId,
+    bindingDigest,
+    action,
+    input: performInput as Record<string, unknown>,
+  });
+  if (shownDigest !== input.expectedDigest) {
     return { ok: false, code: "APPROVAL_FORGED", message: "the operation changed after it was displayed; the decision does not cover what would run" };
   }
   const cursor = widgetActionTarget(services, instanceId, actionBindingId);
@@ -1333,8 +1459,8 @@ export function performReceipt(locale: "vi" | "en", label: string, result: Widge
   const why =
     result.code === "FRAME_NOT_MOUNTED" || result.code === "SURFACE_GONE"
       ? locale === "en"
-        ? "no screen running this conversation shows the widget now"
-        : "lúc này không có màn hình nào của cuộc trò chuyện đang hiện widget đó"
+        ? "the screen you approved on does not show the widget now"
+        : "màn hình bạn duyệt lúc này không hiện widget đó"
       : result.code === "WIDGET_REFUSED"
         ? locale === "en"
           ? "the widget refused it"

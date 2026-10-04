@@ -580,7 +580,7 @@ function resolveLiveWidget(
  * Both halves are read fresh rather than captured when the request was made: an approval can sit for a
  * quarter of an hour, and a project that was indexed then may not be known now.
  */
-function blocksOfConversation(
+export function blocksOfConversation(
   services: Pick<NodeServices, "runtime">,
   conversationId: string,
 ): Record<string, unknown>[] {
@@ -2029,7 +2029,30 @@ export async function decideApprovalForNode(
       principalId: input.principal.principalId,
       perform: input.perform,
     });
-    if (!performed.ok) return { ok: false, code: performed.code, message: performed.message };
+    if (!performed.ok) {
+      // The approval is already spent, so the card is answered here too: without a receipt it would keep offering
+      // Approve for a decision the node no longer accepts.
+      appendHostReply(services, {
+        conversationId: input.conversationId,
+        blocks: [
+          {
+            type: "tool-activity",
+            toolCallId: `perform-${input.approvalId}`,
+            name: "perform_widget_action",
+            label:
+              locale === "en"
+                ? `Approved, but nothing was performed: the operation changed after it was shown, or could not be read (${performed.code}). Nothing was sent.`
+                : `Đã duyệt, nhưng không có gì được thực hiện: thao tác đã đổi sau khi hiện, hoặc không đọc được (${performed.code}). Không có gì được gửi.`,
+            status: "failed",
+            args: { approvalId: input.approvalId, decision: "granted" },
+            startedAt: input.at,
+            endedAt: input.at,
+          },
+        ],
+        at: input.at,
+      });
+      return { ok: false, code: performed.code, message: performed.message };
+    }
     const receipt = performReceipt(locale, performed.label, performed.result);
     appendHostReply(services, {
       conversationId: input.conversationId,

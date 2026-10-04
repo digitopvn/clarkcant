@@ -841,13 +841,14 @@ function mount(api) {
    */
   if (typeof api.actions.offer === "function") {
     api.actions.offer("format", async (input) => {
-      if (busy || readOnly()) throw new Error(`SHEET_BUSY: ${t().performBusy}`);
+      // A refusal is made with actions.refuse, and only before anything changed: that is what tells Clark nothing did.
+      if (busy || readOnly()) throw api.actions.refuse("SHEET_BUSY", t().performBusy);
       const format = String(input.format ?? "");
-      if (!FORMAT_KINDS.includes(format)) throw new Error(`FORMAT_UNKNOWN: ${t().performFormat(format)}`);
+      if (!FORMAT_KINDS.includes(format)) throw api.actions.refuse("FORMAT_UNKNOWN", t().performFormat(format));
       const named = typeof input.range === "string" ? input.range.trim().toUpperCase() : "";
       const range = named === "" ? selection() : parseRangeName(named);
       if (range === undefined || range.bottom >= MAX_ROWS || range.right >= MAX_COLUMNS) {
-        throw new Error(`RANGE_INVALID: ${t().performRange(named)}`);
+        throw api.actions.refuse("RANGE_INVALID", t().performRange(named));
       }
       if (editing) closeEditor(true, false);
       const next = applyFormat(formats, range, format);
@@ -856,8 +857,8 @@ function mount(api) {
       try {
         await setFormats(next.formats);
       } catch (error) {
-        // The sheet already shows the format, so this is not a refusal: whether it was kept is unknown. An uncoded
-        // throw is reported as a failure, which Clark treats as an uncertain outcome rather than "nothing happened".
+        // The sheet already shows the format, so this is not a refusal: whether it was kept is unknown. Any throw that
+        // is not actions.refuse is reported as a failure, which Clark treats as an uncertain outcome.
         const why = error instanceof Error ? error.message : String(error);
         throw new Error(`the format is shown on the sheet but could not be saved: ${why}`, { cause: error });
       }

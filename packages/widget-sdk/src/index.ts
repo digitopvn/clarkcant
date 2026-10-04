@@ -546,12 +546,19 @@ export interface WidgetAuthorApi {
      * Handle an action this widget's definition offers (`offeredActions`), when Clark asks for it (`actions.perform@1`).
      *
      * The input has been checked by the host against the declared schema. Return (or resolve with) a short sentence
-     * saying what was done — it is what Clark is told. To refuse, throw an error whose message is `CODE: why` before
-     * changing anything: only that is a refusal. Any other throw is reported as failed while performing, so Clark is
-     * told the outcome is unknown and does not retry it. May be called before init. Returns a function that stops
-     * handling it.
+     * saying what was done — it is what Clark is told. To refuse, `throw api.actions.refuse(code, why)` before changing
+     * anything: only that is a refusal, meaning nothing changed. Any other throw — including a rejection from the SDK
+     * itself, such as a refused state or artifact write, whatever its message — is reported as failed while performing,
+     * so Clark is told the outcome is unknown and does not retry it. May be called before init. Returns a function that
+     * stops handling it.
      */
     offer(name: string, handler: (input: Record<string, unknown>) => string | undefined | Promise<string | undefined>): () => void;
+    /**
+     * The error an offered action's handler throws to refuse, before it has changed anything: `code` is an upper-case
+     * identifier such as `NOTHING_SELECTED` (2–60 of A–Z, 0–9 and `_`, starting with a letter), `message` says why.
+     * Throws a `TypeError` for a code of any other shape.
+     */
+    refuse(code: string, message: string): Error;
   };
   capabilities: { request(capabilityRef: string, justification: string): Promise<void> };
   host: {

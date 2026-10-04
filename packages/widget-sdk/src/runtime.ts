@@ -120,6 +120,8 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     { actionBindingId: string; resolve: (value: string | undefined) => void; reject: (error: Error) => void }
   >();
   /** Handlers for the actions this widget offers Clark (`actions.perform@1`), by the name its definition declares. */
+  /** The refusals `actions.refuse` made, so a handler's deliberate refusal is told apart from any other coded error. */
+  const actionRefusals = new WeakMap<Error, { code: string; message: string }>();
   const offeredHandlers = new Map<string, (input: Record<string, unknown>) => string | undefined | Promise<string | undefined>>();
   let availability: readonly ActionAvailability[] = [];
   const availabilityHandlers = new Set<(availability: readonly ActionAvailability[]) => void>();
@@ -424,12 +426,14 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         ...(output === undefined || output === "" ? {} : { output: String(output).slice(0, PERFORM_OUTPUT_MAX_CHARS) }),
       });
     } catch (cause) {
-      const text = cause instanceof Error ? cause.message : String(cause);
-      const coded = /^([A-Z][A-Z0-9_]{1,59}): (.+)$/su.exec(text);
-      if (coded !== null) {
-        answer({ status: "refused", code: coded[1]!, message: coded[2]!.slice(0, 600) });
+      // Only an error made by `actions.refuse` is the widget saying it changed nothing. A coded message is not enough:
+      // the SDK's own rejections carry codes too, and one can come after the handler has already changed something.
+      const refused = cause instanceof Error ? actionRefusals.get(cause) : undefined;
+      if (refused !== undefined) {
+        answer({ status: "refused", code: refused.code, message: refused.message.slice(0, 600) });
         return;
       }
+      const text = cause instanceof Error ? cause.message : String(cause);
       answer({ status: "failed", message: text.slice(0, 600) || "the widget's handler failed" });
     }
   }
@@ -647,6 +651,12 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         return () => {
           if (offeredHandlers.get(name) === handler) offeredHandlers.delete(name);
         };
+      },
+      refuse: (code, message) => {
+        if (!/^[A-Z][A-Z0-9_]{1,59}$/u.test(code)) throw new TypeError(`actions.refuse: "${code}" is not a refusal code`);
+        const error = new Error(`${code}: ${message}`);
+        actionRefusals.set(error, { code, message: String(message) });
+        return error;
       },
     },
     capabilities: {

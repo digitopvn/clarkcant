@@ -73,6 +73,31 @@ async function placeAndOpen(page: Page, widgetId: string, ready: string): Promis
   return frame;
 }
 
+const POLICY_KEY = "execution.policy";
+
+async function storedPolicy(request: APIRequestContext): Promise<Record<string, unknown>> {
+  const listed = (await (await request.get(`${GATEWAY}/preferences`, { headers: headers() })).json()) as { preferences: { key: string; value: unknown }[] };
+  const policy = listed.preferences.find((entry) => entry.key === POLICY_KEY)?.value;
+  if (typeof policy !== "object" || policy === null) throw new Error("the node reports no execution policy");
+  return policy as Record<string, unknown>;
+}
+
+async function writePolicy(request: APIRequestContext, value: Record<string, unknown>): Promise<void> {
+  const written = await request.put(`${GATEWAY}/preferences/${POLICY_KEY}`, { headers: headers(), data: { value } });
+  expect(written.ok(), await written.text()).toBe(true);
+}
+
+/** Type a value into a cell of the sheet, as the person would. */
+async function typeCell(page: Page, frame: FrameLocator, cell: string, value: string): Promise<void> {
+  await frame.locator(`.cell[data-cell='${cell}']`).click();
+  await page.keyboard.press("Enter");
+  const editor = frame.locator("[data-sheet-editor]");
+  await expect(editor).toBeVisible();
+  await editor.fill(value);
+  await page.keyboard.press("Enter");
+  await expect(editor).toBeHidden();
+}
+
 test.afterAll(async ({ request }) => {
   await uninstall(request, SPREADSHEET.packageId);
   await uninstall(request, TEXT_EDITOR.packageId);
@@ -130,6 +155,40 @@ test("a range selected in the spreadsheet is formatted as a percentage when the 
   await say(page, "format this as a percentage");
   await expect(page.getByText("Fixture: tui gọi perform_widget_action").last()).toContainText("Not performed", { timeout: 30_000 });
   await expect(page.getByText("Fixture: tui gọi perform_widget_action").last()).toContainText("FRAME_NOT_MOUNTED");
+});
+
+test("under Ask, Clark's perform waits on the host's card: refused, nothing changes; approved, the range is formatted", async ({ page, request }) => {
+  test.setTimeout(180_000);
+  await install(request, SPREADSHEET.packageId, SPREADSHEET.digest);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const frame = await placeAndOpen(page, SPREADSHEET.widgetId, "#root[data-widget-ready='true']");
+  await typeCell(page, frame, "B2", "0.25");
+  await frame.locator(".cell[data-cell='B2']").click();
+  await expect(frame.locator(".cell[data-cell='B2']").first()).toHaveText("0.25");
+
+  const previous = await storedPolicy(request);
+  try {
+    await writePolicy(request, { ...previous, rules: [{ effectCategory: "local-write", decision: "ask" }] });
+
+    // The card shows everything the widget would be sent, and nothing reaches the widget until the person answers.
+    await say(page, "format this as a percentage");
+    const refused = page.locator("[data-host-card='approval']").last();
+    await expect(refused).toBeVisible({ timeout: 30_000 });
+    await expect(refused).toContainText('"format": "percent"');
+    await refused.locator("[data-deny]").click();
+    await expect(page.getByText(/Đã từ chối: widget không được yêu cầu|Refused: the widget was not asked/u).last()).toBeVisible({ timeout: 20_000 });
+    await expect(frame.locator(".cell[data-cell='B2']").first()).toHaveText("0.25");
+
+    // Asked again, a new card; approved on this screen, which shows the widget, the frame does it.
+    await say(page, "format this as a percentage");
+    const approved = page.locator("[data-host-card='approval']").last();
+    await expect(approved.locator("[data-approve]")).toBeEnabled({ timeout: 30_000 });
+    await approved.locator("[data-approve]").click();
+    await expect(frame.locator(".cell[data-cell='B2']").first()).toHaveText("25%", { timeout: 30_000 });
+    await expect(page.getByText(/Đã duyệt: widget đã thực hiện|Approved: the widget performed/u).last()).toBeVisible({ timeout: 20_000 });
+  } finally {
+    await writePolicy(request, previous);
+  }
 });
 
 test("the text selected in the editor is replaced when the person asks in the composer", async ({ page, request }) => {

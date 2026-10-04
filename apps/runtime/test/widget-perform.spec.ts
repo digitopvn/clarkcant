@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant, type WidgetDefinition, type WidgetPerformRequest } from "@clarkcant/contracts";
 import {
   EXECUTION_POLICY_PREFERENCE_KEY,
+  type ModelTurnInput,
   captureSnapshot,
   createInstance,
   getActionBinding,
@@ -21,6 +22,7 @@ import { compileWidgetAction } from "../src/application/action-bindings.ts";
 import { resetActionRateLimits } from "../src/application/action-limits.ts";
 import { cancelActionRuns } from "../src/application/action-runs.ts";
 import { type WidgetPerformer, invokeWidgetAction, performReceipt, runApprovedPerform } from "../src/application/widget-actions.ts";
+import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { decideApprovalForNode } from "../src/routes/conversations.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createWidgetPerformAcks } from "../src/widget-perform-acks.ts";
@@ -63,6 +65,12 @@ const DEFINITION: WidgetDefinition = {
         additionalProperties: false,
       },
     },
+    {
+      name: "note",
+      label: "Ghi chú vào ô",
+      description: "Write a note into the selected cell.",
+      inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
+    },
   ],
 };
 
@@ -84,11 +92,11 @@ function bindingDeps() {
 const REF = { id: DEFINITION.id, version: DEFINITION.version, packageDigest: definitionDigest(DEFINITION) };
 
 /** The widget placed in the conversation with its offered action bound, the way `place_widget` binds it. */
-function placeSheet(): { instanceId: string; bindingId: string } {
+function placeSheet(action: "format" | "note" = "format"): { instanceId: string; bindingId: string } {
   const compiled = compileWidgetAction(bindingDeps(), {
     definitionRef: REF,
-    label: "Định dạng vùng đang chọn",
-    action: { kind: "perform", action: "format" },
+    label: action === "format" ? "Định dạng vùng đang chọn" : "Ghi chú vào ô",
+    action: { kind: "perform", action },
     ownerPrincipalId: services.runtime.identity.ownerPrincipalId,
     offeredActions: DEFINITION.offeredActions ?? [],
   });
@@ -452,6 +460,73 @@ describe("Clark performing an offered action", () => {
     expect(await forged).toMatchObject({ ok: false, code: "APPROVAL_FORGED" });
   });
 
+  it("answers the same perform asked again while its card waits with that card, so one approval runs it once", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { asked, performer } = page({ status: "done" });
+    const first = await perform(placed, { format: "percent" }, { perform: performer });
+    const second = await perform(placed, { format: "percent" }, { perform: performer });
+    if (!first.ok || !second.ok) throw new Error("the policy should have asked");
+    const card = first.body.card as { approvalId: string; operationDigest: string };
+    expect(second.body).toMatchObject({ outcome: "approval-required", alreadyWaiting: true, approvalRequired: { approvalId: card.approvalId } });
+    expect(second.body.card).toBeUndefined();
+    expect(rows("SELECT approval_id FROM approvals")).toHaveLength(1);
+
+    // Other input is another operation, with its own card.
+    const other = await perform(placed, { format: "number" }, { perform: performer });
+    if (!other.ok) throw new Error("the policy should have asked");
+    expect((other.body.card as { approvalId: string }).approvalId).not.toBe(card.approvalId);
+
+    showCard(first.body.card as Record<string, unknown>);
+    expect(await decide(card, performer)).toMatchObject({ ok: true });
+    expect(await decide(card, performer)).toMatchObject({ ok: false, code: "APPROVAL_ALREADY_DECIDED" });
+    expect(asked).toHaveLength(1);
+  });
+
+  it("holds at most a bounded number of waiting perform cards in a conversation, before and after they are shown", async () => {
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { performer } = page({ status: "done" });
+    for (let index = 0; index < 8; index += 1) {
+      const waiting = await perform(placeSheet(), { format: "percent" }, { perform: performer });
+      if (!waiting.ok) throw new Error(`card ${String(index)} should have been drawn`);
+      // Half are written to the conversation, as a finished turn writes them; the rest are only minted.
+      if (index % 2 === 0) showCard(waiting.body.card as Record<string, unknown>);
+    }
+    const ninth = await perform(placeSheet(), { format: "percent" }, { perform: performer });
+    expect(ninth).toMatchObject({ ok: false, status: 429, code: "PERFORM_CARDS_WAITING", detail: { outcome: "refused" } });
+    expect(rows("SELECT approval_id FROM approvals")).toHaveLength(8);
+  });
+
+  it("shows the whole input on the card, and refuses an input too long to show rather than cutting it", async () => {
+    const placed = placeSheet("note");
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { asked, performer } = page({ status: "done" });
+    const text = "x".repeat(1_100);
+    const shown = await perform(placed, { text }, { perform: performer });
+    if (!shown.ok) throw new Error("the policy should have asked");
+    const card = shown.body.card as { operationDescription: string };
+    expect(card.operationDescription).toContain(JSON.stringify({ text }));
+
+    const tooLong = await perform(placed, { text: "y".repeat(1_300) }, { perform: performer });
+    expect(tooLong).toMatchObject({ ok: false, status: 413, code: "PERFORM_INPUT_TOO_LONG", detail: { outcome: "refused" } });
+    expect(rows("SELECT approval_id FROM approvals")).toHaveLength(1);
+    expect(asked).toHaveLength(0);
+  });
+
+  it("answers a tampered card with a failed receipt, so the spent approval does not keep offering Approve", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { asked, performer } = page({ status: "done" });
+    const waiting = await perform(placed, { format: "percent" }, { perform: performer });
+    if (!waiting.ok) throw new Error("the policy should have asked");
+    const card = waiting.body.card as { approvalId: string; operationDigest: string; payload: string };
+    showCard({ ...card, payload: JSON.stringify({ ...JSON.parse(card.payload), input: { format: "plain" } }) });
+
+    expect(await decide(card, performer)).toMatchObject({ ok: false, code: "APPROVAL_FORGED" });
+    expect(asked).toHaveLength(0);
+    expect(receipts()).toEqual([expect.objectContaining({ status: "failed", label: expect.stringContaining("APPROVAL_FORGED") })]);
+  });
+
   it("refuses a click naming the action, because it is Clark's to ask for and the page reaches the widget itself", async () => {
     const placed = placeSheet();
     const { asked, performer } = page({ status: "done" });
@@ -466,7 +541,7 @@ describe("Clark performing an offered action", () => {
     const done = { ok: true, status: 200, body: {} } as const;
     expect(performReceipt("en", "Format", done)).toEqual({ text: "Approved: the widget performed “Format”.", succeeded: true });
     const gone = { ok: false, status: 409, code: "FRAME_NOT_MOUNTED", message: "x", detail: { outcome: "refused" } } as const;
-    expect(performReceipt("en", "Format", gone).text).toContain("no screen running this conversation shows the widget now");
+    expect(performReceipt("en", "Format", gone).text).toContain("the screen you approved on does not show the widget now");
     expect(performReceipt("vi", "Format", gone).text).toContain("Không có gì được gửi");
   });
 
@@ -616,6 +691,135 @@ describe("placing a widget with place_widget", () => {
   it("refuses a widget whose package this node does not run", () => {
     const answer = placeWidget(services, { messageId: () => "msg_place", locate: () => ({ ok: true, active: false, definition: PLACEABLE }) }, { widgetId: PLACEABLE.id });
     expect(answer.text).toContain("not installed and running");
+  });
+});
+
+describe("the routes a perform crosses", () => {
+  const PERFORM_HEADER = "x-clarkcant-widget-perform";
+
+  function gatewayDeps(overrides: Partial<NodeServices> = {}): GatewayDeps {
+    return { services: { ...services, ...overrides }, now: () => new Date().toISOString() };
+  }
+
+  function call(deps: GatewayDeps, method: string, path: string, body: unknown, extra: Record<string, string> = {}) {
+    return handleRequest(deps, {
+      method,
+      path,
+      query: {},
+      headers: { authorization: `Bearer ${services.runtime.identity.localToken}`, ...extra },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /**
+   * One streamed turn whose model asks a frame to perform, the way `perform_widget_action` does, with the page's report
+   * posted to the report route as soon as the stream carries the request.
+   */
+  async function streamPerform(extra: Record<string, string>) {
+    let heard: unknown;
+    const deps = gatewayDeps({
+      conductor: {
+        ...services.conductor,
+        respondWithModel: async (input: ModelTurnInput) => {
+          const request: WidgetPerformRequest = { v: 1, performId: "perform_route", instanceId: "wi_x", actionBindingId: "act_x", action: "format", input: {} };
+          input.onEvent?.({ type: "widget-perform", request });
+          heard = await services.widgetPerforms.wait(request.performId, 2_000);
+          return { text: "ok", segments: [{ kind: "text" as const, text: "ok" }], provider: "test", model: "test", elapsedMs: 1 };
+        },
+      },
+    });
+    const response = await call(deps, "POST", `/conversations/${conversationId}/messages/stream`, { text: "format this" }, extra);
+    const chunks: string[] = [];
+    const reports: Promise<unknown>[] = [];
+    await response.stream?.run((chunk) => {
+      chunks.push(chunk);
+      if (chunk.includes("event: widget-perform")) {
+        reports.push(call(deps, "POST", "/app-intents/widget-perform/perform_route", { status: "done", output: "xong" }));
+      }
+    });
+    await Promise.all(reports);
+    return { raw: chunks.join(""), heard };
+  }
+
+  it("sends the stream's perform only to a caller that says it runs this version, and waits for that caller's report", async () => {
+    const plain = await streamPerform({});
+    expect(plain.raw).not.toContain("event: widget-perform");
+    expect(plain.heard).toBe("no-surface");
+
+    const otherVersion = await streamPerform({ [PERFORM_HEADER]: "2" });
+    expect(otherVersion.raw).not.toContain("event: widget-perform");
+    expect(otherVersion.heard).toBe("no-surface");
+
+    const pageStream = await streamPerform({ [PERFORM_HEADER]: "1" });
+    expect(pageStream.raw).toContain("event: widget-perform");
+    expect(pageStream.heard).toEqual({ status: "done", output: "xong" });
+  });
+
+  async function askedCard(): Promise<{ approvalId: string; operationDigest: string }> {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const waiting = await perform(placed, { format: "percent" }, { perform: page({ status: "done" }).performer });
+    if (!waiting.ok) throw new Error("the policy should have asked");
+    const card = waiting.body.card as { approvalId: string; operationDigest: string };
+    showCard(card as unknown as Record<string, unknown>);
+    return card;
+  }
+
+  async function settledReceipt(): Promise<{ label: string; status: string }> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const found = receipts()[0];
+      if (found !== undefined) return found;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("no receipt was written");
+  }
+
+  it("hands an approved perform back in the decide answer, and writes the receipt once the page reports", async () => {
+    const card = await askedCard();
+    const deps = gatewayDeps();
+    const decided = await call(deps, "POST", `/conversations/${conversationId}/approvals/${card.approvalId}/decide`, {
+      decision: "granted",
+      digest: card.operationDigest,
+    }, { [PERFORM_HEADER]: "1" });
+    expect(decided.status).toBe(200);
+    const handed = (decided.body as { perform?: WidgetPerformRequest }).perform;
+    expect(handed).toMatchObject({ v: 1, action: "format", input: { format: "percent" } });
+    // Nothing is settled until the page says what the frame did.
+    expect(receipts()).toHaveLength(0);
+
+    const reported = await call(deps, "POST", `/app-intents/widget-perform/${handed?.performId ?? ""}`, { status: "done", output: "xong" });
+    expect(reported.status).toBe(200);
+    expect(await settledReceipt()).toMatchObject({ status: "done" });
+    expect(effects()).toEqual([expect.objectContaining({ state: "confirmed" })]);
+  });
+
+  it("holds an approved perform whose report comes too late as uncertain, and refuses the late report", async () => {
+    const card = await askedCard();
+    const acks = createWidgetPerformAcks();
+    const deps = gatewayDeps({ widgetPerforms: { ...acks, wait: (performId) => acks.wait(performId, 20) } });
+    const decided = await call(deps, "POST", `/conversations/${conversationId}/approvals/${card.approvalId}/decide`, {
+      decision: "granted",
+      digest: card.operationDigest,
+    }, { [PERFORM_HEADER]: "1" });
+    const handed = (decided.body as { perform?: WidgetPerformRequest }).perform;
+    expect(handed).toBeDefined();
+    expect(await settledReceipt()).toMatchObject({ status: "failed", label: expect.stringMatching(/unknown|chưa rõ/u) });
+    expect(effects()).toEqual([expect.objectContaining({ state: "unknown" })]);
+
+    const late = await call(deps, "POST", `/app-intents/widget-perform/${handed?.performId ?? ""}`, { status: "done" });
+    expect(late.status).toBe(404);
+  });
+
+  it("answers an approval decided without the perform header as approved and not performed, with nothing sent", async () => {
+    const card = await askedCard();
+    const decided = await call(gatewayDeps(), "POST", `/conversations/${conversationId}/approvals/${card.approvalId}/decide`, {
+      decision: "granted",
+      digest: card.operationDigest,
+    });
+    expect(decided.status).toBe(200);
+    expect((decided.body as { perform?: unknown }).perform).toBeUndefined();
+    expect(receipts()).toEqual([expect.objectContaining({ status: "failed" })]);
+    expect(effects()).toHaveLength(0);
   });
 });
 

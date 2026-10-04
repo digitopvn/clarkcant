@@ -915,11 +915,11 @@ describe("actions.perform@1", () => {
     expect(performed(bus)).toEqual([{ kind: "action.performed", nonce: NONCE, performId: "perf_1", status: "done", output: "formatted B2:B4" }]);
   });
 
-  it("refuses an action it does not handle, and keeps a thrown code", async () => {
+  it("refuses an action it does not handle, and keeps the code of a refusal made with actions.refuse", async () => {
     const bus = channel();
     const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
     runtime.api().actions.offer("format", () => {
-      throw new Error("NO_SELECTION: select some cells first");
+      throw runtime.api().actions.refuse("NO_SELECTION", "select some cells first");
     });
     bus.deliver(initMessage({ extensions: ["actions.perform@1"] }));
     bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "rename", input: {} });
@@ -943,6 +943,32 @@ describe("actions.perform@1", () => {
     expect(performed(bus)).toEqual([
       { kind: "action.performed", nonce: NONCE, performId: "perf_1", status: "failed", message: "the format is shown but could not be saved" },
     ]);
+  });
+
+  it("reports a coded error that is not a refusal as a failure, including the SDK's own rejection after a change", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    const api = runtime.api();
+    api.actions.offer("format", async () => {
+      // The handler changes the state first; the host then refuses the write with a coded reason.
+      await api.state.update(0, { format: "percent" });
+      return "done";
+    });
+    api.actions.offer("rename", () => {
+      throw new Error("NO_SELECTION: a coded message alone is not a refusal");
+    });
+    bus.deliver(initMessage({ extensions: ["actions.perform@1"] }));
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "format", input: {} });
+    await flush();
+    bus.deliver({ kind: "state", nonce: NONCE, state: {}, revision: 1, refused: { code: "STATE_REVISION_STALE", message: "another surface saved first" } });
+    await flush();
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_2", action: "rename", input: {} });
+    await flush();
+    expect(performed(bus)).toEqual([
+      expect.objectContaining({ performId: "perf_1", status: "failed", message: expect.stringContaining("STATE_REVISION_STALE") }),
+      expect.objectContaining({ performId: "perf_2", status: "failed" }),
+    ]);
+    expect(() => api.actions.refuse("not a code", "x")).toThrow(TypeError);
   });
 
   it("refuses a perform when the host did not offer the extension", async () => {

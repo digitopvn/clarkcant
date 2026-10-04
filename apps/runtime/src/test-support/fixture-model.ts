@@ -2131,6 +2131,10 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
             ? { text: "Fixture: the host read no selected text from the widget, so there is nothing to replace." }
             : await tool.execute({ action: "perform", actionBindingId: target.actionBindingId, input: performInput });
       const text = `Fixture: tui gọi perform_widget_action (không phải model thật). ${answer.text}`;
+      // The host card the policy asked for, placed in the answer the way the model turn places a tool's `hostCard`.
+      const hostCard = (answer as { hostCard?: Record<string, unknown> }).hostCard;
+      // SAFETY: the approval card `invokePerformAction` built and checked against the approval card block schema.
+      if (hostCard !== undefined) return { text, block: hostCard as unknown as MessageBlock };
       return { text, block: { type: "text", format: "plain", content: text, streaming: false } };
     }
 

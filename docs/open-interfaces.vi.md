@@ -96,7 +96,11 @@ và không được thử lại. Route báo cáo chỉ dành cho người dùng,
 Khi chính sách thực thi muốn hỏi trước, câu trả lời là một thẻ phê duyệt của host. Khi quyết định thẻ đó tại
 `POST /conversations/{id}/approvals/{approvalId}/decide` với cùng header, lần thực hiện đã được duyệt có thể được chuyển
 cho trang này. Khi đó câu trả lời của quyết định mang `perform` (yêu cầu), và trang báo cáo theo cùng cách. Một yêu cầu
-quyết định không có header thì phê duyệt mà không gửi gì, và biên nhận nói rõ điều đó.
+quyết định không có header thì phê duyệt mà không gửi gì, và biên nhận nói rõ điều đó. Cùng lần thực hiện đó được yêu
+cầu lại trong lúc thẻ của nó còn chờ thì được trả `202` với `approvalRequired.approvalId` của thẻ đó và
+`alreadyWaiting: true`, không có thẻ thứ hai. Một hội thoại giữ tối đa 8 thẻ perform đang chờ
+(`429 PERFORM_CARDS_WAITING`), và input dài hơn 1.200 ký tự khi viết dạng JSON bị từ chối (`413 PERFORM_INPUT_TOO_LONG`)
+vì thẻ hiện toàn bộ input.
 
 Trang của chính node gửi `x-clarkcant-surface: composer` kèm các tin nhắn người dùng gõ vào đó, và node lưu giá trị
 này thành `surface` của tin nhắn; một tin nhắn nói bằng giọng được chính node lưu với `surface: "voice"`. Một tin nhắn

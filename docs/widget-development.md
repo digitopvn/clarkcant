@@ -2017,10 +2017,15 @@ directly. Perform bindings are not listed among the widget's presses, so neither
 press one.
 
 **The policy decides, and the person approves.** A policy that denies refuses with `POLICY_REFUSED`. A policy that asks
-puts a host-owned approval card in the conversation, and nothing is sent until the person approves it. Approving asks
-the frame then, but only if a screen running the conversation still shows the widget. Otherwise the receipt says it
-was approved and not performed, with nothing sent. The approval re-checks the card's payload against the decided
-digest, the binding, the input, the policy and the ledger. Neither the widget nor the model can approve.
+puts a host-owned approval card in the conversation, and nothing is sent until the person approves it. The card shows
+the whole input: its description carries it for the inbox and a spoken question, and the card lays it out in full. An
+input longer than 1,200 characters as JSON is refused with `PERFORM_INPUT_TOO_LONG` instead of being shown in part.
+Asking again for the same action with the same input while its card waits returns that card's approval, not a second
+card, and a conversation holds at most 8 waiting perform cards (`PERFORM_CARDS_WAITING` after that). Approving asks
+the frame then, but only if the screen you approve on still shows the widget; approving from the inbox, or from a page
+without the widget, is answered "approved, not performed", with nothing sent. The approval re-checks the card's payload
+against the decided digest (which covers the conversation, the widget, the binding, the action and the input), the
+binding, the input, the policy and the ledger. Neither the widget nor the model can approve.
 
 **The frame does it.** The node sends a versioned `widget-perform` event (`v: 1`) only to a caller that said it can run
 one:
@@ -2033,16 +2038,18 @@ answer at `POST /app-intents/widget-perform/{performId}` ([open interfaces](open
 
 ```js
 const stop = api.actions.offer("format", async (input) => {
-  if (busy) throw new Error("SHEET_BUSY: the sheet is busy; try again in a moment.");
+  if (busy) throw api.actions.refuse("SHEET_BUSY", "the sheet is busy; try again in a moment.");
   applyFormat(input.format);
   return `Formatted ${selection} as ${input.format}.`; // what Clark is told, at most 4,000 characters
 });
 ```
 
-The handler gets a frozen copy of the checked input. A returned string is the tool's result. A thrown `"CODE: message"`
-is the widget's deliberate refusal: the node answers `WIDGET_REFUSED` with the widget's own code in `widgetCode`, kept
-apart from the host's codes. Only throw a coded error before changing anything. Any other error is reported as
-`failed`, which Clark treats as an uncertain outcome, because the handler may already have changed something. An action
+The handler gets a frozen copy of the checked input. A returned string is the tool's result. An error made by
+`api.actions.refuse(code, message)` is the widget's deliberate refusal: the node answers `WIDGET_REFUSED` with the
+widget's own code in `widgetCode`, kept apart from the host's codes. Only throw it before changing anything. Any other
+error is reported as `failed`, which Clark treats as an uncertain outcome, because the handler may already have changed
+something. That includes an error whose message merely looks coded, and the SDK's own rejections, such as a refused
+state write (`STATE_REVISION_STALE: …`) or artifact request, even though they carry a code. An action
 with no handler is refused with `ACTION_NOT_OFFERED`. Output that carries a token is dropped, and the outcome becomes
 uncertain.
 

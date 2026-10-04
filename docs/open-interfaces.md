@@ -95,7 +95,10 @@ retried. The report route is person-only, like the host-control report.
 When the execution policy asks first, the answer is a host approval card instead. Deciding it at
 `POST /conversations/{id}/approvals/{approvalId}/decide` with the same header can hand the approved perform to this
 page. Then the decision's answer carries `perform` (the request), and the page reports it the same way. A decide
-request without the header approves without sending anything, and the receipt says so.
+request without the header approves without sending anything, and the receipt says so. The same perform asked again
+while its card waits is answered `202` with that card's `approvalRequired.approvalId` and `alreadyWaiting: true`, and
+no second card. A conversation holds at most 8 waiting perform cards (`429 PERFORM_CARDS_WAITING`), and an input
+longer than 1,200 characters as JSON is refused (`413 PERFORM_INPUT_TOO_LONG`) because the card shows the whole input.
 
 The node's own page sends `x-clarkcant-surface: composer` with the messages a person types into it, and the node
 stores that as the message's `surface`; a spoken message is stored with `surface: "voice"` by the node itself. A
