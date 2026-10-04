@@ -218,6 +218,20 @@ export const VOICE_CSS = `
 .cc-tabpanel { display: flex; flex-direction: column; gap: var(--cc-space-md); }
 .cc-modal-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md); padding: var(--cc-space-md) var(--cc-space-lg); border-top: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-modal-done { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-md); }
+/*
+ * A tabbed dialog keeps one size. Sized to its content, it grew and shrank with every tab, and because it is centred
+ * the tab strip itself jumped up and down under the pointer that had just pressed it. The strip stays at the top and
+ * the footer at the bottom while a long tab scrolls between them, so switching tab never needs a scroll back up.
+ */
+.cc-modal:has(> .cc-modal-body > .cc-tabs) { height: calc(100vh - 64px); max-height: 900px; }
+.cc-modal:has(> .cc-modal-body > .cc-tabs) > .cc-modal-body { flex: 1; min-height: 0; }
+.cc-modal-body > .cc-tabs {
+  position: sticky; top: calc(var(--cc-space-lg) * -1); z-index: 2; background: var(--cc-elevated);
+}
+.cc-modal-body > .cc-modal-foot {
+  position: sticky; bottom: calc(var(--cc-space-lg) * -1); z-index: 2;
+  margin: auto calc(var(--cc-space-lg) * -1) calc(var(--cc-space-lg) * -1); background: var(--cc-elevated);
+}
 
 /* Menu bar popover: the same connection wording the app window uses. */
 .cc-menubar {

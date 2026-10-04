@@ -365,7 +365,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.devices.wake.unavailableBadge": "chưa có",
   "settings.devices.gemini.label": "Gemini API key",
   "settings.devices.gemini.purpose": "Dùng cho Gemini Live khi bạn nói. Lần mở voice kế tiếp sẽ dùng khoá này.",
-  "settings.voice.provider.description": "Provider đang trả lời cho voice trên node này.",
+  "settings.voice.provider.description": "Dịch vụ đang trả lời khi bạn nói chuyện bằng giọng trên node này.",
   "settings.voice.capabilitiesFailed": "Không đọc được khả năng của provider.",
   "settings.voice.select.label": "Chọn giọng",
   "settings.voice.select.unsupported": "Provider này không cho chọn giọng.",

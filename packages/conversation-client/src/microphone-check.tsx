@@ -82,8 +82,7 @@ export function MicrophoneCheck(): ReactElement {
       </span>
       <button
         type="button"
-        className="cc-icon-btn"
-        style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+        className="cc-action"
         data-mic-ask="true"
         onClick={() => {
           setLevel(0);

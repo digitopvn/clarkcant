@@ -401,7 +401,7 @@ export function SettingsPanel({
         <span className="cc-freshness" data-settings-status={problem === undefined ? "ok" : "error"}>
           {nodeStatus()}
         </span>
-        <button type="button" className="cc-badge cc-modal-done" onClick={onClose}>
+        <button type="button" className="cc-action cc-modal-done" data-emphasis="primary" onClick={onClose}>
           {t("settings.done")}
         </button>
       </footer>
