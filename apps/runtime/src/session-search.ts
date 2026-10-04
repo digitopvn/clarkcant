@@ -5,6 +5,7 @@ import {
   type HistoryHit,
   type HistorySource,
   getSessionFile,
+  historyEntry,
   historyIndexSize,
   indexHistory,
   recentHistory,
@@ -567,10 +568,14 @@ export function createSearchHistoryTool(deps: SessionSearchDeps): ToolDefinition
       if (query.trim() === "") return { text: "No query was given." };
       const limit = typeof params.limit === "number" && params.limit > 0 ? Math.min(params.limit, 20) : 5;
       const searched = await searchSessions(deps, { text: query, limit });
-      // Classified on the raw snippet, before redaction: what decides is what the stored text is, not what is left of it.
+      /*
+       * Classified on the whole stored entry, before redaction: what decides is what the stored text is, not the window
+       * a snippet happens to cut from it or what redaction leaves. An entry no longer stored falls back to its snippet.
+       */
       const allowed = deps.allowed?.();
-      const results =
-        allowed === undefined ? searched.results : searched.results.filter((hit) => allowed.includes(dataClassOfText(hit.snippet)));
+      const classOf = (hit: SessionSearchHit): DataClass =>
+        dataClassOfText(historyEntry(deps.db, { principalId: deps.principalId, source: hit.source, ref: hit.ref })?.text ?? hit.snippet);
+      const results = allowed === undefined ? searched.results : searched.results.filter((hit) => allowed.includes(classOf(hit)));
       const withheld = searched.results.length - results.length;
       const withheldNote =
         withheld === 0 ? "" : `\n[${String(withheld)} kết quả bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]`;

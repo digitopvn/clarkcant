@@ -239,7 +239,8 @@ describe("what is stated", () => {
     const active = [entry("a", true), entry("b", false)];
     const first = instructionSection({ active, stated: new Set(), nonce: "n1" });
     expect(first.stated).toEqual(["a", "b"]);
-    expect(first.text.split("\n")[0]).toBe(instructionsHeader("n1"));
+    // Given the session's code, the header points at the code the host stated; it does not repeat it.
+    expect(first.text.split("\n")[0]).toBe(instructionsHeader());
     expect(first.text.startsWith(INSTRUCTIONS_HEADER)).toBe(true);
     expect(first.text).toContain(
       `<project-instruction nonce="n1" source="clark/.clarkcant/instructions/b.md">\nnội dung b\n</project-instruction nonce="n1">`,
@@ -270,8 +271,9 @@ describe("what is stated", () => {
     const b = instructionSection({ active: [entry("a", false, forged)], stated: new Set() });
     const nonce = /nonce="([0-9a-f]{16})"/.exec(a.text)?.[1];
     expect(nonce).toBeDefined();
-    // Drawn per statement: a file the model read earlier cannot have quoted it.
+    // Without a session's code (a task's brief), one is drawn per statement and the header names it.
     expect(b.text).not.toContain(nonce!);
+    expect(a.text.split("\n")[0]).toBe(instructionsHeader(nonce));
     // Only the host's tags carry the tag name; the snippet's are defused.
     expect(a.text.match(/<\/?project-instruction nonce="guess"/g)).toBeNull();
     expect(a.text).toContain("</project_instruction nonce=\"guess\">");
@@ -370,6 +372,23 @@ describe("a conversation's turns", () => {
     // Pinned, so the next turn re-states it.
     await ask(turn, "hai");
     expect(adapter.promptsFor("fake-session-1")[1]).toContain(MIGRATIONS);
+  });
+
+  it("states the session's code once, in the host's own guidance, and frames every block of the session with it", async () => {
+    const { adapter, turn } = await turnWith(true, { places: [], skills: [] });
+    await ask(turn, "một");
+    const first = adapter.promptsFor("fake-session-1")[0] ?? "";
+    const code = /Mã hướng dẫn dự án của session này là ([0-9a-f]{16})\./.exec(first)?.[1];
+    expect(code).toBeDefined();
+    const result = await adapter.callTool("fake-session-1", "write_file", { path: join(project, "packages", "storage", "migrations", "0002.sql") });
+    expect(result).toContain(`<project-instruction nonce="${code!}" `);
+    // The header points at the stated code instead of carrying one a reader could copy from the block.
+    expect(result).not.toContain(`mang đúng mã này`);
+    await ask(turn, "hai");
+    const second = adapter.promptsFor("fake-session-1")[1] ?? "";
+    expect(second).not.toContain("Mã hướng dẫn dự án của session này");
+    expect(second).toContain(`<project-instruction nonce="${code!}" `);
+    expect(second.match(/nonce="([0-9a-f]{16})"/g)?.every((tag) => tag === `nonce="${code!}"`)).toBe(true);
   });
 
   it("states an unpinned one once per session, and reads a folder the message points at as read, not written", async () => {

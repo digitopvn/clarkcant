@@ -115,11 +115,14 @@ function looksIssued(match: string): boolean {
 
 /**
  * Whether a `named-secret` match carries a value rather than a type or a reference: `password: string` and
- * `api_key: process.env.API_KEY` are code, `password = "hunter22"` is not.
+ * `api_key: process.env.API_KEY` are code, `password = "hunter22"` is not. The redaction shape already passes over a
+ * call chain (`z.string().min(8)`), a type name and a template placeholder; a member reference is ruled out here,
+ * where a miss costs a routing choice rather than a credential.
  */
 function looksAssigned(match: string): boolean {
   const value = /[:=]\s*["']?(.+)$/.exec(match)?.[1] ?? "";
-  if (/^[A-Za-z_$][\w$]*(?:\.[\w$]+)+$/.test(value)) return false;
+  if (/^[A-Za-z_$][\w$]*(?:\.[\w$]+)+[;)\]]*$/.test(value)) return false;
+  if (/^[A-Za-z_$][\w$]*(?:\.[\w$]+)*\(|\$\{|\{\{|^</.test(value)) return false;
   return /\d/.test(value) || /[:=]\s*["']/.test(match) || value.length >= 16;
 }
 /** Shapes that identify a person or their machine: text carrying one is `confidential`. */

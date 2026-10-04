@@ -7,6 +7,7 @@ import {
   estimateTokens,
   intersectDataClasses,
   maxDataClass,
+  redactSecrets,
   userModelProfileSchema,
 } from "../src/index.ts";
 
@@ -70,6 +71,37 @@ describe("the class of a text", () => {
     ].join("\n");
     expect(dataClassOfText(code)).toBe("internal");
     expect(dataClassOfText("sk_button_component_v2 và pk_index_users_2024")).toBe("internal");
+  });
+
+  it("is not secret for validation schemas, templated connection strings or a key header on its own", () => {
+    const schema = [
+      "const signUp = z.object({",
+      "  email: z.string().email(),",
+      "  password: z.string().min(8).max(128),",
+      "  apiKey: z.string().min(32),",
+      "});",
+      "const change = yup.object({ newPassword: yup.string().required(), confirmPassword: yup.string().oneOf([ref('newPassword')]) });",
+      "const config = { password: options.password; };",
+      "const url = `postgres://${user}:${password}@${host}:5432/app`;",
+      'const cache = "redis://default:${REDIS_PASSWORD}@cache:6379";',
+      'const template = "amqp://guest:<password>@queue";',
+      `const HEADER = "${["-----BEGIN PRIVATE", "KEY-----"].join(" ")}";`,
+    ].join("\n");
+    expect(dataClassOfText(schema)).toBe("internal");
+    // A real value in the same places still is one.
+    expect(dataClassOfText("password: hunter22x")).toBe("secret");
+    expect(dataClassOfText(`url = "${["postgres://clark", "s3cretPass@db"].join(":")}"`)).toBe("secret");
+  });
+
+  it("redacts a key without running past it, and leaves code and a header on its own as they are", () => {
+    const header = ["-----BEGIN PRIVATE", "KEY-----"].join(" ");
+    const mention = `const HEADER = "${header}"; const next = parse(HEADER);`;
+    expect(redactSecrets(mention)).toBe(mention);
+    const clipped = `${PEM.slice(0, 80)}" và phần sau vẫn còn`;
+    const redacted = redactSecrets(clipped);
+    expect(redacted).not.toContain("MIIEowIBAAKCAQEA");
+    expect(redacted).toContain("và phần sau vẫn còn");
+    expect(redactSecrets("password: z.string().min(8)")).toBe("password: z.string().min(8)");
   });
 
   it("is the same for the same text, every time", () => {

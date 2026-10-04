@@ -15,6 +15,8 @@
  * approval, evidence and budgets live, and a conversation turn has none of them.
  */
 
+import { randomBytes } from "node:crypto";
+
 import {
   type AttachmentRef,
   type DataClass,
@@ -51,7 +53,13 @@ import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, Turn
 
 import { attachmentBrief } from "./attachments.ts";
 import { type ContextSource, readContextTool } from "./context-bundle.ts";
-import { type InstructionTouch, type TurnInstructions, rememberTouch, touchOfToolCall } from "./conditional-instructions.ts";
+import {
+  type InstructionTouch,
+  type TurnInstructions,
+  instructionsNonceNote,
+  rememberTouch,
+  touchOfToolCall,
+} from "./conditional-instructions.ts";
 import { legacyRecap, planRecap } from "./context-planner.ts";
 import {
   SESSION_POLICY_LIMITS,
@@ -315,6 +323,12 @@ interface Turn {
   touched: InstructionTouch[];
   /** The conditional instructions this session has been told, so an unpinned one is stated once per session. */
   stated: Set<string>;
+  /**
+   * The code marking this session's project-instruction blocks (#433), drawn when the session is created and stated
+   * once by the host in its own turn guidance; `nonceStated` says whether that has happened yet in this session.
+   */
+  instructionNonce: string;
+  nonceStated: boolean;
   /** What the model answering may receive, set when a turn starts; read by a tool call's instructions. */
   allowed: readonly DataClass[];
   /** When the session behind this turn was created, and how many turns it has answered: its age, for the session policy. */
@@ -1019,7 +1033,14 @@ export async function createModelTurn(options: {
   const stateInstructions = (turn: Turn, conversationId: string, newOnly: boolean): string => {
     if (options.instructions === undefined) return "";
     try {
-      const section = options.instructions({ conversationId, touched: turn.touched, stated: turn.stated, allowed: turn.allowed, newOnly });
+      const section = options.instructions({
+        conversationId,
+        touched: turn.touched,
+        stated: turn.stated,
+        allowed: turn.allowed,
+        newOnly,
+        nonce: turn.instructionNonce,
+      });
       for (const id of section.stated) turn.stated.add(id);
       return section.text;
     } catch {
@@ -1160,6 +1181,8 @@ export async function createModelTurn(options: {
       preparing: undefined,
       touched: [],
       stated: new Set(),
+      instructionNonce: randomBytes(8).toString("hex"),
+      nonceStated: false,
       allowed: DEFAULT_ALLOWED_DATA_CLASSES,
       sessionCreatedAtMs: Date.now(),
       answered: 0,
@@ -1253,6 +1276,9 @@ export async function createModelTurn(options: {
       // A successor starts with every tool its brief names, so a disclosure plan starts over with it.
       existing.registeredTools = turn.registeredTools;
       existing.activeTools = undefined;
+      // A successor session has not heard the code: a new one is drawn and stated on its first turn.
+      existing.instructionNonce = randomBytes(8).toString("hex");
+      existing.nonceStated = false;
       existing.unsubscribe = listen(existing, existing.sessionId);
       generationModels.set(conversationId, preferredModel ?? "");
       return existing;
@@ -1261,8 +1287,8 @@ export async function createModelTurn(options: {
     turn.rebuild = async (): Promise<boolean> => {
       const handle = await adapter.createWorkerSession(briefFor(options.model?.()));
       // A Stop while the fresh session was being created ended this turn: the old session is the stop's to dispose,
-      // and the fresh one nobody will prompt goes now.
-      if (turn.stopped) {
+      // and the fresh one nobody will prompt goes now. The same when the node shut down meanwhile (its turn aborted).
+      if (turn.stopped || turn.abort.signal.aborted) {
         void adapter.dispose(handle.sessionId).catch(() => undefined);
         return false;
       }
@@ -1274,6 +1300,8 @@ export async function createModelTurn(options: {
       // instructions, every tool and the screen as if for the first time.
       turn.fresh = true;
       turn.stated.clear();
+      turn.instructionNonce = randomBytes(8).toString("hex");
+      turn.nonceStated = false;
       turn.uiSeen.clear();
       turn.activeTools = undefined;
       turn.sessionCreatedAtMs = Date.now();
@@ -1564,7 +1592,13 @@ export async function createModelTurn(options: {
       // Built here rather than at the call, because `note` is optional under exactOptionalPropertyTypes: a
       // present key holding undefined is a different type from an absent key, and only one of them means
       // "this turn carries no extra instruction".
-      const note = withRecap(recap.text, input.note);
+      // The session's instruction code, said once in the host's own guidance before any block can carry it: on the first
+      // turn the session is prompted, and only while conditional instructions are on.
+      const statesNonce = options.instructions !== undefined && !turn.nonceStated;
+      const note = withRecap(
+        [recap.text, statesNonce ? instructionsNonceNote(turn.instructionNonce) : ""].filter((part) => part !== "").join("\n\n"),
+        input.note,
+      );
       // Project guidance whose condition holds goes with the brief, after the person's words and labelled with its
       // source: a pinned one every turn, an unpinned one the first time this session hears it.
       const instructionPart = stateInstructions(turn, input.conversationId, false);
@@ -1603,6 +1637,8 @@ export async function createModelTurn(options: {
         }, budget.maxWallClockMs);
       });
 
+      // Marked only when the prompt that carries it is sent: a stopped turn leaves it for the next one.
+      if (statesNonce && !turn.stopped) turn.nonceStated = true;
       // A Stop that arrived while the prompt was being prepared means the prompt is never sent.
       const prompted = turn.stopped
         ? Promise.resolve()

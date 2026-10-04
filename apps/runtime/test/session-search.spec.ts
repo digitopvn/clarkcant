@@ -352,6 +352,17 @@ describe("the tool the main model sees", () => {
     expect((await createSearchHistoryTool(search).execute({ query: "đăng nhập" })).text).toContain("báo cáo");
   });
 
+  it("classifies the whole stored entry, not the window its snippet cuts", async () => {
+    const filler = Array.from({ length: 80 }, (_unused, index) => `mục${String(index)}`).join(" ");
+    seed(`lỗi thanh toán ở cổng ${filler} liên hệ duy@example.com`, "msg_far", "2026-09-16T02:00:00.000Z");
+    const searched = await searchSessions(search, { text: "thanh toán" });
+    // The snippet alone looks harmless: the address is far from the match.
+    expect(searched.results[0]?.snippet).not.toContain("example.com");
+    const result = await createSearchHistoryTool({ ...search, allowed: () => ["public", "internal"] }).execute({ query: "thanh toán" });
+    expect(result.text).toContain("No matches this model may read");
+    expect(result.text).toContain("1 kết quả bị giữ lại");
+  });
+
   it("is narrowed by the node only while the context planner is on", async () => {
     seed("gửi báo cáo đăng nhập cho duy@example.com", "msg_mail", "2026-09-16T02:00:00.000Z");
     const allowed = (): readonly DataClass[] => ["public", "internal"];

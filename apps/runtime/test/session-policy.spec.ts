@@ -303,14 +303,17 @@ describe("a conversation's sessions", () => {
   });
 
   it("answers as a reused session when the policy step itself fails, and does not stay running", async () => {
-    const { adapter, ask, turn, warmThenCold } = await conversation("rebuild");
+    const { adapter, turn, warmThenCold } = await conversation("rebuild");
     await warmThenCold();
-    vi.spyOn(adapter, "usage").mockImplementation(() => {
+    // Only the policy step's read fails; the turn's own accounting afterwards works, so an error here is the turn's.
+    vi.spyOn(adapter, "usage").mockImplementationOnce(() => {
       throw new Error("unknown session");
     });
-    await ask("thời tiết Hà Nội cuối tuần", "m3").catch(() => undefined);
+    const reply = await turn.answer({ conversationId: CONVERSATION, principal: OWNER, text: "thời tiết Hà Nội cuối tuần", messageId: "m3" });
+    expect(reply.text).toBe("ba");
     expect(turn.running()).toEqual([]);
     expect(adapter.promptsFor("fake-session-1")).toHaveLength(3);
+    expect(adapter.promptsFor("fake-session-2")).toHaveLength(0);
   });
 
   it("states instructions again to the rebuilt session", async () => {
@@ -323,6 +326,14 @@ describe("a conversation's sessions", () => {
     expect(first[0]).toContain("[HƯỚNG DẪN migrations]");
     expect(first[1]).not.toContain("[HƯỚNG DẪN migrations]");
     expect(adapter.promptsFor("fake-session-2")[0]).toContain("[HƯỚNG DẪN migrations]");
+    // Each session hears its own code once, in the host's guidance: a rebuilt one is not handed the old one.
+    const codeOf = (prompt: string | undefined) => /Mã hướng dẫn dự án của session này là ([0-9a-f]{16})\./.exec(prompt ?? "")?.[1];
+    const oldCode = codeOf(first[0]);
+    const newCode = codeOf(adapter.promptsFor("fake-session-2")[0]);
+    expect(oldCode).toBeDefined();
+    expect(codeOf(first[1])).toBeUndefined();
+    expect(newCode).toBeDefined();
+    expect(newCode).not.toBe(oldCode);
   });
 
   it("reports nothing and decides nothing when the policy is off", async () => {
