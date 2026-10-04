@@ -37,6 +37,7 @@ import { textOfMessage } from "../session-search.ts";
 import { registerSessionFile } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import { registerNodeTools } from "../tool-catalogue.ts";
+import { planToolDisclosure, toolDisclosureFromEnv } from "../tool-disclosure.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
 
 /**
@@ -340,6 +341,30 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
       reportContextPlan({ conversationId, part: "memory", plan: planned.plan });
       return planned.text;
     },
+    /*
+     * Progressive tool disclosure, only when an operator asked for it (#433). The set grows within a session and never
+     * leaves what the session was created with; one stderr line per change says what was offered and why.
+     */
+    ...(toolDisclosureFromEnv(deps.env) === "all"
+      ? {}
+      : {
+          toolDisclosure: async (input) => {
+            const plan = await planToolDisclosure({ mode: "progressive", ...input, ...contextDecider() });
+            if (plan.active !== undefined) {
+              process.stderr.write(
+                `${JSON.stringify({
+                  event: "tool-disclosure",
+                  conversationId: input.conversationId,
+                  reason: plan.reason,
+                  families: plan.families,
+                  active: plan.active.length,
+                  registered: input.registered.length,
+                })}\n`,
+              );
+            }
+            return { active: plan.active };
+          },
+        }),
     /*
      * What the widgets the person changed now mean, read when a turn starts (#195).
      *

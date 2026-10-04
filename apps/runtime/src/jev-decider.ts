@@ -682,6 +682,42 @@ export async function decideContextFocus(
 }
 
 /**
+ * Which family of tools a message most needs, when its own words do not say.
+ *
+ * Asked only by progressive tool disclosure, only when an operator opted in, and only on a session's first turn. An
+ * undecided answer means the turn is offered every tool, so this can save tokens and never cost a capability the
+ * conversation had: the families offered are the ones the session was created with.
+ */
+export async function decideToolFamily(
+  deps: DecideDeps,
+  input: { text: string; families: Readonly<Record<string, string>> },
+): Promise<{ status: "chosen"; family: string; confidence: number; model: string } | { status: "all"; reason: string }> {
+  const names = Object.keys(input.families);
+  if (names.length < 2) return { status: "all", reason: "there was nothing to choose between" };
+  const refused = jevCallRefusal(deps.jev.config);
+  if (refused !== undefined) return { status: "all", reason: refused };
+  const criteria: Record<string, string | null> = {};
+  for (const name of names) criteria[`family:${name}`] = input.families[name] ?? null;
+  const outcome = await askChoice(deps.jev, {
+    state: { message: redactSecrets(input.text).slice(0, 400) },
+    instructions:
+      "Which kind of tool will answering this message most likely need? Choose none if it needs no tool or more than one kind.",
+    criteria,
+    questionId: "tool-family",
+    budget: deps.budget(),
+  });
+  if (outcome.status !== "answered") {
+    return { status: "all", reason: outcome.status === "unavailable" ? outcome.reason : `the selector did not decide: ${outcome.reason}` };
+  }
+  if (!outcome.value.substantive) return { status: "all", reason: "the selector chose none of them" };
+  const decisive = isDecisive(outcome.value.top, outcome.value.runnerUp, deps.jev.config.confidenceFloor, deps.jev.config.marginFloor);
+  if (!decisive.decisive) return { status: "all", reason: decisive.reason };
+  const family = outcome.value.choice.replace(/^family:/, "");
+  if (!names.includes(family)) return { status: "all", reason: "the selector chose something that was not offered" };
+  return { status: "chosen", family, confidence: outcome.value.confidence ?? outcome.value.top, model: deps.jev.config.model };
+}
+
+/**
  * Choose which retrieved result the user meant.
  *
  * The order of the refusals is the design. One result needs no decision, a ranking with a clear

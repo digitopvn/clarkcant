@@ -269,6 +269,12 @@ interface Turn {
    * told nothing.
    */
   uiSeen: Map<string, { doc: WidgetSemanticDoc; revision: number }>;
+  /** The tools this session was created with, by name: everything a disclosure plan may choose from. */
+  registeredTools: readonly string[];
+  /** The tools the session offers now, or undefined while it still offers everything it was created with. */
+  activeTools: readonly string[] | undefined;
+  /** Tools called during the turn that ran last, so the next turn keeps their families. */
+  toolsUsed: Set<string>;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -424,6 +430,7 @@ function withActivity(turn: Turn, tool: ToolDefinition): ToolDefinition {
     execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
       // A call the model issued before it heard the stop is not run: stopping means nothing else happens.
       if (turn.stopped) return { text: "Người dùng đã dừng lượt này; công cụ không được chạy." };
+      turn.toolsUsed.add(tool.name);
       turn.toolSequence += 1;
       const toolCallId = `${tool.name}-${turn.toolSequence}`;
       const startedAt = new Date().toISOString() as Instant;
@@ -669,6 +676,20 @@ export async function createModelTurn(options: {
    */
   memoryBrief?: (conversationId: string, query: string) => string | Promise<string>;
   /**
+   * Which of the session's tools this turn is offered (#433), or absent to offer every one, as before.
+   *
+   * Given the names the session was created with and what it offers now; the answer's `active` is applied through the
+   * adapter, which only ever chooses among the names the session was created with. A plan that fails leaves the
+   * session's tools as they are.
+   */
+  toolDisclosure?: (input: {
+    conversationId: string;
+    text: string;
+    registered: readonly string[];
+    current: readonly string[] | undefined;
+    usedLastTurn: readonly string[];
+  }) => Promise<{ active: readonly string[] | undefined }>;
+  /**
    * What the message being answered points at: skills to follow and the things it names (#210).
    *
    * Read from the stored message, as attachments are, and given the adapter's own skill reader, so the instructions a
@@ -745,6 +766,38 @@ export async function createModelTurn(options: {
       if (note.shown.includes(entry.doc.instanceId)) turn.uiSeen.set(entry.doc.instanceId, entry);
     }
     return note.text;
+  };
+  /*
+   * Apply this turn's tool plan, when there is one.
+   *
+   * The adapter is only called when the set actually changes, because every change rebuilds the system prompt the
+   * provider caches. A plan that throws leaves the tools as they were: offering what the session already offers is
+   * always a safe answer.
+   */
+  const discloseTools = async (turn: Turn, conversationId: string, text: string): Promise<void> => {
+    const usedLastTurn = [...turn.toolsUsed];
+    turn.toolsUsed.clear();
+    if (options.toolDisclosure === undefined || turn.registeredTools.length === 0) return;
+    let active: readonly string[] | undefined;
+    try {
+      ({ active } = await options.toolDisclosure({
+        conversationId,
+        text,
+        registered: turn.registeredTools,
+        current: turn.activeTools,
+        usedLastTurn,
+      }));
+    } catch {
+      return;
+    }
+    const offered = turn.activeTools ?? turn.registeredTools;
+    if (active === undefined) {
+      turn.activeTools = offered;
+      return;
+    }
+    const same = active.length === offered.length && active.every((name) => offered.includes(name));
+    if (!same) await adapter.setActiveTools(turn.sessionId, active);
+    turn.activeTools = [...active];
   };
   const budget = modelBudgetFromEnv(options.env);
   const adapter =
@@ -914,6 +967,9 @@ export async function createModelTurn(options: {
       stopping: undefined,
       lastUsedAtMs: Date.now(),
       uiSeen: new Map(),
+      registeredTools: [],
+      activeTools: undefined,
+      toolsUsed: new Set(),
     };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
@@ -921,6 +977,7 @@ export async function createModelTurn(options: {
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
       ...readExtraTools(turn),
     ].map((tool) => withActivity(turn, tool));
+    turn.registeredTools = customTools.map((tool) => tool.name);
 
     const chosen = options.model?.();
 
@@ -985,6 +1042,9 @@ export async function createModelTurn(options: {
       const successor = await adapter.handoff(existing.sessionId, briefFor(preferred));
       existing.unsubscribe();
       existing.sessionId = successor.successor.sessionId;
+      // A successor starts with every tool its brief names, so a disclosure plan starts over with it.
+      existing.registeredTools = turn.registeredTools;
+      existing.activeTools = undefined;
       existing.unsubscribe = listen(existing, existing.sessionId);
       generationModels.set(conversationId, preferredModel ?? "");
       return existing;
@@ -1161,6 +1221,7 @@ export async function createModelTurn(options: {
           : await options.references.briefFor(input.conversationId, (name, revision) => adapter.skillBody(name, revision));
       const brief = [referencePart, attachmentPart, memoryPart].filter((part) => part !== "").join("\n\n");
       const ui = uiNoteFor(turn, input.conversationId);
+      await discloseTools(turn, input.conversationId, input.text);
       // Set before the prompt rather than after it, so a message arriving while the first tokens are being written
       // already sees a turn in flight.
       turn.inFlight = true;

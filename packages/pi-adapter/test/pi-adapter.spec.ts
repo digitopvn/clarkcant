@@ -135,6 +135,29 @@ describe("fake adapter used by CI and E2E", () => {
     expect(await adapter.callTool(session.sessionId, "read_fixture", {})).toBe("contents");
   });
 
+  it("activates only registered tools, and can widen again after narrowing", async () => {
+    const adapter = new FakePiAdapter();
+    const tool = (name: string) => ({
+      name,
+      label: name,
+      description: name,
+      parameters: { type: "object", properties: {} },
+      execute: async () => ({ text: name }),
+    });
+    const session = await adapter.createWorkerSession({
+      goal: "g",
+      projectRoots: [],
+      allowedCapabilityRefs: [],
+      customTools: [tool("a"), tool("b")],
+    });
+    await adapter.setActiveTools(session.sessionId, ["a", "b", "never_registered"]);
+    expect(adapter.activeToolNames(session.sessionId)).toEqual(["a", "b"]);
+    await adapter.setActiveTools(session.sessionId, ["a"]);
+    expect(adapter.activeToolNames(session.sessionId)).toEqual(["a"]);
+    await adapter.setActiveTools(session.sessionId, ["a", "b"]);
+    expect(adapter.activeToolNames(session.sessionId)).toEqual(["a", "b"]);
+  });
+
   it("reports the refresh scope it actually applied", async () => {
     const adapter = new FakePiAdapter();
     const session = await adapter.createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
@@ -274,7 +297,7 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
     ModelRuntime: { create: async () => ({ getModels: () => [], getProviders: () => [] }) },
   };
 
-  return { module: module_, prompts, aborts: () => aborts, sessions };
+  return { module: module_, prompts, aborts: () => aborts, sessions, session };
 }
 
 function adapterWith(sdk: ReturnType<typeof stubSdk>): RealPiAdapter {
@@ -680,3 +703,87 @@ describe("a brief confined to its approved project roots", () => {
   });
 });
 
+
+describe("the real adapter narrows and widens a session's tools from the set it was created with", () => {
+  /**
+   * A session whose tool list starts as the SDK's would — every allowed tool active — and, when `withByName`, whose
+   * `setActiveToolsByName` activates from a registry of exactly those tools and records the prompt rebuild it implies.
+   */
+  function registrySdk(withByName: boolean) {
+    const sdk = stubSdk();
+    const rebuilt: string[][] = [];
+    const created = sdk.module.createAgentSession;
+    sdk.module.createAgentSession = async (options: { tools?: string[]; customTools?: { name: string }[] }) => {
+      const result = await created(options);
+      const registry = new Map((options.tools ?? []).map((name) => [name, { name }]));
+      const session = result.session as unknown as {
+        agent: { state: { tools: { name: string }[] } };
+        setActiveToolsByName?: (names: string[]) => void;
+      };
+      session.agent.state.tools = [...registry.values()];
+      if (withByName) {
+        session.setActiveToolsByName = (names: string[]) => {
+          session.agent.state.tools = names.flatMap((name) => {
+            const tool = registry.get(name);
+            return tool === undefined ? [] : [tool];
+          });
+          rebuilt.push(names);
+        };
+      } else {
+        delete session.setActiveToolsByName;
+      }
+      return result;
+    };
+    return { sdk, rebuilt };
+  }
+
+  const custom = (name: string): ToolDefinition => ({
+    name,
+    label: name,
+    description: name,
+    parameters: { type: "object", properties: {} },
+    execute: async () => ({ text: name }),
+  });
+
+  /** The names on the stub's one session, which is the object the adapter changes. */
+  const toolNames = (sdk: ReturnType<typeof stubSdk>): string[] => sdk.session.agent.state.tools.map((tool) => tool.name);
+
+  for (const withByName of [true, false]) {
+    it(`narrow, widen and narrow again end where they should (${withByName ? "SDK setActiveToolsByName" : "without it"})`, async () => {
+      const { sdk, rebuilt } = registrySdk(withByName);
+      const adapter = adapterWith(sdk);
+      const handle = await adapter.createWorkerSession({
+        goal: "g",
+        projectRoots: [],
+        allowedCapabilityRefs: [],
+        customTools: [custom("a"), custom("b"), custom("c")],
+      });
+      const state = (): string[] => toolNames(sdk);
+      expect(state()).toEqual(["a", "b", "c"]);
+
+      await adapter.setActiveTools(handle.sessionId, ["a"]);
+      expect(state()).toEqual(["a"]);
+      // The defect: filtering the current list made this a no-op, and "b" could never come back.
+      await adapter.setActiveTools(handle.sessionId, ["a", "b", "c"]);
+      expect(state()).toEqual(["a", "b", "c"]);
+      // A name the session was not created with is never activated.
+      await adapter.setActiveTools(handle.sessionId, ["b", "read", "bash"]);
+      expect(state()).toEqual(["b"]);
+      if (withByName) expect(rebuilt).toEqual([["a"], ["a", "b", "c"], ["b"]]);
+    });
+  }
+
+  it("keeps a tool registered after creation whatever the active set is", async () => {
+    const { sdk } = registrySdk(true);
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession({
+      goal: "g",
+      projectRoots: [],
+      allowedCapabilityRefs: [],
+      customTools: [custom("a"), custom("b")],
+    });
+    await adapter.registerTool(handle.sessionId, custom("late"));
+    await adapter.setActiveTools(handle.sessionId, ["a"]);
+    expect(toolNames(sdk)).toEqual(["a", "late"]);
+  });
+});

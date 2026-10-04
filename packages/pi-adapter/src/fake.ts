@@ -215,7 +215,14 @@ export class FakePiAdapter implements PiAdapter {
 
   async setActiveTools(sessionId: string, toolNames: readonly string[]): Promise<void> {
     const session = this.#require(sessionId);
-    session.activeTools = [...toolNames];
+    // Only what is registered can become active, as on the real adapter: a test that activates a name nobody
+    // registered would otherwise pass here and fail against the SDK.
+    session.activeTools = [...new Set(toolNames)].filter((name) => session.tools.has(name));
+  }
+
+  /** Test-only: the tools a session currently offers, in the order they were activated. */
+  activeToolNames(sessionId: string): readonly string[] {
+    return [...this.#require(sessionId).activeTools];
   }
 
   async registerTool(sessionId: string, tool: ToolDefinition): Promise<void> {
