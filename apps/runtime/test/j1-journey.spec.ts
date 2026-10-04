@@ -178,6 +178,8 @@ describe("J1: a real capability is never shadowed by the demo", async () => {
     const card = blocksOf(outcome.messages).find((block) => block.type === "system-card");
     expect(card?.type === "system-card" && card.subject).toBe("capability");
     expect(card?.type === "system-card" && card.status).toBe("blocked");
+    // With no model to answer instead, the card says what unblocks the conversation, not only that it is stuck.
+    expect(card?.type === "system-card" && card.detail).toContain("Thêm một model trong Cài đặt");
 
     const task = oneRow<{ state: string; waiting_capability_ref: string | null }>(
       deps.db,

@@ -778,7 +778,8 @@ export async function handleUserMessage(
           title: "Cần một capability chưa cài",
           status: "blocked",
           detail:
-            "Chưa có capability nào đang dùng được trên node này, nên task đang chờ. Tui sẽ không tự chạy bằng một công cụ tui không có.",
+            // Reached only with no model to fall back on, so the next step is the one that unblocks a conversation.
+            "Chưa có capability nào đang dùng được trên node này, và cũng chưa có model nào để tui trả lời bằng lời, nên task đang chờ. Thêm một model trong Cài đặt → AI & Định tuyến rồi gửi lại; tui sẽ không tự chạy bằng một công cụ tui không có.",
           fields: [
             { label: "Task", value: task.taskId },
             { label: "Node", value: deps.nodeId },
