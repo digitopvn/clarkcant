@@ -306,6 +306,9 @@ div.cc-attachment { flex-wrap: wrap; }
   font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
 }
 .cc-statusline-part { white-space: nowrap; }
+/* A failed send is said under the pill, from its inset like the model line, in the warning tone: it is the one line
+   here that asks for something. */
+.cc-hint[data-statusline="false"] { box-sizing: border-box; padding-inline: var(--cc-space-md); color: var(--cc-warning); }
 .cc-statusline-part + .cc-statusline-part::before { content: "·"; margin-inline-end: var(--cc-space-sm); opacity: 0.7; }
 /* The model line is two facts - which model, and how to change it - so they get the statusline's gap rather than
    running together as one word. */

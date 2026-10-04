@@ -257,6 +257,7 @@ export function Conversation({
     onReferencesSent: references.clear,
     beginHeroExit,
     resetHero,
+    t: localeState.t,
     setDatasets,
     setSnapshots,
     setPendingIntent: (decision) => appIntents.setPendingIntent(decision),

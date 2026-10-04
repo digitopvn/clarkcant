@@ -77,6 +77,7 @@ export const MESSAGES_SHELL_VI = {
   "shell.hero.heading": "Bạn đang nghĩ gì?",
   "shell.hero.subheading": "Nói việc bạn muốn làm, hoặc bắt đầu từ một gợi ý dưới đây.",
   "shell.hero.footerNote": "Gợi ý đánh dấu “cần model” sẽ báo lỗi nếu node này chưa cấu hình model.",
+  "shell.send.unreachable": "Chưa gửi được: không kết nối tới node. Tin nhắn vẫn còn trong ô nhập — gửi lại khi kết nối trở lại.",
 
   "shell.reply.thinkingAria": "ClarkCant đang trả lời",
 
@@ -296,6 +297,7 @@ export const MESSAGES_SHELL_EN = {
   "shell.hero.heading": "What's on your mind?",
   "shell.hero.subheading": "Say what you want to do, or start from a suggestion below.",
   "shell.hero.footerNote": "Suggestions marked \"needs a model\" will error if this node has no model configured.",
+  "shell.send.unreachable": "Not sent: the node can't be reached. Your message is still in the box — send it again once the connection is back.",
 
   "shell.reply.thinkingAria": "ClarkCant is replying",
 

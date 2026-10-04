@@ -93,3 +93,33 @@ test("a refused send gives the typed text back", async ({ page }) => {
   await expect(composer).toHaveValue("");
   await expect(page.locator('[data-role="assistant"]').last()).toContainText(FIXTURE_REPLY, { timeout: 20_000 });
 });
+
+test("a first message that never reaches the node says so and gives the start screen back", async ({ page }) => {
+  await openApp(page);
+  const composer = page.locator("[data-composer]");
+  await expect(page.locator("[data-suggestion]").first()).toBeVisible();
+
+  // The request fails in the network, the way it does when the node has gone away: no answer at all to word.
+  await page.route("**/messages/stream", (route) =>
+    route.request().method() === "POST" ? route.abort("connectionrefused") : route.continue(),
+  );
+  await composer.fill(MESSAGE);
+  await page.locator("[data-send]").click();
+
+  // Said in the interface's language, with what was kept and what to do next, not as the browser's "Failed to fetch".
+  const failure = page.locator("[data-send-error='true']");
+  await expect(failure).toContainText("không kết nối tới node");
+  await expect(failure).toContainText("vẫn còn trong ô nhập");
+  await expect(failure).not.toContainText("fetch");
+  await expect(composer).toHaveValue(MESSAGE);
+
+  // Nothing was sent, so the page is the start screen again rather than an empty transcript.
+  await expect(page.locator(".cc-empty[data-leaving='false']")).toBeVisible();
+  await expect(page.locator("[data-suggestion]").first()).toBeVisible();
+  await expect(page.locator('[data-role="user"]')).toHaveCount(0);
+
+  await page.unroute("**/messages/stream");
+  await page.locator("[data-send]").click();
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(FIXTURE_REPLY, { timeout: 20_000 });
+  await expect(failure).toHaveCount(0);
+});

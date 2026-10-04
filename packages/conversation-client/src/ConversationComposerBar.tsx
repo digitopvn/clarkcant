@@ -290,7 +290,7 @@ export function ConversationComposerBar({
             </span>
           ))
         ) : (
-          <span>{error}</span>
+          <span role="alert" data-send-error="true">{error}</span>
         )}
       </div>
     </div>

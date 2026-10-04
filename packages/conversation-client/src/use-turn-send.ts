@@ -8,10 +8,14 @@ import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { followScrollBehavior, followsBottom } from "./follow-bottom.ts";
 import { answerWidgetPerform } from "./frame-performs.ts";
 import type { AppIntentDecision, ComposerReference } from "@clarkcant/contracts";
+import type { MessageKey } from "./i18n/messages.ts";
 
 /** The node's own sentence for a refused send; the code in front of it belongs in a log, not the status line. */
-function sendFailure(cause: unknown): string {
+function sendFailure(cause: unknown, t: (key: MessageKey) => string): string {
   if (cause instanceof GatewayError) return cause.reason;
+  // fetch rejects with a TypeError when the request never reached the node ("Failed to fetch", "Load failed"): the
+  // browser's own words, in English, say nothing about what was kept or what to do next.
+  if (cause instanceof TypeError) return t("shell.send.unreachable");
   return cause instanceof Error ? cause.message : String(cause);
 }
 
@@ -86,6 +90,8 @@ export interface TurnSendDeps {
   clearDraft: () => void;
   /** A failed send restores the user's text to the composer draft, so nothing typed is lost. */
   onSendFailed: (originalText: string) => void;
+  /** The interface language, for a failure the node did not word itself. */
+  t: (key: MessageKey) => string;
 }
 
 /**
@@ -117,6 +123,7 @@ export function useTurnSend({
   setPendingIntent,
   clearDraft,
   onSendFailed,
+  t,
 }: TurnSendDeps): TurnSendState {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -274,7 +281,10 @@ export function useTurnSend({
         if (!standalone) onSendFailed(trimmed);
         setPendingUser(undefined);
         setLive([]);
-        setError(sendFailure(cause));
+        setError(sendFailure(cause, t));
+        // The first message of a conversation took the start screen with it; refused, it leaves nothing in its place,
+        // so the start screen comes back with the text, rather than an empty page with the composer at its foot.
+        if ((timeline?.messages.length ?? 0) === 0) resetHero();
       } finally {
         setBusy(false);
       }
@@ -292,8 +302,11 @@ export function useTurnSend({
       onConversationReady,
       onReferencesSent,
       onSendFailed,
+      resetHero,
       setConversationId,
       setPendingIntent,
+      t,
+      timeline,
     ],
   );
 
@@ -322,10 +335,10 @@ export function useTurnSend({
     try {
       return (await client.stopTurn(conversationId)).stopped;
     } catch (cause) {
-      setError(sendFailure(cause));
+      setError(sendFailure(cause, t));
       return false;
     }
-  }, [busy, client, conversationId]);
+  }, [busy, client, conversationId, t]);
 
   return { busy, error, setError, pendingUser, live, send, stop, restartSession, scroller };
 }
