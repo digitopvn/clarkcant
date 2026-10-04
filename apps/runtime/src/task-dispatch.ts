@@ -42,6 +42,7 @@ import {
 } from "@clarkcant/project-work";
 import { appendAuditEvent, getTask, oneRow, type Database } from "@clarkcant/storage";
 
+import type { BackgroundFallback } from "./model-turn.ts";
 import type { CommandToolDeps } from "./node-tools.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { signalTree, stopTree } from "./process-tree.ts";
@@ -135,6 +136,11 @@ export interface WorkerModelLaunch {
   model: { provider: string; id: string; thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" };
   /** How it was chosen: routed among the node's pool by the policy layer, or the model the node itself runs. */
   via: "routed" | "configured";
+  /**
+   * Why it is the node's own model when routing had a reason: no model in the pool may receive the task's data class,
+   * or the route failed. Absent when the node routes nothing or the route simply chose this model.
+   */
+  fallback?: BackgroundFallback;
   /**
    * The provider's key, handed to the worker over its stdin and nowhere else. Absent when the node holds none of its
    * own, and the worker's model runtime reads its configuration directory instead.
@@ -1098,13 +1104,20 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
   /**
    * Which model a task's worker was started on, written to the node's audit trail before it starts: the model, how it
-   * was chosen and where its key came from. A row, not the task's record, because the record is the worker's own account
+   * was chosen — with the reason when routing fell back to the node's own model for one — and where its key came from. A row, not the task's record, because the record is the worker's own account
    * of what it did, and this is the host's account of what it handed the worker. Never the key.
    */
   function recordModelRun(job: QueuedRun, runId: string, launch: WorkerModelLaunch): void {
     const principalId = deps.ownerPrincipalId?.();
     if (principalId === undefined) return;
-    const chosen = launch.via === "routed" ? "routed by policy among the node's models" : "the model this node runs";
+    const chosen =
+      launch.via === "routed"
+        ? "routed by policy among the node's models"
+        : launch.fallback?.reason === "data-class"
+          ? `the model this node runs, because no model in the pool may receive ${launch.fallback.dataClass} data`
+          : launch.fallback?.reason === "route-failed"
+            ? "the model this node runs, because routing failed"
+            : "the model this node runs";
     const key =
       launch.credentialSource === "environment"
         ? "the node's environment"

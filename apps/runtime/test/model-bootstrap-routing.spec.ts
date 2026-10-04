@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Instant, UserModelProfile } from "@clarkcant/contracts";
 import type { ModelCatalogue } from "@clarkcant/pi-adapter";
 
-import { routeNodeBackgroundModel, workerModelCandidates } from "../src/bootstrap/model-bootstrap.ts";
+import { routeNodeBackgroundModel, routeOrFallBack, workerModelCandidates } from "../src/bootstrap/model-bootstrap.ts";
 import { writeModelPool } from "../src/model-registry.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { nodeWorkerModel } from "../src/worker-model.ts";
@@ -86,6 +86,50 @@ describe("the node's background routing reads tool support from its catalogue", 
   });
 });
 
+describe("why background work falls back to the configured model", () => {
+  const stderrLines = (): { lines: string[]; restore: () => void } => {
+    const lines: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      lines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    return { lines, restore: () => (process.stderr.write = original) };
+  };
+
+  it("answers the data class when no profile may receive it, and says so on stderr", async () => {
+    storePool({ ...profile("narrow", "can-call", 1), allowedDataClasses: ["public", "internal"] });
+    services.modelCatalogue = async () => catalogue;
+    const captured = stderrLines();
+    try {
+      expect(await routeNodeBackgroundModel(services, { dataClass: "confidential" })).toEqual({
+        fallback: { reason: "data-class", dataClass: "confidential" },
+      });
+    } finally {
+      captured.restore();
+    }
+    expect(captured.lines.map((line) => JSON.parse(line) as unknown)).toEqual([
+      { event: "model-route", fallback: "data-class", dataClass: "confidential", rejected: 1 },
+    ]);
+    // The same profile may receive internal work, so that is routed rather than a fallback.
+    expect(await routeNodeBackgroundModel(services, { dataClass: "internal" })).toEqual({ provider: "acme", id: "can-call" });
+  });
+
+  it("answers a failed route as a fallback rather than throwing, and says so on stderr without the error", async () => {
+    storePool(profile("yes", "can-call", 1));
+    services.modelCatalogue = async () => {
+      throw new Error("catalogue at C:\\Users\\someone unavailable");
+    };
+    const captured = stderrLines();
+    try {
+      expect(await routeOrFallBack(services, { dataClass: "internal" })).toEqual({ fallback: { reason: "route-failed" } });
+    } finally {
+      captured.restore();
+    }
+    expect(captured.lines).toEqual([`${JSON.stringify({ event: "model-route", fallback: "route-failed" })}\n`]);
+  });
+});
+
 describe("whether a dispatched worker's model can call tools", () => {
   const source = (
     candidates: readonly { provider: string; id: string }[],
@@ -113,6 +157,19 @@ describe("whether a dispatched worker's model can call tools", () => {
     });
     expect(await unreadable.toolCalls?.()).toBeUndefined();
     expect((await unreadable.launch())?.toolCalls).toBeUndefined();
+  });
+
+  it("carries the reason routing fell back into the launch, and none when there was none", async () => {
+    const launchWith = (fallback?: { reason: "route-failed" }) =>
+      nodeWorkerModel({
+        modelTurn: {
+          workerModel: async () => ({ provider: "acme", id: "can-call", via: "configured", ...(fallback === undefined ? {} : { fallback }) }),
+        },
+        env: {},
+        storedCredential: () => undefined,
+      }).launch();
+    expect((await launchWith({ reason: "route-failed" }))?.fallback).toEqual({ reason: "route-failed" });
+    expect(await launchWith()).not.toHaveProperty("fallback");
   });
 
   it("carries what the catalogue states about the model a launch chose", async () => {

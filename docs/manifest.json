@@ -130,13 +130,13 @@
     },
     {
       "path": "system-architecture.md",
-      "bytes": 125872,
-      "sha256": "1a6fd7cd62833049450ab0328e1dc4c9fc04063ed140f178f116e93890b7ecfc"
+      "bytes": 126761,
+      "sha256": "39602debe9fe08bd4e04ea5191c45c63e48d62f40cb715c28b9837107251c094"
     },
     {
       "path": "system-architecture.vi.md",
-      "bytes": 143414,
-      "sha256": "3963e2a0230974273840e4b9073a8eb5a58c5e35322e519161fcdb57c63199b3"
+      "bytes": 144578,
+      "sha256": "46a7cd8c6b9bbcffd4e303a792a7d42f052e6c44db48a9423635a020d0b9d030"
     },
     {
       "path": "widget-development.md",
