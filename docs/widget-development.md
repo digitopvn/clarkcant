@@ -2,6 +2,9 @@
 
 > English (default) · [Tiếng Việt](widget-development.vi.md)
 
+Public websites can reuse the [public document widget host](public-widget-host.md)
+without granting runtime capabilities.
+
 > Status: canonical authoring target for the widget ecosystem.
 > Updated: 2026-10-01.
 > Applies to the built-in catalog, declarative compositions, isolated widgets and MCP Apps.

@@ -2,6 +2,9 @@
 
 > [English](widget-development.md) (mặc định) · Tiếng Việt
 
+Website công khai có thể dùng [host widget cho tài liệu](public-widget-host.vi.md)
+mà không cấp quyền runtime.
+
 > Trạng thái: canonical authoring target cho widget ecosystem.
 > Cập nhật: 2026-10-01.
 > Áp dụng cho built-in catalog, declarative compositions, isolated widgets và MCP Apps.
