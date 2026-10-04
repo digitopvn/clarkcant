@@ -19,6 +19,11 @@ each lack the context the foreground had, and each would pay for the same retrie
 - Task workers: the brief carries only `contextItems` (a count, 0–64); the worker's `read_context` tool asks the host
   over IPC (`clarkcant.context.request`/`reply`), answered by the same reader. The tool is offered and active but is
   never wrapped as evidence and never in the permitted capability set.
+- Only tasks a person asked for (`origin` absent or `interactive`) get context; delegated, persistent and system tasks
+  get none, the same gate `planRoots` applies to folders. Retrieval runs inside the run's `try`, so a throw still settles
+  the task and releases the lease; a worker spawned after the wall-clock budget ran out is stopped at once.
+- The brief lists the host's channel kinds (`hostChannels`), so a channel opened only for context offers no command or
+  browser tool. `read_context`'s name, description and parameters live in `@clarkcant/contracts`.
 - Everything returned sits under a data-not-instructions header. A bundle grants nothing. A failed retrieval leaves
   the run without context.
 - `context-bundle` stderr line per bundle given out: counts only (items, built, reused, held, dropped).

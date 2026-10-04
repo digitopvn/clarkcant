@@ -1315,7 +1315,19 @@ export async function createModelTurn(options: {
         turn.startedAtMs = undefined;
         turn.settleStop = undefined;
         turn.onEvent = undefined;
-        throw cause;
+        if (!turn.stopped) throw cause;
+        /*
+         * A person stopped the turn while it was being prepared, and the preparation then failed: they asked for a stop
+         * and a stop is what they get. `interrupt` already took the session out of `turns`, so nothing else would
+         * dispose of it; it goes here, once the stop it started has settled, the way a stopped turn's session does below.
+         */
+        const elapsedMs = Date.now() - startedAt;
+        const sessionId = turn.sessionId;
+        const metrics = turnMetrics({ adapter, sessionId, elapsedMs, model: selection.id });
+        turn.lastUsedAtMs = Date.now();
+        turn.unsubscribe();
+        void (turn.stopping ?? Promise.resolve()).then(() => adapter.dispose(sessionId)).catch(() => undefined);
+        return { text: "", segments: [], provider: selection.provider, model: selection.id, elapsedMs, metrics, stopped: true };
       } finally {
         preparedResolve();
         turn.preparing = undefined;

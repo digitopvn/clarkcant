@@ -476,12 +476,20 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     stopCommandsForTask(taskId);
     browsers.get(taskId)?.stop();
   };
-  /** The retrieved context a task's worker may read, or undefined when there is none to give it. */
-  const taskContext = async (conversationId: string, goal: string): Promise<ContextReader | undefined> => {
-    const bundles = deps.contextBundles?.();
-    const principalId = deps.ownerPrincipalId?.();
-    if (bundles === undefined || principalId === undefined) return undefined;
+  /**
+   * The retrieved context a task's worker may read, or undefined when there is none to give it.
+   *
+   * Only work a person asked for in the conversation gets it — the same line `planRoots` draws for folders. A task a
+   * peer delegated, an automation started or a signal raised carries a goal someone else wrote, and the owner's notes and
+   * conversation are not part of what that grant covers.
+   */
+  const taskContext = async (task: NonNullable<ReturnType<typeof getTask>>): Promise<ContextReader | undefined> => {
+    if (task.origin !== undefined && task.origin.kind !== "interactive") return undefined;
+    const { conversationId, goal } = task;
     try {
+      const bundles = deps.contextBundles?.();
+      const principalId = deps.ownerPrincipalId?.();
+      if (bundles === undefined || principalId === undefined) return undefined;
       const bundle = await bundles.bundleFor({ principalId, conversationId, query: goal });
       reportContextBundle({ conversationId, purpose: "task", bundle, stats: bundles.stats() });
       const reader = bundles.reader(bundle, principalId);
@@ -890,11 +898,11 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
      * What the conversation already holds about this goal, retrieved once and shared with any other run started from the
      * same request at the same point in the conversation. The worker is told only how many items there are and reads
      * them on demand; each read goes back through the principal-scoped readers with the digest checked. A retrieval that
-     * fails leaves the worker without it rather than failing the task.
+     * fails leaves the worker without it rather than failing the task. Inside the run's `try`, so whatever happens here
+     * the lease, the browser, the worktrees and the timer are still released below.
      */
-    const context = await taskContext(task.conversationId, task.goal);
-
     try {
+      const context = await taskContext(task);
       const result = await runWorker({
         nodeId: job.executionNodeId,
         brief: {
@@ -946,8 +954,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           liveChildren.set(runId, { taskId: job.taskId, child });
           // Written once the worker exists, so the trail never says a worker started that never did.
           if (launch !== undefined) recordModelRun(job, runId, launch);
-          // A stop that arrived while the run was being prepared ends the worker as soon as it exists.
-          if (stopping.has(job.taskId)) {
+          // A stop, or a wall-clock budget, that ran out while the run was being prepared ends the worker as soon as it
+          // exists.
+          if (stopping.has(job.taskId) || wallClockExceeded) {
             void stopTree(child);
             stopEffectsOf(job.taskId);
           }

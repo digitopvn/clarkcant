@@ -196,7 +196,15 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
   const briefPath = join(directory, "brief.json");
 
   try {
-    writeFileSync(briefPath, `${JSON.stringify(options.brief, null, 2)}\n`, "utf8");
+    const channel = options.onCommand !== undefined || options.onBrowser !== undefined || options.onContext !== undefined;
+    // The worker is told which kinds this host answers, so it offers only the tools that can work.
+    const hostChannels = [
+      ...(options.onCommand === undefined ? [] : (["command"] as const)),
+      ...(options.onBrowser === undefined ? [] : (["browser"] as const)),
+      ...(options.onContext === undefined ? [] : (["context"] as const)),
+    ];
+    const brief = channel ? { ...options.brief, hostChannels } : options.brief;
+    writeFileSync(briefPath, `${JSON.stringify(brief, null, 2)}\n`, "utf8");
 
     const adapter = options.adapter ?? "fake";
     const credential = adapter === "real" && options.credential !== undefined && options.credential !== "" ? options.credential : undefined;
@@ -205,7 +213,6 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     if (options.scriptPath !== undefined) args.push("--script", options.scriptPath);
     if (credential !== undefined) args.push("--credential-stdin");
 
-    const channel = options.onCommand !== undefined || options.onBrowser !== undefined || options.onContext !== undefined;
     const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
       // The child never inherits this process's environment wholesale: only the names the `build`
       // profile allows cross the boundary, so a provider key or an SSH agent socket sitting in this

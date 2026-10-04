@@ -8,7 +8,7 @@ import type { ConversationId, Instant, Principal, TaskRecord } from "@clarkcant/
 import { advanceResolving, applyTaskEvent, createTask, type ConductorDeps } from "@clarkcant/core";
 import { getTask } from "@clarkcant/storage";
 
-import { BUNDLE_DATA_HEADER, createContextBundles } from "../src/context-bundle.ts";
+import { BUNDLE_DATA_HEADER, type ContextBundles, createContextBundles } from "../src/context-bundle.ts";
 import { rememberMemory } from "../src/memory.ts";
 import { bootRuntime, type Runtime } from "../src/node.ts";
 import { createTaskDispatcher } from "../src/task-dispatch.ts";
@@ -37,7 +37,8 @@ afterEach(() => {
   scratch = undefined;
 });
 
-function setup(goal: string): { conductor: ConductorDeps; task: TaskRecord } {
+function setup(goal: string, origin?: TaskRecord["origin"]): { conductor: ConductorDeps; task: TaskRecord } {
+  scratch ??= mkdtempSync(join(tmpdir(), "cc-task-context-folder-"));
   runtime = bootRuntime({ dataDir: mkdtempSync(join(tmpdir(), "cc-task-context-")), label: "task context test node" });
   runtime.db
     .prepare("INSERT INTO conversations (conversation_id, home_node_id, created_at, updated_at) VALUES (?,?,?,?)")
@@ -65,7 +66,12 @@ function setup(goal: string): { conductor: ConductorDeps; task: TaskRecord } {
     },
   );
   if ("refused" in outcome) throw new Error(outcome.refused);
-  const task = createTask(conductor, { conversationId: CONVERSATION_ID, goal, principal: PRINCIPAL });
+  const task = createTask(conductor, {
+    conversationId: CONVERSATION_ID,
+    goal,
+    principal: PRINCIPAL,
+    ...(origin === undefined ? {} : { origin, resources: [{ kind: "folder", path: scratch, access: "read" }] }),
+  });
   applyTaskEvent(conductor, task.taskId, "resolve.start");
   advanceResolving(conductor, task.taskId, { kind: "ready", executionNodeId: runtime.identity.nodeId });
   applyTaskEvent(conductor, task.taskId, "dispatch.acknowledged");
@@ -94,20 +100,42 @@ function emptyResult(): WorkerProcessResult {
   };
 }
 
-async function dispatchOnce(
+interface Dispatched {
+  options: WorkerProcessOptions | undefined;
+  settled: boolean;
+  bundles: ContextBundles | undefined;
+  leaseHeld: boolean;
+}
+
+async function dispatch(
   goal: string,
-  overrides: { owner?: boolean; bundles?: boolean } = {},
-): Promise<WorkerProcessOptions> {
-  const { conductor, task } = setup(goal);
+  overrides: { owner?: boolean; bundles?: boolean; origin?: TaskRecord["origin"]; throwing?: "owner" | "bundles" } = {},
+): Promise<Dispatched> {
+  const { conductor, task } = setup(goal, overrides.origin);
   const db = conductor.db;
+  const bundles = overrides.bundles === false ? undefined : createContextBundles({ db });
   let seen: WorkerProcessOptions | undefined;
   let settled = false;
   const dispatcher = createTaskDispatcher({
     conductor,
-    projectRoots: () => [],
-    ownedRoots: () => [],
-    ...(overrides.owner === false ? {} : { ownerPrincipalId: () => OWNER }),
-    ...(overrides.bundles === false ? {} : { contextBundles: () => createContextBundles({ db }) }),
+    projectRoots: () => [scratch ?? ""],
+    ownedRoots: () => [scratch ?? ""],
+    ...(overrides.owner === false
+      ? {}
+      : {
+          ownerPrincipalId: () => {
+            if (overrides.throwing === "owner") throw new Error("identity unavailable");
+            return OWNER;
+          },
+        }),
+    ...(bundles === undefined
+      ? {}
+      : {
+          contextBundles: () => {
+            if (overrides.throwing === "bundles") throw new Error("bundle cache unavailable");
+            return bundles;
+          },
+        }),
     onSettled: () => {
       settled = true;
     },
@@ -119,8 +147,16 @@ async function dispatchOnce(
   dispatcher.dispatch({ taskId: task.taskId, capabilityRef: "project.file.read@1", executionNodeId: conductor.nodeId });
   const deadline = Date.now() + 5_000;
   while (!settled && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-  if (seen === undefined) throw new Error("no worker was started");
-  return seen;
+  const leaseHeld = db.prepare("SELECT COUNT(*) AS n FROM leases WHERE holder_task_id = ? AND released_at IS NULL").get(task.taskId) as {
+    n: number;
+  };
+  return { options: seen, settled, bundles, leaseHeld: leaseHeld.n > 0 };
+}
+
+async function dispatchOnce(goal: string, overrides: { owner?: boolean; bundles?: boolean } = {}): Promise<WorkerProcessOptions> {
+  const { options } = await dispatch(goal, overrides);
+  if (options === undefined) throw new Error("no worker was started");
+  return options;
 }
 
 const GOAL = "tổng hợp báo cáo tuần trong thư mục docs";
@@ -143,6 +179,36 @@ describe("a dispatched task's context", () => {
       const options = await dispatchOnce(GOAL, overrides);
       expect(options.brief.contextItems).toBeUndefined();
       expect(options.onContext).toBeUndefined();
+      runtime?.close();
+      runtime = undefined;
+    }
+  });
+
+  it("is not given to work a peer delegated, an automation started or a signal raised", async () => {
+    const others: TaskRecord["origin"][] = [
+      { kind: "delegated", principalId: OWNER, peerNodeId: "node_peer", delegationId: "del_1", allowedCategories: [] },
+      { kind: "persistent", principalId: OWNER, intentId: "intent_1", triggerSignalId: "signal_1", allowedCategories: [] },
+      { kind: "system", reason: "the node's own maintenance" },
+    ];
+    for (const origin of others) {
+      const { options, bundles } = await dispatch(GOAL, { origin });
+      if (options === undefined) throw new Error(`no worker was started for a ${String(origin?.kind)} task`);
+      expect(options.brief.contextItems).toBeUndefined();
+      // No reader on the host channel, so a read_context the worker made up would reach nothing.
+      expect(options.onContext).toBeUndefined();
+      // Nothing of the owner's was even retrieved for it.
+      expect(bundles?.stats().built).toBe(0);
+      runtime?.close();
+      runtime = undefined;
+    }
+  });
+
+  it("still settles, and releases its lease, when retrieving context throws", async () => {
+    for (const throwing of ["owner", "bundles"] as const) {
+      const outcome = await dispatch(GOAL, { throwing });
+      expect(outcome.settled).toBe(true);
+      expect(outcome.leaseHeld).toBe(false);
+      expect(outcome.options?.brief.contextItems).toBeUndefined();
       runtime?.close();
       runtime = undefined;
     }
@@ -187,5 +253,33 @@ describe("a worker process reads its context over the host channel", () => {
     expect(asked).toEqual([{}, { item: "c1" }]);
     expect(result.record.evidence).toHaveLength(1);
     expect(result.record.evidence[0]?.verdict).toBe("not-verified");
+  }, 25_000);
+
+  it("does not offer commands a host that answers only context would refuse", async () => {
+    scratch = mkdtempSync(join(tmpdir(), "cc-task-context-script-"));
+    const scriptPath = join(scratch, "script.json");
+    writeFileSync(scriptPath, JSON.stringify([{ callTool: { name: "run_command", params: { command: "node", args: ["--version"] } }, reply: "x" }]), "utf8");
+    const outcome = await runWorkerProcess({
+      nodeId: "node_test",
+      scriptPath,
+      timeoutMs: 20_000,
+      brief: {
+        runId: "run_ctx_only",
+        taskId: "task_ctx_only",
+        taskRevision: 0,
+        leaseEpoch: 1,
+        goal: GOAL,
+        projectRoots: [scratch],
+        allowedCapabilityRefs: ["project.command.run@1"],
+        contextItems: 1,
+      },
+      onContext: async () => ({ kind: "done", text: BUNDLE_DATA_HEADER }),
+    }).then(
+      (result) => ({ result }),
+      (error: unknown) => ({ error: String(error) }),
+    );
+    if (!("result" in outcome)) throw new Error(`the worker did not run: ${outcome.error}`);
+    // Never offered, so the call never reached the host to be refused there.
+    expect(outcome.result.record.evidence[0]?.summary).toContain("tool run_command is not active");
   }, 25_000);
 });
