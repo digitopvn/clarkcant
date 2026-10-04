@@ -14,6 +14,7 @@ import { referenceBrief, referencesForLastUserMessage } from "../composer-refere
 import { type BrowserTaskToolDeps, personTextOf } from "../browser-task-tool.ts";
 import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
+import { createContextBundles } from "../context-bundle.ts";
 import {
   type ContextPlan,
   contextDeciderFromEnv,
@@ -218,6 +219,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
   };
 
   const planner = contextPlannerFromEnv(deps.env);
+  const bundles = planner === "off" ? undefined : createContextBundles({ db: deps.runtime.db });
   // The selector may only reorder a close top-K, and only when an operator opted in; otherwise nothing is asked.
   const contextDecider = (): { decider?: DecideDeps } => {
     if (contextDeciderFromEnv(deps.env) !== "jev") return {};
@@ -341,6 +343,18 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
       reportContextPlan({ conversationId, part: "memory", plan: planned.plan });
       return planned.text;
     },
+    /*
+     * Shared retrieval for background requests (#433): one pass per request and conversation revision, expanded per
+     * run through the principal-scoped readers so a note deleted meanwhile is not sent. Off with the planner.
+     */
+    ...(bundles === undefined
+      ? {}
+      : {
+          backgroundContext: async ({ conversationId, principalId, text }) => {
+            const bundle = await bundles.bundleFor({ principalId, conversationId, query: text });
+            return bundles.expand(bundle, principalId).text;
+          },
+        }),
     /*
      * Progressive tool disclosure, only when an operator asked for it (#433). The set grows within a session and never
      * leaves what the session was created with; one stderr line per change says what was offered and why.

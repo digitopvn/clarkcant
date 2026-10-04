@@ -676,6 +676,11 @@ export async function createModelTurn(options: {
    */
   memoryBrief?: (conversationId: string, query: string) => string | Promise<string>;
   /**
+   * What the host retrieved for a background request (#433): remembered notes and earlier messages that match it, as
+   * data. Read when the run starts, so a deleted note is not sent; a retrieval that fails leaves the run without it.
+   */
+  backgroundContext?: (input: { conversationId: string; principalId: string; text: string }) => Promise<string>;
+  /**
    * Which of the session's tools this turn is offered (#433), or absent to offer every one, as before.
    *
    * Given the names the session was created with and what it offers now; the answer's `active` is applied through the
@@ -1156,7 +1161,15 @@ export async function createModelTurn(options: {
       try {
         // Created before the signal could be observed, so an abort that landed during creation is honoured here.
         signal?.throwIfAborted();
-        await adapter.prompt(handle.sessionId, promptForTurn({ text: input.text, ...(input.data === undefined ? {} : { data: input.data }) }));
+        // What the host retrieved for this request goes with the data, after the caller's own: material, not a goal.
+        const retrieved =
+          options.backgroundContext === undefined
+            ? ""
+            : await options
+                .backgroundContext({ conversationId: input.conversationId, principalId: input.principal.principalId, text: input.text })
+                .catch(() => "");
+        const data = [input.data ?? "", retrieved].map((part) => part.trim()).filter((part) => part !== "").join("\n\n");
+        await adapter.prompt(handle.sessionId, promptForTurn({ text: input.text, ...(data === "" ? {} : { data }) }));
         // A prompt that settles quietly after an abort is still a stopped run, not a result to report.
         signal?.throwIfAborted();
       } finally {
