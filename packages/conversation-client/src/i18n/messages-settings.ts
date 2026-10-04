@@ -285,7 +285,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.control.autonomy.mode.label": "Cách node quyết định chạy",
   "settings.control.autonomy.mode.description": "Áp dụng chung cho lệnh agent đề xuất, hành động của widget và cài đặt.",
   "settings.control.autonomy.osNote":
-    "Quyền của hệ điều hành, của tài khoản provider, của trình duyệt và của bên thứ ba vẫn luôn được hỏi, ở mọi mức — đó không phải là quyết định của ClarkCant.",
+    "Quyền của hệ điều hành, của tài khoản nhà cung cấp dịch vụ, của trình duyệt và của bên thứ ba vẫn luôn được hỏi, ở mọi mức — đó không phải là quyết định của ClarkCant.",
   "settings.control.autonomy.guardrails.label": "Rào chắn của Jev",
   "settings.control.autonomy.guardrails.description":
     "Tắt thì không có bước phán đoán nào; bước kiểm tra của host và các thẻ duyệt ở trên vẫn chạy.",
@@ -326,7 +326,7 @@ export const MESSAGES_SETTINGS_VI = {
   // InboxNotificationSettings
   "settings.control.notifications.heading": "Thông báo hộp thư",
   "settings.control.notifications.intro":
-    "Khi cửa sổ không có focus hoặc đang ở chế độ thu nhỏ, Clark có thể báo cho bạn qua thông báo của hệ điều hành hoặc trình duyệt.",
+    "Khi bạn đang ở cửa sổ khác hoặc đã thu nhỏ cửa sổ này, Clark có thể báo cho bạn qua thông báo của hệ điều hành hoặc trình duyệt.",
   "settings.control.notifications.group.waitingApprovals": "Việc chờ duyệt",
   "settings.control.notifications.group.backgroundResults": "Kết quả việc chạy nền",
   "settings.control.notifications.group.updates": "Cập nhật",
@@ -334,7 +334,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.control.notifications.group.otherDevices.unavailable": "Chưa có thiết bị nào được ghép nối.",
   "settings.control.notifications.pending": "Đang lưu…",
   "settings.control.notifications.os.label": "Thông báo hệ điều hành",
-  "settings.control.notifications.os.description": "Hiện thông báo của hệ điều hành khi cửa sổ không có focus.",
+  "settings.control.notifications.os.description": "Hiện thông báo của hệ điều hành khi bạn đang ở cửa sổ khác.",
   "settings.control.notifications.os.needsDesktop": "Chỉ có trên ứng dụng desktop.",
   "settings.control.notifications.os.status.unsupported":
     "Thông báo gần nhất không hiện được: hệ điều hành này không hỗ trợ thông báo. Mục vẫn nằm trong hộp thư; hãy mở hộp thư để xem.",
