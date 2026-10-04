@@ -129,9 +129,10 @@ export function ConversationHeroEmptyState({
           ))}
         </div>
       )}
-      {/* Only beside the chip it explains, and only while a model may be missing: under the node's own suggestions,
-          or once a model answers, it described a mark nobody could see or a failure that could not happen. */}
-      {dynamicSuggestions.length === 0 && needsModel !== false ? (
+      {/* Only beside the chip it explains, and only while nobody knows yet whether a model is there: under the node's
+          own suggestions, or once a model answers, it described a mark nobody could see or a failure that could not
+          happen; and with no model, the setup card above already says it, with the control that fixes it. */}
+      {dynamicSuggestions.length === 0 && needsModel === undefined ? (
         <p className="cc-freshness">{t("shell.hero.footerNote")}</p>
       ) : null}
     </div>

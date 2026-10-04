@@ -149,6 +149,8 @@ test.describe("the first run on a node that has been told nothing", () => {
     const card = page.locator("[data-needs-model='true']");
     await expect(card).toBeVisible({ timeout: 20_000 });
     await expect(card).toContainText("chưa có model");
+    // Said once: the footnote that warns a chip may fail without a model would only repeat the card above it.
+    await expect(page.locator(".cc-empty > p.cc-freshness")).toHaveCount(0);
 
     // And the control leads to the place that fixes it, which is what makes this a setup step rather than a
     // dead end. The card closes with the panel it opened, because the panel is the fix.
