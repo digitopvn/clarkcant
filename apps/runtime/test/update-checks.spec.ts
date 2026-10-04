@@ -312,7 +312,8 @@ describe("checkForUpdates — Pi SDK", () => {
     expect(notices[0]?.category).toBe("update");
     expect(notices[0]?.body).toContain("0.85.1");
     expect(notices[0]?.body).toContain("0.86.0");
-    expect(notices[0]?.body).toContain("extension Pi gốc");
+    expect(notices[0]?.title).not.toContain("Pi");
+    expect(notices[0]?.body).toContain("chạy cùng tiến trình");
   });
 
   it("retires the notice for an older SDK release once a newer one is published", async () => {

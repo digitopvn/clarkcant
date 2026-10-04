@@ -174,9 +174,12 @@ export function piUpdateNotice(input: {
     sourceKind: "pi",
     category: "update",
     severity: "info",
-    title: "Có bản cập nhật cho Pi SDK",
+    // Named as the part of Clark it is, the way the inbox labels its source; "Pi SDK" stays in the body for whoever
+    // wants the technical name, because the SDK is machinery the person never installed and never chose.
+    title: "Bộ máy của Clark có bản mới",
     // What happens next, so the reader knows there is nothing to do: the SDK is part of ClarkCant, not installed alone.
-    body: `${input.currentVersion} → ${input.newVersion} · ${LANE_LABEL["trusted-native"]} · sẽ có trong bản ClarkCant tiếp theo, bạn không cần làm gì`,
+    // The lane is still said plainly: it is code that runs inside the host process.
+    body: `${input.currentVersion} → ${input.newVersion} · Pi SDK, chạy cùng tiến trình · sẽ có trong bản ClarkCant tiếp theo, bạn không cần làm gì`,
     subject: { kind: "pi-update", packageName: input.packageName, version: input.newVersion },
     dedupKey: `update:pi:${input.packageName}@${input.newVersion}`,
     at: input.at,
