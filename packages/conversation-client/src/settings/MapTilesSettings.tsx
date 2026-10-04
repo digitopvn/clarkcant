@@ -203,7 +203,7 @@ export function MapTilesSettings({ client, prefs }: { client: GatewayClient; pre
       <p className="cc-panel-note" data-map-tiles-key={keyState.kind} data-map-tiles-key-origin={savedKey?.origin}>
         {keyState.text}
       </p>
-      <form onSubmit={save} data-map-tiles-form="true" noValidate style={{ display: "grid", gap: "var(--cc-space-sm)" }}>
+      <form onSubmit={save} data-map-tiles-form="true" noValidate style={{ display: "grid", gap: "var(--cc-space-md)", marginTop: "var(--cc-space-sm)" }}>
         <label className="cc-field" htmlFor={`${id}-origin`}>
           <span className="cc-field-label">{t("settings.mapTiles.origin")}</span>
           <input id={`${id}-origin`} className="cc-field-input" type="url" required maxLength={300} autoComplete="off" spellCheck={false}
@@ -239,10 +239,10 @@ export function MapTilesSettings({ client, prefs }: { client: GatewayClient; pre
         </label>
         <fieldset className="cc-field">
           <legend className="cc-field-label">{t("settings.mapTiles.keyPlacement")}</legend>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--cc-space-sm)", alignItems: "center" }}>
-            <label><input type="radio" name={`${id}-placement`} value="header" checked={placement === "header"}
+          <div style={{ display: "flex", flexWrap: "wrap", columnGap: "var(--cc-space-md)", alignItems: "center" }}>
+            <label className="cc-field-check"><input type="radio" name={`${id}-placement`} value="header" checked={placement === "header"}
               onChange={() => setPlacement("header")} data-map-tiles-field="placement-header" /> {t("settings.mapTiles.keyHeader")}</label>
-            <label><input type="radio" name={`${id}-placement`} value="query" checked={placement === "query"}
+            <label className="cc-field-check"><input type="radio" name={`${id}-placement`} value="query" checked={placement === "query"}
               onChange={() => setPlacement("query")} data-map-tiles-field="placement-query" /> {t("settings.mapTiles.keyQuery")}</label>
             <input className="cc-field-input" type="text" maxLength={64} autoComplete="off" spellCheck={false} value={keyName}
               aria-label={t("settings.mapTiles.keyName")} placeholder={placement === "header" ? "x-api-key" : "key"}
