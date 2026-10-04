@@ -63,8 +63,8 @@
   --cc-motion-glow: 7200ms;
   --cc-motion-easing: cubic-bezier(0.2, 0, 0.2, 1);
   --cc-motion-bounce: cubic-bezier(0.22, 1.28, 0.36, 1);
-  --cc-conversation-max-width: 800px;
-  --cc-composer-max-width: 840px;
+  --cc-conversation-max-width: 720px;
+  --cc-composer-max-width: 720px;
   --cc-composer-min-height: 70px;
   --cc-topbar-height: 62px;
   --cc-modal-width: 700px;
@@ -135,8 +135,8 @@
   --cc-motion-glow: 7200ms;
   --cc-motion-easing: cubic-bezier(0.2, 0, 0.2, 1);
   --cc-motion-bounce: cubic-bezier(0.22, 1.28, 0.36, 1);
-  --cc-conversation-max-width: 800px;
-  --cc-composer-max-width: 840px;
+  --cc-conversation-max-width: 720px;
+  --cc-composer-max-width: 720px;
   --cc-composer-min-height: 70px;
   --cc-topbar-height: 62px;
   --cc-modal-width: 700px;

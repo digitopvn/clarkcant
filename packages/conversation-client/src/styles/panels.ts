@@ -9,10 +9,11 @@
 export const PANELS_CSS = `
 @layer panels {
 /* Evidence and artifacts */
-.cc-evidence { display: flex; gap: var(--cc-space-sm); align-items: flex-start; font-size: var(--cc-text-label); }
-.cc-evidence[data-verdict="not-verified"] { color: var(--cc-warning); }
-.cc-evidence[data-verdict="contradicted"] { color: var(--cc-danger); }
-.cc-evidence[data-verdict="verified"] { color: var(--cc-success); }
+.cc-evidence { display: flex; gap: var(--cc-space-sm); align-items: baseline; font-size: var(--cc-text-label); }
+/* The verdict carries the colour; the sentence beside it stays in the reading tone, so a good result is quiet. */
+.cc-evidence[data-verdict="not-verified"] .cc-evidence-verdict { color: var(--cc-warning); }
+.cc-evidence[data-verdict="contradicted"] .cc-evidence-verdict { color: var(--cc-danger); }
+.cc-evidence[data-verdict="verified"] .cc-evidence-verdict { color: color-mix(in oklab, var(--cc-success) 75%, var(--cc-text-muted)); }
 
 /* Focus: never removed, only restyled. Keyboard users must be able to see where they are. */
 :focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: var(--cc-radius-badge); }
@@ -20,6 +21,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 /* A code or diff scroll fills a card that clips whatever overflows it, so its ring is drawn inside the scroll. It is
    here, after the rule above, because this layer comes last and an outer ring from above would be cut off. */
 .cc-viewer-scroll:focus-visible { outline-offset: -2px; }
+/* The composer's field draws its focus on the pill around it (see the composer layer), not as a rectangle inside a
+   stadium. Restated here because this layer comes last and the rule above would otherwise put the rectangle back. */
+.cc-composer textarea:focus-visible { outline: none; }
 
 /* Screen-reader-only text: the text alternative for every rich surface. */
 .cc-sr-only {

@@ -8,7 +8,7 @@
       "tokenContractVersion": 2,
       "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade",
       "scheme": "dark",
-      "revision": "5bfa0159b25bd160",
+      "revision": "f005eacfd9d393ba",
       "tokens": {
         "color": {
           "canvas": "#111317",
@@ -114,8 +114,8 @@
           "bounce": "linear"
         },
         "layout": {
-          "conversationMaxWidth": "800px",
-          "composerMaxWidth": "840px",
+          "conversationMaxWidth": "720px",
+          "composerMaxWidth": "720px",
           "composerMinHeight": "70px",
           "topBarHeight": "62px",
           "modalWidth": "700px"
@@ -170,7 +170,7 @@
       "tokenContractVersion": 2,
       "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade",
       "scheme": "dark",
-      "revision": "1299519515c33e3c",
+      "revision": "fe1aedb384d0c991",
       "tokens": {
         "color": {
           "canvas": "#111317",
@@ -276,8 +276,8 @@
           "bounce": "linear"
         },
         "layout": {
-          "conversationMaxWidth": "800px",
-          "composerMaxWidth": "840px",
+          "conversationMaxWidth": "720px",
+          "composerMaxWidth": "720px",
           "composerMinHeight": "70px",
           "topBarHeight": "62px",
           "modalWidth": "700px"
@@ -332,7 +332,7 @@
       "tokenContractVersion": 2,
       "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade",
       "scheme": "light",
-      "revision": "fa40bedcbb29c895",
+      "revision": "4a76afc6faf16776",
       "tokens": {
         "color": {
           "canvas": "#F7F7F5",
@@ -438,8 +438,8 @@
           "bounce": "linear"
         },
         "layout": {
-          "conversationMaxWidth": "800px",
-          "composerMaxWidth": "840px",
+          "conversationMaxWidth": "720px",
+          "composerMaxWidth": "720px",
           "composerMinHeight": "70px",
           "topBarHeight": "62px",
           "modalWidth": "700px"
@@ -494,7 +494,7 @@
       "tokenContractVersion": 2,
       "themeRef": "package:org.clarkcant.pixel-arcade#pixel-arcade",
       "scheme": "light",
-      "revision": "5a1639fab2e32c0c",
+      "revision": "f769f57cfc813270",
       "tokens": {
         "color": {
           "canvas": "#F7F7F5",
@@ -600,8 +600,8 @@
           "bounce": "linear"
         },
         "layout": {
-          "conversationMaxWidth": "800px",
-          "composerMaxWidth": "840px",
+          "conversationMaxWidth": "720px",
+          "composerMaxWidth": "720px",
           "composerMinHeight": "70px",
           "topBarHeight": "62px",
           "modalWidth": "700px"
@@ -656,7 +656,7 @@
       "tokenContractVersion": 2,
       "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism",
       "scheme": "dark",
-      "revision": "9006c4c90d9c4db9",
+      "revision": "8ee7de7f321c4aca",
       "tokens": {
         "color": {
           "canvas": "#111317",
@@ -762,8 +762,8 @@
           "bounce": "linear"
         },
         "layout": {
-          "conversationMaxWidth": "800px",
-          "composerMaxWidth": "840px",
+          "conversationMaxWidth": "720px",
+          "composerMaxWidth": "720px",
           "composerMinHeight": "70px",
           "topBarHeight": "62px",
           "modalWidth": "700px"
@@ -818,7 +818,7 @@
       "tokenContractVersion": 2,
       "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism",
       "scheme": "dark",
-      "revision": "b7606006cb21f7ed",
+      "revision": "864b02f09fb4ca8d",
       "tokens": {
         "color": {
           "canvas": "#111317",
@@ -924,8 +924,8 @@
           "bounce": "linear"
         },
         "layout": {
-          "conversationMaxWidth": "800px",
-          "composerMaxWidth": "840px",
+          "conversationMaxWidth": "720px",
+          "composerMaxWidth": "720px",
           "composerMinHeight": "70px",
           "topBarHeight": "62px",
           "modalWidth": "700px"
@@ -980,7 +980,7 @@
       "tokenContractVersion": 2,
       "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism",
       "scheme": "light",
-      "revision": "8668db9e9b188eb9",
+      "revision": "74f2a768b5d59ebc",
       "tokens": {
         "color": {
           "canvas": "#F7F7F5",
@@ -1086,8 +1086,8 @@
           "bounce": "linear"
         },
         "layout": {
-          "conversationMaxWidth": "800px",
-          "composerMaxWidth": "840px",
+          "conversationMaxWidth": "720px",
+          "composerMaxWidth": "720px",
           "composerMinHeight": "70px",
           "topBarHeight": "62px",
           "modalWidth": "700px"
@@ -1142,7 +1142,7 @@
       "tokenContractVersion": 2,
       "themeRef": "package:org.clarkcant.neo-brutalism#neo-brutalism",
       "scheme": "light",
-      "revision": "57f1066bea3c5158",
+      "revision": "f0faec2154be7e0f",
       "tokens": {
         "color": {
           "canvas": "#F7F7F5",
@@ -1248,8 +1248,8 @@
           "bounce": "linear"
         },
         "layout": {
-          "conversationMaxWidth": "800px",
-          "composerMaxWidth": "840px",
+          "conversationMaxWidth": "720px",
+          "composerMaxWidth": "720px",
           "composerMinHeight": "70px",
           "topBarHeight": "62px",
           "modalWidth": "700px"

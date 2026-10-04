@@ -305,6 +305,22 @@ export const VOICE_CSS = `
 .cc-action[data-emphasis="primary"]:not(:disabled) { background: var(--cc-accent); border-color: var(--cc-accent); color: var(--cc-on-accent); font-weight: 600; }
 .cc-action[data-emphasis="primary"]:hover:not(:disabled) { background: color-mix(in oklab, var(--cc-accent) 88%, var(--cc-text)); }
 
+/*
+ * The choices a question offers.
+ *
+ * A list, one choice per row, read top to bottom like the options they are: the name first and in the reading tone,
+ * what it means under it in the muted one. Centred buttons of uneven widths made each option a different shape and put
+ * its explanation in the middle of the label it explains.
+ */
+.cc-question-options { flex-direction: column; align-items: stretch; gap: var(--cc-space-xs); }
+.cc-action.cc-question-option {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  padding: var(--cc-space-sm) var(--cc-space-md); border-radius: var(--cc-radius-button);
+}
+.cc-question-option-label { font-weight: 600; color: var(--cc-text); }
+.cc-question-option-desc { font-size: var(--cc-text-label); color: var(--cc-text-muted); line-height: 1.45; }
+.cc-question-option[data-selected="true"] { border-color: var(--cc-accent); background: color-mix(in oklab, var(--cc-accent) 10%, var(--cc-elevated)); }
+
 /* Project roots the node has already approved. */
 .cc-root-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 .cc-root-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); padding: var(--cc-space-xs) 0; border-bottom: var(--cc-line, 1px solid) var(--cc-border); }

@@ -369,7 +369,7 @@ export { READ_CONTEXT_TOOL };
 export function createContextTool(channel: HostContextChannel, items: number): ToolDefinition {
   return {
     name: READ_CONTEXT_TOOL,
-    label: "Read retrieved context",
+    label: "Đọc ngữ cảnh đã tìm được",
     description: readContextDescription(items),
     parameters: READ_CONTEXT_PARAMETERS,
 

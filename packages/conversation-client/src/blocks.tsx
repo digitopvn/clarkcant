@@ -110,7 +110,11 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
           {status === "running" ? "◐" : status === "failed" ? "✕" : "✓"}
         </span>
         <span className="cc-tool-label">{label}</span>
-        {path !== undefined && <code className="cc-tool-path">{path}</code>}
+        {path !== undefined && (
+          <code className="cc-tool-path" title={path}>
+            {path}
+          </code>
+        )}
         <span className="cc-sr-only">
           {status === "running"
             ? t("blocks.tool.status.running")
@@ -178,16 +182,26 @@ export function ReasoningBlock({
   );
 }
 
+/**
+ * What the host checked about the step above it.
+ *
+ * A footnote to that step rather than a row of its own: the verdict is a word in the reader's language with a glyph
+ * that repeats it (so it survives without colour), and only a verdict that is not good keeps a colour strong enough to
+ * be noticed.
+ */
 export function EvidenceBlock({ block }: { block: Record<string, unknown> }): ReactElement {
-  const verdict = typeof block.verdict === "string" ? block.verdict : "not-verified";
+  const t = useT();
+  const raw = typeof block.verdict === "string" ? block.verdict : "not-verified";
+  const verdict = raw === "verified" || raw === "contradicted" ? raw : "not-verified";
   const summary = typeof block.summary === "string" ? block.summary : "";
   const kind = typeof block.kind === "string" ? block.kind : "evidence";
   return (
     <div className="cc-evidence" data-verdict={verdict} data-evidence-kind={kind}>
-      <span className="cc-badge" data-tone={verdict === "verified" ? "ok" : verdict === "contradicted" ? "danger" : "warn"}>
-        {verdict}
+      <span className="cc-evidence-verdict">
+        <span aria-hidden="true">{verdict === "verified" ? "✓" : verdict === "contradicted" ? "✕" : "!"}</span>{" "}
+        {t(`blocks.evidence.${verdict}`)}
       </span>
-      <span>{summary}</span>
+      <span className="cc-evidence-summary">{summary}</span>
     </div>
   );
 }
@@ -698,12 +712,12 @@ export function QuestionCardBlock({
         )}
 
         {!answered && canAnswer && (kind === "single-choice" || kind === "multi-choice") && (
-          <div className="cc-card-actions">
+          <div className="cc-card-actions cc-question-options">
             {offered.map((option) => (
               <button
                 key={option.id}
                 type="button"
-                className="cc-action"
+                className="cc-action cc-question-option"
                 data-question-option={option.id}
                 data-selected={chosen.includes(option.id)}
                 disabled={!canAnswer}
@@ -715,9 +729,9 @@ export function QuestionCardBlock({
                   toggle(option.id);
                 }}
               >
-                {option.label}
+                <span className="cc-question-option-label">{option.label}</span>
                 {option.description === undefined ? null : (
-                  <span className="cc-setting-desc"> {option.description}</span>
+                  <span className="cc-question-option-desc"> {option.description}</span>
                 )}
               </button>
             ))}

@@ -13,7 +13,7 @@
  * changes nothing about which rule wins a cascade tie — the concatenation order below is
  * cosmetic, the layer order is what is authoritative.
  */
-import { BASE_CSS } from "./styles/base.ts";
+import { BASE_CSS, REGISTERED_PROPERTIES_CSS } from "./styles/base.ts";
 import { TIMELINE_CSS } from "./styles/timeline.ts";
 import { CARDS_CSS } from "./styles/cards.ts";
 import { COMPOSER_CSS } from "./styles/composer.ts";
@@ -23,5 +23,5 @@ import { THEME_LAB_CSS } from "./styles/theme-lab.ts";
 
 export const APP_CSS = `
 @layer base, timeline, cards, composer, voice, panels;
-${BASE_CSS}${TIMELINE_CSS}${CARDS_CSS}${COMPOSER_CSS}${VOICE_CSS}${PANELS_CSS}${THEME_LAB_CSS}
+${REGISTERED_PROPERTIES_CSS}${BASE_CSS}${TIMELINE_CSS}${CARDS_CSS}${COMPOSER_CSS}${VOICE_CSS}${PANELS_CSS}${THEME_LAB_CSS}
 `;

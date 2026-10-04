@@ -16,6 +16,11 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.tool.args.label": "tham số",
   "blocks.tool.result.label": "kết quả",
 
+  // blocks.tsx — evidence under a tool call
+  "blocks.evidence.verified": "đã kiểm chứng",
+  "blocks.evidence.not-verified": "chưa kiểm chứng",
+  "blocks.evidence.contradicted": "mâu thuẫn",
+
   // blocks.tsx — reasoning
   "blocks.reasoning.label": "Suy luận của agent",
   "blocks.reasoning.writing": "đang viết…",
@@ -964,6 +969,11 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.tool.status.done": "done",
   "blocks.tool.args.label": "parameters",
   "blocks.tool.result.label": "result",
+
+  // blocks.tsx — evidence under a tool call
+  "blocks.evidence.verified": "verified",
+  "blocks.evidence.not-verified": "not verified",
+  "blocks.evidence.contradicted": "contradicted",
 
   "blocks.reasoning.label": "Agent reasoning",
   "blocks.reasoning.writing": "writing…",

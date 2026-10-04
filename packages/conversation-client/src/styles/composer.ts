@@ -186,8 +186,8 @@ div.cc-attachment { flex-wrap: wrap; }
 @keyframes cc-glow-orbit { to { transform: translate(-50%, -50%) rotate(1turn); } }
 
 .cc-composer {
-  /* Deliberately wider than the column above it, so the input a message is typed into reads as
-     the control it is rather than as one more line of the transcript. */
+  /* As wide as the column above it: the elevation and the pill shape are what mark it as the control,
+     so it does not need extra width to stand apart from the transcript. */
   position: relative; z-index: 1;
   min-height: var(--cc-composer-min-height);
   display: flex;
@@ -210,6 +210,19 @@ div.cc-attachment { flex-wrap: wrap; }
      silhouette rather than a box, and a soft shadow is what separates it from the transcript behind. */
   padding: var(--cc-space-sm) var(--cc-space-md);
   box-shadow: var(--cc-composer-shadow, var(--cc-shadow-raised, 0 12px 32px color-mix(in oklab, var(--cc-code) 42%, transparent)));
+  transition: border-color var(--cc-motion-normal) var(--cc-motion-easing), box-shadow var(--cc-motion-normal) var(--cc-motion-easing);
+}
+/*
+ * Focus belongs to the pill, not to the field inside it.
+ *
+ * A rectangle drawn around the textarea sat inside the stadium as a second, square outline. The pill's own edge takes
+ * the accent instead, with a soft halo, so the whole control reads as focused and keyboard users still see where they are.
+ */
+.cc-composer:focus-within {
+  border-color: color-mix(in oklab, var(--cc-focus) 70%, var(--cc-border));
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--cc-focus) 18%, transparent),
+    var(--cc-composer-shadow, var(--cc-shadow-raised, 0 12px 32px color-mix(in oklab, var(--cc-code) 42%, transparent)));
 }
 .cc-composer textarea {
   flex: 1; background: none; border: none; color: var(--cc-text); font: inherit;
@@ -240,10 +253,15 @@ div.cc-attachment { flex-wrap: wrap; }
  * that two figures never read as one.
  */
 .cc-hint[data-statusline="true"] {
-  display: flex; flex-wrap: wrap; gap: var(--cc-space-md);
+  display: flex; flex-wrap: wrap; gap: var(--cc-space-sm);
+  /* One run of figures under the middle of the pill, rather than four words pushed to its corners: spread out,
+     they read as four separate labels and the eye has to cross the whole composer to collect them. */
+  justify-content: center; margin-top: var(--cc-space-sm);
+  font-size: var(--cc-text-meta); color: var(--cc-text-tertiary);
   font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
 }
 .cc-statusline-part { white-space: nowrap; }
+.cc-statusline-part + .cc-statusline-part::before { content: "·"; margin-inline-end: var(--cc-space-sm); opacity: 0.7; }
 /* The model line is two facts - which model, and how to change it - so they get the statusline's gap rather than
    running together as one word. */
 .cc-model-switch { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--cc-space-sm); }
@@ -391,7 +409,6 @@ div.cc-attachment { flex-wrap: wrap; }
   transition: opacity var(--cc-motion-orb) var(--cc-motion-easing), filter var(--cc-motion-orb) var(--cc-motion-easing);
 }
 .cc-stage-orb[data-docked="true"] > .cc-empty-orb { opacity: 0.5; filter: blur(1px) brightness(0.85); }
-
 /*
  * The docked orb reports what the agent is doing.
  *
@@ -446,30 +463,57 @@ div.cc-attachment { flex-wrap: wrap; }
  * the state survives a monochrome screen: a ring while it runs, a tick when it finished, a cross when it
  * did not.
  */
+/*
+ * A run of steps reads as one list, not a stack of cards.
+ *
+ * Each step is a quiet line: no frame, the label in the muted tone, the place it ran in small monospace at the end.
+ * A frame appears only where there is something inside it — on hover, as the press target, and while it is open —
+ * so ten finished steps are ten lines of receipt rather than ten boxes competing with the reply. Consecutive steps
+ * sit closer than the reply's own blocks, which is what makes them read as one group.
+ */
 .cc-tool {
-  border: var(--cc-line, 1px solid) var(--cc-border); background: var(--cc-card);
-  border-radius: var(--cc-radius-card); overflow: hidden;
+  border: var(--cc-line, 1px solid) transparent; background: transparent;
+  border-radius: var(--cc-radius-button); overflow: hidden;
+  /* The frame bleeds past the column so the mark and label line up with the reply's text, not inside it. */
+  margin-inline: calc(-1 * var(--cc-space-sm));
+  transition: background-color var(--cc-motion-normal) var(--cc-motion-easing), border-color var(--cc-motion-normal) var(--cc-motion-easing);
 }
-.cc-reasoning { background: var(--cc-elevated); }
+.cc-tool:hover { background: color-mix(in oklab, var(--cc-card) 70%, transparent); }
+.cc-tool[open] { background: var(--cc-card); border-color: var(--cc-border); border-radius: var(--cc-radius-card); }
+.cc-tool + .cc-tool, .cc-tool + .cc-evidence, .cc-evidence + .cc-tool { margin-top: calc(var(--cc-space-xxs) - var(--cc-space-sm)); }
 .cc-tool-head {
-  display: flex; align-items: center; gap: var(--cc-space-sm);
-  padding: var(--cc-space-sm) var(--cc-space-md);
-  cursor: pointer; list-style: none; font-size: var(--cc-text-body-sm);
+  display: flex; align-items: baseline; gap: var(--cc-space-sm);
+  padding: var(--cc-space-xs) var(--cc-space-sm);
+  cursor: pointer; list-style: none; font-size: var(--cc-text-body-sm); line-height: var(--cc-leading-body-sm, 1.45);
+  color: var(--cc-text-muted);
 }
 .cc-tool-head::-webkit-details-marker { display: none; }
 .cc-tool-head:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: -2px; }
+.cc-tool:hover .cc-tool-label, .cc-tool[open] .cc-tool-label { color: var(--cc-text); }
 .cc-tool-mark { flex: none; width: 1em; text-align: center; color: var(--cc-text-tertiary); }
 .cc-tool-mark[data-status="running"] { color: var(--cc-accent); animation: cc-tool-spin var(--cc-motion-orb) linear infinite; }
 .cc-tool-mark[data-status="done"] { color: var(--cc-success); }
 .cc-tool-mark[data-status="failed"] { color: var(--cc-danger); }
 @keyframes cc-tool-spin { to { transform: rotate(1turn); } }
-.cc-tool-label { flex: 1; min-width: 0; color: var(--cc-text); }
+.cc-tool-label { flex: 1; min-width: 0; color: var(--cc-text-muted); transition: color var(--cc-motion-normal) var(--cc-motion-easing); }
+/* One line at most: the full place is in the open step and in the title, and a path that wraps pushes the label into a column. */
 .cc-tool-path {
+  flex: 0 1 auto; max-width: 38%; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-meta);
-  color: var(--cc-text-muted); overflow-wrap: anywhere;
+  color: var(--cc-text-tertiary);
 }
 .cc-tool-body { padding: 0 var(--cc-space-md) var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-tool[open] > .cc-tool-body { border-top: var(--cc-line, 1px solid) var(--cc-border); padding-top: var(--cc-space-sm); }
+.cc-tool[open] > .cc-tool-head { padding: var(--cc-space-sm) var(--cc-space-md); }
+
+/* The check under a step, lined up with the step's label rather than with its mark. */
+.cc-tool + .cc-evidence {
+  padding-left: calc(var(--cc-space-sm) + 1em + var(--cc-space-sm));
+  font-size: var(--cc-text-meta); color: var(--cc-text-tertiary);
+}
+.cc-evidence-verdict { flex: none; white-space: nowrap; }
+.cc-evidence-summary { min-width: 0; overflow-wrap: anywhere; }
 .cc-reasoning-body { color: var(--cc-text-muted); }
 /*
  * The reasoning block, while the model is still writing it.

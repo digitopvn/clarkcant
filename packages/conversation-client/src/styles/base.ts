@@ -6,6 +6,17 @@
  * Wrapped in its own CSS `@layer` so the concatenation order in styles.ts stays the visible,
  * intentional cascade order rather than an accident of import order.
  */
+/**
+ * Custom properties registered with a type, so a transition can interpolate them.
+ *
+ * Outside every layer: a registration is global and is not a rule that takes part in the cascade.
+ */
+export const REGISTERED_PROPERTIES_CSS = `
+@property --cc-grid-clear-x { syntax: "<length>"; inherits: false; initial-value: -9999px; }
+@property --cc-grid-clear-y { syntax: "<length>"; inherits: false; initial-value: -9999px; }
+@property --cc-grid-clear-r { syntax: "<length>"; inherits: false; initial-value: 0px; }
+`;
+
 export const BASE_CSS = `
 @layer base {
 * { box-sizing: border-box; }
@@ -57,6 +68,23 @@ body {
   transition: opacity var(--cc-motion-normal) var(--cc-motion-easing);
 }
 .cc-dot-grid[data-lit="true"]::after { opacity: 1; }
+/*
+ * The field parts around the orb.
+ *
+ * The orb is glass, dimmed and faded where it sinks behind the composer, so the dots under it showed through and read
+ * as if they were printed on top of it. The field is masked away in a soft circle where the ball is, which keeps the
+ * orb an object in front of the field at every opacity. The centre and radius are registered lengths (see
+ * REGISTERED_PROPERTIES_CSS) so the clearing travels with the orb when it moves between the start screen and the dock,
+ * on the orb's own timing; where they are not animatable the clearing simply arrives with the orb.
+ */
+.cc-dot-grid[data-clearing="true"] {
+  mask-image: radial-gradient(circle var(--cc-grid-clear-r, 0px) at var(--cc-grid-clear-x, -9999px) var(--cc-grid-clear-y, -9999px), transparent 0%, transparent 72%, #000 100%);
+  -webkit-mask-image: radial-gradient(circle var(--cc-grid-clear-r, 0px) at var(--cc-grid-clear-x, -9999px) var(--cc-grid-clear-y, -9999px), transparent 0%, transparent 72%, #000 100%);
+  transition:
+    --cc-grid-clear-x var(--cc-motion-orb) var(--cc-motion-easing),
+    --cc-grid-clear-y var(--cc-motion-orb) var(--cc-motion-easing),
+    --cc-grid-clear-r var(--cc-motion-orb) var(--cc-motion-easing);
+}
 
 /*
  * Everything between the header and the foot of the window.

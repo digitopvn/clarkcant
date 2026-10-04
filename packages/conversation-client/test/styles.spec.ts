@@ -310,8 +310,17 @@ describe("the look a theme's identity reaches", () => {
   it("draws every focus ring in the protected focus colour", () => {
     const rings = rules(APP_CSS).filter(({ selector, body }) => selector.includes(":focus-visible") && /\boutline\s*:/.test(body));
     expect(rings.length).toBeGreaterThan(20);
+    // A field that hands its ring to the control around it. Each one is allowed to drop its own outline only because
+    // the container draws focus in the same protected colour, which is checked below rather than taken on trust.
+    const delegated: Readonly<Record<string, string>> = { ".cc-composer textarea:focus-visible": ".cc-composer:focus-within" };
     for (const { selector, body } of rings) {
       const outline = /\boutline\s*:\s*([^;]+)/.exec(body)?.[1] ?? "";
+      const container = delegated[selector];
+      if (container !== undefined && outline.trim() === "none") {
+        const ring = rules(APP_CSS).find((rule) => rule.selector === container)?.body ?? "";
+        expect(ring, `${selector} delegates to ${container}`).toContain("var(--cc-focus)");
+        continue;
+      }
       expect(outline, selector).toContain("var(--cc-focus)");
     }
   });

@@ -1355,7 +1355,7 @@ export async function createModelTurn(options: {
   ): ToolDefinition {
     return {
       name: SHOW_VIEW_TOOL,
-      label: "Show a view",
+      label: "Hiển thị một khung nhìn",
       description:
         `Show a visual view in the conversation. Use the exact view name from the list. ` +
         `The values you pass are shown as sample data, so never describe them as live. ` +

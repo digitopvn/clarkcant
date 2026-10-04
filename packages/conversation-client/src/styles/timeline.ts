@@ -184,7 +184,8 @@ export const TIMELINE_CSS = `
 .cc-md a, .cc-text a { color: var(--cc-accent); }
 .cc-md a:focus-visible, .cc-text a:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: 2px; }
 .cc-md-inline-code {
-  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm);
+  /* Relative to the sentence it sits in: a fixed small size made a path in a paragraph read as a footnote. */
+  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.88em;
   background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border);
   border-radius: var(--cc-radius-badge); padding: 0 4px;
 }

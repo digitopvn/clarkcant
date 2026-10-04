@@ -4,7 +4,7 @@
     "tokenContractVersion": 2,
     "themeRef": "builtin:clark",
     "scheme": "dark",
-    "revision": "bf9d3bfc960b8265",
+    "revision": "efca6a328a8e8fd3",
     "tokens": {
       "color": {
         "canvas": "#111317",
@@ -110,8 +110,8 @@
         "bounce": "linear"
       },
       "layout": {
-        "conversationMaxWidth": "800px",
-        "composerMaxWidth": "840px",
+        "conversationMaxWidth": "720px",
+        "composerMaxWidth": "720px",
         "composerMinHeight": "70px",
         "topBarHeight": "62px",
         "modalWidth": "700px"
@@ -161,7 +161,7 @@
     "tokenContractVersion": 2,
     "themeRef": "builtin:clark",
     "scheme": "light",
-    "revision": "615fe25b44b71d3f",
+    "revision": "0ad6a83d1dd98ff4",
     "tokens": {
       "color": {
         "canvas": "#F7F7F5",
@@ -267,8 +267,8 @@
         "bounce": "linear"
       },
       "layout": {
-        "conversationMaxWidth": "800px",
-        "composerMaxWidth": "840px",
+        "conversationMaxWidth": "720px",
+        "composerMaxWidth": "720px",
         "composerMinHeight": "70px",
         "topBarHeight": "62px",
         "modalWidth": "700px"

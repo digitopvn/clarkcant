@@ -310,7 +310,7 @@ describe("a tool call is reported while it runs and kept afterwards", () => {
     expect(ends).toHaveLength(1);
     // The same identifier on both, which is what lets a client update one widget instead of drawing two.
     expect(ends[0]?.toolCallId).toBe(starts[0]?.toolCallId);
-    expect(starts[0]).toMatchObject({ name: "show_view", label: "Show a view", args: { view: VIEW.id } });
+    expect(starts[0]).toMatchObject({ name: "show_view", label: "Hiển thị một khung nhìn", args: { view: VIEW.id } });
     expect(ends[0]).toMatchObject({ status: "done" });
 
     const widget = reply.segments
