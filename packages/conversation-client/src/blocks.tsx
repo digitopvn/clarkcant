@@ -247,10 +247,10 @@ export function ArtifactBlock({
         node can answer it — an artifact can expire between the message being written and somebody reading it.
       */}
       {artifactId !== "" && actions?.onArtifactOpen !== undefined ? (
-        <div className="cc-chip-row">
+        <div className="cc-card-actions">
           <button
             type="button"
-            className="cc-chip"
+            className="cc-action"
             data-artifact-open={artifactId}
             /*
              * Disabled only while a request is in flight. Unlike stopping a task, reopening is a question rather
@@ -1306,10 +1306,10 @@ export function TaskProgressCardBlock({
           exactly when the block says the task is cancellable, so the claim and the affordance cannot drift.
         */}
         {cancellable && taskId !== "" && actions?.onTaskStop !== undefined ? (
-          <div className="cc-chip-row">
+          <div className="cc-card-actions">
             <button
               type="button"
-              className="cc-chip"
+              className="cc-action"
               data-task-stop={taskId}
               disabled={stopState !== undefined && stopState.status !== "failed"}
               onClick={() => actions.onTaskStop?.({ taskId })}
@@ -2079,10 +2079,11 @@ export function FormCardBlock({
       </div>
       {!open ? null : (
         <>
-          <div className="cc-chip-row">
+          <div className="cc-card-actions">
             <button
               type="button"
-              className="cc-chip"
+              className="cc-action"
+              data-emphasis="primary"
               data-form-submit="true"
               // Disabled with the reason shown, rather than submitting a form with holes in it.
               disabled={!complete}
@@ -2435,7 +2436,7 @@ export function ControlSessionCardBlock({
         </p>
       )}
       {running ? (
-        <div className="cc-chip-row">
+        <div className="cc-card-actions">
           {/*
             Offered only while the agent still has the wheel, and only when something can carry the verb out: a
             takeover control on a session the user already drives would be a control with nothing left to do.
@@ -2443,7 +2444,7 @@ export function ControlSessionCardBlock({
           {driver === "agent" && actions?.onControlTakeover !== undefined ? (
             <button
               type="button"
-              className="cc-chip"
+              className="cc-action"
               data-control-takeover={sessionId}
               disabled={busy}
               onClick={() => actions.onControlTakeover?.({ sessionId })}
@@ -2454,7 +2455,7 @@ export function ControlSessionCardBlock({
           {actions?.onControlStop !== undefined ? (
             <button
               type="button"
-              className="cc-chip"
+              className="cc-action"
               data-control-stop={sessionId}
               disabled={busy}
               onClick={() => actions.onControlStop?.({ sessionId })}
