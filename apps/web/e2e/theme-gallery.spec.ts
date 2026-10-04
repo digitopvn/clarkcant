@@ -63,7 +63,8 @@ for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const
       await page.keyboard.press("Escape");
       await expect(page.locator('[data-modal="true"]')).toHaveCount(1);
       await expect(browse).toBeFocused();
-      await expect(page.locator("[data-theme-recent]")).toContainText("Dusk");
+      // The theme in use is the pressed card already; the recent row is only a way back to the others.
+      await expect(page.locator("[data-theme-recent] button", { hasText: "Dusk" })).toHaveCount(0);
       await page.locator(`[data-theme-choice="${scheme}"]`).click();
       const normalSpace = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-space-md"));
       await page.locator('[data-theme-customization] [data-segment="compact"]').click();

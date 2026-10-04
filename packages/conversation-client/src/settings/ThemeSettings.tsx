@@ -272,8 +272,11 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
 
   const selectedRef = prefs.text("experience.themeRef", BUILTIN_CLARK_THEME_REF);
   const storedRecent = prefs.preference("experience.recentThemes")?.value;
+  // A way back to a theme used before, so the one in use is left out: it is already the pressed card above, and a row
+  // naming only it read as a second, different choice.
   const recent = Array.isArray(storedRecent)
     ? storedRecent.flatMap((ref) => {
+        if (ref === selectedRef) return [];
         const theme = listing?.themes.find((candidate) => candidate.themeRef === ref);
         return theme === undefined ? [] : [theme];
       })
@@ -338,8 +341,8 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
       </SettingsRow>
       {galleryOpen || recent.length === 0 ? null : <div className="cc-theme-recent" role="group" aria-label={t("themeLab.recent")} data-theme-recent>
         <span>{t("themeLab.recent")}</span>
-        {recent.map((theme) => <button key={theme.themeRef} type="button" className="cc-badge"
-          aria-pressed={selectedRef === theme.themeRef} disabled={prefs.pending !== undefined}
+        {recent.map((theme) => <button key={theme.themeRef} type="button" className="cc-action"
+          disabled={prefs.pending !== undefined}
           onClick={() => choose(theme.themeRef)}>{theme.displayName}</button>)}
       </div>}
       <button type="button" className="cc-action" data-theme-browse onClick={() => {
