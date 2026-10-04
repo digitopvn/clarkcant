@@ -317,22 +317,25 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
         </div>
       )}
 
-      <div className="cc-panel-row">
-        <button
-          type="button"
-          className="cc-chip"
-          data-model-pool-save="true"
-          onClick={() => {
-            client
-              .putModelPool(pool)
-              .then((answer) => setPool(answer.pool))
-              .then(() => setStatus(t("settings.modelPool.saved")))
-              .catch((cause: unknown) => setStatus(cause instanceof Error ? cause.message : t("settings.modelPool.saveFailed")));
-          }}
-        >
-          {t("settings.modelPool.save")}
-        </button>
-      </div>
+      {/* Nothing to save until there is a profile to order: a save button over an empty list only looks like a step. */}
+      {pool.profiles.length > 0 && (
+        <div className="cc-panel-row">
+          <button
+            type="button"
+            className="cc-chip"
+            data-model-pool-save="true"
+            onClick={() => {
+              client
+                .putModelPool(pool)
+                .then((answer) => setPool(answer.pool))
+                .then(() => setStatus(t("settings.modelPool.saved")))
+                .catch((cause: unknown) => setStatus(cause instanceof Error ? cause.message : t("settings.modelPool.saveFailed")));
+            }}
+          >
+            {t("settings.modelPool.save")}
+          </button>
+        </div>
+      )}
       {status === "" ? null : <p className="cc-panel-note">{status}</p>}
     </section>
   );

@@ -959,7 +959,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   border-color: var(--cc-button-edge, color-mix(in oklab, var(--cc-text) 16%, var(--cc-border)));
 }
 .cc-tabpanel :is(.cc-chip-row, .cc-panel-row) > .cc-chip:hover:not(:disabled) { border-color: var(--cc-accent); }
-.cc-tabpanel .cc-chip-row { margin-top: var(--cc-space-xs); }
+.cc-tabpanel .cc-chip-row, .cc-tabpanel .cc-panel-section > .cc-panel-row { margin-top: var(--cc-space-sm); }
 /* Each stored key is its own small form; a hairline between them keeps one key's buttons from reading as the next's. */
 .cc-credential-form p { margin: 0; }
 .cc-credential-form + .cc-credential-form { margin-top: var(--cc-space-md); padding-top: var(--cc-space-md); border-top: var(--cc-line, 1px solid) var(--cc-border); }
