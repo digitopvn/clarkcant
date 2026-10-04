@@ -43,7 +43,8 @@ một tài liệu lớn trong giới hạn, tự mô tả cho Clark và áp dụ
 - **Định dạng từ ô soạn tin.** Widget cho Clark thực hiện hành động `format` (`{format: percent|number|plain,
   range?}`) qua `actions.perform@1`. Một yêu cầu gõ trong ô soạn tin, như "định dạng phần trăm cho vùng này", cho phép
   Clark gọi `perform_widget_action`; bảng định dạng vùng được nêu, hoặc vùng đang chọn, báo trên dòng trạng thái, và
-  từ chối bằng `SHEET_BUSY`, `FORMAT_UNKNOWN` hoặc `RANGE_INVALID` trong các trường hợp còn lại. "Hoàn tác định dạng"
+  từ chối bằng `SHEET_BUSY`, `FORMAT_UNKNOWN` hoặc `RANGE_INVALID` trong các trường hợp còn lại. Một định dạng đã hiện
+  nhưng không lưu được thì được báo là lỗi, và Clark coi đó là kết quả không chắc chắn. "Hoàn tác định dạng"
   lấy lại thay đổi đó. Công cụ `place_widget` gắn hành động này, và cả nút `formatBinding` khi được yêu cầu, trong bản
   cài thật; xem
   [phát triển widget §10.3](../../../docs/widget-development.vi.md#103-hành-động-clark-thực-hiện-actionsperform1).

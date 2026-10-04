@@ -320,8 +320,10 @@ function baseHeaders(): Record<string, string> {
     // a caller does not already need the token for.
     "access-control-allow-origin": "*",
     // The two MCP headers as well, so a browser-hosted MCP client's preflight is not refused before it starts, and the
-    // composer's own mark on a message it posts (`COMPOSER_SURFACE_HEADER`).
-    "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id, x-clarkcant-surface",
+    // composer's own mark on a message it posts (`COMPOSER_SURFACE_HEADER`), and the page's word that it runs a widget
+    // perform (`WIDGET_PERFORM_HEADER`).
+    "access-control-allow-headers":
+      "authorization, content-type, mcp-protocol-version, mcp-session-id, x-clarkcant-surface, x-clarkcant-widget-perform",
     /*
      * Every method the gateway routes.
      *

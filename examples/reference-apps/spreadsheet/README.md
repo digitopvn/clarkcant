@@ -43,7 +43,8 @@ document bounded, describes itself to Clark, and applies a change Clark chose.
 - **Formatting from the composer.** The widget offers Clark a `format` action (`{format: percent|number|plain,
   range?}`) through `actions.perform@1`. A request typed in the composer, such as "format this as a percentage", lets
   Clark call `perform_widget_action`; the sheet formats the given range, or the selection, says so in its status line
-  and refuses with `SHEET_BUSY`, `FORMAT_UNKNOWN` or `RANGE_INVALID` otherwise. "Undo format" takes it back. The
+  and refuses with `SHEET_BUSY`, `FORMAT_UNKNOWN` or `RANGE_INVALID` otherwise. A format that is shown but cannot be
+  saved is reported as a failure, which Clark treats as an uncertain outcome. "Undo format" takes it back. The
   `place_widget` tool binds this action, and the `formatBinding` button when asked, in a real installation; see
   [widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
 

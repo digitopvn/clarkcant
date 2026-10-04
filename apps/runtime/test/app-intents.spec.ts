@@ -440,4 +440,14 @@ describe("the page's report on an action Clark asked a widget to perform", () =>
     expect((await request("POST", "/app-intents/widget-perform/perform_2", { status: "maybe" })).status).toBe(400);
     expect((await request("POST", "/app-intents/widget-perform/bad%20id", { status: "done" })).status).toBe(400);
   });
+
+  it("takes a refusal only when it says whose it is", async () => {
+    services.widgetPerforms.expect("perform_3");
+    const waiting = services.widgetPerforms.wait("perform_3");
+    const unsigned = await request("POST", "/app-intents/widget-perform/perform_3", { status: "refused", code: "FRAME_NOT_MOUNTED", message: "no frame" });
+    expect(unsigned.status).toBe(400);
+    const signed = await request("POST", "/app-intents/widget-perform/perform_3", { status: "refused", by: "page", code: "FRAME_NOT_MOUNTED", message: "no frame" });
+    expect(signed.status).toBe(200);
+    expect(await waiting).toEqual({ status: "refused", by: "page", code: "FRAME_NOT_MOUNTED", message: "no frame" });
+  });
 });

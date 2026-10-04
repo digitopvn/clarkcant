@@ -93,7 +93,8 @@ export interface WidgetFrameProps {
   /** The bindings this instance holds. The frame may name one of these and nothing else. */
   knownActionBindings: readonly string[];
   /**
-   * The actions the widget's package declared it offers to Clark, by name. Non-empty, the frame is offered`n   * `actions.perform@1` and registered on this page so a perform Clark asks for can reach it.
+   * The actions the widget's package declared it offers to Clark, by name. Non-empty, the frame is offered
+   * `actions.perform@1` and registered on this page so a perform Clark asks for can reach it.
    */
   offeredActions?: readonly string[];
   /** Which service-backed bindings can run right now, as the node last said. Told to the frame when it changes. */

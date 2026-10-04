@@ -437,14 +437,15 @@ export const widgetToHostSchema = z.discriminatedUnion("kind", [
     request: tokenRequestSchema,
   }),
   /**
-   * The frame's answer to one `action.perform`: `done` with what it did, in a sentence or a short value, or `refused`
-   * with its code and why. Only a perform the host is waiting for is accepted.
+   * The frame's answer to one `action.perform`: `done` with what it did, in a sentence or a short value; `refused` with
+   * its code and why, a deliberate refusal before anything changed; or `failed`, the handler broke while it ran, so what
+   * it changed is unknown. Only a perform the host is waiting for is accepted.
    */
   z.strictObject({
     kind: z.literal("action.performed"),
     nonce: z.string().min(16).max(200),
     performId: z.string().min(1).max(128),
-    status: z.enum(["done", "refused"]),
+    status: z.enum(["done", "refused", "failed"]),
     output: z.string().max(PERFORM_OUTPUT_MAX_CHARS).optional(),
     code: z.string().min(1).max(60).optional(),
     message: z.string().min(1).max(600).optional(),
@@ -545,8 +546,10 @@ export interface WidgetAuthorApi {
      * Handle an action this widget's definition offers (`offeredActions`), when Clark asks for it (`actions.perform@1`).
      *
      * The input has been checked by the host against the declared schema. Return (or resolve with) a short sentence
-     * saying what was done — it is what Clark is told — and throw to refuse, with `CODE: why` as the message when there
-     * is a code to give. May be called before init. Returns a function that stops handling it.
+     * saying what was done — it is what Clark is told. To refuse, throw an error whose message is `CODE: why` before
+     * changing anything: only that is a refusal. Any other throw is reported as failed while performing, so Clark is
+     * told the outcome is unknown and does not retry it. May be called before init. Returns a function that stops
+     * handling it.
      */
     offer(name: string, handler: (input: Record<string, unknown>) => string | undefined | Promise<string | undefined>): () => void;
   };

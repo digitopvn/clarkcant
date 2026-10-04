@@ -161,8 +161,9 @@ export function openApiDocument(): Record<string, unknown> {
           summary: "Send a message and stream the answer",
           description:
             "Server-Sent Events in the order the turn produced them: delta { text }, reasoning, tool-start, tool-end, " +
-            "host-control, widget-perform { request } (an action Clark asks a widget shown on this page to perform; the page " +
-            "reports what the frame answered at /app-intents/widget-perform/{performId}), error, and a final " +
+            "host-control, widget-perform { request } (an action Clark asks a widget shown on this page to perform, sent only " +
+            "when the request carries x-clarkcant-widget-perform: 1; the page reports what the frame answered at " +
+            "/app-intents/widget-perform/{performId}), error, and a final " +
             "done { resolution, taskId, messageIds, timeline }.",
           parameters: [conversationId],
           requestBody: messageBody,

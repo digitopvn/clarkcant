@@ -1984,31 +1984,50 @@ Một widget cách ly có thể cho Clark làm một việc bên trong nó, như
 chọn. Widget khai báo những gì nó cho phép; Clark yêu cầu; frame làm việc đó và nói điều đã xảy ra. Clark không bao giờ
 ghi vào frame và không bao giờ tự phê duyệt hành động.
 
-**Khai báo.** Definition liệt kê `offeredActions` (tối đa 16), mỗi mục có `name` (chữ cái, chữ số, `_` hoặc `-`),
-`label`, `description` và một `inputSchema` kiểu object. Một hành động được cho phép là một đề xuất `perform {action}`:
-nó được biên dịch như mọi action binding, với effect category `local-write` và input schema đã khai báo, và một hành
-động definition không cho phép bị từ chối ngay khi biên dịch.
+**Khai báo.** Definition liệt kê `offeredActions` (tối đa 16). Mỗi mục có `name`, `label`, `description` và một
+`inputSchema` kiểu object. Tên bắt đầu bằng một chữ cái thường và gồm tối đa 64 chữ cái, chữ số, `.`, `_` hoặc `-`. Một
+hành động được cho phép là một đề xuất `perform {action}`. Nó được biên dịch như mọi action binding, với effect
+category `local-write` và input schema đã khai báo. Một hành động mà definition không cho phép bị từ chối ngay khi biên
+dịch.
 
 **Đặt widget.** Công cụ agent `place_widget` đặt một widget từ một package đã cài, đang hoạt động, có renderer
-`isolated-app`. `list` cho thấy id, props schema và các hành động được cho phép của từng widget đã cài; `place` gắn mọi
-hành động được cho phép và, tuỳ chọn, tối đa 4 nút "Nhờ Clark", mỗi nút được gắn vào một prop kiểu chuỗi mà widget đọc
-(prop, nhãn, ý định và `contextRefs` tuỳ chọn). Đây là đường đi của sản phẩm cho một widget của package nhận binding
-trong một bản cài thật.
+`isolated-app`. `list` cho thấy id, props schema và các hành động được cho phép của từng widget đã cài. `place` gắn mọi
+hành động được cho phép, cùng tối đa 4 nút "Nhờ Clark" tuỳ chọn. Mỗi nút được gắn vào một prop kiểu chuỗi mà widget đọc,
+và nêu prop, nhãn, ý định và `contextRefs` tuỳ chọn. Việc đặt widget là tất cả hoặc không gì cả. Hai nút cùng một prop,
+một prop vừa được cho giá trị vừa được dùng cho nút, hoặc một binding bị host từ chối thì không có gì được tạo. Đây là
+đường đi của sản phẩm cho một widget của package nhận binding trong một bản cài thật. Việc gắn một service capability
+qua `place_widget` chưa được hỗ trợ ([#445](https://github.com/digitopvn/clarkcant/issues/445)).
 
-**Thực hiện.** Công cụ agent `perform_widget_action` dùng `list` để liệt kê các hành động mà widget trong hội thoại này
-cho phép, kèm binding id và input schema, và dùng `perform` để thực hiện một hành động theo binding id. Nó đi cùng đường
-với một lần bấm: cổng của binding, input được kiểm tra theo schema đã khai báo (`INVALID_INPUT`), chính sách thực thi,
-sổ hiệu ứng (effect ledger) và dòng audit "Clark asked widget … to perform …". Kết quả được đánh dấu là của Clark
-(`performedBy: "clark"`). Một cú bấm của người dùng vào binding perform bị từ chối (`NOT_AUTHORIZED`): các nút của chính
-frame làm việc đó trực tiếp.
+**Thực hiện.** Công cụ agent `perform_widget_action` có hai hành động. `list` liệt kê các hành động mà widget trong hội
+thoại này cho phép, kèm binding id và input schema. `perform` thực hiện một hành động theo binding id. Nó đi cùng đường
+với một lần bấm:
 
-**Chính sách quyết định; không ai tự phê duyệt cho mình.** Chính sách từ chối thì trả `POLICY_REFUSED`. Chính sách muốn
-hỏi người dùng trước thì hiện tại trả `PERFORM_NEEDS_APPROVAL`: chưa có thẻ phê duyệt cho một lần perform, nên không có
-gì chạy. Cả widget lẫn model đều không phê duyệt được.
+- cổng của binding;
+- input được kiểm tra theo schema đã khai báo (`INVALID_INPUT`);
+- chính sách thực thi;
+- sổ hiệu ứng (effect ledger);
+- dòng audit "Clark asked widget … to perform …".
 
-**Frame làm việc đó.** Node stream một sự kiện `widget-perform` tới trang đang chạy lượt (hoặc phiên giọng nói); trang
-chuyển nó cho frame đã mount dưới dạng `action.perform` và báo câu trả lời `action.performed` của frame tại
-`POST /app-intents/widget-perform/{performId}` ([giao diện mở](open-interfaces.vi.md)). Trong frame:
+Kết quả được đánh dấu là của Clark (`performedBy: "clark"`). Điều widget nói được đưa cho model như dữ liệu, không bao
+giờ như chỉ dẫn. Một cú bấm của người dùng vào binding perform bị từ chối (`NOT_AUTHORIZED`): các nút của chính frame
+làm việc đó trực tiếp. Binding perform không nằm trong danh sách nút bấm của widget, nên cả frame lẫn một câu lệnh
+bằng giọng nói đều không bấm được nó.
+
+**Chính sách quyết định, người dùng phê duyệt.** Chính sách từ chối thì trả `POLICY_REFUSED`. Chính sách muốn hỏi thì
+đặt một thẻ phê duyệt do host sở hữu vào hội thoại, và không có gì được gửi cho tới khi người dùng phê duyệt. Khi được
+phê duyệt, frame được hỏi lúc đó, nhưng chỉ khi một màn hình đang chạy hội thoại vẫn hiện widget. Nếu không, biên nhận
+cho biết việc đã được duyệt nhưng không được thực hiện, và không có gì được gửi. Lần phê duyệt kiểm tra lại payload
+của thẻ với digest đã được quyết định, binding, input, chính sách và sổ hiệu ứng. Cả widget lẫn model đều không phê
+duyệt được.
+
+**Frame làm việc đó.** Node chỉ gửi sự kiện `widget-perform` có phiên bản (`v: 1`) tới bên gọi đã nói là mình chạy được
+nó:
+
+- một yêu cầu stream của trang mang header `x-clarkcant-widget-perform: 1`;
+- một phiên giọng nói có khung `auth` mang `widgetPerform: 1`.
+
+Trang chuyển sự kiện cho frame đã mount dưới dạng `action.perform`. Sau đó trang báo câu trả lời `action.performed`
+của frame tại `POST /app-intents/widget-perform/{performId}` ([giao diện mở](open-interfaces.vi.md)). Trong frame:
 
 ```js
 const stop = api.actions.offer("format", async (input) => {
@@ -2018,26 +2037,50 @@ const stop = api.actions.offer("format", async (input) => {
 });
 ```
 
-Handler nhận một bản sao đã đóng băng của input đã kiểm tra. Chuỗi trả về là kết quả của công cụ; một lỗi
-`"CODE: message"` được ném ra là một lời từ chối với mã đó (mọi lỗi khác là `ACTION_REFUSED`). Hành động không có
-handler bị từ chối với `ACTION_NOT_OFFERED`, và output mang token bị từ chối với `TOKEN_NOT_ALLOWED`.
+Handler nhận một bản sao đã đóng băng của input đã kiểm tra. Chuỗi trả về là kết quả của công cụ. Một lỗi
+`"CODE: message"` được ném ra là lời từ chối có chủ ý của widget: node trả `WIDGET_REFUSED`, với mã riêng của widget
+trong `widgetCode`, tách khỏi các mã của host. Chỉ ném lỗi có mã trước khi thay đổi bất cứ điều gì. Mọi lỗi khác được
+báo là `failed`, và Clark coi đó là kết quả không chắc chắn, vì handler có thể đã thay đổi điều gì đó. Hành động không
+có handler bị từ chối với `ACTION_NOT_OFFERED`. Output mang token bị bỏ đi, và kết quả trở thành không chắc chắn.
 
-**Không mở thì không thực hiện.** Khi không trang nào đang hiện widget, hoặc frame chưa được mount và sẵn sàng, công cụ
-bị từ chối với `FRAME_NOT_MOUNTED`. Không có gì được xếp hàng để làm sau và không có gì tới được widget. Frame có 6 giây
-để trả lời; node chờ tối đa 8 giây. Frame không trả lời, hoặc một lần Dừng trong lúc chờ, để lại kết quả không chắc chắn
-(`WIDGET_NO_ANSWER`, `WIDGET_PERFORM_STOPPED`): sổ hiệu ứng ghi là không rõ và Clark không tự hỏi lại. Một lời từ chối
-giải phóng invocation, nên có thể thử lại.
+**Không mở thì không thực hiện.** Một lần perform bị từ chối với `FRAME_NOT_MOUNTED` trong các trường hợp sau:
 
-**Giọng nói.** Một yêu cầu bằng lời nói tới cùng công cụ đó qua lượt của Clark trong phiên giọng nói. Một lần bấm nút
-widget bằng giọng nói không trực tiếp thực hiện một hành động được cho phép.
+- không trang nào đang hiện widget;
+- bên gọi đang chạy lượt không tới được frame (CLI, một relay, một trang cũ hơn, hoặc một cửa sổ desktop đã tách);
+- frame chưa được mount.
 
-Kiểm thử: [widget-perform.spec.ts](../apps/runtime/test/widget-perform.spec.ts) cho hành động chưa khai báo, input sai
-schema, frame chưa mount, hết thời gian chờ, chính sách, giọng nói và các công cụ;
-[app-intents.spec.ts](../apps/runtime/test/app-intents.spec.ts) cho báo cáo của trang;
-[session.spec.ts](../packages/widget-host/test/session.spec.ts) và
-[runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) cho bridge; và hành trình trên trình duyệt
-[widget-perform.spec.ts](../apps/web/e2e/widget-perform.spec.ts), định dạng một vùng bảng tính và thay đoạn đang chọn
-của trình soạn thảo từ điều người dùng gõ trong ô soạn tin.
+Trang mà hội thoại đã đổi trước khi kịp hỏi thì trả `SURFACE_GONE`. Trang không đọc được sự kiện thì trả
+`PERFORM_UNREADABLE`, hoặc `PERFORM_VERSION_UNSUPPORTED` với phiên bản khác. Không có gì được xếp hàng để làm sau và
+không có gì tới được widget.
+
+Frame có 6 giây để trả lời; node chờ tối đa 8 giây. Kết quả là không chắc chắn (`WIDGET_NO_ANSWER`,
+`WIDGET_PERFORM_STOPPED`) trong các trường hợp sau:
+
+- frame không trả lời;
+- frame lỗi trong khi thực hiện;
+- có một lần Dừng trong lúc chờ.
+
+Sổ hiệu ứng ghi kết quả không chắc chắn là không rõ. Cho tới khi người dùng xác nhận, cùng hành động với cùng input
+trên cùng widget bị từ chối với `PERFORM_OUTCOME_UNKNOWN`. Một lời từ chối giải phóng invocation, nên có thể thử lại
+hành động đó.
+
+**Giọng nói.** Một yêu cầu bằng lời nói tới cùng công cụ đó qua lượt của Clark trong phiên giọng nói. Một lần bấm
+bằng giọng nói vào hành động được cho phép bị từ chối, không có gì được gửi, và người dùng được bảo hãy nhờ Clark
+([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+
+Kiểm thử:
+
+- [widget-perform.spec.ts](../apps/runtime/test/widget-perform.spec.ts): hành động chưa khai báo, input sai schema,
+  frame chưa mount, bên gọi không thực hiện được, lời từ chối của trang và của widget, lỗi, hết thời gian chờ, Dừng,
+  chặn khi kết quả chưa rõ, chính sách và thẻ phê duyệt, giọng nói, danh sách nút bấm, các công cụ và việc đặt widget.
+- [app-intents.spec.ts](../apps/runtime/test/app-intents.spec.ts): báo cáo của trang.
+- [frame-performs.spec.ts](../packages/conversation-client/test/frame-performs.spec.ts): việc trang tìm frame và trả
+  lời.
+- [session.spec.ts](../packages/widget-host/test/session.spec.ts) và
+  [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts): bridge.
+- Hành trình trên trình duyệt [widget-perform.spec.ts](../apps/web/e2e/widget-perform.spec.ts): định dạng một vùng
+  bảng tính và thay đoạn đang chọn của trình soạn thảo từ điều người dùng gõ trong ô soạn tin. Nó cũng kiểm tra rằng
+  một stream HTTP thuần và một widget đã đóng đều bị từ chối với `FRAME_NOT_MOUNTED`.
 
 ---
 

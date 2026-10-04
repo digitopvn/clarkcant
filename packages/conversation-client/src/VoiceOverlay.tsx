@@ -3,7 +3,7 @@ import { type ReactElement, useCallback, useEffect, useRef, useState } from "rea
 import type { AppIntentDecision, VoiceState } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
-import { performInMountedFrame } from "./frame-performs.ts";
+import { answerWidgetPerform } from "./frame-performs.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
 import { Orb } from "./Orb.tsx";
@@ -300,10 +300,8 @@ export function VoiceOverlay({
           ...(onAppIntent === undefined ? {} : { onAppIntent }),
           ...(onWidgetActionResult === undefined ? {} : { onWidgetActionResult }),
           // What Clark asked a widget on this page to perform while answering: the same hand-off a typed turn makes.
-          onWidgetPerform: (request) => {
-            void performInMountedFrame(request)
-              .then((report) => client.reportWidgetPerform(request.performId, report))
-              .catch(() => undefined);
+          onWidgetPerform: (event) => {
+            void answerWidgetPerform(event, (performId, report) => client.reportWidgetPerform(performId, report));
           },
           onAudioFrame: (received) => setFrames((current) => ({ ...current, heard: received })),
           onError: (message) => {

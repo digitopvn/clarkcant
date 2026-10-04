@@ -394,11 +394,13 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
    * Run one offered action the host asked for, and answer it — always, once.
    *
    * A name nothing here handles is refused with `ACTION_NOT_OFFERED`, so the host's wait ends with a reason rather than
-   * at its timeout. A handler that throws refuses with its message (a `CODE: why` message keeps its code). An answer
-   * that carries a token this frame was given is refused rather than sent, as any other way out of the frame is.
+   * at its timeout. Only a handler that throws a coded `CODE: why` error refuses: that is the widget saying it changed
+   * nothing. Any other throw is `failed` — the handler broke while it ran, so whatever it had already changed is
+   * unknown, and Clark is told so rather than "nothing changed". An answer that carries a token this frame was given is
+   * not sent; the handler ran, so that is `failed` as well.
    */
   async function perform(message: Extract<HostToWidgetMessage, { kind: "action.perform" }>): Promise<void> {
-    const answer = (fields: { status: "done" | "refused"; output?: string; code?: string; message?: string }): void => {
+    const answer = (fields: { status: "done" | "refused" | "failed"; output?: string; code?: string; message?: string }): void => {
       if (status === "disposed" || nonce === undefined) return;
       send({ kind: "action.performed", nonce, performId: message.performId, ...fields });
     };
@@ -414,7 +416,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     try {
       const output = await handler(freezeSnapshot(structuredClone(message.input)));
       if (output !== undefined && carriesToken(output)) {
-        answer({ status: "refused", code: "TOKEN_NOT_ALLOWED", message: TOKEN_LEAK.slice("TOKEN_NOT_ALLOWED: ".length) });
+        answer({ status: "failed", code: "TOKEN_NOT_ALLOWED", message: TOKEN_LEAK.slice("TOKEN_NOT_ALLOWED: ".length) });
         return;
       }
       answer({
@@ -424,11 +426,11 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     } catch (cause) {
       const text = cause instanceof Error ? cause.message : String(cause);
       const coded = /^([A-Z][A-Z0-9_]{1,59}): (.+)$/su.exec(text);
-      answer({
-        status: "refused",
-        code: coded?.[1] ?? "ACTION_REFUSED",
-        message: (coded?.[2] ?? text).slice(0, 600) || "the widget refused the action",
-      });
+      if (coded !== null) {
+        answer({ status: "refused", code: coded[1]!, message: coded[2]!.slice(0, 600) });
+        return;
+      }
+      answer({ status: "failed", message: text.slice(0, 600) || "the widget's handler failed" });
     }
   }
 

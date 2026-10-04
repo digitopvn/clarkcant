@@ -55,6 +55,11 @@ export type ActionCallEnding =
   | { kind: "not-sent"; reason: string }
   | { kind: "no-answer"; stopped: boolean; reason: string };
 
+/** The digest an effect is recorded under: the capability and what it was sent with. One place, so a lookup matches. */
+export function effectOperationDigest(capabilityRef: string, args: Record<string, unknown>): string {
+  return `sha256:${payloadDigest(asJsonValue({ capabilityRef, args: args as never }))}`;
+}
+
 /** The category a capability declares now, or `undefined` when the registry no longer holds it. */
 export function effectCategoryOf(services: Pick<NodeServices, "runtime">, ref: string): EffectCategory | undefined {
   const nodeId = services.runtime.identity.nodeId;
@@ -99,7 +104,7 @@ export function openActionEffect(services: Pick<NodeServices, "runtime" | "condu
           category: call.effectCategory,
           capabilityRef: call.capabilityRef as CapabilityRef,
           intent: call.intent.slice(0, 500),
-          operationDigest: `sha256:${payloadDigest(asJsonValue({ capabilityRef: call.capabilityRef, args: call.args }))}`,
+          operationDigest: effectOperationDigest(call.capabilityRef, call.args),
           externalSupportsDedup: false,
         });
         const submitted = advanceEffect(prepared, { to: "submitted", at: deps.now() });

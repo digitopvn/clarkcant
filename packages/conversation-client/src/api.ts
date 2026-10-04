@@ -27,9 +27,11 @@ import {
   COMPOSER_SURFACE_HEADER,
   MAP_TILES_OFFLINE_REASONS,
   appIntentDecisionSchema,
+  WIDGET_PERFORM_HEADER,
+  WIDGET_PERFORM_VERSION,
   type WidgetPerformReport,
   type WidgetPerformRequest,
-  widgetPerformRequestSchema,
+  readWidgetPerformRequest,
   conversationDeleteResultSchema,
   artifactRefSchema,
   attachmentRefSchema,
@@ -68,6 +70,7 @@ import {
   type VoiceCapabilities,
 } from "@clarkcant/contracts";
 import { JOB_LIST_LIMIT, browserTokenWireSchema, jobSnapshotWireSchema, type BrowserToken, type JobSnapshot, type TokenRequest } from "@clarkcant/widget-sdk";
+import { answerWidgetPerform } from "./frame-performs.ts";
 
 import {
   type StartVoiceSessionOptions,
@@ -497,9 +500,11 @@ export type ReplyStreamEvent =
   | { type: "host-control"; decision: AppIntentDecision }
   /**
    * An action Clark asked a widget shown on this page to perform. The page hands it to the mounted frame and reports
-   * what the frame answered (`reportWidgetPerform`); the node is waiting for that report.
+   * what the frame answered (`reportWidgetPerform`); the node is waiting for that report. One this page cannot read but
+   * whose id it can is `widget-perform-unreadable`, answered with the refusal it carries (`answerWidgetPerform`).
    */
-  | { type: "widget-perform"; request: WidgetPerformRequest };
+  | { type: "widget-perform"; request: WidgetPerformRequest }
+  | { type: "widget-perform-unreadable"; performId: string; report: WidgetPerformReport };
 
 /*
  * The event-stream parser lives in contracts so the node's WebSocket, the CLI and this client split a stream the
@@ -900,11 +905,18 @@ export class GatewayClient {
    * `keepalive` lets a request outlive the page that sent it, for the last write a page makes as it goes away. `signal`
    * aborts the request, for a caller that gives up waiting.
    */
-  async #call<T>(method: string, path: string, body?: unknown, init: { keepalive?: true; signal?: AbortSignal } = {}): Promise<T> {
+  async #call<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    init: { keepalive?: true; signal?: AbortSignal; headers?: Record<string, string> } = {},
+  ): Promise<T> {
+    const { headers: extraHeaders, ...rest } = init;
     const response = await this.#fetch(`${this.#baseUrl}${path}`, {
-      ...init,
+      ...rest,
       method,
       headers: {
+        ...extraHeaders,
         authorization: `Bearer ${this.#token}`,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
@@ -1070,6 +1082,9 @@ export class GatewayClient {
         accept: "text/event-stream",
         // Typed into this page's composer: the node stores the message as the person's own words.
         [COMPOSER_SURFACE_HEADER]: "composer",
+        // This page hands a `widget-perform` of this version to a mounted frame and reports back; without it the node
+        // sends none.
+        [WIDGET_PERFORM_HEADER]: String(WIDGET_PERFORM_VERSION),
       },
       body: JSON.stringify(messageBody(text, options)),
       ...(listeners.signal === undefined ? {} : { signal: listeners.signal }),
@@ -1135,9 +1150,13 @@ export class GatewayClient {
           const parsedDecision = appIntentDecisionSchema.safeParse(payload.decision);
           if (parsedDecision.success) listeners.onEvent({ type: "host-control", decision: parsedDecision.data });
         } else if (frame.event === "widget-perform") {
-          // Validated like a decision: a request that does not parse is not one to hand to a widget.
-          const parsedRequest = widgetPerformRequestSchema.safeParse(payload.request);
-          if (parsedRequest.success) listeners.onEvent({ type: "widget-perform", request: parsedRequest.data });
+          // Validated like a decision: a request that does not parse is not one to hand to a widget. It is still answered
+          // when its id can be read, because the node is waiting on that id.
+          const read = readWidgetPerformRequest(payload.request);
+          if (read.kind === "request") listeners.onEvent({ type: "widget-perform", request: read.request });
+          else if (read.kind === "unreadable") {
+            listeners.onEvent({ type: "widget-perform-unreadable", performId: read.performId, report: read.report });
+          }
         } else if (frame.event === "done") {
           finished = true;
           listeners.onDone({
@@ -1484,12 +1503,33 @@ export class GatewayClient {
    * that was displayed, so a payload that changed between display and decision is refused rather than
    * executed. This is the only route that can start a command, and it takes a decision from a user.
    */
-  decideApproval(
+  async decideApproval(
     conversationId: string,
     approvalId: string,
     decision: { decision: "granted" | "denied"; digest: string },
   ): Promise<{ decision: string; timeline: Timeline; outcome?: string }> {
-    return this.#call("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, decision);
+    const answered = await this.#call<{ decision: string; timeline: Timeline; outcome?: string; perform?: unknown }>(
+      "POST",
+      `/conversations/${conversationId}/approvals/${approvalId}/decide`,
+      decision,
+      // An approved widget action is performed by the frame on this page, so the page says it can run one.
+      { headers: { [WIDGET_PERFORM_HEADER]: String(WIDGET_PERFORM_VERSION) } },
+    );
+    const { perform, ...rest } = answered;
+    if (perform === undefined) return rest;
+    /*
+     * The person approved an action Clark asked a widget to perform: the node handed it back here because only this page
+     * reaches the frame. It is answered either way, and the receipt the node writes once it has the answer is read back.
+     */
+    const read = readWidgetPerformRequest(perform);
+    if (read.kind === "none") return rest;
+    await answerWidgetPerform(
+      read.kind === "request"
+        ? { type: "widget-perform", request: read.request }
+        : { type: "widget-perform-unreadable", performId: read.performId, report: read.report },
+      (performId, report) => this.reportWidgetPerform(performId, report),
+    );
+    return { ...rest, timeline: await this.timeline(conversationId) };
   }
 
   /**
@@ -2367,14 +2407,22 @@ export class GatewayClient {
    * Tell the node what a widget's frame on this page answered to an action Clark asked it to perform.
    *
    * Sent for every perform this page was handed, done or not: the node is waiting on it to tell Clark whether the widget
-   * changed. A node that stopped waiting answers 404, and Clark was already told the outcome is unknown.
+   * changed. A node that stopped waiting answers 404, and Clark was already told the outcome is unknown. A request that
+   * never reached the node is sent once more: a report lost to a network blip would otherwise become "unknown" for an
+   * action whose answer this page holds. Reporting the same id twice is harmless, the node takes the first.
    */
   async reportWidgetPerform(performId: string, report: WidgetPerformReport): Promise<void> {
-    await this.#fetch(`${this.#baseUrl}/app-intents/widget-perform/${encodeURIComponent(performId)}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
-      body: JSON.stringify(report),
-    });
+    const send = (): Promise<Response> =>
+      this.#fetch(`${this.#baseUrl}/app-intents/widget-perform/${encodeURIComponent(performId)}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+        body: JSON.stringify(report),
+      });
+    try {
+      await send();
+    } catch {
+      await send().catch(() => undefined);
+    }
   }
   /**
    * Starts one request in a worker of its own, so it happens while the conversation carries on.

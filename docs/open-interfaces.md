@@ -71,14 +71,32 @@ command (`source: "voice"`).
 
 A `widget-perform` event is Clark asking a widget the page shows to perform one of the actions its package offers
 (`offeredActions`, [widget-development.md §10.3](widget-development.md#103-actions-clark-performs-actionsperform1)).
-Its `request` is `{ performId, instanceId, actionBindingId, action, input }`, and the node has already checked it: the
-binding, the input against the declared schema, and the person's execution policy. The page hands it to the mounted
-frame and answers `POST /app-intents/widget-perform/{performId}` with `{ status: "done", output? }`,
-`{ status: "refused", code, message }` or `{ status: "no-answer", message }`. That answer is the tool's result. Each
-`performId` is answered once (a second answer gets `404 WIDGET_PERFORM_NOT_EXPECTED`). A page with no frame for the
-widget answers `refused` with `FRAME_NOT_MOUNTED`, and nothing is queued for later. With no answer within 8 seconds,
-the perform is recorded as uncertain and is not retried. The plain `/messages` route never sends one, so a perform
-there is refused with `FRAME_NOT_MOUNTED`. The report route is person-only, like the host-control report.
+The node has already checked it: the binding, the input against the declared schema, and the person's execution
+policy. The node sends one only on a stream request that carries `x-clarkcant-widget-perform: 1`, the version the page
+runs. Any other caller is sent none, and the perform is refused at once with `FRAME_NOT_MOUNTED`. That includes the
+plain `/messages` route, MCP, the relay and `clarkcant api`.
+
+The event's `request` is `{ v: 1, performId, instanceId, actionBindingId, action, input }`. The page hands it to the
+mounted frame and answers `POST /app-intents/widget-perform/{performId}` with one of:
+
+- `{ status: "done", output? }`;
+- `{ status: "refused", by: "page" | "widget", code, message }`;
+- `{ status: "no-answer", message }`.
+
+`by: "page"` is taken only with the page's own codes, such as `FRAME_NOT_MOUNTED`, `SURFACE_GONE`,
+`PERFORM_UNREADABLE` and `PERFORM_VERSION_UNSUPPORTED`. A page that cannot read a request, or gets another version,
+still answers under its `performId`. A widget's refusal reaches Clark as `WIDGET_REFUSED`, with the widget's code in
+`widgetCode`.
+
+Each `performId` is answered once; a second answer gets `404 WIDGET_PERFORM_NOT_EXPECTED`. Nothing is queued for
+later. With no answer within 8 seconds, or a `no-answer` report, the perform is recorded as uncertain and is not
+retried. The report route is person-only, like the host-control report.
+
+When the execution policy asks first, the answer is a host approval card instead. Deciding it at
+`POST /conversations/{id}/approvals/{approvalId}/decide` with the same header can hand the approved perform to this
+page. Then the decision's answer carries `perform` (the request), and the page reports it the same way. A decide
+request without the header approves without sending anything, and the receipt says so.
+
 The node's own page sends `x-clarkcant-surface: composer` with the messages a person types into it, and the node
 stores that as the message's `surface`; a spoken message is stored with `surface: "voice"` by the node itself. A
 message posted without the header (MCP, the WebSocket relay, `clarkcant api`, a script) is stored without a surface.

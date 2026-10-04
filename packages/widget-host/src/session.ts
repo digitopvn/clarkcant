@@ -67,14 +67,15 @@ export type FrameRefusal =
 /**
  * What the frame answered one perform with (`actions.perform@1`).
  *
- * `done` and `refused` are the frame's own answers. `no-answer` is the host giving up waiting, or the frame going away
- * mid-perform: the frame was asked and may have done it, so it is never reported as refused. A perform that was never
- * sent — the frame not mounted, not ready, without the extension, or asked for an action it does not offer — is
- * `refused` with the host's code, and nothing is queued for later.
+ * `done` and a `refused` `by: "widget"` are the frame's own answers. `no-answer` is the host giving up waiting, the frame
+ * going away mid-perform, or the widget failing while it performed: the frame was asked and may have done it, so it is
+ * never reported as refused. A perform that was never sent — the frame not mounted, not ready, without the extension,
+ * or asked for an action it does not offer — is `refused` `by: "host"` with the host's code, and nothing is queued for
+ * later.
  */
 export type FramePerformOutcome =
   | { status: "done"; output?: string | undefined }
-  | { status: "refused"; code: string; message: string }
+  | { status: "refused"; by: "host" | "widget"; code: string; message: string }
   | { status: "no-answer"; message: string };
 
 export interface FramePerformRequest {
@@ -570,18 +571,26 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
           return refuse("PERFORM_UNKNOWN", `no perform ${message.performId} is waiting for this frame's answer`);
         }
         if (carriesToken({ output: message.output, message: message.message })) {
-          settlePerform(message.performId, { status: "refused", code: "TOKEN_NOT_ALLOWED", message: TOKEN_LEAK });
+          // The widget answered, so it ran: its answer is dropped, and what it did is unknown rather than refused.
+          settlePerform(message.performId, { status: "no-answer", message: "the widget's answer carried a token it was given, so it was dropped" });
           return refuse("TOKEN_NOT_ALLOWED", TOKEN_LEAK);
         }
         settlePerform(
           message.performId,
           message.status === "done"
             ? { status: "done", ...(message.output === undefined ? {} : { output: message.output }) }
-            : {
-                status: "refused",
-                code: message.code ?? "ACTION_REFUSED",
-                message: message.message ?? "the widget refused the action",
-              },
+            : message.status === "refused"
+              ? {
+                  status: "refused",
+                  by: "widget",
+                  code: message.code ?? "ACTION_REFUSED",
+                  message: message.message ?? "the widget refused the action",
+                }
+              : {
+                  // Broke while it ran: the handler may have changed something before it failed.
+                  status: "no-answer",
+                  message: `the widget failed while performing it${message.message === undefined ? "" : `: ${message.message}`}`.slice(0, 600),
+                },
         );
         record({ kind: "action.performed", detail: `${message.performId} ${message.status}` });
         return { ok: true, kind: "action.performed", detail: message.status };
@@ -971,7 +980,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
 
     perform(request) {
       const refused = (code: string, message: string): Promise<FramePerformOutcome> =>
-        Promise.resolve({ status: "refused", code, message });
+        Promise.resolve({ status: "refused", by: "host", code, message });
       if (status === "disposed") return refused("FRAME_NOT_MOUNTED", "the widget's frame has been closed");
       if (status === "suspended") return refused("FRAME_NOT_READY", "the widget's frame is suspended");
       if (status === "awaiting-init" || !frameReady) return refused("FRAME_NOT_READY", "the widget's frame has not finished opening");

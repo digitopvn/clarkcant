@@ -853,7 +853,14 @@ function mount(api) {
       const next = applyFormat(formats, range, format);
       formatHistory.push(formats);
       if (formatHistory.length > MAX_UNDO) formatHistory.shift();
-      await setFormats(next.formats);
+      try {
+        await setFormats(next.formats);
+      } catch (error) {
+        // The sheet already shows the format, so this is not a refusal: whether it was kept is unknown. An uncoded
+        // throw is reported as a failure, which Clark treats as an uncertain outcome rather than "nothing happened".
+        const why = error instanceof Error ? error.message : String(error);
+        throw new Error(`the format is shown on the sheet but could not be saved: ${why}`, { cause: error });
+      }
       const name = rangeName(range);
       const done = format === "percent" ? t().applied(name) : t().appliedOther(name, format);
       const lost = next.dropped.map((entry) => entry.range).join(", ");

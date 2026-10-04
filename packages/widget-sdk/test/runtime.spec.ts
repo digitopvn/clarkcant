@@ -931,6 +931,20 @@ describe("actions.perform@1", () => {
     ]);
   });
 
+  it("reports a throw without a code as a failure, since the handler may have changed something first", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    runtime.api().actions.offer("format", async () => {
+      throw new Error("the format is shown but could not be saved");
+    });
+    bus.deliver(initMessage({ extensions: ["actions.perform@1"] }));
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "format", input: {} });
+    await flush();
+    expect(performed(bus)).toEqual([
+      { kind: "action.performed", nonce: NONCE, performId: "perf_1", status: "failed", message: "the format is shown but could not be saved" },
+    ]);
+  });
+
   it("refuses a perform when the host did not offer the extension", async () => {
     const bus = channel();
     const runtime = createWidgetRuntime({ endpoint: bus.endpoint });

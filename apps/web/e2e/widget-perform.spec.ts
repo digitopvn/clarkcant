@@ -100,7 +100,9 @@ test("a range selected in the spreadsheet is formatted as a percentage when the 
   await frame.locator(".cell[data-cell='C3']").click({ modifiers: ["Shift"] });
   await expect(frame.locator("[data-sheet-address]")).toHaveText("C3 · B2:C3");
 
+  const streamed = page.waitForRequest((sent) => sent.method() === "POST" && new URL(sent.url()).pathname.endsWith("/messages/stream"));
   await say(page, "format this as a percentage");
+  const streamUrl = (await streamed).url();
   await expect(page.getByText("Fixture: tui gọi perform_widget_action").last()).toContainText("Done", { timeout: 30_000 });
   await expect(frame.locator("[data-sheet-status]")).toHaveText("Clark đã định dạng B2:C3 thành phần trăm.");
   await expect(frame.locator(".cell[data-cell='B2']").first()).toHaveText("25%");
@@ -109,6 +111,25 @@ test("a range selected in the spreadsheet is formatted as a percentage when the 
   // Undo steps back the format Clark applied, like one the person asked for.
   await frame.locator("[data-sheet-undo-format]").click();
   await expect(frame.locator(".cell[data-cell='B2']").first()).toHaveText("0.25");
+
+  // A caller that never said it can hand a perform to a frame (a plain HTTP client, as the CLI or a relay is) is sent
+  // none: the turn learns at once that nobody can ask the widget, rather than waiting on a report that cannot come.
+  const machine = await request.post(streamUrl, {
+    headers: { ...headers(), "content-type": "application/json", accept: "text/event-stream" },
+    data: { text: "format this as a percentage" },
+  });
+  expect(machine.ok()).toBe(true);
+  const machineReply = await machine.text();
+  expect(machineReply).toContain("FRAME_NOT_MOUNTED");
+  expect(machineReply).not.toContain("event: widget-perform");
+  await expect(frame.locator(".cell[data-cell='B2']").first()).toHaveText("0.25");
+
+  // Closed, the widget cannot be asked from this page either: the refusal reaches the conversation, nothing changes.
+  await page.locator("[data-close-live]").first().click();
+  await expect(page.locator("[data-pin-live] [data-widget-frame]")).toHaveCount(0);
+  await say(page, "format this as a percentage");
+  await expect(page.getByText("Fixture: tui gọi perform_widget_action").last()).toContainText("Not performed", { timeout: 30_000 });
+  await expect(page.getByText("Fixture: tui gọi perform_widget_action").last()).toContainText("FRAME_NOT_MOUNTED");
 });
 
 test("the text selected in the editor is replaced when the person asks in the composer", async ({ page, request }) => {

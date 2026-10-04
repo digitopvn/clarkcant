@@ -265,12 +265,23 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
      * The same function the HTTP route calls, so a decision made by voice and a decision made by pressing the
      * card mean exactly the same thing: the same digest check, the same receipt in the same conversation.
      */
-    decideApproval: async ({ conversationId, approvalId, decision, digest }) => {
+    decideApproval: async ({ conversationId, approvalId, decision, digest, onWidgetPerform }) => {
       const result = await decideApprovalForNode(deps.services, {
         conversationId,
         approvalId,
         decision,
         digest,
+        // An approved widget action goes to the frame on the page this voice session runs on, which reports back like a
+        // typed turn's page does. A session that cannot run one gets "approved, nothing sent".
+        ...(onWidgetPerform === undefined
+          ? {}
+          : {
+              perform: async (request) => {
+                deps.services.widgetPerforms.expect(request.performId);
+                onWidgetPerform(request);
+                return deps.services.widgetPerforms.wait(request.performId);
+              },
+            }),
         principal: {
           principalId: deps.services.runtime.identity.ownerPrincipalId,
           kind: "user",
@@ -395,6 +406,17 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         // The page's view was older than the instance, or the action is gone. Either way this is a refusal and not a
         // guess: invoking a binding the instance no longer announces is exactly what the digest check exists for.
         return { ok: false, say: "Widget đang mở không còn hành động đó nữa. Bạn mở lại rồi thử lại giúp tôi nhé." };
+      }
+      if (target.kind === "perform") {
+        // An action the widget offers to Clark is not a button: it runs in the frame on the screen that shows it, which a
+        // spoken press cannot reach. The voice list never names one; a stale or crafted press is refused, nothing sent.
+        const performLocale = preferredAppIntentLocale(appIntentDepsFor(deps.services), deps.services.runtime.identity.ownerPrincipalId);
+        return {
+          ok: false,
+          say: performLocale === "vi"
+            ? `Tôi không bấm “${action.label}” bằng giọng nói được. Bạn nhờ Clark làm việc đó trong cuộc trò chuyện nhé; chưa có gì được gửi.`
+            : `I can't press “${action.label}” by voice. Ask Clark to do it in the conversation instead; nothing was sent.`,
+        };
       }
 
       const result = await invokeWidgetAction(

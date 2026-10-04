@@ -1015,6 +1015,22 @@ describe("tokens@1", () => {
     expect(session.accept(ask("tokreq-3")).ok).toBe(true);
   });
 
+  it("drops a perform answer that carries a token, and holds the perform as unknown rather than refused", async () => {
+    const { session } = withTokens({ offeredActions: ["format"] });
+    session.init();
+    session.accept(fromFrame({ kind: "ready" }));
+    session.accept(ask("tokreq-1"));
+    await flush();
+    const answer = session.perform({ performId: "perf_1", action: "format", input: {} });
+    expect(session.accept(fromFrame({ kind: "action.performed", performId: "perf_1", status: "done", output: `done ${VALUE}` }))).toMatchObject({
+      ok: false,
+      code: "TOKEN_NOT_ALLOWED",
+    });
+    const settled = await answer;
+    expect(settled).toMatchObject({ status: "no-answer" });
+    expect(JSON.stringify(settled)).not.toContain(VALUE);
+  });
+
   it("answers a broker failure with a fixed sentence", async () => {
     const { session, posted } = withTokens({
       tokens: { request: () => Promise.reject(new Error("internal detail")), release: () => undefined },
@@ -1055,11 +1071,23 @@ describe("actions.perform@1", () => {
     await expect(answer).resolves.toEqual({ status: "done", output: "B2:B4 as percent" });
   });
 
-  it("passes the frame's refusal on with its code", async () => {
+  it("passes the frame's refusal on with its code, as the widget's own", async () => {
     const { session } = ready();
     const answer = session.perform({ performId: "perf_1", action: "format", input: {} });
     session.accept(fromFrame({ kind: "action.performed", performId: "perf_1", status: "refused", code: "NO_SELECTION", message: "select cells first" }));
-    await expect(answer).resolves.toEqual({ status: "refused", code: "NO_SELECTION", message: "select cells first" });
+    await expect(answer).resolves.toEqual({ status: "refused", by: "widget", code: "NO_SELECTION", message: "select cells first" });
+  });
+
+  it("marks its own refusals as the host's", async () => {
+    const { session } = ready();
+    await expect(session.perform({ performId: "p", action: "rename", input: {} })).resolves.toMatchObject({ status: "refused", by: "host" });
+  });
+
+  it("holds a widget that failed while performing as one that may have done it, not as a refusal", async () => {
+    const { session } = ready();
+    const answer = session.perform({ performId: "perf_1", action: "format", input: {} });
+    expect(session.accept(fromFrame({ kind: "action.performed", performId: "perf_1", status: "failed", message: "could not save" })).ok).toBe(true);
+    await expect(answer).resolves.toEqual({ status: "no-answer", message: "the widget failed while performing it: could not save" });
   });
 
   it("refuses at once, sending nothing, when the frame cannot be asked", async () => {

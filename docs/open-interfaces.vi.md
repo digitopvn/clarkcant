@@ -72,15 +72,32 @@ nói (`source: "voice"`).
 
 Event `widget-perform` là Clark nhờ một widget đang hiện trên trang thực hiện một trong các hành động mà gói của nó
 cung cấp (`offeredActions`, [widget-development.vi.md §10.3](widget-development.vi.md#103-hành-động-clark-thực-hiện-actionsperform1)).
-`request` của event là `{ performId, instanceId, actionBindingId, action, input }`, và node đã kiểm tra xong: binding,
-input so với schema đã khai báo, và chính sách thực thi của người dùng. Trang chuyển nó cho frame đang được mount và
-trả lời bằng `POST /app-intents/widget-perform/{performId}` với `{ status: "done", output? }`,
-`{ status: "refused", code, message }` hoặc `{ status: "no-answer", message }`. Câu trả lời đó là kết quả của tool. Mỗi
-`performId` chỉ được trả lời một lần (lần thứ hai nhận `404 WIDGET_PERFORM_NOT_EXPECTED`). Trang không có frame nào cho
-widget đó thì trả lời `refused` với `FRAME_NOT_MOUNTED`, và không có gì được xếp hàng chờ về sau. Nếu không có câu trả
-lời trong 8 giây, lần thực hiện được ghi là chưa rõ kết quả và không được thử lại. Route `/messages` thường không bao
-giờ gửi event này, nên một lần thực hiện ở đó bị từ chối với `FRAME_NOT_MOUNTED`. Route báo cáo chỉ dành cho người
-dùng, giống route báo cáo host-control.
+Node đã kiểm tra xong: binding, input so với schema đã khai báo, và chính sách thực thi của người dùng. Node chỉ gửi
+event này trên một yêu cầu stream mang `x-clarkcant-widget-perform: 1`, tức phiên bản mà trang chạy được. Mọi bên gọi
+khác không được gửi event nào, và lần thực hiện bị từ chối ngay với `FRAME_NOT_MOUNTED`. Điều này bao gồm route
+`/messages` thường, MCP, relay và `clarkcant api`.
+
+`request` của event là `{ v: 1, performId, instanceId, actionBindingId, action, input }`. Trang chuyển nó cho frame
+đang được mount và trả lời bằng `POST /app-intents/widget-perform/{performId}` với một trong các dạng:
+
+- `{ status: "done", output? }`;
+- `{ status: "refused", by: "page" | "widget", code, message }`;
+- `{ status: "no-answer", message }`.
+
+`by: "page"` chỉ được chấp nhận với các mã của chính trang, như `FRAME_NOT_MOUNTED`, `SURFACE_GONE`,
+`PERFORM_UNREADABLE` và `PERFORM_VERSION_UNSUPPORTED`. Trang không đọc được yêu cầu, hoặc nhận một phiên bản khác, vẫn
+trả lời theo `performId` của nó. Lời từ chối của widget tới Clark dưới dạng `WIDGET_REFUSED`, với mã của widget trong
+`widgetCode`.
+
+Mỗi `performId` chỉ được trả lời một lần; lần thứ hai nhận `404 WIDGET_PERFORM_NOT_EXPECTED`. Không có gì được xếp hàng
+chờ về sau. Nếu không có câu trả lời trong 8 giây, hoặc trang báo `no-answer`, lần thực hiện được ghi là chưa rõ kết quả
+và không được thử lại. Route báo cáo chỉ dành cho người dùng, giống route báo cáo host-control.
+
+Khi chính sách thực thi muốn hỏi trước, câu trả lời là một thẻ phê duyệt của host. Khi quyết định thẻ đó tại
+`POST /conversations/{id}/approvals/{approvalId}/decide` với cùng header, lần thực hiện đã được duyệt có thể được chuyển
+cho trang này. Khi đó câu trả lời của quyết định mang `perform` (yêu cầu), và trang báo cáo theo cùng cách. Một yêu cầu
+quyết định không có header thì phê duyệt mà không gửi gì, và biên nhận nói rõ điều đó.
+
 Trang của chính node gửi `x-clarkcant-surface: composer` kèm các tin nhắn người dùng gõ vào đó, và node lưu giá trị
 này thành `surface` của tin nhắn; một tin nhắn nói bằng giọng được chính node lưu với `surface: "voice"`. Một tin nhắn
 gửi không kèm header (MCP, relay WebSocket, `clarkcant api`, một script) được lưu mà không có surface. Chỉ tin nhắn có

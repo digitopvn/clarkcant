@@ -1988,31 +1988,48 @@ An isolated widget can let Clark do something inside it, such as format the sele
 text. The widget declares what it offers; Clark asks; the frame does it and says what happened. Clark never writes
 into the frame and never approves the action itself.
 
-**Declaring.** The definition lists `offeredActions` (at most 16), each with a `name` (letters, digits, `_` or `-`), a
-`label`, a `description` and an object `inputSchema`. An offered action is a `perform {action}` proposal: it compiles
-like any action binding, with the effect category `local-write` and the declared input schema, and an action the
-definition does not offer is refused when it is compiled.
+**Declaring.** The definition lists `offeredActions` (at most 16). Each has a `name`, a `label`, a `description` and an
+object `inputSchema`. A name starts with a lowercase letter and holds at most 64 letters, digits, `.`, `_` or `-`. An
+offered action is a `perform {action}` proposal. It compiles like any action binding, with the effect category
+`local-write` and the declared input schema. An action the definition does not offer is refused when it is compiled.
 
 **Placing.** The agent tool `place_widget` places a widget from an installed, active package whose renderer is
-`isolated-app`. `list` shows each installed widget's id, props schema and offered actions; `place` binds every offered
-action and, optionally, up to 4 "Ask Clark" buttons, each bound into a string prop the widget reads (the prop, the
-label, the intent and optional `contextRefs`). This is the product path that gives a package widget its bindings in a
-real installation.
+`isolated-app`. `list` shows each installed widget's id, props schema and offered actions. `place` binds every offered
+action, plus up to 4 optional "Ask Clark" buttons. Each button is bound into a string prop the widget reads, and names
+the prop, the label, the intent and optional `contextRefs`. Placing is all or nothing. Two buttons on one prop, a prop
+given both as a value and as a button, or a binding the host refuses leaves nothing created. This is the product path
+that gives a package widget its bindings in a real installation. Binding a service capability through `place_widget`
+is not supported yet ([#445](https://github.com/digitopvn/clarkcant/issues/445)).
 
-**Performing.** The agent tool `perform_widget_action` `list`s the actions offered by widgets in this conversation, with
-their binding ids and input schemas, and `perform`s one by its binding id. It takes the same path as a press: the
-binding's gate, the input checked against the declared schema (`INVALID_INPUT`), the execution policy, the effect
-ledger and the audit line "Clark asked widget … to perform …". The result is marked as Clark's (`performedBy:
-"clark"`). A person's click on a perform binding is refused (`NOT_AUTHORIZED`): the frame's own buttons do the work
-directly.
+**Performing.** The agent tool `perform_widget_action` has two actions. `list` shows the actions offered by widgets in
+this conversation, with their binding ids and input schemas. `perform` runs one by its binding id. It takes the same
+path as a press:
 
-**The policy decides; nobody approves on its own behalf.** A policy that denies refuses with `POLICY_REFUSED`. A policy
-that would ask a person first refuses with `PERFORM_NEEDS_APPROVAL` today: there is no approval card for a perform
-yet, so nothing runs. Neither the widget nor the model can approve it.
+- the binding's gate;
+- the input checked against the declared schema (`INVALID_INPUT`);
+- the execution policy;
+- the effect ledger;
+- the audit line "Clark asked widget … to perform …".
 
-**The frame does it.** The node streams a `widget-perform` event to the page that runs the turn (or the voice session);
-the page hands it to the mounted frame as `action.perform` and reports the frame's `action.performed` answer at
-`POST /app-intents/widget-perform/{performId}` ([open interfaces](open-interfaces.md)). In the frame:
+The result is marked as Clark's (`performedBy: "clark"`). What the widget said is given to the model as data, never as
+instructions. A person's click on a perform binding is refused (`NOT_AUTHORIZED`): the frame's own buttons do the work
+directly. Perform bindings are not listed among the widget's presses, so neither the frame nor a spoken command can
+press one.
+
+**The policy decides, and the person approves.** A policy that denies refuses with `POLICY_REFUSED`. A policy that asks
+puts a host-owned approval card in the conversation, and nothing is sent until the person approves it. Approving asks
+the frame then, but only if a screen running the conversation still shows the widget. Otherwise the receipt says it
+was approved and not performed, with nothing sent. The approval re-checks the card's payload against the decided
+digest, the binding, the input, the policy and the ledger. Neither the widget nor the model can approve.
+
+**The frame does it.** The node sends a versioned `widget-perform` event (`v: 1`) only to a caller that said it can run
+one:
+
+- a page stream request carrying the `x-clarkcant-widget-perform: 1` header;
+- a voice session whose `auth` frame carries `widgetPerform: 1`.
+
+The page hands the event to the mounted frame as `action.perform`. It then reports the frame's `action.performed`
+answer at `POST /app-intents/widget-perform/{performId}` ([open interfaces](open-interfaces.md)). In the frame:
 
 ```js
 const stop = api.actions.offer("format", async (input) => {
@@ -2022,25 +2039,51 @@ const stop = api.actions.offer("format", async (input) => {
 });
 ```
 
-The handler gets a frozen copy of the checked input. A returned string is the tool's result; a thrown
-`"CODE: message"` is a refusal with that code (any other error is `ACTION_REFUSED`). An action with no handler is
-refused with `ACTION_NOT_OFFERED`, and output that carries a token is refused with `TOKEN_NOT_ALLOWED`.
+The handler gets a frozen copy of the checked input. A returned string is the tool's result. A thrown `"CODE: message"`
+is the widget's deliberate refusal: the node answers `WIDGET_REFUSED` with the widget's own code in `widgetCode`, kept
+apart from the host's codes. Only throw a coded error before changing anything. Any other error is reported as
+`failed`, which Clark treats as an uncertain outcome, because the handler may already have changed something. An action
+with no handler is refused with `ACTION_NOT_OFFERED`. Output that carries a token is dropped, and the outcome becomes
+uncertain.
 
-**Not open means not performed.** When no page is showing the widget, or the frame is not mounted and ready, the tool
-is refused with `FRAME_NOT_MOUNTED`. Nothing is queued for later and nothing reaches the widget. A frame has 6
-seconds to answer; the node waits at most 8. A frame that does not answer, or a Stop during the wait, leaves the
-outcome uncertain (`WIDGET_NO_ANSWER`, `WIDGET_PERFORM_STOPPED`): the ledger records it as unknown and Clark does not
-ask again by itself. A refusal frees the invocation, so it can be tried again.
+**Not open means not performed.** A perform is refused with `FRAME_NOT_MOUNTED` in these cases:
 
-**Voice.** A spoken request reaches the same tool through Clark's turn in the voice session. A spoken press of a
-widget button does not perform an offered action directly.
+- no page is showing the widget;
+- the caller running the turn cannot reach a frame (the CLI, a relay, an older page, or a detached desktop window);
+- the frame is not mounted.
 
-Tests: [widget-perform.spec.ts](../apps/runtime/test/widget-perform.spec.ts) for the undeclared action, schema mismatch,
-unmounted frame, timeout, policy, voice and the tools; [app-intents.spec.ts](../apps/runtime/test/app-intents.spec.ts)
-for the page's report; [session.spec.ts](../packages/widget-host/test/session.spec.ts) and
-[runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) for the bridge; and the browser journey
-[widget-perform.spec.ts](../apps/web/e2e/widget-perform.spec.ts), which formats a spreadsheet range and replaces an
-editor's selection from what the person types in the composer.
+A page whose conversation changed before it could ask answers `SURFACE_GONE`. A page that cannot read the event
+answers `PERFORM_UNREADABLE`, or `PERFORM_VERSION_UNSUPPORTED` for another version. Nothing is queued for later and
+nothing reaches the widget.
+
+A frame has 6 seconds to answer; the node waits at most 8. The outcome is uncertain (`WIDGET_NO_ANSWER`,
+`WIDGET_PERFORM_STOPPED`) in these cases:
+
+- the frame does not answer;
+- the frame fails while performing;
+- a Stop arrives during the wait.
+
+The ledger records an uncertain outcome as unknown. Until the person settles it, the same action with the same input on
+the same widget is refused with `PERFORM_OUTCOME_UNKNOWN`. A refusal frees the invocation, so the action can be tried
+again.
+
+**Voice.** A spoken request reaches the same tool through Clark's turn in the voice session. A spoken press of an
+offered action is refused, with nothing sent, and the person is told to ask Clark instead
+([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+
+Tests:
+
+- [widget-perform.spec.ts](../apps/runtime/test/widget-perform.spec.ts): the undeclared action, schema mismatch,
+  unmounted frame, a caller that cannot perform, page and widget refusals, failure, timeout, Stop, the
+  uncertain-outcome guard, policy and the approval card, voice, the press lists, the tools and placement.
+- [app-intents.spec.ts](../apps/runtime/test/app-intents.spec.ts): the page's report.
+- [frame-performs.spec.ts](../packages/conversation-client/test/frame-performs.spec.ts): the page's frame lookup and
+  answers.
+- [session.spec.ts](../packages/widget-host/test/session.spec.ts) and
+  [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts): the bridge.
+- The browser journey [widget-perform.spec.ts](../apps/web/e2e/widget-perform.spec.ts): formats a spreadsheet range
+  and replaces an editor's selection from what the person types in the composer. It also checks that a plain HTTP
+  stream and a closed widget are both refused with `FRAME_NOT_MOUNTED`.
 
 ---
 

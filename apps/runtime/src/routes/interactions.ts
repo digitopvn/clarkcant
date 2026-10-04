@@ -192,10 +192,14 @@ async function handleAppIntentRoutes(
     if (!services.widgetPerforms.settle(performId.data, body.data)) {
       return fail(404, "WIDGET_PERFORM_NOT_EXPECTED", "nothing is waiting for a report on this perform any more");
     }
+    // The dispatch waiting on this report records its outcome — ledger, receipt, audit — as soon as it resumes. Answered
+    // after that turn of the loop, so a page that reads the conversation next reads that record, not the moment before.
+    await new Promise<void>((resolve) => setImmediate(resolve));
     return json(200, { settled: true });
   }
 
-  if (segments.length === 2 && segments[1] === "confirm" && request.method === "POST") {    const parsed = readJson(request);
+  if (segments.length === 2 && segments[1] === "confirm" && request.method === "POST") {
+    const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
     const body = appIntentConfirmRequestSchema.safeParse(parsed.value);
     if (!body.success) {

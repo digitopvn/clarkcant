@@ -105,3 +105,25 @@ export function unknownEffectsSince(db: Database, nodeId: string, since: Instant
     since,
   ).map(effectFromRow);
 }
+
+/**
+ * Whether a conversation holds an effect for this capability and operation whose outcome nobody knows yet: handed off
+ * and not settled (`submitted`), or settled as `unknown` and not yet answered by the person. A caller that must never
+ * repeat an action of unknown outcome refuses a second one while this is true.
+ */
+export function hasUnsettledEffect(
+  db: Database,
+  input: { conversationId: string; capabilityRef: string; operationDigest: string },
+): boolean {
+  return (
+    allRows<Record<string, unknown>>(
+      db,
+      `SELECT 1 AS found FROM effects e JOIN tasks t ON t.task_id = e.task_id
+        WHERE t.conversation_id = ? AND e.capability_ref = ? AND e.operation_digest = ? AND e.state IN ('submitted','unknown')
+        LIMIT 1`,
+      input.conversationId,
+      input.capabilityRef,
+      input.operationDigest,
+    ).length > 0
+  );
+}
