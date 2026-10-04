@@ -2011,15 +2011,21 @@ prop cùng nhãn. Sau đó nút hoặc nhờ Clark, với một ý định và `
 
 - `inputs` là các đối số widget gửi kèm một lần bấm. `stateInputs` được đọc từ state của chính widget khi bấm, và một giá
   trị lần bấm gửi cùng khoá đó sẽ được ưu tiên.
-- Capability phải do chính thế hệ package đang hoạt động đã cài widget đó phục vụ. Một widget không bao giờ được gắn với
-  service của package khác, và một thế hệ không liệt kê widget của mình thì không gắn được nút nào.
+- Capability phải do thế hệ đang hoạt động của package chứa definition của widget phục vụ: package mà node tải frame
+  của widget từ đó, khớp theo id và phiên bản của package. Id widget không có namespace, nên một package khác khai báo
+  cùng id widget không được cấp gì. Một widget không bao giờ được gắn với service của package khác. `list` chỉ cho thấy
+  một widget cùng các capability của chính package nó. Một package được ghi lại trước khi node lưu id widget của nó
+  được liệt kê là cần cài lại hoặc cập nhật.
 - Host biên dịch nút thành một binding `invoke`. Effect category lấy từ registry, binding được ghim vào thế hệ đang phục
   vụ, và input schema được ghi lại là schema của chính capability, chỉ giữ các khoá trong `inputs`. Nếu service chưa
   liệt kê các tool của nó, chỉ tên các khoá được ghi lại; mỗi lời gọi vẫn được kiểm tra theo schema của chính capability
-  khi chạy.
+  khi chạy. Các định nghĩa mà thuộc tính của schema tham chiếu tới (`$defs`, `definitions`) được mang theo.
+- Một capability có input schema không đặt `additionalProperties: false` nhận mọi tên đối số. Khi đó model có thể nêu bất
+  kỳ đối số nào trong `inputs`, và lần bấm chấp nhận mọi giá trị cho một tên mà schema không mô tả. Hãy khai báo
+  `additionalProperties: false` và một schema cho mọi đối số mà widget có thể gửi.
 - Một capability chưa sẵn sàng, ví dụ còn thiếu khoá hoặc kết nối, vẫn được gắn. Live view của frame liệt kê binding đó
-  là chưa dùng được kèm lý do của node cho tới khi nó sẵn sàng. Một capability mà node còn chưa đăng ký, vì service của
-  nó chưa khởi động, bị từ chối kèm một câu nói hãy thử lại.
+  là chưa dùng được kèm lý do của node cho tới khi nó sẵn sàng. Một capability mà node còn chưa đăng ký bị từ chối kèm một
+  câu nói hãy thử lại. Việc này xảy ra ở lần khởi động đầu tiên của một service, trước khi nó ghi các dòng của mình.
 
 Mỗi lần bấm sau đó đi qua cùng đường `invokeCapability`, execution policy và sổ cái hiệu ứng như mọi `invoke` khác. Việc
 đặt widget là tất cả hoặc không gì cả. Hai nút cùng một prop, một prop vừa được cho giá trị vừa được dùng cho nút, một

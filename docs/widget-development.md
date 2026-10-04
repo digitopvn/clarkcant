@@ -2013,15 +2013,23 @@ the label. It then either asks Clark, with an intent and optional `contextRefs`,
 
 - `inputs` are the arguments the widget sends with a press. `stateInputs` are read from the widget's own state when it
   is pressed, and a value the press sends under the same key wins.
-- The capability must be served by the same active package generation that installed the widget. A widget is never
-  bound to another package's service, and a generation that does not list its widgets binds none.
+- The capability must be served by the active generation of the package the widget's definition is read from: the
+  package the node loads the widget's frame from, matched by package id and version. Widget ids are not namespaced, so
+  another package that declares the same widget id grants nothing. A widget is never bound to another package's
+  service. `list` shows a widget only under its own package's capabilities. A package recorded before the node kept
+  its widget ids is listed as one to reinstall or update.
 - The host compiles the button as an `invoke` binding. The effect category comes from the registry, the binding is
   pinned to the serving generation, and the recorded input schema is the capability's own, cut down to `inputs`. If the
   service has not listed its tools yet, only the names are recorded; every call is still checked against the
-  capability's own schema when it runs.
+  capability's own schema when it runs. Definitions the schema's properties refer to (`$defs`, `definitions`) are
+  carried with it.
+- A capability whose input schema does not set `additionalProperties: false` takes any argument name. The model can
+  then name any argument in `inputs`, and the press accepts any value for a name the schema does not describe.
+  Declare `additionalProperties: false` and a schema for every argument a widget may send.
 - A capability that is not ready yet, for example one still missing its key or connection, is still bound. The frame's
   live view lists the binding as unavailable with the node's reason until it is ready. A capability the node has not
-  registered at all yet, because its service has not started, is refused with a sentence that says to try again.
+  registered at all yet is refused with a sentence that says to try again. This happens on a service's first start,
+  before it has written its rows.
 
 Every press then goes through the same `invokeCapability` path, the execution policy and the effect ledger as any other
 `invoke`. Placing is all or nothing. Two buttons on one prop, a prop given both as a value and as a button, a state key
