@@ -92,6 +92,38 @@ async function focused(page: Page): Promise<string | null> {
   return page.evaluate(() => document.activeElement?.getAttribute("data-timeline-entry") ?? null);
 }
 
+/**
+ * Wait until an element rests where a finger would land on it.
+ *
+ * A placed timeline arrives with the reply's entrance animation, and the transcript glides to its bottom to follow the
+ * reply. A tap aimed at a box that is still moving lands on whatever moves under it — on a slow runner the entry above —
+ * so the element must be in view, outside any running entrance, and in the same place across several frames.
+ */
+async function atRest(target: Locator): Promise<void> {
+  const resting = (): Promise<boolean> =>
+    target.evaluate(async (element) => {
+      const frame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      const place = (): string => {
+        const box = element.getBoundingClientRect();
+        return `${String(box.left)},${String(box.top)},${String(box.width)},${String(box.height)}`;
+      };
+      const entering = document.getAnimations().some((animation) => {
+        const animated = (animation.effect as KeyframeEffect | null)?.target;
+        const ends = animation.effect?.getComputedTiming().endTime;
+        return animation.playState === "running" && animated instanceof Node && animated.contains(element) && typeof ends === "number" && Number.isFinite(ends);
+      });
+      const first = place();
+      for (let index = 0; index < 3; index += 1) {
+        await frame();
+        if (place() !== first) return false;
+      }
+      return !entering;
+    });
+  await expect.poll(resting, { timeout: 10_000 }).toBe(true);
+  await target.scrollIntoViewIfNeeded();
+  await expect.poll(resting, { timeout: 10_000 }).toBe(true);
+}
+
 async function horizontalOverflow(page: Page): Promise<number> {
   return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 }
@@ -299,6 +331,7 @@ test("the timeline is usable at phone width with touch, without scrolling sidewa
     const timeline = await place(page, "");
     const box = await timeline.boundingBox();
     expect(box?.width ?? 0, "the timeline fits the phone's width").toBeLessThanOrEqual(390);
+    await atRest(timeline.locator(entry("deploy-started")));
     await timeline.locator(entry("deploy-started")).tap();
     await expect(timeline.locator("[data-timeline-selected-entry='deploy-started']")).toContainText("lúc 21:05");
     await timeline.locator("[data-timeline-fold='deploy-started']").tap();

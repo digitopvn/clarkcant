@@ -142,6 +142,7 @@ import {
 } from "@clarkcant/contracts";
 
 import type { ResolvedDataset } from "./api.ts";
+import { boardColumnForBoardState, boardPickupDrop, boardPickupPreview, type BoardPickup, rebaseBoardPickup, rebaseBoardPointerDrag } from "./board-pickup.ts";
 import { artifactReason } from "./artifact-messages.ts";
 import { formatFileSize } from "./attachments.ts";
 import { calendarWeek, eventSegment, moveDay, moveInList, nowIndex } from "./calendar-layout.ts";
@@ -5074,14 +5075,46 @@ function BoardWidgetView({ props, state, onAction }: RendererProps): ReactElemen
   const board = useMemo(() => readBoard(props), [props]);
   const stored = useMemo(() => board === undefined ? undefined : readBoardState(state, board), [board, state]);
   const [boardState, setBoardState] = useState(stored);
-  const [pickup, setPickup] = useState<{ cardId: string; origin: NonNullable<typeof stored> }>();
+  const [pickup, setPickup] = useState<BoardPickup>();
   const cardNodes = useRef(new Map<string, HTMLDivElement>());
   const pointer = useRef<{ cardId: string; fromColumnId: string; fromPosition: number; targetColumnId: string; position: number } | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
-  useEffect(() => setBoardState(stored), [stored]);
+  const [focusFirst, setFocusFirst] = useState(false);
+  // The node's view is adopted whenever it arrives. A card the person is moving with the keyboard stays picked up and
+  // stays where they moved it, on top of that view: the answer to an earlier move can arrive in the middle of this one.
+  // A card the newer view no longer has ends the move, said so, with focus on the board's first card.
+  const [adopted, setAdopted] = useState(stored);
+  if (adopted !== stored) {
+    setAdopted(stored);
+    const rebased = board === undefined || stored === undefined || pickup === undefined ? undefined : rebaseBoardPickup(board, pickup, stored);
+    if (board !== undefined && rebased !== undefined) {
+      setPickup(rebased);
+      setBoardState(boardPickupPreview(board, rebased));
+    } else {
+      setBoardState(stored);
+      if (pickup !== undefined) {
+        setPickup(undefined);
+        setAnnouncement(t("widgets.board.pickupGone"));
+        setFocusFirst(true);
+      }
+    }
+  }
+  // A pointer drag follows the newer view the same way; it lives in a ref, so it is moved after the render.
+  useEffect(() => {
+    const drag = pointer.current;
+    if (drag === undefined || board === undefined || stored === undefined) return;
+    pointer.current = rebaseBoardPointerDrag(board, drag, stored);
+    if (pointer.current === undefined) setAnnouncement(t("widgets.board.pickupGone"));
+  }, [board, stored, t]);
   useEffect(() => {
     if (pickup !== undefined) cardNodes.current.get(pickup.cardId)?.focus();
   }, [boardState, pickup]);
+  useEffect(() => {
+    if (!focusFirst) return;
+    setFocusFirst(false);
+    const first = board?.columns.flatMap((column) => boardState?.order[column.id] ?? [])[0];
+    if (first !== undefined) cardNodes.current.get(first)?.focus();
+  }, [board, boardState, focusFirst]);
 
   if (board === undefined || boardState === undefined) {
     return <Frame title={t("widgets.board.title")} dataset={undefined} role="group"><p role="status">{t("widgets.board.unreadable")}</p></Frame>;
@@ -5092,7 +5125,13 @@ function BoardWidgetView({ props, state, onAction }: RendererProps): ReactElemen
   const order = (columnId: string): string[] => boardState.order[columnId] ?? [];
   const firstCardId = board.columns.flatMap((column) => order(column.id))[0];
   const commitMove = (move: BoardMove): void => {
-    if (boardMoveProblems(board, pickup?.origin ?? boardState, move).length > 0) return;
+    if (boardMoveProblems(board, pickup?.origin ?? boardState, move).length > 0) {
+      // Not saved, and said so: the card goes back to where the node's view has it.
+      setBoardState(pickup?.origin ?? stored ?? boardState);
+      setPickup(undefined);
+      setAnnouncement(t("widgets.board.cancelled"));
+      return;
+    }
     const next = moveBoardCard(board, pickup?.origin ?? boardState, { ...move, external: externalBound });
     setBoardState(next);
     setPickup(undefined);
@@ -5101,7 +5140,9 @@ function BoardWidgetView({ props, state, onAction }: RendererProps): ReactElemen
   };
   const movePreview = (columnId: string, position: number): void => {
     if (pickup === undefined || boardMoveProblems(board, pickup.origin, { cardId: pickup.cardId, fromColumnId: boardColumnForBoardState(pickup.origin, pickup.cardId), toColumnId: columnId, position }).length > 0) return;
-    setBoardState(moveBoardCard(board, pickup.origin, { cardId: pickup.cardId, fromColumnId: boardColumnForBoardState(pickup.origin, pickup.cardId), toColumnId: columnId, position }));
+    const moved = { ...pickup, target: { columnId, position } };
+    setPickup(moved);
+    setBoardState(boardPickupPreview(board, moved));
     setAnnouncement(`${t("widgets.board.moving")} ${board.cards.find((card) => card.id === pickup.cardId)?.title ?? ""} — ${board.columns.find((column) => column.id === columnId)?.title ?? ""}, ${String(position + 1)}`);
   };
   const cancelPickup = (): void => {
@@ -5162,10 +5203,11 @@ function BoardWidgetView({ props, state, onAction }: RendererProps): ReactElemen
                   return <article key={card.id} data-board-position={index} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "var(--cc-space-xs)", border: "1px solid var(--cc-border-subtle)", borderRadius: "var(--cc-radius-sm)", padding: "var(--cc-space-xs)", background: "var(--cc-surface)", outline: selected ? "2px solid var(--cc-focus)" : undefined }}>
                     <div ref={(element) => { if (element === null) cardNodes.current.delete(card.id); else cardNodes.current.set(card.id, element); }} role="group" data-board-card={card.id} tabIndex={selected || boardState.selectedCardId === undefined && firstCardId === card.id ? 0 : -1} aria-label={`${card.title}, ${column.title}`} onFocus={() => setBoardState({ ...boardState, selectedCardId: card.id })}
                       onKeyDown={(event) => {
-                        if (pending !== undefined) return;
+                        // Escape always puts a picked-up card back, even while the node holds a move that is not settled yet.
                         if (event.key === "Escape" && pickup !== undefined) { event.preventDefault(); cancelPickup(); return; }
+                        if (pending !== undefined) return;
                         if ((event.key === " " || event.key === "Enter") && pickup === undefined) { event.preventDefault(); setPickup({ cardId: card.id, origin: boardState }); setBoardState({ ...boardState, selectedCardId: card.id }); setAnnouncement(`${t("widgets.board.pickedUp")} ${card.title}`); return; }
-                        if ((event.key === " " || event.key === "Enter") && pickup?.cardId === card.id) { event.preventDefault(); const toColumnId = boardColumnForBoardState(boardState, card.id); const position = Math.max(0, order(toColumnId).indexOf(card.id)); const fromColumnId = boardColumnForBoardState(pickup.origin, card.id); commitMove({ cardId: card.id, fromColumnId, toColumnId, position }); return; }
+                        if ((event.key === " " || event.key === "Enter") && pickup?.cardId === card.id) { event.preventDefault(); const drop = boardPickupDrop(board, pickup); if (drop === undefined) cancelPickup(); else commitMove(drop); return; }
                         if (pickup?.cardId === card.id && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
                           event.preventDefault();
                           const fromColumnId = boardColumnForBoardState(boardState, card.id);
@@ -5207,10 +5249,6 @@ function BoardWidgetView({ props, state, onAction }: RendererProps): ReactElemen
       </div>
     </Frame>
   );
-}
-
-function boardColumnForBoardState(state: { order: Record<string, string[]> }, cardId: string): string {
-  return Object.entries(state.order).find(([, ids]) => ids.includes(cardId))?.[0] ?? "";
 }
 
 /* ------------------------------------------------------------------ *
