@@ -130,13 +130,13 @@
     },
     {
       "path": "system-architecture.md",
-      "bytes": 116479,
-      "sha256": "2fcca0c96f359995c36b3395d61f80962748dc84b0f1df8e22d9016ed8354eb7"
+      "bytes": 122330,
+      "sha256": "8b5954507e38bd09b5292231af67e6b4aff907f07737eb1ca0a25aa97987019f"
     },
     {
       "path": "system-architecture.vi.md",
-      "bytes": 131551,
-      "sha256": "91a2bc3538b88888d3a8085ea5cfacfe87c780f1fbc7693d68d53a6b5b041864"
+      "bytes": 138726,
+      "sha256": "04edf39b15279e34bd4d08fa3673510a7a8fc607bad24d9acd26567c24f28355"
     },
     {
       "path": "widget-development.md",
@@ -160,13 +160,13 @@
     },
     {
       "path": "mini-app/jev-configuration.md",
-      "bytes": 15027,
-      "sha256": "abe3a74d6b71483ee6b6597bb1b9a7140bed9b76f874f6b71b37550e74905d18"
+      "bytes": 15740,
+      "sha256": "c0000fb286e6599a102417dfe0d5dbbb7f21eb8561bf3ea166ca7f64f7b17a6b"
     },
     {
       "path": "mini-app/jev-configuration.vi.md",
-      "bytes": 15356,
-      "sha256": "db7dd9997f0214320f14d539e064561df16566b54da9457166a2b0e81477bec1"
+      "bytes": 16181,
+      "sha256": "431f6a1e94328f8acd204e25dded1e2537290c56a1e57e9018e5ede06f90a54d"
     },
     {
       "path": "voice-live-provider.md",

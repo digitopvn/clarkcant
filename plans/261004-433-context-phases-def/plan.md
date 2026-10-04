@@ -1,6 +1,6 @@
 ---
 title: "#433 Context planner phases D, E, F: data-class routing, conditional instructions, session reuse policy"
-status: in-progress
+status: in-review
 created: 2026-10-04
 issues: [433]
 related: [402, 447]
@@ -51,9 +51,9 @@ constrains phase 03: a rebuild must go through the adapter's public session API,
 
 | Phase | Status | Depends on | Detail |
 | --- | --- | --- | --- |
-| 01 (D) Data classes in context and routing | in progress | #447 | [phase-01-data-class-routing.md](phase-01-data-class-routing.md) |
-| 02 (E) Conditional instructions | pending | 01 | [phase-02-conditional-instructions.md](phase-02-conditional-instructions.md) |
-| 03 (F) Session telemetry and reuse/rebuild policy | pending | 01, 02 | [phase-03-session-policy.md](phase-03-session-policy.md) |
+| 01 (D) Data classes in context and routing | done | #447 | [phase-01-data-class-routing.md](phase-01-data-class-routing.md) |
+| 02 (E) Conditional instructions | done | 01 | [phase-02-conditional-instructions.md](phase-02-conditional-instructions.md) |
+| 03 (F) Session telemetry and reuse/rebuild policy | done (off by default; live A/B gated) | 01, 02 | [phase-03-session-policy.md](phase-03-session-policy.md) |
 
 Order: D first, because E's instructions and F's rebuilt recap are both context that must pass the same data-class
 ceiling; E before F, because a rebuilt session must re-state pinned instructions.
