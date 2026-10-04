@@ -140,6 +140,20 @@ describe("commands", () => {
     expect(await runCli(["api", "GET", "/conversations/conv_missing/timeline"], missing)).toBe(1);
   });
 
+  it("marks what api carries as the clarkcant api surface, and nothing else it sends", async () => {
+    const surfaces: (string | null)[] = [];
+    const watched: typeof fetch = (input, init) => {
+      surfaces.push(new Headers(init?.headers).get("x-clarkcant-surface"));
+      return fetch(input, init);
+    };
+    expect(await runCli(["api", "GET", "/node"], io({ fetch: watched }))).toBe(0);
+    expect(await runCli(["status"], io({ fetch: watched }))).toBe(0);
+    // The node decides a widget's artifact writes by the execution policy when they arrive under this mark.
+    expect(surfaces[0]).toBe("cli-api");
+    expect(surfaces.length).toBeGreaterThan(1);
+    expect(surfaces.slice(1).every((surface) => surface === null)).toBe(true);
+  });
+
   it("does not carry an approval decision through api", async () => {
     const run = io();
     expect(await runCli(["api", "POST", "/conversations/conv_x/approvals/appr_y/decide", "{}"], run)).toBe(1);

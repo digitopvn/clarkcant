@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
@@ -6,7 +7,7 @@ import { isPersonOnlyRoute, PERSON_ONLY_REFUSAL, parseSseChunk } from "@clarkcan
 
 import { handleRequest, type GatewayRequest } from "./gateway.ts";
 import { API_SOCKET_PATH, API_SOCKET_PROTOCOL } from "./open-interfaces.ts";
-import { SURFACE_HEADER, tokenMatches } from "./routes/http.ts";
+import { SURFACE_CONNECTION_HEADER, SURFACE_HEADER, tokenMatches } from "./routes/http.ts";
 import type { NodeServices } from "./services.ts";
 
 /**
@@ -49,6 +50,7 @@ export function attachApiSocket(options: { server: Server; services: NodeService
   function serve(ws: WebSocket): void {
     let token: string | undefined;
     let inFlight = 0;
+    const connectionId = randomUUID();
     const authTimer = setTimeout(() => ws.close(4401, "unauthenticated"), AUTH_TIMEOUT_MS);
     authTimer.unref();
 
@@ -133,7 +135,8 @@ export function attachApiSocket(options: { server: Server; services: NodeService
         query,
         // The token this socket proved, so the gateway makes the same decision it makes for HTTP, and the surface, so a
         // route that records who asked can say it came through the relay.
-        headers: { authorization: `Bearer ${token}`, [SURFACE_HEADER]: "relay" },
+        // The connection id holds what the person grants this socket alone (a widget file's write right).
+        headers: { authorization: `Bearer ${token}`, [SURFACE_HEADER]: "relay", [SURFACE_CONNECTION_HEADER]: connectionId },
         body: frame.body === undefined ? "" : typeof frame.body === "string" ? frame.body : JSON.stringify(frame.body),
       };
 

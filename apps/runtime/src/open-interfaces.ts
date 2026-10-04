@@ -43,8 +43,40 @@ export function discoveryDocument(): Record<string, unknown> {
       refusedOn: ["websocket", "mcp", "cli api"],
       refusal: { status: 403, code: PERSON_ONLY_REFUSAL.code },
     },
+    // A widget instance's artifact writes are not refused there but decided: on these surfaces each one is an effect the
+    // execution policy runs, asks the person about on a card in the conversation, or refuses, and each is audited.
+    policyGatedOnMachineSurfaces: {
+      routes: [
+        "POST /conversations/{conversationId}/widgets/{instanceId}/artifacts",
+        "POST /conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/chunks",
+        "POST /conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/finalize",
+        "POST /conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/attach",
+        "DELETE /conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}",
+      ],
+      on: ["websocket", "mcp", "cli api"],
+      effectCategory: "local-write",
+      // Discarding a file that is not an unfinished one the same surface started deletes what may be the person's only copy.
+      destructive: ["DELETE /conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}"],
+      // The 15-minute write right an approved create or write access gives: held by the one relay connection that asked,
+      // or by every client of the surface where it has no per-client identity (MCP, clarkcant api).
+      approval: { status: 202, outcome: "approval-required", per: "file", writeRight: { minutes: 15, heldBy: { websocket: "connection", mcp: "surface", "cli api": "surface" } } },
+      refusal: { status: 403, code: "POLICY_REFUSED" },
+      pendingLimit: { status: 429, code: "APPROVALS_PENDING" },
+    },
   };
 }
+
+/** What every widget artifact write route says about machine surfaces (`policyGatedWidgetArtifactWrite`). */
+const MACHINE_WRITE_NOTE =
+  " On a machine surface (MCP, the WebSocket relay, clarkcant api) this write is decided by the execution policy and " +
+  "audited: a local-write effect, except discarding a file that is not an unfinished one the same surface started, which " +
+  "is destructive. It runs; or it answers 202 { outcome: \"approval-required\", approvalRequired: { approvalId } } while a " +
+  "card in the conversation waits for the person (asking again answers the same card; 429 APPROVALS_PENDING past 8 " +
+  "waiting cards from one surface in one conversation); or it is 403 POLICY_REFUSED. A card is per file and never " +
+  "carries bytes: approving a create, or write access to a working file, lets whoever asked write that file's chunks " +
+  "and finalize it for 15 minutes, so a chunk or finalize that got 202 is sent again once the person approves. Whoever " +
+  "asked is the one WebSocket relay connection that carried it; MCP and clarkcant api have no per-client identity, so " +
+  "there it is every client of that surface, and the card says so.";
 
 const errorSchema = {
   type: "object",
@@ -88,6 +120,13 @@ const tokenSession = { name: "session", in: "path", required: true, schema: { ty
 function ok(description: string): Record<string, unknown> {
   return { description, content: { "application/json": { schema: { type: "object" } } } };
 }
+
+/** The answers a machine surface can get from a widget artifact write route besides the route's own. */
+const MACHINE_WRITE_RESPONSES = {
+  "202": ok("On a machine surface, when the execution policy asks: { outcome: \"approval-required\", approvalRequired: { approvalId }, operation, message }"),
+  "403": ok("POLICY_REFUSED on a machine surface whose execution policy refuses this effect"),
+  "429": ok("APPROVALS_PENDING on a machine surface already waiting on 8 cards in this conversation"),
+};
 
 /** A refusal answered with the Error body, under its own description. */
 function refusal(description: string): Record<string, unknown> {
@@ -421,10 +460,10 @@ export function openApiDocument(): Record<string, unknown> {
           description:
             "{ mimeType, name? }. The type must be one the attachment pipeline accepts. The instance receives a write " +
             "grant that expires; the artifact expires unless it is written to or finalized. Every later call is " +
-            "re-checked against the instance's grant.",
+            "re-checked against the instance's grant." + MACHINE_WRITE_NOTE,
           parameters: [conversationId, instanceId],
           requestBody: { content: { "application/json": { schema: { type: "object", required: ["mimeType"] } } } },
-          responses: { "201": ok("{ artifactRef }"), "415": ok("ARTIFACT_TYPE_UNSUPPORTED"), ...refusals },
+          responses: { "201": ok("{ artifactRef }"), ...MACHINE_WRITE_RESPONSES, "415": ok("ARTIFACT_TYPE_UNSUPPORTED"), ...refusals },
         },
       },
       "/conversations/{conversationId}/widgets/{instanceId}/artifacts/pick": {
@@ -456,9 +495,10 @@ export function openApiDocument(): Record<string, unknown> {
           description:
             "Only a file the calling instance created, working or finalized; a file the person chose, or one another widget " +
             "made, is 403 ARTIFACT_NOT_CREATOR. The record and every grant on it go; the bytes go too unless an attachment " +
-            "or another record still points at them. What was discarded no longer counts against the instance's share.",
+            "or another record still points at them. What was discarded no longer counts against the instance's share." +
+            MACHINE_WRITE_NOTE,
           parameters: [conversationId, instanceId, artifactId],
-          responses: { "200": ok("{ discarded: true, artifactId }"), "403": ok("ARTIFACT_NOT_CREATOR, ARTIFACT_NOT_GRANTED or ARTIFACT_GRANT_REVOKED"), ...refusals },
+          responses: { "200": ok("{ discarded: true, artifactId }"), ...MACHINE_WRITE_RESPONSES, "403": ok("ARTIFACT_NOT_CREATOR, ARTIFACT_NOT_GRANTED, ARTIFACT_GRANT_REVOKED or POLICY_REFUSED"), ...refusals },
         },
       },
       "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/content": {
@@ -480,18 +520,21 @@ export function openApiDocument(): Record<string, unknown> {
           summary: "Append one chunk to a working artifact",
           description:
             "{ offset, contentBase64 }: at most 262144 bytes, and offset must equal the artifact's current size, so a " +
-            "repeated or reordered chunk is refused with 409 ARTIFACT_OFFSET_MISMATCH instead of stored twice.",
+            "repeated or reordered chunk is refused with 409 ARTIFACT_OFFSET_MISMATCH instead of stored twice." +
+            MACHINE_WRITE_NOTE,
           parameters: [conversationId, instanceId, artifactId],
           requestBody: { content: { "application/json": { schema: { type: "object", required: ["offset", "contentBase64"] } } } },
-          responses: { "200": ok("{ artifactRef }"), "409": ok("ARTIFACT_OFFSET_MISMATCH, ARTIFACT_NOT_WRITABLE, ARTIFACT_INSTANCE_QUOTA_EXCEEDED (128 MiB per instance) or ARTIFACT_QUOTA_EXCEEDED"), "413": ok("ARTIFACT_CHUNK_TOO_LARGE or ARTIFACT_TOO_LARGE"), ...refusals },
+          responses: { "200": ok("{ artifactRef }"), ...MACHINE_WRITE_RESPONSES, "409": ok("ARTIFACT_OFFSET_MISMATCH, ARTIFACT_NOT_WRITABLE, ARTIFACT_INSTANCE_QUOTA_EXCEEDED (128 MiB per instance) or ARTIFACT_QUOTA_EXCEEDED"), "413": ok("ARTIFACT_CHUNK_TOO_LARGE or ARTIFACT_TOO_LARGE"), ...refusals },
         },
       },
       "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/finalize": {
         post: {
           summary: "Fix a working artifact's bytes",
-          description: "The bytes are sniffed against the declared type; a disagreement is 415 ARTIFACT_TYPE_MISMATCH and the artifact stays writable.",
+          description:
+            "The bytes are sniffed against the declared type; a disagreement is 415 ARTIFACT_TYPE_MISMATCH and the artifact stays writable." +
+            MACHINE_WRITE_NOTE,
           parameters: [conversationId, instanceId, artifactId],
-          responses: { "200": ok("{ artifactRef } with kind finalized and a digest"), "415": ok("ARTIFACT_TYPE_MISMATCH"), ...refusals },
+          responses: { "200": ok("{ artifactRef } with kind finalized and a digest"), ...MACHINE_WRITE_RESPONSES, "415": ok("ARTIFACT_TYPE_MISMATCH"), ...refusals },
         },
       },
       "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/attach": {
@@ -499,9 +542,10 @@ export function openApiDocument(): Record<string, unknown> {
           summary: "Make a finalized artifact an attachment of this conversation",
           description:
             "Through the attachment pipeline (sniff, allowlist, quota). The answer's attachmentRef is sent with the " +
-            "person's next message like any other attachment; the model reads it through the attachment brief or read_attachment.",
+            "person's next message like any other attachment; the model reads it through the attachment brief or read_attachment." +
+            MACHINE_WRITE_NOTE,
           parameters: [conversationId, instanceId, artifactId],
-          responses: { "201": ok("{ artifactRef, attachmentRef }"), "409": ok("ARTIFACT_NOT_FINALIZED"), ...refusals },
+          responses: { "201": ok("{ artifactRef, attachmentRef }"), ...MACHINE_WRITE_RESPONSES, "409": ok("ARTIFACT_NOT_FINALIZED"), ...refusals },
         },
       },
       "/conversations/{conversationId}/widgets/{instanceId}/jobs": {

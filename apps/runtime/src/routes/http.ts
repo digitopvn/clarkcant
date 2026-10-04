@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 
+import { MACHINE_SURFACE_HEADER } from "@clarkcant/contracts";
+
 /**
  * The HTTP primitives every route module shares.
  *
@@ -13,11 +15,20 @@ import { timingSafeEqual } from "node:crypto";
  */
 
 /**
- * Set by the node's own machine surfaces on a request they relay in process — `mcp` from an MCP tool, `relay` from the
- * WebSocket `request` frame — so a route can record which surface a call came through. An HTTP caller can send it too,
- * so it is a label for the audit and a reason to refuse more, never a reason to allow anything.
+ * Set by the node's own machine surfaces on a request they carry — `mcp` from an MCP tool, `relay` from the WebSocket
+ * `request` frame, both in process, and `cli-api` from `clarkcant api` over HTTP — so a route can record which surface a
+ * call came through (`MACHINE_SURFACES`). An HTTP caller can send it too, so it is a label for the audit and a reason to
+ * refuse or ask more, never a reason to allow anything.
  */
-export const SURFACE_HEADER = "x-clarkcant-surface";
+export const SURFACE_HEADER = MACHINE_SURFACE_HEADER;
+
+/**
+ * Set by the WebSocket relay beside `SURFACE_HEADER`: an id the node gave that one socket when it opened, so a right the
+ * person grants to "the client that asked" is held by that connection, not by every relay client. A frame cannot set
+ * it. MCP calls are stateless and `clarkcant api` is one HTTP call per run, so neither has one. An HTTP caller could
+ * send it, but that caller can already write without any marker, so it is a way to be held to less, never to more.
+ */
+export const SURFACE_CONNECTION_HEADER = "x-clarkcant-surface-connection";
 
 export interface GatewayRequest {
   method: string;
