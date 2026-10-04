@@ -322,10 +322,13 @@ jobs:
   # The widget author tooling as an outside project gets it: both packages packed from this commit, installed from the
   # archives into an empty project under the runner's temporary directory, and used there — init, test, pack, the dev
   # hosts over HTTP, and the SDK's imports and declarations. The release workflow runs the same smoke on every OS and
-  # Node version before it publishes; here it runs on each OS once, beside the other jobs rather than in front of them.
+  # Node version before it publishes; here it runs on each OS once, beside the other jobs rather than in front of them,
+  # and only when the change touches what the packages are built from (tools/ci-test-scope.mjs, WIDGET_TOOLING_PATHS).
+  # A diff that cannot be read runs it.
   widget-tooling-smoke:
     name: widget tooling smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -340,19 +343,42 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # Both sides of push/PR diffs must be available. A missing base still runs the smoke.
+          fetch-depth: 0
+
+      - name: Classify the changed paths
+        id: scope
+        continue-on-error: true
+        env:
+          CI_DIFF_BASE: >-
+            ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_DIFF_HEAD: HEAD
+        run: node tools/ci-test-scope.mjs
 
       - name: Enable corepack
+        if: >-
+          steps.scope.outcome != 'success' ||
+          steps.scope.outputs.widget_tooling != 'false'
         run: corepack enable
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: >-
+          steps.scope.outcome != 'success' ||
+          steps.scope.outputs.widget_tooling != 'false'
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
 
       - name: Install
+        if: >-
+          steps.scope.outcome != 'success' ||
+          steps.scope.outputs.widget_tooling != 'false'
         run: pnpm install --frozen-lockfile
 
       - name: Pack, install outside the repository and use the widget tooling
+        if: >-
+          steps.scope.outcome != 'success' ||
+          steps.scope.outputs.widget_tooling != 'false'
         run: node tools/smoke-widget-tooling.mjs
 
   # A package service runs in a container as the node's own user, which rootless Docker maps onto a subordinate id the

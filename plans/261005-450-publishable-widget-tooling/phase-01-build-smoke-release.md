@@ -25,6 +25,17 @@ status: in-progress
 - [x] Unit tests for the build helpers and asset lookup; build integration test.
 - [x] Release workflow and CI job.
 - [x] EN/VI docs; `node tools/check-invariants.mjs --fix-manifest`.
+- [x] Review follow-up ([code-review-450.md](reports/code-review-450.md)):
+  - the release compares each version's archive integrity with npm before publishing anything, so it fails on a changed
+    package that kept its version and skips only identical bytes;
+  - publishing is limited to `widget-tooling-v*` tags in the `npm-release` environment, with trusted publishing
+    (OIDC) first and `NPM_TOKEN` as the fallback;
+  - the CI smoke runs only when its inputs change (`tools/ci-test-scope.mjs`) and has a timeout;
+  - installed dev hosts serve the runtime bundles from disk, and Vite is imported only by the dev hosts;
+  - the asset lists are shared by the CLI and the build, and the smoke runs every template;
+  - the smoke stops its processes on SIGINT/SIGTERM, and `clark widget pack` uses a private temporary directory;
+  - the SDK drops `engines` and gains `typesVersions`, the CLI ships `THIRD_PARTY_NOTICES.md`, and `clark --version`
+    prints the version.
 - [ ] Publish once npm credentials exist.
 
 ## Validation

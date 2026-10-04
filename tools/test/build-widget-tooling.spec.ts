@@ -6,10 +6,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   buildWidgetTooling,
+  installedPackageOf,
   packageNameOf,
   resolveExternalDependencies,
   rewriteDeclarationSpecifiers,
+  thirdPartyNotices,
 } from "../build-widget-tooling.mjs";
+import { touchesWidgetTooling } from "../ci-test-scope.mjs";
+import { BROWSER_RUNTIME_SOURCES, REFERENCE_APPS } from "../../packages/widget-cli/src/package-assets.ts";
 
 const importer = (name: string, dependencies: Record<string, string>) => ({ name, dependencies });
 
@@ -19,6 +23,37 @@ describe("packageNameOf", () => {
     expect(packageNameOf("react-dom/client")).toBe("react-dom");
     expect(packageNameOf("@vitejs/plugin-react")).toBe("@vitejs/plugin-react");
     expect(packageNameOf("@scope/name/sub/path")).toBe("@scope/name");
+  });
+});
+
+describe("installedPackageOf", () => {
+  it("names the installed package a bundled input comes from, plain or scoped", () => {
+    expect(installedPackageOf("node_modules/.pnpm/react@19.3.0/node_modules/react/cjs/react.production.js")).toEqual({
+      name: "react",
+      dir: "node_modules/.pnpm/react@19.3.0/node_modules/react",
+    });
+    expect(installedPackageOf("node_modules/.pnpm/@xterm+xterm@6.0.0/node_modules/@xterm/xterm/lib/xterm.mjs")).toEqual({
+      name: "@xterm/xterm",
+      dir: "node_modules/.pnpm/@xterm+xterm@6.0.0/node_modules/@xterm/xterm",
+    });
+  });
+
+  it("leaves out the workspace's own sources and esbuild's virtual modules", () => {
+    expect(installedPackageOf("packages/widget-sdk/src/index.ts")).toBeUndefined();
+    expect(installedPackageOf("(disabled):node_modules/x/y.js")).toBeUndefined();
+    expect(installedPackageOf("node_modules/react")).toBeUndefined();
+  });
+});
+
+describe("thirdPartyNotices", () => {
+  it("lists each package with its licence and text, in a fence its text cannot close", () => {
+    const text = thirdPartyNotices("@clarkcant/widget-cli", [
+      { name: "zeta", version: "1.0.0", license: "MIT", text: "MIT text with ```code``` inside" },
+      { name: "alpha", version: "2.0.0", license: "BSD-3-Clause", text: undefined },
+    ]);
+    expect(text.indexOf("## alpha@2.0.0")).toBeLessThan(text.indexOf("## zeta@1.0.0"));
+    expect(text).toContain("License: BSD-3-Clause");
+    expect(text).toContain("````text\nMIT text with ```code``` inside\n````");
   });
 });
 
@@ -97,11 +132,17 @@ describe("rewriteDeclarationSpecifiers", () => {
 describe("buildWidgetTooling", () => {
   let outRoot = "";
   let stages: { sdk: string; cli: string };
+  let bundledWorkspace: string[];
 
   beforeAll(async () => {
     outRoot = mkdtempSync(join(tmpdir(), "clark-tooling-build-"));
-    ({ stages } = await buildWidgetTooling({ outRoot }));
+    ({ stages, bundledWorkspace } = await buildWidgetTooling({ outRoot }));
   }, 180_000);
+
+  it("inlines only workspace code CI's smoke gate watches, so a change to any of it runs the smoke", () => {
+    expect(bundledWorkspace).toContain("packages/widget-sdk");
+    for (const dir of bundledWorkspace) expect(touchesWidgetTooling([`${dir}/src/changed.ts`])).toBe(true);
+  });
 
   afterAll(() => {
     if (outRoot !== "") rmSync(outRoot, { recursive: true, force: true });
@@ -123,6 +164,24 @@ describe("buildWidgetTooling", () => {
       expect(json.publishConfig).toEqual({ access: "public", provenance: true });
     }
     expect(manifest(stages.cli).bin).toEqual({ clark: "./lib/cli.js" });
+    // Only the command runs in Node; the SDK is a browser library.
+    expect(manifest(stages.cli).engines).toEqual({ node: ">=22.19.0" });
+    expect(manifest(stages.sdk).engines).toBeUndefined();
+  });
+
+  it("gives the SDK's ./dom subpath types under the older node10 resolution too", () => {
+    const sdk = manifest(stages.sdk) as unknown as { exports: Record<string, { types: string }>; typesVersions: Record<string, Record<string, string[]>> };
+    expect(sdk.typesVersions).toEqual({ "*": { dom: [sdk.exports["./dom"]?.types] } });
+  });
+
+  it("ships notices for the third-party code its runtimes inline, and lists them in files", () => {
+    const cli = manifest(stages.cli) as unknown as { files: string[] };
+    expect(cli.files).toContain("THIRD_PARTY_NOTICES.md");
+    const notices = readFileSync(join(stages.cli, "THIRD_PARTY_NOTICES.md"), "utf8");
+    expect(notices).toMatch(/^## react@\d/m);
+    expect(notices).toMatch(/^## highlight\.js@\d/m);
+    // The SDK inlines no third-party code: zod stays a dependency.
+    expect(existsSync(join(stages.sdk, "THIRD_PARTY_NOTICES.md"))).toBe(false);
   });
 
   it("ships the SDK's two entry points with declarations, and no workspace import in any module", () => {
@@ -142,11 +201,15 @@ describe("buildWidgetTooling", () => {
   });
 
   it("ships the CLI's reference templates without their tests, and its bundled browser runtimes", () => {
-    for (const app of ["text-editor", "image-generator", "media-render", "connected-app"]) {
+    // The lists the CLI looks assets up by, so a template or runtime the CLI names is one the package ships.
+    expect(readdirSync(join(stages.cli, "templates")).sort()).toEqual([...REFERENCE_APPS].sort());
+    for (const app of REFERENCE_APPS) {
       expect(existsSync(join(stages.cli, "templates", app, "clarkcant.json"))).toBe(true);
-      expect(existsSync(join(stages.cli, "templates", app, "test"))).toBe(false);
+      for (const skipped of ["test", "README.md", "README.vi.md", "LICENSE"]) {
+        expect(existsSync(join(stages.cli, "templates", app, skipped))).toBe(false);
+      }
     }
     expect(existsSync(join(stages.cli, "templates", "connected-app", "dev", "service.test.mjs"))).toBe(true);
-    expect(readdirSync(join(stages.cli, "runtime")).sort()).toEqual(["catalog-runtime.js", "dev-frame-runtime.js", "theme-dev-runtime.js"]);
+    expect(readdirSync(join(stages.cli, "runtime")).sort()).toEqual(Object.keys(BROWSER_RUNTIME_SOURCES).map((name) => `${name}.js`).sort());
   });
 });

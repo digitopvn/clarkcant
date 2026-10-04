@@ -5,7 +5,7 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 
 import type { ViteDevServer } from "vite";
 import { closeDevModuleServer, createDevModuleServer } from "./dev-module-server.ts";
-import { browserRuntime } from "./package-assets.ts";
+import { browserRuntime, sendPrebundledRuntime } from "./package-assets.ts";
 
 import type { BrowserTokenDeclaration, ResourceRequest } from "@clarkcant/contracts";
 import { readPackage } from "@clarkcant/core";
@@ -1062,8 +1062,10 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
         response.setHeader("access-control-allow-origin", "null");
         response.setHeader("vary", "Origin");
       }
+      const runtime = browserRuntime("dev-frame-runtime");
+      if (sendPrebundledRuntime(response, runtime.url)) return;
       const moduleServer = await getVite();
-      request.url = browserRuntime("dev-frame-runtime").url;
+      request.url = runtime.url;
       moduleServer.middlewares(request, response, () => {
         response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         response.end("widget runtime module not found\n");
@@ -1175,8 +1177,10 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       /*
        * A catalog widget has no package files to serve: its module graph belongs to Vite, which resolves the
        * workspace's sources the way the app's own build does. Handing the request over rather than answering it is
-       * what keeps the preview the production renderer instead of a second implementation of it.
+       * what keeps the preview the production renderer instead of a second implementation of it. An installed CLI's
+       * catalog runtime is already that graph, bundled, and is served as it is.
        */
+      if (sendPrebundledRuntime(response, path)) return;
       const moduleServer = await getVite();
       moduleServer.middlewares(request, response, () => {
         response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });

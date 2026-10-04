@@ -2727,15 +2727,26 @@ Trong repository này cả hai package vẫn `private` và resolve tới mã ngu
 `tools/build-widget-tooling.mjs` sinh một thư mục package riêng cho từng package trong `dist/widget-tooling/`: mã được
 bundle bằng esbuild, các workspace package được nhúng vào và mọi import bên thứ ba được khai báo đúng phiên bản chính
 xác mà repository pin; các khai báo kiểu của SDK; các template của CLI (`templates/`) và các mô-đun trình duyệt của dev
-host dưới dạng bundle tự đủ (`runtime/`). `package.json` được sinh ra không chứa specifier `workspace:` nào và không có
-lifecycle script.
+host dưới dạng bundle tự đủ (`runtime/`), được dev host đã cài phục vụ thẳng từ đĩa. `THIRD_PARTY_NOTICES.md` của CLI
+liệt kê mã bên thứ ba mà các bundle đó nhúng vào, kèm giấy phép của từng gói. `package.json` được sinh ra không chứa
+specifier `workspace:` nào và không có lifecycle script. `clark --version` in ra version của CLI đã cài.
 
-`.github/workflows/release-widget-tooling.yml` phát hành chúng: khi có tag `widget-tooling-v<version>` nêu version của
-`@clarkcant/widget-cli`, hoặc khi chạy thủ công, workflow pack các archive một lần, chạy smoke với chính các archive đó
-trên Ubuntu, Windows và macOS với Node 22.19 và 24, rồi publish đúng các archive đó bằng
-`npm publish --provenance --access public`. Lần chạy thủ công không chọn `publish` dừng ở `npm publish --dry-run`. Các
-version là version trong `package.json` của chính từng package, và version nào đã có trên npm sẽ được bỏ qua. Token npm
-là secret `NPM_TOKEN`, chỉ được đưa cho bước publish.
+`.github/workflows/release-widget-tooling.yml` phát hành chúng. Mỗi lần chạy đều pack các archive một lần và chạy smoke
+với chính các archive đó trên Ubuntu, Windows và macOS với Node 22.19 và 24. Chỉ lần chạy từ tag
+`widget-tooling-v<version>` nêu version của `@clarkcant/widget-cli` mới publish: chính lần push tag đó, hoặc lần chạy
+thủ công từ tag đó có chọn `publish`. Mọi lần chạy khác, kể cả lần chạy thủ công từ một branch có chọn `publish`, đều
+dừng ở `npm publish --dry-run`.
+
+Trước khi publish bất cứ thứ gì, workflow so version của từng package với npm. Version mà npm chưa có sẽ được publish
+bằng `npm publish --provenance --access public`. Version npm đã có với cùng integrity của archive sẽ được bỏ qua, nên
+chạy lại chỉ publish phần còn thiếu. Version npm đã có nhưng nội dung khác sẽ làm workflow thất bại trước khi publish
+bất kỳ package nào, nên package đã thay đổi luôn cần version mới.
+
+Job publish chạy trong GitHub environment `npm-release`. Người bảo trì phải giới hạn deployment của environment đó vào
+các tag `widget-tooling-v*` và bắt buộc có người duyệt. Thông tin xác thực dự kiến là npm trusted publishing (OIDC): khi
+trusted publisher của từng package trên npmjs.com đã nêu repository và workflow này thì không cần secret npm nào. Version
+đầu tiên của một package, được publish trước khi có thể đặt trusted publisher cho nó, cần secret `NPM_TOKEN` của
+environment, và secret này chỉ được đưa cho bước publish.
 
 ### init
 

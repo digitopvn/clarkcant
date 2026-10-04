@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +24,7 @@ import { publishedDefinitions, versionRuleViolations, type PublishedDefinitions 
 import { inspectNpmTarball, installedThemes, readPackage } from "@clarkcant/core";
 import { credentialShaped, pnpmPack, readNpmPackageJson, scaffoldPackageJson } from "./npm-package.ts";
 import { packageFiles } from "./package-files.ts";
+import { packageVersion, skippedFromReference } from "./package-assets.ts";
 import { REFERENCE_TEMPLATES, referenceCopy, type ReferenceTemplate } from "./reference-templates.ts";
 import { runThemeCli, THEME_COMMANDS } from "./theme-cli.ts";
 
@@ -141,10 +142,8 @@ function definitionFor(id: string, template: Template): Record<string, unknown> 
   };
 }
 
-/** The reference app's own files that describe or test that app rather than the package a person starts from. */
-export function skippedFromReference(path: string): boolean {
-  return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "README.vi.md" || path === "LICENSE";
-}
+// Defined beside the asset lists the release build reads, so the published templates leave out the same files.
+export { skippedFromReference };
 
 /** Files whose text can name the reference's id — a skill names a capability ref. Anything else is copied byte for byte. */
 const REFERENCE_TEXT = /\.(json|js|mjs|html|css|md)$/;
@@ -467,23 +466,30 @@ function packNpmArchive(
   const packed = pnpmPack(root);
   if (!packed.ok) return packed;
   const problems: string[] = [];
-  const inspected = inspectNpmTarball(packed.bytes, join(tmpdir(), "clark-pack-inspect"), (extracted) => {
-    const archivedManifest = join(extracted, "clarkcant.json");
-    if (!existsSync(archivedManifest)) {
-      problems.push('the archive has no clarkcant.json; add it to package.json "files"');
-      return;
-    }
-    if (!readFileSync(archivedManifest).equals(readFileSync(join(root, "clarkcant.json")))) {
-      problems.push("the archived clarkcant.json differs from the package's own");
-    }
-    const archivedReport = conform(extracted);
-    if (!archivedReport.ok) {
-      const failed = archivedReport.checks.filter((check) => check.status === "fail").map((check) => `${check.name} — ${check.detail}`);
-      problems.push(
-        `the archive does not pass the conformance suite on its own, so package.json "files" leaves out something it needs:\n    ${failed.join("\n    ")}`,
-      );
-    }
-  });
+  // A directory of this run's own, removed afterwards: a fixed shared name would be raced by two packs at once.
+  const scratch = mkdtempSync(join(tmpdir(), "clark-pack-inspect-"));
+  let inspected: ReturnType<typeof inspectNpmTarball>;
+  try {
+    inspected = inspectNpmTarball(packed.bytes, scratch, (extracted) => {
+      const archivedManifest = join(extracted, "clarkcant.json");
+      if (!existsSync(archivedManifest)) {
+        problems.push('the archive has no clarkcant.json; add it to package.json "files"');
+        return;
+      }
+      if (!readFileSync(archivedManifest).equals(readFileSync(join(root, "clarkcant.json")))) {
+        problems.push("the archived clarkcant.json differs from the package's own");
+      }
+      const archivedReport = conform(extracted);
+      if (!archivedReport.ok) {
+        const failed = archivedReport.checks.filter((check) => check.status === "fail").map((check) => `${check.name} — ${check.detail}`);
+        problems.push(
+          `the archive does not pass the conformance suite on its own, so package.json "files" leaves out something it needs:\n    ${failed.join("\n    ")}`,
+        );
+      }
+    });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
   if (!inspected.ok) return { ok: false, message: `the npm archive is unsafe: ${inspected.message}` };
   const credentials = inspected.facts.files.filter((file) => credentialShaped(file.path)).map((file) => file.path);
   if (credentials.length > 0) {
@@ -689,6 +695,10 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   // Help that was asked for is a success; help shown because the command was wrong is not.
   if (group === "--help" || group === "-h" || group === "help") {
     process.stdout.write(`${usage()}\n`);
+    return 0;
+  }
+  if (group === "--version" || group === "-v" || group === "version") {
+    process.stdout.write(`${packageVersion()}\n`);
     return 0;
   }
   if (group !== "widget" || command === undefined) {

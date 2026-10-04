@@ -20,7 +20,10 @@
  *     graph fails the build, and ship declarations emitted by the TypeScript compiler, with workspace imports
  *     rewritten to the copies shipped beside them;
  *   - the CLI ships its reference templates under `templates/` and the dev hosts' browser modules as self-contained
- *     bundles under `runtime/`, where `packages/widget-cli/src/package-assets.ts` looks for them first.
+ *     bundles under `runtime/`, where `packages/widget-cli/src/package-assets.ts` looks for them first; the lists of
+ *     both are imported from that file, so the CLI and its package cannot disagree about them;
+ *   - third-party code a bundle inlines (React and the libraries the dev hosts' runtimes render with) is listed, with
+ *     its licence text, in `THIRD_PARTY_NOTICES.md`.
  *
  * The generated `package.json` holds no `workspace:` specifier, no lifecycle script and no `private` flag, and the
  * build refuses to finish if a bundle imports something its owning workspace package does not declare.
@@ -31,17 +34,13 @@ import { builtinModules } from "node:module";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { BROWSER_RUNTIME_SOURCES, REFERENCE_APPS, skippedFromReference } from "../packages/widget-cli/src/package-assets.ts";
+
 export const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /** The repository these packages are published from; npm provenance checks the package's `repository` against it. */
 const REPOSITORY_URL = "git+https://github.com/digitopvn/clarkcant.git";
 const HOMEPAGE = "https://github.com/digitopvn/clarkcant/blob/main/docs/widget-development.md";
-
-/** The reference apps `clark widget init` copies; see `packages/widget-cli/src/reference-templates.ts`. */
-const REFERENCE_APPS = ["text-editor", "image-generator", "media-render", "connected-app"];
-
-/** A reference app's own tests and readmes describe that app, not the package a template starts; the copier skips them. */
-const TEMPLATE_SKIPPED = new Set(["test", "dist", "node_modules", "README.md", "README.vi.md"]);
 
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -124,6 +123,95 @@ export function rewriteDeclarationSpecifiers(text, fileFromTypesRoot, resolveWor
     rewritten = `${rewritten.slice(0, start)}${replacement}${rewritten.slice(end)}`;
   }
   return { text: rewritten, bare: [...bare] };
+}
+
+/**
+ * The installed package a bundled input belongs to: `node_modules/.pnpm/react@19.2.0/node_modules/react/index.js` is
+ * `{ name: "react", dir: "node_modules/.pnpm/react@19.2.0/node_modules/react" }`. Undefined for the workspace's own
+ * sources and for esbuild's virtual modules. `input` is an esbuild metafile path, relative and `/`-separated.
+ */
+export function installedPackageOf(input) {
+  if (input.includes(":")) return undefined;
+  const marker = "node_modules/";
+  const at = input.lastIndexOf(marker);
+  if (at === -1) return undefined;
+  const rest = input.slice(at + marker.length).split("/");
+  const nameParts = rest[0]?.startsWith("@") ? rest.slice(0, 2) : rest.slice(0, 1);
+  if (nameParts.length === 0 || nameParts.some((part) => part === "" || part === undefined) || rest.length <= nameParts.length) return undefined;
+  const name = nameParts.join("/");
+  return { name, dir: `${input.slice(0, at + marker.length)}${name}` };
+}
+
+/**
+ * The notices file for the third-party packages a bundle inlines: each one's name, version and licence, followed by
+ * its licence text. `packages` is `{ name, version, license, text }` with `text` possibly undefined.
+ */
+export function thirdPartyNotices(packageName, packages) {
+  const sorted = [...packages].sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
+  const lines = [
+    "# Third-party notices",
+    "",
+    `${packageName} bundles code from the packages below. Each is listed with its licence as its own package declares it.`,
+    "",
+  ];
+  for (const pkg of sorted) {
+    lines.push(`## ${pkg.name}@${pkg.version}`, "", `License: ${pkg.license}`, "");
+    if (pkg.text === undefined) continue;
+    // A fence longer than any backtick run in the text, so a licence that quotes code cannot end it early.
+    const fence = "`".repeat(Math.max(3, ...[...pkg.text.matchAll(/`+/g)].map((run) => run[0].length + 1)));
+    lines.push(`${fence}text`, pkg.text.trim(), fence, "");
+  }
+  return lines.join("\n");
+}
+
+/** Read the name, version, licence and licence text of each installed package the metafiles' inputs come from. */
+function bundledPackages(metafiles) {
+  const byDir = new Map();
+  for (const metafile of metafiles) {
+    for (const input of Object.keys(metafile.inputs)) {
+      const found = installedPackageOf(input);
+      if (found !== undefined) byDir.set(found.dir, found);
+    }
+  }
+  const packages = [];
+  for (const { dir, name } of byDir.values()) {
+    const full = resolve(repoRoot, dir);
+    const manifest = JSON.parse(readFileSync(join(full, "package.json"), "utf8"));
+    const licenseFile = readdirSync(full).find((file) => /^(?:licen[cs]e|copying)(?:[.-].*)?$/i.test(file));
+    const text = licenseFile === undefined ? undefined : readFileSync(join(full, licenseFile), "utf8");
+    const license = typeof manifest.license === "string" ? manifest.license : manifest.license?.type;
+    if (typeof license !== "string" && text === undefined) {
+      throw new Error(`${name} is bundled, but declares no licence and ships no licence file, so it cannot be redistributed`);
+    }
+    packages.push({ name: manifest.name ?? name, version: String(manifest.version), license: license ?? "see the licence text", text });
+  }
+  return packages;
+}
+
+/**
+ * The workspace package directories (repository-relative, `/`-separated) whose sources the bundles inline: what a
+ * change must touch to change the published packages, which CI's path gate for the smoke is checked against. A
+ * bundled source outside every workspace package is listed as itself, so the gate check fails for it rather than
+ * missing it.
+ */
+function bundledWorkspaceDirs(metafiles, workspace) {
+  const dirs = new Set();
+  for (const metafile of metafiles) {
+    for (const input of Object.keys(metafile.inputs)) {
+      if (input.includes(":") || installedPackageOf(input) !== undefined) continue;
+      const owner = owningPackage(workspace, resolve(repoRoot, input));
+      dirs.add(owner === undefined ? input : relative(repoRoot, owner.dir).split(sep).join("/"));
+    }
+  }
+  return [...dirs].sort();
+}
+
+/** Write `THIRD_PARTY_NOTICES.md` into `stage` when its bundles inline third-party code; returns whether it did. */
+function writeNotices(stage, packageName, metafiles) {
+  const packages = bundledPackages(metafiles);
+  if (packages.length === 0) return false;
+  writeFileSync(join(stage, "THIRD_PARTY_NOTICES.md"), thirdPartyNotices(packageName, packages));
+  return true;
 }
 
 /* ------------------------------------------------------------------ workspace */
@@ -324,7 +412,6 @@ function commonFields(manifest, directory) {
     homepage: HOMEPAGE,
     repository: { type: "git", url: REPOSITORY_URL, directory },
     bugs: { url: "https://github.com/digitopvn/clarkcant/issues" },
-    engines: { node: ">=22.19.0" },
     // The scoped packages are public, and a release from CI attests where it was built.
     publishConfig: { access: "public", provenance: true },
   };
@@ -378,8 +465,10 @@ async function buildSdk({ esbuild, workspace, outRoot }) {
       ].join("\n"),
     ),
   );
+  const notices = writeNotices(stage, pkg.manifest.name, [result.metafile]);
   writePackageJson(stage, {
     ...commonFields(pkg.manifest, "packages/widget-sdk"),
+    // No `engines`: a browser library never runs in the Node that installs it.
     sideEffects: false,
     main: "./lib/index.js",
     types: typesOf("@clarkcant/widget-sdk"),
@@ -388,11 +477,13 @@ async function buildSdk({ esbuild, workspace, outRoot }) {
       "./dom": { types: typesOf("@clarkcant/widget-sdk/dom"), default: "./lib/dom.js" },
       "./package.json": "./package.json",
     },
-    files: ["lib/", "types/", "README.md", "LICENSE"],
+    // A consumer still on `moduleResolution: node10` ignores `exports`; this gives it the subpath's types too.
+    typesVersions: { "*": { dom: [typesOf("@clarkcant/widget-sdk/dom")] } },
+    files: ["lib/", "types/", "README.md", "LICENSE", ...(notices ? ["THIRD_PARTY_NOTICES.md"] : [])],
     keywords: ["clarkcant", "widget", "sdk"],
     dependencies,
   });
-  return stage;
+  return { stage, metafiles: [result.metafile] };
 }
 
 async function buildCli({ esbuild, workspace, outRoot }) {
@@ -419,13 +510,9 @@ async function buildCli({ esbuild, workspace, outRoot }) {
   const dependencies = resolveExternalDependencies(externalImports(node.metafile, workspace));
 
   // The dev hosts' browser modules: everything inlined, React included, so Vite serves them without resolving anything.
-  await esbuild.build({
+  const runtimes = await esbuild.build({
     absWorkingDir: repoRoot,
-    entryPoints: {
-      "dev-frame-runtime": join(pkg.dir, "src", "dev-frame-runtime.ts"),
-      "catalog-runtime": join(pkg.dir, "src", "catalog-runtime.tsx"),
-      "theme-dev-runtime": join(pkg.dir, "src", "theme-dev-runtime.tsx"),
-    },
+    entryPoints: Object.fromEntries(Object.entries(BROWSER_RUNTIME_SOURCES).map(([name, source]) => [name, join(pkg.dir, ...source.split("/"))])),
     outdir: join(stage, "runtime"),
     bundle: true,
     format: "esm",
@@ -434,6 +521,7 @@ async function buildCli({ esbuild, workspace, outRoot }) {
     jsx: "automatic",
     minify: true,
     define: { "process.env.NODE_ENV": '"production"' },
+    metafile: true,
     logLevel: "silent",
   });
 
@@ -442,13 +530,18 @@ async function buildCli({ esbuild, workspace, outRoot }) {
     if (!existsSync(join(source, "clarkcant.json"))) throw new Error(`the ${app} reference app is missing from ${source}`);
     cpSync(source, join(stage, "templates", app), {
       recursive: true,
+      // The same files `clark widget init` skips when it copies from the checkout, so neither layout ships them.
       filter: (path) => {
+        if (path === source) return true;
         const fromApp = relative(source, path).split(sep);
-        return !fromApp.includes("node_modules") && !(fromApp.length >= 1 && TEMPLATE_SKIPPED.has(fromApp[0] ?? ""));
+        if (fromApp.includes("node_modules")) return false;
+        const posixPath = fromApp.join("/");
+        return !skippedFromReference(posixPath) && !skippedFromReference(`${posixPath}/`);
       },
     });
   }
 
+  const notices = writeNotices(stage, pkg.manifest.name, [node.metafile, runtimes.metafile]);
   cpSync(join(repoRoot, "LICENSE"), join(stage, "LICENSE"));
   writeFileSync(
     join(stage, "README.md"),
@@ -471,14 +564,15 @@ async function buildCli({ esbuild, workspace, outRoot }) {
   );
   writePackageJson(stage, {
     ...commonFields(pkg.manifest, "packages/widget-cli"),
+    engines: { node: ">=22.19.0" },
     bin: { clark: "./lib/cli.js" },
     // The command is the supported surface; its modules are not a library API.
     exports: { "./package.json": "./package.json" },
-    files: ["lib/", "runtime/", "templates/", "README.md", "LICENSE"],
+    files: ["lib/", "runtime/", "templates/", "README.md", "LICENSE", ...(notices ? ["THIRD_PARTY_NOTICES.md"] : [])],
     keywords: ["clarkcant", "widget", "cli"],
     dependencies,
   });
-  return stage;
+  return { stage, metafiles: [node.metafile, runtimes.metafile] };
 }
 
 /** `pnpm pack` one staged package into `destination`, returning the archive's path. */
@@ -513,16 +607,19 @@ export async function buildWidgetTooling({ outRoot = DEFAULT_STAGE_ROOT, packInt
   const esbuild = await loadEsbuild();
   const workspace = readWorkspace();
   mkdirSync(outRoot, { recursive: true });
-  const sdk = await buildSdk({ esbuild, workspace, outRoot });
-  const cli = await buildCli({ esbuild, workspace, outRoot });
+  const sdkBuild = await buildSdk({ esbuild, workspace, outRoot });
+  const cliBuild = await buildCli({ esbuild, workspace, outRoot });
+  const sdk = sdkBuild.stage;
+  const cli = cliBuild.stage;
   const stages = { sdk, cli };
-  if (packInto === undefined) return { stages };
+  const bundledWorkspace = bundledWorkspaceDirs([...sdkBuild.metafiles, ...cliBuild.metafiles], workspace);
+  if (packInto === undefined) return { stages, bundledWorkspace };
   // Packed fresh: an archive left from an earlier build of the same version would otherwise be the one installed.
   for (const stage of [sdk, cli]) {
     const manifest = JSON.parse(readFileSync(join(stage, "package.json"), "utf8"));
     rmSync(join(packInto, `${manifest.name.replace(/^@/, "").replace("/", "-")}-${manifest.version}.tgz`), { force: true });
   }
-  return { stages, archives: { sdk: packStage(sdk, packInto), cli: packStage(cli, packInto) } };
+  return { stages, bundledWorkspace, archives: { sdk: packStage(sdk, packInto), cli: packStage(cli, packInto) } };
 }
 
 if (process.argv[1] !== undefined && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

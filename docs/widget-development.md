@@ -2737,15 +2737,27 @@ Inside this repository both packages stay `private` and resolve to their TypeScr
 package. `tools/build-widget-tooling.mjs` generates a separate package directory for each under
 `dist/widget-tooling/`: the code bundled with esbuild, the workspace packages inlined and every third-party import
 declared at the exact version the repository pins; the SDK's declarations; the CLI's templates (`templates/`) and the
-dev hosts' browser modules as self-contained bundles (`runtime/`). The generated `package.json` holds no `workspace:`
-specifier and no lifecycle script.
+dev hosts' browser modules as self-contained bundles (`runtime/`), which the installed dev hosts serve from disk as they
+are. The CLI's `THIRD_PARTY_NOTICES.md` lists the third-party code those bundles inline, with each licence. The
+generated `package.json` holds no `workspace:` specifier and no lifecycle script. `clark --version` prints the installed
+CLI's version.
 
-`.github/workflows/release-widget-tooling.yml` releases them: on a `widget-tooling-v<version>` tag naming
-`@clarkcant/widget-cli`'s version, or a manual run, it packs the archives once, runs the smoke against those archives on
-Ubuntu, Windows and macOS with Node 22.19 and 24, and publishes the same archives with
-`npm publish --provenance --access public`. A manual run without `publish` checked stops at `npm publish --dry-run`. The
-versions are the packages' own `package.json` versions, and one already on npm is skipped. The npm token is the
-`NPM_TOKEN` secret, passed only to the publish step.
+`.github/workflows/release-widget-tooling.yml` releases them. Every run packs the archives once and runs the smoke
+against those archives on Ubuntu, Windows and macOS with Node 22.19 and 24. Only a run from a `widget-tooling-v<version>`
+tag naming `@clarkcant/widget-cli`'s version publishes: the tag push itself, or a manual run from that tag with
+`publish` checked. Any other run, including a manual run from a branch with `publish` checked, stops at
+`npm publish --dry-run`.
+
+Before publishing anything, the workflow compares each package's version with npm. A version npm does not have is
+published with `npm publish --provenance --access public`. A version npm already has with the same archive integrity is
+skipped, so a rerun publishes only what is missing. A version npm already has with different contents fails the run
+before either package is published, so a changed package always needs a new version.
+
+The publish job runs in the `npm-release` GitHub environment. Its maintainers must restrict that environment's
+deployments to `widget-tooling-v*` tags and require a reviewer. npm trusted publishing (OIDC) is the intended
+credential: once each package's trusted publisher on npmjs.com names this repository and workflow, no npm secret is
+needed. A package's first version, published before a trusted publisher can be set on it, needs the environment's
+`NPM_TOKEN` secret, which reaches only the publish step.
 
 ### init
 
