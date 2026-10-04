@@ -46,7 +46,10 @@ export const CLARK_THEME: ThemeDocument = {
  * without the other would stamp `builtin:clark` on another theme's tokens, and a consumer that trusts the name — a
  * cache, a fallback notice, a widget told which theme it is drawn in — would be told something untrue.
  */
-export type CompileAppearanceInput = { reducedMotion?: boolean; customization?: AppearanceCustomization | undefined } & (
+/** Personal choices the compiler applies; a field left out keeps the theme's own (fonts were added after accent and density). */
+export type AppearanceCustomizationInput = Partial<AppearanceCustomization>;
+
+export type CompileAppearanceInput = { reducedMotion?: boolean; customization?: AppearanceCustomizationInput | undefined } & (
   | {
       /** The scheme to draw in, already resolved from the person's choice. */
       scheme: ResolvedColorScheme;
@@ -110,15 +113,34 @@ const COMPACT_SPACE = Object.fromEntries(
 );
 
 /** Personal colors remain data and are audited like the package's own colors. */
-export function customizedTheme(theme: ThemeDocument, customization?: AppearanceCustomization): ThemeDocument {
-  if (customization?.accent == null) return theme;
-  const colors = { ...theme.colors };
+export function customizedTheme(theme: ThemeDocument, customization?: AppearanceCustomizationInput): ThemeDocument {
+  const typed = customizedTypography(theme, customization);
+  if (customization?.accent == null) return typed;
+  const colors = { ...typed.colors };
   for (const scheme of RESOLVED_COLOR_SCHEMES) {
     const accent = customization.accent[scheme];
     const onAccent = contrastRatio("#000000", accent) >= contrastRatio("#FFFFFF", accent) ? "#000000" : "#FFFFFF";
     colors[scheme] = { ...colors[scheme], accent, onAccent };
   }
-  return { ...theme, colors };
+  return { ...typed, colors };
+}
+
+/**
+ * Personal typefaces over the theme's: one face for the interface (body and headings, so the page keeps one voice) and
+ * one for code. A profile from the same closed list a theme picks from, never a family name.
+ */
+function customizedTypography(theme: ThemeDocument, customization?: AppearanceCustomizationInput): ThemeDocument {
+  const font = customization?.font ?? null;
+  const codeFont = customization?.codeFont ?? null;
+  if (font === null && codeFont === null) return theme;
+  return {
+    ...theme,
+    typography: {
+      ...theme.typography,
+      ...(font === null ? {} : { body: font, display: font }),
+      ...(codeFont === null ? {} : { mono: codeFont }),
+    },
+  };
 }
 
 /** The contrast audit of a compiled snapshot: the same pairs and thresholds Clark Default is held to. */

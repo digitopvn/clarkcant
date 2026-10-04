@@ -1224,7 +1224,12 @@ Use segmented controls, toggles and swatches:
   draw the theme's own accent, explain the fallback, and keep the preference for recovery.
 - Motion: Full / Reduced / Follow system.
 - Density: Comfortable / Compact, compiled into shared spacing tokens while preserving type and layout minima.
-- Reset theme customization clears accent, density, motion and explicit Orb tuning through the existing preference
+- Interface font and code font: a row of specimens, each tile set in the face it names, with "Theme's" first (choosing
+  it clears the preference). The interface face covers body and headings together, so the page keeps one voice; the
+  code face covers code blocks, inline code, paths and tabular figures. Choices are closed profiles compiled by the
+  same snapshot compiler, never free family names; the host ships the extra faces (Inter, Geist, JetBrains Mono, Geist
+  Mono) itself, so no choice needs the network.
+- Reset theme customization clears accent, density, fonts, motion and explicit Orb tuning through the existing preference
   reset/Undo path. It preserves the selected theme, color scheme and language; each confirmed change is redrawn, and
   a failed write stops the remaining reset and reports the failure.
 - Window behavior: remember size, start mode.

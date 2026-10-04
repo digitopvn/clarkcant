@@ -39,6 +39,10 @@ const MONO_STACKS: Readonly<Record<ThemeMonoProfile, string>> = {
   // The stack every stylesheet falls back to beside `var(--cc-font-mono, …)`; one monospace stack everywhere.
   clark: "ui-monospace, SFMono-Regular, Menlo, monospace",
   typewriter: `"Courier New", Courier, ui-monospace, monospace`,
+  // Shipped by the host (self-hosted variable faces), with the system monospace stack behind each in case a host
+  // embeds this stylesheet without loading them.
+  jetbrains: `"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace`,
+  "geist-mono": `"Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace`,
 };
 
 const FONT_STACKS: Readonly<Record<ThemeFontProfile, string>> = {
@@ -47,7 +51,14 @@ const FONT_STACKS: Readonly<Record<ThemeFontProfile, string>> = {
   serif: `ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif`,
   rounded: `ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif`,
   mono: MONO_STACKS.clark,
+  inter: `"Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif`,
+  geist: `"Geist Variable", ui-sans-serif, system-ui, sans-serif`,
 };
+
+/** A body font profile's stack, for a surface that previews a choice before it is made (the font picker's samples). */
+export function fontStack(profile: ThemeFontProfile): string {
+  return FONT_STACKS[profile];
+}
 
 /** A font profile's stack, for a surface that sets a font outside CSS (the terminal's canvas). */
 export function monoFontStack(profile: ThemeMonoProfile): string {

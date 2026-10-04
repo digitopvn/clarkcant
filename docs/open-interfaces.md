@@ -439,8 +439,11 @@ window comes back into view. The shapes are `packages/contracts/src/themes.ts`.
 
 `GET /appearance?themeRef=<encoded reference>` resolves a checked theme for read-only preview, without writing any
 preference. Malformed references answer `400`; unavailable themes return the normal fallback. Personal appearance
-adds optional `customization: { accent, density }`: accent is `null` or `{ dark: "#RRGGBB", light: "#RRGGBB" }`, density
-is `comfortable | compact`. Write these through registered `experience.accent` and `experience.density` preferences.
+adds optional `customization: { accent, density, font, codeFont }`: accent is `null` or `{ dark: "#RRGGBB", light: "#RRGGBB" }`, density
+is `comfortable | compact`, font is `null` or a body font profile (`clark | system | serif | rounded | mono | inter | geist`,
+applied to body and headings), codeFont is `null` or a mono profile (`clark | typewriter | jetbrains | geist-mono`); `null`
+keeps the theme's own face. Write these through registered `experience.accent`, `experience.density`, `experience.font`
+and `experience.codeFont` preferences.
 Accent is audited in both schemes and for protected states before a write (including a theme choice under the saved
 accent); refusal is `409` and leaves storage unchanged. `customizationFallback` names why an installed update made a
 saved accent unsafe; the theme's accent is drawn and the saved preference is retained. The compiler owns these

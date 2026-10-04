@@ -444,8 +444,11 @@ nhìn lại. Hình dạng dữ liệu ở `packages/contracts/src/themes.ts`.
 
 `GET /appearance?themeRef=<tham chiếu đã encode>` phân giải chủ đề đã kiểm tra để preview chỉ đọc, không ghi
 preference. Tham chiếu sai hình dạng trả `400`; chủ đề không có trả fallback thường. Diện mạo cá nhân thêm
-`customization: { accent, density }` khi có: accent là `null` hoặc `{ dark: "#RRGGBB", light: "#RRGGBB" }`, density
-là `comfortable | compact`. Ghi qua preference đã đăng ký `experience.accent` và `experience.density`.
+`customization: { accent, density, font, codeFont }` khi có: accent là `null` hoặc `{ dark: "#RRGGBB", light: "#RRGGBB" }`, density
+là `comfortable | compact`, font là `null` hoặc một profile phông chữ thân (`clark | system | serif | rounded | mono | inter | geist`,
+áp dụng cho cả nội dung và tiêu đề), codeFont là `null` hoặc một profile phông mono (`clark | typewriter | jetbrains | geist-mono`);
+`null` giữ phông của chủ đề. Ghi qua preference đã đăng ký `experience.accent`, `experience.density`, `experience.font`
+và `experience.codeFont`.
 Màu nhấn phải qua kiểm tra cả hai chế độ và trạng thái bảo vệ trước khi ghi (cả khi chọn chủ đề với màu nhấn đã lưu);
 từ chối trả `409`, giữ nguyên dữ liệu. `customizationFallback` nói vì sao bản cập nhật đã cài làm màu nhấn cũ không
 an toàn; màu của chủ đề được vẽ và preference cũ vẫn giữ. Compiler sở hữu các lựa chọn này, nên renderer iframe và

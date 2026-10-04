@@ -21,6 +21,7 @@ import {
   themeContrastProblem,
 } from "../src/appearance.ts";
 import { requiredPairs } from "../src/contrast.ts";
+import { identityDeclarations } from "../src/identity.ts";
 import { appearanceToCss, themeStylesheet } from "../src/css.ts";
 import { DARK, LAYOUT, LIGHT, MOTION, RADIUS, SPACE, TYPE_SCALE } from "../src/tokens.ts";
 
@@ -61,6 +62,19 @@ describe("personal appearance", () => {
       expect(reduced.tokens.color).toEqual(personal.tokens.color);
       expect(appearanceSnapshotSchema.safeParse(reduced).success).toBe(true);
     }
+  });
+  it("sets a personal interface face on body and headings, and a code face on monospace, over any theme", () => {
+    const base = compileAppearance({ scheme: "dark" });
+    const personal = compileAppearance({ scheme: "dark", customization: { font: "inter", codeFont: "jetbrains" } });
+    expect(personal.tokens.identity.typography).toMatchObject({ body: "inter", display: "inter", mono: "jetbrains" });
+    expect(identityDeclarations(personal.tokens.identity)).toMatchObject({
+      "--cc-font-body": expect.stringMatching(/^"Inter Variable"/),
+      "--cc-font-mono": expect.stringMatching(/^"JetBrains Mono Variable"/),
+    });
+    expect(personal.tokens.color).toEqual(base.tokens.color);
+    expect(personal.revision).not.toBe(base.revision);
+    const themed = compileAppearance({ scheme: "dark", theme: PIXEL, themeRef: PIXEL_REF, customization: { codeFont: "geist-mono" } });
+    expect(themed.tokens.identity.typography).toEqual({ ...base.tokens.identity.typography, mono: "geist-mono" });
   });
   it("refuses personal colors that hide text or protected states", () => {
     expect(() => compileAppearance({ scheme: "dark", customization: {

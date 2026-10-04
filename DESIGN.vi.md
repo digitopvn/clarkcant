@@ -1206,7 +1206,12 @@ Dùng segmented controls, toggles và swatches:
 - Motion: Full / Reduced / Follow system.
 - Density: Comfortable / Compact, biên dịch thành token khoảng cách dùng chung, giữ nguyên chữ và kích thước bố cục
   tối thiểu.
-- Đặt lại tùy chỉnh theme xóa màu nhấn, mật độ, chuyển động và lựa chọn Orb riêng qua đường reset/Undo của preference
+- Phông chữ giao diện và phông chữ code: một hàng mẫu chữ, mỗi ô được vẽ bằng chính phông nó gọi tên, "Theo chủ đề"
+  đứng đầu (chọn nó là xóa preference). Phông giao diện áp dụng cho cả nội dung và tiêu đề để trang giữ một giọng;
+  phông code áp dụng cho khối code, code trong dòng, đường dẫn và số liệu căn cột. Lựa chọn là các profile đóng do
+  cùng trình biên dịch snapshot xử lý, không bao giờ là tên family tự do; host tự đóng gói các phông thêm (Inter,
+  Geist, JetBrains Mono, Geist Mono) nên không lựa chọn nào cần mạng.
+- Đặt lại tùy chỉnh theme xóa màu nhấn, mật độ, phông chữ, chuyển động và lựa chọn Orb riêng qua đường reset/Undo của preference
   hiện có. Giữ nguyên theme, chế độ màu và ngôn ngữ đã chọn; mỗi thay đổi được xác nhận sẽ được vẽ lại, còn lỗi ghi sẽ
   dừng phần đặt lại còn lại và báo lỗi.
 - Window behavior: remember size, start mode.

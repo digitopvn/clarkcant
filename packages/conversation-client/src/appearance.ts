@@ -2,6 +2,7 @@ import {
   BUILTIN_CLARK_THEME_REF,
   appearanceSnapshotSchema,
   appearanceCustomizationSchema,
+  isPersonalAppearance,
   checkThemeDocument,
   type ThemeContrastFailureView,
   type ThemeDocument,
@@ -194,7 +195,7 @@ export function applyAppearance(input: { theme: unknown; themeRef: string; custo
   const drawn = compiled ?? clarkStylesheet();
   writeTokens(drawn);
   writeThemeOrb(orbDefault);
-  const personal = customization.success && (customization.data.accent !== null || customization.data.density !== "comfortable") ? customization.data : undefined;
+  const personal = customization.success && isPersonalAppearance(customization.data) ? customization.data : undefined;
   cacheAppearance(problem === undefined && (input.theme !== null || personal !== undefined)
     ? { theme: input.theme, themeRef: input.themeRef, ...(personal === undefined ? {} : { customization: personal }) } : undefined);
   return problem === undefined && compiled !== undefined
