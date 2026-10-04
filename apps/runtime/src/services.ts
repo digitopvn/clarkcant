@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-import { type Instant, type VoiceCapabilities, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
+import { type Instant, type TurnOrigin, type VoiceCapabilities, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
 import {
   type ConductorDeps,
   type WidgetDeps,
@@ -195,7 +195,8 @@ export interface NodeServices {
   turnControl?: {
     running(): string[];
     interrupt(conversationId: string): boolean;
-    steer(conversationId: string, text: string): Promise<boolean>;
+    /** Answers false, without adding it, when the message's origin differs from the running turn's (absent is the person). */
+    steer(conversationId: string, text: string, origin?: TurnOrigin): Promise<boolean>;
     /** Runs one request in a worker of its own, answering with what it said. Honours `input.signal`. */
     runInBackground(input: BackgroundRunInput): Promise<string>;
     /** How long the conversation's running turn has gone on, when the control can tell. */

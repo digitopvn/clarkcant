@@ -12,6 +12,7 @@ import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { PackageReach, readReach } from "./package-reach.tsx";
+import { askedByKey } from "./turn-origin-words.ts";
 import { UnreadListingFieldsNote, readUnreadFields } from "./unread-listing-fields.tsx";
 import { MESSAGES_VI, type MessageKey } from "./i18n/messages.ts";
 
@@ -802,6 +803,10 @@ export function ApprovalCardBlock({
   const decision = typeof block.decision === "string" ? block.decision : "pending";
   const approvalId = typeof block.approvalId === "string" ? block.approvalId : "";
   const payload = typeof block.payload === "string" ? block.payload : undefined;
+  // Who asked, said only when it was not the person: a card the person caused needs no attribution, and one an AI
+  // client or a script caused is exactly the card where knowing that matters.
+  const origin = typeof block.origin === "string" && block.origin !== "person" ? block.origin : undefined;
+  const askedBy = askedByKey(origin);
   const deciding = actions?.decidingApprovalId === approvalId && approvalId !== "";
   const decided = approvalId !== "" && actions?.decidedApprovals?.includes(approvalId) === true;
   const denied = decided && actions?.deniedApprovals?.includes(approvalId) === true;
@@ -817,6 +822,11 @@ export function ApprovalCardBlock({
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{description}</p>
+        {askedBy === undefined ? null : (
+          <p className="cc-freshness" style={{ margin: 0 }} data-approval-origin={origin}>
+            {t(askedBy)}
+          </p>
+        )}
         {payload !== undefined && (
           <CodeBlock
             code={commandOf(payload) ?? payload}

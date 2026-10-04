@@ -300,6 +300,15 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.control.rules.heading": "Quy tắc theo loại việc",
   "settings.control.rules.intro": "Mặc định là theo mức ở trên. Đặt riêng ở đây thì quy tắc thắng, và “Từ chối” luôn thắng ở mọi mức.",
   "settings.control.rules.default": "Theo mức",
+  "settings.control.machineTurns.heading": "Yêu cầu từ chương trình khác",
+  "settings.control.machineTurns.intro":
+    "Một ứng dụng AI qua MCP, một relay, hoặc một script dùng CLI hay API cũng có thể nhắn cho Clark. Mặc định Clark xử lý như tin nhắn bạn tự gõ, và ghi lại ai đã yêu cầu. Lưu ý: chương trình nào giữ token của node này vẫn có thể đổi cài đặt này, hoặc gọi thẳng HTTP API mà xưng là bạn.",
+  "settings.control.machineTurns.label": "Khi một chương trình nhắn",
+  "settings.control.machineTurns.asPerson.label": "Như tôi",
+  "settings.control.machineTurns.asPerson.note": "Theo đúng chính sách như tin nhắn của bạn.",
+  "settings.control.machineTurns.ask.label": "Hỏi tôi trước",
+  "settings.control.machineTurns.ask.note":
+    "Hỏi trước khi ghi ra ngoài máy này, xoá, chi tiền, gửi tin, hoặc dùng camera hay micro.",
   "settings.control.background.heading": "Việc nền cùng lúc",
   "settings.control.background.intro": "Số việc nền node chạy song song. Việc nhắn thêm khi đã đủ sẽ xếp hàng (tối đa 10) và tự chạy khi có chỗ; cuộc trò chuyện chính không bao giờ bị tính vào đây.",
   "settings.control.background.label": "Tối đa",
@@ -803,6 +812,15 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.control.rules.heading": "Rules by kind of work",
   "settings.control.rules.intro": "Defaults to the level above. Set individually here and the rule wins, and “Deny” always wins at every level.",
   "settings.control.rules.default": "Follow level",
+  "settings.control.machineTurns.heading": "Requests from other programs",
+  "settings.control.machineTurns.intro":
+    "An AI client over MCP, a relay, or a script using the CLI or API can message Clark too. By default Clark treats it like a message you typed, and records who asked. Note: a program holding this node's token can still change this setting, or call the HTTP API directly as you.",
+  "settings.control.machineTurns.label": "When a program asks",
+  "settings.control.machineTurns.asPerson.label": "Same as me",
+  "settings.control.machineTurns.asPerson.note": "Follow the same policy as your own messages.",
+  "settings.control.machineTurns.ask.label": "Ask me first",
+  "settings.control.machineTurns.ask.note":
+    "Ask before writing outside this machine, deleting, spending, sending, or using the camera or microphone.",
   "settings.control.background.heading": "Background work at once",
   "settings.control.background.intro": "How many background requests the node runs in parallel. More requests wait in a queue (up to 10) and start when a slot frees; the main conversation is never counted here.",
   "settings.control.background.label": "At most",

@@ -221,6 +221,10 @@ export const executionGuardrailsSchema = z.object({
 });
 export type ExecutionGuardrails = z.infer<typeof executionGuardrailsSchema>;
 
+/** How the policy treats a turn a program asked for on a machine surface (`ExecutionPolicyConfig.machineTurns`). */
+export const machineTurnsPolicySchema = z.enum(["as-person", "ask"]);
+export type MachineTurnsPolicy = z.infer<typeof machineTurnsPolicySchema>;
+
 /**
  * The one execution policy.
  *
@@ -240,6 +244,14 @@ export const executionPolicyConfigSchema = z.object({
   prohibition: executionProhibitionSchema,
   rules: executionRulesPreferenceSchema,
   guardrails: executionGuardrailsSchema,
+  /**
+   * How a turn asked for by a program on one of the node's machine surfaces (MCP, the WebSocket relay, the HTTP API)
+   * is treated. Absent or `as-person` — the default — decides it exactly as the person's own turn. `ask` is the person's
+   * opt-in to stricter handling: an external-write, destructive, financial, communication or media-capture effect such a
+   * turn asks for waits for the person, in every mode and above an "execute" rule. A prohibition or a deny rule still
+   * refuses first.
+   */
+  machineTurns: machineTurnsPolicySchema.optional(),
 });
 export type ExecutionPolicyConfig = z.infer<typeof executionPolicyConfigSchema>;
 
@@ -309,8 +321,11 @@ export function parseExecutionPolicyConfig(value: unknown): ExecutionPolicyConfi
   const classes = Array.isArray(guardrailSource.classes)
     ? guardrailSource.classes.filter((entry) => guardClassSchema.safeParse(entry).success)
     : [...defaults.guardrails.classes];
+  // Only the opt-in is kept: absent and `as-person` mean the same, so a policy that never chose stays as it was stored.
+  const machineTurns = machineTurnsPolicySchema.safeParse(source.machineTurns);
 
   return {
+    ...(machineTurns.success && machineTurns.data === "ask" ? { machineTurns: "ask" as const } : {}),
     mode: mode.success ? mode.data : defaults.mode,
     prohibition: prohibition.success ? prohibition.data : defaults.prohibition,
     rules: rules ?? [...defaults.rules],
@@ -651,6 +666,14 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: [],
     schema: executionRulesPreferenceSchema,
+  },
+  // A view of `execution.policy`'s `machineTurns`, like the two above: written and read through the one policy.
+  "execution.machineTurns": {
+    key: "execution.machineTurns",
+    scope: "global",
+    applies: "immediate",
+    default: "as-person",
+    schema: machineTurnsPolicySchema,
   },
   "execution.policy": {
     key: "execution.policy",

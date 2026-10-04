@@ -12,6 +12,7 @@ import {
 } from "./directory.ts";
 import { facetKindSchema } from "./install.ts";
 import { instantSchema, platformSchema } from "./primitives.ts";
+import { turnOriginSchema } from "./turn-origin.ts";
 import { widgetSnapshotSchema } from "./widgets.ts";
 
 /**
@@ -444,6 +445,12 @@ export const approvalCardBlockSchema = z.strictObject({
   decider: z.literal("user"),
   decision: z.enum(["pending", "granted", "denied", "expired"]),
   decidedAt: instantSchema.optional(),
+  /**
+   * Who asked for the turn that wants this, as the node recorded it when it accepted the message. The card names it
+   * when it is not the person, so an approval asked for by an AI client over MCP says so. Absent on cards made before
+   * it was recorded and on cards no turn asked for.
+   */
+  origin: turnOriginSchema.optional(),
 });
 
 export const credentialCardBlockSchema = z.strictObject({
@@ -899,6 +906,13 @@ export const messageRecordSchema = z.strictObject({
    * act on — reads only messages that carry it.
    */
   surface: messageSurfaceSchema.optional(),
+  /**
+   * Who asked, on a user message: the person, an AI client over MCP, a program on the relay or the HTTP API, an
+   * automation, or a paired peer (`TurnOrigin`). Set by the node that accepted it, from the surface mark its own
+   * relays set and the code path that took the message — never from a body. Absent on messages stored before it was
+   * recorded.
+   */
+  origin: turnOriginSchema.optional(),
 });
 export type MessageRecord = z.infer<typeof messageRecordSchema>;
 

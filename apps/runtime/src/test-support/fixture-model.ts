@@ -2,6 +2,7 @@ import {
   type CapabilityRef,
   type Instant,
   type MessageBlock,
+  type TurnOrigin,
   advanceEffect,
   instantSchema,
   nowInstant,
@@ -343,6 +344,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     channel?: "voice" | "chat";
     note?: string;
     data?: string;
+    origin?: TurnOrigin;
   }): Promise<{ block: MessageBlock; text: string } | undefined> => {
     /*
      * A press of an `agent` action button, answered.
@@ -685,7 +687,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       const search = deps.wiring.search();
       const projects = deps.wiring.projects();
       if (command === undefined || search === undefined || projects === undefined) return undefined;
-      const tool = createNodeTools({ search, projects, command }).find((entry) => entry.name === "run_command");
+      const tool = createNodeTools({ search, projects, command, origin: () => input.origin }).find((entry) => entry.name === "run_command");
       if (tool === undefined) return undefined;
 
       const answer = await tool.execute({
@@ -748,6 +750,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         search,
         projects,
         command,
+        origin: () => input.origin,
         terminals: {
           registry: deps.services().terminals,
           newId: deps.services().conductor.newId,
@@ -2231,6 +2234,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         }),
         conversationId: input.conversationId,
         channel: () => input.channel ?? "chat",
+        origin: () => input.origin,
       });
       const answer = await tool.execute(
         tilesFrom === null
@@ -2261,6 +2265,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         deps: () => capabilityInvokeDeps(deps.services()),
         conversationId: input.conversationId,
         channel: () => input.channel ?? "chat",
+        origin: () => input.origin,
       });
       const answer = await tool.execute(
         renamed === null
@@ -2913,6 +2918,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         deps: () => capabilityInvokeDeps(deps.services()),
         conversationId: input.conversationId,
         channel: () => input.channel ?? "chat",
+        origin: () => input.origin,
         widgets: () => deps.services(),
       });
       const answer = await tool.execute({ action: "invoke", ref: IMAGE_GENERATE, args: { prompt: (imagined[1] ?? "").trim() } });
@@ -2934,6 +2940,7 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         deps: () => capabilityInvokeDeps(deps.services()),
         conversationId: input.conversationId,
         channel: () => input.channel ?? "chat",
+        origin: () => input.origin,
         widgets: () => deps.services(),
       });
       const answer = await tool.execute(

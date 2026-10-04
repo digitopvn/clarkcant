@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
+import { turnOriginSchema } from "./turn-origin.ts";
 
 /**
  * Task and run lifecycle.
@@ -320,6 +321,11 @@ export const intentOriginSchema = z.discriminatedUnion("kind", [
      * the dispatcher uses this list and never reads sites back out of the goal's text.
      */
     sites: z.array(z.string().min(1).max(300)).min(1).max(8).optional(),
+    /**
+     * Who asked for the turn that started this task (`TurnOrigin`): the person, or a program on one of the node's
+     * machine surfaces. Absent on tasks created before it was recorded, which are read as the person's.
+     */
+    turnOrigin: turnOriginSchema.optional(),
   }),
   /** An automation the person set up earlier matched something that happened. */
   z.strictObject({

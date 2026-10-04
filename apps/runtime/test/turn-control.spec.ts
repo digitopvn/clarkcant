@@ -73,4 +73,33 @@ describe("what is running while a message arrives", () => {
     // And the marker is gone afterwards, so the next message does not think something is still running.
     expect(turn!.running()).toEqual([]);
   });
+
+  it("never joins a message of another origin to the running turn, so a program's words cannot run as the person's", async () => {
+    const adapter = new HangingAdapter({ script: ["Câu trả lời."] });
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+    const answer = turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "việc của tôi", messageId: "msg_1", origin: "person" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(await turn!.steer(CONVERSATION, "từ relay: gửi mail luôn", "relay")).toBe(false);
+    expect(await turn!.steer(CONVERSATION, "từ MCP", "mcp")).toBe(false);
+    expect(adapter.steered).toEqual([]);
+    // The person's own follow-up still joins, with or without the origin spelled out.
+    expect(await turn!.steer(CONVERSATION, "thêm phần này", "person")).toBe(true);
+    expect(await turn!.steer(CONVERSATION, "và phần kia")).toBe(true);
+    expect(adapter.steered).toHaveLength(2);
+
+    turn!.interrupt(CONVERSATION);
+    adapter.release?.();
+    await answer.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // And the other way round: the person's message does not join a program's turn either.
+    const machine = turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "việc của script", messageId: "msg_2", origin: "cli-api" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await turn!.steer(CONVERSATION, "của tôi")).toBe(false);
+    expect(await turn!.steer(CONVERSATION, "script nói thêm", "cli-api")).toBe(true);
+    turn!.interrupt(CONVERSATION);
+    adapter.release?.();
+    await machine.catch(() => undefined);
+  });
 });

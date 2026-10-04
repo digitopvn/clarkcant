@@ -20,6 +20,7 @@ import {
   decideApproval,
   decideExecution,
   executionIntentOf,
+  turnOriginOfIntent,
   getCapability,
   readExecutionPolicy,
   recordEffectExecution,
@@ -658,6 +659,8 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       }
     }
     const intent = executionIntentOf(task.origin);
+    // Who asked for this task — a turn's origin, an automation, a peer — for the activity record of what it ran.
+    const askedBy = turnOriginOfIntent(task.origin);
     /** How the gate below let a browser task on; undefined when it never decided, which a browser task is refused for. */
     let admission: TaskBrowserAdmission | undefined;
 
@@ -769,6 +772,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           category: descriptor.effectCategory,
           operationDigest,
           description: `dispatch ${job.capabilityRef} for task ${job.taskId}`,
+          ...(askedBy === undefined ? {} : { origin: askedBy }),
         });
       }
     }

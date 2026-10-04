@@ -22,6 +22,7 @@ import {
   type GuardrailConstraint,
   type InboxResponse,
   type Instant,
+  type TurnOrigin,
 } from "@clarkcant/contracts";
 import type { ModelTurnEvent } from "@clarkcant/core";
 import { getAttachment } from "@clarkcant/storage";
@@ -245,6 +246,11 @@ export function createNodeTools(input: {
    * as the execution policy decides; the key stays bound to the origin the person entered it for.
    */
   mapTiles?: MapTilesToolDeps;
+  /**
+   * Who asked for the turn these tools run in (`TurnOrigin`), read at call time. Given to the command and terminal
+   * tools, which share the node-wide command deps and so cannot carry a turn's value of their own.
+   */
+  origin?: () => TurnOrigin | undefined;
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -262,6 +268,7 @@ export function createNodeTools(input: {
             // and this is the record of how far an external effect got, which is the question recovery asks.
             ...(input.effectAudit === undefined ? {} : { effectAudit: input.effectAudit }),
             ...(input.resolveFolder === undefined ? {} : { resolveFolder: input.resolveFolder }),
+            ...(input.origin === undefined ? {} : { origin: input.origin }),
           }),
         ]),
     ...(input.command === undefined || input.terminals === undefined
@@ -270,6 +277,7 @@ export function createNodeTools(input: {
           ...input.command,
           ...(input.effectAudit === undefined ? {} : { effectAudit: input.effectAudit }),
           ...(input.resolveFolder === undefined ? {} : { resolveFolder: input.resolveFolder }),
+          ...(input.origin === undefined ? {} : { origin: input.origin }),
           terminals: input.terminals.registry,
           newCardId: input.terminals.newId,
           ...(input.terminals.conversationId === undefined ? {} : { conversationId: input.terminals.conversationId }),
@@ -756,7 +764,15 @@ export interface CommandToolDeps {
     summary: string;
     outcome: "done" | "failed" | "stopped" | "refused";
     ref?: string;
+    /** Who asked for the turn the command came from, when the turn recorded it. */
+    origin?: TurnOrigin;
   }) => void;
+  /**
+   * Who asked for the turn this tool is running in (`TurnOrigin`), read at call time like the turn's channel. Handed to
+   * the execution policy as part of the intent, and written on the approval card, the effect ledger and the trail.
+   * Absent is the person.
+   */
+  origin?: () => TurnOrigin | undefined;
   /**
    * The effect ledger, kept from main.
    *
@@ -1046,6 +1062,8 @@ export function createRunCommandTool(
       const why = typeof params.why === "string" && params.why.trim() !== "" ? params.why.trim() : "";
       const reason = because ?? "";
       const digest = commandDigest(command, envelope.cwd);
+      // Who asked for this turn, read now: the tool list outlives the message it was built for.
+      const origin = input.origin?.();
 
       /*
        * The command path goes through the canonical resolver, like the widget path and the install route.
@@ -1070,7 +1088,7 @@ export function createRunCommandTool(
          * lifts nothing on its own: a node-wide prohibition, a rule the user wrote, and every hard consent
          * boundary are all read before the intent matters, and the preflight has already run.
          */
-        intent: { kind: "interactive" },
+        intent: origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin },
       });
 
       if (decision.kind === "deny") {
@@ -1101,7 +1119,7 @@ export function createRunCommandTool(
         if (judgment.kind === "refuse") {
           // A refusal is an effect too: it is the thing a person asks about later, when work they expected did not
           // happen and nobody can remember why.
-          input.audit?.({ summary: judgment.text, outcome: "refused" });
+          input.audit?.({ summary: judgment.text, outcome: "refused", ...(origin === undefined ? {} : { origin }) });
           return { text: judgment.text };
         }
         if (judgment.kind === "ask") {
@@ -1176,6 +1194,7 @@ export function createRunCommandTool(
             expiresAt: approval.expiresAt,
             decider: approval.decider,
             decision: approval.decision,
+            ...(origin === undefined ? {} : { origin }),
             payload,
           },
         };
@@ -1230,6 +1249,7 @@ export function createRunCommandTool(
           operationDigest: commandDigest(guarded.command, guarded.cwd),
           ...(effectAudit.conversationId === undefined ? {} : { conversationId: effectAudit.conversationId }),
           description: `${guarded.command} — ${guarded.cwd}`,
+          ...(origin === undefined ? {} : { origin }),
         });
       }
 
@@ -1256,6 +1276,7 @@ export function createRunCommandTool(
         outcome:
           ran.outcome.stopped === true ? "stopped" : ran.outcome.exitCode === 0 && !ran.outcome.timedOut ? "done" : "failed",
         ref: operationId,
+        ...(origin === undefined ? {} : { origin }),
       });
 
       return {

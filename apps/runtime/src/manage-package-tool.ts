@@ -1,4 +1,4 @@
-import { nowInstant } from "@clarkcant/contracts";
+import { type TurnOrigin, nowInstant } from "@clarkcant/contracts";
 import { listInstalledPackages, listRestorablePackages } from "@clarkcant/core";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
@@ -23,6 +23,8 @@ export interface ManagePackageToolDeps {
   conversationId?: string;
   /** Which surface the message came in on, read at call time: the tool list outlives any one message. */
   channel: () => "voice" | "chat";
+  /** Who asked for the turn, read at call time like `channel`, and handed to the execution policy. Absent is the person. */
+  origin?: () => TurnOrigin | undefined;
 }
 
 const ACTIONS = ["list", "uninstall", "restore", "rollback"] as const;
@@ -104,7 +106,9 @@ export function createManagePackageTool(deps: ManagePackageToolDeps): ToolDefini
       if (action === "list") return { text: describeList(deps.packages) };
       const packageId = typeof params.packageId === "string" ? params.packageId.trim() : "";
       if (packageId === "") return { text: "Cần packageId; gọi action list để lấy đúng id." };
+      const origin = deps.origin?.();
       const outcome = await changePackageAndConnection(deps.packages, deps.connections, {
+        ...(origin === undefined ? {} : { origin }),
         action: action as PackageChange,
         packageId,
         source: deps.channel() === "voice" ? "voice" : "agent",

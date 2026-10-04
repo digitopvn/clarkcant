@@ -20,6 +20,7 @@ import {
   type Instant,
   type MessageBlock,
   type Principal,
+  type TurnOrigin,
   type WidgetSemanticDoc,
   modelChangeNeedsGeneration,
   uiContextNote,
@@ -137,8 +138,11 @@ export interface ModelTurn {
   running: () => string[];
   /** Stops the running turn for a conversation, answering whether there was one. */
   interrupt: (conversationId: string) => boolean;
-  /** Adds a sentence to the running turn, answering whether there was one to add it to. */
-  steer: (conversationId: string, text: string) => Promise<boolean>;
+  /**
+   * Adds a sentence to the running turn, answering whether it was added. A message whose origin differs from the
+   * running turn's is never added (absent is the person).
+   */
+  steer: (conversationId: string, text: string, origin?: TurnOrigin) => Promise<boolean>;
   /**
    * Runs one request in a worker of its own, answering with what that worker said.
    *
@@ -225,6 +229,12 @@ interface Turn {
    * a typed message and then a spoken one must not keep reporting the first message's channel.
    */
   channel: "voice" | "chat";
+  /**
+   * Who asked for the message this turn is answering (`TurnOrigin`), on the same lifecycle as `channel`: a session that
+   * answers an AI client's turn and then the person's must not keep handing the first origin to its tools. Undefined is
+   * the person.
+   */
+  origin: TurnOrigin | undefined;
   /** Numbers the tool calls this turn made, so a start and an end can name the same widget. */
   toolSequence: number;
   unsubscribe: () => void;
@@ -679,6 +689,8 @@ export async function createModelTurn(options: {
     onEvent: () => ((event: ModelTurnEvent) => void) | undefined;
     /** See `Turn.channel`; read the same way and for the same reason. */
     channel: () => "voice" | "chat";
+    /** See `Turn.origin`; read the same way and for the same reason. */
+    origin: () => TurnOrigin | undefined;
   }) => readonly ToolDefinition[];
   /**
    * What was remembered, for the turn about to run.
@@ -762,6 +774,7 @@ export async function createModelTurn(options: {
       conversationId: turn.conversationId,
       onEvent: () => turn.onEvent,
       channel: () => turn.channel,
+      origin: () => turn.origin,
     }) ?? [];
   /*
    * The note about the screen for this turn, and the session's record of what it has now been told.
@@ -989,6 +1002,7 @@ export async function createModelTurn(options: {
       segments: [],
       onEvent: undefined,
       channel: "chat",
+      origin: undefined,
       toolSequence: 0,
       unsubscribe: () => {},
       abort: new AbortController(),
@@ -1136,10 +1150,15 @@ export async function createModelTurn(options: {
      *
      * What the adapter does with it is the adapter's business; the answer is what lets a caller decide what to do
      * when there was nothing to steer.
+     *
+     * Only a message from the same origin joins: a program's words steered into the person's turn would run as the
+     * person, past "Ask me first", and would be recorded as the person's. A message of another origin answers false,
+     * so the caller makes it a turn of its own with its own origin.
      */
-    steer: async (conversationId: string, text: string): Promise<boolean> => {
+    steer: async (conversationId: string, text: string, origin?: TurnOrigin): Promise<boolean> => {
       const turn = turns.get(conversationId);
       if (turn === undefined || !turn.inFlight || turn.sessionId === "") return false;
+      if ((origin ?? "person") !== (turn.origin ?? "person")) return false;
       await turn.preparing;
       // A Stop while it was being prepared ended the turn this was meant for.
       if (!turn.inFlight || turn.stopped) return false;
@@ -1265,6 +1284,7 @@ export async function createModelTurn(options: {
       turn.messageId = input.messageId;
       turn.onEvent = input.onEvent;
       turn.channel = input.channel ?? "chat";
+      turn.origin = input.origin;
       turn.toolSequence = 0;
       turn.abort = new AbortController();
       turn.stopped = false;

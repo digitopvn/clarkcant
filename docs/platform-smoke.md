@@ -124,6 +124,12 @@ media render package's service on a real engine" passes. The only tests that may
 tests, and only when the engine reports that it does not enforce limits; record which. On the Podman run,
 `CC_EXPECT_ROOTLESS_PODMAN=1` fails the suite instead when Podman does not report the limits enforced.
 
+The same run is the only check of the container's writable surface on these two systems: the probe expects `/run`,
+`/var/tmp` and `/dev` to be read-only, `/dev/shm` to be absent (Docker) or read-only (Podman), `/tmp` and the private
+folder to be the only writable mounts, and nothing written to `/tmp` to run. The media render test reads the engine's
+log driver for the running service and expects `none`. Podman machine reaches these flags (`--log-driver none`,
+`--read-only-tmpfs=false`) through its remote client, which CI does not exercise.
+
 Record in the PR or in this section: the operating system and its version, the engine and its version, and the verbose
 test output. A failure is a finding for its own change. Do not adjust the test to fit the machine.
 

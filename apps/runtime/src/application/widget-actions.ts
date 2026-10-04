@@ -5,6 +5,7 @@ import {
   type Instant,
   type ListItem,
   type WidgetInstance,
+  type TurnOrigin,
   type WorkflowRunReport,
   VIEW_STATE_WRITE_VARIANT,
   checkFormValues,
@@ -538,6 +539,7 @@ async function invokeCapabilityAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
   source: CapabilityInvokeSource,
+  origin?: TurnOrigin,
 ): Promise<WidgetActionResult> {
   const checked = checkInvokeAction(services.conductor, request);
   if (!checked.ok) return gateRefusal(checked);
@@ -565,6 +567,7 @@ async function invokeCapabilityAction(
         jobOrigin: { instanceId: request.instanceId, actionBindingId: request.actionBindingId, invocationId: request.invocationId },
         ...(limits.deadlineMs === undefined ? {} : { timeoutMs: limits.deadlineMs }),
         signal: admitted.controller.signal,
+        ...(origin === undefined ? {} : { origin }),
       },
     });
   } catch (cause) {
@@ -668,6 +671,7 @@ async function invokeAgentAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
   source: "click" | "voice",
+  origin: TurnOrigin = "person",
 ): Promise<WidgetActionResult> {
   const checked = checkBoundAction(services.conductor, request, "agent");
   if (!checked.ok) return gateRefusal(checked);
@@ -761,6 +765,9 @@ async function invokeAgentAction(
       note,
       ...(data === "" ? {} : { data }),
       channel: source === "voice" ? "voice" : "chat",
+      // The button's request is sent as the words of whoever pressed it: the person on their page or voice, or a
+      // program that relayed the press.
+      origin,
     });
     indexMessages(services.search, { conversationId: request.conversationId, messages: outcome.messages, at });
     const reply = outcome.messages
@@ -802,6 +809,7 @@ async function invokeWorkflowAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
   source: CapabilityInvokeSource,
+  origin?: TurnOrigin,
 ): Promise<WidgetActionResult> {
   const checked = checkBoundAction(services.conductor, request, "workflow");
   if (!checked.ok) return gateRefusal(checked);
@@ -834,6 +842,7 @@ async function invokeWorkflowAction(
               bindingGeneration: checked.binding.packageGeneration,
               timeoutMs: options.timeoutMs,
               signal: options.signal,
+              ...(origin === undefined ? {} : { origin }),
             },
           }),
         audit: (step, report) => {
@@ -894,6 +903,12 @@ export async function invokeWidgetAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
   source: "click" | "voice" | "agent" = "click",
+  /**
+   * Who pressed it (`TurnOrigin`), decided by the caller and never read from a request body: the route reads the
+   * gateway's surface mark (the page marks its own presses), voice is the person, and Clark's own press carries its
+   * turn's origin. Handed to the execution policy with a service call and to the turn an agent button starts.
+   */
+  origin?: TurnOrigin,
 ): Promise<WidgetActionResult> {
   // The guard main added at the route, kept where the invocation actually happens so both callers get it.
   if (!Number.isFinite(request.expectedRevision)) {
@@ -912,16 +927,16 @@ export async function invokeWidgetAction(
   // whose gate refuses it with the reason.
   const kind = getActionBinding(services.conductor, request.actionBindingId)?.proposal.kind;
   const capabilitySource: CapabilityInvokeSource = source === "voice" ? "voice" : source === "agent" ? "agent" : "widget";
-  if (kind === "invoke") return invokeCapabilityAction(services, request, capabilitySource);
+  if (kind === "invoke") return invokeCapabilityAction(services, request, capabilitySource, origin);
   if (kind === "agent") {
     // An agent button sends its request to Clark as the person's own message. Clark pressing one would put words in the
     // person's mouth and record Clark's choice as their click, so it is refused rather than relabelled.
     if (source === "agent") {
       return refusal("NOT_AUTHORIZED", "Clark cannot press a button that asks Clark: it would be sent as the person's own message. Nothing was sent.");
     }
-    return invokeAgentAction(services, request, source);
+    return invokeAgentAction(services, request, source, origin);
   }
-  if (kind === "workflow") return invokeWorkflowAction(services, request, capabilitySource);
+  if (kind === "workflow") return invokeWorkflowAction(services, request, capabilitySource, origin);
 
   // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take
   // instead of the next time the node starts.
