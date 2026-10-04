@@ -100,6 +100,12 @@ import { focusedSemanticView } from "./widget-semantic.ts";
  */
 const DEFAULT_HEARTBEAT_MS = 15_000;
 
+/**
+ * Hands a `widget-perform` to the page this voice session runs on. `true` when it went out on the open socket; `false`
+ * when the session had already closed, so nothing reached a frame and nothing can have run.
+ */
+export type VoiceFrameSink = (request: WidgetPerformRequest) => boolean;
+
 export interface VoiceGatewayOptions {
   server: Server;
   services: NodeServices;
@@ -168,7 +174,7 @@ export interface VoiceGatewayOptions {
     decision: "granted" | "denied";
     digest: string;
     /** Present when this page can run a `widget-perform`: an approved widget action is handed to its frame through it. */
-    onWidgetPerform?: (request: WidgetPerformRequest) => void;
+    onWidgetPerform?: VoiceFrameSink;
   }) => Promise<{ ok: boolean; message: string }>;
   /**
    * Answer a question the agent asked, through the same route a click uses.
@@ -227,7 +233,7 @@ export interface VoiceGatewayOptions {
      * performs are. Present only when the page said it runs the `widget-perform` version (`auth.widgetPerform`); absent,
      * nobody can ask a frame and an offered action is refused before anything is sent.
      */
-    onWidgetPerform?: (request: WidgetPerformRequest) => void;
+    onWidgetPerform?: VoiceFrameSink;
   }) => Promise<VoiceWidgetRun>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
@@ -430,7 +436,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     /** Whether the page said it can hand a `widget-perform` to a mounted frame and report back (the auth frame). */
     let performsWidgets = false;
     /** The `onWidgetPerform` a turn, a decided approval or a spoken press carries: present only when `performsWidgets`. */
-    const frameSink = (): { onWidgetPerform?: (request: WidgetPerformRequest) => void } =>
+    const frameSink = (): { onWidgetPerform?: VoiceFrameSink } =>
       performsWidgets ? { onWidgetPerform: (request) => send({ type: "widget-perform", request }) } : {};
     let adapter: VoiceProviderAdapter | undefined;
 
@@ -489,8 +495,11 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
      */
     let answerQueue: Promise<void> = Promise.resolve();
 
-    const send = (payload: unknown): void => {
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
+    /** Sends a frame to the page; `false` when the socket has closed and nothing went out. */
+    const send = (payload: unknown): boolean => {
+      if (ws.readyState !== ws.OPEN) return false;
+      ws.send(JSON.stringify(payload));
+      return true;
     };
 
     const deny = (code: string, message: string, extra: Record<string, unknown> = {}, closeCode = CLOSE_POLICY): void => {

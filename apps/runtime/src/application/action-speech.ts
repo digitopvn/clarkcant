@@ -1,3 +1,5 @@
+import { inertLine } from "./action-context.ts";
+
 /**
  * What voice says after a widget action the person asked for out loud, in the person's language.
  *
@@ -104,7 +106,12 @@ export function spokenActionRefusal(label: string, refusal: SpokenRefusal, local
  * The sentence voice says for an action that started in the background, started a package job, or waits on an approval
  * card. A job has only started: its widget follows the progress and the conversation says when it ended.
  */
-export function spokenActionWaiting(label: string, waiting: "background" | "job" | "approval", locale: SpeechLocale): string {
+export function spokenActionWaiting(label: string, waiting: "background" | "job" | "approval" | "approval-waiting", locale: SpeechLocale): string {
+  if (waiting === "approval-waiting") {
+    return locale === "vi"
+      ? `“${label}” vẫn đang chờ bạn duyệt trên thẻ đã có trong cuộc trò chuyện. Chưa có gì được gửi.`
+      : `“${label}” is still waiting for your approval on the card already in the conversation. Nothing was sent.`;
+  }
   if (waiting === "job") {
     return locale === "vi"
       ? `Đã bắt đầu “${label}”. Widget hiện tiến độ, và cuộc trò chuyện sẽ báo khi xong.`
@@ -118,4 +125,19 @@ export function spokenActionWaiting(label: string, waiting: "background" | "job"
   return locale === "vi"
     ? `“${label}” cần bạn duyệt trước. Tôi đã đặt thẻ duyệt trong cuộc trò chuyện.`
     : `“${label}” needs your approval first. I placed the approval card in the conversation.`;
+}
+
+/** The longest part of what a widget or its service answered that voice reads out. */
+export const SPOKEN_OUTPUT_MAX_CHARS = 400;
+
+/**
+ * The sentence voice says for an action that was done, in the person's language. What the widget or its service
+ * answered is read out as theirs, attributed and on one line, never as Clark's own words: the typed path labels the
+ * same output as the widget's data, and a widget must not be able to put a sentence in Clark's mouth.
+ */
+export function spokenActionDone(label: string, output: string | undefined, locale: SpeechLocale): string {
+  const done = locale === "vi" ? `Đã ${label}.` : `Done: ${label}.`;
+  const said = output === undefined ? "" : inertLine(output).replace(/\s+/gu, " ").trim().slice(0, SPOKEN_OUTPUT_MAX_CHARS);
+  if (said === "") return done;
+  return locale === "vi" ? `${done} Widget báo: “${said}”` : `${done} The widget says: “${said}”`;
 }

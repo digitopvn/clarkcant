@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 
-import { type VoiceCapabilities, type WidgetPerformRequest, describeAppIntent, voicePromptFor } from "@clarkcant/contracts";
+import { type VoiceCapabilities, describeAppIntent, voicePromptFor } from "@clarkcant/contracts";
 import { handleUserMessage, recordAppIntentEvent } from "@clarkcant/core";
 import { credentialNames, readCredential } from "@clarkcant/storage";
 import type { VoiceProviderAdapter } from "@clarkcant/voice-adapters";
@@ -23,7 +23,7 @@ import {
   invokeWidgetAction,
   widgetActionTarget,
 } from "../gateway.ts";
-import { spokenActionRefusal, spokenActionWaiting } from "../application/action-speech.ts";
+import { spokenActionDone, spokenActionRefusal, spokenActionWaiting } from "../application/action-speech.ts";
 import type { WidgetPerformer } from "../application/widget-actions.ts";
 import { carryOutSpokenStop } from "../application/stop-turn.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
@@ -36,6 +36,7 @@ import {
   type PendingVoiceInteraction,
   VOICE_ANSWER_NOTE,
   VOICE_CREDENTIAL_NAME,
+  type VoiceFrameSink,
   type VoiceGatewayOptions,
   attachVoiceGateway,
 } from "../voice-session.ts";
@@ -426,10 +427,15 @@ type SpokenWidgetActionInput = Parameters<NonNullable<VoiceGatewayOptions["widge
  * session's socket, and the dispatch waits for the page's report. One builder for a spoken press and an approval
  * decided by voice, so both hand an offered action over the same way.
  */
-function voicePerformer(services: NodeServices, onWidgetPerform: (request: WidgetPerformRequest) => void): WidgetPerformer {
+export function voicePerformer(services: NodeServices, onWidgetPerform: VoiceFrameSink): WidgetPerformer {
   return async (request) => {
     services.widgetPerforms.expect(request.performId);
-    onWidgetPerform(request);
+    if (!onWidgetPerform(request)) {
+      // The session closed before this went out (a press queued behind a long answer): nothing reached a frame, so this
+      // is "nobody to ask" with nothing sent, never an unknown outcome the inbox would ask about.
+      services.widgetPerforms.forget(request.performId);
+      return "no-surface";
+    }
     return services.widgetPerforms.wait(request.performId);
   };
 }
@@ -485,8 +491,9 @@ export async function spokenWidgetAction(
     // Spoken on the person's own voice surface, so it is the person who asked, as for a spoken turn.
     "person",
     // An offered action reaches the frame through this session's page, which reports back as a typed turn's page
-    // does: the same performer `decideApproval` builds, so a press and an approval are handed over one way.
-    onWidgetPerform === undefined ? {} : { perform: voicePerformer(services, onWidgetPerform) },
+    // does: the same performer `decideApproval` builds, so a press and an approval are handed over one way. The person
+    // asked for it themselves, and a card the policy asks for is placed in the conversation before this returns.
+    { askedBy: "person-voice", ...(onWidgetPerform === undefined ? {} : { perform: voicePerformer(services, onWidgetPerform) }) },
   );
 
   const locale = preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId);
@@ -501,12 +508,15 @@ export async function spokenWidgetAction(
     return { ok: true, instanceId, revision: target.revision, say: spokenActionWaiting(action.label, "job", locale) };
   }
   if (result.status === 202) {
-    // The policy asked. The card is in the conversation; saying "done" here would be claiming something that has
+    // The policy asked. The card is already in the conversation - placed by the dispatch before it answered, or waiting
+    // there from an earlier ask of the same operation - so this says so; saying "done" would claim something that has
     // not happened, and the person answers the card, not this sentence.
-    return { ok: true, instanceId, revision: target.revision, say: spokenActionWaiting(action.label, "approval", locale) };
+    const waiting = result.body.alreadyWaiting === true ? "approval-waiting" : "approval";
+    return { ok: true, instanceId, revision: target.revision, say: spokenActionWaiting(action.label, waiting, locale) };
   }
   const landedOn = typeof result.body.revision === "number" ? result.body.revision : target.revision;
-  // A service-backed action answers with what the service said, and that answer is what the person asked to hear.
-  const output = typeof result.body.output === "string" ? ` ${result.body.output.slice(0, 400)}` : "";
-  return { ok: true, instanceId, revision: landedOn, say: `Đã ${action.label}.${output}` };
+  // A service or a frame answers with what it did, and that answer is what the person asked to hear: read out as the
+  // widget's words, not Clark's.
+  const output = typeof result.body.output === "string" ? result.body.output : undefined;
+  return { ok: true, instanceId, revision: landedOn, say: spokenActionDone(action.label, output, locale) };
 }

@@ -274,6 +274,16 @@ export function inertContextText(text: string): string {
 }
 
 /**
+ * A widget's words on one line, unable to act as structure in the prompt or as markup in a sentence: brackets become
+ * their full-width forms and every control character or line separator becomes a space. Used for sentences that carry
+ * what a widget said, to the model or out loud.
+ */
+export function inertLine(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\[/gu, "［").replace(/\]/gu, "］").replace(/[\x00-\x1f\x7f\u2028\u2029\u0085]/gu, " ");
+}
+
+/**
  * The resolved context as the model is given it: a heading that says what it is, then one entry per reference, each
  * naming where its words came from. The caller sends it as the turn's data section, never inside the guidance note.
  */

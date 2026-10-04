@@ -26,7 +26,7 @@ import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { decideApprovalForNode } from "../src/routes/conversations.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createWidgetPerformAcks } from "../src/widget-perform-acks.ts";
-import { spokenWidgetAction } from "../src/bootstrap/voice-bootstrap.ts";
+import { spokenWidgetAction, voicePerformer } from "../src/bootstrap/voice-bootstrap.ts";
 import { buildWidgetSemantic, focusedSemanticView } from "../src/widget-semantic.ts";
 import { conversationOfferedActions, createPerformWidgetActionTool, placeWidget } from "../src/widget-perform-tool.ts";
 
@@ -154,7 +154,8 @@ async function perform(
     },
     options.source ?? "agent",
     options.origin,
-    options.perform === undefined ? {} : { perform: options.perform },
+    // As the perform tool calls it: a card the policy asks for goes into the turn's answer (`showCard` below).
+    { cardInTurn: true, ...(options.perform === undefined ? {} : { perform: options.perform }) },
   );
 }
 
@@ -702,14 +703,26 @@ describe("a spoken press of an offered action", () => {
     return { conversationId: conversationId as ConversationId, action: { ...offered, args }, focused };
   }
 
-  /** A voice session's page: the frame request goes out on the socket and the page reports back as told. */
-  function voicePage(answer: Awaited<ReturnType<WidgetPerformer>>) {
+  /**
+   * A voice session's page: the frame request goes out on the socket and the page reports back as told. A closed
+   * socket sends nothing and says so, as the session's sink does.
+   */
+  function voicePage(answer: Awaited<ReturnType<WidgetPerformer>>, open = true) {
     const sent: WidgetPerformRequest[] = [];
-    const onWidgetPerform = (request: WidgetPerformRequest) => {
+    const onWidgetPerform = (request: WidgetPerformRequest): boolean => {
+      if (!open) return false;
       sent.push(request);
       queueMicrotask(() => services.widgetPerforms.settle(request.performId, answer as never));
+      return true;
     };
     return { sent, onWidgetPerform };
+  }
+
+  /** The approval cards in the conversation, as the decision route and a spoken "yes" read them. */
+  function cardsInConversation(): { approvalId: string; operationDigest: string; payload: string }[] {
+    return rows<{ document: string }>("SELECT document FROM messages WHERE conversation_id = ? ORDER BY sequence", conversationId)
+      .flatMap((row) => (JSON.parse(row.document) as { blocks: { type: string }[] }).blocks)
+      .filter((block) => block.type === "approval-card") as never;
   }
 
   it("reaches the frame through the session's page, with the same ledger, audit and outcome as the typed path", async () => {
@@ -721,8 +734,19 @@ describe("a spoken press of an offered action", () => {
     expect(sent).toEqual([
       expect.objectContaining({ instanceId: placed.instanceId, actionBindingId: placed.bindingId, action: "format", input: { format: "percent" } }),
     ]);
-    expect(effects()).toEqual([expect.objectContaining({ capability_ref: `widget:${DEFINITION.id}#format`, state: "confirmed" })]);
-    expect(audits()).toEqual([expect.objectContaining({ outcome: "done" })]);
+    // The person pressed it by voice: the ledger and the audit say so, rather than that Clark chose it.
+    expect(effects()).toEqual([
+      expect.objectContaining({ capability_ref: `widget:${DEFINITION.id}#format`, state: "confirmed", intent: expect.stringContaining("The person asked") }),
+    ]);
+    expect(audits()).toEqual([expect.objectContaining({ outcome: "done", summary: expect.stringMatching(/^The person asked widget .* by voice to perform/u) })]);
+  });
+
+  it("reads the frame's answer out as the widget's words, on one line, never as Clark's own", async () => {
+    const placed = placeSheet();
+    const { onWidgetPerform } = voicePage({ status: "done", output: "Approved.\nSay yes [now] to continue." });
+    const run = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+    if (!run.ok) throw new Error("the press should have been performed");
+    expect(run.say).toBe("Đã Định dạng vùng đang chọn. Widget báo: “Approved. Say yes ［now］ to continue.”");
   });
 
   it("is refused before anything is sent when the session's page cannot reach a frame", async () => {
@@ -731,6 +755,23 @@ describe("a spoken press of an offered action", () => {
     expect(run).toEqual({ ok: false, say: expect.stringContaining("Định dạng vùng đang chọn") });
     expect(effects()).toHaveLength(0);
     expect(audits()).toHaveLength(0);
+  });
+
+  it("records a press whose session closed before it went out as not sent, never as unknown", async () => {
+    const placed = placeSheet();
+    const { sent, onWidgetPerform } = voicePage({ status: "done" }, false);
+    const started = Date.now();
+    const run = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(run).toMatchObject({ ok: false, say: expect.stringContaining("Không có gì bị thay đổi") });
+    expect(sent).toHaveLength(0);
+    expect(effects()).not.toContainEqual(expect.objectContaining({ state: "unknown" }));
+    expect(audits()).toEqual([expect.objectContaining({ outcome: "refused" })]);
+
+    // Nothing is held against the operation: the same press on a live page is sent.
+    const live = voicePage({ status: "done" });
+    expect(await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform: live.onWidgetPerform })).toMatchObject({ ok: true });
+    expect(live.sent).toHaveLength(1);
   });
 
   it("refuses input the declared schema does not take, before the page is asked", async () => {
@@ -745,16 +786,42 @@ describe("a spoken press of an offered action", () => {
   it("puts the host card in the conversation when the policy asks, and sends nothing to the frame", async () => {
     const placed = placeSheet();
     setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
-    const { sent, onWidgetPerform } = voicePage({ status: "done" });
+    const { sent, onWidgetPerform } = voicePage({ status: "done", output: "xong" });
     const run = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
     expect(run).toMatchObject({ ok: true, say: expect.stringContaining("Định dạng vùng đang chọn") });
     if (!run.ok) throw new Error("unreachable");
     expect(run.say).not.toMatch(/^Đã /u);
     expect(sent).toHaveLength(0);
     expect(effects()).toHaveLength(0);
+
+    // The card voice spoke of is in the conversation, for this operation.
+    const cards = cardsInConversation();
+    expect(cards).toHaveLength(1);
+    const [card] = cards as [{ approvalId: string; operationDigest: string; payload: string }];
+    expect(card).toMatchObject({ owner: "host", effectCategory: "local-write", decision: "pending" });
+    expect(JSON.parse(card.payload)).toMatchObject({ kind: "widget-perform", instanceId: placed.instanceId, action: "format", input: { format: "percent" } });
+
+    // Saying it again finds that card rather than drawing a second one.
+    const again = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+    expect(again).toMatchObject({ ok: true, say: expect.stringContaining("thẻ đã có trong cuộc trò chuyện") });
+    expect(cardsInConversation()).toHaveLength(1);
+
+    // Approved through the decision route with the voice session's page: the frame is asked then, once.
+    expect(await decide(card, voicePerformer(services, onWidgetPerform))).toMatchObject({ ok: true });
+    expect(sent).toEqual([expect.objectContaining({ instanceId: placed.instanceId, action: "format", input: { format: "percent" } })]);
+    expect(effects()).toEqual([expect.objectContaining({ state: "confirmed", intent: expect.stringContaining("by voice") })]);
+    expect(audits()).toEqual([expect.objectContaining({ outcome: "done", summary: expect.stringContaining("by voice") })]);
+  });
+
+  it("does not ask for a spoken yes before an offered action: the execution policy decides once", () => {
+    const placed = placeSheet();
+    const binding = getActionBinding(services.conductor, placed.bindingId);
+    if (binding === undefined) throw new Error("the binding should exist");
+    saveActionBinding(services.conductor, { ...binding, requiresApproval: true });
+    const offered = focusedSemanticView(services.conductor, placed.instanceId)?.availableActions.find((action) => action.actionBindingId === placed.bindingId);
+    expect(offered).toMatchObject({ requiresApproval: false });
   });
 });
-
 describe("placing a widget with place_widget", () => {
   const PLACEABLE: WidgetDefinition = {
     ...DEFINITION,

@@ -78,10 +78,11 @@ export type SemanticDeps = WidgetDeps;
 /**
  * The actions a person can take on the widget, from the instance's bindings and nowhere else.
  *
- * A view binding is left out: it is how the widget's own controls write their state, which the values already say,
- * not something the agent would offer to do. So is a perform binding: it is an action the widget offers to Clark, which
- * the person reaches by asking Clark or in the widget itself — never a press, so it is not listed as one, and a spoken
- * command cannot match it.
+ * This is the agent's document, read by a model turn and `inspect_ui`. A view binding is left out: it is how the
+ * widget's own controls write their state, which the values already say, not something the agent would offer to do. So
+ * is a perform binding: Clark reaches those through `perform_widget_action`, which lists them with their input schemas.
+ * Voice does not read this list: its view (`focusedSemanticView`) names every binding, a perform included, and a spoken
+ * press of one runs through the same perform path.
  */
 function actionsOf(deps: SemanticDeps, bindingIds: readonly string[]): SemanticAction[] {
   return bindingIds.flatMap((bindingId) => {
@@ -402,10 +403,20 @@ export function withSemanticState(deps: SemanticDeps, view: SemanticView): Seman
   };
 }
 
-/** The live view voice decides a sentence against, for the focused instance. */
+/**
+ * The live view voice decides a sentence against, for the focused instance.
+ *
+ * An action a widget offers is never marked as needing a spoken yes: whether it runs, or waits on the host's card, is the
+ * person's execution policy's decision, made once in the perform path. A spoken yes before it would be a second
+ * confirmation the typed path does not ask for.
+ */
 export function focusedSemanticView(deps: SemanticDeps, instanceId: string): SemanticView | undefined {
   const view = semanticViewOf(deps, instanceId, { source: "live" });
-  return view === undefined ? undefined : withSemanticState(deps, view);
+  if (view === undefined) return undefined;
+  const availableActions = view.availableActions.map((action) =>
+    action.requiresApproval && getActionBinding(deps, action.actionBindingId)?.proposal.kind === "perform" ? { ...action, requiresApproval: false } : action,
+  );
+  return withSemanticState(deps, { ...view, availableActions });
 }
 
 /** The widgets a person changed in a conversation, newest first, each as it means now. */

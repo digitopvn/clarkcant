@@ -916,9 +916,24 @@ async function invokeWorkflowAction(
  */
 export type WidgetPerformer = (request: WidgetPerformRequest, signal: AbortSignal) => Promise<WidgetPerformAwaited>;
 
-/** Options only some callers have: the live page a perform is handed to. */
+/**
+ * Who asked for a perform. `clark`: Clark chose it in a turn. `person-voice`: the person said the action's label to a
+ * voice session, which pressed it for them. Only the wording of the ledger and the audit line follows it; the policy is
+ * told who asked through `TurnOrigin`.
+ */
+export type PerformAsker = "clark" | "person-voice";
+
+/** Options only some callers have: the live page a perform is handed to, and how a policy's card reaches the person. */
 export interface WidgetActionOptions {
   perform?: WidgetPerformer;
+  /**
+   * The caller writes the approval card a policy asks for into the answer it is composing: a model tool returning its
+   * `hostCard`, which the turn places. Every other caller gets the card placed in the conversation here, as a host
+   * reply, before the result returns, so nothing can report a card that is not there.
+   */
+  cardInTurn?: boolean;
+  /** Who asked for a perform. Absent is Clark. */
+  askedBy?: PerformAsker;
 }
 
 /** How long a person has to answer the card a perform's policy asked for: as long as any other host card. */
@@ -1005,7 +1020,10 @@ function performLedgerArgs(instanceId: string, input: Record<string, unknown>): 
   return { instanceId, input };
 }
 
-/** Clark's own line in the audit log for a perform, so what Clark did is never recorded as the person's press. */
+/**
+ * The line in the audit log for a perform, worded for who asked: Clark's choice is never recorded as the person's press,
+ * and the person's spoken press is never recorded as Clark's choice.
+ */
 function auditPerform(
   services: WidgetActionServices,
   request: WidgetActionRequest,
@@ -1013,15 +1031,17 @@ function auditPerform(
   outcome: "done" | "failed" | "refused" | "stopped",
   said: string,
   /** Who asked for the turn that asked Clark to perform it (`TurnOrigin`). Absent is the person. */
-  origin?: TurnOrigin,
+  origin: TurnOrigin | undefined,
+  askedBy: PerformAsker,
 ): void {
+  const who = askedBy === "person-voice" ? `The person asked widget ${request.instanceId} by voice` : `Clark asked widget ${request.instanceId}`;
   try {
     appendAuditEvent(services.runtime.db, {
       auditId: services.conductor.newId("audit"),
       principalId: request.principalId,
       nodeId: services.runtime.identity.nodeId,
       kind: "interaction",
-      summary: `Clark asked widget ${request.instanceId} to perform “${label}”: ${said}`.slice(0, 500),
+      summary: `${who} to perform “${label}”: ${said}`.slice(0, 500),
       outcome,
       at: new Date().toISOString() as Instant,
       ref: request.invocationId,
@@ -1081,7 +1101,8 @@ async function runPerform(
   request: WidgetActionRequest,
   target: Extract<PerformChecked, { ok: true }>,
   perform: WidgetPerformer,
-  origin?: TurnOrigin,
+  origin: TurnOrigin | undefined,
+  askedBy: PerformAsker,
 ): Promise<WidgetActionResult> {
   const { checked, proposal, label } = target;
   const limits = bindingLimits(checked.binding);
@@ -1090,7 +1111,8 @@ async function runPerform(
 
   // Random, because the page answers by this id alone: a counter would let another page guess the next one.
   const performId = `perform_${randomUUID().replaceAll("-", "")}`;
-  const intent = `Clark asked “${checked.instance.definitionRef.id}” to ${label}`;
+  const widgetId = checked.instance.definitionRef.id;
+  const intent = askedBy === "person-voice" ? `The person asked “${widgetId}” by voice to ${label}` : `Clark asked “${widgetId}” to ${label}`;
   let opened: OpenedActionEffect;
   try {
     opened = openActionEffect(services, {
@@ -1149,7 +1171,7 @@ async function runPerform(
           : `the widget refused “${label}” and says it changed nothing: ${answered.message}`;
     settleActionEffect(services, opened, { kind: "not-sent", reason: message });
     forgetStartedInvokeAction(services.conductor, request.invocationId);
-    auditPerform(services, request, label, "refused", message, origin);
+    auditPerform(services, request, label, "refused", message, origin, askedBy);
     // The widget's own code is its word, kept apart from the host's codes so neither the model nor the audit can mistake
     // a widget's "POLICY_REFUSED" for the host's.
     const widgetCode = typeof answered === "object" && pageCode === undefined ? answered.code : undefined;
@@ -1159,7 +1181,7 @@ async function runPerform(
     const output = answered.output ?? "";
     settleActionEffect(services, opened, { kind: "answered", evidence: `the widget performed it${output === "" ? "" : `: ${output.slice(0, 200)}`}` });
     settle(services, checked, request, { kind: "done", output });
-    auditPerform(services, request, label, "done", output === "" ? "done" : output.slice(0, 200), origin);
+    auditPerform(services, request, label, "done", output === "" ? "done" : output.slice(0, 200), origin, askedBy);
     return {
       ok: true,
       status: 200,
@@ -1186,7 +1208,7 @@ async function runPerform(
     message: said,
     ...(ledger.recorded ? { taskId: opened.taskId } : {}),
   });
-  auditPerform(services, request, label, stoppedNow ? "stopped" : "failed", said, origin);
+  auditPerform(services, request, label, stoppedNow ? "stopped" : "failed", said, origin, askedBy);
   return refusal(stoppedNow ? "WIDGET_PERFORM_STOPPED" : "WIDGET_NO_ANSWER", said, {
     outcome: "uncertain",
     mayHaveRun: true,
@@ -1214,6 +1236,8 @@ interface PerformApprovalPayload {
   action: string;
   label: string;
   input: Record<string, unknown>;
+  /** Present when the person asked for it by voice, so the run after their approval is recorded as theirs. */
+  askedBy?: "person-voice";
 }
 
 /** Whether an approval card's payload is a perform rather than a command, a capability call or a tile policy. */
@@ -1233,9 +1257,10 @@ export function isWidgetPerformPayload(payload: string): boolean {
  * every bound action passes runs first, then the declared input schema, then the rule that an attempt of unknown outcome
  * is not repeated, then the person's execution policy decides on a `local-write`: the widget never approves its own
  * action, and the model never approves on its behalf. A policy that asks puts a host-owned card in the conversation
- * (`approval-required`, the card in `body.card` for the caller to place); approving it asks the frame then, through
- * `runApprovedPerform`, if the screen the person approves on still shows it. The same operation asked for again while
- * its card waits gets that card, not a second one, and a conversation holds at most `PERFORM_CARDS_WAITING_MAX`.
+ * (`approval-required`, the card also in `body.card`): placed here as a host reply, or by the caller's own turn when it
+ * says so (`cardInTurn`), so no caller can report a card that was never placed. Approving it asks the frame then,
+ * through `runApprovedPerform`, if the screen the person approves on still shows it. The same operation asked for again
+ * while its card waits gets that card, not a second one, and a conversation holds at most `PERFORM_CARDS_WAITING_MAX`.
  *
  * Inside the effect ledger like a service call: written down as handed off before the page is asked, settled on the
  * frame's answer. A frame that was asked and did not answer in time, failed while performing, or a Stop while waiting,
@@ -1245,12 +1270,14 @@ export function isWidgetPerformPayload(payload: string): boolean {
 async function invokePerformAction(
   services: WidgetActionServices,
   request: WidgetActionRequest,
-  perform: WidgetPerformer | undefined,
+  options: WidgetActionOptions,
   origin?: TurnOrigin,
 ): Promise<WidgetActionResult> {
   const target = checkPerform(services, request);
   if (!target.ok) return target.result;
   const { checked, proposal, label } = target;
+  const { perform } = options;
+  const askedBy = options.askedBy ?? "clark";
   if (perform === undefined) return refusal("FRAME_NOT_MOUNTED", notMountedMessage(label), { outcome: "refused" });
 
   const now = (): Instant => new Date().toISOString() as Instant;
@@ -1270,7 +1297,7 @@ async function invokePerformAction(
     intent: origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin },
   });
   if (decided.kind === "deny") {
-    auditPerform(services, request, label, "refused", decided.reason, origin);
+    auditPerform(services, request, label, "refused", decided.reason, origin, askedBy);
     return refusal("POLICY_REFUSED", `${decided.reason}. Nothing was sent to the widget.`, { outcome: "refused" });
   }
   if (decided.kind === "ask") {
@@ -1321,6 +1348,7 @@ async function invokePerformAction(
       action: proposal.action,
       label,
       input: request.input,
+      ...(askedBy === "person-voice" ? { askedBy } : {}),
     };
     const operationDescription = performApprovalDescription(locale, label, checked.instance.definitionRef.id, inputText);
     const cardOf = (approval: { approvalId: string; expiresAt: string; decision: string }) => ({
@@ -1356,6 +1384,9 @@ async function invokePerformAction(
       result: { kind: "approval-required", approvalId: approval.approvalId },
     });
     const card = cardOf(approval);
+    // Placed before the result returns, so whoever reports "a card asks you" reports one that is there. A model turn
+    // writes it into its own answer instead (`cardInTurn`), where it lands with the words that explain it.
+    if (options.cardInTurn !== true) appendHostReply(services, { conversationId: request.conversationId, blocks: [approvalCardBlockSchema.parse(card)], at });
     return {
       ok: true,
       status: 202,
@@ -1366,7 +1397,7 @@ async function invokePerformAction(
       }),
     };
   }
-  return runPerform(services, request, target, perform, origin);
+  return runPerform(services, request, target, perform, origin, askedBy);
 }
 
 /**
@@ -1398,6 +1429,8 @@ export async function runApprovedPerform(
   }
   const { instanceId, actionBindingId, bindingDigest, action, label } = parsed;
   const performInput = parsed.input;
+  // Who asked, as the host wrote it on its own card: the person approved it either way, and the record keeps who asked.
+  const askedBy: PerformAsker = parsed.askedBy === "person-voice" ? "person-voice" : "clark";
   if (
     typeof instanceId !== "string" ||
     typeof actionBindingId !== "string" ||
@@ -1452,10 +1485,10 @@ export async function runApprovedPerform(
     intent: input.origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin: input.origin },
   });
   if (decided.kind === "deny") {
-    auditPerform(services, request, label, "refused", decided.reason, input.origin);
+    auditPerform(services, request, label, "refused", decided.reason, input.origin, askedBy);
     return { ok: true, label, result: refusal("POLICY_REFUSED", `${decided.reason}. Nothing was sent to the widget.`, { outcome: "refused" }) };
   }
-  return { ok: true, label, result: await runPerform(services, request, target, input.perform, input.origin) };
+  return { ok: true, label, result: await runPerform(services, request, target, input.perform, input.origin, askedBy) };
 }
 
 /**
@@ -1560,7 +1593,7 @@ export async function invokeWidgetAction(
     if (source === "click") {
       return refusal("NOT_AUTHORIZED", "an action a widget offers to Clark is performed by Clark, not pressed. Nothing was sent.");
     }
-    return invokePerformAction(services, request, options.perform, origin);
+    return invokePerformAction(services, request, options, origin);
   }
 
   // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take

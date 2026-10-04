@@ -22,6 +22,8 @@ export type WidgetPerformAwaited = WidgetPerformReport | "no-surface" | "timeout
 export interface WidgetPerformAcks {
   /** A transport is about to deliver this perform to a live page that will report back. */
   expect(performId: string): void;
+  /** The transport expected this perform and then could not deliver it: nothing went out, so nothing will report. */
+  forget(performId: string): void;
   /** The page's report. `false` when nothing was expecting it: unknown, already reported, or given up on. */
   settle(performId: string, report: WidgetPerformReport): boolean;
   /** The report, `"no-surface"` when no live page was sent this id, or `"timeout"`. Settles each id once. */
@@ -46,6 +48,9 @@ export function createWidgetPerformAcks(): WidgetPerformAcks {
   return {
     expect(performId) {
       if (!pending.has(performId)) pending.set(performId, { report: undefined, resolve: undefined });
+    },
+    forget(performId) {
+      pending.delete(performId);
     },
     settle(performId, report) {
       const entry = pending.get(performId);
