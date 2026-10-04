@@ -232,6 +232,51 @@ div.cc-attachment { flex-wrap: wrap; }
   resize: none; padding: var(--cc-space-xs);
 }
 .cc-composer textarea:focus { outline: none; }
+/*
+ * Markdown, marked while it is typed (composer-markdown.ts).
+ *
+ * The mirror sits exactly under the textarea and draws the draft; the textarea keeps the caret, the selection and every
+ * keystroke, with its own glyphs transparent. The two share every property that decides where a character lands —
+ * font, line height, padding, wrapping, tab width — and the marks below change only colour, a tint behind code, a
+ * stroke and a line through, never a width, so the caret never drifts from the letter it is beside.
+ */
+.cc-composer-field { position: relative; flex: 1; min-width: 0; display: flex; }
+.cc-composer-field > textarea {
+  position: relative; z-index: 1; width: 100%; box-sizing: border-box;
+  color: transparent; caret-color: var(--cc-text); -webkit-text-fill-color: transparent;
+  /* Past five lines the field scrolls; a hairline thumb, not a platform scrollbar with arrows inside the pill. */
+  scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--cc-text) 22%, transparent) transparent;
+}
+.cc-composer-field > textarea::placeholder { color: var(--cc-text-muted); -webkit-text-fill-color: var(--cc-text-muted); }
+.cc-composer-field > textarea::selection { background: color-mix(in oklab, var(--cc-accent) 32%, transparent); }
+.cc-composer-field > textarea, .cc-composer-mirror {
+  font: inherit; line-height: var(--cc-leading-body-md, 1.5); letter-spacing: inherit; tab-size: 4;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
+}
+.cc-composer-mirror {
+  position: absolute; inset: 0 auto auto 0; box-sizing: border-box; overflow: hidden; pointer-events: none;
+  padding: var(--cc-space-xs); color: var(--cc-text);
+}
+.cc-md-live-syntax { color: var(--cc-text-tertiary, var(--cc-text-muted)); }
+.cc-md-live-strong:not(.cc-md-live-syntax), .cc-md-live-heading:not(.cc-md-live-syntax) { -webkit-text-stroke: 0.035em currentColor; }
+.cc-md-live-heading:not(.cc-md-live-syntax) { color: var(--cc-text); }
+.cc-md-live-emphasis:not(.cc-md-live-syntax) { color: color-mix(in oklab, var(--cc-accent) 45%, var(--cc-text)); }
+.cc-md-live-strike:not(.cc-md-live-syntax) { text-decoration: line-through; text-decoration-color: var(--cc-text-muted); color: var(--cc-text-muted); }
+.cc-md-live-code, .cc-md-live-fence {
+  background: color-mix(in oklab, var(--cc-text) 8%, transparent); border-radius: 3px;
+  box-decoration-break: clone; -webkit-box-decoration-break: clone;
+}
+.cc-md-live-code:not(.cc-md-live-syntax), .cc-md-live-fence:not(.cc-md-live-syntax) { color: color-mix(in oklab, var(--cc-accent) 30%, var(--cc-text)); }
+.cc-md-live-link { color: var(--cc-accent); text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--cc-accent) 45%, transparent); text-underline-offset: 2px; }
+.cc-md-live-url { color: var(--cc-text-muted); }
+.cc-md-live-list { color: var(--cc-accent); }
+.cc-md-live-quote:not(.cc-md-live-syntax) { color: var(--cc-text-muted); }
+.cc-md-live-quote.cc-md-live-syntax { color: var(--cc-accent); }
+/* Where the system draws its own colours, the textarea draws its text itself and the mirror steps aside. */
+@media (forced-colors: active) {
+  .cc-composer-mirror { display: none; }
+  .cc-composer-field > textarea { color: CanvasText; -webkit-text-fill-color: CanvasText; }
+}
 .cc-icon-btn {
   display: grid; place-items: center;
   width: 28px; height: 28px; border-radius: var(--cc-radius-pill);

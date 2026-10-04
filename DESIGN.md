@@ -429,6 +429,13 @@ Required:
   keeping the draft, when it has gone stale. While an input method is composing a word, its Enter finishes the word:
   it neither chooses a row nor sends. Shift+Enter starts a new line with the list open or closed. This is an
   enhancement, not the primary navigation.
+- basic Markdown is marked while it is typed — strong, emphasis, strike, inline code, fenced code, headings, lists,
+  quotes and links — with its syntax kept visible but quiet, so what is sent is what is seen and still edited as plain
+  text. The field stays a native textarea (caret, selection, undo, spell-check and input methods unchanged) over a
+  mirror that draws the same text; marks change only colour, a tint, a stroke or a line-through, never a glyph's width,
+  so the caret never drifts. Under forced colours the mirror steps aside and the textarea draws its own text;
+- focus is shown on the pill (accent edge and a soft halo), never as a second rectangle around the field inside it;
+- the composer is as wide as the conversation column (720px), and scrolls past five lines with a hairline thumb.
 
 While a turn is running:
 

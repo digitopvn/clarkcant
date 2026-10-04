@@ -429,6 +429,14 @@ Bắt buộc:
   lượt gửi, nói rõ reference nào, đồng thời giữ nguyên bản nháp. Khi bộ gõ đang ghép một chữ, Enter của nó chỉ để hoàn
   tất chữ đó: không chọn dòng nào và không gửi. Shift+Enter xuống dòng dù danh sách đang mở hay đóng. Đây là tính năng
   bổ trợ, không phải navigation chính.
+- Markdown cơ bản được đánh dấu ngay khi gõ — đậm, nghiêng, gạch ngang, code inline, khối code, tiêu đề, danh sách,
+  trích dẫn và liên kết — cú pháp vẫn hiện nhưng nhạt đi, nên thứ được gửi chính là thứ người dùng thấy và vẫn sửa
+  như văn bản thường. Ô nhập vẫn là textarea gốc (con trỏ, vùng chọn, undo, kiểm tra chính tả và bộ gõ không đổi)
+  nằm trên một lớp gương vẽ cùng văn bản; dấu hiệu chỉ đổi màu, nền nhạt, nét viền hoặc gạch ngang, không bao giờ đổi
+  độ rộng ký tự, nên con trỏ không bao giờ lệch. Ở chế độ forced colors, lớp gương lùi ra và textarea tự vẽ chữ;
+- focus hiện trên viên composer (viền màu nhấn và quầng sáng nhẹ), không bao giờ là một khung chữ nhật thứ hai quanh
+  ô nhập bên trong;
+- composer rộng bằng cột hội thoại (720px), và cuộn khi quá năm dòng với thanh cuộn mảnh.
 
 Khi turn đang chạy:
 
