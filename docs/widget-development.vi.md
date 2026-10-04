@@ -2093,8 +2093,11 @@ Sổ hiệu ứng và nhật ký kiểm toán ghi rằng chính người dùng y
 “đồng ý” trước; chính sách thực thi quyết định một lần. Khi chính sách hỏi, thẻ của host và yêu cầu phê duyệt của nó
 được ghi cùng lúc, trước khi giọng nói báo điều đó. Người dùng trả lời thẻ ở đó bằng cách bấm, hoặc bằng lời “đồng ý”
 hay “không” mà giọng nói hỏi sau đó. Câu trả lời bằng lời đi qua cùng quyết định như một lần bấm, và lần bấm bằng giọng
-nói không bao giờ tự duyệt chính nó. Chỉ một câu ngắn mà các từ trọn vẹn của nó nói đồng ý hay không mới quyết định thẻ
-(“từ từ đã” hay “để tôi xem lại từ đầu” không quyết định gì, và giọng nói hỏi lại). Khi thẻ đã được quyết định bằng cách
+nói không bao giờ tự duyệt chính nó. Một câu chỉ quyết định thẻ khi mọi từ trong câu đều là từ
+đồng ý (“yes”, “ok”, “go ahead”, “đồng ý”, “được”), hoặc mọi từ đều là từ từ chối (“no”, “cancel”, “don't”, “không”,
+“thôi”), ngoài ra chỉ có từ đệm như “please” hay “nhé”. Có bất kỳ từ nào khác, một câu hỏi, hoặc vừa đồng ý vừa từ chối
+thì không quyết định gì, và giọng nói hỏi lại: “not ok”, “is it ok”, “yes, don't”, “chưa được” và “từ từ đã” đều được
+hỏi lại. Khi thẻ đã được quyết định bằng cách
 bấm hoặc đã hết hạn, câu nói tiếp theo không còn được coi là câu trả lời cho thẻ đó. Sau một lời “đồng ý”, giọng nói nói
 kết quả của quyết định: widget đã làm hay chưa, và câu trả lời của widget như lời của chính widget, không bao giờ nói
 “tôi chạy ngay”. Nói lại cùng hành động khi thẻ còn chờ sẽ được chỉ tới thẻ đó và hỏi lại; không có thẻ thứ hai. Yêu cầu

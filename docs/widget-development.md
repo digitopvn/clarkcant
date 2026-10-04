@@ -2095,8 +2095,11 @@ the same declared schema, execution policy, ledger, and origin (`voice`, asked b
 log record that the person asked by voice. Voice does not ask for a spoken yes first; the execution policy decides
 once. When the policy asks, the host card and its approval are written together, before voice says so. The person
 answers the card there by click, or by the spoken yes or no that voice then asks for. The spoken answer goes through the
-same decision a click makes, and the press never approves itself. Only a short sentence whose whole words say yes or
-no decides it ("từ từ đã" or "look at this first" decides nothing, and voice asks again). Once the card is decided by a
+same decision a click makes, and the press never approves itself. A sentence decides it only when every word in it is
+a yes word ("yes", "ok", "go ahead", "đồng ý", "được"), or every word is a no word ("no", "cancel", "don't", "không",
+"thôi"), with nothing else but fillers such as "please" or "nhé". Any other word, a question, or a mix of yes and no
+decides nothing, and voice asks again: "not ok", "is it ok", "yes, don't", "chưa được" and "từ từ đã" all get the
+question again. Once the card is decided by a
 click or has expired, the next sentence is no longer taken as its answer. After a spoken yes, voice says what the
 decision came to: whether the widget did it, and what the widget answered as the widget's own words, never "running it
 now". Saying the same action again while that card waits points to it and asks again; no second card is drawn. The
