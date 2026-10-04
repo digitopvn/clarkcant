@@ -53,6 +53,16 @@ import { attachmentBrief } from "./attachments.ts";
 import { type ContextSource, readContextTool } from "./context-bundle.ts";
 import { type InstructionTouch, type TurnInstructions, rememberTouch, touchOfToolCall } from "./conditional-instructions.ts";
 import { legacyRecap } from "./context-planner.ts";
+import {
+  SESSION_POLICY_LIMITS,
+  type SessionDecision,
+  type SessionPolicyMode,
+  type SessionTelemetry,
+  decideSession,
+  linesChanged,
+  reportSessionTelemetry,
+  topicShift,
+} from "./session-policy.ts";
 
 /**
  * One view a model may ask for.
@@ -307,6 +317,20 @@ interface Turn {
   stated: Set<string>;
   /** What the model answering may receive, set when a turn starts; read by a tool call's instructions. */
   allowed: readonly DataClass[];
+  /** When the session behind this turn was created, and how many turns it has answered: its age, for the session policy. */
+  sessionCreatedAtMs: number;
+  answered: number;
+  /** The session's recent messages, newest last, bounded: what a change of subject is measured against. */
+  recentTexts: string[];
+  /** How long the session's last turn took. */
+  lastLatencyMs: number | undefined;
+  /** The brief the last turn was given, so the next can count what changed. */
+  lastBrief: string;
+  /**
+   * Replace the session with a fresh one, at a turn boundary: the new one is briefed by the recap like any fresh
+   * session, and the old one is let go. The transcript is not touched.
+   */
+  rebuild: () => Promise<void>;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -790,6 +814,15 @@ export async function createModelTurn(options: {
    * turn starts and after each tool call; absent states none, which is what the off switch does.
    */
   instructions?: TurnInstructions;
+  /**
+   * Whether a conversation's next turn reuses its session or starts a fresh one (#433). Absent is the behaviour before
+   * it: reuse until a failure, an eviction or a model change. `observe` reports what it would decide; `rebuild` acts.
+   * `ask` is consulted only in the band where the subject change is unclear.
+   */
+  sessionPolicy?: {
+    mode: Exclude<SessionPolicyMode, "off">;
+    ask?: (telemetry: SessionTelemetry) => Promise<boolean | undefined>;
+  };
 }): Promise<ModelTurn | undefined> {
   /*
    * What this node runs: the choice somebody made, else what the environment names.
@@ -935,6 +968,48 @@ export async function createModelTurn(options: {
   const generationModels = new Map<string, string>();
 
   const describe = (): string => `${selection.provider}/${selection.id}`;
+
+  /*
+   * The session policy for the turn about to run: what the session looks like, what the policy decides, and the rebuild
+   * when it decides one and is allowed to act. A rebuild that fails leaves the session as it was: reuse is always safe.
+   */
+  const applySessionPolicy = async (
+    turn: Turn,
+    text: string,
+    alreadyRunning: boolean,
+  ): Promise<{ telemetry: SessionTelemetry; decision: SessionDecision; rebuilt: boolean } | undefined> => {
+    const policy = options.sessionPolicy;
+    if (policy === undefined) return undefined;
+    const now = Date.now();
+    const usage = adapter.usage(turn.sessionId);
+    const telemetry: SessionTelemetry = {
+      ageMs: now - turn.sessionCreatedAtMs,
+      idleMs: now - turn.lastUsedAtMs,
+      turns: turn.answered,
+      ...(usage.contextTokens === undefined ? {} : { contextTokens: usage.contextTokens }),
+      ...(usage.contextWindow === undefined ? {} : { contextWindow: usage.contextWindow }),
+      ...(usage.cacheReadTokens === undefined ? {} : { cacheReadTokens: usage.cacheReadTokens }),
+      ...(usage.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: usage.cacheWriteTokens }),
+      ...(usage.costUsd === undefined ? {} : { costUsd: usage.costUsd }),
+      ...(turn.lastLatencyMs === undefined ? {} : { lastLatencyMs: turn.lastLatencyMs }),
+      topicShift: topicShift(turn.recentTexts, text),
+    };
+    const decision = await decideSession(
+      telemetry,
+      { firstTurn: turn.fresh || turn.answered === 0, inFlight: alreadyRunning },
+      policy.ask,
+    );
+    let rebuilt = false;
+    if (policy.mode === "rebuild" && decision.decision === "rebuild" && !turn.stopped) {
+      try {
+        await turn.rebuild();
+        rebuilt = true;
+      } catch {
+        rebuilt = false;
+      }
+    }
+    return { telemetry, decision, rebuilt };
+  };
 
   /** The conditional instructions to state now, marked as told; nothing when there are none or they cannot be read. */
   const stateInstructions = (turn: Turn, conversationId: string, newOnly: boolean): string => {
@@ -1082,6 +1157,12 @@ export async function createModelTurn(options: {
       touched: [],
       stated: new Set(),
       allowed: DEFAULT_ALLOWED_DATA_CLASSES,
+      sessionCreatedAtMs: Date.now(),
+      answered: 0,
+      recentTexts: [],
+      lastLatencyMs: undefined,
+      lastBrief: "",
+      rebuild: async () => undefined,
     };
     /*
      * After a tool call: remember what it touched, and hand back the instructions that newly apply. A failure here is a
@@ -1172,6 +1253,25 @@ export async function createModelTurn(options: {
       generationModels.set(conversationId, preferredModel ?? "");
       return existing;
     }
+
+    turn.rebuild = async (): Promise<void> => {
+      const handle = await adapter.createWorkerSession(briefFor(options.model?.()));
+      const previous = turn.sessionId;
+      turn.unsubscribe();
+      turn.sessionId = handle.sessionId;
+      turn.unsubscribe = listen(turn, handle.sessionId);
+      // Everything the old session had been told goes with it: the new one hears the recap, the pinned and active
+      // instructions, every tool and the screen as if for the first time.
+      turn.fresh = true;
+      turn.stated.clear();
+      turn.uiSeen.clear();
+      turn.activeTools = undefined;
+      turn.sessionCreatedAtMs = Date.now();
+      turn.answered = 0;
+      turn.recentTexts = [];
+      turn.lastBrief = "";
+      void adapter.dispose(previous).catch(() => undefined);
+    };
 
     evictIdleTurns(Date.now());
     const handle = await adapter.createWorkerSession(briefFor(chosen));
@@ -1352,6 +1452,7 @@ export async function createModelTurn(options: {
 
       const startedAt = Date.now();
       const turn = await turnFor(input.conversationId, input.principal);
+      const alreadyRunning = turn.inFlight;
       /*
        * Running from here, before anything is read for the prompt.
        *
@@ -1377,6 +1478,8 @@ export async function createModelTurn(options: {
       const stopRequested = new Promise<void>((resolve) => {
         turn.settleStop = resolve;
       });
+      // At the turn boundary, before anything is read: a rebuilt session is fresh, so the recap below briefs it.
+      const policy = await applySessionPolicy(turn, input.text, alreadyRunning);
       // Once, on the first turn this session answers: the second turn already has the first in its context,
       // and repeating the brief each time would push the conversation out with its own summary.
       const fresh = turn.fresh;
@@ -1449,6 +1552,15 @@ export async function createModelTurn(options: {
       // source: a pinned one every turn, an unpinned one the first time this session hears it.
       const instructionPart = stateInstructions(turn, input.conversationId, false);
       const brief = [referencePart, attachmentPart, memoryPart, instructionPart].filter((part) => part !== "").join("\n\n");
+      if (policy !== undefined && options.sessionPolicy !== undefined) {
+        reportSessionTelemetry({
+          conversationId: input.conversationId,
+          mode: options.sessionPolicy.mode,
+          ...policy,
+          linesChanged: linesChanged(turn.lastBrief, brief),
+        });
+      }
+      turn.lastBrief = brief;
       // What the planner retrieved from further back goes with the data, after the caller's own: material, not guidance.
       const data = [input.data ?? "", recap.earlier].map((part) => part.trim()).filter((part) => part !== "").join("\n\n");
       const ui = uiNoteFor(turn, input.conversationId);
@@ -1523,6 +1635,10 @@ export async function createModelTurn(options: {
         turn.inFlight = false;
         turn.startedAtMs = undefined;
         turn.lastUsedAtMs = Date.now();
+        turn.answered += 1;
+        turn.lastLatencyMs = Date.now() - startedAt;
+        turn.recentTexts.push(input.text.slice(0, 2_000));
+        if (turn.recentTexts.length > SESSION_POLICY_LIMITS.recentTexts) turn.recentTexts.shift();
       }
 
       // Trailing prose after the last view, and reasoning that never got closed by a later block.

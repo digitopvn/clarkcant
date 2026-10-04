@@ -12,9 +12,10 @@ import {
   planRecap,
   recapWindow,
 } from "../context-planner.ts";
-import type { DecideDeps } from "../jev-decider.ts";
+import { type DecideDeps, decideSessionRebuild } from "../jev-decider.ts";
 import { memoryBrief } from "../memory.ts";
 import type { createModelTurn } from "../model-turn.ts";
+import { sessionPolicyFromEnv } from "../session-policy.ts";
 import { textOfMessage } from "../session-search.ts";
 import { planToolDisclosure, toolDisclosureFromEnv } from "../tool-disclosure.ts";
 
@@ -35,7 +36,7 @@ type ModelTurnOptions = Parameters<typeof createModelTurn>[0];
 
 export type ContextWiring = Pick<
   ModelTurnOptions,
-  "history" | "recapPlanner" | "memoryBrief" | "backgroundContext" | "toolDisclosure" | "onToolDisclosureFailed"
+  "history" | "recapPlanner" | "memoryBrief" | "backgroundContext" | "toolDisclosure" | "onToolDisclosureFailed" | "sessionPolicy"
 >;
 
 export interface ContextWiringDeps {
@@ -188,5 +189,30 @@ export function contextWiring(deps: ContextWiringDeps): ContextWiring {
             process.stderr.write(`${JSON.stringify({ event: "tool-disclosure", conversationId, reason })}\n`);
           },
         }),
+
+    /*
+     * Whether a conversation's next turn reuses its session or starts a fresh one, only when an operator asked: `observe`
+     * reports what it would decide, `rebuild` acts on it. The selector is asked only in the unclear band, and only with
+     * the same opt-in as every other context decision; it is shown counts, never the conversation.
+     */
+    ...(() => {
+      const mode = sessionPolicyFromEnv(deps.env);
+      if (mode === "off") return {};
+      return {
+        sessionPolicy: {
+          mode,
+          ask: async (telemetry) => {
+            const { decider } = contextDecider();
+            if (decider === undefined) return undefined;
+            return await decideSessionRebuild(decider, {
+              idleSeconds: telemetry.idleMs / 1000,
+              contextTokens: telemetry.contextTokens ?? 0,
+              topicShift: telemetry.topicShift,
+              turns: telemetry.turns,
+            });
+          },
+        },
+      };
+    })(),
   };
 }
