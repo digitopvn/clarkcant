@@ -81,5 +81,5 @@ test("switching to English translates an approval card and a tool call's chrome"
   await expect(receipt).toContainText("result");
   await expect(receipt).toContainText("fixture ran");
 
-  await expect(card.locator('[data-approval-decision="answered"]')).toBeVisible();
+  await expect(card.locator('[data-approval-decision="answered"]')).toHaveText("approved");
 });

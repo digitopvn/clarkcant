@@ -908,9 +908,11 @@ export function ApprovalCardBlock({
         <p className="cc-freshness" style={{ margin: 0 }}>
           {t("blocks.approval.digest")} <code>{digest.slice(0, 20)}…</code>
         </p>
-        <p className="cc-freshness" style={{ margin: 0 }}>
-          {t("blocks.approval.onlyYouCanConfirm")}
-        </p>
+        {decision === "pending" && !decided ? (
+          <p className="cc-freshness" style={{ margin: 0 }}>
+            {t("blocks.approval.onlyYouCanConfirm")}
+          </p>
+        ) : null}
         {decision === "pending" && !decided ? (
           <div className="cc-card-actions">
             {/*
@@ -938,8 +940,16 @@ export function ApprovalCardBlock({
             </button>
           </div>
         ) : (
+          // What was decided, in words: a granted card says approved, and one read back from history says what its record
+          // says rather than the wire's value.
           <span className="cc-badge" data-approval-decision={denied ? "denied" : decided ? "answered" : decision}>
-            {denied ? t("blocks.approval.denied") : decided ? t("blocks.approval.decided") : decision}
+            {denied || decision === "denied"
+              ? t("blocks.approval.denied")
+              : decided || decision === "granted"
+                ? t("blocks.approval.granted")
+                : decision === "expired"
+                  ? t("blocks.approval.expired")
+                  : t("blocks.approval.decided")}
           </span>
         )}
       </div>

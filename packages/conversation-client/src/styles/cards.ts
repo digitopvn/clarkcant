@@ -41,6 +41,8 @@ export const CARDS_CSS = `
 }
 .cc-card-title { font-family: var(--cc-font-display, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); font-weight: var(--cc-weight-heading, 600); color: var(--cc-text); }
 .cc-card-body { padding: var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-sm); }
+/* A badge in a card body is a mark, not a field: stretched across the column it read as an empty input. */
+.cc-card-body > .cc-badge { align-self: flex-start; }
 .cc-fields { display: grid; grid-template-columns: max-content 1fr; gap: var(--cc-space-xs) var(--cc-space-md); margin: 0; }
 .cc-fields dt { color: var(--cc-text-muted); }
 .cc-fields dd { margin: 0; }
