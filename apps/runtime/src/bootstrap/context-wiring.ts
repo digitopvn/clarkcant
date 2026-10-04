@@ -1,7 +1,7 @@
 import type { MessageRecord } from "@clarkcant/contracts";
 import { conversationMetadata, latestMessages, type Database } from "@clarkcant/storage";
 
-import { contextBundlesFor, reportContextBundle } from "../context-bundle.ts";
+import { contextBundlesFor, contextSourceOf, reportContextBundle } from "../context-bundle.ts";
 import {
   CONTEXT_LIMITS,
   type ContextPlan,
@@ -12,9 +12,10 @@ import {
   planRecap,
   recapWindow,
 } from "../context-planner.ts";
-import type { DecideDeps } from "../jev-decider.ts";
+import { type DecideDeps, decideSessionRebuild } from "../jev-decider.ts";
 import { memoryBrief } from "../memory.ts";
 import type { createModelTurn } from "../model-turn.ts";
+import { sessionPolicyFromEnv } from "../session-policy.ts";
 import { textOfMessage } from "../session-search.ts";
 import { planToolDisclosure, toolDisclosureFromEnv } from "../tool-disclosure.ts";
 
@@ -35,7 +36,7 @@ type ModelTurnOptions = Parameters<typeof createModelTurn>[0];
 
 export type ContextWiring = Pick<
   ModelTurnOptions,
-  "history" | "recapPlanner" | "memoryBrief" | "backgroundContext" | "toolDisclosure" | "onToolDisclosureFailed"
+  "history" | "recapPlanner" | "memoryBrief" | "backgroundContext" | "toolDisclosure" | "onToolDisclosureFailed" | "sessionPolicy"
 >;
 
 export interface ContextWiringDeps {
@@ -60,7 +61,7 @@ export const RECAP_READ = 40;
  * unfocused one is the old behaviour and says nothing new.
  */
 function reportContextPlan(input: { conversationId: string; part: "recap" | "memory"; plan: ContextPlan }): void {
-  if (!input.plan.focused) return;
+  if (!input.plan.focused && input.plan.withheld === 0) return;
   const count = (visibility: string): number => input.plan.entries.filter((entry) => entry.visibility === visibility).length;
   process.stderr.write(
     `${JSON.stringify({
@@ -71,6 +72,7 @@ function reportContextPlan(input: { conversationId: string; part: "recap" | "mem
       short: count("short"),
       hidden: count("hide"),
       omitted: input.plan.omitted,
+      withheld: input.plan.withheld,
       reranked: input.plan.reranked,
     })}\n`,
   );
@@ -104,22 +106,22 @@ export function contextWiring(deps: ContextWiringDeps): ContextWiring {
     ...(planner === "off"
       ? {}
       : {
-          recapPlanner: async ({ conversationId, query, messages }) => {
+          recapPlanner: async ({ conversationId, query, messages, allowed }) => {
             const db = deps.db();
             const principalId = deps.historyPrincipalId();
             // Only what the recap repeats; an older message that was read but not repeated must stay findable.
             const exclude = new Set(
               recapWindow(messages).flatMap((message) => (message.messageId === undefined ? [] : [message.messageId])),
             );
-            const { earlier } =
+            const { earlier, withheld } =
               principalId === undefined
-                ? { earlier: [] }
+                ? { earlier: [], withheld: 0 }
                 : await earlierMessagesFor(
                     { db, ...contextDecider() },
-                    { principalId, conversationId, query, exclude, shown: CONTEXT_LIMITS.earlierShown },
+                    { principalId, conversationId, query, exclude, shown: CONTEXT_LIMITS.earlierShown, allowed },
                   );
             const total = conversationMetadata(db, conversationId).messageCount;
-            const planned = planRecap({ messages, query, earlier, total });
+            const planned = planRecap({ messages, query, earlier, total, allowed, earlierWithheld: withheld });
             reportContextPlan({ conversationId, part: "recap", plan: planned.plan });
             return { text: planned.text, earlier: planned.earlier };
           },
@@ -132,13 +134,14 @@ export function contextWiring(deps: ContextWiringDeps): ContextWiring {
      * very next turn. Focused on the turn's text unless the planner is off: what matches comes first, the rest follows
      * newest first, and with no match the brief is exactly the unfocused one.
      */
-    memoryBrief: async (conversationId, query) => {
+    memoryBrief: async (conversationId, query, allowed) => {
       const db = deps.db();
       const principalId = deps.ownerPrincipalId();
       if (planner === "off") {
         return memoryBrief({ db, now: () => new Date().toISOString(), newId: deps.newId }, { principalId, conversationId });
       }
-      const planned = await focusedMemoryBrief({ db, ...contextDecider() }, { principalId, conversationId, query });
+      // Withheld by data class before the selector or the provider sees a note (#433); off keeps the old brief exactly.
+      const planned = await focusedMemoryBrief({ db, ...contextDecider() }, { principalId, conversationId, query, allowed });
       reportContextPlan({ conversationId, part: "memory", plan: planned.plan });
       return planned.text;
     },
@@ -154,7 +157,8 @@ export function contextWiring(deps: ContextWiringDeps): ContextWiring {
             const bundles = contextBundlesFor(deps.db());
             const bundle = await bundles.bundleFor({ principalId, conversationId, query: text });
             reportContextBundle({ conversationId, purpose: "background", bundle, stats: bundles.stats() });
-            return bundles.reader(bundle, principalId);
+            // A source rather than a reader: which items the run may read depends on the model it is routed to.
+            return contextSourceOf(bundles, bundle, principalId);
           },
         }),
 
@@ -185,5 +189,30 @@ export function contextWiring(deps: ContextWiringDeps): ContextWiring {
             process.stderr.write(`${JSON.stringify({ event: "tool-disclosure", conversationId, reason })}\n`);
           },
         }),
+
+    /*
+     * Whether a conversation's next turn reuses its session or starts a fresh one, only when an operator asked: `observe`
+     * reports what it would decide, `rebuild` acts on it. The selector is asked only in the unclear band, and only with
+     * the same opt-in as every other context decision; it is shown counts, never the conversation.
+     */
+    ...(() => {
+      const mode = sessionPolicyFromEnv(deps.env);
+      if (mode === "off") return {};
+      return {
+        sessionPolicy: {
+          mode,
+          ask: async (telemetry) => {
+            const { decider } = contextDecider();
+            if (decider === undefined) return undefined;
+            return await decideSessionRebuild(decider, {
+              idleSeconds: telemetry.idleMs / 1000,
+              contextTokens: telemetry.contextTokens ?? 0,
+              topicShift: telemetry.topicShift,
+              turns: telemetry.turns,
+            });
+          },
+        },
+      };
+    })(),
   };
 }

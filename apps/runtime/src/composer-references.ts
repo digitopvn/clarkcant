@@ -255,6 +255,34 @@ export function referencesForLastUserMessage(input: { db: Database; conversation
 }
 
 /**
+ * What a message's references point at on this node: the folders and files it names, each still inside its project and
+ * an approved root, and the skills it names. What conditional instructions read as the work's subject; never a grant.
+ */
+export function referencedWork(
+  projects: ProjectFinderDeps,
+  blocks: readonly ReferenceBlock[],
+): { places: { path: string; folder: boolean }[]; skills: string[] } {
+  const places: { path: string; folder: boolean }[] = [];
+  const skills: string[] = [];
+  for (const { reference } of blocks) {
+    if (reference.kind === "skill") {
+      skills.push(reference.skillId);
+      continue;
+    }
+    if (reference.kind !== "project" && reference.kind !== "file" && reference.kind !== "folder") continue;
+    const project = checkProject(projects, reference.projectId);
+    if (!project.ok) continue;
+    if (reference.kind === "project") {
+      places.push({ path: project.path, folder: true });
+      continue;
+    }
+    const inside = insideProject(project.path, reference.path);
+    if (inside.ok) places.push({ path: inside.realPath, folder: inside.isDirectory });
+  }
+  return { places, skills };
+}
+
+/**
  * The reference section of a turn's prompt.
  *
  * A skill's instructions are included the way pi itself includes a skill named with `/skill:`, inside a `<skill>`

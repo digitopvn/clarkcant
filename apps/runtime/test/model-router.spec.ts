@@ -4,6 +4,7 @@ import type { ModelPool, UserModelProfile } from "@clarkcant/contracts";
 
 import {
   type CandidateFilterInput,
+  allowedDataClassesForModel,
   filterBackgroundCandidates,
   routeBackgroundModel,
   toolCallsIn,
@@ -313,5 +314,65 @@ describe("routing work that needs tools, by what the catalogue states", () => {
     });
     expect(outcome.eligible).toEqual([]);
     expect(await routeBackgroundModel({ eligible: outcome.eligible, verify: () => true })).toBeUndefined();
+  });
+});
+
+describe("routing by what the work carries", () => {
+  it("leaves out a profile that may not receive the work's data class, in the role pass and the relaxed one", () => {
+    const strict = filterBackgroundCandidates(
+      filterInput({
+        pool: pool(
+          profile({ alias: "cloud", priority: 1 }),
+          profile({ alias: "local", trustClass: "local", priority: 2 }),
+          profile({ alias: "public-only", allowedDataClasses: ["public"], priority: 3 }),
+        ),
+        dataClass: "secret",
+      }),
+    );
+    expect(strict.eligible.map((entry) => entry.alias)).toEqual(["local"]);
+    expect(strict.rejected.find((entry) => entry.alias === "cloud")?.reason).toBe("không được nhận dữ liệu mức secret");
+
+    // No profile declares the role, so the relaxed pass runs: the data class still applies there.
+    const relaxed = filterBackgroundCandidates(
+      filterInput({
+        pool: pool(
+          profile({ alias: "cloud", roles: ["foreground"], priority: 1 }),
+          profile({ alias: "local", roles: ["foreground"], trustClass: "local", priority: 2 }),
+        ),
+        dataClass: "secret",
+      }),
+    );
+    expect(relaxed.eligible.map((entry) => entry.alias)).toEqual(["local"]);
+  });
+
+  it("filters nothing for work that names no class, and an unlabelled profile takes up to confidential", () => {
+    const any = filterBackgroundCandidates(filterInput({ pool: pool(profile({ alias: "cloud" })) }));
+    expect(any.eligible.map((entry) => entry.alias)).toEqual(["cloud"]);
+    const confidential = filterBackgroundCandidates(filterInput({ pool: pool(profile({ alias: "cloud" })), dataClass: "confidential" }));
+    expect(confidential.eligible.map((entry) => entry.alias)).toEqual(["cloud"]);
+  });
+
+  it("re-checks the class after the selector, and falls back rather than land on a profile that may not receive it", async () => {
+    const eligible = filterBackgroundCandidates(
+      filterInput({ pool: pool(profile({ alias: "a", priority: 1 }), profile({ alias: "b", priority: 2 })) }),
+    ).eligible;
+    const routed = await routeBackgroundModel({
+      eligible,
+      decide: async () => ({ status: "chosen", alias: "b" }),
+      // As if "b" were narrowed in Settings while the selector was thinking.
+      verify: (alias) => alias !== "b",
+    });
+    expect(routed?.alias).not.toBe("b");
+  });
+
+  it("answers what a model may receive from every profile that names it, and the default when none does", () => {
+    const models = pool(
+      profile({ alias: "a", provider: "acme", modelId: "m1", allowedDataClasses: ["public", "internal", "confidential"] }),
+      profile({ alias: "b", provider: "acme", modelId: "m1:high", allowedDataClasses: ["public", "internal"], enabled: false }),
+      profile({ alias: "c", provider: "acme", modelId: "m2", trustClass: "untrusted" }),
+    );
+    expect(allowedDataClassesForModel(models, { provider: "acme", id: "m1" })).toEqual(["public", "internal"]);
+    expect(allowedDataClassesForModel(models, { provider: "acme", id: "m2" })).toEqual(["public"]);
+    expect(allowedDataClassesForModel(models, { provider: "other", id: "x" })).toEqual(["public", "internal", "confidential"]);
   });
 });

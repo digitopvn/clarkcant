@@ -107,9 +107,10 @@ async function openLive(page: Page, options: { restored?: boolean } = {}): Promi
 async function composeTool(page: Page): Promise<FrameLocator> {
   const composer = page.locator("[data-composer='true']");
   await composer.waitFor();
-  await composer.fill("mở trình dựng âm thanh");
+  // Placed the way a model places it: `place_widget`, with Render bound to the package's own capability.
+  await composer.fill("place widget com.clarkcant.reference.media-render.main@1");
   await composer.press("Enter");
-  await expect(page.getByText("Fixture: trình dựng âm thanh mẫu").last()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/Fixture: tui gọi place_widget .*Placed /u).last()).toBeVisible({ timeout: 20_000 });
   return openLive(page);
 }
 

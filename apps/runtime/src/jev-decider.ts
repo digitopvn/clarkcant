@@ -718,6 +718,43 @@ export async function decideToolFamily(
 }
 
 /**
+ * Whether a conversation's next turn should start a fresh session (#433), asked only when the subject change is unclear.
+ *
+ * Shown counts and times, never the conversation: whether the cache is cold, how large the context is, how much of the
+ * new message is new. Anything short of a decisive answer is `undefined`, and the session is reused.
+ */
+export async function decideSessionRebuild(
+  deps: DecideDeps,
+  input: { idleSeconds: number; contextTokens: number; topicShift: number; turns: number },
+): Promise<boolean | undefined> {
+  const refused = jevCallRefusal(deps.jev.config);
+  if (refused !== undefined) return undefined;
+  const outcome = await askChoice(deps.jev, {
+    state: {
+      idleSeconds: Math.round(input.idleSeconds),
+      contextTokens: Math.round(input.contextTokens),
+      newTermShare: Number(input.topicShift.toFixed(2)),
+      turnsSoFar: input.turns,
+    },
+    instructions:
+      "A conversation's cached session has gone cold and holds a large context. The new message shares some terms with the " +
+      "recent ones. Should the next turn continue the same session, or start a fresh one briefed with a short recap?",
+    criteria: {
+      reuse: "Continue the same session: the new message is most likely the same subject.",
+      rebuild: "Start a fresh session with a recap: the new message is most likely a new subject.",
+    },
+    questionId: "session-rebuild",
+    budget: deps.budget(),
+  });
+  if (outcome.status !== "answered" || !outcome.value.substantive) return undefined;
+  const decisive = isDecisive(outcome.value.top, outcome.value.runnerUp, deps.jev.config.confidenceFloor, deps.jev.config.marginFloor);
+  if (!decisive.decisive) return undefined;
+  if (outcome.value.choice === "rebuild") return true;
+  if (outcome.value.choice === "reuse") return false;
+  return undefined;
+}
+
+/**
  * Choose which retrieved result the user meant.
  *
  * The order of the refusals is the design. One result needs no decision, a ranking with a clear

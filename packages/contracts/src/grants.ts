@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { dataClassSchema, type DataClass } from "./data-class.ts";
 import { effectCategorySchema, instantSchema, type EffectCategory } from "./primitives.ts";
 
 /**
@@ -149,7 +150,7 @@ export const grantSchema = z.strictObject({
     )
     .max(128),
   /** Data classes the sender may include in a delegation payload. */
-  allowedDataClasses: z.array(z.enum(["public", "internal", "confidential", "secret"])).max(8),
+  allowedDataClasses: z.array(dataClassSchema).max(8),
   expiresAt: instantSchema,
   budget: z
     .strictObject({
@@ -281,7 +282,7 @@ export function checkGrant(
     capabilityRef: CapabilityRef;
     at: string;
     resource?: { nodeId: string; resourceId: string; kind: string; access: "read" | "write" | "admin" };
-    dataClass?: "public" | "internal" | "confidential" | "secret";
+    dataClass?: DataClass;
     delegationDepth?: number;
   },
 ): GrantCheck {

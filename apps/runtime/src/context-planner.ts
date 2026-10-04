@@ -1,4 +1,11 @@
-import { MEMORY_BRIEF_MAX_CHARS, MEMORY_BRIEF_MAX_ROWS } from "@clarkcant/contracts";
+import {
+  type DataClass,
+  MEMORY_BRIEF_MAX_CHARS,
+  MEMORY_BRIEF_MAX_ROWS,
+  SELECTOR_DATA_CLASSES,
+  dataClassOfText,
+  estimateTokens,
+} from "@clarkcant/contracts";
 import {
   countMemoryRecordsForBrief,
   memoryRecordsForBrief,
@@ -38,6 +45,10 @@ export interface ContextBlock {
   score: number;
   /** A pinned block is shown in full whatever the budget, because it is where the conversation is. */
   pinned: boolean;
+  /** How sensitive the text is, from its shapes (`dataClassOfText`): what decides which models may see it. */
+  sensitivity: DataClass;
+  /** Four characters a token, for budgets and telemetry. */
+  estimatedTokens: number;
 }
 
 /** What the planner decided for one turn, kept for telemetry and tests. */
@@ -45,6 +56,8 @@ export interface ContextPlan {
   entries: readonly { block: ContextBlock; visibility: ContextVisibility }[];
   /** Candidates that matched but were left out for the budget, stated in the brief rather than swallowed. */
   omitted: number;
+  /** Candidates left out because the model about to read them may not receive their data class. */
+  withheld: number;
   /** False when nothing matched and the previous behaviour was used unchanged. */
   focused: boolean;
   /** True when Jev moved a candidate to the front. */
@@ -127,6 +140,30 @@ function clip(text: string, max: number): string {
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
+/** A candidate's data class and size, computed once from its own text. */
+export function labelsOf(text: string): { sensitivity: DataClass; estimatedTokens: number } {
+  return { sensitivity: dataClassOfText(text), estimatedTokens: estimateTokens(text) };
+}
+
+/**
+ * Whether a model that may receive `allowed` may be shown a block of this class. No list means the caller set no
+ * ceiling, which only a test or the off switch does: the node always passes the model's own list.
+ */
+export function permits(allowed: readonly DataClass[] | undefined, sensitivity: DataClass): boolean {
+  return allowed === undefined || allowed.includes(sensitivity);
+}
+
+/**
+ * The line a brief carries when something was left out for its data class: a count and why, never what. It says the
+ * text is not to be looked for either: the history tool withholds it the same way, so pointing there would only spend a
+ * call.
+ */
+export function withheldLine(count: number, what: "memory" | "message"): string {
+  return what === "memory"
+    ? `[${String(count)} điều đã ghi nhớ bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]`
+    : `[${String(count)} tin bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]`;
+}
+
 /**
  * Move the candidate Jev chose to the front, or leave the order alone.
  *
@@ -135,7 +172,7 @@ function clip(text: string, max: number): string {
  * how many candidates the turn will see; when every candidate fits, moving one to the front changes nothing that is
  * sent, so nobody is asked. Absent means the caller decided that already. Whatever Jev answers, the set is the same set.
  */
-export async function rerankTop<T extends { id: string; text: string; score: number }>(
+export async function rerankTop<T extends { id: string; text: string; score: number; sensitivity?: DataClass }>(
   candidates: readonly T[],
   query: string,
   decider: DecideDeps | undefined,
@@ -148,7 +185,11 @@ export async function rerankTop<T extends { id: string; text: string; score: num
   if (first === undefined || second === undefined || rankGapIsClear(first.score, second.score)) {
     return { ordered, reranked: false };
   }
-  const top = ordered.slice(0, CONTEXT_LIMITS.rerankTopK);
+  // The selector is a third party: only what it may be shown is offered, and the rest keeps its deterministic place.
+  const top = ordered
+    .slice(0, CONTEXT_LIMITS.rerankTopK)
+    .filter((candidate) => SELECTOR_DATA_CLASSES.includes(candidate.sensitivity ?? dataClassOfText(candidate.text)));
+  if (top.length < 2) return { ordered, reranked: false };
   const decision = await decideContextFocus(decider, { query, candidates: top }).catch(() => undefined);
   if (decision?.status !== "chosen") return { ordered, reranked: false };
   const index = ordered.findIndex((candidate) => candidate.id === decision.id);
@@ -174,16 +215,30 @@ export async function planMemoryBrief(input: {
   total: () => number;
   query: string;
   decider?: DecideDeps;
+  /** The data classes the model reading this brief may receive; a record of any other class is withheld. */
+  allowed?: readonly DataClass[];
 }): Promise<{ text: string; plan: ContextPlan }> {
   const terms = contextTerms(input.query);
-  const blocks = input.records.map((record) => {
+  // Classified before anything is ranked, offered to the selector or laid out: a withheld record is never a candidate.
+  const labelled = input.records.map((record) => ({ record, ...labelsOf(record.text) }));
+  const records = labelled.filter((entry) => permits(input.allowed, entry.sensitivity));
+  const withheld = labelled.length - records.length;
+  const total = (): number => input.total() - withheld;
+  const withNote = (text: string): string => {
+    if (withheld === 0) return text;
+    return [text === "" ? "[Điều đã ghi nhớ cho người dùng này]" : text, withheldLine(withheld, "memory")].join("\n");
+  };
+  const blocks = records.map(({ record, sensitivity, estimatedTokens }) => {
     const { score, relevant } = relevance(terms, record.text);
-    return { record, relevant, id: `memory:${record.memoryId}`, text: record.text, score };
+    return { record, relevant, id: `memory:${record.memoryId}`, text: record.text, score, sensitivity, estimatedTokens };
   });
   const matched = blocks.filter((block) => block.relevant).sort((left, right) => right.score - left.score);
   if (matched.length === 0) {
-    const text = briefFromRows(input.records.slice(0, MEMORY_BRIEF_MAX_ROWS), input.total);
-    return { text, plan: { entries: [], omitted: 0, focused: false, reranked: false } };
+    const text = briefFromRows(
+      records.slice(0, MEMORY_BRIEF_MAX_ROWS).map((entry) => entry.record),
+      total,
+    );
+    return { text: withNote(text), plan: { entries: [], omitted: 0, withheld, focused: false, reranked: false } };
   }
 
   const rest = blocks.filter((block) => !block.relevant);
@@ -206,7 +261,15 @@ export async function planMemoryBrief(input: {
       if (fits(full)) visibility = "full";
       else if (block.relevant && fits(short)) visibility = "short";
       if (block.relevant && visibility !== "full") allMatchedWhole = false;
-      const contextBlock: ContextBlock = { id: block.id, kind: "memory", text: block.text, score: block.score, pinned: false };
+      const contextBlock: ContextBlock = {
+        id: block.id,
+        kind: "memory",
+        text: block.text,
+        score: block.score,
+        pinned: false,
+        sensitivity: block.sensitivity,
+        estimatedTokens: block.estimatedTokens,
+      };
       entries.push({ block: contextBlock, visibility });
       if (visibility === "hide") {
         if (block.relevant) omitted += 1;
@@ -230,27 +293,29 @@ export async function planMemoryBrief(input: {
     }
   }
   const { lines, entries, omitted } = planned;
-  const remaining = input.total() - lines.length;
+  const remaining = total() - lines.length;
   const text = [
     "[Điều đã ghi nhớ cho người dùng này]",
     ...lines,
     ...(remaining > 0 ? [`[còn ${remaining} điều đã ghi nhớ khác]`] : []),
+    ...(withheld > 0 ? [withheldLine(withheld, "memory")] : []),
   ].join("\n");
-  return { text, plan: { entries, omitted, focused: true, reranked } };
+  return { text, plan: { entries, omitted, withheld, focused: true, reranked } };
 }
 
 /** The node's memory brief, read fresh for this turn and focused on its text. */
 export async function focusedMemoryBrief(
   deps: { db: Database; decider?: DecideDeps },
-  input: { principalId: string; conversationId: string; query: string },
+  input: { principalId: string; conversationId: string; query: string; allowed?: readonly DataClass[] },
 ): Promise<{ text: string; plan: ContextPlan }> {
   const records = memoryRecordsForBrief(deps.db, input.principalId, input.conversationId, CONTEXT_LIMITS.memoryCandidates);
-  if (records.length === 0) return { text: "", plan: { entries: [], omitted: 0, focused: false, reranked: false } };
+  if (records.length === 0) return { text: "", plan: { entries: [], omitted: 0, withheld: 0, focused: false, reranked: false } };
   return await planMemoryBrief({
     records,
     total: () => countMemoryRecordsForBrief(deps.db, input.principalId, input.conversationId),
     query: input.query,
     ...(deps.decider === undefined ? {} : { decider: deps.decider }),
+    ...(input.allowed === undefined ? {} : { allowed: input.allowed }),
   });
 }
 
@@ -271,6 +336,8 @@ export interface EarlierMessage {
   text: string;
   /** Higher is better. */
   score: number;
+  /** Its data class, when the retriever already computed it. */
+  sensitivity?: DataClass;
 }
 
 const RECAP_HEADER = "Mạch hội thoại trước đó, để bạn tiếp tục đúng việc đang làm:";
@@ -319,8 +386,26 @@ export function planRecap(input: {
   earlier: readonly EarlierMessage[];
   /** Messages the conversation holds in all, so the recap can say how many it did not repeat. */
   total?: number;
+  /** The data classes the model being briefed may receive; a message of any other class is withheld. */
+  allowed?: readonly DataClass[];
+  /** Earlier matches already withheld for their class by `earlierMessagesFor`, so the recap can count them. */
+  earlierWithheld?: number;
 }): { text: string; earlier: string; plan: ContextPlan } {
-  const recent = recapWindow(input.messages);
+  // A recent message the model may not receive keeps its place in the thread and loses its words: where the conversation
+  // is still shows, and what it said does not.
+  let withheld = input.earlierWithheld ?? 0;
+  const messages = input.messages.map((message, index) => {
+    if (index < input.messages.length - CONTEXT_LIMITS.recapRecent) return message;
+    if (permits(input.allowed, dataClassOfText(message.text))) return message;
+    withheld += 1;
+    return { ...message, text: WITHHELD_MESSAGE };
+  });
+  const earlierAllowed = input.earlier.filter((message) => permits(input.allowed, dataClassOfText(message.text)));
+  // Older matches left out for their class are stated by count; a recent one already shows where it was.
+  const earlierWithheld = (input.earlierWithheld ?? 0) + input.earlier.length - earlierAllowed.length;
+  withheld += input.earlier.length - earlierAllowed.length;
+  const withheldNote = earlierWithheld > 0 ? [withheldLine(earlierWithheld, "message")] : [];
+  const recent = recapWindow(messages);
   const terms = contextTerms(input.query);
   const pinnedFrom = recent.length - CONTEXT_LIMITS.recapPinned;
   const scored = recent.map((message, index) => ({
@@ -328,16 +413,20 @@ export function planRecap(input: {
     pinned: index >= pinnedFrom,
     ...relevance(terms, message.text),
   }));
-  const earlier = input.earlier.slice(0, CONTEXT_LIMITS.earlierShown);
+  const earlier = earlierAllowed.slice(0, CONTEXT_LIMITS.earlierShown);
   const anyRecentMatch = scored.some((entry) => !entry.pinned && entry.relevant);
   if (earlier.length === 0 && !anyRecentMatch) {
-    return { text: legacyRecap(input.messages), earlier: "", plan: { entries: [], omitted: 0, focused: false, reranked: false } };
+    return {
+      text: [legacyRecap(messages), ...withheldNote].filter((part) => part !== "").join("\n"),
+      earlier: "",
+      plan: { entries: [], omitted: 0, withheld, focused: false, reranked: false },
+    };
   }
 
   const entries: { block: ContextBlock; visibility: ContextVisibility }[] = [];
   const earlierLines = earlier.map((message) => {
     entries.push({
-      block: { id: message.id, kind: "earlier-message", text: message.text, score: message.score, pinned: false },
+      block: { id: message.id, kind: "earlier-message", text: message.text, score: message.score, pinned: false, ...labelsOf(message.text) },
       visibility: "full",
     });
     return recapLine({ role: message.role, text: clip(message.text, CONTEXT_LIMITS.recapLineFull) }, CONTEXT_LIMITS.recapLineFull);
@@ -351,13 +440,14 @@ export function planRecap(input: {
         text: entry.message.text,
         score: entry.score,
         pinned: entry.pinned,
+        ...labelsOf(entry.message.text),
       },
       visibility,
     });
     return recapLine(entry.message, visibility === "full" ? CONTEXT_LIMITS.recapLineFull : CONTEXT_LIMITS.recapLineShort);
   });
-  const notRepeated = Math.max(0, (input.total ?? input.messages.length) - recent.length - earlier.length);
-  const omittedMatches = Math.max(0, input.earlier.length - earlier.length);
+  const notRepeated = Math.max(0, (input.total ?? messages.length) - recent.length - earlier.length);
+  const omittedMatches = Math.max(0, earlierAllowed.length - earlier.length);
   const parts = [
     RECAP_HEADER,
     ...recentLines,
@@ -365,13 +455,17 @@ export function planRecap(input: {
     ...(notRepeated > 0
       ? [`[Còn ${notRepeated} tin cũ hơn không nhắc lại ở đây; dùng search_history nếu cần đọc lại.]`]
       : []),
+    ...withheldNote,
   ];
   return {
     text: parts.join("\n"),
     earlier: earlierLines.length === 0 ? "" : [EARLIER_DATA_HEADER, ...earlierLines].join("\n"),
-    plan: { entries, omitted: omittedMatches, focused: true, reranked: false },
+    plan: { entries, omitted: omittedMatches, withheld, focused: true, reranked: false },
   };
 }
+
+/** What a recap line says in place of a message the model may not receive. */
+export const WITHHELD_MESSAGE = "[tin này bị giữ lại: nhạy cảm hơn mức model này được nhận]";
 
 /** The roles an earlier message may have to be retrieved: what the person said and what Clark answered, nothing else. */
 const EARLIER_ROLES: readonly ("user" | "assistant")[] = ["user", "assistant"];
@@ -392,10 +486,13 @@ export async function earlierMessagesFor(
     query: string;
     exclude: ReadonlySet<string>;
     shown?: number;
+    /** The data classes the reader may receive; a match of any other class is withheld before the selector sees it. */
+    allowed?: readonly DataClass[];
   },
-): Promise<{ earlier: EarlierMessage[]; reranked: boolean }> {
+): Promise<{ earlier: EarlierMessage[]; reranked: boolean; withheld: number }> {
   const terms = contextTerms(input.query);
-  if (terms.size === 0) return { earlier: [], reranked: false };
+  if (terms.size === 0) return { earlier: [], reranked: false, withheld: 0 };
+  let withheld = 0;
   const hits = searchHistory(deps.db, {
     principalId: input.principalId,
     conversationId: input.conversationId,
@@ -409,10 +506,15 @@ export async function earlierMessagesFor(
     if (input.exclude.has(hit.ref) || hit.conversationId !== input.conversationId) continue;
     const role = EARLIER_ROLES.find((candidate) => candidate === hit.role);
     if (role === undefined || !relevance(terms, hit.text).relevant) continue;
+    const sensitivity = dataClassOfText(hit.text);
+    if (!permits(input.allowed, sensitivity)) {
+      withheld += 1;
+      continue;
+    }
     // BM25 is lower-is-better and negative; flipped so every score in the planner reads the same way.
-    earlier.push({ id: `message:${hit.ref}`, role, text: hit.text, score: -hit.score });
+    earlier.push({ id: `message:${hit.ref}`, role, text: hit.text, score: -hit.score, sensitivity });
     if (earlier.length >= CONTEXT_LIMITS.earlierCandidates) break;
   }
   const { ordered, reranked } = await rerankTop(earlier, input.query, deps.decider, input.shown);
-  return { earlier: ordered, reranked };
+  return { earlier: ordered, reranked, withheld };
 }

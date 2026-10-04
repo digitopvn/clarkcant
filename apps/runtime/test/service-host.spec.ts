@@ -372,6 +372,19 @@ describe("a running service", () => {
     expect(host?.serves(ADD)).toEqual({ packageId: PACKAGE, generationId: GENERATION });
   });
 
+  it("serves a first start's refs before it writes their rows, while the engine is still being sized", async () => {
+    activate();
+    let sized: (capacity: EngineCapacity) => void = () => undefined;
+    const serviceHost = start({ capacity: () => new Promise<EngineCapacity>((resolve) => (sized = resolve)) });
+    await serviceHost.reconcile();
+    // What a caller that compiles against the registry meets in this window: served, with no row to read yet.
+    expect(serviceHost.serves(ADD)).toEqual({ packageId: PACKAGE, generationId: GENERATION });
+    expect(getCapability({ db, nodeId: NODE }, ADD, NODE)).toBeUndefined();
+    sized({});
+    await until(() => serviceHost.status().every((entry) => entry.state === "running"), "running");
+    expect(getCapability({ db, nodeId: NODE }, ADD, NODE)?.readiness).toMatchObject({ loaded: true });
+  });
+
   it("runs a call through the policy and answers with what the service said, keeping its data in the private folder", async () => {
     activate();
     await running(start());

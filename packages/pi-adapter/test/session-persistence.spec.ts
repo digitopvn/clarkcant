@@ -82,6 +82,47 @@ describe("redaction", () => {
     expect(readFileSync(path, "utf8")).toContain(TOKEN);
   });
 
+  it("redacts a clipped private key without breaking its line, and still redacts the rest of the file", () => {
+    const path = transcriptPath();
+    const header = ["-----BEGIN RSA PRIVATE", "KEY-----"].join(" ");
+    const body = "MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MaqkW";
+    const lines = [
+      // A header mentioned on its own, in code the model read.
+      JSON.stringify({ type: "tool_result", text: `const HEADER = "${header}"; // then the parser` }),
+      // A key whose footer a clipped read cut off, beside another secret on the same line.
+      JSON.stringify({ type: "tool_result", text: `${header}\n${body}`, note: `key ${TOKEN}` }),
+      JSON.stringify({ type: "message", role: "user", text: `và cả ${JWT}` }),
+    ];
+    writeFileSync(path, `${lines.join("\n")}\n`);
+
+    const result = redactSessionFile(path);
+    expect(result.ok).toBe(true);
+    const after = readFileSync(path, "utf8").trim().split("\n");
+    const parsed = after.map((line) => JSON.parse(line) as { text: string; note?: string });
+    expect(parsed[0]?.text).toContain("then the parser");
+    expect(parsed[1]?.text).not.toContain(body);
+    expect(parsed[1]?.note).not.toContain(TOKEN);
+    expect(readFileSync(path, "utf8")).not.toContain(JWT);
+  });
+
+  it("redacts value by value, so a shape that would run across JSON strings neither breaks a line nor drops a field", () => {
+    const path = transcriptPath();
+    // Over the line's text, the URL-password shape would read from one field's `u:p` to the next field's `@` and take
+    // the key `b` with it, leaving text that still parses.
+    // Built from parts so secret scanners do not read the fixture as a database URL.
+    const crossing = JSON.stringify({ a: ["postgres", "://u", ":p"].join(""), b: "x@example.test", c: `key ${TOKEN}` });
+    writeFileSync(path, `${crossing}\n${JSON.stringify({ text: `dùng ${JWT}` })}\n`);
+
+    const result = redactSessionFile(path);
+    expect(result.ok).toBe(true);
+    expect(result.redacted).toBe(2);
+    const after = readFileSync(path, "utf8").trim().split("\n");
+    const first = JSON.parse(after[0] ?? "") as Record<string, string>;
+    expect(Object.keys(first)).toEqual(["a", "b", "c"]);
+    expect(first.c).not.toContain(TOKEN);
+    expect(readFileSync(path, "utf8")).not.toContain(JWT);
+  });
+
   it("reports a missing file instead of throwing", () => {
     const result = redactSessionFile(join(dir, "absent.jsonl"));
     expect(result.ok).toBe(false);

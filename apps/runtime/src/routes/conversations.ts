@@ -221,6 +221,7 @@ export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; id
    */
   const node = { db: runtime.db, nodeId: runtime.identity.nodeId };
   const active = activePackageVersions(node);
+  const generations = activeGenerations(node);
   const activePackages = new Set([...active].map((key) => key.slice(0, key.lastIndexOf("@"))));
   // A local install is recorded under its path, not the manifest id the directory lists it by.
   const idsOf = (entry: DirectoryEntry): string[] =>
@@ -233,7 +234,7 @@ export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; id
    * A local package an active generation installed is read from that generation's snapshot, never from its path. A
    * listing that no longer names what that generation installed is withheld, not read from the path.
    */
-  const installed = installedDirectoryEntries(index.kind === "configured" ? index.entries : [], activeGenerations(node), cacheRoot);
+  const installed = installedDirectoryEntries(index.kind === "configured" ? index.entries : [], generations, cacheRoot);
   const { entries } = installed;
   const found = findIsolatedFrame({
     /*
@@ -264,8 +265,16 @@ export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; id
    * Whether the code found is the version this node is running, rather than a listing kept to describe an instance
    * whose package is gone. A frame is still described either way; only a running package is given anything new.
    */
-  const running = entries.some((entry) => entry.packageId === found.packageId && entry.version === found.version && isActive(entry));
-  return { ...found, active: running };
+  const { entry: owner, ...located } = found;
+  const running = isActive(owner);
+  /*
+   * The active generation of the package the definition was read from: that same directory entry, by package identity
+   * and version. Widget ids are not namespaced, so this, not which generation lists the id, is what says whose widget it is.
+   */
+  const generationId = running
+    ? generations.find((generation) => idsOf(owner).includes(generation.packageId) && generation.version === owner.version)?.generationId
+    : undefined;
+  return { ...located, active: running, generationId };
 }
 
 /**

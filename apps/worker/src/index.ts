@@ -82,6 +82,11 @@ export const workerBriefEnvelopeSchema = z.strictObject({
    * would refuse on every call. Absent means the channel, when there is one, carries every kind.
    */
   hostChannels: z.array(z.enum(["command", "browser", "context"])).max(3).optional(),
+  /**
+   * Project guidance the host found applies to this task (#433), stated after the goal: how to do the work in the
+   * folders it was given. Guidance only — it grants nothing the rest of this brief does not.
+   */
+  instructions: z.string().min(1).max(8000).optional(),
 });
 
 // Derived from the schema rather than declared alongside it. Two declarations of the same shape
@@ -347,12 +352,14 @@ export async function runWorker(
   });
 
   const drive = deps.drive ?? ((id: string, goal: string) => deps.adapter.prompt(id, goal));
+  // The goal first, then the project's guidance for it, so the request is what the run reads before anything else.
+  const prompt = envelope.instructions === undefined ? envelope.goal : `${envelope.goal}\n\n${envelope.instructions}`;
 
   let stopReason: WorkerStopReason = "settled";
   try {
     const budgetMs = envelope.maxWallClockMs;
     if (budgetMs === undefined) {
-      await drive(handle.sessionId, envelope.goal);
+      await drive(handle.sessionId, prompt);
     } else {
       // Rule 3, in the small: exceeding the budget stops the run rather than being noticed
       // afterwards, so a runaway worker cannot spend without a limit.
@@ -360,7 +367,7 @@ export async function runWorker(
       try {
         const outcome = await Promise.race([
           (async (): Promise<"settled"> => {
-            await drive(handle.sessionId, envelope.goal);
+            await drive(handle.sessionId, prompt);
             return "settled";
           })(),
           new Promise<"wall-clock">((resolve) => {

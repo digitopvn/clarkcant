@@ -47,10 +47,10 @@ export function nodeWorkerModel(input: {
       if (stated.every((value) => value === true)) return true;
       return undefined;
     },
-    launch: async (): Promise<WorkerModelLaunch | undefined> => {
+    launch: async (work): Promise<WorkerModelLaunch | undefined> => {
       const turn = input.modelTurn;
       if (turn === undefined) return undefined;
-      const chosen = await turn.workerModel();
+      const chosen = await turn.workerModel(work);
       const catalogue = await catalogueOf(turn);
       const toolCalls = catalogue === undefined ? undefined : toolCallsIn(catalogue, chosen.provider, chosen.id);
       const variable = keyVariableFor(chosen.provider);

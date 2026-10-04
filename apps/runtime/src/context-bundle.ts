@@ -1,11 +1,17 @@
 import { createHash } from "node:crypto";
 
-import { READ_CONTEXT_PARAMETERS, READ_CONTEXT_TOOL, readContextDescription } from "@clarkcant/contracts";
+import {
+  type DataClass,
+  READ_CONTEXT_PARAMETERS,
+  READ_CONTEXT_TOOL,
+  maxDataClass,
+  readContextDescription,
+} from "@clarkcant/contracts";
 
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import { conversationMetadata, historyEntry, memoryRecordsForBrief, type Database } from "@clarkcant/storage";
 
-import { CONTEXT_LIMITS, contextTerms, earlierMessagesFor, relevance } from "./context-planner.ts";
+import { CONTEXT_LIMITS, contextTerms, earlierMessagesFor, labelsOf, permits, relevance } from "./context-planner.ts";
 
 /**
  * Shared retrieval for the work a conversation starts away from its turn: background runs and dispatched task workers.
@@ -28,6 +34,9 @@ export interface ContextBundleRef {
   digest: string;
   /** Who said it, for a message: only the person's and Clark's own messages are ever retrieved. */
   role?: "user" | "assistant";
+  /** The text's data class when the bundle was made; the digest pins the text, so the class cannot drift. */
+  sensitivity: DataClass;
+  estimatedTokens: number;
 }
 
 export interface ContextBundle {
@@ -83,11 +92,26 @@ export interface ContextReader {
   answer: (request: unknown) => ContextReply;
 }
 
+/**
+ * A bundle before the model that will read it is known (#433).
+ *
+ * `dataClass` is the most sensitive item it holds for this principal, which is what routing filters models by; the
+ * reader is made once the model is chosen, holding only what that model may be sent.
+ */
+export interface ContextSource {
+  dataClass: DataClass;
+  items: number;
+  readerFor: (allowed: readonly DataClass[]) => ContextReader;
+}
+
 export interface ContextBundles {
   /** The bundle for this request at this point in the conversation, made once and then reused until it expires. */
   bundleFor: (input: { principalId: string; conversationId: string; query: string }) => Promise<ContextBundle>;
-  /** A reader of the bundle for `principalId`; it reads nothing for anyone the bundle was not made for. */
-  reader: (bundle: ContextBundle, principalId: string) => ContextReader;
+  /**
+   * A reader of the bundle for `principalId`; it reads nothing for anyone the bundle was not made for, and, given
+   * `allowed`, nothing of a data class outside it.
+   */
+  reader: (bundle: ContextBundle, principalId: string, allowed?: readonly DataClass[]) => ContextReader;
   /** How many retrieval passes ran, how many requests reused one, how many are held, and references dropped on read. */
   stats: () => { built: number; reused: number; held: number; dropped: number };
 }
@@ -124,14 +148,22 @@ export function createContextBundles(deps: { db: Database; now?: () => number })
       .filter((entry) => entry.relevant)
       .sort((left, right) => right.score - left.score)
       .slice(0, BUNDLE_LIMITS.maxMemory)
-      .map((entry): ContextBundleRef => ({ ref: `memory:${entry.record.memoryId}`, digest: digestOf(entry.record.text) }));
+      .map(
+        (entry): ContextBundleRef => ({
+          ref: `memory:${entry.record.memoryId}`,
+          digest: digestOf(entry.record.text),
+          ...labelsOf(entry.record.text),
+        }),
+      );
     const { earlier } = await earlierMessagesFor(
       { db: deps.db },
       { principalId: input.principalId, conversationId: input.conversationId, query: input.query, exclude: new Set() },
     );
     const messages = earlier
       .slice(0, BUNDLE_LIMITS.maxMessages)
-      .map((message): ContextBundleRef => ({ ref: message.id, digest: digestOf(message.text), role: message.role }));
+      .map(
+        (message): ContextBundleRef => ({ ref: message.id, digest: digestOf(message.text), role: message.role, ...labelsOf(message.text) }),
+      );
 
     counter += 1;
     const bundle: ContextBundle = Object.freeze({
@@ -184,9 +216,16 @@ export function createContextBundles(deps: { db: Database; now?: () => number })
     return { label: entry.role === "user" ? "Người dùng" : "Trợ lý", text: found.text };
   };
 
-  const reader: ContextBundles["reader"] = (bundle, principalId) => {
+  const reader: ContextBundles["reader"] = (bundle, principalId, allowed) => {
     // Read only for the principal it was made for; anything else is an empty bundle, not an error a caller could probe.
-    const refs = principalId === bundle.principalId ? bundle.refs : [];
+    // A reference the reading model may not receive is not in its list at all, so it cannot be asked for by label.
+    const refs = principalId === bundle.principalId ? bundle.refs.filter((entry) => permits(allowed, entry.sensitivity)) : [];
+    // Said by count in the list, the same way the recap says it: never what, and never where to read it back.
+    const withheld = principalId === bundle.principalId ? bundle.refs.length - refs.length : 0;
+    const withheldNote =
+      withheld === 0
+        ? ""
+        : `\n[${String(withheld)} mục bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]`;
     const seen = new Set<string>();
     let reads = 0;
     const live = (): { item: string; label: string; text: string }[] => {
@@ -222,14 +261,14 @@ export function createContextBundles(deps: { db: Database; now?: () => number })
       const item = typeof raw === "string" && raw.trim() !== "" ? raw.trim().slice(0, 16) : undefined;
       const items = live();
       if (item === undefined) {
-        if (items.length === 0) return { kind: "done", text: `${BUNDLE_DATA_HEADER}\n(không còn mục nào)` };
+        if (items.length === 0) return { kind: "done", text: `${BUNDLE_DATA_HEADER}\n(không còn mục nào)${withheldNote}` };
         let text = BUNDLE_DATA_HEADER;
         for (const entry of items) {
           const next = `${text}\n${entry.item} · ${entry.label}: ${clip(entry.text, BUNDLE_LIMITS.previewMax)}`;
-          if (next.length > BUNDLE_LIMITS.indexMax) break;
+          if (next.length + withheldNote.length > BUNDLE_LIMITS.indexMax) break;
           text = next;
         }
-        return { kind: "done", text };
+        return { kind: "done", text: `${text}${withheldNote}` };
       }
       const chosen = items.find((entry) => entry.item === item);
       if (chosen === undefined) return { kind: "refused", text: `không có mục ${item}, hoặc nó đã bị xoá hay đã đổi` };
@@ -241,6 +280,16 @@ export function createContextBundles(deps: { db: Database; now?: () => number })
   return { bundleFor, reader, stats: () => ({ built, reused, held: held.size, dropped }) };
 }
 
+
+/** A bundle as a source a reader can be made from once the reading model is known. */
+export function contextSourceOf(bundles: ContextBundles, bundle: ContextBundle, principalId: string): ContextSource {
+  const refs = principalId === bundle.principalId ? bundle.refs : [];
+  return {
+    dataClass: maxDataClass(refs.map((entry) => entry.sensitivity)),
+    items: refs.length,
+    readerFor: (allowed) => bundles.reader(bundle, principalId, allowed),
+  };
+}
 
 /**
  * `read_context` for a worker in this process: read-only, over one bundle, through the reader's own checks.
