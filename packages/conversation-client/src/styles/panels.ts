@@ -161,7 +161,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
  * One container, several leaf regions. The grid is the only layout the container performs: each
  * region is an ordinary card, so a leaf that fails still leaves the rest of the surface readable.
  * ------------------------------------------------------------------ */
-.cc-surface { padding: 0; }
+/* A figure element, so without this the browser's own 40px a side indents it from the reply it belongs to and takes the room
+   a split or a grid needs for its columns. */
+.cc-surface { padding: 0; margin: 0; }
 .cc-surface-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
