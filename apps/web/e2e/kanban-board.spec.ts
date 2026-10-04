@@ -146,6 +146,11 @@ test("a keyboard move started while the previous move's save is still being answ
     await route.fulfill({ response });
   });
 
+  // Which of the node's answers the board is drawn from.
+  const widget = page.locator(`[data-widget-instance='${instanceId}']`);
+  const revision = async (): Promise<number> => Number(await widget.getAttribute("data-widget-revision"));
+  const before = await revision();
+
   await card("schema").focus();
   await page.keyboard.press("Space");
   await page.keyboard.press("ArrowRight");
@@ -155,10 +160,14 @@ test("a keyboard move started while the previous move's save is still being answ
   await page.keyboard.press("Space");
   await page.keyboard.press("ArrowDown");
   await expect(card("schema").locator("..")).toHaveAttribute("data-board-position", "1");
-  const adopted = page.waitForResponse(`**/conversations/*/widgets/${instanceId}/actions`);
+  // The answer to the first move is still held: the page has not drawn it yet, so it arrives in the middle of this move.
+  expect(held, "the first move's answer is the one held back").toBe(1);
+  expect(await revision(), "the board has not adopted the first move's answer before the second move").toBe(before);
   release();
-  await adopted;
-  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect.poll(revision, { timeout: 10_000 }).toBeGreaterThan(before);
+  // Adopting that answer leaves the card where the person moved it, still picked up.
+  await expect(card("schema").locator("..")).toHaveAttribute("data-board-position", "1");
+  await expect(card("schema")).toBeFocused();
   await page.keyboard.press("Space");
   await expect.poll(() => heldState(page, conversation, instanceId), { timeout: 10_000 }).toMatchObject({ order: { todo: [], doing: ["review", "schema"] } });
   await expect(card("schema").locator("..")).toHaveAttribute("data-board-position", "1");
