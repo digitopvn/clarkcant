@@ -2027,79 +2027,83 @@ export function FormCardBlock({
       data-form-open={open ? "true" : "false"}
       aria-label={title}
     >
-      <div className="cc-card-title">{title}</div>
-      <div className="cc-form-fields" data-form-fields={fields.length}>
-        {fields.map((field) => (
-          <label key={field.id} className="cc-credential-field">
-            <span>
-              {field.label}
-              {field.required ? <span aria-hidden="true"> *</span> : null}
-            </span>
-            {/*
-              Rendered as text once the form is closed. The value the user gave stays readable — it is what the
-              conversation is about — and the control goes, because there is nothing left to submit.
-            */}
-            {!open ? (
-              <span className="cc-chip" data-form-answer={field.id}>
-                {(values[field.id] ?? "").trim() === "" ? "—" : values[field.id]}
+      <header className="cc-card-head">
+        <span className="cc-card-title">{title}</span>
+      </header>
+      <div className="cc-card-body">
+        <div className="cc-form-fields" data-form-fields={fields.length}>
+          {fields.map((field) => (
+            <label key={field.id} className="cc-credential-field">
+              <span>
+                {field.label}
+                {field.required ? <span aria-hidden="true"> *</span> : null}
               </span>
-            ) : field.kind === "textarea" ? (
-              <textarea
-                className="cc-personal-instructions"
-                data-form-input={field.id}
-                rows={3}
-                value={values[field.id] ?? ""}
-                placeholder={field.placeholder}
-                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
-              />
-            ) : field.kind === "select" ? (
-              <select
-                className="cc-select"
-                data-form-input={field.id}
-                value={values[field.id] ?? ""}
-                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+              {/*
+                Rendered as text once the form is closed. The value the user gave stays readable — it is what the
+                conversation is about — and the control goes, because there is nothing left to submit.
+              */}
+              {!open ? (
+                <span className="cc-form-answer" data-form-answer={field.id}>
+                  {(values[field.id] ?? "").trim() === "" ? "—" : values[field.id]}
+                </span>
+              ) : field.kind === "textarea" ? (
+                <textarea
+                  className="cc-personal-instructions"
+                  data-form-input={field.id}
+                  rows={3}
+                  value={values[field.id] ?? ""}
+                  placeholder={field.placeholder}
+                  onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+                />
+              ) : field.kind === "select" ? (
+                <select
+                  className="cc-select"
+                  data-form-input={field.id}
+                  value={values[field.id] ?? ""}
+                  onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+                >
+                  <option value="">—</option>
+                  {field.options.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  data-form-input={field.id}
+                  value={values[field.id] ?? ""}
+                  placeholder={field.placeholder}
+                  onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+                />
+              )}
+            </label>
+          ))}
+        </div>
+        {!open ? null : (
+          <>
+            <div className="cc-card-actions">
+              <button
+                type="button"
+                className="cc-action"
+                data-emphasis="primary"
+                data-form-submit="true"
+                // Disabled with the reason shown, rather than submitting a form with holes in it.
+                disabled={!complete}
+                onClick={() => actions?.onFormSubmit?.({ formId, summary: summary(), values })}
               >
-                <option value="">—</option>
-                {field.options.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                type="text"
-                data-form-input={field.id}
-                value={values[field.id] ?? ""}
-                placeholder={field.placeholder}
-                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
-              />
+                {submitLabel}
+              </button>
+            </div>
+            {complete ? null : (
+              <p className="cc-freshness" data-form-incomplete="true">
+                {t("blocks.form.missingFieldsLabel")}: {missing.map((field) => field.label).join(", ")}
+              </p>
             )}
-          </label>
-        ))}
+          </>
+        )}
       </div>
-      {!open ? null : (
-        <>
-          <div className="cc-card-actions">
-            <button
-              type="button"
-              className="cc-action"
-              data-emphasis="primary"
-              data-form-submit="true"
-              // Disabled with the reason shown, rather than submitting a form with holes in it.
-              disabled={!complete}
-              onClick={() => actions?.onFormSubmit?.({ formId, summary: summary(), values })}
-            >
-              {submitLabel}
-            </button>
-          </div>
-          {complete ? null : (
-            <p className="cc-freshness" data-form-incomplete="true">
-              {t("blocks.form.missingFieldsLabel")}: {missing.map((field) => field.label).join(", ")}
-            </p>
-          )}
-        </>
-      )}
     </section>
   );
 }
