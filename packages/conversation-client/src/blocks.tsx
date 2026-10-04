@@ -13,6 +13,7 @@ import { useT } from "./i18n/locale-context.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { PackageReach, readReach } from "./package-reach.tsx";
 import { askedByKey } from "./turn-origin-words.ts";
+import { effectCategoryLabels } from "./inbox/inbox-model.ts";
 import { UnreadListingFieldsNote, readUnreadFields } from "./unread-listing-fields.tsx";
 import { MESSAGES_VI, type MessageKey } from "./i18n/messages.ts";
 
@@ -881,8 +882,9 @@ export function ApprovalCardBlock({
     <section className="cc-card" data-host-card="approval" data-owner="host" data-decision={decision} data-approval-id={approvalId}>
       <header className="cc-card-head">
         <span className="cc-card-title">{t("blocks.approval.needsConfirm")}</span>
-        <span className="cc-badge" data-tone={effect === "destructive" ? "danger" : "warn"}>
-          {effect}
+        {/* In the words the Control settings use for the same kind of effect, so a rule and the card it raises match. */}
+        <span className="cc-badge" data-tone={effect === "destructive" ? "danger" : "warn"} data-effect={effect}>
+          {(effectCategoryLabels(t) as Record<string, string>)[effect] ?? effect}
         </span>
       </header>
       <div className="cc-card-body">
@@ -904,7 +906,7 @@ export function ApprovalCardBlock({
           ))}
         {/* The digest is shown so an approved plan cannot be swapped for another one. */}
         <p className="cc-freshness" style={{ margin: 0 }}>
-          operation {digest.slice(0, 20)}…
+          {t("blocks.approval.digest")} <code>{digest.slice(0, 20)}…</code>
         </p>
         <p className="cc-freshness" style={{ margin: 0 }}>
           {t("blocks.approval.onlyYouCanConfirm")}

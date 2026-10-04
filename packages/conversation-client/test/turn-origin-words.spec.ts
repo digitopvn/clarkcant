@@ -52,6 +52,17 @@ describe("an approval card says who asked", () => {
   });
 });
 
+describe("an approval card says what kind of effect it is", () => {
+  it("in the words the Control tab uses, not the wire's", () => {
+    const en = inLocale("en", card());
+    expect(en).toContain('data-effect="external-write"');
+    expect(en).toContain(CATALOGS.en["settings.control.category.externalWrite"]);
+    expect(en).not.toContain(">external-write<");
+    expect(en).not.toContain("operation sha256");
+    expect(inLocale("vi", card())).toContain(CATALOGS.vi["settings.control.category.externalWrite"]);
+  });
+});
+
 describe("the Control tab", () => {
   const prefs = (value?: unknown): PreferencesHandle =>
     ({
