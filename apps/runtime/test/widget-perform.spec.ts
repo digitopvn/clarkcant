@@ -20,6 +20,7 @@ import { appendMessage } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 
 import { bindingAvailability, compileWidgetAction } from "../src/application/action-bindings.ts";
+import { validateArgs } from "../src/application/capability-invoke.ts";
 import { resetActionRateLimits } from "../src/application/action-limits.ts";
 import { cancelActionRuns } from "../src/application/action-runs.ts";
 import { type WidgetPerformer, invokeWidgetAction, performReceipt, runApprovedPerform } from "../src/application/widget-actions.ts";
@@ -29,7 +30,7 @@ import type { ServiceHost } from "../src/service-host.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createWidgetPerformAcks } from "../src/widget-perform-acks.ts";
 import { buildWidgetSemantic } from "../src/widget-semantic.ts";
-import { conversationOfferedActions, createPerformWidgetActionTool, placeWidget } from "../src/widget-perform-tool.ts";
+import { conversationOfferedActions, createPerformWidgetActionTool, listPlaceableWidgets, placeWidget } from "../src/widget-perform-tool.ts";
 
 /**
  * Clark performing an action an isolated widget offers.
@@ -699,7 +700,7 @@ describe("placing a widget with place_widget", () => {
     ...DEFINITION,
     propsSchema: { type: "object", properties: { title: { type: "string" }, askBinding: { type: "string" }, size: { type: "number" } }, additionalProperties: false },
   };
-  const located = () => ({ ok: true as const, active: true, definition: PLACEABLE });
+  const located = () => ({ ok: true as const, active: true, definition: PLACEABLE, generationId: "gen_place" });
   const placeDeps = { messageId: () => "msg_place", locate: located };
   const count = (table: string) => rows<{ n: number }>(`SELECT count(*) AS n FROM ${table}`)[0]?.n ?? 0;
   const button = (prop: string) => ({ prop, label: "Hỏi Clark", intent: "Explain the selection" });
@@ -735,7 +736,7 @@ describe("placing a widget with place_widget", () => {
   });
 
   it("refuses a widget whose package this node does not run", () => {
-    const answer = placeWidget(services, { messageId: () => "msg_place", locate: () => ({ ok: true, active: false, definition: PLACEABLE }) }, { widgetId: PLACEABLE.id });
+    const answer = placeWidget(services, { messageId: () => "msg_place", locate: () => ({ ok: true, active: false, definition: PLACEABLE, generationId: undefined }) }, { widgetId: PLACEABLE.id });
     expect(answer.text).toContain("not installed and running");
   });
 
@@ -749,9 +750,10 @@ describe("placing a widget with place_widget", () => {
       propsSchema: { type: "object", properties: { title: { type: "string" }, askBinding: { type: "string" }, chartBinding: { type: "string" } }, additionalProperties: false },
       stateSchema: { type: "object", properties: { range: { type: "string" } }, additionalProperties: false },
     };
-    const placing = { messageId: () => "msg_place", locate: () => ({ ok: true as const, active: true, definition: STATEFUL }) };
+    const placing = { messageId: () => "msg_place", locate: () => ({ ok: true as const, active: true, definition: STATEFUL, generationId: OWN_GENERATION }) };
 
-    function activate(packageId: string, generationId: string, widgetIds: string[]): void {
+    /** `widgetIds` undefined is a generation recorded before a generation kept its widget ids. */
+    function activate(packageId: string, generationId: string, widgetIds: string[] | undefined): void {
       const document = {
         generationId,
         packageId,
@@ -762,7 +764,7 @@ describe("placing a widget with place_widget", () => {
         activatedAt: AT,
         uiOnlyFacets: [],
         grantedCapabilities: [],
-        widgetIds,
+        ...(widgetIds === undefined ? {} : { widgetIds }),
       };
       services.runtime.db
         .prepare(
@@ -772,7 +774,21 @@ describe("placing a widget with place_widget", () => {
         .run(generationId, packageId, "1.0.0", document.digest, document.nodeId, "code_1", AT, JSON.stringify(document));
     }
 
-    function register(ref: CapabilityRef, generation: string, effectCategory: "read" | "external-write", healthy = true): void {
+    const CHART_SCHEMA = {
+      type: "object",
+      properties: { kind: { type: "string", enum: ["bar", "line"] }, range: { type: "string", maxLength: 20 } },
+      required: ["kind", "range"],
+      additionalProperties: false,
+    };
+
+    function register(
+      ref: CapabilityRef,
+      generation: string,
+      effectCategory: "read" | "external-write",
+      healthy = true,
+      /** null registers a capability whose service listed no input schema. */
+      inputSchema: Record<string, unknown> | null = CHART_SCHEMA,
+    ): void {
       registerCapability(
         { db: services.runtime.db, nodeId: services.runtime.identity.nodeId },
         {
@@ -793,12 +809,7 @@ describe("placing a widget with place_widget", () => {
             ...(healthy ? {} : { blockedReason: "the provider key is not set" }),
           },
           uiAffordances: [],
-          inputSchema: {
-            type: "object",
-            properties: { kind: { type: "string", enum: ["bar", "line"] }, range: { type: "string", maxLength: 20 } },
-            required: ["kind", "range"],
-            additionalProperties: false,
-          },
+          ...(inputSchema === null ? {} : { inputSchema }),
         },
       );
     }
@@ -879,12 +890,91 @@ describe("placing a widget with place_widget", () => {
       expect([count("widget_instances"), count("action_bindings")]).toEqual(before);
     });
 
-    it("refuses a package capability when the generation serving it does not list the widget", () => {
+    it("binds by the package the widget's definition was read from when two packages declare the same widget id", () => {
       register(OWN, OWN_GENERATION, "read");
-      services.runtime.db.prepare("DELETE FROM package_generations WHERE generation_id = ?").run(OWN_GENERATION);
-      activate("com.example.sheet", OWN_GENERATION, []);
+      register(OTHER, OTHER_GENERATION, "external-write");
+      // The mail package also lists the sheet's widget id; the definition placing it reads is the sheet package's.
+      services.runtime.db.prepare("DELETE FROM package_generations WHERE generation_id = ?").run(OTHER_GENERATION);
+      activate("com.example.mail", OTHER_GENERATION, [STATEFUL.id]);
+      const before = [count("widget_instances"), count("action_bindings")];
+      const refused = placeWidget(services, placing, { widgetId: STATEFUL.id, props: { title: "Bảng" }, buttons: [chart(OTHER)] });
+      expect(refused.text).toContain("can only call its own package's service");
+      expect([count("widget_instances"), count("action_bindings")]).toEqual(before);
+
+      // The list shows the widget once, with its own package's capabilities and not the other package's.
+      const rows = listPlaceableWidgets(services, placing.locate);
+      expect(rows.map((row) => row.widgetId)).toEqual([STATEFUL.id]);
+      expect(rows[0]?.summary).toContain(OWN);
+      expect(rows[0]?.summary).not.toContain(OTHER);
+    });
+
+    it("lists a generation recorded without its widget ids as one to reinstall or update", () => {
+      services.runtime.db.prepare("DELETE FROM package_generations WHERE generation_id = ?").run(OTHER_GENERATION);
+      activate("com.example.mail", OTHER_GENERATION, undefined);
+      const rows = listPlaceableWidgets(services, placing.locate);
+      expect(rows.map((row) => row.summary)).toEqual([
+        expect.stringContaining("com.example.mail 1.0.0: its widgets cannot be listed"),
+        expect.stringContaining(`- ${STATEFUL.id}:`),
+      ]);
+      expect(rows[0]?.summary).toContain("reinstall or update the package");
+    });
+
+    it("refuses a capability a service serves before the node has registered it, saying to try again", () => {
+      // Reachable: a first start serves its refs before its rows are written (service-host.spec.ts).
       const answer = placeWidget(services, placing, { widgetId: STATEFUL.id, props: { title: "Bảng" }, buttons: [chart(OWN)] });
-      expect(answer.text).toContain("can only call its own package's service");
+      expect(answer.text).toContain("is not registered on this node yet");
+      expect(answer.text).toContain("try again in a moment");
+      expect(answer.hostBlocks).toBeUndefined();
+    });
+
+    it("refuses every capability button on a node that runs no package services", () => {
+      register(OWN, OWN_GENERATION, "read");
+      delete services.serviceHost;
+      const answer = placeWidget(services, placing, { widgetId: STATEFUL.id, props: { title: "Bảng" }, buttons: [chart(OWN)] });
+      expect(answer.text).toContain("is not provided by an active package's service on this node");
+    });
+
+    it("binds a capability whose service listed no input schema, recording only the names its press sends", () => {
+      register(OWN, OWN_GENERATION, "read", true, null);
+      const answer = placeWidget(services, placing, { widgetId: STATEFUL.id, props: { title: "Bảng" }, buttons: [chart(OWN)] });
+      expect(answer.text).toContain("Placed");
+      expect(placedChart(answer).binding?.inputSchema).toEqual({ type: "object", properties: { kind: {} }, additionalProperties: false });
+    });
+
+    it("carries the definitions a property refers to, so the press is still checked against them", () => {
+      register(OWN, OWN_GENERATION, "read", true, {
+        ...CHART_SCHEMA,
+        $defs: { kind: { type: "string", enum: ["bar", "line"] } },
+        properties: { kind: { $ref: "#/$defs/kind" }, range: { type: "string" } },
+      });
+      const answer = placeWidget(services, placing, { widgetId: STATEFUL.id, props: { title: "Bảng" }, buttons: [chart(OWN)] });
+      expect(answer.text).toContain("Placed");
+      const schema = placedChart(answer).binding?.inputSchema;
+      expect(schema).toMatchObject({ $defs: { kind: { enum: ["bar", "line"] } }, properties: { kind: { $ref: "#/$defs/kind" } } });
+      expect(validateArgs(schema, { kind: "bar" })).toEqual({ ok: true });
+      expect(validateArgs(schema, { kind: "pie" })).toMatchObject({ ok: false });
+    });
+
+    it("refuses a workflow step calling another package's capability from a package widget's button", () => {
+      register(OWN, OWN_GENERATION, "read");
+      register(OTHER, OTHER_GENERATION, "external-write");
+      const deps = {
+        db: services.runtime.db,
+        nodeId: services.runtime.identity.nodeId,
+        serviceHost: services.serviceHost,
+        now: () => AT,
+        newId: services.conductor.newId,
+      };
+      const workflow = (ref: CapabilityRef) =>
+        compileWidgetAction(deps, {
+          definitionRef: { id: STATEFUL.id, version: STATEFUL.version, packageDigest: definitionDigest(STATEFUL) },
+          label: "Gửi",
+          action: { kind: "workflow", steps: [{ stepId: "send", kind: "invoke", capabilityRef: ref, args: { kind: "bar", range: "A1" }, dependsOn: [] }] },
+          widgetGeneration: OWN_GENERATION,
+        });
+      expect(workflow(OTHER)).toMatchObject({ ok: false, message: expect.stringContaining("step send: ") });
+      expect(workflow(OTHER)).toMatchObject({ ok: false, message: expect.stringContaining("can only call its own package's service") });
+      expect(workflow(OWN)).toMatchObject({ ok: true });
     });
 
     it("places a button whose capability is not ready, and the frame's live view names why it cannot run yet", () => {

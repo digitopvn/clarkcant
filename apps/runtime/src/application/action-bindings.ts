@@ -9,7 +9,7 @@ import {
   capabilityRefSchema,
   compileActionBinding,
 } from "@clarkcant/contracts";
-import { M1_VIEW_OPERATIONS, activeGenerations, getCapability, invocationPreflight } from "@clarkcant/core";
+import { M1_VIEW_OPERATIONS, getCapability, invocationPreflight } from "@clarkcant/core";
 import { asJsonValue, type Database, payloadDigest } from "@clarkcant/storage";
 
 import type { ServiceHost } from "../service-host.ts";
@@ -66,14 +66,10 @@ function withoutRequired(schema: Record<string, unknown> | undefined, omit: read
   return { ...schema, required: (schema.required as unknown[]).filter((name) => !omit.includes(String(name))) };
 }
 
-/**
- * Whether the active package generation that serves a capability is the one that installed this widget. Fails closed: a
- * generation that does not list its widgets cannot vouch for any of them.
- */
-function generationHoldsWidget(deps: ActionBindingDeps, generationId: string, widgetId: string): boolean {
-  return activeGenerations({ db: deps.db, nodeId: deps.nodeId }).some(
-    (generation) => generation.generationId === generationId && generation.widgetIds?.includes(widgetId) === true,
-  );
+/** Why a package widget's button cannot call a capability another package generation serves, or undefined if it can. */
+function notOwnPackage(ref: string, servedBy: string, widgetGeneration: string | undefined): string | undefined {
+  if (widgetGeneration === undefined || servedBy === widgetGeneration) return undefined;
+  return `${ref} is not a capability of the package this widget belongs to; a package widget's button can only call its own package's service`;
 }
 
 /** Arguments a capability's schema says it does not take, of the ones a use would send. */
@@ -134,10 +130,11 @@ export function compileWidgetAction(
     /** The actions the widget's definition offers; a `perform` binding can only name one of these. */
     offeredActions?: readonly OfferedAction[];
     /**
-     * The id of an installed package's widget the button is for. An `invoke` may then only call a capability that the
-     * same active package generation serves: a widget is never bound to another package's service.
+     * The active package generation the widget the button is for was read from, found by package identity and version
+     * (`locateIsolatedFrame`), never by widget id. Every capability the action calls, an `invoke` or each step of a
+     * `workflow`, must then be served by that same generation: a widget is never bound to another package's service.
      */
-    packageWidgetId?: string;
+    widgetGeneration?: string;
   },
 ): WidgetActionCompile {
   const carries = input.carries;
@@ -189,12 +186,8 @@ export function compileWidgetAction(
           message: `${proposal.capabilityRef} is not provided by an active package's service on this node; a button can only call one that is`,
         };
       }
-      if (input.packageWidgetId !== undefined && !generationHoldsWidget(deps, served.generationId, input.packageWidgetId)) {
-        return {
-          ok: false,
-          message: `${proposal.capabilityRef} is not a capability of the package ${input.packageWidgetId} belongs to; a package widget's button can only call its own package's service`,
-        };
-      }
+      const foreign = notOwnPackage(proposal.capabilityRef, served.generationId, input.widgetGeneration);
+      if (foreign !== undefined) return { ok: false, message: foreign };
       const descriptor = getCapability({ db: deps.db, nodeId: deps.nodeId }, ref.data as CapabilityRef, deps.nodeId);
       if (descriptor === undefined) {
         return {
@@ -288,6 +281,8 @@ export function compileWidgetAction(
             message: `step ${step.stepId}: ${step.capabilityRef} is not provided by an active package's service on this node; a workflow can only call one that is`,
           };
         }
+        const foreign = notOwnPackage(step.capabilityRef, served.generationId, input.widgetGeneration);
+        if (foreign !== undefined) return { ok: false, message: `step ${step.stepId}: ${foreign}` };
         const descriptor = getCapability({ db: deps.db, nodeId: deps.nodeId }, step.capabilityRef as CapabilityRef, deps.nodeId);
         if (descriptor === undefined) continue;
         knownCapabilities.add(step.capabilityRef);

@@ -323,11 +323,16 @@ function pressInputSchema(keys: readonly string[], stateKeys: readonly string[],
   const declared = (capabilitySchema?.properties ?? {}) as Record<string, unknown>;
   const required = Array.isArray(capabilitySchema?.required) ? (capabilitySchema.required as unknown[]).map(String) : [];
   const stillRequired = required.filter((key) => keys.includes(key) && !stateKeys.includes(key));
+  // A property may point into the root's definitions with `$ref`; they are carried so the cut schema still resolves it.
+  const definitions = Object.fromEntries(
+    (["$defs", "definitions"] as const).flatMap((name) => (capabilitySchema?.[name] === undefined ? [] : [[name, capabilitySchema[name]]])),
+  );
   return {
     type: "object",
     properties: Object.fromEntries(keys.map((key) => [key, Object.hasOwn(declared, key) ? declared[key] : {}])),
     ...(stillRequired.length === 0 ? {} : { required: stillRequired }),
     additionalProperties: false,
+    ...definitions,
   };
 }
 
@@ -339,8 +344,30 @@ function notInState(definition: WidgetDefinition, keys: readonly string[]): stri
   return keys.filter((key) => !Object.hasOwn(schema.properties ?? {}, key));
 }
 
-/** The widgets of packages this node runs now, each read from its running generation. */
-function installedWidgets(services: PlaceServices): { widgetId: string; summary: string }[] {
+/** Where a placed widget's definition is read from: the package this node runs (`locateIsolatedFrame`). */
+export type PlaceableWidgetLocator = (
+  services: PlaceServices,
+  widgetId: string,
+) =>
+  | { ok: false; message: string }
+  | {
+      ok: true;
+      active: boolean;
+      definition: WidgetDefinition;
+      /** The active generation of the package the definition was read from, by package identity; absent when none runs. */
+      generationId: string | undefined;
+    };
+
+const locateInstalled: PlaceableWidgetLocator = (services, widgetId) => locateIsolatedFrame(services.runtime, widgetId);
+
+/**
+ * The widgets of packages this node runs now, each with its own package's capabilities.
+ *
+ * A widget id is listed under a generation only when the definition placing it would read belongs to that same
+ * generation. Widget ids are not namespaced, so another package declaring the same id is not shown with this package's
+ * capabilities, and placing the id binds to the package the definition really comes from.
+ */
+export function listPlaceableWidgets(services: PlaceServices, locate: PlaceableWidgetLocator = locateInstalled): { widgetId: string; summary: string }[] {
   const node = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId };
   const provided = packageProvidedCapabilities(node);
   const seen = new Set<string>();
@@ -358,11 +385,20 @@ function installedWidgets(services: PlaceServices): { widgetId: string; summary:
             `input schema: ${JSON.stringify(descriptor.inputSchema ?? {}).slice(0, 400)})`,
         ];
       });
-    for (const widgetId of generation.widgetIds ?? []) {
+    if (generation.widgetIds === undefined) {
+      // Recorded before a generation kept its widget ids: nothing here says which widgets are this package's.
+      rows.push({
+        widgetId: "",
+        summary: `- package ${generation.packageId} ${generation.version}: its widgets cannot be listed, because it was installed before this node recorded a package's widgets; reinstall or update the package to place them.`,
+      });
+      if (rows.length >= LISTED_WIDGETS) return rows;
+      continue;
+    }
+    for (const widgetId of generation.widgetIds) {
       if (seen.has(widgetId)) continue;
+      const found = locate(services, widgetId);
+      if (!found.ok || !found.active || found.generationId !== generation.generationId || found.definition.renderer !== "isolated-app") continue;
       seen.add(widgetId);
-      const found = locateIsolatedFrame(services.runtime, widgetId);
-      if (!found.ok || !found.active || found.definition.renderer !== "isolated-app") continue;
       const definition = found.definition;
       const offered = (definition.offeredActions ?? []).map((entry) => `${entry.name} (“${entry.label}”)`).join(", ");
       rows.push({
@@ -431,7 +467,7 @@ export function createPlaceWidgetTool(deps: PlaceWidgetToolDeps): ToolDefinition
       if (!(PLACE_ACTIONS as readonly string[]).includes(action)) return { text: `"${action}" is not an action here; use list or place.` };
       const services = deps.services();
       if (action === "list") {
-        const rows = installedWidgets(services);
+        const rows = listPlaceableWidgets(services);
         return {
           text:
             rows.length === 0
@@ -449,12 +485,6 @@ export function createPlaceWidgetTool(deps: PlaceWidgetToolDeps): ToolDefinition
  * the instance created and captured against this turn's message. Refused whole, with nothing created, when any part
  * does not compile.
  */
-/** Where a placed widget's definition is read from: the package this node runs (`locateIsolatedFrame`). */
-export type PlaceableWidgetLocator = (
-  services: PlaceServices,
-  widgetId: string,
-) => { ok: false; message: string } | { ok: true; active: boolean; definition: WidgetDefinition };
-
 export function placeWidget(
   services: PlaceServices,
   deps: Pick<PlaceWidgetToolDeps, "messageId"> & { locate?: PlaceableWidgetLocator },
@@ -464,9 +494,10 @@ export function placeWidget(
   if (widgetId === "") return { text: "Name the widget to place by its id from list. Nothing was placed." };
   const messageId = deps.messageId();
   if (messageId === undefined) return { text: "The widget could not be placed: this turn has no message yet. Nothing was placed." };
-  const found = (deps.locate ?? ((placing, id) => locateIsolatedFrame(placing.runtime, id)))(services, widgetId);
+  const found = (deps.locate ?? locateInstalled)(services, widgetId);
   if (!found.ok) return { text: `Not placed: ${found.message}` };
-  if (!found.active) return { text: `Not placed: ${widgetId}'s package is not installed and running on this node.` };
+  if (!found.active || found.generationId === undefined) return { text: `Not placed: ${widgetId}'s package is not installed and running on this node.` };
+  const widgetGeneration = found.generationId;
   const definition = found.definition;
   if (definition.renderer !== "isolated-app") return { text: `Not placed: ${widgetId} is not a widget that runs in its own frame.` };
   const buttons = buttonsOf(params.buttons);
@@ -524,7 +555,7 @@ export function placeWidget(
         },
         ownerPrincipalId: owner,
         // The grant: a placed widget's button reaches only the service its own package generation runs.
-        packageWidgetId: definition.id,
+        widgetGeneration,
       });
     } else {
       result = compileWidgetAction(bindingDeps, {
