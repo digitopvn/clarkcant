@@ -54,7 +54,9 @@ export function readMapTilePolicy(deps: { db: Database; now: () => Instant }, pr
 }
 
 /** Runs `use` with the provider's key, or with nothing when the policy names none; a refusal says why without a value. */
-export type MapTileCredential = <T>(use: (value: string | undefined) => T) => { ok: true; result: T } | { ok: false; message: string };
+export type MapTileCredential = <T>(
+  use: (value: string | undefined) => T,
+) => { ok: true; result: T } | { ok: false; message: string; offline?: MapTileKeyOfflineReason };
 
 /**
  * The credential runner for a provider, from the node's own secret store.
@@ -67,7 +69,8 @@ export function mapTileCredential(deps: { db: Database; principalId: string; now
     const credential = provider.credential;
     if (credential === undefined) return { ok: true, result: use(undefined) };
     const problem = mapTileCredentialProblem(deps, provider);
-    if (problem !== undefined) return { ok: false, message: problem.message };
+    // The key can be removed or entered for another origin between the route's check and this fetch: said the same way.
+    if (problem !== undefined) return { ok: false, message: problem.message, offline: problem.offline };
     // Recorded as `http-header` whether the policy puts the key in a header or in the query: either way it leaves only in
     // the node's own request to the policy's origin, and neither the URL nor the key is ever logged or returned.
     const used = createSecretBroker(deps).withSecret(
@@ -115,7 +118,7 @@ export function mapTileCredentialProblem(
 
 export type MapTileOutcome =
   | { ok: true; bytes: Uint8Array; contentType: (typeof MAP_TILE_CONTENT_TYPES)[number]; cached: boolean }
-  | { ok: false; status: 404 | 429 | 502 | 503; code: string; message: string };
+  | { ok: false; status: 404 | 429 | 502 | 503; code: string; message: string; offline?: MapTileKeyOfflineReason };
 
 export interface MapTileRequest {
   provider: MapTileProvider;
@@ -285,7 +288,9 @@ export function createMapTileProxy(deps: MapTileProxyDeps = {}): MapTileProxy {
       remember(key, tile);
       return { ok: true, bytes: tile.bytes, contentType: tile.contentType, cached: false };
     });
-    if (!fetched.ok) return { ok: false, status: 503, code: "MAP_TILE_KEY_UNAVAILABLE", message: fetched.message };
+    if (!fetched.ok) {
+      return { ok: false, status: 503, code: "MAP_TILE_KEY_UNAVAILABLE", message: fetched.message, ...(fetched.offline === undefined ? {} : { offline: fetched.offline }) };
+    }
     return fetched.result;
   }
 }

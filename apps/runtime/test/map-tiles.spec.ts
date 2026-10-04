@@ -324,6 +324,20 @@ describe("the tile routes on a node", () => {
     expect(seen).toHaveLength(0);
   });
 
+  it("says offline on a key refusal found while the key is handed over, as it does before the fetch", async () => {
+    storeKey([BOUND]);
+    setPolicy({ ...PROVIDER, credential: { secret: MAP_TILE_SECRET_NAME, header: "x-api-key" } });
+    const { fetch, seen } = fakeFetch(png);
+    const real = createMapTileProxy({ fetch });
+    // The key is entered again for another origin after the route checked it and before the proxy hands it over.
+    const rebinding = { tile: (request: Parameters<typeof real.tile>[0]) => { storeKey([mapTileKeyConsumer("https://other.example")]); return real.tile(request); } };
+    expect(await route("/map-tiles/1/0/0", "GET", rebinding)).toMatchObject({
+      status: 503,
+      body: { code: "MAP_TILE_KEY_UNAVAILABLE", offline: "key-origin-mismatch" },
+    });
+    expect(seen).toHaveLength(0);
+  });
+
   it("stops a cached tile as soon as its key is bound to another origin, without waiting for the cache", async () => {
     storeKey([BOUND]);
     setPolicy({ ...PROVIDER, credential: { secret: MAP_TILE_SECRET_NAME, header: "x-api-key" } });

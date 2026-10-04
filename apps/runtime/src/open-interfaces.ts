@@ -1,4 +1,4 @@
-import { MAP_TILES_OFFLINE_REASONS, PERSON_ONLY_REFUSAL } from "@clarkcant/contracts";
+import { MAP_TILE_KEY_OFFLINE_REASONS, PERSON_ONLY_REFUSAL } from "@clarkcant/contracts";
 
 /**
  * The node's open interfaces, described in the formats other tools already read.
@@ -89,10 +89,15 @@ function ok(description: string): Record<string, unknown> {
   return { description, content: { "application/json": { schema: { type: "object" } } } };
 }
 
+/** A refusal answered with the Error body, under its own description. */
+function refusal(description: string): Record<string, unknown> {
+  return { description, content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } };
+}
+
 const refusals = {
-  "400": { description: "Malformed request", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-  "401": { description: "Missing or wrong bearer token", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-  "404": { description: "No such resource", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+  "400": refusal("Malformed request"),
+  "401": refusal("Missing or wrong bearer token"),
+  "404": refusal("No such resource"),
 };
 
 export function openApiDocument(): Record<string, unknown> {
@@ -342,12 +347,16 @@ export function openApiDocument(): Record<string, unknown> {
             "when the provider has no tile at that address, 400 MAP_TILE_OUT_OF_BOUNDS, 429 MAP_TILES_RATE_LIMITED, " +
             "502 MAP_TILE_FAILED or MAP_TILE_REFUSED, 503 MAP_TILE_KEY_UNAVAILABLE. The 503 carries offline " +
             "(key-unavailable or key-origin-mismatch, as GET /map-tiles says) when the saved key is missing or bound to " +
-            "another origin; when the key is in place but the node's secret store refuses to hand it over, the 503 has no offline.",
+            "another origin, whether the node finds that before asking the provider or while handing the key over; when the " +
+            "key is in place but the node's secret store refuses to hand it over, the 503 has no offline.",
           parameters: ["z", "x", "y"].map((name) => ({ name, in: "path", required: true, schema: { type: "integer", minimum: 0 } })),
           responses: {
             "200": { description: "The tile, as image/png or image/webp" },
             ...refusals,
-            "404": { ...refusals["404"], description: "MAP_TILES_OFF with no tile policy, or MAP_TILE_MISSING when the provider has no tile there" },
+            "400": refusal("MAP_TILE_OUT_OF_BOUNDS: z, x or y is not a whole number on the provider's grid"),
+            "404": refusal("MAP_TILES_OFF with no tile policy, or MAP_TILE_MISSING when the provider has no tile there"),
+            "429": refusal("MAP_TILES_RATE_LIMITED: too many tile requests reach the provider; ask again shortly"),
+            "502": refusal("MAP_TILE_FAILED when the provider cannot be reached, redirects or fails; MAP_TILE_REFUSED when its tile is not a bounded PNG or WebP"),
             "503": {
               description: "MAP_TILE_KEY_UNAVAILABLE: offline is present when the key is missing or bound to another origin, absent when the secret store refuses it",
               content: {
@@ -355,7 +364,7 @@ export function openApiDocument(): Record<string, unknown> {
                   schema: {
                     allOf: [
                       { $ref: "#/components/schemas/Error" },
-                      { properties: { offline: { type: "string", enum: MAP_TILES_OFFLINE_REASONS.filter((reason) => reason !== "no-provider") } } },
+                      { properties: { offline: { type: "string", enum: [...MAP_TILE_KEY_OFFLINE_REASONS] } } },
                     ],
                   },
                 },

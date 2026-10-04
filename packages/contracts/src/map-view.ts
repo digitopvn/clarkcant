@@ -573,10 +573,11 @@ export type MapTilePolicy = z.infer<typeof mapTilePolicySchema>;
  * entered, or without a value); or the key was entered for another origin than the provider's, so the node does not send
  * it there. Said so a map, and Settings, can tell the person why.
  */
-export const MAP_TILES_OFFLINE_REASONS = ["no-provider", "key-unavailable", "key-origin-mismatch"] as const;
+/** Why a keyed provider is offline: the reasons that are about its key. A tile refused for its key carries one of these. */
+export const MAP_TILE_KEY_OFFLINE_REASONS = ["key-unavailable", "key-origin-mismatch"] as const;
+export type MapTileKeyOfflineReason = (typeof MAP_TILE_KEY_OFFLINE_REASONS)[number];
+export const MAP_TILES_OFFLINE_REASONS = ["no-provider", ...MAP_TILE_KEY_OFFLINE_REASONS] as const;
 export type MapTilesOfflineReason = (typeof MAP_TILES_OFFLINE_REASONS)[number];
-/** Why a keyed provider is offline: the reasons that are about its key. */
-export type MapTileKeyOfflineReason = Exclude<MapTilesOfflineReason, "no-provider">;
 
 /** What the page is told about the policy: whose tiles, and the attribution it must show. Never a path or a key. */
 export interface MapTilePolicyView {

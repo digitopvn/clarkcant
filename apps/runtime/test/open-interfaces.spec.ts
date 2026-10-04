@@ -124,7 +124,17 @@ describe("discovery", () => {
       expect(tile?.description).toContain(code);
     }
     expect(tile?.description).toContain("when the key is in place but the node's secret store refuses to hand it over, the 503 has no offline");
-    expect(tile?.responses["404"]?.description).toContain("MAP_TILE_MISSING");
+    expect(tile?.description).toContain("whether the node finds that before asking the provider or while handing the key over");
+    for (const [status, codes] of [
+      ["400", ["MAP_TILE_OUT_OF_BOUNDS"]],
+      ["404", ["MAP_TILES_OFF", "MAP_TILE_MISSING"]],
+      ["429", ["MAP_TILES_RATE_LIMITED"]],
+      ["502", ["MAP_TILE_FAILED", "MAP_TILE_REFUSED"]],
+      ["503", ["MAP_TILE_KEY_UNAVAILABLE"]],
+    ] as const) {
+      for (const code of codes) expect(tile?.responses[status]?.description, status).toContain(code);
+      expect(JSON.stringify(tile?.responses[status]?.content), status).toContain("#/components/schemas/Error");
+    }
     expect(tile?.responses["503"]?.content).toEqual({
       "application/json": {
         schema: {

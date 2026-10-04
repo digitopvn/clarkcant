@@ -71,7 +71,7 @@ export async function handleMapTileRoutes(deps: MapTileRouteDeps): Promise<Gatew
   if (keyProblem !== undefined) return fail(503, "MAP_TILE_KEY_UNAVAILABLE", keyProblem.message, { offline: keyProblem.offline });
   const credential = mapTileCredential({ db: runtime.db, principalId, now }, policy);
   const outcome = await proxy.tile({ provider: policy, z, x, y, credential });
-  if (!outcome.ok) return fail(outcome.status, outcome.code, outcome.message);
+  if (!outcome.ok) return fail(outcome.status, outcome.code, outcome.message, outcome.offline === undefined ? undefined : { offline: outcome.offline });
   return {
     status: 200,
     body: null,
