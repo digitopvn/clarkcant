@@ -4,6 +4,7 @@ import type { GatewayClient, Timeline } from "./api.ts";
 import { TranscriptRow } from "./transcript-row.tsx";
 import { renderBlock, type BlockActions, type SurfaceBlockRef } from "./blocks.tsx";
 import { echoesCommandReceipt } from "./command-receipts.ts";
+import { repeatsDrawnSurface } from "./surface-refs.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import { WorkStepsFold } from "./work-steps-fold.tsx";
 import { countsAsStep, foldWorkSteps, isWorkBlock } from "./work-steps.ts";
@@ -44,10 +45,11 @@ function TimelineMessageRowComponent({
 }: TimelineMessageRowProps): ReactElement {
   const t = useT();
   const locale = useLocale();
-  // A block that only echoes a command receipt is left out before folding, so it neither splits a run nor counts in it.
+  // A block that only echoes a command receipt, or only names a widget a surface above already draws, is left out
+  // before folding, so it neither splits a run nor counts in it.
   const shown = message.blocks
     .map((block, blockIndex) => ({ block, blockIndex }))
-    .filter(({ blockIndex }) => !echoesCommandReceipt(message.blocks, blockIndex));
+    .filter(({ blockIndex }) => !echoesCommandReceipt(message.blocks, blockIndex) && !repeatsDrawnSurface(message.blocks, blockIndex));
   const draw = ({ block, blockIndex }: (typeof shown)[number]): ReactElement | null =>
     renderBlock(block, blockIndex, renderSurface, blockActions, client, t, locale);
   return (

@@ -111,6 +111,8 @@ test("a suggestion produces a labelled sample with a real widget", async ({ page
   await expect(page.locator('[data-widget-role="chart"]').first()).toBeVisible();
   await expect(page.locator("[data-freshness='sample']").first()).toBeVisible();
   await expect(page.locator("[data-chart-summary='true']").first()).not.toBeEmpty();
+  // Drawn once: the reference to the same instance does not print the catalog's description under the chart.
+  await expect(page.locator("[data-widget-placeholder]")).toHaveCount(0);
 
   await page.screenshot({ path: join(EVIDENCE, "j1-02-sample-chart.png") });
 });
