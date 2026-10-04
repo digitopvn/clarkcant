@@ -86,7 +86,8 @@ mounted frame and answers `POST /app-intents/widget-perform/{performId}` with on
 `by: "page"` is taken only with the page's own codes, such as `FRAME_NOT_MOUNTED`, `SURFACE_GONE`,
 `PERFORM_UNREADABLE` and `PERFORM_VERSION_UNSUPPORTED`. A page that cannot read a request, or gets another version,
 still answers under its `performId`. A widget's refusal reaches Clark as `WIDGET_REFUSED`, with the widget's code in
-`widgetCode`.
+`detail.widgetCode` and its own reason, when it gave one, in `detail.widgetMessage`. Both are the widget's words, not
+the host's: a surface that shows or speaks them quotes them as the widget's.
 
 Each `performId` is answered once; a second answer gets `404 WIDGET_PERFORM_NOT_EXPECTED`. Nothing is queued for
 later. With no answer within 8 seconds, or a `no-answer` report, the perform is recorded as uncertain and is not

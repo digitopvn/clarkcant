@@ -87,7 +87,8 @@ khác không được gửi event nào, và lần thực hiện bị từ chối
 `by: "page"` chỉ được chấp nhận với các mã của chính trang, như `FRAME_NOT_MOUNTED`, `SURFACE_GONE`,
 `PERFORM_UNREADABLE` và `PERFORM_VERSION_UNSUPPORTED`. Trang không đọc được yêu cầu, hoặc nhận một phiên bản khác, vẫn
 trả lời theo `performId` của nó. Lời từ chối của widget tới Clark dưới dạng `WIDGET_REFUSED`, với mã của widget trong
-`widgetCode`.
+`detail.widgetCode` và lý do của chính widget, khi widget có nêu, trong `detail.widgetMessage`. Cả hai là lời của
+widget, không phải của host: bề mặt nào hiển thị hoặc đọc chúng lên đều trích dẫn chúng như lời của widget.
 
 Mỗi `performId` chỉ được trả lời một lần; lần thứ hai nhận `404 WIDGET_PERFORM_NOT_EXPECTED`. Không có gì được xếp hàng
 chờ về sau. Nếu không có câu trả lời trong 8 giây, hoặc trang báo `no-answer`, lần thực hiện được ghi là chưa rõ kết quả
