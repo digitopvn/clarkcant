@@ -8,8 +8,10 @@ status: in-progress
 Status: in progress. Accepted outcome: interactive articles composed from versioned blocks; shared Clark widgets; visual and AI editing; EN/VI published together; scoped small-team access; real surveys; REST, MCP, CLI; semantic HTML and Markdown.
 
 Implementation is deployed at https://clarkcant.cc/blog/ (website PR #89).
-Remaining: product branch integration/checks, and external GitHub OAuth App
-configuration plus real ChatGPT/Claude consent verification. The user confirmed
+Product branch is integrated with main at 70480188; local checks passed with
+bounded test concurrency. PR #453 awaits its final-head CI before landing.
+Remaining external acceptance: GitHub OAuth App configuration plus real
+ChatGPT/Claude consent verification. The user confirmed
 on 2026-10-04 that no dedicated OAuth App exists. Do not mark those checks passed.
 See [delivery evidence](reports/delivery-evidence.md).
 
