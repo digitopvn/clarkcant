@@ -147,7 +147,7 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.marketplace.searchAgainMessage": "Tìm lại các gói khớp “{query}”",
   "blocks.marketplace.unknownSource": "không rõ nguồn",
   "blocks.marketplace.lane.isolatedUi": "widget cách ly",
-  "blocks.marketplace.lane.service": "service",
+  "blocks.marketplace.lane.service": "dịch vụ",
   "blocks.marketplace.lane.declarative": "khai báo",
   "blocks.marketplace.lane.trustedNative": "native tin cậy",
 
@@ -778,17 +778,17 @@ export const MESSAGES_TIMELINE_VI = {
   // widget-library/WidgetFixtureControls.tsx
   "widgets.lab.fixture": "Fixture",
   "widgets.lab.viewport": "Khung",
-  "widgets.lab.theme": "Theme",
+  "widgets.lab.theme": "Chủ đề",
   "widgets.lab.reducedMotion": "Giảm chuyển động",
 
   // widget-library/WidgetGallery.tsx
   "widgets.gallery.noMatches": "Không có widget nào khớp với bộ lọc này. Xoá ô tìm kiếm hoặc chọn “Tất cả” để xem lại danh mục.",
   "widgets.gallery.cardAria": "{name} — {description}",
   "widgets.gallery.noFixture": "Chưa có fixture cho widget này.",
-  "widgets.gallery.sourceBuiltin": "Built-in",
-  "widgets.gallery.sourceInstalled": "Installed package",
-  "widgets.gallery.sourceLocal": "Local development package",
-  "widgets.gallery.experimentalSuffix": " · experimental",
+  "widgets.gallery.sourceBuiltin": "Có sẵn",
+  "widgets.gallery.sourceInstalled": "Gói đã cài",
+  "widgets.gallery.sourceLocal": "Gói đang phát triển trên máy",
+  "widgets.gallery.experimentalSuffix": " · thử nghiệm",
   "widgets.appearance.fixed": "Widget này sử dụng giao diện riêng.",
 
   // widget-library/WidgetInspector.tsx
@@ -829,7 +829,7 @@ export const MESSAGES_TIMELINE_VI = {
 
   // widget-library/WidgetLibrarySurface.tsx
   "widgets.library.titleLab": "Widget Lab",
-  "widgets.library.titleBrowse": "Widget Library",
+  "widgets.library.titleBrowse": "Thư viện widget",
   "widgets.library.back": "Quay lại danh mục",
   "widgets.library.searchPlaceholder": "Tìm widget…",
   "widgets.library.searchAria": "Tìm widget",

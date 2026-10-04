@@ -187,7 +187,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.ai.currentModel.heading": "Model đang dùng",
   "settings.ai.currentModel.none":
     "Node này chưa cấu hình model. Nó trả lời bằng recipe và capability đã cài, và không gọi provider nào.",
-  "settings.ai.provider.label": "Provider",
+  "settings.ai.provider.label": "Nhà cung cấp",
   "settings.ai.provider.description": "Lấy từ lựa chọn đã lưu, mặc định là CC_MODEL_PROVIDER.",
   "settings.ai.model.label": "Model",
   "settings.ai.model.description": "Lấy từ lựa chọn đã lưu, mặc định là CC_MODEL_ID.",
@@ -218,12 +218,12 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.key.status.saveFailed": "Không lưu được khoá. Thử lại.",
   "settings.key.status.signedOut": "Đã đăng xuất: node không còn giữ khoá này.",
   "settings.key.status.removeFailed": "Không xoá được — có thể node chưa giữ khoá này.",
-  "settings.modelPool.heading": "Model pool",
+  "settings.modelPool.heading": "Nhóm model",
   "settings.modelPool.readFailed": "Không đọc được model pool của node này.",
   "settings.modelPool.intro":
     "Hotkey ⌘] (Ctrl+] trên Windows) đi theo thứ tự ưu tiên này và áp dụng từ lượt kế tiếp, không đổi model của lượt đang chạy.",
   "settings.modelPool.empty": "Node này chưa có profile nào, nên hotkey ⌘] không có gì để chuyển. Nó vẫn chạy model đã cấu hình.",
-  "settings.modelPool.table.alias": "Alias",
+  "settings.modelPool.table.alias": "Tên gọi",
   "settings.modelPool.table.model": "Model",
   "settings.modelPool.table.roles": "Vai trò",
   "settings.modelPool.table.priority": "Ưu tiên",
@@ -284,7 +284,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.control.autonomy.mode.description": "Áp dụng chung cho lệnh agent đề xuất, hành động của widget và cài đặt.",
   "settings.control.autonomy.osNote":
     "Quyền của hệ điều hành, của tài khoản provider, của trình duyệt và của bên thứ ba vẫn luôn được hỏi, ở mọi mức — đó không phải là quyết định của ClarkCant.",
-  "settings.control.autonomy.guardrails.label": "Jev guardrails",
+  "settings.control.autonomy.guardrails.label": "Rào chắn của Jev",
   "settings.control.autonomy.guardrails.description":
     "Tắt thì không có bước phán đoán nào; bước kiểm tra của host và các thẻ duyệt ở trên vẫn chạy.",
   "settings.control.instructions.description": "Luật của bạn, bằng lời của bạn. Guardrail chỉ có thể thu hẹp thêm, không bao giờ nới.",

@@ -443,7 +443,7 @@ describe("a notice's details, as Copy details writes them", () => {
     expect(findHiddenCharacter(text, { lineBreaks: true })).toBeUndefined();
     expect(text).toContain("Thông báo: Tệp ⟨U+202E⟩gnp.exe⟨U+200B⟩ xong⟨U+000A⟩Mức độ: Thành công");
     expect(text).toContain("Nội dung: Dòng ⟨U+2068⟩một⟨U+2069⟩⟨U+000D⟩\n  Mức độ: Thành công ⟨U+E0041⟩");
-    expect(text).toContain("Về: Task · task_⟨U+2066⟩x⟨U+2069⟩");
+    expect(text).toContain("Về: Việc · task_⟨U+2066⟩x⟨U+2069⟩");
     // The only line that starts with the severity label is the summary's own.
     expect(text.split("\n").filter((line) => line.startsWith("Mức độ:"))).toEqual(["Mức độ: Thành công"]);
   });

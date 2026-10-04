@@ -169,7 +169,7 @@ export const MESSAGES_INBOX_VI = {
   "inbox.severity.error": "Lỗi",
   "inbox.subject.conversation": "Hội thoại",
   "inbox.subject.backgroundWork": "Việc nền",
-  "inbox.subject.task": "Task",
+  "inbox.subject.task": "Việc",
   "inbox.subject.package": "Gói mở rộng",
   "inbox.subject.piUpdate": "Bản cập nhật Pi",
   "inbox.subject.peer": "Thiết bị đã ghép đôi",
