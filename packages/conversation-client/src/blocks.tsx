@@ -221,10 +221,13 @@ export function ArtifactBlock({
   block,
   actions,
   t = defaultT,
+  locale = "vi",
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
   t?: (key: MessageKey) => string;
+  /** The interface language, for when the file was made and when it expires; Vietnamese by default, like `t`. */
+  locale?: string;
 }): ReactElement {
   const labelValue = typeof block.label === "string" ? block.label : "artifact";
   const mimeType = typeof block.mimeType === "string" ? block.mimeType : "application/octet-stream";
@@ -239,72 +242,82 @@ export function ArtifactBlock({
         <span className="cc-card-title">{labelValue}</span>
         <span>
           {/* A node id is an internal name; the fallback phrase says the same useful thing without exposing one. */}
-          {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : t("blocks.artifact.fromAnotherNode")}
+          {mimeType} · {formatFileSize(sizeBytes)}
+          {originNodeId === undefined ? "" : t("blocks.artifact.fromAnotherNode")}
         </span>
       </div>
-      {/*
-        The snapshot is what the message recorded. What the node holds now is a separate question, and only the
-        node can answer it — an artifact can expire between the message being written and somebody reading it.
-      */}
-      {artifactId !== "" && actions?.onArtifactOpen !== undefined ? (
-        <div className="cc-card-actions">
-          <button
-            type="button"
-            className="cc-action"
-            data-artifact-open={artifactId}
-            /*
-             * Disabled only while a request is in flight. Unlike stopping a task, reopening is a question rather
-             * than a state change: the answer can have changed since it was asked — an artifact that had expired
-             * may have been produced again — so asking a second time has to stay possible.
-             */
-            disabled={state?.status === "pending"}
-            onClick={() => actions.onArtifactOpen?.({ artifactId })}
-          >
-            {state?.status === "pending" ? t("blocks.artifact.opening") : t("blocks.artifact.reopen")}
-          </button>
-        </div>
-      ) : null}
-      {state === undefined || state.status === "pending" ? null : state.status === "failed" ? (
-        <p className="cc-freshness" data-artifact-error="true">
-          {state.message}
-        </p>
-      ) : (
-        <dl className="cc-fields" data-artifact-opened="true" data-artifact-expired={String(state.expired)}>
-          {/*
-            An expired artifact is reported as a distinct outcome rather than as a failure: the node had the
-            file and a retention window passed, which calls for asking for it again rather than for looking for
-            a fault.
-          */}
-          {state.expired ? (
-            <p className="cc-freshness" data-artifact-expiry="true">
-              {t("blocks.artifact.expiredNotice").replace(
-                "{since}",
-                state.expiresAt === null
-                  ? ""
-                  : t("blocks.artifact.expiredSince").replace("{at}", state.expiresAt),
-              )}
-            </p>
-          ) : null}
-          <dt>{t("blocks.artifact.size")}</dt>
-          <dd>{state.sizeBytes} B</dd>
-          <dt>{t("blocks.artifact.type")}</dt>
-          <dd>{state.mimeType}</dd>
-          <dt>{t("blocks.artifact.digest")}</dt>
-          <dd>
-            <code>{state.digest}</code>
-          </dd>
-          <dt>{t("blocks.artifact.createdAt")}</dt>
-          <dd>{state.createdAt}</dd>
-          <dt>{t("blocks.artifact.source")}</dt>
-          <dd>{state.originNodeId}</dd>
-          <dt>{t("blocks.artifact.expiresAt")}</dt>
-          <dd>{state.expiresAt ?? t("blocks.artifact.none")}</dd>
-        </dl>
-      )}
+      <div className="cc-card-body">
+        {/*
+          The snapshot is what the message recorded. What the node holds now is a separate question, and only the
+          node can answer it — an artifact can expire between the message being written and somebody reading it.
+        */}
+        {artifactId !== "" && actions?.onArtifactOpen !== undefined ? (
+          <div className="cc-card-actions">
+            <button
+              type="button"
+              className="cc-action"
+              data-artifact-open={artifactId}
+              /*
+               * Disabled only while a request is in flight. Unlike stopping a task, reopening is a question rather
+               * than a state change: the answer can have changed since it was asked — an artifact that had expired
+               * may have been produced again — so asking a second time has to stay possible.
+               */
+              disabled={state?.status === "pending"}
+              onClick={() => actions.onArtifactOpen?.({ artifactId })}
+            >
+              {state?.status === "pending" ? t("blocks.artifact.opening") : t("blocks.artifact.reopen")}
+            </button>
+          </div>
+        ) : null}
+        {state === undefined || state.status === "pending" ? null : state.status === "failed" ? (
+          <p className="cc-freshness" data-artifact-error="true">
+            {state.message}
+          </p>
+        ) : (
+          <div data-artifact-opened="true" data-artifact-expired={String(state.expired)}>
+            {/*
+              An expired artifact is reported as a distinct outcome rather than as a failure: the node had the
+              file and a retention window passed, which calls for asking for it again rather than for looking for
+              a fault.
+            */}
+            {state.expired ? (
+              <p className="cc-freshness" data-artifact-expiry="true">
+                {t("blocks.artifact.expiredNotice").replace(
+                  "{since}",
+                  state.expiresAt === null
+                    ? ""
+                    : t("blocks.artifact.expiredSince").replace("{at}", readableInstant(state.expiresAt, locale)),
+                )}
+              </p>
+            ) : null}
+            <dl className="cc-fields">
+              <dt>{t("blocks.artifact.size")}</dt>
+              <dd>{formatFileSize(state.sizeBytes)}</dd>
+              <dt>{t("blocks.artifact.type")}</dt>
+              <dd>{state.mimeType}</dd>
+              <dt>{t("blocks.artifact.createdAt")}</dt>
+              <dd>{readableInstant(state.createdAt, locale)}</dd>
+              <dt>{t("blocks.artifact.expiresAt")}</dt>
+              <dd>{state.expiresAt === null ? t("blocks.artifact.none") : readableInstant(state.expiresAt, locale)}</dd>
+            </dl>
+            {/* What identifies the file to a machine — its digest and the node that holds it — is there when asked for. */}
+            <details className="cc-text-alt" data-artifact-references="true">
+              <summary>{t("inbox.capability.details")}</summary>
+              <dl className="cc-fields">
+                <dt>{t("blocks.artifact.digest")}</dt>
+                <dd>
+                  <code>{state.digest}</code>
+                </dd>
+                <dt>{t("blocks.artifact.source")}</dt>
+                <dd>{state.originNodeId}</dd>
+              </dl>
+            </details>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
-
 const CARD_TONE: Record<string, string> = {
   "needs-decision": "warn",
   blocked: "danger",
@@ -1877,7 +1890,7 @@ export function renderBlock(
     case "artifact":
       // Forwarded, for the reason the task card's control taught: a component tested by calling it directly
       // passes whether or not the dispatcher hands it anything.
-      return <ArtifactBlock key={index} block={block} t={t} {...(actions === undefined ? {} : { actions })} />;
+      return <ArtifactBlock key={index} block={block} t={t} locale={locale} {...(actions === undefined ? {} : { actions })} />;
     case "system-card":
       return <SystemCardBlock key={index} block={block} t={t} />;
     case "approval-card":

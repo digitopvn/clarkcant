@@ -62,8 +62,14 @@ test("reopening an artifact asks the node what it still holds", async ({ page })
   const opened = block.locator("[data-artifact-opened='true']");
   await expect(opened).toBeVisible({ timeout: 20_000 });
   await expect(opened).toContainText("sha256:");
-  await expect(opened).toContainText("20480 B");
+  // In a size a person reads, and with the machine references folded away until asked for.
+  await expect(opened).toContainText("20 KB");
   await expect(opened).toContainText("application/pdf");
+  await expect(opened.locator("[data-artifact-references='true']")).not.toHaveAttribute("open", "");
+  // The button sits inside the card's body, not against its edge.
+  const cardBox = await block.boundingBox();
+  const openBox = await open.boundingBox();
+  expect(openBox!.x - cardBox!.x).toBeGreaterThanOrEqual(8);
   await expect(opened).toHaveAttribute("data-artifact-expired", "false");
 
   // Nothing expired, so nothing claims it did.
