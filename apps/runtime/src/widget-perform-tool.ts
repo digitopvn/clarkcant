@@ -365,14 +365,39 @@ const locateInstalled: PlaceableWidgetLocator = (services, widgetId) => locateIs
  *
  * A widget id is listed under a generation only when the definition placing it would read belongs to that same
  * generation. Widget ids are not namespaced, so another package declaring the same id is not shown with this package's
- * capabilities, and placing the id binds to the package the definition really comes from.
+ * capabilities, and placing the id binds to the package the definition really comes from. Each id is located once.
+ *
+ * A package with widgets that was recorded before generations kept their widget ids is named after the widgets, on its
+ * own line that does not count toward the widgets shown.
  */
 export function listPlaceableWidgets(services: PlaceServices, locate: PlaceableWidgetLocator = locateInstalled): { widgetId: string; summary: string }[] {
   const node = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId };
   const provided = packageProvidedCapabilities(node);
-  const seen = new Set<string>();
+  const located = new Map<string, ReturnType<PlaceableWidgetLocator>>();
   const rows: { widgetId: string; summary: string }[] = [];
+  const unlisted: { widgetId: string; summary: string }[] = [];
   for (const generation of activeGenerations(node)) {
+    if (generation.widgetIds === undefined) {
+      // Its install recorded a UI facet, but not which widgets: nothing here says which ids are this package's.
+      if (generation.uiOnlyFacets.includes("ui") && unlisted.length < LISTED_WIDGETS) {
+        unlisted.push({
+          widgetId: "",
+          summary: `- package ${generation.packageId} ${generation.version}: its widgets cannot be listed, because it was installed before this node recorded a package's widgets; reinstall or update the package to list them.`,
+        });
+      }
+      continue;
+    }
+    const mine = generation.widgetIds.flatMap((widgetId) => {
+      if (rows.some((row) => row.widgetId === widgetId)) return [];
+      let found = located.get(widgetId);
+      if (found === undefined) {
+        found = locate(services, widgetId);
+        located.set(widgetId, found);
+      }
+      if (!found.ok || !found.active || found.generationId !== generation.generationId || found.definition.renderer !== "isolated-app") return [];
+      return [{ widgetId, definition: found.definition }];
+    });
+    if (mine.length === 0) continue;
     // What a capability button on this package's widgets may call: the package's own service, nothing else.
     const own = provided
       .filter((entry) => entry.generation === generation.generationId)
@@ -385,21 +410,7 @@ export function listPlaceableWidgets(services: PlaceServices, locate: PlaceableW
             `input schema: ${JSON.stringify(descriptor.inputSchema ?? {}).slice(0, 400)})`,
         ];
       });
-    if (generation.widgetIds === undefined) {
-      // Recorded before a generation kept its widget ids: nothing here says which widgets are this package's.
-      rows.push({
-        widgetId: "",
-        summary: `- package ${generation.packageId} ${generation.version}: its widgets cannot be listed, because it was installed before this node recorded a package's widgets; reinstall or update the package to place them.`,
-      });
-      if (rows.length >= LISTED_WIDGETS) return rows;
-      continue;
-    }
-    for (const widgetId of generation.widgetIds) {
-      if (seen.has(widgetId)) continue;
-      const found = locate(services, widgetId);
-      if (!found.ok || !found.active || found.generationId !== generation.generationId || found.definition.renderer !== "isolated-app") continue;
-      seen.add(widgetId);
-      const definition = found.definition;
+    for (const { widgetId, definition } of mine) {
       const offered = (definition.offeredActions ?? []).map((entry) => `${entry.name} (“${entry.label}”)`).join(", ");
       rows.push({
         widgetId,
@@ -409,12 +420,11 @@ export function listPlaceableWidgets(services: PlaceServices, locate: PlaceableW
           (offered === "" ? "" : ` offered actions: ${offered}`) +
           (own.length === 0 ? "" : ` its package's capabilities: ${own.join("; ")}`),
       });
-      if (rows.length >= LISTED_WIDGETS) return rows;
+      if (rows.length >= LISTED_WIDGETS) return [...rows, ...unlisted];
     }
   }
-  return rows;
+  return [...rows, ...unlisted];
 }
-
 export function createPlaceWidgetTool(deps: PlaceWidgetToolDeps): ToolDefinition {
   return {
     name: "place_widget",

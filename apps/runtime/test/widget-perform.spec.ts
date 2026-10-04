@@ -908,15 +908,33 @@ describe("placing a widget with place_widget", () => {
       expect(rows[0]?.summary).not.toContain(OTHER);
     });
 
-    it("lists a generation recorded without its widget ids as one to reinstall or update", () => {
+    it("names a package with widgets recorded without its widget ids after the widgets, as one to reinstall or update", () => {
       services.runtime.db.prepare("DELETE FROM package_generations WHERE generation_id = ?").run(OTHER_GENERATION);
       activate("com.example.mail", OTHER_GENERATION, undefined);
+      // A package with no UI facet has no widgets to list, and is not named.
+      expect(listPlaceableWidgets(services, placing.locate).map((row) => row.widgetId)).toEqual([STATEFUL.id]);
+
+      services.runtime.db
+        .prepare(`UPDATE package_generations SET document = json_set(document, '$.uiOnlyFacets', json('["ui"]')) WHERE generation_id = ?`)
+        .run(OTHER_GENERATION);
       const rows = listPlaceableWidgets(services, placing.locate);
       expect(rows.map((row) => row.summary)).toEqual([
-        expect.stringContaining("com.example.mail 1.0.0: its widgets cannot be listed"),
         expect.stringContaining(`- ${STATEFUL.id}:`),
+        expect.stringContaining("com.example.mail 1.0.0: its widgets cannot be listed"),
       ]);
-      expect(rows[0]?.summary).toContain("reinstall or update the package");
+      expect(rows[1]?.summary).toContain("reinstall or update the package to list them");
+    });
+
+    it("locates each widget id once, however many generations list it", () => {
+      services.runtime.db.prepare("DELETE FROM package_generations WHERE generation_id = ?").run(OTHER_GENERATION);
+      activate("com.example.mail", OTHER_GENERATION, [STATEFUL.id]);
+      const asked: string[] = [];
+      const rows = listPlaceableWidgets(services, (_, widgetId) => {
+        asked.push(widgetId);
+        return placing.locate();
+      });
+      expect(rows.map((row) => row.widgetId)).toEqual([STATEFUL.id]);
+      expect(asked).toEqual([STATEFUL.id]);
     });
 
     it("refuses a capability a service serves before the node has registered it, saying to try again", () => {

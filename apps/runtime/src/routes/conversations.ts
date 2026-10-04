@@ -265,16 +265,16 @@ export function locateIsolatedFrame(runtime: { dataDir: string; db: Database; id
    * Whether the code found is the version this node is running, rather than a listing kept to describe an instance
    * whose package is gone. A frame is still described either way; only a running package is given anything new.
    */
-  const owner = entries.find((entry) => entry.packageId === found.packageId && entry.version === found.version && isActive(entry));
+  const { entry: owner, ...located } = found;
+  const running = isActive(owner);
   /*
-   * The active generation of the package the definition was read from, by package identity and version. Widget ids are
-   * not namespaced, so this, not which generation lists the id, is what says whose widget it is.
+   * The active generation of the package the definition was read from: that same directory entry, by package identity
+   * and version. Widget ids are not namespaced, so this, not which generation lists the id, is what says whose widget it is.
    */
-  const generationId =
-    owner === undefined
-      ? undefined
-      : generations.find((generation) => idsOf(owner).includes(generation.packageId) && generation.version === owner.version)?.generationId;
-  return { ...found, active: owner !== undefined, generationId };
+  const generationId = running
+    ? generations.find((generation) => idsOf(owner).includes(generation.packageId) && generation.version === owner.version)?.generationId
+    : undefined;
+  return { ...located, active: running, generationId };
 }
 
 /**
