@@ -281,6 +281,8 @@ export const VOICE_CSS = `
  * distinction the whole settings surface is built around.
  */
 .cc-card-actions { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; padding-top: var(--cc-space-xs); }
+/* Under a terminal screen rather than under a card body's text, so the row keeps the card's own inset. */
+.cc-card-actions.cc-terminal-actions { padding: var(--cc-space-sm) var(--cc-space-md); }
 .cc-action {
   cursor: pointer; font: inherit; font-size: var(--cc-text-body-sm);
   padding: var(--cc-space-xs) var(--cc-space-md);

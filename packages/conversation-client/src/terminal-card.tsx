@@ -583,16 +583,16 @@ function LiveTerminal({
         )}
       </div>
 
-      <div className="cc-chip-row cc-terminal-actions">
+      <div className="cc-card-actions cc-terminal-actions">
         {live && !driver && !exited && !inSession ? (
-          <button type="button" className="cc-chip" data-terminal-take="true" onClick={onTake}>
+          <button type="button" className="cc-action" data-terminal-take="true" onClick={onTake}>
             {t("blocks.terminal.takeControl")}
           </button>
         ) : null}
         <button
           ref={shareButtonRef}
           type="button"
-          className="cc-chip"
+          className="cc-action"
           data-terminal-share={choice.kind}
           disabled={!live || choice.kind === "nothing"}
           onClick={onShare}
@@ -601,7 +601,7 @@ function LiveTerminal({
         </button>
         <button
           type="button"
-          className="cc-chip"
+          className="cc-action"
           data-terminal-expand="true"
           aria-pressed={expanded}
           onClick={() => setExpanded((value) => !value)}
@@ -611,7 +611,7 @@ function LiveTerminal({
         <button
           ref={panelToggleRef}
           type="button"
-          className="cc-chip"
+          className="cc-action"
           data-terminal-processes="true"
           aria-expanded={panelOpen}
           aria-controls={`cc-terminal-panel-${terminalId}`}
@@ -620,7 +620,7 @@ function LiveTerminal({
           {t("blocks.terminal.processes")}
         </button>
         {live && !exited && !inSession ? (
-          <button type="button" className="cc-chip" data-terminal-kill="true" disabled={killing} onClick={onKill}>
+          <button type="button" className="cc-action" data-terminal-kill="true" disabled={killing} onClick={onKill}>
             {killing ? t("blocks.terminal.killing") : t("blocks.terminal.kill")}
           </button>
         ) : null}
