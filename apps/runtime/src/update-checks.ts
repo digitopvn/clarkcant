@@ -8,9 +8,9 @@ import {
   type InstalledPackageView,
 } from "@clarkcant/core";
 import { sdkVersion } from "@clarkcant/pi-adapter";
-import { skippedVersionsOf, type SkippedVersionKind } from "@clarkcant/storage";
+import { dismissNotificationsByKeyPrefix, skippedVersionsOf, type SkippedVersionKind } from "@clarkcant/storage";
 
-import { packageUpdateNotice, piUpdateNotice, tryRecordNodeNotice, type NoticeServices } from "./notices.ts";
+import { packageUpdateNotice, piUpdateNotice, tryRecordNodeNotice, type NodeNotice, type NoticeServices } from "./notices.ts";
 
 /**
  * Checking whether an installed package, widget or the Pi SDK has a newer version published.
@@ -205,7 +205,7 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
           undefined,
         );
       if (newest === undefined) continue;
-      tryRecordNodeNotice(
+      recordUpdateNotice(
         input.services,
         packageUpdateNotice({
           packageId: installed.packageId,
@@ -236,7 +236,7 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
   if (!isNewerVersion(latest.version, input.piInstalledVersion) || skippedFor(input.services, "pi", piPackageName)(latest.version)) {
     return { packageUpdates, piUpdate: false, piOffline: false };
   }
-  tryRecordNodeNotice(
+  recordUpdateNotice(
     input.services,
     piUpdateNotice({
       packageName: piPackageName,
@@ -246,6 +246,30 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
     }),
   );
   return { packageUpdates, piUpdate: true, piOffline: false };
+}
+
+/**
+ * Record an update notice, and take out the ones it replaces.
+ *
+ * An update notice is keyed `update:<source>:<name>@<version>`, so a newer version is a new notice; without this the
+ * inbox kept "an update is available" once per version it had ever seen, and two such lines for one package read as two
+ * updates. The notice for an older version is no longer so once a newer one is published, so it is dismissed the way a
+ * producer dismisses anything that stopped holding — the row stays for the retention window, still deduplicated.
+ */
+function recordUpdateNotice(services: NoticeServices, notice: NodeNotice): void {
+  tryRecordNodeNotice(services, notice);
+  const family = notice.dedupKey.slice(0, notice.dedupKey.lastIndexOf("@") + 1);
+  if (family === "") return;
+  try {
+    dismissNotificationsByKeyPrefix(services.runtime.db, {
+      principalId: services.runtime.identity.ownerPrincipalId,
+      dedupKeyPrefix: family,
+      at: notice.at,
+      except: notice.dedupKey,
+    });
+  } catch (cause) {
+    process.stderr.write(`inbox: could not retire older update notices (${cause instanceof Error ? cause.message : String(cause)})\n`);
+  }
 }
 
 /**

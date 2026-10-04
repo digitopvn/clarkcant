@@ -284,8 +284,11 @@ describe("checkForUpdates — packages and widgets", () => {
       platform: HOST,
     });
 
+    // The newer version is its own notice, and it replaces the one for 1.1.0: one package, one "update available".
     const notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
-    expect(notices.filter((notice) => notice.sourceKind === "package")).toHaveLength(2);
+    const packageNotices = notices.filter((notice) => notice.sourceKind === "package");
+    expect(packageNotices).toHaveLength(1);
+    expect(packageNotices[0]?.body).toContain("1.2.0");
   });
 });
 
@@ -310,6 +313,24 @@ describe("checkForUpdates — Pi SDK", () => {
     expect(notices[0]?.body).toContain("0.85.1");
     expect(notices[0]?.body).toContain("0.86.0");
     expect(notices[0]?.body).toContain("extension Pi gốc");
+  });
+
+  it("retires the notice for an older SDK release once a newer one is published", async () => {
+    for (const latest of ["0.87.1", "1.0.2"]) {
+      await checkForUpdates({
+        services,
+        installedPackages: [],
+        directory: [],
+        piInstalledVersion: "0.85.1",
+        fetchImpl: fetchReturning(latest),
+        now: () => AT,
+        platform: HOST,
+      });
+    }
+
+    const notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.body).toContain("1.0.2");
   });
 
   it("writes nothing when the registry's latest is not newer than what is pinned", async () => {
