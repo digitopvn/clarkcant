@@ -91,6 +91,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
  */
 .cc-setting-row[data-layout="stacked"] { flex-direction: column; align-items: stretch; gap: var(--cc-space-sm); }
 .cc-setting-row[data-layout="stacked"] > .cc-setting-control { flex: initial; display: block; }
+/* A plain value in the control column, such as a date, at the size of the row text beside it rather than the reply size. */
+.cc-setting-control > time { font-size: var(--cc-text-body-sm); line-height: var(--cc-leading-body-sm); }
 .cc-setting-control code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text-muted); overflow-wrap: anywhere; }
 
 /* A capability, with its real readiness. The reason is shown whenever there is one. */
@@ -1003,6 +1005,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 /* A definition list's value may be a path or an id; it wraps rather than pushing the column off the page. */
 .cc-fields { grid-template-columns: max-content minmax(0, 1fr); }
 .cc-fields dd { min-width: 0; overflow-wrap: anywhere; }
+/* Settings sets its labels at the small body size; a card there kept the reply size and read a step louder than its row. */
+.cc-tabpanel .cc-fields { font-size: var(--cc-text-body-sm); line-height: var(--cc-leading-body-sm); }
 
 /* In this layer rather than beside .cc-setup-card, because the voice layer's .cc-chip padding comes later and wins. */
 .cc-setup-card > .cc-chip { padding: var(--cc-space-xs) var(--cc-space-lg); }
