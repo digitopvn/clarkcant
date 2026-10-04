@@ -7,6 +7,7 @@ import {
   ProjectPickerCardBlock,
   ReconnectCardBlock,
   SystemCardBlock,
+  readableElapsed,
   renderBlock,
 } from "../src/blocks.tsx";
 import { findAll, nonHost, textOf } from "./block-helpers.ts";
@@ -235,10 +236,18 @@ describe("the model answer note", () => {
     const line = textOf(summary);
     expect(line).toContain("Trả lời bằng model");
     expect(line).toContain("deepseek");
-    expect(line).toContain("1042 ms");
+    // The node's exact milliseconds, read as the seconds a person waited.
+    expect(line).toContain("1 giây");
     expect(line).not.toContain("Câu trả lời này do model sinh ra.");
     // And it is reachable once opened.
     expect(textOf(element)).toContain("Câu trả lời này do model sinh ra.");
+  });
+
+  it("reads a duration in seconds past one, and leaves anything else as the node wrote it", () => {
+    expect(readableElapsed("17681 ms", "vi", "giây")).toBe("17,7 giây");
+    expect(readableElapsed("17681 ms", "en", "s")).toBe("17.7 s");
+    expect(readableElapsed("640 ms", "vi", "giây")).toBe("640 ms");
+    expect(readableElapsed("about a minute", "en", "s")).toBe("about a minute");
   });
 
   it("marks a reply a fallback model wrote, so the line itself says the choice did not answer", () => {

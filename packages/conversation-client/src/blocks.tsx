@@ -317,6 +317,21 @@ const CARD_TONE: Record<string, string> = {
 };
 
 /**
+ * A turn's duration as a person reads a wait.
+ *
+ * The node records "17681 ms", which is exact and hard to read at a glance. Past one second it reads as seconds in the
+ * interface's number format ("17,7 giây"); anything else, including a value the node may word differently later, is
+ * shown as it came.
+ */
+export function readableElapsed(value: string, locale: string, secondsUnit: string): string {
+  const match = /^(\d+) ms$/u.exec(value);
+  if (match === null) return value;
+  const ms = Number(match[1]);
+  if (ms < 1000) return value;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(ms / 1000)} ${secondsUnit}`;
+}
+
+/**
  * Host-owned system card.
  *
  * `owner` must be `"host"`. A card that claims host ownership without it is refused
@@ -344,7 +359,13 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
       const field = fields.find((entry) => entry.label === label);
       return typeof field?.value === "string" ? field.value : undefined;
     };
-    const summary = [valueOf("Provider"), valueOf("Model"), valueOf("Thời gian")].filter(
+    const elapsed = valueOf("Thời gian");
+    const summary = [
+      valueOf("Provider"),
+      valueOf("Model"),
+      // In the card's own language: the node writes these fields in Vietnamese, and this block is drawn without hooks.
+      elapsed === undefined ? undefined : readableElapsed(elapsed, "vi", MESSAGES_VI["settings.ai.turnCap.seconds"]),
+    ].filter(
       (value): value is string => value !== undefined,
     );
     const rest = fields.filter((field) => !["Provider", "Model", "Thời gian"].includes(String(field.label)));
