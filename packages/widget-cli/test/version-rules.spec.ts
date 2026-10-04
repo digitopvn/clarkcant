@@ -131,10 +131,17 @@ describe("clark widget publish holds a new version to the one it prepared before
     expect(await runCli(["widget", "publish", root])).toBe(0);
 
     const manifest = join(root, "clarkcant.json");
+    const npmPackage = join(root, "package.json");
     const definition = join(root, "widgets", "main", "widget.json");
-    editJson(manifest, (value) => {
-      value["version"] = "0.2.0";
-    });
+    // A release names its version twice, in clarkcant.json and package.json, and pack refuses the two disagreeing.
+    const bump = (version: string): void => {
+      for (const path of [manifest, npmPackage]) {
+        editJson(path, (value) => {
+          value["version"] = version;
+        });
+      }
+    };
+    bump("0.2.0");
     editJson(definition, (value) => {
       value["stateSchema"] = { type: "object", properties: { done: { type: "boolean" } }, additionalProperties: true };
     });
@@ -143,9 +150,7 @@ describe("clark widget publish holds a new version to the one it prepared before
     // Nothing was prepared for the refused version.
     expect(readFileSync(join(root, "dist", "directory-entry.json"), "utf8")).toBe(entryBefore);
 
-    editJson(manifest, (value) => {
-      value["version"] = "0.3.0";
-    });
+    bump("0.3.0");
     editJson(definition, (value) => {
       value["stateVersion"] = 1;
       value["stateMigrations"] = [{ from: 0, to: 1, ops: [{ op: "default", key: "done", value: false }] }];

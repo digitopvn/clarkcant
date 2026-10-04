@@ -2788,11 +2788,54 @@ Runs the conformance suite.
 
 ### pack
 
-Validates the manifest, builds an immutable artifact, generates digest + metadata.
+Runs the conformance suite, then builds the artifact and its digests. When the package has a `package.json`, pack also
+builds the npm archive with `pnpm pack` into `dist/<name>-<version>.tgz`, extracts it with the runtime's own reader,
+and refuses it unless the extracted archive passes the conformance suite on its own, holds the same `clarkcant.json`
+and contains nothing credential-shaped (`.npmrc`, `.env*`, `.dev.vars`, `.git-credentials`, `.pypirc`, private keys, `node_modules`, `.git`). A
+`files` list that leaves out a runtime asset is therefore caught by pack, not on someone else's machine. Without a
+`package.json` the package stays a local/git package and pack writes no archive.
+
+`dist/artifact.json` (`schemaVersion: 2`) records three digests, each answering a different question:
+
+| Field | Covers | Checked by |
+| --- | --- | --- |
+| `npm.integrity` | sha512 SRI of the `.tgz` bytes | the npm registry and the node's fetch |
+| `npm.contentDigest` | the runtime digest of the extracted archive's files | the node, after extracting the exact npm version; it is the npm directory entry's `digest` |
+| `authorDigest` | identity, version, definitions, theme documents and file hashes of the source | pack, so a packed version whose bytes changed is refused; it is a local entry's `digest` |
+
+`pnpm pack` is reproducible: packing unchanged files again writes byte-identical archives. Repacking a version whose
+author digest or archive content digest changed is refused; bump the version.
+
+`package.json` rules, checked before packing and named one by one when they fail:
+
+- `name` is a valid npm package name, and `version` equals `clarkcant.json`'s `version`;
+- `license`, when the manifest has a `publisher`, equals `publisher.license`;
+- `keywords` include `clarkcant` and one keyword per facet kind (`clarkcant-widget`, `clarkcant-service`,
+  `clarkcant-skill`, `clarkcant-prompt`, `clarkcant-theme`, `clarkcant-setup`, `clarkcant-driver`,
+  `clarkcant-voice`), which is how a Marketplace finds the package;
+- an explicit, non-empty `files` list;
+- no `dependencies`, `optionalDependencies` or `bundle(d)Dependencies`: a package ships what it runs;
+- no `preinstall`, `install` or `postinstall` script, and no `prepack`, `prepare` or `postpack` script: pack runs no
+  package code, and an archive a script generated could not be rebuilt from the source. Ship the generated files.
+
+`clark widget init` writes a `package.json` that meets these rules for every template, named after the last segment of
+the package id. That name may already be taken on npm: rename it, or use a scope you own (`@you/quick-notes`), before
+publishing. Pack needs `pnpm` (`corepack enable pnpm`). Adding a `package.json` to an already packed package changes
+its author digest, because the file becomes part of the package; bump the version when you add it.
 
 ### publish
 
-Publishes the package source/artifact and then submits directory metadata. The directory is not the only place a package can run: a local/git source is still a first-class development path.
+Prepares the directory entry; it never uploads anything. `dist/directory-entry.json` names the exact npm version
+(`source: { kind: "npm", name, version }`) and the archive's `contentDigest` when pack built an archive, or the
+package's own directory and its `authorDigest` otherwise. `--source npm|local` picks one explicitly. The output states
+three outcomes separately — prepared: yes; published to npm: no; Marketplace submission: no — and prints the
+command that publishes the exact archive that was checked:
+
+    npm publish dist/<name>-<version>.tgz
+
+Publish that file rather than running `npm publish` in the package directory, so the registry serves the bytes whose
+integrity and content digest the entry already names. A Marketplace then indexes npm packages carrying the
+`clarkcant` keyword, or takes a submission. A local/git source is still a first-class development path.
 
 Before writing the entry, publish compares the definitions with the previous preparation (`dist/published-definitions.json`) and
 refuses a version that violates the rules in §20. This file is the comparison baseline, so it should be committed with the source; if
@@ -2918,11 +2961,13 @@ Developer:
       ↓
     clark widget pack
       ↓
-    artifact + digest
+    npm archive + integrity + content digest
       ↓
-    publish npm/git/release
+    clark widget publish        (prepares the entry; uploads nothing)
       ↓
-    clark widget publish
+    npm publish dist/<name>-<version>.tgz
+      ↓
+    Marketplace indexes the "clarkcant" keyword, or a submission
       ↓
     directory validation
       ↓
@@ -3013,8 +3058,10 @@ This section states which parts of the document already have code, so that nobod
   pin, state migration, text fallback, effect action. Checks that need a rendered frame (keyboard, touch size,
   narrow/compact/expanded, reduced motion, voice/click parity) are reported as `requires-dev-host` — they are **not**
   reported as passing just because a fixture exists.
-- `clark widget pack` — validates the manifest, computes the digest over identity + content, and refuses to re-pack a
-  version that was already packed with a different digest (a version whose bytes changed is a different package carrying the same number).
+- `clark widget pack` — validates the manifest, computes the author digest over identity + content, builds the npm
+  archive when the package has a `package.json` (§16), records its integrity and runtime content digest, and refuses to
+  re-pack a version that was already packed with a different digest (a version whose bytes changed is a different package
+  carrying the same number). A node fetching that exact npm version computes the same content digest.
 - `clark widget dev` — the dev host in §16: hot reload via SSE, fixtures, viewport switcher (320px is a real
   option), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
   simulator, and accessibility audit. The frame uses the host's actual sandbox (`allow-scripts`, no
@@ -3030,6 +3077,8 @@ This section states which parts of the document already have code, so that nobod
   with every field §18 requires and the digest of the packed artifact (read from `dist/artifact.json`, not recomputed —
   computing the same thing twice is how a listing ends up referring to an artifact nobody can produce). It does **not** submit on the
   user's behalf: submitting needs a directory account, and a command that looks like it has already submitted is a control whose action does not exist.
+  With an npm archive, the entry names the exact npm version and the archive's content digest, and the output prints the
+  `npm publish` command for that archive; npm publication itself is the author's step.
   The local/git/npm path is still first-class, so no account is needed to run your own widget.
 - **Directory search** — implemented at the level of reading an index: `CC_DIRECTORY_INDEX` points to a JSON file of entries per
   §18, and `search_directory` returns a `marketplace-results` card showing **source, version, digest and risk lane**,
