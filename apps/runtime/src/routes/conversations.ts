@@ -106,6 +106,7 @@ import {
 } from "../application/capability-invoke.ts";
 import { isMapTilePolicyPayload, runApprovedMapTilePolicy } from "../application/map-tile-policy.ts";
 import {
+  deniedWidgetArtifactWriteLabel,
   isWidgetArtifactWritePayload,
   recordDeniedWidgetArtifactWrite,
   runApprovedWidgetArtifactWrite,
@@ -1907,7 +1908,7 @@ export async function decideApprovalForNode(
     const refused = tilePolicyChange
       ? "Đã từ chối đổi chính sách ô bản đồ. Không có gì thay đổi."
       : artifactWrite
-        ? "Đã từ chối ghi tệp widget đó. Không có gì được ghi."
+        ? deniedWidgetArtifactWriteLabel(services, input.at)
         : capabilityCall
         ? "Đã từ chối gọi capability đó. Không có gì được chạy."
         : "Đã từ chối chạy lệnh đó. Không có gì được chạy.";
@@ -1967,8 +1968,9 @@ export async function decideApprovalForNode(
       conversationId: input.conversationId,
       at: input.at,
     });
-    if (!written.ok) return { ok: false, code: written.code, message: written.message };
+    // A failure after the approval was spent still answers the card, so it shows how it ended.
     appendHostReply(services, { conversationId: input.conversationId, blocks: written.blocks, at: input.at });
+    if (!written.ok) return { ok: false, code: written.code, message: written.message };
     return { ok: true, outcome: written.description };
   }
 

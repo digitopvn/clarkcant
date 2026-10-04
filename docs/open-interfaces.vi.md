@@ -431,28 +431,38 @@ câu trả lời nào mang đường dẫn.
 
 **Trên bề mặt máy, năm route ghi đi qua chính sách thực thi.** Tạo, ghi chunk, chốt, đính kèm và bỏ tệp là việc của
 widget. App của chính người dùng vẫn gọi chúng như trước. Khi MCP, relay WebSocket hoặc `clarkcant api` mang một lời gọi
-như vậy, một AI client hoặc một máy từ xa sẽ ghi với tư cách widget, nên node quyết định từng lần ghi như một hiệu ứng
-`local-write` theo chính sách thực thi của người dùng (`policyGatedWidgetArtifactWrite` trong
-`packages/contracts/src/machine-surfaces.ts`):
+như vậy, một AI client hoặc một máy từ xa sẽ ghi với tư cách widget, nên node quyết định từng lần ghi theo chính sách thực
+thi của người dùng (`packages/contracts/src/machine-surfaces.ts`,
+`apps/runtime/src/application/machine-artifact-writes.ts`). Mỗi lần ghi là một hiệu ứng `local-write`, trừ việc bỏ một
+tệp không phải tệp đang ghi dở do chính bề mặt đó bắt đầu: việc này có thể xoá bản duy nhất của người dùng, nên nó là
+`destructive`, và được hỏi ở chế độ Guarded, và vì không ai trong hội thoại yêu cầu nó, cả ở chế độ Autonomous.
 
-- **Autonomous**, hoặc **Guarded** khi không có quy tắc nào hỏi về `local-write`: lần ghi chạy và trả lời như trên.
-- **Hỏi mỗi lần** (Ask every time), hoặc một quy tắc yêu cầu hỏi: không có gì được ghi. Một thẻ phê duyệt do host sở hữu
-  được thêm vào hội thoại của widget, và bên gọi nhận `202 { outcome: "approval-required", approvalRequired: { approvalId },
-  operation, message }`. Chỉ người dùng quyết định thẻ đó, trên route quyết định chỉ dành cho người dùng; relay và
-  `clarkcant api` từ chối route này với `403 PERSON_ONLY`, còn MCP không có công cụ nào cho nó. Khi người dùng duyệt, node
-  chạy lần ghi từ chính payload của thẻ sau khi đối chiếu với digest mà thẻ đã hiển thị, rồi thêm một biên nhận
-  `widget_artifact_write` có `args.artifactId` chỉ tệp (với lệnh tạo là tệp mới). Một chunk mà thao tác của nó không vừa
-  trên thẻ (quá 4.000 ký tự, khoảng 2,9 KB dữ liệu) bị từ chối với `413 APPROVAL_UNAVAILABLE`: hãy gửi chunk nhỏ hơn, hoặc
-  đổi chính sách.
-- Một quy tắc từ chối `local-write`, hoặc lệnh cấm trên toàn node: `403 POLICY_REFUSED`, không có gì được ghi.
+- **Chính sách cho chạy** (Autonomous, hoặc Guarded khi không có quy tắc nào hỏi): lần ghi chạy và trả lời như trên.
+- **Chính sách hỏi** (Hỏi mỗi lần, một quy tắc yêu cầu hỏi, hoặc một lần bỏ tệp `destructive`): không có gì được ghi.
+  Một thẻ phê duyệt do host sở hữu được thêm vào hội thoại của widget, viết bằng ngôn ngữ của người dùng, và bên gọi nhận
+  `202 { outcome: "approval-required", approvalRequired: { approvalId }, operation, message }`. Chỉ người dùng quyết
+  định thẻ đó, trên route quyết định chỉ dành cho người dùng; relay và `clarkcant api` từ chối route này với
+  `403 PERSON_ONLY`, còn MCP không có công cụ nào cho nó. Mỗi thẻ là cho một tệp, không bao giờ cho từng chunk, và không
+  bao giờ chứa byte. Duyệt một lệnh tạo sẽ tạo tệp và cho bề mặt đã yêu cầu được ghi các chunk và chốt tệp đó trong 15
+  phút. Một chunk hoặc lệnh chốt cho một tệp đang ghi dở đã có sẽ hỏi cùng quyền ghi đó, và được gửi lại khi người dùng
+  duyệt. Quyền này kết thúc khi tệp được chốt, bị bỏ hoặc hết hạn. Đính kèm và bỏ tệp được hỏi từng lần một. Một biên
+  nhận (`widget_artifact_write`, có `args.approvalId` và `args.artifactId`, hoặc `args.code` khi thất bại) trả lời mọi
+  thẻ đã được quyết định, kể cả thẻ không còn chạy được vì widget đã rời hội thoại, chính sách đã đổi, tệp đã thay đổi
+  hoặc thẻ đã bị sửa. Hỏi lại đúng việc đó sẽ nhận lại thẻ đang chờ; quá 8 thẻ đang chờ từ một bề mặt trong một hội
+  thoại, câu trả lời là `429 APPROVALS_PENDING`.
+- **Chính sách từ chối** (một quy tắc từ chối loại hiệu ứng đó, hoặc lệnh cấm trên toàn node): `403 POLICY_REFUSED`,
+  không có gì được ghi.
 
-Mọi lần ghi do bề mặt máy mang tới đều được ghi vào nhật ký kiểm toán (loại `widget-artifact`) cùng bề mặt (`mcp`,
-`relay` hoặc `cli-api`), instance widget, mã artifact, thao tác và quyết định. Lần ghi mà chính sách cho chạy cũng có một
-bản ghi hoạt động. Nhật ký kiểm toán không bao giờ chứa byte của tệp. Bề mặt được đọc từ header `x-clarkcant-surface` mà
-các bề mặt của chính node đặt (`clarkcant api` gửi `cli-api`). Một trường trong body không bao giờ đặt được nó, và một
-frame WebSocket cũng không. Bất kỳ bên gọi HTTP nào cũng có thể gửi header này, nên nó chỉ có thể khiến một lần ghi phải
-đi qua chính sách; nó không bao giờ giúp lần ghi bỏ qua chính sách. Các route đọc vẫn dùng được trên mọi bề mặt. Save As
-và bộ chọn tệp vẫn chỉ dành cho người dùng.
+Một kiểu nội dung không phải media type, hoặc một mã artifact không do node cấp, bị từ chối trước khi có thẻ nào được
+hiển thị, cũng như mọi thứ mà broker vốn sẽ từ chối. Mọi lần ghi do bề mặt máy mang tới đều được ghi vào nhật ký kiểm
+toán (loại `widget-artifact`) cùng bề mặt (`mcp`, `relay` hoặc `cli-api`), instance widget, mã artifact, thao tác và
+quyết định. Lần ghi mà chính sách cho chạy cũng có một bản ghi hoạt động sau khi broker chấp nhận nó. Cả nhật ký kiểm
+toán lẫn hội thoại đều không bao giờ chứa byte của tệp. Bề mặt được đọc từ header `x-clarkcant-surface` mà các bề mặt
+của chính node đặt (`clarkcant api` gửi `cli-api`); một trường trong body không bao giờ đặt được nó, và một frame
+WebSocket cũng không. Một yêu cầu qua HTTP thuần không có header đó là chính token của người dùng hành động trực tiếp,
+như app của người dùng, và không đi qua kiểm tra chính sách; bất kỳ bên gọi HTTP nào cũng có thể thêm header này, nên nó
+chỉ có thể khiến một lần ghi phải đi qua chính sách, không bao giờ giúp lần ghi bỏ qua chính sách. Các route đọc vẫn dùng
+được trên mọi bề mặt. Save As và bộ chọn tệp vẫn chỉ dành cho người dùng.
 
 Các job của package mà widget theo dõi (`jobs@1`, [widget-development.vi.md §10.2](widget-development.vi.md#102-job-chạy-lâu-jobs1))
 có trong `/openapi.json`. Một lần bấm vào binding có capability chạy dưới dạng job trả về một JobRef (`job_…`) thay vì

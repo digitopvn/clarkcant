@@ -550,84 +550,265 @@ describe("widget artifact writes on machine surfaces", () => {
       .reverse();
   }
 
-  it("runs every write a relay carries under Autonomous, and audits each with the surface, never the bytes", async () => {
+  const MCP = { "x-clarkcant-surface": "mcp" };
+
+  async function blocksOf(conversationId: string): Promise<Record<string, unknown>[]> {
+    const timeline = await http("GET", `/conversations/${conversationId}/timeline`);
+    return (timeline.body.messages as { blocks: Record<string, unknown>[] }[]).flatMap((message) => message.blocks);
+  }
+
+  async function cardOf(conversationId: string, approvalId: string): Promise<Record<string, unknown> | undefined> {
+    return (await blocksOf(conversationId)).find((block) => block.type === "approval-card" && block.approvalId === approvalId);
+  }
+
+  /** The person deciding on their own surface, with the digest the card showed them. */
+  async function decide(conversationId: string, approvalId: string, decision = "granted"): Promise<{ status: number; body: Record<string, unknown> }> {
+    const card = await cardOf(conversationId, approvalId);
+    return http("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, { decision, digest: card?.operationDigest });
+  }
+
+  function receiptOf(blocks: Record<string, unknown>[], approvalId: string): Record<string, unknown> | undefined {
+    return blocks.find(
+      (block) => block.type === "tool-activity" && block.name === "widget_artifact_write" && (block.args as { approvalId?: string } | undefined)?.approvalId === approvalId,
+    );
+  }
+
+  function approvalOf(body: unknown): string {
+    return (body as { approvalRequired: { approvalId: string } }).approvalRequired.approvalId;
+  }
+
+  function artifactIdOf(body: unknown): string {
+    return (body as { artifactRef: { artifactId: string } }).artifactRef.artifactId;
+  }
+
+  function chunk(text: string, offset = 0): { offset: number; contentBase64: string } {
+    return { offset, contentBase64: Buffer.from(text).toString("base64") };
+  }
+
+  it("runs a relay's writes under Autonomous, audits each without the bytes, and asks before deleting a finished file", async () => {
     const { conversationId, route } = await widget();
     const relay = await relayed();
 
     const created = await relay.request("POST", route, { mimeType: "text/plain", name: "ghi-chu.txt" });
     expect(created).toMatchObject({ type: "response", status: 201 });
-    const artifactId = ((created.body as { artifactRef: { artifactId: string } }).artifactRef).artifactId;
-    const chunk = { offset: 0, contentBase64: Buffer.from(TEXT + SECRET_TEXT).toString("base64") };
-    expect(await relay.request("POST", `${route}/${artifactId}/chunks`, chunk)).toMatchObject({ status: 200 });
+    const artifactId = artifactIdOf(created.body);
+    const body = chunk(TEXT + SECRET_TEXT);
+    expect(await relay.request("POST", `${route}/${artifactId}/chunks`, body)).toMatchObject({ status: 200 });
     expect(await relay.request("POST", `${route}/${artifactId}/finalize`)).toMatchObject({ status: 200 });
     expect(await relay.request("POST", `${route}/${artifactId}/attach`, {})).toMatchObject({ status: 201 });
-    expect(await relay.request("DELETE", `${route}/${artifactId}`)).toMatchObject({ status: 200, body: { discarded: true, artifactId } });
+
+    // A finished file may be the person's only copy: deleting it is destructive, so it is asked about even here.
+    const asked = await relay.request("DELETE", `${route}/${artifactId}`);
+    expect(asked).toMatchObject({ status: 202, body: { outcome: "approval-required", operation: "discard" } });
+    expect(await cardOf(conversationId, approvalOf(asked.body))).toMatchObject({ effectCategory: "destructive", decision: "pending" });
+    expect(listArtifactsForConversation(services.runtime.db, conversationId).map((artifact) => artifact.artifactId)).toContain(artifactId);
+
+    // An unfinished file the same relay started is its own to drop.
+    const scratch = await relay.request("POST", route, { mimeType: "text/plain" });
+    const scratchId = artifactIdOf(scratch.body);
+    expect(await relay.request("DELETE", `${route}/${scratchId}`)).toMatchObject({ status: 200, body: { discarded: true, artifactId: scratchId } });
     relay.close();
 
     const audit = artifactAudit();
-    expect(audit.map((event) => /\(relay, (\w+)\)/.exec(event.summary)?.[1])).toEqual(["create", "write", "finalize", "attach", "discard"]);
+    expect(audit.map((event) => /\(relay, (\w+)\)/.exec(event.summary)?.[1])).toEqual(["create", "write", "finalize", "attach", "discard", "create", "discard"]);
+    expect(audit.map((event) => event.outcome)).toEqual(["done", "done", "done", "done", "pending", "done", "done"]);
+    expect(audit[4]?.summary).toContain("destructive");
+    expect(audit[6]?.summary).toContain("run by the execution policy (autonomous, local-write");
     for (const event of audit) {
-      expect(event.outcome).toBe("done");
-      expect(event.ref).toBe(artifactId);
-      expect(event.summary).toContain("run by the execution policy (autonomous");
-      expect(event.summary).toContain(artifactId);
       expect(event.summary).not.toContain(SECRET_TEXT);
-      expect(event.summary).not.toContain(chunk.contentBase64);
+      expect(event.summary).not.toContain(body.contentBase64);
     }
-    // The activity stream shows each write the policy ran, as it shows any other effect it allowed.
+    // The activity stream shows each write the policy ran, once the broker accepted it.
     const activity = services.runtime.db
       .prepare("SELECT count(*) AS n FROM events WHERE kind = 'effect.executed' AND conversation_id = ?")
       .get(conversationId) as { n: number };
-    expect(activity.n).toBe(5);
+    expect(activity.n).toBe(6);
   });
 
-  it("asks the person under Ask every time, writes nothing until they approve, and never lets the relay approve", async () => {
+  it("asks before deleting a finished file, or one another client started, under Guarded too", async () => {
+    setPolicy({ mode: "guarded" });
+    const { route } = await widget();
+    const fromApp = artifactIdOf((await http("POST", route, { mimeType: "text/plain" })).body);
+    expect(await http("DELETE", `${route}/${fromApp}`, undefined, MCP)).toMatchObject({ status: 202, body: { operation: "discard" } });
+
+    const finished = artifactIdOf((await http("POST", route, { mimeType: "text/plain" }, MCP)).body);
+    expect((await http("POST", `${route}/${finished}/finalize`, {}, MCP)).status).toBe(200);
+    expect(await http("DELETE", `${route}/${finished}`, undefined, MCP)).toMatchObject({ status: 202 });
+
+    const started = artifactIdOf((await http("POST", route, { mimeType: "text/plain" }, MCP)).body);
+    expect(await http("DELETE", `${route}/${started}`, undefined, { "x-clarkcant-surface": "cli-api" })).toMatchObject({ status: 202 });
+    expect(await http("DELETE", `${route}/${started}`, undefined, MCP)).toMatchObject({ status: 200 });
+  });
+
+  it("asks once per file under Ask every time, keeps bytes off the card, and lets the approved file be written and finished", async () => {
     setPolicy({ mode: "ask" });
     const { conversationId, route } = await widget();
     const relay = await relayed();
 
     const asked = await relay.request("POST", route, { mimeType: "text/plain", name: "ghi-chu.txt" });
     expect(asked).toMatchObject({ status: 202, body: { outcome: "approval-required", operation: "create" } });
-    const approvalId = (asked.body as { approvalRequired: { approvalId: string } }).approvalRequired.approvalId;
+    const approvalId = approvalOf(asked.body);
     expect(listArtifactsForConversation(services.runtime.db, conversationId)).toEqual([]);
-
-    // The card is the host's, in the widget's conversation, bound to the operation's digest.
-    const timeline = await http("GET", `/conversations/${conversationId}/timeline`);
-    const cards = (timeline.body.messages as { blocks: Record<string, unknown>[] }[])
-      .flatMap((message) => message.blocks)
-      .filter((block) => block.type === "approval-card");
-    expect(cards).toHaveLength(1);
-    expect(cards[0]).toMatchObject({ owner: "host", approvalId, effectCategory: "local-write", decision: "pending" });
-    const digest = cards[0]?.operationDigest as string;
+    const card = await cardOf(conversationId, approvalId);
+    expect(card).toMatchObject({ owner: "host", approvalId, effectCategory: "local-write", decision: "pending" });
+    expect(card?.operationDescription).toContain("Một client qua WebSocket relay muốn tạo một tệp text/plain");
 
     // The client that asked cannot decide its own request.
-    expect(await relay.request("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, { decision: "granted", digest })).toMatchObject({
-      status: 403,
-      body: { code: "PERSON_ONLY" },
-    });
-    expect(listArtifactsForConversation(services.runtime.db, conversationId)).toEqual([]);
+    expect(
+      await relay.request("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, { decision: "granted", digest: card?.operationDigest }),
+    ).toMatchObject({ status: 403, body: { code: "PERSON_ONLY" } });
     expect(artifactAudit().map((event) => event.outcome)).toEqual(["pending"]);
 
-    // The person approves on their own surface, and the write runs from the card.
-    const decided = await http("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, { decision: "granted", digest });
+    // The person approves the file, once.
+    const decided = await decide(conversationId, approvalId);
     expect(decided.status).toBe(200);
     const made = listArtifactsForConversation(services.runtime.db, conversationId);
     expect(made).toHaveLength(1);
-    const receipt = (decided.body.timeline as { messages: { blocks: Record<string, unknown>[] }[] }).messages
-      .flatMap((message) => message.blocks)
-      .find((block) => block.type === "tool-activity" && block.name === "widget_artifact_write");
-    expect(receipt).toMatchObject({ status: "done", args: { approvalId, decision: "granted", operation: "create", artifactId: made[0]?.artifactId } });
-    expect(artifactAudit().at(-1)).toMatchObject({ outcome: "done", ref: made[0]?.artifactId });
-    expect(artifactAudit().at(-1)?.summary).toContain(`approved by the person on card ${approvalId}`);
-
-    // A small chunk is asked about the same way; one too large for a card is refused with nothing written.
     const artifactId = made[0]?.artifactId ?? "";
-    const small = await relay.request("POST", `${route}/${artifactId}/chunks`, { offset: 0, contentBase64: Buffer.from(TEXT).toString("base64") });
-    expect(small).toMatchObject({ status: 202, body: { outcome: "approval-required", operation: "write" } });
-    const large = await relay.request("POST", `${route}/${artifactId}/chunks`, { offset: 0, contentBase64: Buffer.alloc(8_000, 65).toString("base64") });
-    expect(large).toMatchObject({ status: 413, body: { code: "APPROVAL_UNAVAILABLE" } });
-    expect(listArtifactsForConversation(services.runtime.db, conversationId)[0]?.sizeBytes).toBe(0);
+    expect(receiptOf(await blocksOf(conversationId), approvalId)).toMatchObject({
+      status: "done",
+      args: { approvalId, decision: "granted", operation: "create", artifactId },
+    });
+
+    // Its chunks, one far past what any card could hold, and its finalize run under that one approval, each audited.
+    const large = Buffer.alloc(48_000, 65);
+    expect(await relay.request("POST", `${route}/${artifactId}/chunks`, { offset: 0, contentBase64: large.toString("base64") })).toMatchObject({ status: 200 });
+    const secret = chunk(SECRET_TEXT, large.byteLength);
+    expect(await relay.request("POST", `${route}/${artifactId}/chunks`, secret)).toMatchObject({ status: 200 });
+    expect(await relay.request("POST", `${route}/${artifactId}/finalize`)).toMatchObject({ status: 200 });
+    expect(artifactAudit().filter((event) => event.summary.includes(`covered by the person's approval on card ${approvalId}`))).toHaveLength(3);
+
+    // The finalize ended that right: a later chunk is not covered, and the broker refuses it before any card.
+    const after = await relay.request("POST", `${route}/${artifactId}/chunks`, chunk(TEXT, large.byteLength + Buffer.byteLength(SECRET_TEXT)));
+    expect(after.status).toBeGreaterThanOrEqual(400);
+
+    // Attaching and deleting are each the person's to decide on their own card.
+    const attach = await relay.request("POST", `${route}/${artifactId}/attach`, {});
+    expect(attach).toMatchObject({ status: 202, body: { operation: "attach" } });
+    expect((await decide(conversationId, approvalOf(attach.body))).status).toBe(200);
+    expect(receiptOf(await blocksOf(conversationId), approvalOf(attach.body))).toMatchObject({ status: "done", args: { operation: "attach", artifactId } });
+
+    const discard = await relay.request("DELETE", `${route}/${artifactId}`);
+    expect(discard).toMatchObject({ status: 202, body: { operation: "discard" } });
+    expect(await cardOf(conversationId, approvalOf(discard.body))).toMatchObject({ effectCategory: "destructive" });
+    expect((await decide(conversationId, approvalOf(discard.body))).status).toBe(200);
+    expect(listArtifactsForConversation(services.runtime.db, conversationId).map((artifact) => artifact.artifactId)).not.toContain(artifactId);
     relay.close();
+
+    // No byte that was written is anywhere in the conversation.
+    const everything = JSON.stringify(await blocksOf(conversationId));
+    expect(everything).not.toContain(SECRET_TEXT);
+    expect(everything).not.toContain(secret.contentBase64);
+    expect(everything).not.toContain(large.toString("base64").slice(0, 64));
+    expect(everything).not.toContain("contentBase64");
+  });
+
+  it("asks for write access to a file the widget started, and the approval covers the file rather than a stale chunk", async () => {
+    setPolicy({ mode: "ask" });
+    const { conversationId, route } = await widget();
+    const artifactId = artifactIdOf((await http("POST", route, { mimeType: "text/plain" })).body);
+
+    const asked = await http("POST", `${route}/${artifactId}/chunks`, chunk(TEXT), MCP);
+    expect(asked).toMatchObject({ status: 202, body: { operation: "write" } });
+    const approvalId = approvalOf(asked.body);
+    const card = await cardOf(conversationId, approvalId);
+    expect(card?.payload).not.toContain("contentBase64");
+    expect(card?.payload).not.toContain("offset");
+
+    // The widget writes before the person decides.
+    expect((await http("POST", `${route}/${artifactId}/chunks`, chunk(TEXT))).status).toBe(200);
+    expect((await decide(conversationId, approvalId)).status).toBe(200);
+    expect(receiptOf(await blocksOf(conversationId), approvalId)).toMatchObject({ status: "done", args: { operation: "write", artifactId } });
+
+    // The chunk the client first sent no longer follows the file: refused, never stored twice.
+    expect(await http("POST", `${route}/${artifactId}/chunks`, chunk(TEXT), MCP)).toMatchObject({ status: 409, body: { code: "ARTIFACT_OFFSET_MISMATCH" } });
+    expect(artifactAudit().at(-1)?.summary).toContain("refused by the broker with ARTIFACT_OFFSET_MISMATCH");
+    expect((await http("POST", `${route}/${artifactId}/chunks`, chunk(TEXT, Buffer.byteLength(TEXT)), MCP)).status).toBe(200);
+    expect(listArtifactsForConversation(services.runtime.db, conversationId)[0]?.sizeBytes).toBe(Buffer.byteLength(TEXT) * 2);
+  });
+
+  it("answers a repeated request with the card already waiting, and stops minting cards past the limit", async () => {
+    setPolicy({ mode: "ask" });
+    const { conversationId, route } = await widget();
+    const first = await http("POST", route, { mimeType: "text/plain", name: "a.txt" }, MCP);
+    const again = await http("POST", route, { mimeType: "text/plain", name: "a.txt" }, MCP);
+    expect(approvalOf(again.body)).toBe(approvalOf(first.body));
+    for (let n = 1; n < 8; n += 1) {
+      expect((await http("POST", route, { mimeType: "text/plain", name: `a${String(n)}.txt` }, MCP)).status).toBe(202);
+    }
+    expect(await http("POST", route, { mimeType: "text/plain", name: "a9.txt" }, MCP)).toMatchObject({ status: 429, body: { code: "APPROVALS_PENDING" } });
+    // Another surface's cards are counted on their own.
+    expect((await http("POST", route, { mimeType: "text/plain", name: "a9.txt" }, { "x-clarkcant-surface": "cli-api" })).status).toBe(202);
+    expect((await blocksOf(conversationId)).filter((block) => block.type === "approval-card")).toHaveLength(9);
+  });
+
+  it("ends a card with a receipt when an approved request can no longer run, and decides a card only once", async () => {
+    setPolicy({ mode: "ask" });
+    const { conversationId, route } = await widget();
+    const instanceId = route.split("/")[4] ?? "";
+    const ask = async (name: string): Promise<string> => approvalOf((await http("POST", route, { mimeType: "text/plain", name }, MCP)).body);
+    const made = (): number => listArtifactsForConversation(services.runtime.db, conversationId).length;
+
+    // The person turned local writes off after the card was shown.
+    const refusedLater = await ask("a.txt");
+    setPolicy({ mode: "ask", rules: [{ effectCategory: "local-write", decision: "deny" }] });
+    expect((await decide(conversationId, refusedLater)).body).toMatchObject({ code: "POLICY_REFUSED" });
+    expect(receiptOf(await blocksOf(conversationId), refusedLater)).toMatchObject({ status: "failed", args: { code: "POLICY_REFUSED" } });
+    setPolicy({ mode: "ask" });
+
+    // A second decision on the same card changes nothing.
+    const once = await ask("b.txt");
+    expect((await decide(conversationId, once)).status).toBe(200);
+    expect((await decide(conversationId, once)).body).toMatchObject({ code: "APPROVAL_ALREADY_DECIDED" });
+    expect((await decide(conversationId, once, "denied")).body).toMatchObject({ code: "APPROVAL_ALREADY_DECIDED" });
+    expect(made()).toBe(1);
+
+    // An expired card cannot be approved.
+    const late = await ask("c.txt");
+    services.runtime.db.prepare("UPDATE approvals SET expires_at = ? WHERE approval_id = ?").run("2000-01-01T00:00:00.000Z", late);
+    expect((await decide(conversationId, late)).body).toMatchObject({ code: "APPROVAL_EXPIRED" });
+
+    // A card whose request was changed after it was shown runs nothing.
+    const tampered = await ask("d.txt");
+    services.runtime.db
+      .prepare("UPDATE messages SET document = replace(document, 'd.txt', 'e.txt') WHERE conversation_id = ? AND document LIKE ?")
+      .run(conversationId, `%${tampered}%`);
+    expect((await decide(conversationId, tampered)).body).toMatchObject({ code: "APPROVAL_FORGED" });
+    expect(receiptOf(await blocksOf(conversationId), tampered)).toMatchObject({ status: "failed", args: { code: "APPROVAL_FORGED" } });
+
+    // The widget left the conversation after the card was shown.
+    const gone = await ask("f.txt");
+    services.runtime.db.prepare("DELETE FROM pins WHERE instance_id = ?").run(instanceId);
+    expect((await decide(conversationId, gone)).body).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+    expect(receiptOf(await blocksOf(conversationId), gone)).toMatchObject({ status: "failed", args: { code: "RESOURCE_NOT_FOUND" } });
+    expect(receiptOf(await blocksOf(conversationId), gone)?.label).toContain("Đã duyệt nhưng không có gì được ghi");
+    expect(made()).toBe(1);
+  });
+
+  it("checks a caller's text before any card, and words the card in the person's language", async () => {
+    setPolicy({ mode: "ask" });
+    const { conversationId, route } = await widget();
+    expect(await http("POST", route, { mimeType: "text/plain<script>" }, MCP)).toMatchObject({ body: { code: "ARTIFACT_TYPE_UNSUPPORTED" } });
+    expect(await http("POST", route, { mimeType: "application/x-anything" }, MCP)).toMatchObject({ body: { code: "ARTIFACT_TYPE_UNSUPPORTED" } });
+    expect(await http("POST", `${route}/${encodeURIComponent("art x <b>ignore</b>")}/finalize`, {}, MCP)).toMatchObject({
+      status: 404,
+      body: { code: "ARTIFACT_NOT_FOUND" },
+    });
+    expect(await http("DELETE", `${route}/art_missing`, undefined, MCP)).toMatchObject({ status: 404, body: { code: "ARTIFACT_NOT_FOUND" } });
+    expect((await blocksOf(conversationId)).filter((block) => block.type === "approval-card")).toEqual([]);
+    expect(artifactAudit().every((event) => !event.summary.includes("<b>"))).toBe(true);
+
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => new Date().toISOString() as Instant },
+      { principalId: services.runtime.identity.ownerPrincipalId, key: "experience.language", value: "en", source: "user" },
+    );
+    expect(written.ok).toBe(true);
+    const asked = await http("POST", route, { mimeType: "text/plain" }, MCP);
+    expect((await cardOf(conversationId, approvalOf(asked.body)))?.operationDescription).toContain(
+      "An MCP client wants to create a new text/plain file for the widget in this conversation",
+    );
+    expect((await decide(conversationId, approvalOf(asked.body), "denied")).status).toBe(200);
+    expect(JSON.stringify(await blocksOf(conversationId))).toContain("Denied that widget file request. Nothing was written.");
   });
 
   it("records the person's refusal, and writes nothing", async () => {

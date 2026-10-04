@@ -55,18 +55,24 @@ export function discoveryDocument(): Record<string, unknown> {
       ],
       on: ["websocket", "mcp", "cli api"],
       effectCategory: "local-write",
-      approval: { status: 202, outcome: "approval-required" },
+      // Discarding a file that is not an unfinished one the same surface started deletes what may be the person's only copy.
+      destructive: ["DELETE /conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}"],
+      approval: { status: 202, outcome: "approval-required", per: "file" },
       refusal: { status: 403, code: "POLICY_REFUSED" },
+      pendingLimit: { status: 429, code: "APPROVALS_PENDING" },
     },
   };
 }
 
 /** What every widget artifact write route says about machine surfaces (`policyGatedWidgetArtifactWrite`). */
 const MACHINE_WRITE_NOTE =
-  " On a machine surface (MCP, the WebSocket relay, clarkcant api) this write is decided by the execution policy as a " +
-  "local-write effect and audited: it runs; or it answers 202 { outcome: \"approval-required\", approvalRequired: " +
-  "{ approvalId } } while a card in the conversation waits for the person, and runs only when they approve it; or it " +
-  "is 403 POLICY_REFUSED.";
+  " On a machine surface (MCP, the WebSocket relay, clarkcant api) this write is decided by the execution policy and " +
+  "audited: a local-write effect, except discarding a file that is not an unfinished one the same surface started, which " +
+  "is destructive. It runs; or it answers 202 { outcome: \"approval-required\", approvalRequired: { approvalId } } while a " +
+  "card in the conversation waits for the person (asking again answers the same card; 429 APPROVALS_PENDING past 8 " +
+  "waiting cards from one surface in one conversation); or it is 403 POLICY_REFUSED. A card is per file and never " +
+  "carries bytes: approving a create, or write access to a working file, lets that surface write that file's chunks and " +
+  "finalize it for 15 minutes, so a chunk or finalize that got 202 is sent again once the person approves.";
 
 const errorSchema = {
   type: "object",
@@ -114,7 +120,8 @@ function ok(description: string): Record<string, unknown> {
 /** The answers a machine surface can get from a widget artifact write route besides the route's own. */
 const MACHINE_WRITE_RESPONSES = {
   "202": ok("On a machine surface, when the execution policy asks: { outcome: \"approval-required\", approvalRequired: { approvalId }, operation, message }"),
-  "403": ok("POLICY_REFUSED on a machine surface whose execution policy refuses local-write effects"),
+  "403": ok("POLICY_REFUSED on a machine surface whose execution policy refuses this effect"),
+  "429": ok("APPROVALS_PENDING on a machine surface already waiting on 8 cards in this conversation"),
 };
 
 const refusals = {
@@ -478,11 +485,10 @@ export function openApiDocument(): Record<string, unknown> {
           description:
             "{ offset, contentBase64 }: at most 262144 bytes, and offset must equal the artifact's current size, so a " +
             "repeated or reordered chunk is refused with 409 ARTIFACT_OFFSET_MISMATCH instead of stored twice." +
-            MACHINE_WRITE_NOTE +
-            " A chunk too large to show on that card (its operation over 4000 characters) is 413 APPROVAL_UNAVAILABLE.",
+            MACHINE_WRITE_NOTE,
           parameters: [conversationId, instanceId, artifactId],
           requestBody: { content: { "application/json": { schema: { type: "object", required: ["offset", "contentBase64"] } } } },
-          responses: { "200": ok("{ artifactRef }"), ...MACHINE_WRITE_RESPONSES, "409": ok("ARTIFACT_OFFSET_MISMATCH, ARTIFACT_NOT_WRITABLE, ARTIFACT_INSTANCE_QUOTA_EXCEEDED (128 MiB per instance) or ARTIFACT_QUOTA_EXCEEDED"), "413": ok("ARTIFACT_CHUNK_TOO_LARGE, ARTIFACT_TOO_LARGE or APPROVAL_UNAVAILABLE"), ...refusals },
+          responses: { "200": ok("{ artifactRef }"), ...MACHINE_WRITE_RESPONSES, "409": ok("ARTIFACT_OFFSET_MISMATCH, ARTIFACT_NOT_WRITABLE, ARTIFACT_INSTANCE_QUOTA_EXCEEDED (128 MiB per instance) or ARTIFACT_QUOTA_EXCEEDED"), "413": ok("ARTIFACT_CHUNK_TOO_LARGE or ARTIFACT_TOO_LARGE"), ...refusals },
         },
       },
       "/conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}/finalize": {

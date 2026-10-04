@@ -7,7 +7,6 @@ import {
   artifactNameSchema,
   artifactRefusalStatus,
   machineSurfaceOf,
-  policyGatedWidgetArtifactWrite,
 } from "@clarkcant/contracts";
 import { getInstance } from "@clarkcant/core";
 import { getBrokerArtifact, getConversation, instanceIsInConversation } from "@clarkcant/storage";
@@ -38,8 +37,7 @@ import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, 
  *   person's choice in host chrome, not something a machine surface can make. Taking a widget's access away is the
  *   person's act too, so it has no route until host chrome offers it (#343); `revokeArtifactAccess` is what that uses.
  *   The writes — create, chunks, finalize, attach, discard — run as before for the person's own app; carried by a
- *   machine surface (`policyGatedWidgetArtifactWrite`), each is decided by the execution policy and audited
- *   (`decideMachineArtifactWrite`).
+ *   machine surface, each is decided by the execution policy and audited (`decideMachineArtifactWrite`).
  *
  * No answer here carries a path, a staging name or where a picked file was read from: only an `ArtifactRef`, bytes,
  * or a refusal that names what was wrong.
@@ -188,13 +186,13 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
   const scope = { principalId, instanceId };
 
   /*
-   * A write, once read from the request. The person's own app runs it as before; a machine surface's marker on a route
-   * `policyGatedWidgetArtifactWrite` names sends it through the execution policy and the audit instead. The marker is
-   * the header the node's own surfaces set, never a body field.
+   * A write, once read from the request. Only the write branches below call this, so the marker alone decides: the
+   * person's own app runs it as before, and a machine surface's marker sends it through the execution policy and the
+   * audit instead. The marker is the header the node's own surfaces set, never a body field.
    */
   const surface = machineSurfaceOf(request.headers[SURFACE_HEADER]);
   const write = (planned: WidgetArtifactWrite): GatewayResponse =>
-    surface !== undefined && policyGatedWidgetArtifactWrite(request.method, request.path) !== undefined
+    surface !== undefined
       ? decideMachineArtifactWrite(services, { surface, scope: { ...scope, conversationId }, write: planned })
       : performWidgetArtifactWrite(broker, { ...scope, conversationId }, planned).response;
 
@@ -269,7 +267,6 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
       operation: "write",
       artifactId,
       offset: parsed.value.offset,
-      contentBase64: parsed.value.contentBase64 as string,
       bytes: bytes.bytes,
     });
   }
