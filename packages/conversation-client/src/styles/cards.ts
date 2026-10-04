@@ -195,8 +195,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-table-search { flex: 1 1 200px; min-width: 0; display: flex; }
 .cc-table-search input {
   flex: 1; min-width: 0; min-height: 32px; font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text);
-  background: var(--cc-input-bg, var(--cc-elevated)); border: var(--cc-line, 1px solid) var(--cc-border);
-  border-color: var(--cc-input-edge, var(--cc-border)); border-radius: var(--cc-input-radius, var(--cc-radius-badge));
+  background: var(--cc-input-bg, var(--cc-card)); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border))); border-radius: var(--cc-input-radius, var(--cc-radius-badge));
   padding: var(--cc-space-xs) var(--cc-space-sm);
 }
 .cc-table-search input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
@@ -274,8 +274,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 
 /* Note */
 .cc-note-area {
-  width: 100%; background: var(--cc-input-bg, var(--cc-elevated)); color: var(--cc-text);
-  border: var(--cc-line, 1px solid) var(--cc-border); border-color: var(--cc-input-edge, var(--cc-border));
+  width: 100%; background: var(--cc-input-bg, var(--cc-card)); color: var(--cc-text);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border)));
   border-radius: var(--cc-input-radius, var(--cc-radius-badge));
   padding: var(--cc-space-sm); font: inherit;
 }
@@ -389,8 +389,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-field-error { margin: 0; font-size: var(--cc-text-label); color: var(--cc-danger); }
 .cc-field-input {
   width: 100%; min-width: 0; min-height: 44px; font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text);
-  background: var(--cc-input-bg, var(--cc-elevated)); border: var(--cc-line, 1px solid) var(--cc-border);
-  border-color: var(--cc-input-edge, var(--cc-border)); border-radius: var(--cc-input-radius, var(--cc-radius-badge));
+  background: var(--cc-input-bg, var(--cc-card)); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border))); border-radius: var(--cc-input-radius, var(--cc-radius-badge));
   padding: var(--cc-space-xs) var(--cc-space-sm);
 }
 textarea.cc-field-input { resize: vertical; line-height: var(--cc-leading-body-md); }

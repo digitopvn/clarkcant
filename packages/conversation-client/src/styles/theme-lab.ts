@@ -14,10 +14,25 @@ export const THEME_LAB_CSS = `
 .cc-theme-lab pre { max-width: 100%; overflow: auto; font-size: var(--cc-text-mono-sm); }
 .cc-theme-gallery-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--cc-space-lg); }
 .cc-theme-gallery-layout .cc-theme-options { max-height: 18rem; overflow-y: auto; }
-.cc-theme-recent { display: flex; gap: var(--cc-space-sm); flex-wrap: wrap; }
+.cc-theme-recent { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
+.cc-theme-recent > span { font-size: var(--cc-text-label); line-height: var(--cc-leading-label); color: var(--cc-text-muted); }
 .cc-theme-accent { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-md); }
 .cc-theme-accent label { display: flex; align-items: center; gap: var(--cc-space-sm); }
-.cc-theme-accent input { width: 7rem; min-height: 2.75rem; color: var(--cc-text); background: var(--cc-card); border: var(--cc-line, 1px solid) var(--cc-border); font: inherit; padding: var(--cc-space-sm); }
+.cc-theme-accent label { color: var(--cc-text-muted); font-size: var(--cc-text-body-sm); }
+.cc-theme-accent input {
+  width: 7rem; min-height: 2.75rem; box-sizing: border-box; color: var(--cc-text); font: inherit;
+  font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); padding: var(--cc-space-xs) var(--cc-space-sm);
+  background: var(--cc-input-bg, var(--cc-card)); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border))); border-radius: var(--cc-input-radius, var(--cc-radius-button));
+}
+.cc-theme-accent input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+/* The customisation block opens a new group under the theme, so it is headed like one and set apart by a hairline. */
+[data-theme-customization] > h4 {
+  margin: var(--cc-space-lg) 0 var(--cc-space-sm); padding-top: var(--cc-space-lg);
+  border-top: var(--cc-line, 1px solid) var(--cc-border);
+  font-size: var(--cc-text-label); line-height: var(--cc-leading-label);
+  text-transform: uppercase; letter-spacing: 0.06em; color: var(--cc-text-muted); font-weight: 600;
+}
 /*
  * A typeface choice is a row of specimens. Each tile sets its sample large and its name small in its own face (the
  * face arrives inline, from the same stack the compiler would write), so the row reads as a type sheet rather than a

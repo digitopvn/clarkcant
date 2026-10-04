@@ -263,8 +263,8 @@ export const VOICE_CSS = `
 .cc-action {
   cursor: pointer; font: inherit; font-size: var(--cc-text-body-sm);
   padding: var(--cc-space-xs) var(--cc-space-md);
-  background: var(--cc-button-bg, var(--cc-elevated)); color: var(--cc-text);
-  border: var(--cc-line, 1px solid) var(--cc-border); border-color: var(--cc-button-edge, var(--cc-border));
+  background: var(--cc-button-bg, color-mix(in oklab, var(--cc-text) 5%, var(--cc-elevated))); color: var(--cc-text);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-color: var(--cc-button-edge, color-mix(in oklab, var(--cc-text) 16%, var(--cc-border)));
   border-radius: var(--cc-radius-button);
   box-shadow: var(--cc-button-shadow, none);
   min-height: 32px;
@@ -278,8 +278,8 @@ export const VOICE_CSS = `
  * rule still draws the button exactly as Clark does, and its colours still follow the audited tokens.
  */
 [data-owner="host"] .cc-action {
-  --cc-button-bg: var(--cc-elevated);
-  --cc-button-edge: var(--cc-border);
+  --cc-button-bg: color-mix(in oklab, var(--cc-text) 5%, var(--cc-elevated));
+  --cc-button-edge: color-mix(in oklab, var(--cc-text) 16%, var(--cc-border));
   --cc-button-shadow: none;
   --cc-button-press: scale(0.97);
   --cc-button-press-shadow: none;

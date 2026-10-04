@@ -108,10 +108,10 @@ body {
 
 /* Built for choosing from a long list, and dressed so it belongs to this surface rather than to the operating system. */
 .cc-select {
-  background: var(--cc-input-bg, var(--cc-elevated));
+  background: var(--cc-input-bg, var(--cc-card));
   color: inherit;
   border: var(--cc-line, 1px solid) var(--cc-border);
-  border-color: var(--cc-input-edge, var(--cc-border));
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border)));
   border-radius: var(--cc-input-radius, var(--cc-radius-field, 10px));
   padding: 10px 12px;
   font: inherit;
@@ -134,10 +134,10 @@ body {
 .cc-search-select { position: relative; }
 .cc-search-select input {
   width: 100%;
-  background: var(--cc-input-bg, var(--cc-elevated));
+  background: var(--cc-input-bg, var(--cc-card));
   color: inherit;
   border: var(--cc-line, 1px solid) var(--cc-border);
-  border-color: var(--cc-input-edge, var(--cc-border));
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border)));
   border-radius: var(--cc-input-radius, var(--cc-radius-field, 10px));
   padding: 10px 12px;
   font: inherit;
@@ -296,8 +296,8 @@ body {
 .cc-credential-field { display: flex; flex-direction: column; gap: var(--cc-space-xs); font-size: var(--cc-text-label); }
 .cc-credential-field input {
   font: inherit; color: inherit; padding: var(--cc-space-sm);
-  background: var(--cc-input-bg, var(--cc-elevated)); border: var(--cc-line, 1px solid) var(--cc-border);
-  border-color: var(--cc-input-edge, var(--cc-border)); border-radius: var(--cc-input-radius, var(--cc-radius-card));
+  background: var(--cc-input-bg, var(--cc-card)); border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border))); border-radius: var(--cc-input-radius, var(--cc-radius-card));
 }
 .cc-orb {
   width: 27px; height: 27px; border-radius: var(--cc-radius-pill);

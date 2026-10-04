@@ -254,12 +254,12 @@ describe("the look a theme's identity reaches", () => {
     }
 
     // The primary action is filled with the accent directly, so no recipe reaches it, and the plain one beside it is
-    // the elevated surface: the two differ in fill.
+    // the elevated surface lightly tinted with the text colour: the two differ in fill.
     const primary = rules(APP_CSS).find(({ selector }) => selector === '.cc-action[data-emphasis="primary"]:not(:disabled)')?.body ?? "";
     expect(primary).toMatch(/background:\s*var\(--cc-accent\)/);
     expect(primary).toMatch(/border-color:\s*var\(--cc-accent\)/);
     expect(primary).not.toMatch(/var\(--cc-button-/);
-    expect(declared.get("--cc-button-bg")).toBe("var(--cc-elevated)");
+    expect(declared.get("--cc-button-bg")).toBe("color-mix(in oklab, var(--cc-text) 5%, var(--cc-elevated))");
     // And the contrast audit holds the accent to text contrast on the elevated surface, so for every theme that can be
     // drawn the filled answer stands apart from the plain one.
     for (const palette of [DARK, LIGHT]) {
