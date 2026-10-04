@@ -683,14 +683,16 @@ export class RealPiAdapter implements PiAdapter {
     // brought back on the next.
     const wanted = entry.baseline.filter((tool) => allowed.has(tool.name));
     const session = entry.session as SdkSession & { setActiveToolsByName?: (names: string[]) => void };
-    if (typeof session.setActiveToolsByName === "function") {
-      // The SDK's own path (#402): it activates from its registry and rebuilds the system prompt, so the "Available
-      // tools" list the model reads matches the tools it can call.
-      session.setActiveToolsByName(wanted.map((tool) => tool.name));
-    } else {
-      session.agent.state.tools = [...wanted];
+    if (typeof session.setActiveToolsByName !== "function") {
+      // The pinned SDK has it; one without it would leave the system prompt describing tools the model cannot call.
+      throw new Error(`the agent SDK in use cannot change ${sessionId}'s active tools`);
     }
-    // Registered tools are kept whatever was asked, as before; the registry the SDK activates from does not hold them.
+    // Only the SDK's own path (#402): it activates from its registry and rebuilds the system prompt, so the "Available
+    // tools" list the model reads matches the tools it can call.
+    session.setActiveToolsByName(wanted.map((tool) => tool.name));
+    // Registered tools are kept whatever was asked, as before. The SDK has no public way to add a tool after creation,
+    // so `registerTool` appends to the live list and the registry this activates from never holds it; re-adding here is
+    // the one write outside the SDK's path, and goes away with that registration path (#402).
     const active = new Set(session.agent.state.tools.map((tool) => tool.name));
     const registered = [...entry.registeredTools.values()].filter((tool) => !active.has(tool.name));
     if (registered.length > 0) session.agent.state.tools = [...session.agent.state.tools, ...registered];

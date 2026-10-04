@@ -24,20 +24,23 @@ writes a new cache entry.
 `pnpm exec vitest run apps/runtime/test/context-economics.spec.ts`; `node tools/check-invariants.mjs --fix-manifest`;
 `pnpm verify`.
 
-## Result (2026-10-04, offline estimate)
+## Result (2026-10-04, offline, in-sample estimate)
 
-38 labelled turns, 30 runtime tools (~8,805 schema tokens), assumptions printed by the spec:
+38 labelled turns, 30 runtime tools (~8,805 schema tokens, ~2,081 always offered). The cost model prices cache reads
+($0.30/M), cache writes ($3.75/M) and the uncached tail ($3/M `inputPerM`) separately; a fresh session writes the
+base, schema and history prefix. In-sample: the family hints were written against this corpus, so the wrong-tool rate
+is a best case, not a held-out result; the spec prints this caveat with each table.
 
-| Mode | Schema tok/turn | Cache write | Cache read | Tool-set changes | Cost vs all | Wrong-tool turns |
-|---|---|---|---|---|---|---|
-| all | 8,805 | 102,747 | 346,052 | 0 | 0% | 0/38 |
-| progressive | 5,530 | 125,530 | 198,836 | 7 | +8.4% | 1/38 |
-| per-turn | 5,520 | 252,842 | 71,138 | 23 | +98.2% | 2/38 |
+| Mode | Schema tok/turn | Cache write | Cache read | Uncached | Tool-set changes | Cost vs all | Wrong-tool turns |
+|---|---|---|---|---|---|---|---|
+| all | 8,805 | 102,517 | 346,052 | 230 | 0 | 0% ($0.4889) | 0/38 |
+| progressive | 5,530 | 117,245 | 198,836 | 8,285 | 7 | +7.2% | 1/38 |
+| per-turn | 5,485 | 216,845 | 71,138 | 34,660 | 23 | +91.9% | 2/38 |
 
-Recap carrying the labelled earlier decision: first-40 1/3, latest-12 1/3, planned 3/3. The harness found that the
-planner excluded all 40 read messages from the earlier-message search although the recap repeats only 12; the
-exclusion now uses `recapWindow`. Decision: `CLARKCANT_TOOL_DISCLOSURE` stays `all` by default.
-
+Recap carrying the labelled earlier decision: first-40 1/3, latest-12 1/3, planned 3/3 (planned = recap text plus the
+earlier-message data section). The harness found that the planner excluded all 40 read messages from the
+earlier-message search although the recap repeats only 12; the exclusion now uses `recapWindow`, and
+`context-wiring.spec.ts` covers that gap at wiring level. Decision: `CLARKCANT_TOOL_DISCLOSURE` stays `all` by default.
 ## Risk and rollback
 
 Simulated numbers can mislead; they are labelled as offline estimates and the default stays off.

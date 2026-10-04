@@ -35,7 +35,13 @@ import {
   type WorkerBriefEnvelope,
   type WorkerDeps,
 } from "./index.ts";
-import { allWorkerTools, processBrowserChannel, processCommandChannel } from "./tools.ts";
+import {
+  allWorkerTools,
+  createContextTool,
+  processBrowserChannel,
+  processCommandChannel,
+  processContextChannel,
+} from "./tools.ts";
 
 interface Args {
   briefPath: string | undefined;
@@ -237,10 +243,13 @@ async function main(): Promise<number> {
   // opened one. The brief's capabilities still decide which of the tools this run is offered.
   const commands = processCommandChannel();
   const browser = processBrowserChannel();
+  // What the host retrieved for this task is read through the same channel, on demand, and only when it retrieved any.
+  const context = (envelope.contextItems ?? 0) > 0 ? processContextChannel() : undefined;
   const deps: WorkerDeps = {
     adapter,
     nodeId: args.nodeId,
     secrets,
+    ...(context === undefined ? {} : { contextTools: [createContextTool(context, envelope.contextItems ?? 0)] }),
     availableTools: allWorkerTools(envelope.projectRoots, {
       ...(envelope.writableRoots === undefined ? {} : { writableRoots: envelope.writableRoots }),
       ...(commands === undefined ? {} : { commands }),

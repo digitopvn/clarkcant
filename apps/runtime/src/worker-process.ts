@@ -136,6 +136,13 @@ export interface WorkerProcessOptions {
    * the host was given no answerer for is refused over the channel rather than left waiting.
    */
   onBrowser?: (request: unknown) => Promise<unknown>;
+  /**
+   * Where the worker's `read_context` requests are answered, when the host retrieved context for this task.
+   *
+   * The same channel again: the worker is told how many items there are and reads them on demand, so nothing is
+   * expanded up front and every read goes back through the host's principal-scoped readers.
+   */
+  onContext?: (request: unknown) => Promise<unknown>;
 }
 
 /** The messages that cross the worker's IPC channel, a request and its reply per kind. Anything else is ignored. */
@@ -143,6 +150,8 @@ export const WORKER_COMMAND_REQUEST = "clarkcant.command.request";
 export const WORKER_COMMAND_REPLY = "clarkcant.command.reply";
 export const WORKER_BROWSER_REQUEST = "clarkcant.browser.request";
 export const WORKER_BROWSER_REPLY = "clarkcant.browser.reply";
+export const WORKER_CONTEXT_REQUEST = "clarkcant.context.request";
+export const WORKER_CONTEXT_REPLY = "clarkcant.context.reply";
 
 export interface WorkerProcessResult {
   adapter: string;
@@ -196,6 +205,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     if (options.scriptPath !== undefined) args.push("--script", options.scriptPath);
     if (credential !== undefined) args.push("--credential-stdin");
 
+    const channel = options.onCommand !== undefined || options.onBrowser !== undefined || options.onContext !== undefined;
     const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
       // The child never inherits this process's environment wholesale: only the names the `build`
       // profile allows cross the boundary, so a provider key or an SSH agent socket sitting in this
@@ -203,9 +213,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       const stdin = credential === undefined ? "ignore" : "pipe";
       const child = (options.spawnImpl ?? spawn)(process.execPath, args, {
         stdio:
-          options.onCommand === undefined && options.onBrowser === undefined
-            ? [stdin, "pipe", "pipe"]
-            : [stdin, "pipe", "pipe", "ipc"],
+          channel ? [stdin, "pipe", "pipe", "ipc"] : [stdin, "pipe", "pipe"],
         env: workerEnvironment(adapter, options.agentDir),
         // A real model's worker starts in this run's own empty directory, not wherever this node was started from, so
         // nothing that happens to sit around the node's working directory is the worker's working directory too.
@@ -222,10 +230,11 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
         child.stdin?.on("error", () => undefined);
         child.stdin?.end(JSON.stringify({ apiKey: credential }));
       }
-      if (options.onCommand !== undefined || options.onBrowser !== undefined) {
+      if (channel) {
         const answerers = [
           { request: WORKER_COMMAND_REQUEST, reply: WORKER_COMMAND_REPLY, answer: options.onCommand, what: "commands" },
           { request: WORKER_BROWSER_REQUEST, reply: WORKER_BROWSER_REPLY, answer: options.onBrowser, what: "the browser" },
+          { request: WORKER_CONTEXT_REQUEST, reply: WORKER_CONTEXT_REPLY, answer: options.onContext, what: "retrieved context" },
         ];
         child.on("message", (message: unknown) => {
           if (message === null || typeof message !== "object") return;

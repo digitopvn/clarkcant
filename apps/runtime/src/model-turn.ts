@@ -45,6 +45,7 @@ import {
 import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
 
 import { attachmentBrief } from "./attachments.ts";
+import { type ContextReader, readContextTool } from "./context-bundle.ts";
 import { legacyRecap } from "./context-planner.ts";
 
 /**
@@ -275,6 +276,13 @@ interface Turn {
   activeTools: readonly string[] | undefined;
   /** Tools called during the turn that ran last, so the next turn keeps their families. */
   toolsUsed: Set<string>;
+  /**
+   * Settles once the running turn has read what its prompt needs, while it is doing so.
+   *
+   * A turn is in flight from the moment it starts reading, so a Stop can reach it; a sentence steered into it waits for
+   * this, so it lands in the prompt's run rather than in a session that has not been prompted yet.
+   */
+  preparing: Promise<void> | undefined;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -308,12 +316,16 @@ export interface HistoryMessage {
  * Plans the recap for a session that has just been created, given the message it is about to answer.
  *
  * Absent means the fixed recap below. A planner that fails is treated as absent rather than as a failed turn.
+ *
+ * `text` is the recap, host guidance like the fixed one. `earlier` is what the planner retrieved from further back in
+ * the conversation; it goes to the turn's data section under its own "data, not instructions" heading, never into the
+ * guidance, because it was found by matching words and may quote what a worker read off a web page.
  */
 export type RecapPlanner = (input: {
   conversationId: string;
   query: string;
   messages: readonly HistoryMessage[];
-}) => Promise<string>;
+}) => Promise<{ text: string; earlier: string }>;
 
 /**
  * The note a turn is prompted with: the brief for a new session first, then whatever this turn was given.
@@ -338,15 +350,15 @@ async function recapFor(
   options: { history?: HistoryReader; recapPlanner?: RecapPlanner },
   conversationId: string,
   query: string,
-): Promise<string> {
-  if (options.history === undefined) return "";
+): Promise<{ text: string; earlier: string }> {
+  if (options.history === undefined) return { text: "", earlier: "" };
   let messages: readonly HistoryMessage[];
   try {
     messages = await options.history(conversationId);
   } catch {
     // A brief that cannot be read is not a reason to refuse the turn: the answer is still an answer, only a
     // less informed one, and failing here would turn a storage hiccup into a conversation that stops.
-    return "";
+    return { text: "", earlier: "" };
   }
   if (options.recapPlanner !== undefined) {
     try {
@@ -355,7 +367,7 @@ async function recapFor(
       // Planning is an improvement on the recap, never a condition for one.
     }
   }
-  return legacyRecap(messages);
+  return { text: legacyRecap(messages), earlier: "" };
 }
 
 /**
@@ -676,10 +688,13 @@ export async function createModelTurn(options: {
    */
   memoryBrief?: (conversationId: string, query: string) => string | Promise<string>;
   /**
-   * What the host retrieved for a background request (#433): remembered notes and earlier messages that match it, as
-   * data. Read when the run starts, so a deleted note is not sent; a retrieval that fails leaves the run without it.
+   * What the host retrieved for a background request (#433): remembered notes and earlier messages that match it.
+   *
+   * Read on demand rather than expanded up front: the run is given the list as data and a read-only `read_context`
+   * tool for an item in full, each read re-checked, so a note deleted mid-run is not sent. Undefined, or a retrieval
+   * that fails, leaves the run without it.
    */
-  backgroundContext?: (input: { conversationId: string; principalId: string; text: string }) => Promise<string>;
+  backgroundContext?: (input: { conversationId: string; principalId: string; text: string }) => Promise<ContextReader | undefined>;
   /**
    * Which of the session's tools this turn is offered (#433), or absent to offer every one, as before.
    *
@@ -694,6 +709,8 @@ export async function createModelTurn(options: {
     current: readonly string[] | undefined;
     usedLastTurn: readonly string[];
   }) => Promise<{ active: readonly string[] | undefined }>;
+  /** Told when a tool plan could not be applied, so the session kept the tools it had; for telemetry only. */
+  onToolDisclosureFailed?: (input: { conversationId: string; reason: string }) => void;
   /**
    * What the message being answered points at: skills to follow and the things it names (#210).
    *
@@ -793,6 +810,7 @@ export async function createModelTurn(options: {
         usedLastTurn,
       }));
     } catch {
+      options.onToolDisclosureFailed?.({ conversationId, reason: "plan-failed" });
       return;
     }
     const offered = turn.activeTools ?? turn.registeredTools;
@@ -801,7 +819,18 @@ export async function createModelTurn(options: {
       return;
     }
     const same = active.length === offered.length && active.every((name) => offered.includes(name));
-    if (!same) await adapter.setActiveTools(turn.sessionId, active);
+    if (same) {
+      turn.activeTools = [...active];
+      return;
+    }
+    try {
+      await adapter.setActiveTools(turn.sessionId, active);
+    } catch {
+      // Applying is part of the plan: one that cannot be applied leaves the session offering what it offered, and the
+      // turn goes ahead with that rather than failing over a narrower prompt it never needed.
+      options.onToolDisclosureFailed?.({ conversationId, reason: "apply-failed" });
+      return;
+    }
     turn.activeTools = [...active];
   };
   const budget = modelBudgetFromEnv(options.env);
@@ -975,6 +1004,7 @@ export async function createModelTurn(options: {
       registeredTools: [],
       activeTools: undefined,
       toolsUsed: new Set(),
+      preparing: undefined,
     };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
@@ -1110,6 +1140,9 @@ export async function createModelTurn(options: {
     steer: async (conversationId: string, text: string): Promise<boolean> => {
       const turn = turns.get(conversationId);
       if (turn === undefined || !turn.inFlight || turn.sessionId === "") return false;
+      await turn.preparing;
+      // A Stop while it was being prepared ended the turn this was meant for.
+      if (!turn.inFlight || turn.stopped) return false;
       await adapter.steer(turn.sessionId, text);
       return true;
     },
@@ -1135,12 +1168,23 @@ export async function createModelTurn(options: {
       const workId = input.workId ?? `bg-${input.conversationId}-${String(Date.now())}`;
       signal?.throwIfAborted();
       const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel();
+      // What the host retrieved for this request, read before the session exists because its one tool is part of how
+      // the session is created. A retrieval that fails is a run without it, not a run that fails.
+      const context =
+        options.backgroundContext === undefined
+          ? undefined
+          : await options
+              .backgroundContext({ conversationId: input.conversationId, principalId: input.principal.principalId, text: input.text })
+              .catch(() => undefined);
+      const reader = context === undefined || context.items === 0 ? undefined : context;
       const handle = await adapter.createWorkerSession({
         goal: input.text.slice(0, 2000),
         // No folders and no capabilities: starting a worker is not a way to acquire either, and the request that
-        // needs them goes through the same approval path as any other.
+        // needs them goes through the same approval path as any other. The one tool it may get reads what the host
+        // retrieved from this conversation for this request, and nothing else.
         projectRoots: [],
         allowedCapabilityRefs: [],
+        ...(reader === undefined ? {} : { customTools: [readContextTool(reader)] }),
         // Routed only for background work. Foreground honours the person's choice, and nobody is watching this run —
         // which is exactly why the model for it is a decision rather than a setting.
         ...(routed === undefined ? {} : { model: routed }),
@@ -1161,13 +1205,10 @@ export async function createModelTurn(options: {
       try {
         // Created before the signal could be observed, so an abort that landed during creation is honoured here.
         signal?.throwIfAborted();
-        // What the host retrieved for this request goes with the data, after the caller's own: material, not a goal.
-        const retrieved =
-          options.backgroundContext === undefined
-            ? ""
-            : await options
-                .backgroundContext({ conversationId: input.conversationId, principalId: input.principal.principalId, text: input.text })
-                .catch(() => "");
+        // The list of what was retrieved goes with the data, after the caller's own: material, not a goal. An item is read
+        // in full only when the run asks for it.
+        const listed = reader?.answer({});
+        const retrieved = listed?.kind === "done" ? listed.text : "";
         const data = [input.data ?? "", retrieved].map((part) => part.trim()).filter((part) => part !== "").join("\n\n");
         await adapter.prompt(handle.sessionId, promptForTurn({ text: input.text, ...(data === "" ? {} : { data }) }));
         // A prompt that settles quietly after an abort is still a stopped run, not a result to report.
@@ -1207,36 +1248,13 @@ export async function createModelTurn(options: {
 
       const startedAt = Date.now();
       const turn = await turnFor(input.conversationId, input.principal);
-      // Once, on the first turn this session answers: the second turn already has the first in its context,
-      // and repeating the brief each time would push the conversation out with its own summary.
-      const recap = turn.fresh ? await recapFor(options, input.conversationId, input.text) : "";
-      turn.fresh = false;
-      // Built here rather than at the call, because `note` is optional under exactOptionalPropertyTypes: a
-      // present key holding undefined is a different type from an absent key, and only one of them means
-      // "this turn carries no extra instruction".
-      const note = withRecap(recap, input.note);
-      // Read once, before the prompt, from the message the conductor has already stored.
-      const attachmentPart =
-        options.attachments === undefined
-          ? ""
-          : attachmentBrief({
-              refs: options.attachments.refsFor(input.conversationId),
-              dataDir: options.attachments.dataDir,
-            });
-      // Read fresh every turn, not captured once: a record the person deleted must stop being sent on the next
-      // turn, which is what the Memory tab's promise to let them see the source and delete it has to mean.
-      // Given the turn's text, so what is remembered about this subject comes first; a brief that cannot be read is
-      // a less informed turn, not a failed one.
-      const memoryPart = (await Promise.resolve(options.memoryBrief?.(input.conversationId, input.text)).catch(() => "")) ?? "";
-      const referencePart =
-        options.references === undefined
-          ? ""
-          : await options.references.briefFor(input.conversationId, (name, revision) => adapter.skillBody(name, revision));
-      const brief = [referencePart, attachmentPart, memoryPart].filter((part) => part !== "").join("\n\n");
-      const ui = uiNoteFor(turn, input.conversationId);
-      await discloseTools(turn, input.conversationId, input.text);
-      // Set before the prompt rather than after it, so a message arriving while the first tokens are being written
-      // already sees a turn in flight.
+      /*
+       * Running from here, before anything is read for the prompt.
+       *
+       * Reading the recap, the memory and the tool plan can take a selector call each when an operator opted in, and a
+       * message or a Stop arriving meanwhile must see a turn in flight: a second message is steered rather than started
+       * alongside, and a Stop is honoured — the prompt below is then never sent.
+       */
       turn.inFlight = true;
       turn.startedAtMs = startedAt;
       // Cleared before the prompt rather than after, so a turn that throws still leaves the
@@ -1254,6 +1272,62 @@ export async function createModelTurn(options: {
       const stopRequested = new Promise<void>((resolve) => {
         turn.settleStop = resolve;
       });
+      // Once, on the first turn this session answers: the second turn already has the first in its context,
+      // and repeating the brief each time would push the conversation out with its own summary.
+      const fresh = turn.fresh;
+      turn.fresh = false;
+
+      let preparedResolve: () => void = () => undefined;
+      turn.preparing = new Promise<void>((resolve) => {
+        preparedResolve = resolve;
+      });
+      let recap: { text: string; earlier: string };
+      let memoryPart: string;
+      let referencePart: string;
+      let attachmentPart: string;
+      try {
+        // Read once, before the prompt, from the message the conductor has already stored.
+        attachmentPart =
+          options.attachments === undefined
+            ? ""
+            : attachmentBrief({
+                refs: options.attachments.refsFor(input.conversationId),
+                dataDir: options.attachments.dataDir,
+              });
+        // Side by side rather than one after another, so a turn waits for the slowest of them and not their sum.
+        [recap, memoryPart, referencePart] = await Promise.all([
+          fresh ? recapFor(options, input.conversationId, input.text) : Promise.resolve({ text: "", earlier: "" }),
+          // Read fresh every turn, not captured once: a record the person deleted must stop being sent on the next
+          // turn, which is what the Memory tab's promise to let them see the source and delete it has to mean.
+          // Given the turn's text, so what is remembered about this subject comes first; a brief that cannot be read is
+          // a less informed turn, not a failed one.
+          Promise.resolve(options.memoryBrief?.(input.conversationId, input.text))
+            .catch(() => "")
+            .then((part) => part ?? ""),
+          options.references === undefined
+            ? Promise.resolve("")
+            : options.references.briefFor(input.conversationId, (name, revision) => adapter.skillBody(name, revision)),
+          discloseTools(turn, input.conversationId, input.text),
+        ]);
+      } catch (cause) {
+        // Nothing was sent: the turn was never running as far as anyone else is concerned.
+        turn.inFlight = false;
+        turn.startedAtMs = undefined;
+        turn.settleStop = undefined;
+        turn.onEvent = undefined;
+        throw cause;
+      } finally {
+        preparedResolve();
+        turn.preparing = undefined;
+      }
+      // Built here rather than at the call, because `note` is optional under exactOptionalPropertyTypes: a
+      // present key holding undefined is a different type from an absent key, and only one of them means
+      // "this turn carries no extra instruction".
+      const note = withRecap(recap.text, input.note);
+      const brief = [referencePart, attachmentPart, memoryPart].filter((part) => part !== "").join("\n\n");
+      // What the planner retrieved from further back goes with the data, after the caller's own: material, not guidance.
+      const data = [input.data ?? "", recap.earlier].map((part) => part.trim()).filter((part) => part !== "").join("\n\n");
+      const ui = uiNoteFor(turn, input.conversationId);
 
       // The adapter stops a turn that overruns its brief, but this is the layer holding an open
       // HTTP request, so it does not delegate the guarantee: without a deadline here a provider
@@ -1272,16 +1346,19 @@ export async function createModelTurn(options: {
         }, budget.maxWallClockMs);
       });
 
-      const prompted = adapter.prompt(
-        turn.sessionId,
-        promptForTurn({
-          text: input.text,
-          ...(note === undefined ? {} : { note }),
-          ...(brief === "" ? {} : { brief }),
-          ...(input.data === undefined ? {} : { data: input.data }),
-          ...(ui === "" ? {} : { ui }),
-        }),
-      );
+      // A Stop that arrived while the prompt was being prepared means the prompt is never sent.
+      const prompted = turn.stopped
+        ? Promise.resolve()
+        : adapter.prompt(
+            turn.sessionId,
+            promptForTurn({
+              text: input.text,
+              ...(note === undefined ? {} : { note }),
+              ...(brief === "" ? {} : { brief }),
+              ...(data === "" ? {} : { data }),
+              ...(ui === "" ? {} : { ui }),
+            }),
+          );
       // A stop settles the race before the provider does, and whatever the provider says afterwards is already
       // answered; left unobserved, its rejection would surface as an unhandled one.
       prompted.catch(() => undefined);

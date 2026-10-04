@@ -19,7 +19,8 @@ mutating `agent.state.tools` directly, so the tool-set fix goes through the SDK'
   long thread) and adds the few earlier messages of the same conversation that match the new message.
 - Tool disclosure can narrow the tool list per turn by family, behind a flag that stays off by default, and narrowing
   is reversible because the adapter keeps an immutable baseline.
-- Read-only background runs reuse one retrieval pass through a principal-scoped, digest-checked bundle of refs.
+- Read-only background runs and dispatched task workers reuse one retrieval pass through a principal-scoped,
+  digest-checked bundle of refs, read on demand through a `read_context` tool.
 - A deterministic harness measures tool-schema tokens, prefix-cache reads/writes and wrong-tool rate for "all tools"
   against "progressive", so the default is a measured decision.
 
@@ -38,9 +39,9 @@ mutating `agent.state.tools` directly, so the tool-set fix goes through the SDK'
 
 ## Non-goals
 
-- Security-aware routing and conditional instructions (issue phases D and E): not in the owner's list for this run.
-- Dynamic per-turn session rebuild (issue phase F): deferred by the issue.
-- Changing the dispatched task worker envelope: file/diff refs for task workers are a follow-up.
+- Security-aware routing, conditional instructions and dynamic per-turn session rebuild (issue phases D, E and F):
+  a separate follow-up PR. This PR addresses #433 without closing it.
+- File/diff refs in bundles: only memory and message refs are bundled.
 - Semantic (embedding) retrieval inside the planner: lexical BM25 plus overlap only; the semantic leg stays where it is.
 
 ## Phases
@@ -49,13 +50,14 @@ mutating `agent.state.tools` directly, so the tool-set fix goes through the SDK'
 | --- | --- | --- | --- |
 | 01 Query-aware recap and memory | in review | — | [phase-01-query-aware-context.md](phase-01-query-aware-context.md) |
 | 02 Adapter tool baseline and progressive disclosure | in review | 01 | [phase-02-progressive-tools.md](phase-02-progressive-tools.md) |
-| 03 Shared retrieval for background runs | in review | 01 | [phase-03-shared-retrieval.md](phase-03-shared-retrieval.md) |
+| 03 Shared retrieval for background runs and task workers | in review | 01 | [phase-03-shared-retrieval.md](phase-03-shared-retrieval.md) |
 | 04 Cache-economics measurement and docs | in review | 02 | [phase-04-measurement.md](phase-04-measurement.md) |
 
 ## Acceptance
 
 - Focused vitest per phase; `pnpm verify`; `pnpm invariants`; relevant Playwright journeys on ports 19101–19104.
-- Planner off → previous output byte-for-byte (tested).
+- Planner off → previous output byte-for-byte (tested, including at bootstrap wiring).
+- Earlier messages reach the model as role-labelled data, never inside the turn guidance (injection test).
 - Narrow → widen → narrow returns the full baseline and never anything outside it (tested on real-adapter stub).
 - Measurement numbers recorded in the PR body and phase 04; live A/B named as an external gate.
 - EN + VI docs for architecture and the new environment variables.

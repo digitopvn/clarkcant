@@ -39,7 +39,13 @@ export const CORE_TOOLS: readonly string[] = [
 
 export interface ToolFamily {
   tools: readonly string[];
-  /** Words (diacritics folded, lower case) that suggest a message needs this family. */
+  /**
+   * Words (lower case) that suggest a message needs this family, matched as whole words.
+   *
+   * Written without diacritics, a hint matches whatever diacritics the message used. Written with them, it matches only
+   * those: folded, "tối" (dark) is "tôi" (I) and "dừng" (stop) is "dùng" (use), which would switch a family on for
+   * almost every Vietnamese message.
+   */
   hints: readonly string[];
   /** One line for the selector, when it is asked. */
   about: string;
@@ -68,7 +74,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, ToolFamily>> = {
   work: {
     tools: ["list_work", "stop_work", "start_browser_task", "find_runtime"],
     hints: [
-      "task", "tasks", "viec", "cong viec", "background", "chay nen", "stop", "dung", "huy", "cancel", "browser",
+      "task", "tasks", "viec", "cong viec", "background", "chay nen", "stop", "dừng", "huy", "cancel", "browser",
       "trinh duyet", "website", "web", "trang", "runtime", "worker", "dang chay", "running",
     ],
     about: "background work: listing, stopping or starting tasks and browser tasks",
@@ -76,15 +82,15 @@ export const TOOL_FAMILIES: Readonly<Record<string, ToolFamily>> = {
   interface: {
     tools: ["control_app", "inspect_ui", "set_map_tiles"],
     hints: [
-      "giao dien", "cai dat", "settings", "setting", "theme", "mo", "open", "man hinh", "screen", "ui", "nut", "button",
-      "ban do", "map", "tile", "tiles", "widget", "che do", "dark", "light", "toi", "sang",
+      "giao dien", "cai dat", "settings", "setting", "theme", "mở", "open", "man hinh", "screen", "ui", "nut", "button",
+      "ban do", "map", "tile", "tiles", "widget", "che do", "dark", "light", "tối", "sáng",
     ],
     about: "operating the app itself: settings, theme, screens, widgets on screen, map tiles",
   },
   packages: {
     tools: ["manage_package", "invoke_capability"],
     hints: [
-      "package", "packages", "goi", "extension", "marketplace", "capability", "plugin", "skill", "go cai",
+      "package", "packages", "gói", "extension", "marketplace", "capability", "plugin", "skill", "go cai",
       "uninstall", "update", "cap nhat",
     ],
     about: "installing, updating or running packages and their capabilities",
@@ -93,7 +99,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, ToolFamily>> = {
     tools: ["create_automation", "list_automations", "update_automation", "allow_peer_tasks", "list_peers"],
     hints: [
       "automation", "tu dong", "lich", "schedule", "hang ngay", "moi ngay", "hang tuan", "daily", "weekly", "every",
-      "nhac", "remind", "peer", "may khac", "thiet bi khac", "cron",
+      "nhắc", "remind", "peer", "may khac", "thiet bi khac", "cron",
     ],
     about: "scheduled automations and other machines allowed to send tasks",
   },
@@ -113,23 +119,29 @@ export function familyOf(tool: string): string | undefined {
   return CORE_TOOLS.includes(tool) ? undefined : FAMILY_OF.get(tool);
 }
 
-function fold(text: string): string {
-  return ` ${text
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .replace(/đ/g, "d")
-    .replace(/Đ/g, "d")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim()} `;
+/** Lower case, NFC, every run of non-letters one space, padded so a hint can be matched as a whole word. */
+function words(text: string): string {
+  return ` ${text.normalize("NFC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()} `;
 }
 
-/** The families a message's own words point at, by whole-word match. */
+/** `words`, with diacritics folded away. */
+function fold(text: string): string {
+  return words(text.normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/g, "d").replace(/Đ/g, "d"));
+}
+
+/** A hint written without diacritics: hints are printable text, so printable ASCII is the whole test. */
+const ASCII = /^[\x20-\x7e]*$/;
+
+/** The families a message's own words point at, by whole-word match, diacritics-aware (see `ToolFamily.hints`). */
 export function hintedFamilies(text: string): Set<string> {
   const folded = fold(text);
+  const exact = words(text);
   const families = new Set<string>();
   for (const [family, entry] of Object.entries(TOOL_FAMILIES)) {
-    if (entry.hints.some((hint) => folded.includes(` ${hint} `))) families.add(family);
+    const hit = entry.hints.some((hint) =>
+      ASCII.test(hint) ? folded.includes(` ${hint} `) : exact.includes(` ${hint.normalize("NFC")} `),
+    );
+    if (hit) families.add(family);
   }
   return families;
 }

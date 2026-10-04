@@ -48,6 +48,18 @@ describe("hints", () => {
     // "runtime" contains "run", but not as a word.
     expect(hintedFamilies("what is a runtime").has("terminal")).toBe(false);
   });
+
+  it("does not take a word for another that only folds to the same letters", () => {
+    // "tôi" (I) is not "tối" (dark), and "dùng" (use) is not "dừng" (stop).
+    expect(hintedFamilies("Tôi muốn dùng SQLite").size).toBe(0);
+    expect(hintedFamilies("chuyển sang chế độ tối").has("interface")).toBe(true);
+    expect(hintedFamilies("dừng việc đó lại").has("work")).toBe(true);
+    // Typed without diacritics, the ambiguous words point nowhere rather than everywhere.
+    expect(hintedFamilies("toi muon dung sqlite").size).toBe(0);
+    expect(hintedFamilies("mo goi nhac").size).toBe(0);
+    // Unambiguous hints still read either way.
+    expect(hintedFamilies("cài đặt giao diện").has("interface")).toBe(true);
+  });
 });
 
 describe("one turn's plan", () => {
@@ -112,6 +124,30 @@ describe("one turn's plan", () => {
     expect(plan.families).toEqual(["inbox"]);
     expect(plan.active).toContain("read_inbox");
     expect(plan.active).not.toContain("run_command");
+  });
+
+  it("offers everything when the selector fails or runs out of time", async () => {
+    for (const transport of [
+      async (): Promise<never> => {
+        throw new Error("selector unreachable");
+      },
+      // Never answers; the selector's own deadline ends the call.
+      async (request: { signal: AbortSignal }): Promise<never> =>
+        await new Promise<never>((_resolve, reject) => {
+          request.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+    ]) {
+      const conf = { ...config(), timeoutMs: 30 };
+      const plan = await planToolDisclosure({
+        mode: "progressive",
+        registered: REGISTERED,
+        current: undefined,
+        text: "có gì mới không",
+        usedLastTurn: [],
+        decider: { jev: { config: conf, transport: transport as JevTransport }, budget: () => createJevBudget(conf) },
+      });
+      expect(plan).toMatchObject({ reason: "no-hint", active: REGISTERED });
+    }
   });
 
   it("offers everything when the selector does not decide", async () => {
@@ -184,6 +220,38 @@ describe("the model turn applies the plan through the adapter", () => {
     await ask("mở cài đặt", "m3");
     expect(adapter.activeToolNames("fake-session-1")).toEqual(["ask_user", "run_command", "control_app"]);
     expect(adapter.calls).toHaveLength(2);
+  });
+
+  it("leaves the tools as they were and answers anyway when the plan or applying it fails", async () => {
+    class FailingAdapter extends CountingAdapter {
+      override async setActiveTools(sessionId: string, toolNames: readonly string[]): Promise<void> {
+        this.calls.push([...toolNames]);
+        throw new Error("the SDK refused");
+      }
+    }
+    for (const failure of ["plan-failed", "apply-failed"] as const) {
+      const adapter = new FailingAdapter({ script: ["một", "hai"] });
+      const failed: string[] = [];
+      const turn = await createModelTurn({
+        env: ENV,
+        cwd: process.cwd(),
+        adapter,
+        extraTools: () => [tool("ask_user"), tool("run_command"), tool("control_app")],
+        toolDisclosure: async (input) => {
+          if (failure === "plan-failed") throw new Error("planner broke");
+          return await planToolDisclosure({ mode: "progressive", ...input });
+        },
+        onToolDisclosureFailed: ({ reason }) => failed.push(reason),
+      });
+      const reply = await turn!.answer({ conversationId: "c1" as ConversationId, principal: PRINCIPAL, text: "chạy git status", messageId: "m1" });
+      expect(reply.text).toBe("một");
+      expect(failed).toEqual([failure]);
+      // Every tool the session was created with is still offered.
+      expect(adapter.activeToolNames("fake-session-1")).toEqual(["ask_user", "run_command", "control_app"]);
+      // Still the set it was created with, so the next turn plans again rather than believing it narrowed.
+      await turn!.answer({ conversationId: "c1" as ConversationId, principal: PRINCIPAL, text: "chạy git log", messageId: "m2" });
+      expect(failed).toEqual([failure, failure]);
+    }
   });
 
   it("offers everything, unchanged, when no plan is configured", async () => {

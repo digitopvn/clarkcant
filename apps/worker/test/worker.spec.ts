@@ -20,6 +20,8 @@ import {
   CAPABILITY_PROJECT_CODE_CHANGE,
   createBrowserTools,
   createCommandTools,
+  createContextTool,
+  READ_CONTEXT_TOOL,
   READ_PROJECT_FILE_TOOL,
   RUN_COMMAND_TOOL,
   USE_BROWSER_TOOL,
@@ -536,5 +538,78 @@ describe("a worker's browser action is a request to the host", () => {
     expect(allWorkerTools([root]).some((tool) => tool.name === USE_BROWSER_TOOL)).toBe(false);
     const withBrowser = allWorkerTools([root], { browser: { request: async () => ({ kind: "refused", text: "" }) } });
     expect(withBrowser.some((tool) => tool.name === USE_BROWSER_TOOL)).toBe(true);
+  });
+});
+
+describe("a worker reads the context its host retrieved, on demand", () => {
+  function contextTool(replies: Record<string, { kind: "done" | "refused"; text: string }>): {
+    tool: ReturnType<typeof createContextTool>;
+    sent: unknown[];
+  } {
+    const sent: unknown[] = [];
+    const tool = createContextTool(
+      {
+        request: async (request) => {
+          sent.push(request);
+          return replies[request.item ?? ""] ?? { kind: "refused", text: "no such item" };
+        },
+      },
+      2,
+    );
+    return { tool, sent };
+  }
+
+  it("lists with no item and reads one item by label, and a refusal fails the call", async () => {
+    const { tool, sent } = contextTool({
+      "": { kind: "done", text: "[data]\nc1 · note\nc2 · message" },
+      c1: { kind: "done", text: "[data]\nc1 · note in full" },
+    });
+    expect(tool.name).toBe(READ_CONTEXT_TOOL);
+    expect(tool.description).toContain("2 item(s)");
+    await expect(tool.execute({})).resolves.toEqual({ text: "[data]\nc1 · note\nc2 · message" });
+    await expect(tool.execute({ item: " c1 " })).resolves.toEqual({ text: "[data]\nc1 · note in full" });
+    await expect(tool.execute({ item: "c9" })).rejects.toThrow("no such item");
+    expect(sent).toEqual([{}, { item: "c1" }, { item: "c9" }]);
+  });
+
+  it("is offered whatever the brief grants, and reading it is never evidence the task was done", async () => {
+    const adapter = new FakePiAdapter({ script: ["I read the context and I am done."] });
+    const { tool } = contextTool({ "": { kind: "done", text: "[data]\nc1 · note" } });
+    const result = await runWorker(
+      brief({ contextItems: 2 }),
+      deps(adapter, [stubTool()], {
+        contextTools: [tool],
+        drive: async (sessionId) => {
+          expect(adapter.activeToolNames(sessionId)).toEqual(["read_report", READ_CONTEXT_TOOL]);
+          await adapter.callTool(sessionId, READ_CONTEXT_TOOL, {});
+        },
+      }),
+    );
+    // Only the context was read: nothing was demonstrated, and the run says so.
+    expect(result.record.evidence).toHaveLength(1);
+    expect(result.record.evidence[0]?.verdict).toBe("not-verified");
+    expect(result.record.evidence[0]?.summary).toContain("the model answered without using any of its tools (read_report)");
+  });
+
+  it("does not record a refused read as the task failing", async () => {
+    const adapter = new FakePiAdapter();
+    const { tool } = contextTool({});
+    const result = await runWorker(
+      brief({ contextItems: 1 }),
+      deps(adapter, [stubTool()], {
+        contextTools: [tool],
+        drive: async (sessionId) => {
+          await adapter.callTool(sessionId, READ_CONTEXT_TOOL, { item: "c4" }).catch(() => undefined);
+          await adapter.callTool(sessionId, "read_report", {});
+        },
+      }),
+    );
+    expect(result.record.evidence.every((item) => item.verdict === "verified")).toBe(true);
+  });
+
+  it("carries only a count of items across the process boundary, never their text", () => {
+    expect(workerBriefEnvelopeSchema.safeParse(brief({ contextItems: 3 })).success).toBe(true);
+    expect(workerBriefEnvelopeSchema.safeParse({ ...brief(), contextItems: -1 }).success).toBe(false);
+    expect(workerBriefEnvelopeSchema.safeParse({ ...brief(), context: "the notes" }).success).toBe(false);
   });
 });

@@ -4,12 +4,13 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { indexHistory, migrate, openDatabase, type Database } from "@clarkcant/storage";
+import { migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import { earlierMessagesFor, legacyRecap, planRecap, recapWindow, type RecapMessage } from "../src/context-planner.ts";
 import { CORE_TOOLS, TOOL_FAMILIES, familyOf, planToolDisclosure, type ToolDisclosureMode } from "../src/tool-disclosure.ts";
 
 import { ECONOMICS_CORPUS, RECAP_CASES, type EconomicsConversation } from "./context-economics-corpus.ts";
+import { seedMessage } from "./conversation-message-seed.ts";
 
 /**
  * What progressive tool disclosure and the focused recap cost and save, measured offline.
@@ -26,7 +27,13 @@ import { ECONOMICS_CORPUS, RECAP_CASES, type EconomicsConversation } from "./con
  * Every number below is an estimate under the labelled assumptions, printed for the reader. The test asserts only what
  * must hold whatever the numbers are; it never asserts a number chosen to pass. Latency, real cache behaviour and task
  * success need a live A/B with provider credentials and are not measured here.
+ *
+ * In-sample: the family hints were written while looking at this corpus, so its wrong-tool rate is a best case for the
+ * hints, not a held-out result. A held-out corpus, or the live A/B, is what would say how they generalise.
  */
+
+/** Printed with every table, so a number is never read without what it is. */
+const SAMPLE_NOTE = "in-sample (the hints were written against this corpus; not a held-out result)";
 
 /** Labelled assumptions, not measurements. */
 const ASSUMED = {
@@ -143,10 +150,16 @@ async function simulate(mode: Mode, corpus: readonly EconomicsConversation[], si
       if (previousTools !== undefined && toolKey !== previousTools) result.toolChanges += 1;
       // The prefix the cache can serve: everything before this turn's message, unless the tools — and so the system
       // prompt in front of everything — changed, in which case the whole prompt is written again.
-      const read = previousTools === toolKey ? Math.min(cachedPrefix, prompt) : 0;
+      // A fresh session writes its system prompt, tools and recap; a later turn's prefix is what the last turn left in
+      // the cache. This turn's own message and the reply before it are new input, at the uncached price, either way.
+      const prefix = previousTools === undefined ? Math.min(ASSUMED.baseSystemTokens + schema + historyTokens, prompt) : Math.min(cachedPrefix, prompt);
+      const read = previousTools === toolKey ? prefix : 0;
+      const written = prefix - read;
+      const uncached = prompt - prefix;
       result.cacheRead += read;
-      result.cacheWrite += prompt - read;
-      result.costUsd += (read * ASSUMED.cacheReadPerM + (prompt - read) * ASSUMED.cacheWritePerM) / 1_000_000;
+      result.cacheWrite += written;
+      result.uncached += uncached;
+      result.costUsd += (read * ASSUMED.cacheReadPerM + written * ASSUMED.cacheWritePerM + uncached * ASSUMED.inputPerM) / 1_000_000;
       result.schemaTokens += schema;
       result.promptTokens += prompt;
       result.turns += 1;
@@ -177,6 +190,7 @@ describe("tool disclosure economics (offline estimate)", () => {
       "schema tok/turn": Math.round(result.schemaTokens / result.turns),
       "cache write": result.cacheWrite,
       "cache read": result.cacheRead,
+      uncached: result.uncached,
       "tool-set changes": result.toolChanges,
       "cost USD": Number(result.costUsd.toFixed(4)),
       "vs all": all === undefined ? "" : `${(((result.costUsd - all.costUsd) / all.costUsd) * 100).toFixed(1)}%`,
@@ -188,7 +202,7 @@ describe("tool disclosure economics (offline estimate)", () => {
     }));
     const always = [...sizes.entries()].filter(([tool]) => familyOf(tool) === undefined).reduce((sum, [, tokens]) => sum + tokens, 0);
     console.log(
-      `[context-economics] ${String(sizes.size)} tools, ~${String([...sizes.values()].reduce((a, b) => a + b, 0))} schema tokens in all, ` +
+      `[context-economics] ${SAMPLE_NOTE}; ${String(sizes.size)} tools, ~${String([...sizes.values()].reduce((a, b) => a + b, 0))} schema tokens in all, ` +
         `~${String(always)} always offered; assumptions ${JSON.stringify(ASSUMED)}`,
     );
     console.table(familyTokens);
@@ -234,9 +248,9 @@ describe("recap relevance (offline)", () => {
         messageId: `${recapCase.id}_${String(index)}`,
       }));
       for (const message of messages) {
-        indexHistory(db, {
-          source: "message",
-          ref: message.messageId ?? "",
+        seedMessage(db, {
+          messageId: message.messageId ?? "",
+          role: message.role,
           text: message.text,
           principalId: PRINCIPAL,
           conversationId: recapCase.id,
@@ -258,7 +272,11 @@ describe("recap relevance (offline)", () => {
         // What shipped before: the first forty messages read, the last twelve of those recapped.
         "first-40": legacyRecap(messages.slice(0, 40)),
         "latest-12": legacyRecap(latest),
-        planned: planRecap({ messages: latest, query: recapCase.question, earlier, total: messages.length }).text,
+        // The recap and the earlier messages it hands over as data, together: both reach the model.
+        planned: (() => {
+          const planned = planRecap({ messages: latest, query: recapCase.question, earlier, total: messages.length });
+          return [planned.text, planned.earlier].filter((part) => part !== "").join("\n\n");
+        })(),
       };
       const row: Record<string, string | number> = { case: recapCase.id, messages: messages.length };
       for (const [name, text] of Object.entries(recaps)) row[name] = `${text.includes(decision) ? "yes" : "no"} (${String(tokensOf(text))} tok)`;
@@ -268,7 +286,7 @@ describe("recap relevance (offline)", () => {
       // And it never loses what the fixed recap had.
       if (recaps["latest-12"].includes(decision)) expect(recaps.planned).toContain(decision);
     }
-    console.log("[context-economics] does the recap carry the labelled decision?");
+    console.log(`[context-economics] ${SAMPLE_NOTE}; does the recap carry the labelled decision?`);
     console.table(rows);
   });
 });

@@ -70,6 +70,12 @@ export const workerBriefEnvelopeSchema = z.strictObject({
     .optional(),
   /** Set when this run retries an earlier one, so lineage is never lost. */
   replacesRunId: z.string().min(1).max(128).optional(),
+  /**
+   * How many items the host retrieved from the conversation for this task, read on demand over the host channel.
+   * Absent or zero means nothing was retrieved and the worker offers no context tool. A count, never the text: the
+   * brief sits in a temporary file, and what the worker reads is re-read by the host at the moment it asks.
+   */
+  contextItems: z.int().min(0).max(64).optional(),
 });
 
 // Derived from the schema rather than declared alongside it. Two declarations of the same shape
@@ -121,6 +127,12 @@ export interface WorkerDeps {
    * cut in the middle of it would otherwise leave a prefix no exact-match redaction downstream can recognise.
    */
   secrets?: readonly string[];
+  /**
+   * Tools that read the task's own background from the host, such as `read_context`. Offered whatever the brief's
+   * capabilities, because they read only what the host retrieved for this task, and never wrapped for evidence: a run
+   * that only read its context demonstrated nothing.
+   */
+  contextTools?: readonly ToolDefinition[];
 }
 
 export type WorkerStopReason = "settled" | "wall-clock-budget" | "token-budget" | "failed";
@@ -275,6 +287,8 @@ export async function runWorker(
       }
     },
   }));
+  const contextTools = (deps.contextTools ?? []).filter((tool) => !permittedNames.has(tool.name));
+  customTools.push(...contextTools);
 
   const brief: WorkerBrief = {
     goal: envelope.goal,
@@ -288,8 +302,9 @@ export async function runWorker(
   const handle = await deps.adapter.createWorkerSession(brief);
   sessionId = handle.sessionId;
 
-  // Narrowed to exactly the permitted names: anything the adapter added on its own is not this run's to offer.
-  await deps.adapter.setActiveTools(handle.sessionId, [...permittedNames]);
+  // Narrowed to exactly the permitted names and the context readers: anything the adapter added on its own is not this
+  // run's to offer.
+  await deps.adapter.setActiveTools(handle.sessionId, [...permittedNames, ...contextTools.map((tool) => tool.name)]);
 
   /*
    * The token budget, checked after every turn rather than once the session has settled.
