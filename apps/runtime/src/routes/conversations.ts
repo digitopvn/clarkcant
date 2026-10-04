@@ -1189,15 +1189,21 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
         { text, runningMs: control.runningMs?.(conversationId) ?? 0 },
       );
       const action = decided.status === "decided" ? decided.action : "interrupt";
-      // A steer joins only a turn of the same origin; a program's message beside the person's turn becomes its own.
-      if (action === "steer" && (await control.steer(conversationId, text, composerSurface(request).origin))) {
-        return json(202, {
-          accepted: true,
-          resolution: "steered",
-          ...(decided.status === "decided" ? {} : { reason: decided.reason }),
-        });
-      }
-      if (action === "background") {
+      /*
+       * A steer joins only a turn of the same origin and channel. One the turn will not take — a program's message
+       * beside the person's turn, or a typed one during a spoken turn — waits and is answered as a turn of its own, and
+       * Stop still cancels it while it waits. It does not cut the running turn off: joining was what the decider chose,
+       * and taking the running turn's place was not.
+       */
+      if (action === "steer") {
+        if (await control.steer(conversationId, text, composerSurface(request).origin)) {
+          return json(202, {
+            accepted: true,
+            resolution: "steered",
+            ...(decided.status === "decided" ? {} : { reason: decided.reason }),
+          });
+        }
+      } else if (action === "background") {
         const started = startBackgroundWork(services, principal, () => at() as never, conversationId, text);
         if ("refusal" in started && started.busy === true) {
           // Every place and the whole queue are taken. Ending the turn that is answering would not free one, so the
@@ -1230,9 +1236,10 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
             ...(started.position === undefined ? {} : { position: started.position }),
           });
         }
+      } else {
+        // An interrupt: this message takes the running turn's place.
+        control.interrupt(conversationId);
       }
-      // An interrupt, or a steer that found nothing left to join: either way this message becomes its own turn.
-      control.interrupt(conversationId);
     }
 
     const at_ = at() as never;
