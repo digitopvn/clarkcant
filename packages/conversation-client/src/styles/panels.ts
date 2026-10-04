@@ -824,7 +824,15 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-widget-library-head { display: flex; align-items: center; gap: var(--cc-space-md); padding: var(--cc-space-lg); border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-widget-library-head h2 { margin: 0; font-family: var(--cc-font-display, "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif); font-size: var(--cc-text-heading-md); line-height: var(--cc-leading-heading-md); }
 .cc-widget-library-head-left { display: flex; align-items: center; gap: var(--cc-space-sm); }
-.cc-widget-library-search { flex: 1; min-width: 0; }
+/* A field you type into, dressed like the other fields rather than left to the operating system's default. */
+.cc-widget-library-search {
+  flex: 1; min-width: 0; min-height: 36px; padding: var(--cc-space-xs) var(--cc-space-sm); font: inherit; color: inherit;
+  background: var(--cc-input-bg, var(--cc-card));
+  border: var(--cc-line, 1px solid) var(--cc-border);
+  border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border)));
+  border-radius: var(--cc-input-radius, var(--cc-radius-field, 10px));
+}
+.cc-widget-library-search:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-widget-library-facets { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); padding: var(--cc-space-sm) var(--cc-space-lg); border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-widget-library-facet { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-sm); border-radius: var(--cc-radius-button); border: var(--cc-line, 1px solid) var(--cc-border); background: transparent; color: inherit; }
 .cc-widget-library-facet[data-selected="true"] { border-color: var(--cc-accent); }

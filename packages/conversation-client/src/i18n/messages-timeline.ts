@@ -901,7 +901,7 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.provenanceLane.isolatedUi": "widget cách ly",
   "widgets.provenanceLane.service": "service riêng tiến trình",
   "widgets.provenanceLane.trustedNative": "extension Pi gốc — chạy cùng tiến trình",
-  "widgets.provenance.builtInLabel": "widget dựng sẵn trong Clark",
+  "widgets.provenance.builtInLabel": "Widget dựng sẵn trong Clark",
   // terminal-card.tsx
   "blocks.terminal.aria": "Terminal {title}",
   "blocks.terminal.running": "đang chạy",
@@ -1818,7 +1818,7 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.provenanceLane.isolatedUi": "isolated widget",
   "widgets.provenanceLane.service": "own-process service",
   "widgets.provenanceLane.trustedNative": "native Pi extension — runs in-process",
-  "widgets.provenance.builtInLabel": "widget built into Clark",
+  "widgets.provenance.builtInLabel": "Widgets built into Clark",
   // terminal-card.tsx
   "blocks.terminal.aria": "Terminal {title}",
   "blocks.terminal.running": "running",
