@@ -43,9 +43,10 @@ only from a POST whose prompt is in a JSON body (a prompt in the URL is refused)
 GET, advances one step per poll and returns a deterministic PNG. A real provider is
 [digitopvn/clarkcant#321](https://github.com/digitopvn/clarkcant/issues/321).
 
-Only the repository's scripted fixture model places the widget with `generateBinding` today. The `place_widget` tool
-binds a widget's offered actions and "Ask Clark" buttons, not a binding to a service's capability, so in a real
-installation the widget says it is not connected to the service.
+The `place_widget` tool places the widget in a real installation, with `generateBinding` bound to the package's
+`image.generate@1` and `prompt` in both its `inputs` and `stateInputs`, so a spoken "tạo ảnh" runs the draft. Until
+the person stores the provider key, the button is placed disabled with the node's reason; see
+[widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
 
 ## Files
 

@@ -31,6 +31,7 @@ if (NODE_PORT === undefined || NODE_PORT === "") {
 const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 const PACKAGE = "com.clarkcant.reference.image-generator";
 const GENERATE = `${PACKAGE}.image.generate@1`;
+const WIDGET_ID = `${PACKAGE}.main@1`;
 const SECRET = "IMAGE_PROVIDER_KEY";
 /** The origin the package declares. Fixed, because a declared origin is part of what the person consented to. */
 const PROVIDER_PORT = 8881;
@@ -298,7 +299,9 @@ test("a prompt becomes a job whose progress survives a reload, and its image lan
   test.setTimeout(420_000);
   await recordBridge(page);
   await openApp(page);
-  await say(page, "trình tạo ảnh");
+  // Placed the way a model places it: `place_widget`, with the button bound to the package's own capability.
+  await say(page, `place widget ${WIDGET_ID}`);
+  await expect(page.getByText(/Fixture: tui gọi place_widget .*Placed /u).last()).toBeVisible({ timeout: 20_000 });
   let widget = await openLive(page);
   conversationId = (await page.evaluate(() => window.sessionStorage.getItem("cc_conversation"))) ?? undefined;
 

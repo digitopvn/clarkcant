@@ -32,6 +32,7 @@ if (NODE_PORT === undefined || NODE_PORT === "") {
 const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 const PACKAGE = "com.clarkcant.reference.connected-app";
 const LIST_REF = `${PACKAGE}.list-tasks@1`;
+const CAPABILITIES = [LIST_REF, `${PACKAGE}.update-task@1`];
 const FRAME = "[data-pin-live] [data-widget-frame]";
 /** The ports the reference manifest names for the fake connector. */
 const CONNECTOR_PORT = 8880;
@@ -102,9 +103,31 @@ async function say(page: Page, text: string): Promise<void> {
   await composer.press("Enter");
 }
 
-/** Place the connected app's widget and open it live, once the host has said what its buttons can do. */
-async function openTasks(page: Page): Promise<FrameLocator> {
-  await say(page, "widget công việc");
+/**
+ * Place the connected app's widget and open it live, once the host has said what its buttons can do.
+ *
+ * Placed the way a model places it, through `place_widget` with both buttons bound to the package's own capabilities.
+ * The fixture's hand-made placement remains for the one journey that needs a rename deadline shorter than a button's
+ * default, which `place_widget` does not let a model set.
+ */
+async function openTasks(page: Page, placement: "place_widget" | "fixture" = "place_widget"): Promise<FrameLocator> {
+  if (placement === "fixture") {
+    await say(page, "widget công việc");
+  } else {
+    // A model places a widget's capability buttons once `list` shows them: the node registers a service's capabilities
+    // as it starts it, ready or not, and a fresh install may not have reached that yet.
+    await expect
+      .poll(
+        async () => {
+          const listed = (await (await page.request.get(`${GATEWAY}/capabilities`, { headers: headers() })).json()) as { capabilities: { ref: string }[] };
+          return CAPABILITIES.every((ref) => listed.capabilities.some((entry) => entry.ref === ref));
+        },
+        { timeout: 60_000, intervals: [500] },
+      )
+      .toBe(true);
+    await say(page, "place widget com.clarkcant.reference.connected-app.main@1");
+    await expect(page.getByText(/Fixture: tui gọi place_widget .*Placed /u).last()).toBeVisible({ timeout: 20_000 });
+  }
   const open = page.locator("[data-open-live]").last();
   await expect(open).toBeVisible({ timeout: 20_000 });
   await open.click();
@@ -349,7 +372,7 @@ test("a partial grant names the missing scope, and only what needs it stops", as
 test("a rename whose answer never comes back is recorded as unknown and not sent again", async ({ page }) => {
   test.setTimeout(240_000);
   await openApp(page);
-  const widget = await openTasks(page);
+  const widget = await openTasks(page, "fixture");
   await listReady(widget);
   await widget.locator("[data-tasks-load]").click();
   const output = widget.locator("[data-tasks-output]");

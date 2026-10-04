@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant, type TurnOrigin, type WidgetDefinition, type WidgetPerformRequest } from "@clarkcant/contracts";
+import { type CapabilityRef, DEFAULT_EXECUTION_POLICY_CONFIG, type Instant, type TurnOrigin, type WidgetDefinition, type WidgetPerformRequest } from "@clarkcant/contracts";
 import {
   EXECUTION_POLICY_PREFERENCE_KEY,
   type ModelTurnInput,
@@ -12,18 +12,20 @@ import {
   createInstance,
   getActionBinding,
   getInstance,
+  registerCapability,
   saveActionBinding,
   writeRegisteredPreference,
 } from "@clarkcant/core";
 import { appendMessage } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 
-import { compileWidgetAction } from "../src/application/action-bindings.ts";
+import { bindingAvailability, compileWidgetAction } from "../src/application/action-bindings.ts";
 import { resetActionRateLimits } from "../src/application/action-limits.ts";
 import { cancelActionRuns } from "../src/application/action-runs.ts";
 import { type WidgetPerformer, invokeWidgetAction, performReceipt, runApprovedPerform } from "../src/application/widget-actions.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { decideApprovalForNode } from "../src/routes/conversations.ts";
+import type { ServiceHost } from "../src/service-host.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createWidgetPerformAcks } from "../src/widget-perform-acks.ts";
 import { buildWidgetSemantic } from "../src/widget-semantic.ts";
@@ -735,6 +737,165 @@ describe("placing a widget with place_widget", () => {
   it("refuses a widget whose package this node does not run", () => {
     const answer = placeWidget(services, { messageId: () => "msg_place", locate: () => ({ ok: true, active: false, definition: PLACEABLE }) }, { widgetId: PLACEABLE.id });
     expect(answer.text).toContain("not installed and running");
+  });
+
+  describe("a button that calls its package's capability", () => {
+    const OWN = "com.example.sheet.chart@1" as CapabilityRef;
+    const OTHER = "com.example.mail.send@1" as CapabilityRef;
+    const OWN_GENERATION = "gen_sheet";
+    const OTHER_GENERATION = "gen_mail";
+    const STATEFUL: WidgetDefinition = {
+      ...PLACEABLE,
+      propsSchema: { type: "object", properties: { title: { type: "string" }, askBinding: { type: "string" }, chartBinding: { type: "string" } }, additionalProperties: false },
+      stateSchema: { type: "object", properties: { range: { type: "string" } }, additionalProperties: false },
+    };
+    const placing = { messageId: () => "msg_place", locate: () => ({ ok: true as const, active: true, definition: STATEFUL }) };
+
+    function activate(packageId: string, generationId: string, widgetIds: string[]): void {
+      const document = {
+        generationId,
+        packageId,
+        version: "1.0.0",
+        digest: `sha256:${packageId}`,
+        nodeId: services.runtime.identity.nodeId,
+        codeGeneration: "code_1",
+        activatedAt: AT,
+        uiOnlyFacets: [],
+        grantedCapabilities: [],
+        widgetIds,
+      };
+      services.runtime.db
+        .prepare(
+          `INSERT INTO package_generations (generation_id, package_id, version, digest, node_id, code_generation, activated_at, document)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(generationId, packageId, "1.0.0", document.digest, document.nodeId, "code_1", AT, JSON.stringify(document));
+    }
+
+    function register(ref: CapabilityRef, generation: string, effectCategory: "read" | "external-write", healthy = true): void {
+      registerCapability(
+        { db: services.runtime.db, nodeId: services.runtime.identity.nodeId },
+        {
+          ref,
+          providedBy: { packageId: generation, version: "1.0.0", digest: `sha256:${generation}`, generation },
+          executionNodeId: services.runtime.identity.nodeId,
+          summary: "A capability",
+          resourceKinds: [],
+          effectCategory,
+          supportsCancellation: false,
+          requiresConnection: false,
+          readiness: {
+            installed: true,
+            loaded: true,
+            authenticated: true,
+            authorized: true,
+            healthy,
+            ...(healthy ? {} : { blockedReason: "the provider key is not set" }),
+          },
+          uiAffordances: [],
+          inputSchema: {
+            type: "object",
+            properties: { kind: { type: "string", enum: ["bar", "line"] }, range: { type: "string", maxLength: 20 } },
+            required: ["kind", "range"],
+            additionalProperties: false,
+          },
+        },
+      );
+    }
+
+    beforeEach(() => {
+      activate("com.example.sheet", OWN_GENERATION, [STATEFUL.id]);
+      activate("com.example.mail", OTHER_GENERATION, ["com.example.mail.main@1"]);
+      const served = new Map<CapabilityRef, { packageId: string; generationId: string }>([
+        [OWN, { packageId: "com.example.sheet", generationId: OWN_GENERATION }],
+        [OTHER, { packageId: "com.example.mail", generationId: OTHER_GENERATION }],
+      ]);
+      services.serviceHost = { serves: (ref: CapabilityRef) => served.get(ref) } as unknown as ServiceHost;
+    });
+
+    const chart = (ref: CapabilityRef, extra: Record<string, unknown> = {}) => ({
+      prop: "chartBinding",
+      label: "Vẽ biểu đồ",
+      capabilityRef: ref,
+      inputs: ["kind"],
+      stateInputs: ["range"],
+      ...extra,
+    });
+
+    function placedChart(answer: { text: string }) {
+      const instanceId = /as widget (\S+)\./u.exec(answer.text)?.[1] ?? "";
+      const instance = getInstance(services.conductor, instanceId);
+      const bindingId = String(instance?.props.chartBinding ?? "");
+      return { instance, binding: getActionBinding(services.conductor, bindingId) };
+    }
+
+    it("binds a capability the package serves, with the registry's effect category and the press's schema cut from the capability's", () => {
+      register(OWN, OWN_GENERATION, "external-write");
+      const answer = placeWidget(services, placing, { widgetId: STATEFUL.id, props: { title: "Bảng" }, buttons: [chart(OWN)] });
+      expect(answer.text).toContain("Placed");
+      const { instance, binding } = placedChart(answer);
+      expect(instance?.actionBindingIds).toContain(binding?.actionBindingId);
+      expect(binding?.effectCategory).toBe("external-write");
+      expect(binding?.packageGeneration).toBe(OWN_GENERATION);
+      // The state is read first, so what the press sends wins.
+      expect(binding?.proposal).toMatchObject({
+        kind: "invoke",
+        capabilityRef: OWN,
+        bindings: [
+          { target: "range", source: "widget-state" },
+          { target: "kind", source: "user-input" },
+        ],
+      });
+      expect(binding?.inputSchema).toEqual({
+        type: "object",
+        properties: { kind: { type: "string", enum: ["bar", "line"] } },
+        required: ["kind"],
+        additionalProperties: false,
+      });
+      if (binding === undefined) throw new Error("no binding");
+      expect(bindingAvailability({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId, serviceHost: services.serviceHost }, binding)).toEqual({
+        available: true,
+      });
+    });
+
+    it("refuses, creating nothing, a capability another package serves or one the widget cannot feed", () => {
+      register(OWN, OWN_GENERATION, "read");
+      register(OTHER, OTHER_GENERATION, "external-write");
+      const before = [count("widget_instances"), count("action_bindings")];
+      const refusals = [
+        { button: chart(OTHER), says: "can only call its own package's service" },
+        { button: chart("com.example.absent.thing@1" as CapabilityRef), says: "is not provided by an active package's service" },
+        { button: chart(OWN, { stateInputs: ["missing"] }), says: "holds no missing" },
+        { button: chart(OWN, { inputs: ["colour"], stateInputs: ["range"] }), says: "does not take colour" },
+        { button: chart(OWN, { inputs: [], stateInputs: [] }), says: "does not accept those arguments" },
+        { button: chart(OWN, { intent: "Explain" }), says: "not both" },
+      ];
+      for (const refusal of refusals) {
+        const answer = placeWidget(services, placing, { widgetId: STATEFUL.id, props: { title: "Bảng" }, buttons: [button("askBinding"), refusal.button] });
+        expect(answer.text).toContain("Not placed");
+        expect(answer.text).toContain(refusal.says);
+        expect(answer.hostBlocks).toBeUndefined();
+      }
+      expect([count("widget_instances"), count("action_bindings")]).toEqual(before);
+    });
+
+    it("refuses a package capability when the generation serving it does not list the widget", () => {
+      register(OWN, OWN_GENERATION, "read");
+      services.runtime.db.prepare("DELETE FROM package_generations WHERE generation_id = ?").run(OWN_GENERATION);
+      activate("com.example.sheet", OWN_GENERATION, []);
+      const answer = placeWidget(services, placing, { widgetId: STATEFUL.id, props: { title: "Bảng" }, buttons: [chart(OWN)] });
+      expect(answer.text).toContain("can only call its own package's service");
+    });
+
+    it("places a button whose capability is not ready, and the frame's live view names why it cannot run yet", () => {
+      register(OWN, OWN_GENERATION, "external-write", false);
+      const answer = placeWidget(services, placing, { widgetId: STATEFUL.id, props: { title: "Bảng" }, buttons: [chart(OWN)] });
+      expect(answer.text).toContain("Placed");
+      const { binding } = placedChart(answer);
+      if (binding === undefined) throw new Error("no binding");
+      const availability = bindingAvailability({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId, serviceHost: services.serviceHost }, binding);
+      expect(availability).toMatchObject({ available: false, reason: expect.stringContaining("the provider key is not set") });
+    });
   });
 });
 

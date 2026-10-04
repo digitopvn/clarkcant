@@ -9,7 +9,7 @@ import {
   capabilityRefSchema,
   compileActionBinding,
 } from "@clarkcant/contracts";
-import { M1_VIEW_OPERATIONS, getCapability, invocationPreflight } from "@clarkcant/core";
+import { M1_VIEW_OPERATIONS, activeGenerations, getCapability, invocationPreflight } from "@clarkcant/core";
 import { asJsonValue, type Database, payloadDigest } from "@clarkcant/storage";
 
 import type { ServiceHost } from "../service-host.ts";
@@ -48,7 +48,13 @@ export interface ActionInputSpec {
   source: "user-input" | "selected-row" | "selected-event";
   noun: string;
   keys?: readonly string[];
-  schema: (keys: readonly string[]) => Record<string, unknown>;
+  /**
+   * Arguments an `invoke` reads from the widget's own state when it is pressed, such as a draft the frame keeps there.
+   * A value the press sends under the same key wins. Absent, a binding cannot read the widget's state.
+   */
+  stateKeys?: readonly string[];
+  /** `capabilitySchema` is the input schema the registry holds for the capability an `invoke` calls, when it has one. */
+  schema: (keys: readonly string[], capabilitySchema?: Record<string, unknown>) => Record<string, unknown>;
 }
 
 /** The key an item's id is sent under when the action is Clark's rather than a capability's. */
@@ -58,6 +64,16 @@ export const AGENT_ITEM_KEY = "itemId";
 function withoutRequired(schema: Record<string, unknown> | undefined, omit: readonly string[]): Record<string, unknown> | undefined {
   if (schema === undefined || !Array.isArray(schema.required)) return schema;
   return { ...schema, required: (schema.required as unknown[]).filter((name) => !omit.includes(String(name))) };
+}
+
+/**
+ * Whether the active package generation that serves a capability is the one that installed this widget. Fails closed: a
+ * generation that does not list its widgets cannot vouch for any of them.
+ */
+function generationHoldsWidget(deps: ActionBindingDeps, generationId: string, widgetId: string): boolean {
+  return activeGenerations({ db: deps.db, nodeId: deps.nodeId }).some(
+    (generation) => generation.generationId === generationId && generation.widgetIds?.includes(widgetId) === true,
+  );
 }
 
 /** Arguments a capability's schema says it does not take, of the ones a use would send. */
@@ -117,6 +133,11 @@ export function compileWidgetAction(
     ownerPrincipalId?: string;
     /** The actions the widget's definition offers; a `perform` binding can only name one of these. */
     offeredActions?: readonly OfferedAction[];
+    /**
+     * The id of an installed package's widget the button is for. An `invoke` may then only call a capability that the
+     * same active package generation serves: a widget is never bound to another package's service.
+     */
+    packageWidgetId?: string;
   },
 ): WidgetActionCompile {
   const carries = input.carries;
@@ -137,6 +158,7 @@ export function compileWidgetAction(
   const instanceGeneration = input.definitionRef.packageDigest;
   let packageGeneration = instanceGeneration;
   let effectCategory: EffectCategory = "read";
+  let capabilitySchema: Record<string, unknown> | undefined;
   const knownCapabilities = new Set<string>();
 
   switch (proposal.kind) {
@@ -167,11 +189,27 @@ export function compileWidgetAction(
           message: `${proposal.capabilityRef} is not provided by an active package's service on this node; a button can only call one that is`,
         };
       }
+      if (input.packageWidgetId !== undefined && !generationHoldsWidget(deps, served.generationId, input.packageWidgetId)) {
+        return {
+          ok: false,
+          message: `${proposal.capabilityRef} is not a capability of the package ${input.packageWidgetId} belongs to; a package widget's button can only call its own package's service`,
+        };
+      }
       const descriptor = getCapability({ db: deps.db, nodeId: deps.nodeId }, ref.data as CapabilityRef, deps.nodeId);
       if (descriptor === undefined) {
-        return { ok: false, message: `${proposal.capabilityRef} is not registered on this node yet` };
+        return {
+          ok: false,
+          message: `${proposal.capabilityRef} is not registered on this node yet; its package's service registers it as it starts, so try again in a moment`,
+        };
       }
-      const fromInvocation = (proposal.bindings ?? []).filter((field) => field.source !== "literal");
+      // A widget-state value is read from the instance when it is pressed, never sent with the press.
+      const fromState = (proposal.bindings ?? []).filter((field) => field.source === "widget-state");
+      const stateKeys = carries?.stateKeys ?? [];
+      const unread = fromState.filter((field) => !stateKeys.includes(field.target));
+      if (unread.length > 0) {
+        return { ok: false, message: `this button cannot read ${unread.map((field) => field.target).join(", ")} from the widget's state` };
+      }
+      const fromInvocation = (proposal.bindings ?? []).filter((field) => field.source !== "literal" && field.source !== "widget-state");
       if (carries === undefined && fromInvocation.length > 0) {
         return {
           ok: false,
@@ -206,17 +244,23 @@ export function compileWidgetAction(
           const added = inputKeys.filter((key) => !bound.has(key)).map((target) => ({ target, source: carries.source }));
           proposal = { ...proposal, bindings: [...(proposal.bindings ?? []), ...added] };
         }
-        const refused = notTaken(descriptor.inputSchema, inputKeys);
+        const read = new Set(fromState.map((field) => field.target));
+        const fromStateAdded = stateKeys.filter((key) => !read.has(key)).map((target) => ({ target, source: "widget-state" as const }));
+        // The state is read first, so a value the press sends under the same key wins (`composeInvokeArgs` applies in order).
+        const others = (proposal.bindings ?? []).filter((field) => field.source !== "widget-state");
+        proposal = { ...proposal, bindings: [...fromState, ...fromStateAdded, ...others] };
+        const refused = notTaken(descriptor.inputSchema, [...new Set([...inputKeys, ...stateKeys])]);
         if (refused.length > 0) {
           return { ok: false, message: `${proposal.capabilityRef} does not take ${refused.join(", ")}` };
         }
       }
       const args: Record<string, unknown> = { ...proposal.args };
       for (const field of proposal.bindings ?? []) if (field.source === "literal") args[field.target] = field.value;
-      const checked = validateArgs(withoutRequired(descriptor.inputSchema, inputKeys), args);
+      const checked = validateArgs(withoutRequired(descriptor.inputSchema, [...inputKeys, ...stateKeys]), args);
       if (!checked.ok) return { ok: false, message: `${proposal.capabilityRef} does not accept those arguments: ${checked.message}` };
       packageGeneration = served.generationId;
       effectCategory = descriptor.effectCategory;
+      capabilitySchema = descriptor.inputSchema;
       knownCapabilities.add(proposal.capabilityRef);
       break;
     }
@@ -292,7 +336,7 @@ export function compileWidgetAction(
 
   const inputSchema =
     declaredInput ??
-    (carries === undefined ? { type: "object", properties: {}, additionalProperties: false } : carries.schema(inputKeys));
+    (carries === undefined ? { type: "object", properties: {}, additionalProperties: false } : carries.schema(inputKeys, capabilitySchema));
   const limits = effectiveLimits(proposal.kind, proposal.kind === "view" ? undefined : proposal.limits);
   const compiled = compileActionBinding({
     bindingId: deps.newId("act"),
