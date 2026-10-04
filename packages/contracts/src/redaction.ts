@@ -15,7 +15,7 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
   { label: "jwt", pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g },
   // A PEM private key, header to footer, or header and base64 body when the footer was cut off. The match never runs
   // past the key: its body may hold only base64, whitespace and escaped line breaks, so inside a JSON string it stops at
-  // the closing quote, and a header mentioned on its own (`const HEADER = "-----BEGIN PRIVATE KEY-----"`) is left alone.
+  // the closing quote, and a key header mentioned on its own in code, with no body after it, is left alone.
   { label: "private-key", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?:[A-Za-z0-9+/=:,\t \r\n-]|\\[nr])*?-----END [A-Z ]*PRIVATE KEY-----|(?:[\t \r\n]|\\[nr])*[A-Za-z0-9+/=]{40,}(?:(?:[\t \r\n]|\\[nr])+[A-Za-z0-9+/=]{16,})*)/g },
   { label: "aws-access-key", pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
   { label: "github-token", pattern: /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,})/g },
