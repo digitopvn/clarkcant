@@ -326,9 +326,25 @@ const CARD_TONE: Record<string, string> = {
 export function readableElapsed(value: string, locale: string, secondsUnit: string): string {
   const match = /^(\d+) ms$/u.exec(value);
   if (match === null) return value;
-  const ms = Number(match[1]);
-  if (ms < 1000) return value;
+  return readableDuration(Number(match[1]), locale, secondsUnit);
+}
+
+/** A duration in milliseconds as a person reads a wait: "850 ms" under a second, seconds in the locale's format past it. */
+export function readableDuration(ms: number, locale: string, secondsUnit: string): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(ms / 1000)} ${secondsUnit}`;
+}
+
+/**
+ * A moment the node recorded, as the reader would say it: the time alone when it is today, the day and time otherwise,
+ * in the reader's own timezone. The node stores ISO instants in UTC, which are exact and read as a code. Anything that
+ * is not a moment is shown as it came.
+ */
+export function readableInstant(value: string, locale: string, now: Date = new Date()): string {
+  const at = new Date(value);
+  if (value === "" || Number.isNaN(at.getTime())) return value;
+  const today = now.toDateString() === at.toDateString();
+  return new Intl.DateTimeFormat(locale, today ? { timeStyle: "short" } : { dateStyle: "medium", timeStyle: "short" }).format(at);
 }
 
 /**
@@ -1172,10 +1188,13 @@ export function TaskProgressCardBlock({
   block,
   actions,
   t = defaultT,
+  locale = "vi",
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
   t?: (key: MessageKey) => string;
+  /** The interface language, for the start time; Vietnamese by default, like `t`. */
+  locale?: string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
   const goal = fieldText(block.goal);
@@ -1183,7 +1202,7 @@ export function TaskProgressCardBlock({
   const steps = listOf(block.steps);
   const targetNode = (block.targetNode ?? undefined) as Record<string, unknown> | undefined;
   const cancellable = block.cancellable === true;
-  const startedAt = fieldText(block.startedAt);
+  const startedAt = readableInstant(fieldText(block.startedAt), locale);
   const taskId = fieldText(block.taskId);
   const stopState = taskId === "" ? undefined : actions?.taskStop?.[taskId];
 
@@ -1273,9 +1292,11 @@ export function TaskProgressCardBlock({
 export function TaskSummaryCardBlock({
   block,
   t = defaultT,
+  locale = "vi",
 }: {
   block: Record<string, unknown>;
   t?: (key: MessageKey) => string;
+  locale?: string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
   const goal = fieldText(block.goal);
@@ -1299,7 +1320,7 @@ export function TaskSummaryCardBlock({
           <span className="cc-badge" data-tone={evidence === "verified" ? "ok" : evidence === "contradicted" ? "danger" : "warn"}>
             {evidenceLabel(evidence, t)}
           </span>
-          <span className="cc-freshness">{`${(durationMs / 1000).toFixed(1)}s`}</span>
+          <span className="cc-freshness">{readableDuration(durationMs, locale, t("settings.ai.turnCap.seconds"))}</span>
         </p>
         {changes.length > 0 && (
           <ul className="cc-changes">
@@ -1325,9 +1346,11 @@ export function TaskSummaryCardBlock({
 export function TaskOverviewCardBlock({
   block,
   t = defaultT,
+  locale = "vi",
 }: {
   block: Record<string, unknown>;
   t?: (key: MessageKey) => string;
+  locale?: string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
   const tasks = listOf(block.tasks);
@@ -1357,7 +1380,7 @@ export function TaskOverviewCardBlock({
                   {taskStatusLabel(status, t)}
                 </span>
                 <span>{fieldText(task.goal)}</span>
-                <span className="cc-freshness">{fieldText(task.updatedAt)}</span>
+                <span className="cc-freshness">{readableInstant(fieldText(task.updatedAt), locale)}</span>
               </li>
             );
           })}
@@ -1777,6 +1800,8 @@ export function renderBlock(
    * plain function by its own unit tests, not only from within a component's render pass.
    */
   t: (key: MessageKey) => string = defaultT,
+  /** The interface language, for dates and numbers the cards format themselves; Vietnamese by default, like `t`. */
+  locale: string = "vi",
 ): ReactElement | null {
   const type = typeof block.type === "string" ? block.type : "";
 
@@ -1815,12 +1840,12 @@ export function renderBlock(
       // `actions` must be forwarded, or the card's Stop control is unreachable in the browser while its
       // own unit test — which calls the component directly — still passes.
       return (
-        <TaskProgressCardBlock key={index} block={block} t={t} {...(actions === undefined ? {} : { actions })} />
+        <TaskProgressCardBlock key={index} block={block} t={t} locale={locale} {...(actions === undefined ? {} : { actions })} />
       );
     case "task-summary-card":
-      return <TaskSummaryCardBlock key={index} block={block} t={t} />;
+      return <TaskSummaryCardBlock key={index} block={block} t={t} locale={locale} />;
     case "task-overview-card":
-      return <TaskOverviewCardBlock key={index} block={block} t={t} />;
+      return <TaskOverviewCardBlock key={index} block={block} t={t} locale={locale} />;
     case "code-diff-card":
       return <CodeDiffCardBlock key={index} block={block} t={t} />;
     case "project-picker-card":

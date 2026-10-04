@@ -4,7 +4,7 @@ import type { GatewayClient, Timeline } from "./api.ts";
 import { TranscriptRow } from "./transcript-row.tsx";
 import { renderBlock, type BlockActions, type SurfaceBlockRef } from "./blocks.tsx";
 import { echoesCommandReceipt } from "./command-receipts.ts";
-import { useT } from "./i18n/locale-context.tsx";
+import { useLocale, useT } from "./i18n/locale-context.tsx";
 import { WorkStepsFold } from "./work-steps-fold.tsx";
 import { countsAsStep, foldWorkSteps, isWorkBlock } from "./work-steps.ts";
 
@@ -43,12 +43,13 @@ function TimelineMessageRowComponent({
   settled,
 }: TimelineMessageRowProps): ReactElement {
   const t = useT();
+  const locale = useLocale();
   // A block that only echoes a command receipt is left out before folding, so it neither splits a run nor counts in it.
   const shown = message.blocks
     .map((block, blockIndex) => ({ block, blockIndex }))
     .filter(({ blockIndex }) => !echoesCommandReceipt(message.blocks, blockIndex));
   const draw = ({ block, blockIndex }: (typeof shown)[number]): ReactElement | null =>
-    renderBlock(block, blockIndex, renderSurface, blockActions, client, t);
+    renderBlock(block, blockIndex, renderSurface, blockActions, client, t, locale);
   return (
     <TranscriptRow role={message.role} index={index} settled={settled}>
       {foldWorkSteps(shown, (entry) => isWorkBlock(entry.block), (entry) => countsAsStep(entry.block)).map((run) =>
