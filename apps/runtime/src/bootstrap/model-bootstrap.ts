@@ -10,8 +10,8 @@ import { preferredAppIntentLocale } from "../app-intents.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
-import { attachmentRefsForLastUserMessage } from "../attachments.ts";
-import { referenceBrief, referencedWork, referencesForLastUserMessage } from "../composer-references.ts";
+import { attachmentRefsForLastUserMessage, attachmentRefsForMessage } from "../attachments.ts";
+import { referenceBrief, referencedWork, referencesForLastUserMessage, referencesForMessage } from "../composer-references.ts";
 import {
   type ConditionalInstructions,
   conditionalInstructionsFromEnv,
@@ -318,16 +318,21 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     // binary by id; no path is ever part of it.
     attachments: {
       dataDir: deps.dataDir,
-      refsFor: (conversationId) =>
-        attachmentRefsForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
+      refsFor: (conversationId, messageId) =>
+        messageId === undefined
+          ? attachmentRefsForLastUserMessage({ db: deps.services().runtime.db, conversationId })
+          : attachmentRefsForMessage({ db: deps.services().runtime.db, conversationId, messageId }),
     },
     // What the current message points at, read back from its stored row like the attachments above. A skill's
     // instructions are read through the adapter this turn runs on, so they are the installation's words, checked
     // against the version the message named.
     references: {
-      briefFor: (conversationId, skillBody) =>
+      briefFor: (conversationId, skillBody, messageId) =>
         referenceBrief({
-          blocks: referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
+          blocks:
+            messageId === undefined
+              ? referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId })
+              : referencesForMessage({ db: deps.services().runtime.db, conversationId, messageId }),
           projects: deps.services().projects,
           skillBody,
           notice: (noticeId) =>

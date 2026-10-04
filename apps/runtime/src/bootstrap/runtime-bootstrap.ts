@@ -130,6 +130,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   if (modelTurn !== undefined) {
     deps.services.turnControl = {
       running: () => modelTurn.running(),
+      answering: () => modelTurn.answering(),
       interrupt: (conversationId) => modelTurn.interrupt(conversationId),
       steer: (conversationId, text, origin) => modelTurn.steer(conversationId, text, origin),
       runInBackground: (input) => modelTurn.runInBackground(input),

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConversationId, MessageRecord, Principal } from "@clarkcant/contracts";
-import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
+import { FakePiAdapter, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle } from "@clarkcant/pi-adapter";
 import { listAuditEvents } from "@clarkcant/storage";
 
 import { carryOutSpokenStop } from "../src/application/stop-turn.ts";
@@ -267,5 +267,86 @@ describe("the stop route", () => {
     const timeline = await call("GET", `/conversations/${conversationId}/timeline`);
     const said = JSON.stringify((timeline.body as { messages: MessageRecord[] }).messages.at(-1));
     expect(said).toContain("Không có câu trả lời nào đang chạy");
+  });
+});
+
+/** Holds the next model switch until the test lets it go, so a message can arrive while the conversation is set up. */
+class HeldSwitchAdapter extends FakePiAdapter {
+  handoffs = 0;
+  hold: Promise<void> | undefined;
+
+  override async handoff(sessionId: string, brief: WorkerBrief): Promise<{ successor: WorkerSessionHandle; note: string }> {
+    this.handoffs += 1;
+    const held = this.hold;
+    this.hold = undefined;
+    if (held !== undefined) await held;
+    return await super.handoff(sessionId, brief);
+  }
+}
+
+describe("a message sent while a conversation is being set up", () => {
+  let dir: string;
+  let services: NodeServices;
+
+  afterEach(() => {
+    services.runtime.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("answers both of two quick messages after a model switch, and stops neither", async () => {
+    dir = mkdtempSync(join(tmpdir(), "clarkcant-setup-turn-"));
+    services = bootNodeServices({ dataDir: dir, label: "test node" });
+    const deps: GatewayDeps = { services, now: () => AT, newConversationId: () => "conv_setup_1" };
+    const adapter = new HeldSwitchAdapter({ script: ["một", "hai", "ba"] });
+    let preferred = { provider: "fake", id: "fake-model" };
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => preferred });
+    if (turn === undefined) throw new Error("the model turn was not built");
+    services.conductor.respondWithModel = (input) => turn.answer(input);
+    services.turnControl = {
+      running: () => turn.running(),
+      answering: () => turn.answering(),
+      interrupt: (conversationId) => turn.interrupt(conversationId),
+      steer: (conversationId, text, origin) => turn.steer(conversationId, text, origin),
+      runInBackground: (input) => turn.runInBackground(input),
+      runningMs: (conversationId) => turn.runningMs(conversationId),
+    };
+    const call = (method: string, path: string, body?: unknown) =>
+      handleRequest(deps, {
+        method,
+        path,
+        query: {},
+        headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+        body: body === undefined ? "" : JSON.stringify(body),
+      });
+    const created = await call("POST", "/conversations", { title: "đổi model" });
+    const conversationId = (created.body as { conversationId: string }).conversationId;
+    expect((await call("POST", `/conversations/${conversationId}/messages`, { text: "một" })).status).toBe(200);
+
+    // The person picks another model and sends two messages in quick succession while the switch is still being made.
+    preferred = { provider: "fake-other", id: "fake-other-model" };
+    let open: () => void = () => undefined;
+    adapter.hold = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const second = call("POST", `/conversations/${conversationId}/messages`, { text: "hai" });
+    await vi.waitFor(() => expect(adapter.handoffs).toBe(1));
+    // A Stop reaches the setup, but nothing is answering yet.
+    expect(turn.running()).toEqual([conversationId]);
+    expect(turn.answering()).toEqual([]);
+    const third = call("POST", `/conversations/${conversationId}/messages`, { text: "ba" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    open();
+    expect((await second).status).toBe(200);
+    expect((await third).status).toBeLessThan(300);
+
+    const timeline = await call("GET", `/conversations/${conversationId}/timeline`);
+    const messages = (timeline.body as { messages: MessageRecord[] }).messages;
+    const said = JSON.stringify(messages.filter((message) => message.role === "assistant"));
+    // Both were answered — the third joined the second's reply or had one of its own — and neither was stopped.
+    expect(said).toContain("hai");
+    expect(said).toMatch(/\bba\b/);
+    expect(said).not.toContain("Đã dừng theo yêu cầu");
+    expect(said).not.toContain("Không gọi được model");
+    expect(adapter.handoffs).toBe(1);
   });
 });

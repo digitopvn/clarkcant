@@ -196,7 +196,13 @@ export interface NodeServices {
   voiceLiveUtterance?: { enqueueUtterance(words: string): void };
 
   turnControl?: {
+    /** The conversations a Stop can reach, including one whose turn is still being set up. */
     running(): string[];
+    /**
+     * The conversations whose turn is answering, not only being set up: what a new message may steer into or stop.
+     * Absent, `running()` stands in.
+     */
+    answering?(): string[];
     interrupt(conversationId: string): boolean;
     /** Answers false, without adding it, when the message's origin differs from the running turn's (absent is the person). */
     steer(conversationId: string, text: string, origin?: TurnOrigin): Promise<boolean>;

@@ -5,7 +5,7 @@ import type { ModelTurnEvent } from "@clarkcant/core";
 import { FakePiAdapter, type WorkerBrief, type WorkerSessionHandle } from "@clarkcant/pi-adapter";
 
 import { SESSION_POLICY_LIMITS } from "../src/session-policy.ts";
-import { createModelTurn, type ViewDescriptor } from "../src/model-turn.ts";
+import { createModelTurn, redactLocalPaths, type ViewDescriptor } from "../src/model-turn.ts";
 
 const VIEW: ViewDescriptor = {
   id: "canvas.table@1",
@@ -416,7 +416,11 @@ describe("a changed model", () => {
     for (const conversationId of turn.running()) turn.interrupt(conversationId);
     held.open();
     expect((await running).stopped).toBe(true);
-    expect((await waiting).stopped).toBe(true);
+    const cancelled = await waiting;
+    expect(cancelled.stopped).toBe(true);
+    // Its card says it never started, not that the model wrote anything.
+    expect(cancelled.stoppedDetail).toMatch(/stopped before it started/);
+    expect(cancelled.stoppedDetail).toMatch(/still saved/);
     // Sent before the stop, so never started: only the first message was ever prompted.
     expect(prompted).toHaveBeenCalledTimes(1);
     expect(turn.running()).toEqual([]);
@@ -550,5 +554,108 @@ describe("a changed model", () => {
     await say(turn, "một", "msg_1");
     await say(turn, "hai", "msg_2");
     expect(adapter.handoffs).toHaveLength(0);
+  });
+});
+
+describe("the edges of a running turn", () => {
+  it("keeps the finished reply when running the session on a late message fails, and answers the next on a fresh one", async () => {
+    const adapter = new CountingAdapter({ script: ["một", "hai"] });
+    const prompted = vi.spyOn(adapter, "prompt");
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => FIRST });
+    if (turn === undefined) throw new Error("the model turn was not built");
+    vi.spyOn(adapter, "continueQueued").mockRejectedValueOnce(new Error("the provider dropped the connection"));
+
+    const late = adapter.holdAfterLastCheck("fake-session-1");
+    const running = say(turn, "một", "msg_1");
+    await late.reached;
+    expect((await say(turn, "và cả phần kia", "msg_2")).steered).toBe(true);
+    late.release();
+
+    // The reply that had finished is the answer, not an error.
+    const first = await running;
+    expect(first.text).toContain("một");
+    expect(first.stopped).toBeUndefined();
+    expect(turn.running()).toEqual([]);
+    // The session the drain failed on is not prompted again.
+    await say(turn, "hai", "msg_3");
+    expect(prompted.mock.calls.map(([sessionId]) => sessionId)).toEqual(["fake-session-1", "fake-session-2"]);
+    expect(adapter.disposedWhileStreaming).toEqual([]);
+  });
+
+  it("never joins a typed message to a spoken turn: it waits and is answered on its own", async () => {
+    const adapter = new CountingAdapter({ script: ["một", "hai"] });
+    const steered = vi.spyOn(adapter, "steer");
+    const held = holdNextPrompt(adapter);
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => FIRST });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    const spoken = turn.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "một", messageId: "msg_1", channel: "voice" });
+    await vi.waitFor(() => expect(adapter.isProcessing("fake-session-1")).toBe(true));
+    const typed = say(turn, "hai", "msg_2");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(steered).not.toHaveBeenCalled();
+
+    held.open();
+    expect((await spoken).text).toBe("một");
+    const reply = await typed;
+    expect(reply.steered).toBeUndefined();
+    expect(reply.text).toBe("hai");
+    expect(adapter.promptsFor("fake-session-1")).toHaveLength(2);
+  });
+
+  it("starts nothing once the node is shutting down, and stops what was waiting", async () => {
+    const adapter = new CountingAdapter({ script: ["một", "hai"] });
+    const prompted = vi.spyOn(adapter, "prompt");
+    const held = holdNextPrompt(adapter);
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => FIRST });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    const running = say(turn, "một", "msg_1");
+    await vi.waitFor(() => expect(adapter.isProcessing("fake-session-1")).toBe(true));
+    const waiting = turn.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "đồng ý",
+      messageId: "msg_2",
+      note: "The person approved the request above.",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    await turn.dispose();
+    held.open();
+    await running.catch(() => undefined);
+    expect((await waiting).stopped).toBe(true);
+    expect((await say(turn, "ba", "msg_3")).stopped).toBe(true);
+    expect(prompted).toHaveBeenCalledTimes(1);
+  });
+
+  it("says a failure to start a conversation's first session in the person's language, without local paths", async () => {
+    const adapter = new CountingAdapter({ script: ["một"] });
+    vi.spyOn(adapter, "createWorkerSession").mockRejectedValueOnce(
+      new Error("cannot read C:\\Users\\An Nguyen\\.pi\\agent\\auth.json"),
+    );
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => FIRST, language: () => "vi" });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    const message = await say(turn, "một", "msg_1").then(
+      () => "",
+      (cause: Error) => cause.message,
+    );
+    expect(message).toMatch(/Không bắt đầu được cuộc trò chuyện này trên fake\/fake-model/);
+    expect(message).toMatch(/Tin nhắn của bạn đã được lưu/);
+    expect(message).toContain("cannot read <path>");
+    expect(message).not.toMatch(/Users|Nguyen/);
+    // Nothing was left half-made: the next message starts the conversation.
+    expect((await say(turn, "một", "msg_2")).text).toBe("một");
+  });
+});
+
+describe("taking local paths out of a reason", () => {
+  it("takes out paths with spaces, quoted paths and file addresses, and leaves web addresses", () => {
+    expect(redactLocalPaths("cannot open C:\\Users\\An Nguyen\\.pi\\auth.json now")).toBe("cannot open <path> now");
+    expect(redactLocalPaths("cannot open /home/an nguyen/.pi/models.json or later")).toBe("cannot open <path> or later");
+    expect(redactLocalPaths('read "C:\\Program Files\\Pi\\cfg.json" failed')).toBe('read "<path>" failed');
+    expect(redactLocalPaths("see file:///home/an/.pi/x.json and file://C:/Users/x")).toBe("see <path> and <path>");
+    expect(redactLocalPaths("at /a/b (see https://example.com/docs/keys)")).toBe("at <path> (see https://example.com/docs/keys)");
   });
 });
