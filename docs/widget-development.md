@@ -2094,16 +2094,20 @@ offered action, matched by its label on the focused widget, goes through the sam
 the same declared schema, execution policy, ledger, and origin (`voice`, asked by the person). The ledger and the audit
 log record that the person asked by voice. Voice does not ask for a spoken yes first; the execution policy decides
 once. When the policy asks, the host card and its approval are written together, before voice says so. The person
-answers the card there by click, or by the spoken yes or no that voice then asks for; the spoken answer goes through the
-same decision a click makes, and the press never approves itself. Saying the same action again while that card waits
-points to it and asks again; no second card is drawn. The request reaches the frame through the voice session's own
-page, and only when that page sent `widgetPerform: 1` in its auth frame. Otherwise the press is refused before anything is sent, and the person is told to
-ask Clark instead. A press whose session closed before the request went out is recorded as not sent, not as an unknown
-outcome. What the widget answers is read out as the widget's words ("The widget says: …"), on one line, in the
-person's language, with its quotes neutralised and bidi or zero-width controls removed. A press that fails on the node
-is said as failed, in the person's language, and the session goes on. The voice resolver matches labels, so a sentence
-that implies the arguments without naming the label, such as `format this as a percentage`, is not matched yet
-([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+answers the card there by click, or by the spoken yes or no that voice then asks for. The spoken answer goes through the
+same decision a click makes, and the press never approves itself. Only a short sentence whose whole words say yes or
+no decides it ("từ từ đã" or "look at this first" decides nothing, and voice asks again). Once the card is decided by a
+click or has expired, the next sentence is no longer taken as its answer. After a spoken yes, voice says what the
+decision came to: whether the widget did it, and what the widget answered as the widget's own words, never "running it
+now". Saying the same action again while that card waits points to it and asks again; no second card is drawn. The
+request reaches the frame through the voice session's own page, and only when that page sent `widgetPerform: 1` in its
+auth frame. Otherwise the press is refused before anything is sent, and the person is told to ask Clark instead. A press
+whose session closed before the request went out is recorded as not sent, not as an unknown outcome. What the widget
+answers, after a direct press or a spoken yes, is read out as the widget's words ("The widget says: …"), on one line, in
+the person's language, with its quotes neutralised and bidi or zero-width controls removed. A press that fails on the
+node is said as failed, in the person's language, and the session goes on. The voice resolver matches labels, so a
+sentence that implies the arguments without naming the label, such as `format this as a percentage`, is not matched
+yet ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Tests:
 
