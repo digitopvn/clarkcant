@@ -1213,6 +1213,7 @@ export function InboxPanel({
                                 <button
                                   type="button"
                                   className="cc-action"
+                                  data-emphasis="primary"
                                   data-inbox-approve={item.approvalId}
                                   disabled={busy !== undefined}
                                   onClick={() => decideCommand(item, "granted")}
@@ -1256,6 +1257,7 @@ export function InboxPanel({
                                 <button
                                   type="button"
                                   className="cc-action"
+                                  data-emphasis="primary"
                                   data-inbox-grant={item.approvalId}
                                   disabled={busy !== undefined}
                                   onClick={() => decideCapability(item, "granted")}
@@ -1309,6 +1311,7 @@ export function InboxPanel({
                                 <button
                                   type="button"
                                   className="cc-action"
+                                  data-emphasis="primary"
                                   data-inbox-install-approve={item.approvalId}
                                   disabled={busy !== undefined}
                                   onClick={() => decideInstall(item, "granted")}
@@ -1353,6 +1356,7 @@ export function InboxPanel({
                                 <button
                                   type="button"
                                   className="cc-action"
+                                  data-emphasis="primary"
                                   data-inbox-approve={item.approvalId}
                                   disabled={busy !== undefined}
                                   onClick={() => decideTask(item, "granted")}
