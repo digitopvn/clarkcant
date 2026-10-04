@@ -45,11 +45,17 @@ npm credentials, a deployed Marketplace or a released remote provider stays open
 
 ## Delivered here
 
-- `package.json`, Apache-2.0 `LICENSE` (the repository's own text; the spreadsheet's MIT file contradicted its
-  manifest's Apache-2.0 and is replaced) and an "npm package" README section (EN, plus VI where a README.vi.md exists)
-  for each app. `publisher.sourceUrl` now points at each app's directory.
-- `skippedFromReference` also skips `package.json`; `reference-templates.spec.ts` asserts the copy's npm identity and
-  that the reference's `package.json` and `LICENSE` are left behind.
+- `package.json` (with `publishConfig.access: public`, since npm restricts scoped packages by default) and an "npm
+  package" README section (EN, plus VI where a README.vi.md exists) for each app. Text editor and media render gain
+  the repository's Apache-2.0 `LICENSE` text. The spreadsheet's `LICENSE` is deliberately left unchanged: it is MIT
+  while its `package.json` and `clarkcant.json` declare Apache-2.0 (see "Open decisions").
+  `publisher.sourceUrl` now points at each app's directory.
+- `skippedFromReference` also skips `package.json` (the copier rewrites it anyway, so the skip states intent);
+  `reference-templates.spec.ts` asserts the copy's own npm identity, licence and README, and that a reference's
+  `README.vi.md` is left behind.
+- The install spec also checks each packed `package.json` declares `publishConfig.access: public`, that the packed
+  `LICENSE` text matches the declared licence (an `it.todo` for CSV Explorer until its licence is decided), and that a
+  refused install leaves the package absent from `GET /packages`.
 - `apps/runtime/test/reference-packages-npm-install.spec.ts`: for all three apps, `clark widget publish` on a temp copy,
   then install of the CLI-produced archive through `/packages/install` with `CC_NPM_REGISTRY_URL` and
   `CC_DIRECTORY_INDEX`; a tampered archive (fresh registry integrity) is refused with `DIGEST_MISMATCH`, a registry
@@ -60,9 +66,10 @@ npm credentials, a deployed Marketplace or a released remote provider stays open
 ## Acceptance criteria (from #451)
 
 - [ ] Each package has its own npm identity/version, license, source link, screenshots, truthful README and
-      supported-platform/permission declarations. **Done except screenshots:** no package has `previews/`, and the
-      repository has no deterministic preview generator (the e2e journeys write gitignored evidence, not package
-      previews).
+      supported-platform/permission declarations. **Done except screenshots and the CSV Explorer licence:** no
+      package has `previews/`, and the repository has no deterministic preview generator (the e2e journeys write
+      gitignored evidence, not package previews). CSV Explorer's MIT `LICENSE` contradicts its declared Apache-2.0
+      and waits on the maintainer's decision (see "Open decisions").
 - [ ] Publish real immutable npm versions under an authorized publisher; record exact versions, tarball integrity and
       source revisions. **Blocked:** needs `@clarkcant` scope ownership and npm publisher credentials.
 - [ ] The production indexer accepts them and public API/search/detail pages show accurate metadata. **Blocked:**
@@ -77,6 +84,16 @@ npm credentials, a deployed Marketplace or a released remote provider stays open
 - [ ] Record browser/desktop evidence and supported-platform checks. **Remaining:** follows publication.
 - [ ] Publish a reproducible EN/VI author-and-user guide on the official docs site using the released packages.
       **Remaining:** official docs (`digitopvn/clarkcant-web`) follow the release; internal docs are updated here.
+
+## Open decisions (user)
+
+- **CSV Explorer licence.** `examples/reference-apps/spreadsheet/LICENSE` is MIT, but its `package.json` and
+  `clarkcant.json` declare Apache-2.0. Pack does not compare LICENSE text, so publishing today would ship MIT text
+  under Apache-2.0 metadata. Changing a licence is the maintainer's decision: either replace the file with Apache-2.0
+  text or declare MIT in both manifests. Until then CSV Explorer must not be published, and the licence-text check in
+  `reference-packages-npm-install.spec.ts` stays `it.todo` for it.
+- **CSV Explorer identity.** It would publish under `@clarkcant` with package id `com.example.spreadsheet` and
+  publisher id `example`; decide together with the licence.
 
 ## Risks
 

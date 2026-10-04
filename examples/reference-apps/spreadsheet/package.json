@@ -17,6 +17,9 @@
   "bugs": {
     "url": "https://github.com/digitopvn/clarkcant/issues"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "clarkcant.json",
     "widgets/",

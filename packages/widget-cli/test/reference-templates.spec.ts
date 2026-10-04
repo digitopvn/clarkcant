@@ -141,17 +141,19 @@ describe("the reference image generator templates", () => {
     }
   });
 
-  it("leaves the reference app's own npm identity, licence and README behind", () => {
-    for (const template of REFERENCE_TEMPLATES) {
+  /*
+   * The copier rewrites package.json, LICENSE and README.md after copying (the test above checks their content), so
+   * only a file it does not rewrite shows the skip itself: the reference's translated README describes the reference.
+   */
+  it("leaves the reference app's translated README behind", () => {
+    const withTranslation = REFERENCE_TEMPLATES.filter((template) => existsSync(join(referenceCopy(template).source, "README.vi.md")));
+    expect(withTranslation.length).toBeGreaterThan(0);
+    for (const template of withTranslation) {
       const parent = mkdtempSync(join(tmpdir(), "clark-reference-identity-"));
       created.push(parent);
       const root = join(parent, "copy");
       initFromReference(root, "com.example.copy", template);
-      const source = referenceCopy(template).source;
-      for (const file of ["package.json", "LICENSE", "README.md"]) {
-        if (!existsSync(join(source, file))) continue;
-        expect(readFileSync(join(root, file), "utf8"), `${template}: ${file}`).not.toBe(readFileSync(join(source, file), "utf8"));
-      }
+      expect(existsSync(join(root, "README.vi.md")), template).toBe(false);
     }
   });
 });

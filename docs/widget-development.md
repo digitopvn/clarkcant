@@ -2838,8 +2838,10 @@ command that publishes the exact archive that was checked:
     npm publish dist/<name>-<version>.tgz
 
 Publish that file rather than running `npm publish` in the package directory, so the registry serves the bytes whose
-integrity and content digest the entry already names. A Marketplace then indexes npm packages carrying the
-`clarkcant` keyword, or takes a submission. A local/git source is still a first-class development path.
+integrity and content digest the entry already names. npm makes a scoped package (`@scope/name`) restricted by
+default, so a scoped package meant to be public declares `"publishConfig": { "access": "public" }` in `package.json`,
+as the reference apps do (§24); `npm publish <tarball>` reads it from the archive. A Marketplace then indexes npm
+packages carrying the `clarkcant` keyword, or takes a submission. A local/git source is still a first-class development path.
 
 Before writing the entry, publish compares the definitions with the previous preparation (`dist/published-definitions.json`) and
 refuses a version that violates the rules in §20. This file is the comparison baseline, so it should be committed with the source; if
@@ -3492,10 +3494,11 @@ directions, that no place on disk or file handle crosses the bridge.
 isolated UI facet and no service. It shows a widget that works on a file, keeps a large document within bounds,
 describes itself to Clark and applies a change Clark chose.
 
-**npm package.** It is packaged as **CSV Explorer**, `@clarkcant/csv-explorer` 1.0.0, with its own `package.json`,
-Apache-2.0 `LICENSE` and READMEs; its package id stays `com.example.spreadsheet`. `clark widget pack` builds
+**npm package.** It is packaged as **CSV Explorer**, `@clarkcant/csv-explorer` 1.0.0, with its own `package.json`
+and READMEs; its package id stays `com.example.spreadsheet`. `clark widget pack` builds
 `dist/clarkcant-csv-explorer-1.0.0.tgz`, and `publish` prepares the npm directory entry. It is **not published to npm
-yet**: the publishing account has to own the `@clarkcant` scope first. The same
+yet**: the publishing account has to own the `@clarkcant` scope first, and its licence is pending the maintainer's
+decision (the manifests declare Apache-2.0 while the `LICENSE` file holds MIT text). The same
 [install test](../apps/runtime/test/reference-packages-npm-install.spec.ts) as §24.1 covers it.
 
 - **Files.** CSV and TSV come in through `api.artifacts.pick` ([§10.1](#101-files-by-reference-artifacts1)) and are

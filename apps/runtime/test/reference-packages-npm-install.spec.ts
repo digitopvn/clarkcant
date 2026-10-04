@@ -30,6 +30,11 @@ interface ReferencePackage {
   dir: string;
   npmName: string;
   packageId: string;
+  publisherId: string;
+  /** Files beyond the common ones the archive must ship, such as a translated README. */
+  extraFiles: readonly string[];
+  /** Why the packed LICENSE text cannot be checked against the declared licence yet, when it cannot. */
+  licencePending?: string;
 }
 
 /*
@@ -37,10 +42,36 @@ interface ReferencePackage {
  * container, so the install itself needs no container engine. Running a render does, and that is the browser journey's.
  */
 const PACKAGES: readonly ReferencePackage[] = [
-  { dir: "text-editor", npmName: "@clarkcant/quick-notes", packageId: "com.clarkcant.reference.text-editor" },
-  { dir: "spreadsheet", npmName: "@clarkcant/csv-explorer", packageId: "com.example.spreadsheet" },
-  { dir: "media-render", npmName: "@clarkcant/media-converter", packageId: "com.clarkcant.reference.media-render" },
+  {
+    dir: "text-editor",
+    npmName: "@clarkcant/quick-notes",
+    packageId: "com.clarkcant.reference.text-editor",
+    publisherId: "clarkcant",
+    extraFiles: [],
+  },
+  {
+    dir: "spreadsheet",
+    npmName: "@clarkcant/csv-explorer",
+    packageId: "com.example.spreadsheet",
+    publisherId: "example",
+    extraFiles: ["README.vi.md"],
+    licencePending:
+      "its LICENSE file is MIT while package.json and clarkcant.json declare Apache-2.0; the maintainer decides which licence applies",
+  },
+  {
+    dir: "media-render",
+    npmName: "@clarkcant/media-converter",
+    packageId: "com.clarkcant.reference.media-render",
+    publisherId: "clarkcant",
+    extraFiles: ["README.vi.md"],
+  },
 ];
+
+/** The heading every copy of the licence's standard text opens with, keyed by SPDX id. */
+const LICENCE_TEXT_HEADING: Readonly<Record<string, RegExp>> = {
+  "Apache-2.0": /^\s*Apache License\s+Version 2\.0,/,
+  MIT: /^\s*MIT License\s/,
+};
 
 interface Authored {
   entry: DirectoryEntry;
@@ -60,9 +91,15 @@ async function author(reference: ReferencePackage): Promise<Authored> {
   });
   const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-  const code = await runCli(["widget", "publish", root]);
-  const stderr = err.mock.calls.map((call) => String(call[0])).join("");
-  vi.restoreAllMocks();
+  let code: number;
+  let stderr: string;
+  try {
+    code = await runCli(["widget", "publish", root]);
+  } finally {
+    // Restored before anything can fail, so a failure's own output is not swallowed by the mocks.
+    stderr = err.mock.calls.map((call) => String(call[0])).join("");
+    vi.restoreAllMocks();
+  }
   expect(code, stderr).toBe(0);
   const entry = directoryEntrySchema.parse(JSON.parse(readFileSync(join(root, "dist", "directory-entry.json"), "utf8")));
   const artifact = JSON.parse(readFileSync(join(root, "dist", "artifact.json"), "utf8")) as { npm: { tarball: string } };
@@ -71,7 +108,8 @@ async function author(reference: ReferencePackage): Promise<Authored> {
 
 /** The same archive with one shipped file's bytes changed: still a valid archive, no longer the package listed. */
 function tampered(tarball: Buffer): Buffer {
-  // Every reference app ships widgets/main/index.html; the change keeps the file's length, so the archive stays valid.
+  // Changes the first `</html>` in the uncompressed tar, in whichever shipped HTML file holds it first (every reference
+  // app ships at least widgets/main/index.html). The change keeps the file's length, so the archive stays valid.
   const change = { from: "</html>", to: "</HTML>" };
   const tar = gunzipSync(tarball);
   const at = tar.indexOf(change.from);
@@ -117,6 +155,20 @@ async function install(entry: DirectoryEntry): Promise<GatewayResponse> {
   });
 }
 
+/** The package ids `GET /packages` reports as installed on the node. */
+async function installedPackageIds(): Promise<string[]> {
+  const response = await handleRequest(deps, {
+    method: "GET",
+    path: "/packages",
+    query: {},
+    headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+    body: "",
+  });
+  expect(response.status, JSON.stringify(response.body)).toBe(200);
+  const packages = (response.body as { packages: { packageId: string }[] }).packages;
+  return packages.map((installed) => installed.packageId);
+}
+
 function authoredFor(reference: ReferencePackage): Authored {
   const found = authored.get(reference.dir);
   if (found === undefined) throw new Error(`${reference.dir} was not authored`);
@@ -147,20 +199,44 @@ describe.each(PACKAGES)("the $npmName reference package", (reference) => {
     expect(entry.source).toEqual({ kind: "npm", name: reference.npmName, version: entry.version });
     expect(tarballName).toBe(`${reference.npmName.slice(1).replace("/", "-")}-${entry.version}.tgz`);
     expect(entry.publisher).toEqual({
-      id: entry.publisher.id,
+      id: reference.publisherId,
       sourceUrl: `https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/${reference.dir}`,
       license: "Apache-2.0",
     });
 
-    const inspected = inspectNpmTarball(tarball, join(dir, "inspect"));
+    let packedPackageJson: Record<string, unknown> = {};
+    const inspected = inspectNpmTarball(tarball, join(dir, "inspect"), (root) => {
+      packedPackageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as Record<string, unknown>;
+    });
     expect(inspected.ok).toBe(true);
     if (!inspected.ok) return;
     const paths = inspected.facts.files.map((file) => file.path);
-    expect(paths).toEqual(expect.arrayContaining(["clarkcant.json", "package.json", "LICENSE", "README.md", "widgets/main/index.html"]));
+    expect(paths).toEqual(
+      expect.arrayContaining(["clarkcant.json", "package.json", "LICENSE", "README.md", "widgets/main/index.html", ...reference.extraFiles]),
+    );
     // Tests, dev fixtures and packed artifacts describe this repository's checks, not the package a person installs.
     expect(paths.filter((path) => /^(test|dev|dist)\//.test(path) || path === "fixtures/dev-host-services.json")).toEqual([]);
     expect(inspected.facts.contentDigest).toBe(entry.digest);
+    // npm restricts a scoped package by default; `npm publish <tarball>` reads the access from the archive.
+    expect(packedPackageJson["publishConfig"]).toEqual({ access: "public" });
   });
+
+  if (reference.licencePending === undefined) {
+    it("ships a LICENSE whose text is the licence it declares", () => {
+      const { entry, tarball } = authoredFor(reference);
+      let licence = "";
+      const inspected = inspectNpmTarball(tarball, join(dir, "inspect"), (root) => {
+        licence = readFileSync(join(root, "LICENSE"), "utf8");
+      });
+      expect(inspected.ok).toBe(true);
+      const heading = LICENCE_TEXT_HEADING[entry.publisher.license];
+      expect(heading, `a known licence heading for ${entry.publisher.license}`).toBeDefined();
+      expect(licence).toMatch(heading as RegExp);
+    });
+  } else {
+    // Not a passing test: the archive would ship a licence text that contradicts its metadata until this is decided.
+    it.todo(`ships a LICENSE whose text is the licence it declares (pending: ${reference.licencePending})`);
+  }
 
   it("installs the exact published version through the canonical route", async () => {
     const { entry, tarball } = authoredFor(reference);
@@ -174,6 +250,8 @@ describe.each(PACKAGES)("the $npmName reference package", (reference) => {
       const body = response.body as Record<string, unknown>;
       expect((body["installed"] as Record<string, unknown>)["packageId"]).toBe(reference.packageId);
       expect(body["state"]).toBe("active");
+      // The listing the refusal cases rely on does report an installed package.
+      expect(await installedPackageIds()).toContain(reference.packageId);
     } finally {
       await registry.close();
     }
@@ -192,6 +270,7 @@ describe.each(PACKAGES)("the $npmName reference package", (reference) => {
       expect(response.status).toBe(409);
       expect((response.body as Record<string, unknown>)["code"]).toBe("DIGEST_MISMATCH");
       expect(JSON.stringify(response.body)).not.toContain("generationId");
+      expect(await installedPackageIds()).not.toContain(reference.packageId);
     } finally {
       await registry.close();
     }
@@ -208,6 +287,7 @@ describe.each(PACKAGES)("the $npmName reference package", (reference) => {
       expect(response.status).toBe(400);
       expect((response.body as Record<string, unknown>)["code"]).toBe("NPM_INTEGRITY_MISMATCH");
       expect(JSON.stringify(response.body)).not.toContain("generationId");
+      expect(await installedPackageIds()).not.toContain(reference.packageId);
     } finally {
       await registry.close();
     }

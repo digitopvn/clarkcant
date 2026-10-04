@@ -62,8 +62,9 @@ Unit test nằm trong `test/`, và hành trình trình duyệt là `apps/web/e2e
 
 ## Gói npm: CSV Explorer
 
-Ứng dụng này được đóng gói cho npm với tên **`@clarkcant/csv-explorer`** 1.0.0, giấy phép Apache-2.0 (`package.json`,
-`LICENSE`). **Gói chưa có trên npm.** Muốn phát hành cần một tài khoản sở hữu scope `@clarkcant` trên npm, và chưa có
+Ứng dụng này được đóng gói cho npm với tên **`@clarkcant/csv-explorer`** 1.0.0. Giấy phép đang chờ người bảo trì
+quyết định: `package.json` và `clarkcant.json` khai báo Apache-2.0 trong khi tệp `LICENSE` chứa văn bản MIT, và gói sẽ
+không được phát hành cho đến khi hai bên thống nhất. **Gói chưa có trên npm.** Muốn phát hành cần một tài khoản sở hữu scope `@clarkcant` trên npm, và chưa có
 phiên bản nào được phát hành, nên cũng chưa Marketplace nào liệt kê gói. Mã nguồn ở
 [examples/reference-apps/spreadsheet](https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/spreadsheet).
 Package id vẫn là `com.example.spreadsheet`, với publisher id `example`.

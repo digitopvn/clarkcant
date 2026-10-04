@@ -9,11 +9,12 @@ status: completed
 ## Files
 
 - `examples/reference-apps/{text-editor,spreadsheet,media-render}/package.json` (new), `LICENSE` (new for
-  text-editor and media-render; the spreadsheet's MIT file replaced by the repository's Apache-2.0 text),
+  text-editor and media-render; the spreadsheet's MIT file is left unchanged pending the maintainer's licence
+  decision),
   `clarkcant.json` (`publisher.sourceUrl` only), `README.md` / `README.vi.md` (npm package section, absolute doc links).
 - `packages/widget-cli/src/cli.ts`: `skippedFromReference` skips `package.json`.
-- `packages/widget-cli/test/reference-templates.spec.ts`: the copy's own npm identity; the reference's
-  `package.json` and `LICENSE` left behind.
+- `packages/widget-cli/test/reference-templates.spec.ts`: the copy's own npm identity, licence and README; the
+  reference's `README.vi.md` left behind.
 - `packages/core/src/test-support/fake-npm-registry.ts`: answers escaped scoped package names.
 - `apps/runtime/test/reference-packages-npm-install.spec.ts` (new).
 - `docs/widget-development.md`, `docs/widget-development.vi.md` (§16 init, §24.1, §24.2, §24.4), `docs/manifest.json`.
@@ -34,5 +35,10 @@ then `pnpm invariants` and `pnpm verify`; `pnpm install --frozen-lockfile` uncha
 
 ## Risk / rollback
 
-The changes are additive except the spreadsheet licence file and the three `sourceUrl` values; reverting the commit
-restores the previous local-only packages. No published artifact exists to roll back.
+The changes are additive except the three `sourceUrl` values; reverting the commit restores the previous local-only
+packages. No published artifact exists to roll back.
+
+## Remaining work
+
+- CSV Explorer's `LICENSE` is MIT while its manifests declare Apache-2.0. The maintainer decides which licence
+  applies; the packed-licence check for it stays `it.todo` until then, and the package must not be published before.

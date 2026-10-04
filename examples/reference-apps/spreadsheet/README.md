@@ -61,8 +61,9 @@ Unit tests are in `test/`, and the browser journey is `apps/web/e2e/spreadsheet.
 
 ## npm package: CSV Explorer
 
-This app is packaged for npm as **`@clarkcant/csv-explorer`** 1.0.0 under Apache-2.0 (`package.json`, `LICENSE`).
-**It is not on npm yet.** Publishing needs an account that owns the `@clarkcant` npm scope, and no version has been
+This app is packaged for npm as **`@clarkcant/csv-explorer`** 1.0.0. Its licence is pending the maintainer's
+decision: `package.json` and `clarkcant.json` declare Apache-2.0 while the `LICENSE` file holds MIT text, and the
+package will not be published until the two agree. **It is not on npm yet.** Publishing needs an account that owns the `@clarkcant` npm scope, and no version has been
 published, so no Marketplace lists it either. The source is
 [examples/reference-apps/spreadsheet](https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/spreadsheet).
 Its package id is still `com.example.spreadsheet`, with publisher id `example`.

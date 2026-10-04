@@ -2828,8 +2828,10 @@ riêng ba kết quả — prepared: yes; published to npm: no; Marketplace submi
     npm publish dist/<name>-<version>.tgz
 
 Hãy publish file đó thay vì chạy `npm publish` trong thư mục package, để registry phục vụ đúng các byte có integrity
-và content digest mà entry đã nêu. Sau đó Marketplace index các package npm mang keyword `clarkcant`, hoặc nhận một
-bản submit. Source local/git vẫn là development path first-class.
+và content digest mà entry đã nêu. npm mặc định để package có scope (`@scope/name`) ở chế độ hạn chế, nên một package có
+scope muốn công khai phải khai báo `"publishConfig": { "access": "public" }` trong `package.json`, như các ứng dụng tham
+chiếu (§24); `npm publish <tarball>` đọc giá trị này từ archive. Sau đó Marketplace index các package npm mang keyword
+`clarkcant`, hoặc nhận một bản submit. Source local/git vẫn là development path first-class.
 
 Trước khi ghi entry, publish so các definition với lần chuẩn bị trước (`dist/published-definitions.json`) và
 từ chối version vi phạm quy tắc ở §20. File này là mốc so sánh nên cần được commit cùng source; nếu đã có
@@ -3489,10 +3491,11 @@ trên đĩa hay file handle nào đi qua bridge.
 giao diện cách ly và không có service. Package cho thấy một widget làm việc với tệp, giữ một tài liệu lớn trong giới
 hạn, tự mô tả cho Clark và áp dụng một thay đổi do Clark chọn.
 
-**Gói npm.** Ứng dụng được đóng gói thành **CSV Explorer**, `@clarkcant/csv-explorer` 1.0.0, có `package.json`,
-`LICENSE` Apache-2.0 và các README riêng; package id vẫn là `com.example.spreadsheet`. `clark widget pack` tạo
+**Gói npm.** Ứng dụng được đóng gói thành **CSV Explorer**, `@clarkcant/csv-explorer` 1.0.0, có `package.json`
+và các README riêng; package id vẫn là `com.example.spreadsheet`. `clark widget pack` tạo
 `dist/clarkcant-csv-explorer-1.0.0.tgz`, và `publish` chuẩn bị directory entry npm. Gói **chưa được phát hành lên
-npm**: tài khoản phát hành phải sở hữu scope `@clarkcant` trước. Cùng
+npm**: tài khoản phát hành phải sở hữu scope `@clarkcant` trước, và giấy phép đang chờ người bảo trì quyết định (các
+manifest khai báo Apache-2.0 trong khi tệp `LICENSE` chứa văn bản MIT). Cùng
 [bài test cài đặt](../apps/runtime/test/reference-packages-npm-install.spec.ts) như §24.1 kiểm tra gói này.
 
 - **Tệp.** CSV và TSV được nhập qua `api.artifacts.pick` ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)) và đọc theo
