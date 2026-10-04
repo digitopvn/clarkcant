@@ -15,6 +15,8 @@ export const REGISTERED_PROPERTIES_CSS = `
 @property --cc-grid-clear-x { syntax: "<length>"; inherits: false; initial-value: -9999px; }
 @property --cc-grid-clear-y { syntax: "<length>"; inherits: false; initial-value: -9999px; }
 @property --cc-grid-clear-r { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --cc-tabs-fade-start { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --cc-tabs-fade-end { syntax: "<length>"; inherits: false; initial-value: 0px; }
 `;
 
 export const BASE_CSS = `

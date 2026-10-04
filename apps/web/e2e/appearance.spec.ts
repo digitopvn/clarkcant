@@ -160,6 +160,24 @@ test("the settings tabs are operable from the keyboard alone", async ({ page }) 
   expect(tabbable).toBe(1);
 });
 
+test("on a phone the settings tab strip fades only the edges that have more beyond them", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  const strip = page.locator("[role='dialog'] .cc-tabs");
+  await expect(strip).toBeVisible();
+  const fades = () =>
+    strip.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.getPropertyValue("--cc-tabs-fade-start").trim(), style.getPropertyValue("--cc-tabs-fade-end").trim()];
+    });
+
+  // At rest the first tab sits on a hard edge, and the end says there is more.
+  await expect.poll(fades).toEqual(["0px", expect.not.stringMatching(/^0px$/)]);
+  // Scrolled to the end, it is the other way round: the start fades, the last tab sits on a hard edge.
+  await strip.evaluate((element) => element.scrollTo({ left: element.scrollWidth }));
+  await expect.poll(fades).toEqual([expect.not.stringMatching(/^0px$/), "0px"]);
+});
 test("the orb is centred on the screen it is drawn over", async ({ page }) => {
   // This is a measurement, not a style assertion: the orb's position is computed from the box it
   // belongs to, and the canvas inside that box is larger than it, so "the rule is present" would not

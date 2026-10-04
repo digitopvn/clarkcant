@@ -1059,6 +1059,27 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
     scroll-padding-inline-end: var(--cc-space-xl);
   }
 }
+/*
+ * Where the strip's own scroll position can drive a style, each edge fades only while there is more beyond it:
+ * the start edge once the strip has been scrolled, the end edge until it reaches the end. Without this, a strip
+ * scrolled to its last tabs cut the first visible label in half against a hard edge.
+ */
+@supports (animation-timeline: scroll()) {
+  @media (max-width: 672px) {
+    .cc-tabs {
+      mask-image: linear-gradient(to right, transparent, #000 var(--cc-tabs-fade-start), #000 calc(100% - var(--cc-tabs-fade-end)), transparent);
+      scroll-padding-inline-start: var(--cc-space-xl);
+      animation: cc-tabs-edges linear both;
+      animation-timeline: scroll(self inline);
+    }
+  }
+  @keyframes cc-tabs-edges {
+    0% { --cc-tabs-fade-start: 0px; --cc-tabs-fade-end: var(--cc-space-xl); }
+    8% { --cc-tabs-fade-start: var(--cc-space-xl); }
+    92% { --cc-tabs-fade-end: var(--cc-space-xl); }
+    100% { --cc-tabs-fade-start: var(--cc-space-xl); --cc-tabs-fade-end: 0px; }
+  }
+}
 
 /*
  * Touch. A 28 px circle is a fine target for a mouse and a miss for a thumb, so on a coarse pointer the icon
