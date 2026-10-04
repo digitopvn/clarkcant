@@ -159,7 +159,7 @@ export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
       label: "Mở lại phiên gần nhất",
       text: "Cho tui xem lại phiên làm việc gần nhất",
       source: "conversation",
-      sourceLabel: "phiên gần nhất",
+      sourceLabel: "tiếp tục từ chỗ đã dừng",
       at: now,
       ref: latest,
     });

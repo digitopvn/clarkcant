@@ -140,7 +140,7 @@ describe("a node with records", () => {
     expect(session?.ref).toBe("conv_one");
     // No time word on this one: the conversation list carries no instant, and a guessed one would be a lie the
     // person can check.
-    expect(session?.sourceLabel).toBe("phiên gần nhất");
+    expect(session?.sourceLabel).toBe("tiếp tục từ chỗ đã dừng");
   });
 
   it("offers something that was pinned, in the words for having pinned it", () => {

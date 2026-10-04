@@ -359,7 +359,12 @@ body {
   color: var(--cc-text); font-size: var(--cc-text-label); line-height: var(--cc-leading-label); font-weight: 600;
 }
 .cc-inbox-section { display: flex; flex-direction: column; gap: var(--cc-space-sm); }
-.cc-inbox-heading { margin: 0; font-size: var(--cc-text-label); font-weight: 600; color: var(--cc-text-muted); }
+/* Headed like the settings groups, so the two lists read as groups rather than as two more lines of body text. */
+.cc-inbox-heading {
+  margin: 0; font-size: var(--cc-text-label); line-height: var(--cc-leading-label); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em; color: var(--cc-text-muted);
+}
+.cc-inbox-section + .cc-inbox-section { margin-top: var(--cc-space-sm); padding-top: var(--cc-space-md); border-top: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-inbox-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-inbox-command {
   margin: 0; padding: var(--cc-space-sm); overflow-x: auto; max-height: 160px;
