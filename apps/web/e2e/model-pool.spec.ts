@@ -56,3 +56,18 @@ test("the hotkey moves to the next profile and the label follows", async ({ page
   await expect(table).toContainText("fast");
   await expect(table).toContainText("smart");
 });
+
+test("a touch phone is told which model it is on, without a key chord it has no keys for", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  await openApp(page);
+  await expect(page.locator("[data-model-label]").first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toBeHidden();
+  await context.close();
+});
+
+test("a keyboard is told the chord that changes the model", async ({ page }) => {
+  await openApp(page);
+  await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-model-switch [data-model-note="shortcut"]')).toContainText("Ctrl+]");
+});

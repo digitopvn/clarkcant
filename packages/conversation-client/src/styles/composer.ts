@@ -310,7 +310,9 @@ div.cc-attachment { flex-wrap: wrap; }
 /* The model line is two facts - which model, and how to change it - so they get the statusline's gap rather than
    running together as one word. */
 .cc-model-switch { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--cc-space-sm); }
-.cc-model-switch [data-model-note="true"] { color: var(--cc-text-tertiary); }
+.cc-model-switch [data-model-note] { color: var(--cc-text-tertiary); }
+/* A key chord is advice for a keyboard. On a touch screen with nothing to press it is a hint that cannot be followed. */
+@media (hover: none) and (pointer: coarse) { .cc-model-switch [data-model-note="shortcut"] { display: none; } }
 
 /*
  * What a command could not do. A short-lived line near the top of the conversation, above an open panel, rather

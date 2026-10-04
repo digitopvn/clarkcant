@@ -264,7 +264,7 @@ export function ConversationComposerBar({
       {modelAlias !== undefined && (
         <div className="cc-model-switch" data-model-label={modelAlias}>
           <span className="cc-freshness">model: {modelAlias}</span>
-          <span className="cc-freshness" data-model-note="true">
+          <span className="cc-freshness" data-model-note={modelNote === "" ? "shortcut" : "true"}>
             {modelNote === ""
               ? t("shell.model.switchHint").replace(
                   "{shortcut}",
