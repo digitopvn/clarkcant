@@ -27,7 +27,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
@@ -355,7 +355,9 @@ async function main() {
   }
   const scratch = mkdtempSync(join(tmpdir(), "clark-tooling-smoke-"));
   scratchDir = scratch;
-  assert(relative(repoRoot, scratch).startsWith(".."), `the scratch directory ${scratch} is inside the repository`);
+  // On Windows a scratch directory on another drive has no relative path to the repository: `relative` returns it whole.
+  const fromRepo = relative(repoRoot, scratch);
+  assert(fromRepo.startsWith("..") || isAbsolute(fromRepo), `the scratch directory ${scratch} is inside the repository`);
   log(`widget tooling smoke on ${process.platform}-${process.arch}, node ${process.version}`);
   log(`  scratch: ${scratch}`);
   try {
