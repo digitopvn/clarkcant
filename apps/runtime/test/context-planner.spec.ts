@@ -16,6 +16,7 @@ import {
   focusedMemoryBrief,
   legacyRecap,
   planRecap,
+  recapWindow,
   relevance,
   rerankTop,
   type RecapMessage,
@@ -317,6 +318,12 @@ describe("earlier messages of this conversation", () => {
       { principalId: PRINCIPAL, conversationId: CONVERSATION, query: "cơ sở dữ liệu chốt là gì", exclude: new Set(["msg_recent"]) },
     );
     expect(earlier.map((entry) => entry.id)).toEqual(["message:msg_old"]);
+  });
+
+  it("is searched past the recap's window, not past everything read", () => {
+    // Forty read, twelve repeated: the twenty-eight in between are not in the recap and must stay findable.
+    const read = Array.from({ length: 40 }, (_, index) => index);
+    expect(recapWindow(read)).toEqual(read.slice(28));
   });
 });
 

@@ -256,8 +256,18 @@ function recapLine(message: RecapMessage, max: number): string {
 }
 
 /** The recap the node sent before the planner existed: the newest twelve messages, each clipped to 400 characters. */
+/**
+ * The messages a recap repeats: the newest twelve of those read.
+ *
+ * Only these are excluded from the search for earlier messages. A message that was read but falls outside this window
+ * is not in the recap, so it must stay findable — excluding everything read hid a decision made 13 to 40 messages ago.
+ */
+export function recapWindow<T>(messages: readonly T[]): readonly T[] {
+  return messages.slice(-CONTEXT_LIMITS.recapRecent);
+}
+
 export function legacyRecap(messages: readonly RecapMessage[]): string {
-  const recent = messages.slice(-CONTEXT_LIMITS.recapRecent);
+  const recent = recapWindow(messages);
   if (recent.length === 0) return "";
   return `${RECAP_HEADER}\n${recent.map((message) => recapLine(message, CONTEXT_LIMITS.recapLineFull)).join("\n")}`;
 }
@@ -276,7 +286,7 @@ export function planRecap(input: {
   /** Messages the conversation holds in all, so the recap can say how many it did not repeat. */
   total?: number;
 }): { text: string; plan: ContextPlan } {
-  const recent = input.messages.slice(-CONTEXT_LIMITS.recapRecent);
+  const recent = recapWindow(input.messages);
   const terms = contextTerms(input.query);
   const pinnedFrom = recent.length - CONTEXT_LIMITS.recapPinned;
   const scored = recent.map((message, index) => ({

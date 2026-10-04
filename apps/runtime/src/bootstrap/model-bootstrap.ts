@@ -22,6 +22,7 @@ import {
   earlierMessagesFor,
   focusedMemoryBrief,
   planRecap,
+  recapWindow,
 } from "../context-planner.ts";
 import { type DecideDeps, decideModelRoute } from "../jev-decider.ts";
 import { memoryBrief } from "../memory.ts";
@@ -284,7 +285,10 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           recapPlanner: async ({ conversationId, query, messages }) => {
             const db = deps.services().runtime.db;
             const principalId = deps.wiring.search()?.principalId;
-            const exclude = new Set(messages.flatMap((message) => (message.messageId === undefined ? [] : [message.messageId])));
+            // Only what the recap repeats; an older message that was read but not repeated must stay findable.
+            const exclude = new Set(
+              recapWindow(messages).flatMap((message) => (message.messageId === undefined ? [] : [message.messageId])),
+            );
             const { earlier } =
               principalId === undefined
                 ? { earlier: [] }

@@ -24,6 +24,20 @@ writes a new cache entry.
 `pnpm exec vitest run apps/runtime/test/context-economics.spec.ts`; `node tools/check-invariants.mjs --fix-manifest`;
 `pnpm verify`.
 
+## Result (2026-10-04, offline estimate)
+
+38 labelled turns, 30 runtime tools (~8,805 schema tokens), assumptions printed by the spec:
+
+| Mode | Schema tok/turn | Cache write | Cache read | Tool-set changes | Cost vs all | Wrong-tool turns |
+|---|---|---|---|---|---|---|
+| all | 8,805 | 102,747 | 346,052 | 0 | 0% | 0/38 |
+| progressive | 5,530 | 125,530 | 198,836 | 7 | +8.4% | 1/38 |
+| per-turn | 5,520 | 252,842 | 71,138 | 23 | +98.2% | 2/38 |
+
+Recap carrying the labelled earlier decision: first-40 1/3, latest-12 1/3, planned 3/3. The harness found that the
+planner excluded all 40 read messages from the earlier-message search although the recap repeats only 12; the
+exclusion now uses `recapWindow`. Decision: `CLARKCANT_TOOL_DISCLOSURE` stays `all` by default.
+
 ## Risk and rollback
 
 Simulated numbers can mislead; they are labelled as offline estimates and the default stays off.

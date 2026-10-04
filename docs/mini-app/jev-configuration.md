@@ -28,6 +28,9 @@ logged.
 | `CLARKCANT_JEV_POLICY_VERSION` | `2026-09-17` | Stamped into telemetry and composition provenance so a decision can be traced to a policy. |
 | `CLARKCANT_SEARCH_DECIDER` | `rank` | `rank` uses BM25 alone; `jev` asks the selector to choose between results that are close. Any other value falls back to `rank`. |
 | `CLARKCANT_SEARCH_SEMANTIC` | off | `1`/`true` turns on vector retrieval (sqlite-vec + local E5-small), fused with the lexical results by RRF. Off because it was measured: on the Phase 8 corpus it did not improve top-1 and cost precision when the cosine ceiling was loose. |
+| `CLARKCANT_CONTEXT_PLANNER` | on | `off` restores the fixed recap (newest 12 messages) and the fixed memory brief (newest 12 notes), and stops background runs from receiving retrieved context. On, both are focused on the message being answered, and fall back to the fixed form when nothing matches. |
+| `CLARKCANT_CONTEXT_DECIDER` | `rank` | `jev` lets the selector reorder the top 8 matches for the recap and memory brief when their ranking is close, and pick one tool family for a message that names none under progressive disclosure. Any other value is `rank`. |
+| `CLARKCANT_TOOL_DISCLOSURE` | `all` | `progressive` offers a conversation the core tools plus the tool families its messages name, growing within a session. Off because it was measured: in the offline estimate it saved schema tokens but cost more once prompt-cache rewrites were counted (see [system-architecture.md §7.3](../system-architecture.md)). Any other value is `all`. |
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
