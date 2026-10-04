@@ -3,6 +3,7 @@ import { type ReactElement } from "react";
 import type { WidgetCatalogEntry } from "@clarkcant/widget-catalog";
 
 import { useT } from "../i18n/locale-context.tsx";
+import { familyLabel } from "./family-labels.ts";
 import { WidgetPreview } from "./WidgetPreview.tsx";
 
 /**
@@ -85,7 +86,7 @@ export function WidgetGallery({ entries, onSelect }: WidgetGalleryProps): ReactE
               </span>
               <span className="cc-widget-card-meta">
                 <span className="cc-widget-card-name">{entry.displayName}</span>
-                <span className="cc-widget-card-family">{entry.family}</span>
+                <span className="cc-widget-card-family">{familyLabel(entry.family, t)}</span>
                 <span className="cc-widget-card-desc">{entry.description}</span>
                 {entry.definition.appearanceMode === "fixed" && <span data-widget-appearance="fixed">{t("widgets.appearance.fixed")}</span>}
                 <span className="cc-widget-card-source">

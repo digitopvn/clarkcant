@@ -13,6 +13,7 @@ import {
 import type { GatewayClient } from "../api.ts";
 import { useT } from "../i18n/locale-context.tsx";
 import { builtInLabel } from "../package-provenance.ts";
+import { familyLabel } from "./family-labels.ts";
 import { resolveRenderer } from "../renderers.tsx";
 import { HOST_CARD_ENTRIES, visibleHostCards } from "./host-card-entries.ts";
 import { HostCardShowcase } from "./HostCardShowcase.tsx";
@@ -260,7 +261,7 @@ export function WidgetLibrarySurface({
                 onClick={() => onAction({ kind: "family", value: family })}
                 data-widget-library-facet={family}
               >
-                {family === "all" ? t("widgets.library.allFamilies") : family}
+                {family === "all" ? t("widgets.library.allFamilies") : familyLabel(family, t)}
               </button>
             ))}
           </nav>
@@ -341,7 +342,7 @@ export function WidgetLibrarySurface({
                 {!develop && (
                   <dl className="cc-widget-detail-meta">
                     <dt>{t("widgets.library.family")}</dt>
-                    <dd>{selected.family}</dd>
+                    <dd>{familyLabel(selected.family, t)}</dd>
                     <dt>{t("widgets.library.semanticDescription")}</dt>
                     <dd>{selected.description}</dd>
                     <dt>{t("widgets.library.source")}</dt>
