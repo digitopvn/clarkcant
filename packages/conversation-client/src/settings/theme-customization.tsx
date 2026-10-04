@@ -79,7 +79,7 @@ export function ThemeCustomization({ prefs, appearance, onOrbChange }: {
       </details>}
     </div> : <InlineStatus status={prefs.status} forKey="experience.accent" />}
     {selected?.customizationFallback === undefined ? null : <p className="cc-theme-notice" role="status" data-accent-fallback>{t("themeLab.accentFallback")}</p>}
-    <SettingsRow label={t("themeLab.density")}>
+    <SettingsRow label={t("themeLab.density")} description={t("themeLab.densityNote")}>
       <SegmentedControl name="density" label={t("themeLab.density")} options={[
         { value: "comfortable", label: t("themeLab.comfortable") }, { value: "compact", label: t("themeLab.compact") },
       ]} value={prefs.text("experience.density", "comfortable")} pending={prefs.pending !== undefined}
