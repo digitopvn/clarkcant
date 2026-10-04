@@ -45,6 +45,7 @@ import {
 import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
 
 import { attachmentBrief } from "./attachments.ts";
+import { legacyRecap } from "./context-planner.ts";
 
 /**
  * One view a model may ask for.
@@ -288,9 +289,25 @@ function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-d
  * which asks for the short version - the session has to read it aloud.
  */
 /** Reads the conversation so far, newest last, for briefing a session that has just been created. */
-type HistoryReader = (
-  conversationId: string,
-) => Promise<readonly { role: "user" | "assistant"; text: string }[]>;
+type HistoryReader = (conversationId: string) => Promise<readonly HistoryMessage[]>;
+
+/** One message of the conversation as the recap reads it; the id lets a planner tell it apart from a search hit. */
+export interface HistoryMessage {
+  role: "user" | "assistant";
+  text: string;
+  messageId?: string;
+}
+
+/**
+ * Plans the recap for a session that has just been created, given the message it is about to answer.
+ *
+ * Absent means the fixed recap below. A planner that fails is treated as absent rather than as a failed turn.
+ */
+export type RecapPlanner = (input: {
+  conversationId: string;
+  query: string;
+  messages: readonly HistoryMessage[];
+}) => Promise<string>;
 
 /**
  * The note a turn is prompted with: the brief for a new session first, then whatever this turn was given.
@@ -311,9 +328,13 @@ function withRecap(recap: string, note: string | undefined): string | undefined 
  * The last few messages only: a brief that grows with the conversation stops being a brief, and the point is
  * to place the model in the thread rather than to reproduce it. Each line is clipped for the same reason.
  */
-async function recapFor(options: { history?: HistoryReader }, conversationId: string): Promise<string> {
+async function recapFor(
+  options: { history?: HistoryReader; recapPlanner?: RecapPlanner },
+  conversationId: string,
+  query: string,
+): Promise<string> {
   if (options.history === undefined) return "";
-  let messages: readonly { role: "user" | "assistant"; text: string }[];
+  let messages: readonly HistoryMessage[];
   try {
     messages = await options.history(conversationId);
   } catch {
@@ -321,13 +342,14 @@ async function recapFor(options: { history?: HistoryReader }, conversationId: st
     // less informed one, and failing here would turn a storage hiccup into a conversation that stops.
     return "";
   }
-  const recent = messages.slice(-12);
-  if (recent.length === 0) return "";
-  const lines = recent.map(
-    (message) =>
-      `${message.role === "user" ? "Người dùng" : "Trợ lý"}: ${message.text.replace(/\s+/g, " ").trim().slice(0, 400)}`,
-  );
-  return `Mạch hội thoại trước đó, để bạn tiếp tục đúng việc đang làm:\n${lines.join("\n")}`;
+  if (options.recapPlanner !== undefined) {
+    try {
+      return await options.recapPlanner({ conversationId, query, messages });
+    } catch {
+      // Planning is an improvement on the recap, never a condition for one.
+    }
+  }
+  return legacyRecap(messages);
 }
 
 /**
@@ -585,6 +607,8 @@ export async function createModelTurn(options: {
    * which is what "it forgot we had just done that" looks like from the outside.
    */
   history?: HistoryReader;
+  /** Focuses that recap on the message being answered; absent keeps the fixed newest-twelve recap. */
+  recapPlanner?: RecapPlanner;
   /**
    * The files the current message carries, read back from the stored message.
    *
@@ -643,7 +667,7 @@ export async function createModelTurn(options: {
    * A function rather than a string because it must be read per turn: a record somebody deleted has to stop
    * being sent on the very next turn, and a value captured once would keep sending it until a restart.
    */
-  memoryBrief?: (conversationId: string) => string;
+  memoryBrief?: (conversationId: string, query: string) => string | Promise<string>;
   /**
    * What the message being answered points at: skills to follow and the things it names (#210).
    *
@@ -1112,7 +1136,7 @@ export async function createModelTurn(options: {
       const turn = await turnFor(input.conversationId, input.principal);
       // Once, on the first turn this session answers: the second turn already has the first in its context,
       // and repeating the brief each time would push the conversation out with its own summary.
-      const recap = turn.fresh ? await recapFor(options, input.conversationId) : "";
+      const recap = turn.fresh ? await recapFor(options, input.conversationId, input.text) : "";
       turn.fresh = false;
       // Built here rather than at the call, because `note` is optional under exactOptionalPropertyTypes: a
       // present key holding undefined is a different type from an absent key, and only one of them means
@@ -1128,7 +1152,9 @@ export async function createModelTurn(options: {
             });
       // Read fresh every turn, not captured once: a record the person deleted must stop being sent on the next
       // turn, which is what the Memory tab's promise to let them see the source and delete it has to mean.
-      const memoryPart = options.memoryBrief?.(input.conversationId) ?? "";
+      // Given the turn's text, so what is remembered about this subject comes first; a brief that cannot be read is
+      // a less informed turn, not a failed one.
+      const memoryPart = (await Promise.resolve(options.memoryBrief?.(input.conversationId, input.text)).catch(() => "")) ?? "";
       const referencePart =
         options.references === undefined
           ? ""

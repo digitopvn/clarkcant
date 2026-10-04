@@ -638,7 +638,48 @@ export async function decideTurnAction(
     model: deps.jev.config.model,
   };
 }
+/** The most candidates a context-focus question ever offers. */
+export const CONTEXT_FOCUS_TOP_K = 8;
 
+/**
+ * Which of a few remembered notes or earlier messages matters most for the message being answered.
+ *
+ * Asked by the context planner only when its own ranking is too close to call. The answer reorders: the chosen
+ * candidate goes first and every other one stays where it was, so a wrong answer costs a position, never a record.
+ * Texts are redacted and clipped before they leave the node, and candidates are offered by position rather than by id.
+ */
+export async function decideContextFocus(
+  deps: DecideDeps,
+  input: { query: string; candidates: readonly { id: string; text: string }[] },
+): Promise<{ status: "chosen"; id: string; confidence: number; model: string } | { status: "rank"; reason: string }> {
+  const offered = input.candidates.slice(0, CONTEXT_FOCUS_TOP_K);
+  if (offered.length < 2) return { status: "rank", reason: "there was nothing to choose between" };
+  const refused = jevCallRefusal(deps.jev.config);
+  if (refused !== undefined) return { status: "rank", reason: refused };
+
+  const criteria: Record<string, string | null> = {};
+  offered.forEach((candidate, index) => {
+    criteria[`item:${String(index)}`] = redactSecrets(candidate.text).replace(/\s+/g, " ").slice(0, 200);
+  });
+  const outcome = await askChoice(deps.jev, {
+    state: { message: redactSecrets(input.query).slice(0, 300) },
+    instructions:
+      "Which of these remembered notes or earlier messages matters most for answering the message? Choose none if none of them does.",
+    criteria,
+    questionId: "context-focus",
+    budget: deps.budget(),
+  });
+  if (outcome.status !== "answered") {
+    return { status: "rank", reason: outcome.status === "unavailable" ? outcome.reason : `the selector did not decide: ${outcome.reason}` };
+  }
+  if (!outcome.value.substantive) return { status: "rank", reason: "the selector chose none of them" };
+  const decisive = isDecisive(outcome.value.top, outcome.value.runnerUp, deps.jev.config.confidenceFloor, deps.jev.config.marginFloor);
+  if (!decisive.decisive) return { status: "rank", reason: decisive.reason };
+  const index = Number.parseInt(outcome.value.choice.replace(/^item:/, ""), 10);
+  const chosen = Number.isInteger(index) ? offered[index] : undefined;
+  if (chosen === undefined) return { status: "rank", reason: "the selector chose something that was not offered" };
+  return { status: "chosen", id: chosen.id, confidence: outcome.value.confidence ?? outcome.value.top, model: deps.jev.config.model };
+}
 
 /**
  * Choose which retrieved result the user meant.

@@ -117,6 +117,16 @@ export function deleteMemory(deps: MemoryDeps, principalId: string, memoryId: st
  */
 export function memoryBrief(deps: MemoryDeps, input: { principalId: string; conversationId: string }): string {
   const rows = memoryRecordsForBrief(deps.db, input.principalId, input.conversationId, MEMORY_BRIEF_MAX_ROWS);
+  return briefFromRows(rows, () => countMemoryRecordsForBrief(deps.db, input.principalId, input.conversationId));
+}
+
+/**
+ * The brief's text for rows already chosen, newest first.
+ *
+ * Shared with the context planner, so "nothing matched this turn" produces exactly this brief rather than a second
+ * implementation of it. `total` is a function because it is only worth counting when something will be sent.
+ */
+export function briefFromRows(rows: readonly { kind: string; text: string }[], total: () => number): string {
   if (rows.length === 0) return "";
 
   const lines: string[] = [];
@@ -131,8 +141,7 @@ export function memoryBrief(deps: MemoryDeps, input: { principalId: string; conv
   // Every line could have been too long to fit, in which case there is nothing to say.
   if (lines.length === 0) return "";
 
-  const total = countMemoryRecordsForBrief(deps.db, input.principalId, input.conversationId);
-  const remaining = total - lines.length;
+  const remaining = total() - lines.length;
   return [
     "[Điều đã ghi nhớ cho người dùng này]",
     ...lines,

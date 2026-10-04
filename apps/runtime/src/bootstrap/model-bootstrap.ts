@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { instantSchema, type MessageRecord } from "@clarkcant/contracts";
 import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
-import { credentialNames, getNotification, latestMessages, messagesSince, readPreference } from "@clarkcant/storage";
+import { conversationMetadata, credentialNames, getNotification, latestMessages, readPreference } from "@clarkcant/storage";
 
 import { preferredAppIntentLocale } from "../app-intents.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
@@ -14,7 +14,15 @@ import { referenceBrief, referencesForLastUserMessage } from "../composer-refere
 import { type BrowserTaskToolDeps, personTextOf } from "../browser-task-tool.ts";
 import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
-import { decideModelRoute } from "../jev-decider.ts";
+import {
+  type ContextPlan,
+  contextDeciderFromEnv,
+  contextPlannerFromEnv,
+  earlierMessagesFor,
+  focusedMemoryBrief,
+  planRecap,
+} from "../context-planner.ts";
+import { type DecideDeps, decideModelRoute } from "../jev-decider.ts";
 import { memoryBrief } from "../memory.ts";
 import { readCurrentAlias, readModelPool } from "../model-registry.ts";
 import { filterBackgroundCandidates, routeBackgroundModel, toolCallsIn } from "../model-router.ts";
@@ -174,6 +182,29 @@ export async function routeNodeBackgroundModel(
   return routed === undefined ? undefined : { provider: routed.provider, id: routed.modelId };
 }
 /**
+ * One line on stderr when the context planner focused a turn: counts and ids, never the text it chose.
+ *
+ * A focused plan is the planner claiming relevance, and that claim is what an operator measuring it needs to see; an
+ * unfocused one is the old behaviour and says nothing new.
+ */
+function reportContextPlan(input: { conversationId: string; part: "recap" | "memory"; plan: ContextPlan }): void {
+  if (!input.plan.focused) return;
+  const count = (visibility: string): number => input.plan.entries.filter((entry) => entry.visibility === visibility).length;
+  process.stderr.write(
+    `${JSON.stringify({
+      event: "context-plan",
+      conversationId: input.conversationId,
+      part: input.part,
+      full: count("full"),
+      short: count("short"),
+      hidden: count("hide"),
+      omitted: input.plan.omitted,
+      reranked: input.plan.reranked,
+    })}\n`,
+  );
+}
+
+/**
  * Build the model turn, or `undefined` when this node has no model.
  */
 export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<ModelTurn | undefined> {
@@ -183,6 +214,14 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     return provider === undefined || provider === "" || id === undefined || id === ""
       ? undefined
       : { provider, id };
+  };
+
+  const planner = contextPlannerFromEnv(deps.env);
+  // The selector may only reorder a close top-K, and only when an operator opted in; otherwise nothing is asked.
+  const contextDecider = (): { decider?: DecideDeps } => {
+    if (contextDeciderFromEnv(deps.env) !== "jev") return {};
+    const decider = deps.services().projects.decider;
+    return decider === undefined ? {} : { decider };
   };
 
   const modelTurn = await createModelTurn({
@@ -226,12 +265,36 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     // A session is dropped when a turn fails, because a session that failed a turn is the thing that is broken;
     // the thread is not, so the next message is answered by an agent that has been told what it is joining
     // rather than by one that has never heard of it.
+    //
+    // The newest forty, not the first forty: the recap is about where the conversation is, and reading from the start
+    // recapped the opening of any thread longer than forty messages.
     history: async (conversationId) => {
-      const records = messagesSince(deps.services().runtime.db, conversationId, 0, 40);
+      const records = latestMessages(deps.services().runtime.db, conversationId, 40);
       return records
         .filter((record): record is MessageRecord & { role: "user" | "assistant" } => record.role === "user" || record.role === "assistant")
-        .map((record) => ({ role: record.role, text: textOfMessage(record) }));
+        .map((record) => ({ role: record.role, text: textOfMessage(record), messageId: record.messageId }));
     },
+    // Focuses that recap on the message being answered (#433). Off restores the fixed newest-twelve recap.
+    ...(planner === "off"
+      ? {}
+      : {
+          recapPlanner: async ({ conversationId, query, messages }) => {
+            const db = deps.services().runtime.db;
+            const principalId = deps.wiring.search()?.principalId;
+            const exclude = new Set(messages.flatMap((message) => (message.messageId === undefined ? [] : [message.messageId])));
+            const { earlier } =
+              principalId === undefined
+                ? { earlier: [] }
+                : await earlierMessagesFor(
+                    { db, ...contextDecider() },
+                    { principalId, conversationId, query, exclude },
+                  );
+            const total = conversationMetadata(db, conversationId).messageCount;
+            const planned = planRecap({ messages, query, earlier, total });
+            reportContextPlan({ conversationId, part: "recap", plan: planned.plan });
+            return planned.text;
+          },
+        }),
     // The files the current message carries, read back from the row that message was stored as. The
     // timeline and this prompt are then the same reading, so a conversation reopened tomorrow attaches
     // the same files to the same turn. `attachmentBrief` inlines a text file's content and names anything
@@ -264,11 +327,19 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
      * Read per turn rather than captured once, so a record somebody deletes in the Memory tab stops being
      * sent on the very next turn. That is what makes that screen's promise true rather than decorative.
      */
-    memoryBrief: (conversationId) =>
-      memoryBrief(
-        { db: deps.services().runtime.db, now: () => new Date().toISOString(), newId: deps.services().conductor.newId },
-        { principalId: deps.services().runtime.identity.ownerPrincipalId, conversationId },
-      ),
+    //
+    // Focused on the turn's text unless the planner is off (#433): what matches comes first, the rest follows newest
+    // first, and with no match the brief is exactly the unfocused one.
+    memoryBrief: async (conversationId, query) => {
+      const db = deps.services().runtime.db;
+      const principalId = deps.services().runtime.identity.ownerPrincipalId;
+      if (planner === "off") {
+        return memoryBrief({ db, now: () => new Date().toISOString(), newId: deps.services().conductor.newId }, { principalId, conversationId });
+      }
+      const planned = await focusedMemoryBrief({ db, ...contextDecider() }, { principalId, conversationId, query });
+      reportContextPlan({ conversationId, part: "memory", plan: planned.plan });
+      return planned.text;
+    },
     /*
      * What the widgets the person changed now mean, read when a turn starts (#195).
      *
