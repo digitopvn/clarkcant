@@ -148,6 +148,20 @@ describe("a capability the brief does not grant is unreachable (tool registratio
   });
 });
 
+describe("project instructions in the brief", () => {
+  it("follow the goal in what the run is prompted with, and the goal alone without them", async () => {
+    const prompts: string[] = [];
+    const drive = async (_sessionId: string, text: string): Promise<void> => {
+      prompts.push(text);
+    };
+    const instructions = "[Hướng dẫn của dự án]\n--- clark/.clarkcant/instructions/migrations.md ---\nThêm migration mới.";
+    await runWorker(brief({ instructions }), deps(new FakePiAdapter(), [stubTool()], { drive }));
+    await runWorker(brief({ runId: "run_2" }), deps(new FakePiAdapter(), [stubTool()], { drive }));
+    expect(prompts).toEqual([`${brief().goal}\n\n${instructions}`, brief().goal]);
+    expect(workerBriefEnvelopeSchema.safeParse(brief({ instructions: "x".repeat(8001) })).success).toBe(false);
+  });
+});
+
 describe("evidence describes what a tool returned, not that a tool ran", () => {
   it("digests the tool's actual output", async () => {
     const adapter = new FakePiAdapter();

@@ -8,7 +8,14 @@ import type { ConversationId, Principal } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
 import { migrate, openDatabase, type Database } from "@clarkcant/storage";
 
-import { BUNDLE_DATA_HEADER, BUNDLE_LIMITS, READ_CONTEXT_TOOL, contextBundlesFor, createContextBundles } from "../src/context-bundle.ts";
+import {
+  BUNDLE_DATA_HEADER,
+  BUNDLE_LIMITS,
+  READ_CONTEXT_TOOL,
+  contextBundlesFor,
+  contextSourceOf,
+  createContextBundles,
+} from "../src/context-bundle.ts";
 import { deleteMemory, rememberMemory } from "../src/memory.ts";
 import { createModelTurn } from "../src/model-turn.ts";
 import { seedMessage } from "./conversation-message-seed.ts";
@@ -152,6 +159,31 @@ describe("a context bundle", () => {
     expect(bundles.stats().dropped).toBe(2);
   });
 
+  it("labels each reference with its data class, and a reader narrowed to a model offers nothing above it", async () => {
+    index("msg_1", "Mình chốt cơ sở dữ liệu của dự án là SQLite.");
+    index("msg_2", "Cơ sở dữ liệu của dự án nằm ở C:\\Users\\duy\\du-an\\data.sqlite nhé.");
+    const bundles = createContextBundles({ db });
+    const bundle = await bundles.bundleFor({ principalId: PRINCIPAL, conversationId: CONVERSATION, query: QUERY });
+    expect(bundle.refs.map((ref) => ref.sensitivity).sort()).toEqual(["confidential", "internal"]);
+    expect(bundle.refs.every((ref) => ref.estimatedTokens > 0)).toBe(true);
+
+    const source = contextSourceOf(bundles, bundle, PRINCIPAL);
+    expect(source).toMatchObject({ dataClass: "confidential", items: 2 });
+    const narrowed = source.readerFor(["public", "internal"]);
+    expect(narrowed.items).toBe(1);
+    const listed = narrowed.answer({});
+    expect(listed.kind === "done" ? listed.text : "").not.toContain("Users");
+    // Said by count, never by content, and never as something another tool would return.
+    expect(listed.kind === "done" ? listed.text : "").toContain("[1 mục bị giữ lại");
+    // Asked for by its position in the full bundle, the withheld item is not there either.
+    expect(narrowed.answer({ item: "c2" }).kind).toBe("refused");
+    expect(source.readerFor(["public", "internal", "confidential"]).items).toBe(2);
+    const full = source.readerFor(["public", "internal", "confidential"]).answer({});
+    expect(full.kind === "done" ? full.text : "").not.toContain("bị giữ lại");
+    // A stranger is given nothing, whatever the classes.
+    expect(contextSourceOf(bundles, bundle, STRANGER)).toMatchObject({ items: 0 });
+  });
+
   it("expires, so a later request retrieves again", async () => {
     remember("Dự án dùng SQLite làm cơ sở dữ liệu.");
     let clock = 0;
@@ -191,7 +223,7 @@ describe("a background run", () => {
       cwd: process.cwd(),
       adapter,
       backgroundContext: async ({ conversationId, principalId, text }) =>
-        bundles.reader(await bundles.bundleFor({ principalId, conversationId, query: text }), principalId),
+        contextSourceOf(bundles, await bundles.bundleFor({ principalId, conversationId, query: text }), principalId),
     });
 
     await turn!.runInBackground({
@@ -222,11 +254,37 @@ describe("a background run", () => {
       cwd: process.cwd(),
       adapter,
       backgroundContext: async ({ conversationId, principalId, text }) =>
-        bundles.reader(await bundles.bundleFor({ principalId, conversationId, query: text }), principalId),
+        contextSourceOf(bundles, await bundles.bundleFor({ principalId, conversationId, query: text }), principalId),
     });
     await turn!.runInBackground({ conversationId: CONVERSATION as ConversationId, principal: OWNER, text: QUERY });
     expect(adapter.prompts[0]).toBe(QUERY);
     expect(adapter.briefs[0]?.customTools).toBeUndefined();
+  });
+
+  it("routes by what the work carries, and is given only what the model that runs may receive", async () => {
+    index("msg_1", "Mình chốt cơ sở dữ liệu của dự án là SQLite.");
+    index("msg_2", "Cơ sở dữ liệu của dự án nằm ở C:\\Users\\duy\\du-an\\data.sqlite nhé.");
+    const bundles = createContextBundles({ db });
+    const adapter = new BriefRecordingAdapter({ script: ["xong"] });
+    const asked: unknown[] = [];
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      // Routing found nothing that may receive confidential data, so the work falls back to the node's own model.
+      backgroundModel: async (work) => {
+        asked.push(work);
+        return undefined;
+      },
+      allowedDataClasses: () => ["public", "internal"],
+      backgroundContext: async ({ conversationId, principalId, text }) =>
+        contextSourceOf(bundles, await bundles.bundleFor({ principalId, conversationId, query: text }), principalId),
+    });
+    await turn!.runInBackground({ conversationId: CONVERSATION as ConversationId, principal: OWNER, text: QUERY });
+    expect(asked).toEqual([{ dataClass: "confidential" }]);
+    const prompt = adapter.prompts[0] ?? "";
+    expect(prompt).toContain("SQLite.");
+    expect(prompt).not.toContain("Users");
   });
 
   it("still runs when retrieval fails", async () => {

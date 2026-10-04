@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { instantSchema, type TurnOrigin } from "@clarkcant/contracts";
+import { allowedDataClassesFor, type DataClass, instantSchema, type TurnOrigin } from "@clarkcant/contracts";
 
 import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
@@ -11,13 +11,20 @@ import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
-import { referenceBrief, referencesForLastUserMessage } from "../composer-references.ts";
+import { referenceBrief, referencedWork, referencesForLastUserMessage } from "../composer-references.ts";
+import {
+  type ConditionalInstructions,
+  conditionalInstructionsFromEnv,
+  createConditionalInstructions,
+  turnInstructions,
+} from "../conditional-instructions.ts";
 import { type BrowserTaskToolDeps, personTextOf } from "../browser-task-tool.ts";
+import { contextPlannerFromEnv } from "../context-planner.ts";
 import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { decideModelRoute } from "../jev-decider.ts";
 import { readCurrentAlias, readModelPool } from "../model-registry.ts";
-import { filterBackgroundCandidates, routeBackgroundModel, toolCallsIn } from "../model-router.ts";
+import { allowedDataClassesForModel, filterBackgroundCandidates, routeBackgroundModel, toolCallsIn } from "../model-router.ts";
 import { type ModelTurn, type ViewDescriptor, createModelTurn } from "../model-turn.ts";
 import type { Runtime } from "../node.ts";
 import { createNodeTools, type CommandToolDeps } from "../node-tools.ts";
@@ -25,6 +32,7 @@ import { askPeerCapabilities } from "../peer-capabilities.ts";
 import { type ProjectFinderDeps, resolveProject } from "../project-finder.ts";
 import { ownedResources } from "../preflight.ts";
 import type { RequestSecretDeps } from "../request-secret.ts";
+import type { SessionSearchDeps } from "../session-search.ts";
 import { registerSessionFile } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import { registerNodeTools } from "../tool-catalogue.ts";
@@ -126,6 +134,49 @@ export function workerModelCandidates(
 }
 
 /**
+ * The data classes a model may be sent, read from the pool when asked: a profile changed in Settings applies to the next
+ * read. The same answer for the conversation's own model and a dispatched worker's.
+ */
+export function nodeAllowedDataClasses(services: NodeServices, model: { provider: string; id: string }): readonly DataClass[] {
+  return allowedDataClassesForModel(readModelPool(services.runtime.db, services.runtime.identity.ownerPrincipalId), model);
+}
+
+/**
+ * The history search the conversation's model reads itself, held to the same data-class ceiling as the recap (#433)
+ * while the context planner is on; with it off, nothing is withheld here either.
+ */
+export function historySearchFor(
+  env: NodeJS.ProcessEnv,
+  search: SessionSearchDeps,
+  allowed: (() => readonly DataClass[] | undefined) | undefined,
+): SessionSearchDeps {
+  return contextPlannerFromEnv(env) === "off" || allowed === undefined ? search : { ...search, allowed };
+}
+
+/** One reader of project instructions per node, so a conversation's turns and its tasks share the same cache. */
+const instructionReaders = new WeakMap<NodeServices, ConditionalInstructions>();
+
+/**
+ * The node's conditional instructions (#433), read from the projects inside its approved roots; undefined with
+ * `CLARKCANT_CONDITIONAL_INSTRUCTIONS=off`.
+ */
+export function nodeConditionalInstructions(env: NodeJS.ProcessEnv, services: NodeServices): ConditionalInstructions | undefined {
+  if (conditionalInstructionsFromEnv(env) === "off") return undefined;
+  let reader = instructionReaders.get(services);
+  if (reader === undefined) {
+    reader = createConditionalInstructions({
+      roots: () => services.projects.roots(),
+      // Which project's file could not be used, by folder name only: an operator can find it, nothing of it is printed.
+      onInvalid: ({ project }) => {
+        process.stderr.write(`${JSON.stringify({ event: "instructions-invalid", project })}\n`);
+      },
+    });
+    instructionReaders.set(services, reader);
+  }
+  return reader;
+}
+
+/**
  * Which model a background worker runs.
  *
  * Deterministic filters first — the pool's own settings, the credentials this node has, provider health, context and
@@ -136,6 +187,7 @@ export function workerModelCandidates(
  */
 export async function routeNodeBackgroundModel(
   services: NodeServices,
+  work: { dataClass?: DataClass } = {},
 ): Promise<{ provider: string; id: string } | undefined> {
   const owner = services.runtime.identity.ownerPrincipalId;
   const pool = readModelPool(services.runtime.db, owner);
@@ -157,7 +209,18 @@ export async function routeNodeBackgroundModel(
     // installation whose catalogue is thin, so only a stated "no" leaves a profile out.
     supportsTools: (provider, modelId) => toolCallsIn(catalogue, provider, modelId),
     needsTools: true,
+    // What the work carries (#433): a profile that may not be sent it is not a candidate, whatever the selector thinks.
+    ...(work.dataClass === undefined ? {} : { dataClass: work.dataClass }),
   });
+
+  // Nothing in the pool may be sent this work's class, so it falls back to the configured model: said once on stderr, by
+  // class and count only, so the change of model is visible rather than silent.
+  const refusedForClass = filtered.rejected.filter((entry) => entry.reason.startsWith("không được nhận dữ liệu mức")).length;
+  if (filtered.eligible.length === 0 && refusedForClass > 0) {
+    process.stderr.write(
+      `${JSON.stringify({ event: "model-route", fallback: "data-class", dataClass: work.dataClass, rejected: refusedForClass })}\n`,
+    );
+  }
 
   const decider = services.projects.decider;
   const routed = await routeBackgroundModel({
@@ -169,8 +232,17 @@ export async function routeNodeBackgroundModel(
             await decideModelRoute(decider, { task: "background worker", role: "background", candidates }),
         }),
     ...(currentAlias === undefined ? {} : { foregroundAlias: currentAlias }),
-    // Checked after the decision as well as before it: a pool can change while a selector is thinking.
-    verify: (alias) => pool.profiles.some((profile) => profile.alias === alias && profile.enabled),
+    // Checked after the decision as well as before it: a pool can change while a selector is thinking, and the data
+    // class is re-checked with it, so a choice can never land on a profile that may not receive this work.
+    verify: (alias) => {
+      const latest = readModelPool(services.runtime.db, owner);
+      return latest.profiles.some(
+        (profile) =>
+          profile.alias === alias &&
+          profile.enabled &&
+          (work.dataClass === undefined || allowedDataClassesFor(profile).includes(work.dataClass)),
+      );
+    },
   });
   return routed === undefined ? undefined : { provider: routed.provider, id: routed.modelId };
 }
@@ -199,8 +271,9 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     env: deps.env,
     cwd: process.cwd(),
     model: chosenModel,
-    backgroundModel: async () => await routeNodeBackgroundModel(deps.services()),
-
+    backgroundModel: async (work) => await routeNodeBackgroundModel(deps.services(), work),
+    // What a model may be sent (#433): context above it is withheld before it reaches the prompt.
+    allowedDataClasses: (model) => nodeAllowedDataClasses(deps.services(), model),
     /*
      * The user's own instructions, read on every turn rather than captured here.
      *
@@ -259,6 +332,20 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
+    // Project guidance whose condition the conversation's work meets (#433): what its tool calls touched and what the
+    // message points at. Off with `CLARKCANT_CONDITIONAL_INSTRUCTIONS=off`.
+    ...(conditionalInstructionsFromEnv(deps.env) === "off"
+      ? {}
+      : {
+          instructions: turnInstructions({
+            instructions: { active: (state) => nodeConditionalInstructions(deps.env, deps.services())?.active(state) ?? [] },
+            referenced: (conversationId) =>
+              referencedWork(
+                deps.services().projects,
+                referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
+              ),
+          }),
+        }),
     /*
      * What the widgets the person changed now mean, read when a turn starts (#195).
      *
@@ -284,7 +371,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         origin: turn.origin,
       });
       const tools = createNodeTools({
-        search,
+        search: historySearchFor(deps.env, search, turn.allowed),
         projects,
         command,
         // Who asked for the turn, read per call: the command and terminal tools hand it to the execution policy.

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { dataClassSchema, type DataClass } from "./data-class.ts";
 import { instantSchema, sequenceSchema, type Instant } from "./primitives.ts";
 import { grantSchema } from "./grants.ts";
 import { NOTICE_BODY_MAX, NOTICE_TITLE_MAX, noticeCategorySchema, noticeSeveritySchema } from "./inbox.ts";
@@ -525,7 +526,7 @@ export const artifactOfferSchema = z.strictObject({
   digest: z.string().min(1).max(120),
   sizeBytes: z.int().nonnegative(),
   mimeType: z.string().min(1).max(200),
-  classification: z.enum(["public", "internal", "confidential", "secret"]),
+  classification: dataClassSchema,
   /** Node-qualified origin, so lineage survives the copy. */
   originNodeId: z.string().min(1).max(128),
   /** Resource the artifact was derived from, when applicable. */
@@ -540,7 +541,7 @@ export type TransferDecision =
 export function checkArtifactAcceptance(
   offer: ArtifactOffer,
   policy: {
-    allowedClassifications: readonly ("public" | "internal" | "confidential" | "secret")[];
+    allowedClassifications: readonly DataClass[];
     maxBytes: number;
     allowedMimePrefixes: readonly string[];
   },

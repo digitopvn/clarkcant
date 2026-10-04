@@ -10,8 +10,9 @@ import { redactSecrets } from "@clarkcant/contracts";
  * the only one that knows the file's format.
  *
  * 1. **Redaction.** A transcript can contain whatever a tool printed, including a credential. The
- *    pass rewrites the file in place, and refuses to rewrite at all if any line stops parsing: a
- *    redactor that corrupts a transcript is worse than one that declines to run.
+ *    pass rewrites the file in place. It refuses to rewrite at all if a line does not parse to begin with (a writer
+ *    mid-line, or a corrupt file), and never writes a line that does not parse: a redactor that corrupts a transcript
+ *    is worse than one that declines to run.
  * 2. **Reading from an offset.** The history index ingests the file in bounded batches and remembers
  *    a byte offset, so a long session is not re-read from the start on every turn.
  */
@@ -29,9 +30,9 @@ export interface RedactionResult {
 /**
  * Replace secret-shaped runs in a transcript, line by line.
  *
- * The parse check runs before any write. Each line must parse both before and after the replacement:
- * a token can appear inside a JSON *string* where removing its quotes would change the document's
- * meaning, and a line that no longer parses is a line the next reader would throw on.
+ * The parse check runs before any write: every line must parse before anything is replaced. Each line is then redacted
+ * value by value — every string in the document on its own — so a shape can never run across a JSON string's boundary,
+ * break the line or swallow a field, and a line that needs no redaction is written back exactly as it was.
  */
 export function redactSessionFile(path: string): RedactionResult {
   let raw: string;
@@ -58,23 +59,16 @@ export function redactSessionFile(path: string): RedactionResult {
     } catch (cause) {
       return { ok: false, path, lines: examined, redacted: 0, reason: `line ${examined} is not JSON: ${describe(cause)}` };
     }
-    const cleaned = redactSecrets(line);
-    if (cleaned === line) {
+    /*
+     * Value by value, never over the line's text: a shape matched across a JSON string's boundary could swallow the
+     * keys between two values and still leave text that parses, losing a field without anyone noticing. Every string
+     * is redacted on its own, so the line cannot break and no field can go.
+     */
+    const cleaned = JSON.stringify(redactStrings(parsed));
+    if (cleaned === JSON.stringify(parsed)) {
       rewritten.push(line);
       continue;
     }
-    try {
-      JSON.parse(cleaned);
-    } catch (cause) {
-      return {
-        ok: false,
-        path,
-        lines: examined,
-        redacted: 0,
-        reason: `redacting line ${examined} would have produced invalid JSON: ${describe(cause)}`,
-      };
-    }
-    void parsed;
     rewritten.push(cleaned);
     redacted += 1;
   }
@@ -158,6 +152,16 @@ export function transcriptSize(path: string): number {
   } catch {
     return 0;
   }
+}
+
+/** Every string value in a parsed JSON document, redacted; keys and structure are kept. */
+function redactStrings(value: unknown): unknown {
+  if (typeof value === "string") return redactSecrets(value);
+  if (Array.isArray(value)) return value.map(redactStrings);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redactStrings(entry)]));
+  }
+  return value;
 }
 
 function describe(cause: unknown): string {
