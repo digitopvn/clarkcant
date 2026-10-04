@@ -412,6 +412,11 @@ async function ask(rest: string[], flags: Map<string, string | true>, context: A
     }
   }
   if (wrote) io.stdout("\n");
+  // Joined to the reply already being written: this message has no answer of its own, and printing nothing would read
+  // as an empty answer to a script.
+  if (done?.resolution === "steered") {
+    io.stderr("clarkcant: this message joined the reply Clark is already writing; read the conversation for the answer\n");
+  }
   return failed ? 1 : 0;
 }
 
