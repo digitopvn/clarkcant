@@ -12,6 +12,7 @@ import {
 import {
   COMMAND_LIMITS,
   commandDigest,
+  durationWords,
   runApprovedCommand,
   listRunningCommands,
   runCommand,
@@ -369,5 +370,12 @@ describe("the output of a command that was handed a secret", () => {
     const printed = { ...ran, stdout: "on main, 2 ahead" };
     expect(withoutInjectedValues(printed, undefined)).toBe(printed);
     expect(withoutInjectedValues(printed, { FLAG: "on" }).stdout).toBe("on main, 2 ahead");
+  });
+});
+describe("how long a command took", () => {
+  it("says milliseconds under a second and seconds after, in the reader's notation", () => {
+    expect(durationWords(37)).toBe("37 ms");
+    expect(durationWords(1053)).toBe("1,1 giây");
+    expect(durationWords(12_000)).toBe("12 giây");
   });
 });

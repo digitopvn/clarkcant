@@ -379,6 +379,14 @@ describe("the cards run_command builds", () => {
     expect(activity.args).toMatchObject({ command: "pnpm build", cwd: work });
   });
 
+  it("names a run by what it was for and leaves the folder to the path beside it", async () => {
+    const answer = (await runCommandTool("autonomous").execute({ command: "pnpm build", why: "Dựng lại ứng dụng" })) as ToolAnswer;
+    const [activity] = (answer.hostBlocks ?? []).map(expectValidCard);
+    if (activity?.type !== "tool-activity") throw new Error("expected a tool-activity block");
+    expect(activity.label).toBe("Dựng lại ứng dụng");
+    expect(activity.path).toBe(work);
+  });
+
   it("shows a folder too long for the card by its end, and keeps it whole in the record", async () => {
     const preflight = preflightCommand({ command: "pnpm build", cwd: work, resources: ownedResources([work]) });
     if (!preflight.ok || preflight.envelope.kind !== "command") throw new Error("the preflight refused a plain command");
