@@ -1146,6 +1146,12 @@ export async function createModelTurn(options: {
     ) {
       return existing;
     }
+    /*
+     * A change of model waits for a turn boundary. A message that arrives while a turn is running joins that turn on
+     * the session it is running on; swapping and disposing the session underneath it would cut the running reply off.
+     * The model this conversation runs is not recorded as changed, so the next turn that starts makes the handoff.
+     */
+    if (existing?.inFlight === true) return existing;
 
     const views = readViews();
     const viewById = new Map(views.map((entry) => [entry.id, entry]));
@@ -1155,7 +1161,10 @@ export async function createModelTurn(options: {
     // creation — the SDK fixes its custom tool set then, and a tool added afterwards never reaches
     // the registry the allowlist consults. The tool writes into this object, so it has to exist
     // first; the session id is filled in once there is one.
-    const turn: Turn = {
+    //
+    // A handoff keeps the conversation's turn rather than building another: the successor's tools write into the turn
+    // the person is watching, so its tool activity, its views and the tools it used land where they are read (#448).
+    const turn: Turn = existing ?? {
       sessionId: "",
       pending: [],
       reasoning: [],
@@ -1208,7 +1217,8 @@ export async function createModelTurn(options: {
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
       ...readExtraTools(turn),
     ].map((tool) => withActivity(turn, tool, afterCall));
-    turn.registeredTools = customTools.map((tool) => tool.name);
+    // Recorded on the turn once a session holds these tools: a handoff that fails leaves the previous generation's.
+    const registeredTools = customTools.map((tool) => tool.name);
 
     const chosen = options.model?.();
 
@@ -1269,22 +1279,36 @@ export async function createModelTurn(options: {
      * Nothing is mutated in place: the adapter creates a successor and keeps the previous session subscribed until
      * the swap is finished, which is what makes a change mid-conversation safe to observe.
      */
-    if (existing !== undefined) {
-      const successor = await adapter.handoff(existing.sessionId, briefFor(preferred));
-      existing.unsubscribe();
-      existing.sessionId = successor.successor.sessionId;
-      // A successor starts with every tool its brief names, so a disclosure plan starts over with it.
-      existing.registeredTools = turn.registeredTools;
-      existing.activeTools = undefined;
-      // A successor session has not heard the code: a new one is drawn and stated on its first turn.
-      existing.instructionNonce = randomBytes(8).toString("hex");
-      existing.nonceStated = false;
-      existing.unsubscribe = listen(existing, existing.sessionId);
-      generationModels.set(conversationId, preferredModel ?? "");
-      return existing;
-    }
+    /**
+     * Moves this conversation's turn onto a new session — a rebuild's or a handoff's successor — and lets the previous
+     * one go.
+     *
+     * Everything the old session had been told goes with it: the new one hears the recap, the pinned and active
+     * instructions, every tool and the screen as if for the first time. What the conversation's work touched is kept,
+     * because it describes the work rather than the session.
+     */
+    const adopt = (sessionId: string): void => {
+      const previous = turn.sessionId;
+      turn.unsubscribe();
+      turn.sessionId = sessionId;
+      turn.unsubscribe = listen(turn, sessionId);
+      turn.fresh = true;
+      turn.stated.clear();
+      // A new session has not heard the code: a new one is drawn and stated on its first turn.
+      turn.instructionNonce = randomBytes(8).toString("hex");
+      turn.nonceStated = false;
+      turn.uiSeen.clear();
+      // A new session starts with every tool its brief names, so a disclosure plan starts over with it.
+      turn.activeTools = undefined;
+      turn.sessionCreatedAtMs = Date.now();
+      turn.answered = 0;
+      turn.recentTexts = [];
+      turn.lastBrief = "";
+      void adapter.dispose(previous).catch(() => undefined);
+    };
 
-    turn.rebuild = async (): Promise<boolean> => {
+    // Taken on by a handoff as well, so a later rebuild creates the session with this generation's tools.
+    const rebuild = async (): Promise<boolean> => {
       const handle = await adapter.createWorkerSession(briefFor(options.model?.()));
       // A Stop while the fresh session was being created ended this turn: the old session is the stop's to dispose,
       // and the fresh one nobody will prompt goes now. The same when the node shut down meanwhile (its turn aborted).
@@ -1292,26 +1316,21 @@ export async function createModelTurn(options: {
         void adapter.dispose(handle.sessionId).catch(() => undefined);
         return false;
       }
-      const previous = turn.sessionId;
-      turn.unsubscribe();
-      turn.sessionId = handle.sessionId;
-      turn.unsubscribe = listen(turn, handle.sessionId);
-      // Everything the old session had been told goes with it: the new one hears the recap, the pinned and active
-      // instructions, every tool and the screen as if for the first time.
-      turn.fresh = true;
-      turn.stated.clear();
-      turn.instructionNonce = randomBytes(8).toString("hex");
-      turn.nonceStated = false;
-      turn.uiSeen.clear();
-      turn.activeTools = undefined;
-      turn.sessionCreatedAtMs = Date.now();
-      turn.answered = 0;
-      turn.recentTexts = [];
-      turn.lastBrief = "";
-      void adapter.dispose(previous).catch(() => undefined);
+      adopt(handle.sessionId);
       return true;
     };
 
+    if (existing !== undefined) {
+      const { successor } = await adapter.handoff(existing.sessionId, briefFor(preferred));
+      adopt(successor.sessionId);
+      turn.registeredTools = registeredTools;
+      turn.rebuild = rebuild;
+      generationModels.set(conversationId, preferredModel ?? "");
+      return turn;
+    }
+
+    turn.registeredTools = registeredTools;
+    turn.rebuild = rebuild;
     evictIdleTurns(Date.now());
     const handle = await adapter.createWorkerSession(briefFor(chosen));
 
