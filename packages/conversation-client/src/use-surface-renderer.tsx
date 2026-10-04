@@ -632,7 +632,8 @@ export function useSurfaceRenderer({
             };
 
       return (
-        <div data-widget-instance={instance.instanceId} data-widget-definition={definitionId}>
+        // The revision says which of the node's answers this widget is drawn from.
+        <div data-widget-instance={instance.instanceId} data-widget-definition={definitionId} data-widget-revision={instance.revision}>
           {Renderer === undefined ? (
             /*
              * No catalog renderer for this definition — which is exactly the case for a widget

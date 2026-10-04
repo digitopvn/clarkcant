@@ -30,7 +30,7 @@ export function taskDispatchReports(
         at: new Date().toISOString() as Instant,
       });
     },
-    onSettled: ({ taskId, conversationId, outcome, message, outputs, blocks }: TaskSettledReport) => {
+    onSettled: ({ taskId, conversationId, outcome, message, ran, outputs, blocks }: TaskSettledReport) => {
       const label =
         outcome === "succeeded"
           ? "Xong"
@@ -63,7 +63,7 @@ export function taskDispatchReports(
       const { runtime, conductor } = services;
       // The files its worker wrote go back with the answer, read now, before the task's worktree is taken away.
       const files = outputs === undefined || outputs.length === 0 ? {} : { files: { dataDir: runtime.dataDir, outputs } };
-      if (reportDelegatedOutcome({ db: runtime.db, identity: runtime.identity, now: () => at, newId: conductor.newId }, { taskId, outcome, message, ...files })) {
+      if (reportDelegatedOutcome({ db: runtime.db, identity: runtime.identity, now: () => at, newId: conductor.newId }, { taskId, outcome, message, ...(ran === undefined ? {} : { ran }), ...files })) {
         services.peerDelivery?.kick();
       }
     },

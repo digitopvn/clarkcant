@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DirectoryEntry } from "@clarkcant/contracts";
 
-import { directoryIndexPath, readDirectoryIndex, searchDirectory } from "../src/directory-index.ts";
+import { directoryIndexPath, readDirectoryIndex, searchDirectory, unreadFieldsOf } from "../src/directory-index.ts";
 
 function entry(overrides: Partial<DirectoryEntry> & { packageId: string }): DirectoryEntry {
   return {
@@ -106,6 +106,39 @@ describe("readDirectoryIndex", () => {
     expect(state.kind).toBe("unreadable");
     expect(state.kind === "unreadable" ? state.reason : "").toContain("does not match the directory schema");
     expect(state.kind === "unreadable" ? state.directory : "").toBe(path);
+  });
+
+  it("reads every entry when one carries a field a newer directory added, and remembers which", () => {
+    // An older node reading an index a newer directory wrote: it still serves every package.
+    const newer = { ...entry({ packageId: "com.acme.newer" }), futureBinding: { mode: "x" }, preview: { posterUrl: "p" } };
+    const path = writeIndex(JSON.stringify([entry({ packageId: "com.acme.ok" }), newer]));
+    const state = readDirectoryIndex(path);
+    expect(state.kind).toBe("configured");
+    if (state.kind !== "configured") return;
+    expect(state.entries.map((listed) => listed.packageId)).toEqual(["com.acme.ok", "com.acme.newer"]);
+    // Dropped from the entry, never passed on.
+    expect(Object.keys(state.entries[1] ?? {})).not.toContain("futureBinding");
+    expect(state.entries[1]?.preview).toEqual({});
+    // And said: the listing names what this node left out; the other listing was read in full.
+    const [ok, readNewer] = state.entries;
+    expect(ok === undefined ? "missing" : unreadFieldsOf(state, ok)).toBeUndefined();
+    expect(readNewer === undefined ? undefined : unreadFieldsOf(state, readNewer)).toEqual({
+      count: 2,
+      // In the order the entry lists them: `preview` keeps its place, the new field comes last.
+      names: ["preview.posterUrl", "futureBinding"],
+    });
+    expect(searchDirectory({ entries: state.entries, query: "newer" }).map((listed) => listed.packageId)).toEqual(["com.acme.newer"]);
+  });
+
+  it("still refuses the file when a field it knows has a bad value, next to an unknown one", () => {
+    // Tolerance is for fields this node has never heard of, not for the ones it checks.
+    const tooLong = { ...entry({ packageId: "com.acme.long" }), version: `1.0.0-${"a".repeat(80)}`, futureField: 1 };
+    const badReach = { ...entry({ packageId: "com.acme.reach" }), declaredReach: { origins: [], extra: true } };
+    const badAppearance = { ...entry({ packageId: "com.acme.look" }), widgetAppearance: [{ id: "main", mode: "fixed", tint: "red" }] };
+    for (const broken of [tooLong, badReach, badAppearance]) {
+      const state = readDirectoryIndex(writeIndex(JSON.stringify([entry({ packageId: "com.acme.ok" }), broken])));
+      expect(state.kind, broken.packageId).toBe("unreadable");
+    }
   });
 
   it("names an unreadable file instead of throwing", () => {

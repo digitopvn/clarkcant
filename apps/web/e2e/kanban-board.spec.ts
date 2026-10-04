@@ -121,6 +121,58 @@ test("the conversation board supports keyboard, mouse and touch moves with bound
   expect(motion.split(",").every((part) => Number.parseFloat(part) === 0)).toBe(true);
 });
 
+test("a keyboard move started while the previous move's save is still being answered keeps its place", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openApp(page);
+  await say(page, "đặt bảng kanban");
+  const board = page.locator("[data-widget-definition='canvas.board@1']").last().locator("[data-board-root='true']");
+  await expect(board).toBeVisible({ timeout: 30_000 });
+  const card = (id: string): Locator => board.locator(`[data-board-card='${id}']`);
+  const instanceId = await instanceOf(board);
+  const conversation = await conversationId(page);
+
+  // The node saves the first move at once, but its answer reaches the page only after the person has picked the card up
+  // again and moved it: the page then adopts the node's view in the middle of the second move.
+  let release: () => void = () => undefined;
+  const answered = new Promise<void>((resolve) => { release = resolve; });
+  let held = 0;
+  await page.route(`**/conversations/*/widgets/${instanceId}/actions`, async (route) => {
+    if (held > 0) { await route.continue(); return; }
+    held += 1;
+    const response = await route.fetch();
+    await answered;
+    await route.fulfill({ response });
+  });
+
+  // Which of the node's answers the board is drawn from.
+  const widget = page.locator(`[data-widget-instance='${instanceId}']`);
+  const revision = async (): Promise<number> => Number(await widget.getAttribute("data-widget-revision"));
+  const before = await revision();
+
+  await card("schema").focus();
+  await page.keyboard.press("Space");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Space");
+  await expect.poll(() => heldState(page, conversation, instanceId), { timeout: 10_000 }).toMatchObject({ order: { todo: [], doing: ["schema", "review"] } });
+  await card("schema").focus();
+  await page.keyboard.press("Space");
+  await page.keyboard.press("ArrowDown");
+  await expect(card("schema").locator("..")).toHaveAttribute("data-board-position", "1");
+  // The answer to the first move is still held: the page has not drawn it yet, so it arrives in the middle of this move.
+  expect(held, "the first move's answer is the one held back").toBe(1);
+  expect(await revision(), "the board has not adopted the first move's answer before the second move").toBe(before);
+  release();
+  await expect.poll(revision, { timeout: 10_000 }).toBeGreaterThan(before);
+  // Adopting that answer leaves the card where the person moved it, still picked up.
+  await expect(card("schema").locator("..")).toHaveAttribute("data-board-position", "1");
+  await expect(card("schema")).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect.poll(() => heldState(page, conversation, instanceId), { timeout: 10_000 }).toMatchObject({ order: { todo: [], doing: ["review", "schema"] } });
+  await expect(card("schema").locator("..")).toHaveAttribute("data-board-position", "1");
+});
+
 test("a bound board confirms a capability move and rolls back one refused by policy", async ({ page }) => {
   test.setTimeout(240_000);
   await boardServiceReady(page);

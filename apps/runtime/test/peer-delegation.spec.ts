@@ -421,6 +421,42 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
     expect(said(a, onA).some((text) => text.startsWith("Đã hủy (task"))).toBe(true);
   });
 
+  it("confirms the sender's stop when the other node refused the task before starting a worker for it", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop", { hang: true });
+    await pair(a, b);
+    const onA = await conversation(a, "Ghi chú");
+    const onB = await conversation(b, "Máy bàn");
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+    // The first task's worker never answers, so it holds the capability on B for as long as the test runs.
+    await signal(a, "note-1");
+    await waitUntil(() => tasksOn(b)[0]?.state === "running", "the first task to be running on B");
+
+    // The second hand-over is held on A until A's owner has asked to stop it, so the stop is pending when B answers.
+    const delivery = a.services.peerDelivery;
+    if (delivery === undefined) throw new Error("A has no delivery pass");
+    a.services.peerDelivery = { ...delivery, kick: () => undefined };
+    await signal(a, "note-2");
+    await waitUntil(() => tasksOn(a).length === 2 && pendingOutbox(a.services.runtime.db).length > 0, "the second hand-over to wait on A");
+    const second = String(tasksOn(a)[1]?.taskId);
+    const stopped = await call(a, `/tasks/${second}/cancel`, { token: a.token });
+    expect(stopped.body).toMatchObject({ confirmed: false });
+    a.services.peerDelivery = delivery;
+    delivery.kick();
+
+    // B turns it down as busy before any worker exists, and says it did not run: the stop is confirmed, not unknown.
+    await waitUntil(() => getTask(a.services.runtime.db, second)?.state === "cancelled", "A's second task to be stopped");
+    const told = said(a, onA).find((text) => text.startsWith(`Đã hủy (task ${second})`));
+    expect(told).toContain(`${identityOf(b).nodeId} không chạy việc này`);
+    expect(told).toContain("is busy on this node");
+    expect(said(a, onA).some((text) => text.startsWith(`Chưa rõ kết quả (task ${second})`))).toBe(false);
+  });
+
   it("stops a worker running here when this node's owner stops the task", async () => {
     const b = await startClark("laptop", { stoppable: true });
     const onB = await conversation(b, "Việc ở đây");

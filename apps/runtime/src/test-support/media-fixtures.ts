@@ -79,11 +79,27 @@ export interface LocalTlsIdentity {
   notAfter: Date;
 }
 
-/** A self-signed P-256 certificate for `127.0.0.1` and `localhost`, valid from an hour ago for `days` days. */
-export function selfSignedCertificate(days = 7, now = new Date()): LocalTlsIdentity {
+/**
+ * The content octets of a minimal, positive DER INTEGER holding `bytes` read as an unsigned big-endian number.
+ *
+ * DER forbids a leading zero octet unless the next octet has its high bit set, and X.509 serials must be positive, so
+ * leading zeros are dropped, a single zero is put back only before a high bit, and a value of zero becomes one.
+ */
+export function positiveDerInteger(bytes: Uint8Array): Buffer {
+  let start = 0;
+  while (start < bytes.length && bytes[start] === 0) start += 1;
+  const magnitude = start === bytes.length ? Buffer.from([1]) : Buffer.from(bytes.subarray(start));
+  return (magnitude[0] ?? 0) & 0x80 ? Buffer.concat([Buffer.from([0]), magnitude]) : magnitude;
+}
+
+/**
+ * A self-signed P-256 certificate for `127.0.0.1` and `localhost`, valid from an hour ago for `days` days.
+ *
+ * `serialBytes` is random by default; a caller passes its own only to pin the serial.
+ */
+export function selfSignedCertificate(days = 7, now = new Date(), serialBytes: Uint8Array = randomBytes(16)): LocalTlsIdentity {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  const serial = randomBytes(16);
-  serial[0] = (serial[0] ?? 0) & 0x7f;
+  const serial = positiveDerInteger(serialBytes);
   const name = sequence(tlv(0x31, sequence(oid(COMMON_NAME), tlv(0x0c, Buffer.from("ClarkCant local media fixture", "utf8")))));
   const notBefore = new Date(now.getTime() - 3_600_000);
   const notAfter = new Date(now.getTime() + days * 86_400_000);

@@ -8,6 +8,9 @@ import {
   summarizeSecret,
 } from "@clarkcant/storage";
 
+import { MAX_SECRET_CONSUMERS, distinctConsumers } from "./application/credential-vault.ts";
+import { fitHead } from "./card-text.ts";
+
 /**
  * Asking the host for a secret, without ever holding one.
  *
@@ -35,6 +38,12 @@ export interface RequestSecretDeps {
 }
 
 const KINDS: SecretKind[] = ["api-key", "token", "password", "webhook-secret", "other"];
+
+/** `credentialCardBlockSchema`'s bounds: a field's name and label, the consumer list, and the purpose and description. */
+const SECRET_NAME_MAX = 120;
+const FIELD_LABEL_MAX = 200;
+const CONSUMER_MAX = 200;
+const CARD_PROSE_MAX = 1000;
 
 export function createRequestSecretTool(deps: RequestSecretDeps): ToolDefinition {
   return {
@@ -100,7 +109,31 @@ export function createRequestSecretTool(deps: RequestSecretDeps): ToolDefinition
         };
       }
 
+      /*
+       * The form sends the name and the consumers back, and the node stores the value under that name for exactly those
+       * consumers, so neither may be shortened to fit the card: one too long is refused here, with the bound, before a
+       * form exists. The consumers are listed once each, which is how the node records them.
+       */
+      if (name.length > SECRET_NAME_MAX) {
+        return { text: `Tên secret dài ${name.length} ký tự, quá ${SECRET_NAME_MAX} ký tự. Dùng một tên ngắn hơn, ví dụ github_token.` };
+      }
+      const consumers = distinctConsumers(consumer);
+      if (consumers.length > MAX_SECRET_CONSUMERS) {
+        return {
+          text: `Một secret ghi được tối đa ${MAX_SECRET_CONSUMERS} consumer; lần này có ${consumers.length}. Bớt consumer rồi gọi lại.`,
+        };
+      }
+      const consumerList = consumers.join(",");
+      if (consumerList.length > CONSUMER_MAX) {
+        return {
+          text: `Danh sách consumer dài ${consumerList.length} ký tự, quá ${CONSUMER_MAX} ký tự thẻ chứa được. Bớt consumer rồi gọi lại.`,
+        };
+      }
+
       const at = deps.now();
+      // The label, the purpose and the description are only read, so a long one is shortened to what the card holds. The
+      // description is also stored with the secret, and the node keeps the same thousand characters of it.
+      const shownDescription = fitHead(description, CARD_PROSE_MAX);
       return {
         text:
           `Chưa có secret “${name}” trên node này. Form nhập đã được mở cho người dùng, và giá trị họ nhập sẽ không ` +
@@ -109,11 +142,11 @@ export function createRequestSecretTool(deps: RequestSecretDeps): ToolDefinition
           type: "credential-card",
           owner: "host",
           requestId: deps.newId("cred"),
-          purpose: description === "" ? `Node này cần ${label}.` : description,
+          purpose: fitHead(description === "" ? `Node này cần ${label}.` : description, CARD_PROSE_MAX),
           destination: "vault-node",
-          fields: [{ name, label, masked: true, hostOwned: true }],
-          ...(description === "" ? {} : { description }),
-          ...(consumer === "" ? {} : { consumer }),
+          fields: [{ name, label: fitHead(label, FIELD_LABEL_MAX), masked: true, hostOwned: true }],
+          ...(shownDescription === "" ? {} : { description: shownDescription }),
+          ...(consumerList === "" ? {} : { consumer: consumerList }),
           secretKind: kind,
           scope: deps.nodeId === undefined ? "node" : `node:${deps.nodeId}`,
           expiresAt: new Date(Date.parse(at) + SECRET_REQUEST_TTL_MS).toISOString() as Instant,
