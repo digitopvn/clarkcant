@@ -19,7 +19,7 @@ import type {
 /**
  * One scripted turn: either the model's own words, or a tool call the model decides to make before
  * replying. A worker session's tools arrive with `WorkerBrief.customTools` (or later through
- * `registerTool`) and are made callable by `setActiveTools`, so
+ * `registerTool`) active, as on the real adapter, and `setActiveTools` narrows the created ones, so
  * this is the seam by which a scripted prompt can exercise a tool the worker really registered:
  * `run()` calls it through the same `callToolResult` path a live agent loop would use, which means the
  * call is observed by every subscriber exactly like a real tool call, including the `tool-start`/
@@ -89,6 +89,8 @@ export class FakePiAdapter implements PiAdapter {
       brief: WorkerBrief;
       tools: Map<string, ToolDefinition>;
       activeTools: string[];
+      /** Tools added by `registerTool` after creation, which stay active whatever `setActiveTools` is given. */
+      registered: Set<string>;
       listeners: Set<(event: WorkerEvent) => void>;
       script: ScriptedTurn[];
       disposed: boolean;
@@ -199,10 +201,11 @@ export class FakePiAdapter implements PiAdapter {
     this.#sessions.set(sessionId, {
       handle,
       brief,
-      // The tools a session is created with are registered with it, as the real adapter's are; a script can call one
-      // once it is also made active, and not before.
+      // The tools a session is created with are registered with it and active, as the real adapter's are; a script can
+      // call one until `setActiveTools` narrows it away.
       tools: new Map((brief.customTools ?? []).map((tool) => [tool.name, tool])),
-      activeTools: [],
+      activeTools: [...new Set((brief.customTools ?? []).map((tool) => tool.name))],
+      registered: new Set(),
       listeners: new Set(),
       script: this.#options.script ?? [],
       disposed: false,
@@ -215,7 +218,16 @@ export class FakePiAdapter implements PiAdapter {
 
   async setActiveTools(sessionId: string, toolNames: readonly string[]): Promise<void> {
     const session = this.#require(sessionId);
-    session.activeTools = [...toolNames];
+    // Only what is registered can become active, as on the real adapter: a test that activates a name nobody
+    // registered would otherwise pass here and fail against the SDK.
+    const wanted = [...new Set(toolNames)].filter((name) => session.tools.has(name) && !session.registered.has(name));
+    // A tool registered after creation stays active whatever was asked, as on the real adapter.
+    session.activeTools = [...wanted, ...session.registered];
+  }
+
+  /** Test-only: the tools a session currently offers, in the order they were activated. */
+  activeToolNames(sessionId: string): readonly string[] {
+    return [...this.#require(sessionId).activeTools];
   }
 
   async registerTool(sessionId: string, tool: ToolDefinition): Promise<void> {
@@ -226,6 +238,9 @@ export class FakePiAdapter implements PiAdapter {
       throw new Error(`tool ${tool.name} is already registered on ${sessionId}`);
     }
     session.tools.set(tool.name, tool);
+    // Active as soon as it is registered, as the real adapter appends it to the live tool list.
+    session.registered.add(tool.name);
+    session.activeTools = [...session.activeTools.filter((name) => name !== tool.name), tool.name];
   }
 
   async refreshResources(

@@ -59,6 +59,10 @@ export interface HistoryHit {
   /** BM25 score. Lower is better, which is SQLite's convention and worth stating. */
   score: number;
   snippet: string;
+  /** The indexed text whole, so a caller that needs it does not read the entry back once per hit. */
+  text: string;
+  /** The message's role, only when the query was restricted to `messageRoles`. */
+  role?: string;
   conversationId: string | undefined;
   taskId: string | undefined;
   createdAt: string;
@@ -73,6 +77,11 @@ export interface HistoryQuery {
   conversationId?: string;
   taskId?: string;
   source?: HistorySource;
+  /**
+   * Only messages whose stored role is one of these. Part of the SQL, against the messages table, so a message of
+   * another role is never read; a hit that is not a stored message is excluded too.
+   */
+  messageRoles?: readonly string[];
   limit?: number;
   offset?: number;
 }
@@ -127,11 +136,19 @@ export function searchHistory(db: Database, query: HistoryQuery): HistoryHit[] {
     clauses.push("source = ?");
     params.push(query.source);
   }
+  const roles = query.messageRoles;
+  if (roles !== undefined) {
+    const scope = query.conversationId === undefined ? "" : "conversation_id = ? AND ";
+    clauses.push(`ref IN (SELECT message_id FROM messages WHERE ${scope}role IN (${roles.map(() => "?").join(", ") || "NULL"}))`);
+    if (query.conversationId !== undefined) params.push(query.conversationId);
+    params.push(...roles);
+  }
 
   const rows = allRows<{
     text: string;
     source: string;
     ref: string;
+    role: string | null;
     score: number;
     snippet: string;
     conversation_id: string | null;
@@ -139,7 +156,8 @@ export function searchHistory(db: Database, query: HistoryQuery): HistoryHit[] {
     created_at: string;
   }>(
     db,
-    `SELECT text, source, ref, bm25(history_fts) AS score,
+    `SELECT text, source, ref, ${roles === undefined ? "NULL" : "(SELECT role FROM messages WHERE message_id = history_fts.ref)"} AS role,
+            bm25(history_fts) AS score,
             snippet(history_fts, 0, '[', ']', '…', 12) AS snippet,
             conversation_id, task_id, created_at
        FROM history_fts
@@ -156,6 +174,8 @@ export function searchHistory(db: Database, query: HistoryQuery): HistoryHit[] {
     ref: row.ref,
     score: Number(row.score),
     snippet: row.snippet,
+    text: row.text,
+    ...(row.role === null ? {} : { role: row.role }),
     conversationId: row.conversation_id ?? undefined,
     taskId: row.task_id ?? undefined,
     createdAt: row.created_at,
@@ -220,6 +240,7 @@ export function recentHistory(
     // No ranking was applied, and reporting a score here would imply one was.
     score: 0,
     snippet: row.text.slice(0, 240),
+    text: row.text,
     conversationId: row.conversation_id ?? undefined,
     taskId: row.task_id ?? undefined,
     createdAt: row.created_at,

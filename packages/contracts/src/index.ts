@@ -78,3 +78,4 @@ export * from "./memory.ts";
 export * from "./implementation-status.ts";
 export * from "./signals.ts";
 export * from "./delegation.ts";
+export * from "./read-context.ts";

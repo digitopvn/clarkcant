@@ -61,6 +61,7 @@ import {
   taskProfileDir,
 } from "./task-browser.ts";
 import { createWorkerCommandBroker, parseWorkerCommandRequest } from "./worker-command-broker.ts";
+import { type ContextBundles, type ContextReader, reportContextBundle } from "./context-bundle.ts";
 import { runWorkerProcess, type WorkerProcessResult } from "./worker-process.ts";
 import type { WorkView } from "./work-supervisor.ts";
 
@@ -197,6 +198,12 @@ export interface TaskDispatcherDeps {
    * always supplies it, so the gate is live for every task this node actually dispatches to a user.
    */
   ownerPrincipalId?: () => string;
+  /**
+   * Shared retrieval for the task's worker: the remembered notes and earlier messages of the task's conversation that
+   * match its goal, read by the worker on demand. Absent, or answering undefined, means the worker is given none — the
+   * context planner is off, or this caller predates it. Read for `ownerPrincipalId`, and never without it.
+   */
+  contextBundles?: () => ContextBundles | undefined;
   /**
    * Reported once a run settles, so the conversation can say what happened without the caller asking.
    *
@@ -469,6 +476,28 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
   const stopEffectsOf = (taskId: string): void => {
     stopCommandsForTask(taskId);
     browsers.get(taskId)?.stop();
+  };
+  /**
+   * The retrieved context a task's worker may read, or undefined when there is none to give it.
+   *
+   * Only work a person asked for in the conversation gets it — the same line `planRoots` draws for folders. A task a
+   * peer delegated, an automation started or a signal raised carries a goal someone else wrote, and the owner's notes and
+   * conversation are not part of what that grant covers.
+   */
+  const taskContext = async (task: NonNullable<ReturnType<typeof getTask>>): Promise<ContextReader | undefined> => {
+    if (task.origin !== undefined && task.origin.kind !== "interactive") return undefined;
+    const { conversationId, goal } = task;
+    try {
+      const bundles = deps.contextBundles?.();
+      const principalId = deps.ownerPrincipalId?.();
+      if (bundles === undefined || principalId === undefined) return undefined;
+      const bundle = await bundles.bundleFor({ principalId, conversationId, query: goal });
+      reportContextBundle({ conversationId, purpose: "task", bundle, stats: bundles.stats() });
+      const reader = bundles.reader(bundle, principalId);
+      return reader.items > 0 ? reader : undefined;
+    } catch {
+      return undefined;
+    }
   };
   let closing = false;
   /** Tasks whose worker is running, by task id, with when it started — what `work()` lists. */
@@ -869,7 +898,15 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       deps.timeoutMs ??
       (launch !== undefined && maxWallClockMs !== undefined ? maxWallClockMs + WORKER_PROCESS_GRACE_MS : undefined);
 
+    /*
+     * What the conversation already holds about this goal, retrieved once and shared with any other run started from the
+     * same request at the same point in the conversation. The worker is told only how many items there are and reads
+     * them on demand; each read goes back through the principal-scoped readers with the digest checked. A retrieval that
+     * fails leaves the worker without it rather than failing the task. Inside the run's `try`, so whatever happens here
+     * the lease, the browser, the worktrees and the timer are still released below.
+     */
     try {
+      const context = await taskContext(task);
       const result = await runWorker({
         nodeId: job.executionNodeId,
         brief: {
@@ -884,6 +921,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           allowedCapabilityRefs: [...workerCapabilitiesFor(job.capabilityRef)],
           ...(launch === undefined ? {} : { model: launch.model }),
           ...(maxTokens === undefined ? {} : { maxTokens }),
+          ...(context === undefined ? {} : { contextItems: context.items }),
         },
         ...(launch === undefined
           ? {}
@@ -915,12 +953,14 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
                 return browser(request);
               },
             }),
+        ...(context === undefined ? {} : { onContext: async (raw: unknown) => context.answer(raw) }),
         onChild: (child) => {
           liveChildren.set(runId, { taskId: job.taskId, child });
           // Written once the worker exists, so the trail never says a worker started that never did.
           if (launch !== undefined) recordModelRun(job, runId, launch);
-          // A stop that arrived while the run was being prepared ends the worker as soon as it exists.
-          if (stopping.has(job.taskId)) {
+          // A stop, or a wall-clock budget, that ran out while the run was being prepared ends the worker as soon as it
+          // exists.
+          if (stopping.has(job.taskId) || wallClockExceeded) {
             void stopTree(child);
             stopEffectsOf(job.taskId);
           }

@@ -5,6 +5,8 @@ import { type CoordinationDeps, directoryIndexPath, readDirectoryIndex, readExec
 import { appendAuditEvent, readCredential } from "@clarkcant/storage";
 
 import { DEFAULT_NARROWING } from "../autonomy-settings.ts";
+import { contextBundlesFor } from "../context-bundle.ts";
+import { contextPlannerFromEnv } from "../context-planner.ts";
 import { machineRoots } from "../fs-search.ts";
 import { interactionDepsFor } from "../gateway.ts";
 import { guardOperation } from "../jev-decider.ts";
@@ -289,6 +291,10 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       ownedRoots: () =>
         ownedResources([...deps.services.projects.roots(), deps.services.runtime.dataDir, process.cwd()]).roots,
       ownerPrincipalId: () => deps.services.runtime.identity.ownerPrincipalId,
+      // What the conversation holds about the task's goal, read by its worker on demand; the same bundles a background
+      // run reads, so both share a retrieval pass. Off with the context planner.
+      contextBundles: () =>
+        contextPlannerFromEnv(process.env) === "off" ? undefined : contextBundlesFor(deps.services.runtime.db),
       // A task that changes a repository works in a worktree kept here, never in the person's own tree.
       worktreesDir: () => join(deps.services.runtime.dataDir, "worktrees"),
       // The same command path the conversation uses, so a worker's command is decided and recorded the same way.
