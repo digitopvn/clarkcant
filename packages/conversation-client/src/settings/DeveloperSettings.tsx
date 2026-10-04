@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactElement } from "react";
 import { readVar, TokenSpecimens } from "../TokenSpecimens.tsx";
 import type { GatewayClient } from "../api.ts";
 import { SettingsRow } from "./controls/SettingsRow.tsx";
-import { useT } from "../i18n/locale-context.tsx";
+import { useLocale, useT } from "../i18n/locale-context.tsx";
 
 /**
  * Developer / Advanced: the internals, behind a disclosure.
@@ -25,6 +25,7 @@ export interface DeveloperSettingsProps {
 
 export function DeveloperSettings({ client, facts, onOpenWidgetLibrary }: DeveloperSettingsProps): ReactElement {
   const t = useT();
+  const locale = useLocale();
   const [settings, setSettings] = useState<{ key: string; value: string }[] | undefined>(undefined);
   const [open, setOpen] = useState(false);
 
@@ -63,7 +64,7 @@ export function DeveloperSettings({ client, facts, onOpenWidgetLibrary }: Develo
         >
           <button
             type="button"
-            className="cc-badge"
+            className="cc-action"
             onClick={() => onOpenWidgetLibrary?.("develop")}
             data-widget-library-open="develop"
           >
@@ -83,7 +84,16 @@ export function DeveloperSettings({ client, facts, onOpenWidgetLibrary }: Develo
           <code>{facts?.label ?? t("settings.developer.node.unread")}</code>
         </SettingsRow>
         <SettingsRow label={t("settings.developer.node.createdAt.label")}>
-          <code>{facts?.createdAt ?? t("settings.developer.node.unread")}</code>
+          {/* Read as a date in the interface's language; the exact instant stays one hover away for a bug report. */}
+          {facts === undefined ? (
+            <code>{t("settings.developer.node.unread")}</code>
+          ) : (
+            <time dateTime={facts.createdAt} title={facts.createdAt}>
+              {Number.isNaN(Date.parse(facts.createdAt))
+                ? facts.createdAt
+                : new Date(facts.createdAt).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" })}
+            </time>
+          )}
         </SettingsRow>
       </section>
 
@@ -110,7 +120,7 @@ export function DeveloperSettings({ client, facts, onOpenWidgetLibrary }: Develo
         ) : (
           // A key and a value per line. Anything whose name sounds like a secret arrives already redacted by the
           // node, because the node is the only thing that can see the file it came from.
-          <div className="cc-panel-note">
+          <div className="cc-panel-note cc-pi-settings">
             {settings.map((line) => (
               <code key={line.key} data-pi-setting={line.key}>
                 {line.key}: {line.value}

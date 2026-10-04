@@ -122,6 +122,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-tool-list .cc-tool-why .cc-panel-note { margin: 0; }
 /* One tag per extension: names set inline with nothing between them run together into one unreadable word. */
 .cc-pi-extensions { gap: var(--cc-space-xs); }
+/* pi's settings: one key and value per line, as the node reports them. */
+.cc-pi-settings { display: flex; flex-direction: column; gap: var(--cc-space-xxs); margin-top: var(--cc-space-sm); }
+.cc-pi-settings > code { overflow-wrap: anywhere; }
 .cc-pi-extensions > code {
   font-size: var(--cc-text-label); color: var(--cc-text-muted); padding: 2px var(--cc-space-xs);
   border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-badge); overflow-wrap: anywhere;
