@@ -234,6 +234,17 @@ test("on a phone the start screen's suggestions take two even rows and the orb f
     await page.unroute("**/readiness");
   }
 });
+test("on a narrow window the transcript starts at the composer's edge, not a gutter inside it", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openApp(page);
+  await page.locator("[data-composer]").fill("xem diff");
+  await page.locator("[data-send]").click();
+  const reply = page.locator("[data-role='assistant']").last();
+  await expect(reply.locator("[data-host-card]")).toBeVisible({ timeout: 20_000 });
+  const row = await reply.boundingBox();
+  const composer = await page.locator(".cc-composer").boundingBox();
+  // A scrollbar gutter reserved on both edges used to add 15px on each side of the timeline's own inset. A few pixels\n  // are the composer's ring and the row's arrival, not a gutter.\n  expect(Math.abs((row?.x ?? 0) - (composer?.x ?? 100))).toBeLessThanOrEqual(4);
+});
 test("the orb is centred on the screen it is drawn over", async ({ page }) => {
   // This is a measurement, not a style assertion: the orb's position is computed from the box it
   // belongs to, and the canvas inside that box is larger than it, so "the rule is present" would not

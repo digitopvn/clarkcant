@@ -18,6 +18,12 @@ export const TIMELINE_CSS = `
      shift sideways the moment a reply grows long enough to scroll. */
   scrollbar-gutter: stable both-edges;
 }
+/* On a narrow window that reserved room cost a gutter on both sides on top of the timeline's own, so the transcript
+   sat 30px inside the composer's edge. There a scrollbar takes room only when there is one, which a phone's overlay
+   scrollbar never does. */
+@media (max-width: 560px) {
+  .cc-scroll { scrollbar-gutter: auto; }
+}
 /*
  * On the start screen the transcript area is only as tall as the group in it, so the body can centre the orb, the
  * heading, the chips and the input under them as one composition. It still shrinks and scrolls when that group is
