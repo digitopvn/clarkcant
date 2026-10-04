@@ -23,7 +23,14 @@ import {
   invokeWidgetAction,
   widgetActionTarget,
 } from "../gateway.ts";
-import { spokenActionDone, spokenActionFailed, spokenActionRefusal, spokenActionWaiting } from "../application/action-speech.ts";
+import {
+  spokenActionDone,
+  spokenActionFailed,
+  spokenActionRefusal,
+  spokenActionWaiting,
+  spokenApprovalDecided,
+  spokenWidgetWords,
+} from "../application/action-speech.ts";
 import type { WidgetPerformer } from "../application/widget-actions.ts";
 import { carryOutSpokenStop } from "../application/stop-turn.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
@@ -264,8 +271,8 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         ...(pending === undefined ? {} : { pendingInteraction: pending }),
       };
     },
-    /** Carry out what the user just said yes or no to (`decideSpokenApproval`). */
-    decideApproval: (input) => decideSpokenApproval(deps.services, input),
+    /** Carry out what the user just said yes or no to, and only while the card still waits (`spokenApprovalWiring`). */
+    ...spokenApprovalWiring(deps.services),
     /**
      * Record what the person just said, through the same function the HTTP route calls.
      *
@@ -398,6 +405,21 @@ type SpokenWidgetActionInput = Parameters<NonNullable<VoiceGatewayOptions["widge
 type SpokenApprovalInput = Parameters<NonNullable<VoiceGatewayOptions["decideApproval"]>>[0];
 
 /**
+ * How a voice session decides an approval card out loud, as one set: the decision through the route a click takes,
+ * whether the card it is listening for still waits, and the person's language for what it says about either.
+ */
+export function spokenApprovalWiring(
+  services: NodeServices,
+): Required<Pick<VoiceGatewayOptions, "decideApproval" | "approvalWaits" | "speechLocale">> {
+  return {
+    decideApproval: (input) => decideSpokenApproval(services, input),
+    // Read from the approvals row, so a card decided by a click or expired no longer takes the next sentence.
+    approvalWaits: (approvalId) => waitingApprovalRow(services, approvalId) !== undefined,
+    speechLocale: () => preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId),
+  };
+}
+
+/**
  * Carry out what the person just said yes or no to.
  *
  * The same function the HTTP route calls, so a decision made by voice and a decision made by pressing the card mean
@@ -422,11 +444,17 @@ export async function decideSpokenApproval(
     },
     at: new Date().toISOString() as never,
   });
-  return result.ok
-    ? // The agent's continuation is what the person should hear: the command ran, and this is what the agent
-      // made of it. `message` is spoken by the session.
-      { ok: true, message: result.continuation ?? result.outcome ?? "Đã chạy xong lệnh đó." }
-    : { ok: false, message: result.message };
+  if (!result.ok) return { ok: false, message: result.message };
+  const locale = preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId);
+  // `message` is what the session says, so it is what happened rather than what was hoped for: the receipt of the
+  // operation — for a widget action, whether the widget did it and what it answered, as its own words — or the agent's
+  // continuation after a command. Never a "running it now" said before the outcome is known.
+  if (decision === "denied") return { ok: true, message: spokenApprovalDecided("denied", locale) };
+  const said = result.continuation ?? result.outcome;
+  return {
+    ok: true,
+    message: said === undefined ? spokenApprovalDecided("granted", locale) : `${said}${spokenWidgetWords(result.widgetOutput, locale)}`,
+  };
 }
 
 /**
@@ -482,13 +510,21 @@ function pendingApprovalOf(services: NodeServices, body: Record<string, unknown>
   const required = body.approvalRequired as { approvalId?: unknown } | undefined;
   const approvalId = typeof required?.approvalId === "string" ? required.approvalId : undefined;
   if (approvalId === undefined || approvalId === "") return undefined;
-  const row = services.runtime.db
+  const row = waitingApprovalRow(services, approvalId);
+  return row === undefined ? undefined : { kind: "approval", approvalId, digest: row.digest, description: row.description };
+}
+
+/** An approval that still waits for a decision: pending and unexpired. Undefined once decided, expired or unknown. */
+export function waitingApprovalRow(
+  services: Pick<NodeServices, "runtime">,
+  approvalId: string,
+): { digest: string; description: string } | undefined {
+  return services.runtime.db
     .prepare(
       `SELECT operation_digest AS digest, operation_description AS description FROM approvals
         WHERE approval_id = ? AND decision = 'pending' AND expires_at > ?`,
     )
     .get(approvalId, new Date().toISOString()) as { digest: string; description: string } | undefined;
-  return row === undefined ? undefined : { kind: "approval", approvalId, digest: row.digest, description: row.description };
 }
 
 async function runSpokenWidgetAction(

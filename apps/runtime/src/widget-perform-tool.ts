@@ -8,7 +8,7 @@ import { listConversationInstanceIds, transaction } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 
 import { compileWidgetAction } from "./application/action-bindings.ts";
-import { inertContextText, inertLine } from "./application/action-context.ts";
+import { inertContextText, inertLine, inertQuotedLine } from "./application/action-context.ts";
 import {
   type WidgetActionOptions,
   type WidgetActionResult,
@@ -159,7 +159,7 @@ function describePerform(label: string, result: WidgetActionResult): string {
         : "";
     return `Done: the widget performed “${label}”.${output}`;
   }
-  const widgetCode = typeof result.detail?.widgetCode === "string" ? ` [widget code ${inertLine(result.detail.widgetCode)}]` : "";
+  const widgetCode = typeof result.detail?.widgetCode === "string" ? ` [widget code ${inertQuotedLine(result.detail.widgetCode)}]` : "";
   if (result.detail?.outcome === "uncertain") {
     return `Unknown: ${inertLine(result.message)} (${result.code}). Do not perform it again before the person confirms.`;
   }

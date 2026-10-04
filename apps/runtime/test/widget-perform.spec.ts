@@ -40,7 +40,7 @@ import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import { decideApprovalForNode } from "../src/routes/conversations.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createWidgetPerformAcks } from "../src/widget-perform-acks.ts";
-import { decideSpokenApproval, deliverToVoiceFrame, spokenWidgetAction, voicePerformer } from "../src/bootstrap/voice-bootstrap.ts";
+import { deliverToVoiceFrame, spokenApprovalWiring, spokenWidgetAction, voicePerformer } from "../src/bootstrap/voice-bootstrap.ts";
 import { attachVoiceGateway, type VoiceGateway } from "../src/voice-session.ts";
 import { buildWidgetSemantic, focusedSemanticView } from "../src/widget-semantic.ts";
 import { conversationOfferedActions, createPerformWidgetActionTool, placeWidget } from "../src/widget-perform-tool.ts";
@@ -935,7 +935,7 @@ describe("answering a spoken press's approval card out loud", () => {
       credential: () => "credential",
       createAdapter: () => provider,
       widgetAction: (input) => run(services, { ...input, action: { ...input.action, args: { format: "percent" } } }),
-      decideApproval: (input) => decideSpokenApproval(services, input),
+      ...spokenApprovalWiring(services),
     });
     await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
     const { port } = server.address() as AddressInfo;
@@ -951,7 +951,7 @@ describe("answering a spoken press's approval card out loud", () => {
       if (frame["type"] === "widget-perform") {
         const request = frame["request"] as WidgetPerformRequest;
         performs.push(request);
-        services.widgetPerforms.settle(request.performId, { status: "done" } as never);
+        services.widgetPerforms.settle(request.performId, { status: "done", output: "Đã định dạng B2:C3." } as never);
       }
       for (const waiter of [...waiters]) {
         if (waiter.match(frame)) {
@@ -980,6 +980,12 @@ describe("answering a spoken press's approval card out loud", () => {
     return { provider, frames, performs, waitFor, said };
   }
 
+  /** The approval cards in the conversation, oldest first. */
+  const cardsOf = () =>
+    rows<{ document: string }>("SELECT document FROM messages WHERE conversation_id = ? ORDER BY sequence", conversationId)
+      .flatMap((row) => (JSON.parse(row.document) as { blocks: { type: string; approvalId: string; operationDigest: string }[] }).blocks)
+      .filter((block) => block.type === "approval-card");
+
   const decisionOf = (approvalId: string) => rows<{ decision: string }>("SELECT decision FROM approvals WHERE approval_id = ?", approvalId)[0]?.decision;
 
   it("takes a spoken yes as the answer to the card the press placed, and the frame is asked exactly once", async () => {
@@ -990,16 +996,15 @@ describe("answering a spoken press's approval card out loud", () => {
     provider.hear("Định dạng vùng đang chọn");
     await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
     // The press placed the card and asked; it approved nothing and sent nothing.
-    const [card] = rows<{ document: string }>("SELECT document FROM messages WHERE conversation_id = ? ORDER BY sequence", conversationId)
-      .flatMap((row) => (JSON.parse(row.document) as { blocks: { type: string; approvalId?: string }[] }).blocks)
-      .filter((block) => block.type === "approval-card");
-    if (card?.approvalId === undefined) throw new Error("the press should have placed a card");
+    const [card] = cardsOf();
+    if (card === undefined) throw new Error("the press should have placed a card");
     expect(provider.spoken.at(-1)).toContain("“đồng ý”");
     expect(performs).toHaveLength(0);
     expect(decisionOf(card.approvalId)).toBe("pending");
 
     provider.hear("đồng ý");
-    await waitFor(said("Đã duyệt. Tui chạy lệnh đó ngay."), "the decision");
+    // What the decision came to is said, with the widget's answer as its own words; never "running it now".
+    await waitFor(said("Đã duyệt: widget đã thực hiện “Định dạng vùng đang chọn”. Widget báo: “Đã định dạng B2:C3.”"), "the decision");
     expect(decisionOf(card.approvalId)).toBe("granted");
     expect(performs).toEqual([expect.objectContaining({ instanceId: placed.instanceId, action: "format", input: { format: "percent" } })]);
     expect(effects()).toEqual([expect.objectContaining({ state: "confirmed", intent: expect.stringContaining("by voice") })]);
@@ -1020,12 +1025,50 @@ describe("answering a spoken press's approval card out loud", () => {
     expect(effects()).toHaveLength(0);
   });
 
+  it("decides nothing on a sentence that only contains a decision word, and asks again", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { provider, frames, performs, waitFor, said } = await session(placed);
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
+    // "Hold on": "từ" contains "ừ", which a substring match once read as a yes.
+    provider.hear("từ từ đã");
+    await waitFor(said("Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé."), "the question asked again");
+
+    expect(rows<{ decision: string }>("SELECT decision FROM approvals")).toEqual([{ decision: "pending" }]);
+    expect(performs).toHaveLength(0);
+    expect(effects()).toHaveLength(0);
+    expect(frames.filter((frame) => frame["type"] === "widget-action-result")).toHaveLength(1);
+  });
+
+  it("lets the next sentence through when the card was decided by a click meanwhile", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { provider, frames, waitFor } = await session(placed);
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
+    const [card] = cardsOf();
+    if (card === undefined) throw new Error("the press should have placed a card");
+    // Approved on the card itself, on a page that cannot reach the frame.
+    expect(await decide(card, undefined)).toMatchObject({ ok: true });
+
+    // The same words again are a new press, not an answer to a card that no longer waits.
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result" && frames.filter((f) => f["type"] === "widget-action-result").length === 2, "the second press");
+    expect(frames.some((frame) => frame["type"] === "transcript" && String(frame["text"]).includes("chưa rõ ý"))).toBe(false);
+    expect(cardsOf()).toHaveLength(2);
+  });
+
   it("says a press whose runner threw as failed, and keeps the session for the next sentence", async () => {
     const placed = placeSheet();
     const { provider, frames, waitFor } = await session(placed, () => Promise.reject(new Error("disk full")));
 
     provider.hear("Định dạng vùng đang chọn");
     await waitFor((frame) => frame["type"] === "error" && frame["code"] === "VOICE_WIDGET_ACTION_FAILED", "the failure");
+    // The page is told what failed, not the node's internals.
+    expect(JSON.stringify(frames.filter((frame) => frame["type"] === "error"))).not.toContain("disk full");
     await waitFor((frame) => frame["type"] === "transcript" && String(frame["text"]).includes("không xử lý được"), "the spoken failure");
     expect(provider.spoken.at(-1)).toContain("không xử lý được");
     expect(frames.some((frame) => frame["type"] === "ended")).toBe(false);

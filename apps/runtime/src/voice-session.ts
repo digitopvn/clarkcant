@@ -18,6 +18,7 @@ import { recordVoiceTranscript } from "@clarkcant/core";
 import { GeminiLiveAdapter, type VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
 
+import { type SpeechLocale, spokenApprovalDecided } from "./application/action-speech.ts";
 import { tokenMatches } from "./gateway.ts";
 import {
   NO_FOCUSED_SURFACE_SAY,
@@ -200,6 +201,15 @@ export interface VoiceGatewayOptions {
    * act" true rather than a slogan.
    */
   pendingFor?: (conversationId: ConversationId) => PendingVoiceInteraction | undefined;
+  /**
+   * Whether an approval this session is about to take a sentence as the answer to still waits: pending and unexpired.
+   *
+   * A card can be decided by a click, or expire, while the session is listening for a yes or no. Asked before a
+   * sentence is read as the answer, so a card that no longer waits does not swallow the person's next sentence.
+   */
+  approvalWaits?: (approvalId: string) => boolean;
+  /** The person's language for what the session itself says about a decision or a failure. Vietnamese when absent. */
+  speechLocale?: () => SpeechLocale;
 
   /**
    * What a sentence means to the application, as opposed to what it means to the agent.
@@ -328,35 +338,49 @@ export interface VoiceAnswerResult {
  * response to a mumble about something that is going to run.
  *
  * Both accented and unaccented spellings are listed because speech transcription is inconsistent about marks.
+ *
+ * Matched on whole words, never on substrings: the sentence is normalised (NFC, lower case) and split on anything that
+ * is not a letter or a digit, and a phrase counts only as a run of whole words. A substring match read "từ từ đã"
+ * ("hold on") as a yes because "từ" contains "ừ", "book" as a yes because it contains "ok", and "yes, now" as a no
+ * because "now" contains "no". Refusal is still tested first, so "không được" is a no. A yes said inside a longer
+ * sentence is not taken as one: past `DECISION_MAX_WORDS` words the sentence is something else, and it is asked again.
  */
 export function interpretDecision(text: string): "granted" | "denied" | undefined {
-  const said = text.toLowerCase();
-  const denied = ["không", "khong", "đừng", "thôi", "thoi", "từ chối", "tu choi", "hủy", "huy", "khoan", "no"];
-  const granted = [
-    "đồng ý",
-    "dong y",
-    "cho phép",
-    "cho phep",
-    "duyệt",
-    "duyet",
-    "được",
-    "duoc",
-    "ừ",
-    "ok",
-    "yes",
-    "chạy đi",
-    "chay di",
-    "làm đi",
-    "lam di",
-    "tiến hành",
-    "tien hanh",
-  ];
-  // Refusal is tested first: "không được" contains a word that would otherwise read as permission.
-  if (denied.some((word) => said.includes(word))) return "denied";
-  if (granted.some((word) => said.includes(word))) return "granted";
+  const words = text.normalize("NFC").toLowerCase().split(/[^\p{L}\p{M}\p{N}]+/u).filter((word) => word !== "");
+  const says = (phrase: string): boolean => {
+    const wanted = phrase.split(" ");
+    return words.some((_, at) => wanted.every((word, offset) => words[at + offset] === word));
+  };
+  if (DENIED_PHRASES.some(says)) return "denied";
+  if (words.length <= DECISION_MAX_WORDS && GRANTED_PHRASES.some(says)) return "granted";
   return undefined;
 }
 
+const DENIED_PHRASES = ["không", "khong", "đừng", "thôi", "thoi", "từ chối", "tu choi", "hủy", "huy", "khoan", "no"].map((phrase) =>
+  phrase.normalize("NFC"),
+);
+const GRANTED_PHRASES = [
+  "đồng ý",
+  "dong y",
+  "cho phép",
+  "cho phep",
+  "duyệt",
+  "duyet",
+  "được",
+  "duoc",
+  "ừ",
+  "ok",
+  "okay",
+  "yes",
+  "chạy đi",
+  "chay di",
+  "làm đi",
+  "lam di",
+  "tiến hành",
+  "tien hanh",
+].map((phrase) => phrase.normalize("NFC"));
+/** The longest sentence a yes is taken from: "ừ, đồng ý, cho phép chạy đi" fits; a request with a "yes" inside does not. */
+const DECISION_MAX_WORDS = 8;
 /** Close codes. 1008 is a policy refusal; 1013 is "try again when something changes". */
 const CLOSE_POLICY = 1008;
 const CLOSE_TRY_LATER = 1013;
@@ -439,6 +463,8 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     /** The `onWidgetPerform` a turn, a decided approval or a spoken press carries: present only when `performsWidgets`. */
     const frameSink = (): { onWidgetPerform?: VoiceFrameSink } =>
       performsWidgets ? { onWidgetPerform: (request) => send({ type: "widget-perform", request }) } : {};
+    /** The person's language for what this session says itself about a decision or a failure. */
+    const locale = (): SpeechLocale => options.speechLocale?.() ?? "vi";
     let adapter: VoiceProviderAdapter | undefined;
 
     /*
@@ -605,15 +631,15 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           send({ type: "transcript", role: "assistant", text: outcome.say, final: true });
           say(outcome.say);
         })
-        .catch((cause: unknown) => {
+        .catch(() => {
           // The runner answers its own failures in the person's language; this is the last resort for one that threw
           // anyway. The session goes on, and the person hears that it failed rather than nothing at all.
-          send({
-            type: "error",
-            code: "VOICE_WIDGET_ACTION_FAILED",
-            message: cause instanceof Error ? cause.message : "the widget action could not be run",
-          });
-          const failed = "Tui không xử lý được hành động đó vì một lỗi trên máy này. Bạn kiểm tra cuộc trò chuyện trước khi thử lại nhé.";
+          // The frame names the failure without its internals (a storage message, say).
+          const failed =
+            locale() === "en"
+              ? "I could not handle that action because of an error on this machine. Check the conversation before trying again."
+              : "Tui không xử lý được hành động đó vì một lỗi trên máy này. Bạn kiểm tra cuộc trò chuyện trước khi thử lại nhé.";
+          send({ type: "error", code: "VOICE_WIDGET_ACTION_FAILED", message: failed });
           send({ type: "transcript", role: "assistant", text: failed, final: true });
           say(failed);
         });
@@ -651,6 +677,9 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       // A sentence said while something is pending is an answer, not a new request for the agent. The question need
       // not have been asked here: what is pending belongs to the conversation, so a card a click asked is answerable
       // by a sentence and a card this session asked is answerable by a click.
+      // An approval this session remembers may have been decided by a click, or expired, since it was asked: then it no
+      // longer waits, and the sentence is not an answer to it but whatever it is on its own.
+      if (waiting?.kind === "approval" && options.approvalWaits?.(waiting.approvalId) === false) waiting = undefined;
       const pending = waiting ?? options.pendingFor?.(askIn);
       if (pending !== undefined && pending.kind === "approval" && options.decideApproval !== undefined) {
         const decide = options.decideApproval;
@@ -659,7 +688,10 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           // One more try, in the same words. The operation is going to run on the machine, so a sentence that could
           // have meant anything does not decide it - and this says which two words would, because a person who just
           // said something reasonable should not have to guess why it was not understood.
-          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          const again =
+            locale() === "en"
+              ? "I did not catch that. Say “yes” or “no”, please."
+              : "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;
@@ -674,11 +706,15 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             digest: pending.digest,
             ...frameSink(),
           });
+          // What the decision came to, as the node reports it: for a widget action, whether the widget did it and what it
+          // answered. Never "running it now", which would be said before anyone knows.
           const said = decided.ok
-            ? decision === "granted"
-              ? "Đã duyệt. Tui chạy lệnh đó ngay."
-              : "Đã từ chối. Không có gì được chạy."
-            : `Không thực hiện được: ${decided.message}`;
+            ? decided.message.trim() !== ""
+              ? decided.message
+              : spokenApprovalDecided(decision, locale())
+            : locale() === "en"
+              ? `Could not do it: ${decided.message}`
+              : `Không thực hiện được: ${decided.message}`;
           send({ type: "transcript", role: "assistant", text: said, final: true });
           say(said);
         });

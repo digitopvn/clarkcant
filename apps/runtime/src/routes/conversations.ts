@@ -1959,7 +1959,7 @@ export async function decideApprovalForNode(
      */
     perform?: WidgetPerformer;
   },
-): Promise<{ ok: true; outcome?: string; continuation?: string } | { ok: false; code: string; message: string }> {
+): Promise<{ ok: true; outcome?: string; continuation?: string; widgetOutput?: string } | { ok: false; code: string; message: string }> {
   const coordination = {
     db: services.runtime.db,
     nodeId: services.runtime.identity.nodeId,
@@ -2158,7 +2158,10 @@ export async function decideApprovalForNode(
       ...askedByRecord,
       at: input.at,
     });
-    return { ok: true, outcome: receipt.text };
+    // What the widget answered, kept apart from the host's receipt so a surface that reads it out attributes it to the
+    // widget rather than to Clark (`spokenWidgetWords`).
+    const output = performed.result.ok && typeof performed.result.body.output === "string" ? performed.result.body.output : "";
+    return { ok: true, outcome: receipt.text, ...(output === "" ? {} : { widgetOutput: output }) };
   }
 
   if (capabilityCall) {

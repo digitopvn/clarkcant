@@ -1,4 +1,4 @@
-import { inertLine } from "./action-context.ts";
+import { inertQuotedLine } from "./action-context.ts";
 
 /**
  * What voice says after a widget action the person asked for out loud, in the person's language.
@@ -138,6 +138,15 @@ export function spokenActionWaiting(
     : `“${label}” needs your approval first. I placed the approval card in the conversation.${invite}`;
 }
 
+/**
+ * What voice says after a spoken decision on an approval card when the operation reported nothing more specific: a
+ * refusal, or a grant whose outcome the node did not describe. It never claims the operation is running or done.
+ */
+export function spokenApprovalDecided(decision: "granted" | "denied", locale: SpeechLocale): string {
+  if (decision === "denied") return locale === "vi" ? "Đã từ chối. Không có gì được chạy." : "Refused. Nothing was run.";
+  return locale === "vi" ? "Đã duyệt." : "Approved.";
+}
+
 /** What voice says when a spoken widget action failed before it could answer: nothing is claimed about the widget. */
 export function spokenActionFailed(label: string, locale: SpeechLocale): string {
   return locale === "vi"
@@ -155,7 +164,15 @@ export const SPOKEN_OUTPUT_MAX_CHARS = 400;
  */
 export function spokenActionDone(label: string, output: string | undefined, locale: SpeechLocale): string {
   const done = locale === "vi" ? `Đã ${label}.` : `Done: ${label}.`;
-  const said = output === undefined ? "" : inertLine(output).replace(/\s+/gu, " ").trim().slice(0, SPOKEN_OUTPUT_MAX_CHARS);
-  if (said === "") return done;
-  return locale === "vi" ? `${done} Widget báo: “${said}”` : `${done} The widget says: “${said}”`;
+  return `${done}${spokenWidgetWords(output, locale)}`;
+}
+
+/**
+ * What a widget answered, as voice reads it after Clark's own sentence: attributed, on one line, inside a quote it
+ * cannot close, and no longer than voice reads out. Empty when it answered nothing.
+ */
+export function spokenWidgetWords(output: string | undefined, locale: SpeechLocale): string {
+  const said = output === undefined ? "" : inertQuotedLine(output).replace(/\s+/gu, " ").trim().slice(0, SPOKEN_OUTPUT_MAX_CHARS);
+  if (said === "") return "";
+  return locale === "vi" ? ` Widget báo: “${said}”` : ` The widget says: “${said}”`;
 }

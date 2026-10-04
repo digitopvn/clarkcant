@@ -1399,8 +1399,12 @@ async function invokePerformAction(
     if (placed !== undefined) {
       try {
         indexHostReply(services, placed);
-      } catch {
-        // The card is written and answerable; only its search entry is missing.
+      } catch (cause) {
+        // The card is written and answerable; only its search entry is missing. Logged by category only, so a recurring
+        // index failure is visible without writing the card's words anywhere else.
+        process.stderr.write(
+          `widget perform: the approval card was placed but not indexed for search (${cause instanceof Error ? cause.name : "unknown error"})\n`,
+        );
       }
     }
     return {
