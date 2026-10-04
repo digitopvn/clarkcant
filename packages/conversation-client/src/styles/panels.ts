@@ -120,6 +120,12 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-tool-list > li > code { font-size: var(--cc-text-label); color: var(--cc-text-tertiary); }
 .cc-tool-list > li > .cc-tool-why { flex-basis: 100%; }
 .cc-tool-list .cc-tool-why .cc-panel-note { margin: 0; }
+/* One tag per extension: names set inline with nothing between them run together into one unreadable word. */
+.cc-pi-extensions { gap: var(--cc-space-xs); }
+.cc-pi-extensions > code {
+  font-size: var(--cc-text-label); color: var(--cc-text-muted); padding: 2px var(--cc-space-xs);
+  border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-badge); overflow-wrap: anywhere;
+}
 .cc-panel-note { margin: var(--cc-space-sm) 0 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-badge[data-selected="true"], .cc-swatch[aria-pressed="true"] {
   outline: 2px solid var(--cc-focus); outline-offset: 2px;

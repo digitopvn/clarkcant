@@ -141,7 +141,7 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
         ) : (
           // Names and kinds, and deliberately nothing else: an extension on a real machine can hold a credential,
           // and a section that showed what was inside one would be the place it leaked from.
-          <div className="cc-panel-note">
+          <div className="cc-panel-row cc-pi-extensions">
             {extensions.map((entry) => (
               <code key={entry.name} data-pi-extension={entry.name} data-kind={entry.kind}>
                 {entry.name}
