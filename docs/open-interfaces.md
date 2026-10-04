@@ -136,12 +136,16 @@ The origin stays with the work it started:
 - When the person approves a card a program's turn raised, the turn that carries on after the approval keeps the
   program's origin. The person approved that one effect, not the rest of the program's plan, so the next risky step
   is asked about again under `"ask"`. The approved effect's audit and activity rows keep the origin too.
-- A message whose origin differs from the running turn's is never steered into it. It interrupts and becomes a turn
-  of its own with its own origin. A message sent to the background lane is recorded in the audit log with its origin.
-- A message that still reaches a turn already running (it arrived while that turn was being prepared) is never sent
-  to the model as a second prompt. One of the same origin is steered into the running turn, whose reply answers it:
-  the message response and the stream's `done` event report `resolution: "steered"` with no message ids. One of
-  another origin waits for the running turn to end and then becomes a turn of its own.
+- On the plain `/messages` route, a message that arrives while a turn is running is decided there: it joins the
+  running turn (a steer), interrupts it, or runs in the background. A message whose origin differs from the running
+  turn's is never steered into it; it interrupts and becomes a turn of its own with its own origin. A message sent to
+  the background lane is recorded in the audit log with its origin.
+- Every other way a turn starts (the streaming route, an approval's continuation, an answered question, a widget
+  action, voice) never sends a running turn a second prompt. Bare text of the same origin, with no attachments,
+  references, guidance or data and not spoken, is steered into the turn while its reply is being written; that reply
+  answers it, and the message response and the stream's `done` event report `resolution: "steered"` with no message
+  ids (`clarkcant ask` says so on stderr). Anything else waits for the running turn to end and then becomes a turn of
+  its own. A Stop or the emergency stop also ends every message still waiting, so none of them starts.
 
 `machineTurns` is part of the execution policy, and the policy routes (`PUT /preferences/execution.policy`,
 `execution.machineTurns`, their `/undo`, and `POST /autonomy`) are open to any token holder, including the relay and

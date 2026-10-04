@@ -139,13 +139,17 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
 - Khi người dùng duyệt một thẻ do lượt của một chương trình tạo ra, lượt tiếp tục sau khi duyệt vẫn giữ nguồn gốc của
   chương trình đó. Người dùng chỉ duyệt đúng một tác động, không duyệt phần còn lại trong kế hoạch của chương trình, nên
   với `"ask"` bước rủi ro tiếp theo vẫn được hỏi lại. Dòng audit và hoạt động của tác động đã duyệt cũng giữ nguồn gốc.
-- Một tin nhắn có nguồn gốc khác với lượt đang chạy không bao giờ được nhập (steer) vào lượt đó. Nó ngắt lượt đang chạy
-  và trở thành một lượt riêng với nguồn gốc của chính nó. Tin nhắn được chuyển sang làn chạy nền được ghi vào nhật ký
-  audit cùng nguồn gốc.
-- Một tin nhắn vẫn tới được một lượt đang chạy (nó tới trong lúc lượt đó đang được chuẩn bị) không bao giờ được gửi tới
-  model thành một prompt thứ hai. Tin nhắn cùng nguồn gốc được chen (steer) vào lượt đang chạy, và câu trả lời của lượt
-  đó trả lời nó: phản hồi của tin nhắn và event `done` của stream báo `resolution: "steered"` và không có message id
-  nào. Tin nhắn có nguồn gốc khác chờ lượt đang chạy kết thúc rồi trở thành một lượt riêng.
+- Trên route `/messages` thường, một tin nhắn tới khi có lượt đang chạy được quyết định ngay tại đó: nhập (steer) vào
+  lượt đang chạy, ngắt lượt đó, hoặc chạy nền. Một tin nhắn có nguồn gốc khác với lượt đang chạy không bao giờ được
+  nhập (steer) vào lượt đó; nó ngắt lượt đang chạy và trở thành một lượt riêng với nguồn gốc của chính nó. Tin nhắn được
+  chuyển sang làn chạy nền được ghi vào nhật ký audit cùng nguồn gốc.
+- Mọi cách khác để bắt đầu một lượt (route streaming, phần tiếp tục sau khi duyệt, một câu hỏi đã được trả lời, thao tác
+  widget, giọng nói) không bao giờ gửi prompt thứ hai cho một lượt đang chạy. Văn bản thuần cùng nguồn gốc, không có tệp
+  đính kèm, tham chiếu, chỉ dẫn hay dữ liệu và không phải lời nói, được nhập (steer) vào lượt đó trong lúc câu trả lời
+  đang được viết; câu trả lời đó trả lời luôn tin nhắn này, và phản hồi của tin nhắn cùng event `done` của stream báo
+  `resolution: "steered"` và không có message id nào (`clarkcant ask` báo điều này trên stderr). Mọi tin nhắn khác chờ
+  lượt đang chạy kết thúc rồi trở thành một lượt riêng. Stop hoặc dừng khẩn cấp cũng kết thúc mọi tin nhắn còn đang chờ,
+  nên không tin nhắn nào trong số đó được bắt đầu.
 
 `machineTurns` là một phần của chính sách thực thi, và các route chính sách (`PUT /preferences/execution.policy`,
 `execution.machineTurns`, các route `/undo` của chúng, và `POST /autonomy`) mở cho mọi người giữ token, kể cả relay và
