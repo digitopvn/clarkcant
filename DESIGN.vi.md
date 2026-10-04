@@ -465,7 +465,9 @@ Giữ chronology:
 
     text → reasoning → tool → text
 
-Tool activity mặc định compact. Expand khi user muốn xem arguments/result.
+Tool activity mặc định compact, kể cả khi lệnh đang chạy; lệnh lỗi tự mở ra lý do. Expand khi user muốn xem arguments/result.
+
+Từ ba bước làm việc liên tiếp trở lên (suy luận, lời gọi công cụ và phần kiểm chứng bên dưới) được gộp thành một dòng cho biết đã làm bao nhiêu bước và bao nhiêu bước lỗi; mở ra thì thấy đủ các bước theo đúng thứ tự. Khi câu trả lời đang chạy, bước mới nhất luôn nằm ngoài nhóm.
 
 Thinking state kết thúc ngay khi content/tool event đầu tiên xuất hiện.
 
@@ -1223,6 +1225,8 @@ Dùng segmented controls, toggles và swatches:
   hiện có. Giữ nguyên theme, chế độ màu và ngôn ngữ đã chọn; mỗi thay đổi được xác nhận sẽ được vẽ lại, còn lỗi ghi sẽ
   dừng phần đặt lại còn lại và báo lỗi.
 - Window behavior: remember size, start mode.
+  - Đã có: cửa sổ desktop mở lại đúng chỗ lúc đóng (kích thước, vị trí, phóng to hay toàn màn hình) khi màn hình đó
+    vẫn còn gắn, nếu không thì mở ở kích thước mặc định.
 - Wake phrase: on/off + local-listening status.
 - Keyboard shortcuts: mở subpanel.
 

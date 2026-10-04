@@ -464,7 +464,9 @@ Preserve chronology:
 
     text → reasoning → tool → text
 
-Tool activity is compact by default. Expand when the user wants to see arguments/result.
+Tool activity is compact by default, including while a call runs; a failed call opens on its reason. Expand when the user wants to see arguments/result.
+
+Three or more consecutive working steps (reasoning, tool calls and the checks under them) fold into one line that says how many steps were done and how many failed, and opens onto every step in order. While a reply is streaming, its newest step stays outside the fold.
 
 The thinking state ends as soon as the first content/tool event appears.
 
@@ -1240,6 +1242,8 @@ Use segmented controls, toggles and swatches:
   reset/Undo path. It preserves the selected theme, color scheme and language; each confirmed change is redrawn, and
   a failed write stops the remaining reset and reports the failure.
 - Window behavior: remember size, start mode.
+  - Shipped: the desktop window reopens where it was closed (size, position, maximized or full screen) while that
+    display is still attached, and at the default size otherwise.
 - Wake phrase: on/off + local-listening status.
 - Keyboard shortcuts: opens a subpanel.
 
