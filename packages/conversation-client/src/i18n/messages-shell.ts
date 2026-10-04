@@ -208,7 +208,7 @@ export const MESSAGES_SHELL_VI = {
   "voice.defaultUnblockedBy": "đặt GEMINI_API_KEY cho node rồi thử lại",
 
   "voice.wakeUnavailableReason":
-    "Chưa có bộ nhận diện chạy trên máy này. Không dùng cách gửi âm thanh liên tục lên provider thay thế.",
+    "Chưa có bộ nhận diện chạy trên máy này. Không dùng cách gửi âm thanh liên tục lên nhà cung cấp thay thế.",
   "voice.unavailableBadge": "chưa dùng được",
   "voice.noNodeMessage": "Màn hình này chưa nối tới node nào, nên không thể mở phiên giọng nói ở đây.",
   "voice.requiresLabel": "Cần",

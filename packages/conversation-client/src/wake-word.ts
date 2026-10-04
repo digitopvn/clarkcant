@@ -50,7 +50,7 @@ export interface WakeWordDetector {
  * a visible reason or omit it, never a control that looks usable and changes nothing.
  */
 export const WAKE_UNAVAILABLE_REASON =
-  "Chưa có bộ nhận diện chạy trên máy này. Không dùng cách gửi âm thanh liên tục lên provider thay thế.";
+  "Chưa có bộ nhận diện chạy trên máy này. Không dùng cách gửi âm thanh liên tục lên nhà cung cấp thay thế.";
 
 export interface WakeAvailability {
   available: boolean;
