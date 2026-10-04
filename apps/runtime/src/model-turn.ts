@@ -15,8 +15,14 @@
  * approval, evidence and budgets live, and a conversation turn has none of them.
  */
 
+import { randomBytes } from "node:crypto";
+
 import {
   type AttachmentRef,
+  type DataClass,
+  DEFAULT_ALLOWED_DATA_CLASSES,
+  dataClassOfText,
+  maxDataClass,
   type Instant,
   type MessageBlock,
   type Principal,
@@ -46,8 +52,25 @@ import {
 import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
 
 import { attachmentBrief } from "./attachments.ts";
-import { type ContextReader, readContextTool } from "./context-bundle.ts";
-import { legacyRecap } from "./context-planner.ts";
+import { type ContextSource, readContextTool } from "./context-bundle.ts";
+import {
+  type InstructionTouch,
+  type TurnInstructions,
+  instructionsNonceNote,
+  rememberTouch,
+  touchOfToolCall,
+} from "./conditional-instructions.ts";
+import { legacyRecap, planRecap } from "./context-planner.ts";
+import {
+  SESSION_POLICY_LIMITS,
+  type SessionDecision,
+  type SessionPolicyMode,
+  type SessionTelemetry,
+  decideSession,
+  linesChanged,
+  reportSessionTelemetry,
+  topicShift,
+} from "./session-policy.ts";
 
 /**
  * One view a model may ask for.
@@ -160,7 +183,7 @@ export interface ModelTurn {
    * it: the policy layer's route among the node's pool when it gives one, else the model this node runs now (the
    * person's pick, else the environment's). Never a separate setting, so there is one place that decides.
    */
-  workerModel: () => Promise<ModelSelection & { via: "routed" | "configured" }>;
+  workerModel: (work?: { dataClass?: DataClass }) => Promise<ModelSelection & { via: "routed" | "configured" }>;
 
   /** The model this node runs now, the person's pick else the environment's: what a worker falls back to when routing chooses nothing. */
   configuredModel: () => ModelSelection;
@@ -293,6 +316,35 @@ interface Turn {
    * this, so it lands in the prompt's run rather than in a session that has not been prompted yet.
    */
   preparing: Promise<void> | undefined;
+  /**
+   * What this conversation's work has touched, newest kept (#433): the state conditional instructions are checked
+   * against. Kept across turns, because a rule about a folder still applies the turn after the folder was opened.
+   */
+  touched: InstructionTouch[];
+  /** The conditional instructions this session has been told, so an unpinned one is stated once per session. */
+  stated: Set<string>;
+  /**
+   * The code marking this session's project-instruction blocks (#433), drawn when the session is created and stated
+   * once by the host in its own turn guidance; `nonceStated` says whether that has happened yet in this session.
+   */
+  instructionNonce: string;
+  nonceStated: boolean;
+  /** What the model answering may receive, set when a turn starts; read by a tool call's instructions. */
+  allowed: readonly DataClass[];
+  /** When the session behind this turn was created, and how many turns it has answered: its age, for the session policy. */
+  sessionCreatedAtMs: number;
+  answered: number;
+  /** The session's recent messages, newest last, bounded: what a change of subject is measured against. */
+  recentTexts: string[];
+  /** How long the session's last turn took. */
+  lastLatencyMs: number | undefined;
+  /** The brief the last turn was given, so the next can count what changed. */
+  lastBrief: string;
+  /**
+   * Replace the session with a fresh one, at a turn boundary: the new one is briefed by the recap like any fresh
+   * session, and the old one is let go. The transcript is not touched.
+   */
+  rebuild: () => Promise<boolean>;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -335,6 +387,8 @@ export type RecapPlanner = (input: {
   conversationId: string;
   query: string;
   messages: readonly HistoryMessage[];
+  /** The data classes the model being briefed may receive (#433): a message of any other class is withheld. */
+  allowed: readonly DataClass[];
 }) => Promise<{ text: string; earlier: string }>;
 
 /**
@@ -360,6 +414,7 @@ async function recapFor(
   options: { history?: HistoryReader; recapPlanner?: RecapPlanner },
   conversationId: string,
   query: string,
+  allowed: readonly DataClass[],
 ): Promise<{ text: string; earlier: string }> {
   if (options.history === undefined) return { text: "", earlier: "" };
   let messages: readonly HistoryMessage[];
@@ -372,9 +427,11 @@ async function recapFor(
   }
   if (options.recapPlanner !== undefined) {
     try {
-      return await options.recapPlanner({ conversationId, query, messages });
+      return await options.recapPlanner({ conversationId, query, messages, allowed });
     } catch {
-      // Planning is an improvement on the recap, never a condition for one.
+      // Planning is an improvement on the recap, never a condition for one — and never a way around its ceiling: the
+      // fallback is the fixed recap with the same withholding, not the unfiltered one.
+      return { text: planRecap({ messages, query: "", earlier: [], allowed }).text, earlier: "" };
     }
   }
   return { text: legacyRecap(messages), earlier: "" };
@@ -446,7 +503,11 @@ function flushReasoning(turn: Turn): void {
  * is why tool activity is captured here rather than from the adapter's own events: forwarding both
  * would draw every call twice.
  */
-function withActivity(turn: Turn, tool: ToolDefinition): ToolDefinition {
+/**
+ * `afterCall` adds to what the model reads back, never to the transcript's record: the conditional instructions a call
+ * newly made apply, labelled with where they came from.
+ */
+function withActivity(turn: Turn, tool: ToolDefinition, afterCall?: (name: string, params: Record<string, unknown>) => string): ToolDefinition {
   return {
     ...tool,
     execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
@@ -487,7 +548,8 @@ function withActivity(turn: Turn, tool: ToolDefinition): ToolDefinition {
           turn.segments.push({ kind: "host-card", block });
         }
         turn.segments.push({ kind: "block", block: record("done", answer.text) });
-        return answer;
+        const extra = afterCall?.(tool.name, params) ?? "";
+        return extra === "" ? answer : { ...answer, text: `${answer.text}\n\n${extra}` };
       } catch (cause) {
         // Returned rather than re-thrown, which is what `show_view` already does by hand: the model
         // gets the reason in the same turn and can correct itself, instead of the turn failing with
@@ -627,7 +689,13 @@ export async function createModelTurn(options: {
    * the policy layer — all of which are read at the moment a worker is about to start rather than at boot. Absent
    * means workers run whatever the node is configured with.
    */
-  backgroundModel?: () => Promise<{ provider: string; id: string } | undefined>;
+  backgroundModel?: (work?: { dataClass?: DataClass }) => Promise<{ provider: string; id: string } | undefined>;
+  /**
+   * The data classes a model may be sent (#433), from the profiles that name it. Read for the model about to receive
+   * context: the conversation's for a turn, the routed or fallback one for a background run. Absent means everything but
+   * credential-shaped text, the same default an unlabelled profile gets.
+   */
+  allowedDataClasses?: (model: { provider: string; id: string }) => readonly DataClass[];
   /**
    * The conversation so far, newest last, for briefing a session that has just been created.
    *
@@ -693,6 +761,8 @@ export async function createModelTurn(options: {
     messageId?: () => string | undefined;
     /** See `Turn.origin`; read the same way and for the same reason. */
     origin: () => TurnOrigin | undefined;
+    /** What the model answering this turn may be sent (#433), read at call time: a read tool withholds the rest. */
+    allowed?: () => readonly DataClass[];
   }) => readonly ToolDefinition[];
   /**
    * What was remembered, for the turn about to run.
@@ -700,7 +770,7 @@ export async function createModelTurn(options: {
    * A function rather than a string because it must be read per turn: a record somebody deleted has to stop
    * being sent on the very next turn, and a value captured once would keep sending it until a restart.
    */
-  memoryBrief?: (conversationId: string, query: string) => string | Promise<string>;
+  memoryBrief?: (conversationId: string, query: string, allowed: readonly DataClass[]) => string | Promise<string>;
   /**
    * What the host retrieved for a background request (#433): remembered notes and earlier messages that match it.
    *
@@ -708,7 +778,7 @@ export async function createModelTurn(options: {
    * tool for an item in full, each read re-checked, so a note deleted mid-run is not sent. Undefined, or a retrieval
    * that fails, leaves the run without it.
    */
-  backgroundContext?: (input: { conversationId: string; principalId: string; text: string }) => Promise<ContextReader | undefined>;
+  backgroundContext?: (input: { conversationId: string; principalId: string; text: string }) => Promise<ContextSource | undefined>;
   /**
    * Which of the session's tools this turn is offered (#433), or absent to offer every one, as before.
    *
@@ -757,6 +827,20 @@ export async function createModelTurn(options: {
    * value has to be read when a turn starts rather than when this module is built.
    */
   personalInstructions?: () => string | undefined;
+  /**
+   * Conditional instructions (#433): project guidance whose condition the conversation's work now meets. Asked when a
+   * turn starts and after each tool call; absent states none, which is what the off switch does.
+   */
+  instructions?: TurnInstructions;
+  /**
+   * Whether a conversation's next turn reuses its session or starts a fresh one (#433). Absent is the behaviour before
+   * it: reuse until a failure, an eviction or a model change. `observe` reports what it would decide; `rebuild` acts.
+   * `ask` is consulted only in the band where the subject change is unclear.
+   */
+  sessionPolicy?: {
+    mode: Exclude<SessionPolicyMode, "off">;
+    ask?: (telemetry: SessionTelemetry) => Promise<boolean | undefined>;
+  };
 }): Promise<ModelTurn | undefined> {
   /*
    * What this node runs: the choice somebody made, else what the environment names.
@@ -778,6 +862,7 @@ export async function createModelTurn(options: {
       channel: () => turn.channel,
       messageId: () => turn.messageId,
       origin: () => turn.origin,
+      allowed: () => turn.allowed,
     }) ?? [];
   /*
    * The note about the screen for this turn, and the session's record of what it has now been told.
@@ -903,6 +988,78 @@ export async function createModelTurn(options: {
 
   const describe = (): string => `${selection.provider}/${selection.id}`;
 
+  /*
+   * The session policy for the turn about to run: what the session looks like, what the policy decides, and the rebuild
+   * when it decides one and is allowed to act. A rebuild that fails leaves the session as it was: reuse is always safe.
+   */
+  const applySessionPolicy = async (
+    turn: Turn,
+    text: string,
+    alreadyRunning: boolean,
+  ): Promise<{ telemetry: SessionTelemetry; decision: SessionDecision; rebuilt: boolean } | undefined> => {
+    const policy = options.sessionPolicy;
+    if (policy === undefined) return undefined;
+    const now = Date.now();
+    const usage = adapter.usage(turn.sessionId);
+    const telemetry: SessionTelemetry = {
+      ageMs: now - turn.sessionCreatedAtMs,
+      idleMs: now - turn.lastUsedAtMs,
+      turns: turn.answered,
+      ...(usage.contextTokens === undefined ? {} : { contextTokens: usage.contextTokens }),
+      ...(usage.contextWindow === undefined ? {} : { contextWindow: usage.contextWindow }),
+      ...(usage.cacheReadTokens === undefined ? {} : { cacheReadTokens: usage.cacheReadTokens }),
+      ...(usage.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: usage.cacheWriteTokens }),
+      ...(usage.costUsd === undefined ? {} : { costUsd: usage.costUsd }),
+      ...(turn.lastLatencyMs === undefined ? {} : { lastLatencyMs: turn.lastLatencyMs }),
+      topicShift: topicShift(turn.recentTexts, text),
+    };
+    const decision = await decideSession(
+      telemetry,
+      { firstTurn: turn.fresh || turn.answered === 0, inFlight: alreadyRunning },
+      policy.ask,
+    );
+    let rebuilt = false;
+    if (policy.mode === "rebuild" && decision.decision === "rebuild" && !turn.stopped) {
+      try {
+        rebuilt = await turn.rebuild();
+      } catch {
+        rebuilt = false;
+      }
+    }
+    return { telemetry, decision, rebuilt };
+  };
+
+  /** The conditional instructions to state now, marked as told; nothing when there are none or they cannot be read. */
+  const stateInstructions = (turn: Turn, conversationId: string, newOnly: boolean): string => {
+    if (options.instructions === undefined) return "";
+    try {
+      const section = options.instructions({
+        conversationId,
+        touched: turn.touched,
+        stated: turn.stated,
+        allowed: turn.allowed,
+        newOnly,
+        nonce: turn.instructionNonce,
+      });
+      for (const id of section.stated) turn.stated.add(id);
+      return section.text;
+    } catch {
+      return "";
+    }
+  };
+
+  /*
+   * What a model may be sent (#433). A pool that cannot be read is answered with `public` alone, which nothing the
+   * conversation holds is: the turn runs without retrieved context rather than with a guess at what was allowed.
+   */
+  const allowedFor = (model: { provider: string; id: string }): readonly DataClass[] => {
+    try {
+      return options.allowedDataClasses?.(model) ?? DEFAULT_ALLOWED_DATA_CLASSES;
+    } catch {
+      return ["public"];
+    }
+  };
+
   /**
    * The one tool.
    *
@@ -1022,13 +1179,35 @@ export async function createModelTurn(options: {
       activeTools: undefined,
       toolsUsed: new Set(),
       preparing: undefined,
+      touched: [],
+      stated: new Set(),
+      instructionNonce: randomBytes(8).toString("hex"),
+      nonceStated: false,
+      allowed: DEFAULT_ALLOWED_DATA_CLASSES,
+      sessionCreatedAtMs: Date.now(),
+      answered: 0,
+      recentTexts: [],
+      lastLatencyMs: undefined,
+      lastBrief: "",
+      rebuild: async () => false,
+    };
+    /*
+     * After a tool call: remember what it touched, and hand back the instructions that newly apply. A failure here is a
+     * call answered without them, never a failed call.
+     */
+    const afterCall = (name: string, params: Record<string, unknown>): string => {
+      if (options.instructions === undefined) return "";
+      const touch = touchOfToolCall(name, params);
+      if (touch === undefined) return "";
+      rememberTouch(turn.touched, touch);
+      return stateInstructions(turn, conversationId, true);
     };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
     const customTools = [
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
       ...readExtraTools(turn),
-    ].map((tool) => withActivity(turn, tool));
+    ].map((tool) => withActivity(turn, tool, afterCall));
     turn.registeredTools = customTools.map((tool) => tool.name);
 
     const chosen = options.model?.();
@@ -1097,10 +1276,41 @@ export async function createModelTurn(options: {
       // A successor starts with every tool its brief names, so a disclosure plan starts over with it.
       existing.registeredTools = turn.registeredTools;
       existing.activeTools = undefined;
+      // A successor session has not heard the code: a new one is drawn and stated on its first turn.
+      existing.instructionNonce = randomBytes(8).toString("hex");
+      existing.nonceStated = false;
       existing.unsubscribe = listen(existing, existing.sessionId);
       generationModels.set(conversationId, preferredModel ?? "");
       return existing;
     }
+
+    turn.rebuild = async (): Promise<boolean> => {
+      const handle = await adapter.createWorkerSession(briefFor(options.model?.()));
+      // A Stop while the fresh session was being created ended this turn: the old session is the stop's to dispose,
+      // and the fresh one nobody will prompt goes now. The same when the node shut down meanwhile (its turn aborted).
+      if (turn.stopped || turn.abort.signal.aborted) {
+        void adapter.dispose(handle.sessionId).catch(() => undefined);
+        return false;
+      }
+      const previous = turn.sessionId;
+      turn.unsubscribe();
+      turn.sessionId = handle.sessionId;
+      turn.unsubscribe = listen(turn, handle.sessionId);
+      // Everything the old session had been told goes with it: the new one hears the recap, the pinned and active
+      // instructions, every tool and the screen as if for the first time.
+      turn.fresh = true;
+      turn.stated.clear();
+      turn.instructionNonce = randomBytes(8).toString("hex");
+      turn.nonceStated = false;
+      turn.uiSeen.clear();
+      turn.activeTools = undefined;
+      turn.sessionCreatedAtMs = Date.now();
+      turn.answered = 0;
+      turn.recentTexts = [];
+      turn.lastBrief = "";
+      void adapter.dispose(previous).catch(() => undefined);
+      return true;
+    };
 
     evictIdleTurns(Date.now());
     const handle = await adapter.createWorkerSession(briefFor(chosen));
@@ -1174,10 +1384,11 @@ export async function createModelTurn(options: {
       return turn?.inFlight === true && turn.startedAtMs !== undefined ? Date.now() - turn.startedAtMs : undefined;
     },
 
-    workerModel: async (): Promise<ModelSelection & { via: "routed" | "configured" }> => {
+    workerModel: async (work?: { dataClass?: DataClass }): Promise<ModelSelection & { via: "routed" | "configured" }> => {
       // Routing must never be the reason a worker does not start: a route that fails falls back like one that found
       // nothing eligible.
-      const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel().catch(() => undefined);
+      const routed =
+        options.backgroundModel === undefined ? undefined : await options.backgroundModel(work).catch(() => undefined);
       if (routed !== undefined) return { provider: routed.provider, id: routed.id, via: "routed" };
       const current = options.model?.() ?? selection;
       return { ...current, via: "configured" };
@@ -1189,7 +1400,6 @@ export async function createModelTurn(options: {
       const signal = input.signal;
       const workId = input.workId ?? `bg-${input.conversationId}-${String(Date.now())}`;
       signal?.throwIfAborted();
-      const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel();
       // What the host retrieved for this request, read before the session exists because its one tool is part of how
       // the session is created. A retrieval that fails is a run without it, not a run that fails.
       const context =
@@ -1198,7 +1408,20 @@ export async function createModelTurn(options: {
           : await options
               .backgroundContext({ conversationId: input.conversationId, principalId: input.principal.principalId, text: input.text })
               .catch(() => undefined);
-      const reader = context === undefined || context.items === 0 ? undefined : context;
+      // Routed by what the work carries (#433): the request, the caller's data and what was retrieved. The router only
+      // offers profiles that may receive that class, and whichever model then runs — routed or the fallback — is
+      // checked again below: the run reads only what that model may be sent.
+      const dataClass = maxDataClass([
+        dataClassOfText(`${input.text}\n${input.data ?? ""}`),
+        ...(context === undefined ? [] : [context.dataClass]),
+      ]);
+      // A route that fails is a run on the configured model, the same as one that found nothing eligible.
+      const routed =
+        options.backgroundModel === undefined ? undefined : await options.backgroundModel({ dataClass }).catch(() => undefined);
+      const runsOn = routed ?? options.model?.() ?? selection;
+      const allowed = allowedFor(runsOn);
+      const narrowed = context?.readerFor(allowed);
+      const reader = narrowed === undefined || narrowed.items === 0 ? undefined : narrowed;
       const handle = await adapter.createWorkerSession({
         goal: input.text.slice(0, 2000),
         // No folders and no capabilities: starting a worker is not a way to acquire either, and the request that
@@ -1208,8 +1431,9 @@ export async function createModelTurn(options: {
         allowedCapabilityRefs: [],
         ...(reader === undefined ? {} : { customTools: [readContextTool(reader)] }),
         // Routed only for background work. Foreground honours the person's choice, and nobody is watching this run —
-        // which is exactly why the model for it is a decision rather than a setting.
-        ...(routed === undefined ? {} : { model: routed }),
+        // which is exactly why the model for it is a decision rather than a setting. Named even when nothing was routed,
+        // so the model that runs is the one whose data classes narrowed what it reads, not the adapter's boot default.
+        model: runsOn,
         ...(input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens }),
       });
       backgroundSessions.set(workId, handle.sessionId);
@@ -1270,6 +1494,7 @@ export async function createModelTurn(options: {
 
       const startedAt = Date.now();
       const turn = await turnFor(input.conversationId, input.principal);
+      const alreadyRunning = turn.inFlight;
       /*
        * Running from here, before anything is read for the prompt.
        *
@@ -1295,15 +1520,24 @@ export async function createModelTurn(options: {
       const stopRequested = new Promise<void>((resolve) => {
         turn.settleStop = resolve;
       });
-      // Once, on the first turn this session answers: the second turn already has the first in its context,
-      // and repeating the brief each time would push the conversation out with its own summary.
-      const fresh = turn.fresh;
-      turn.fresh = false;
-
+      // Created before the first await: a message steered while this turn is being prepared — a rebuild included —
+      // waits for it, and then joins the session that is actually prompted.
       let preparedResolve: () => void = () => undefined;
       turn.preparing = new Promise<void>((resolve) => {
         preparedResolve = resolve;
       });
+      // At the turn boundary, before anything is read: a rebuilt session is fresh, so the recap below briefs it. Any
+      // failure of the policy is reuse, which is what the session would have done without it.
+      const policy = await applySessionPolicy(turn, input.text, alreadyRunning).catch(() => undefined);
+      // Once, on the first turn this session answers: the second turn already has the first in its context,
+      // and repeating the brief each time would push the conversation out with its own summary.
+      const fresh = turn.fresh;
+      turn.fresh = false;
+      // What the model this conversation runs may be sent (#433), read now: the recap and the memory brief withhold
+      // anything of another class before a selector or the provider sees it.
+      const allowed = allowedFor(options.model?.() ?? selection);
+      turn.allowed = allowed;
+
       let recap: { text: string; earlier: string };
       let memoryPart: string;
       let referencePart: string;
@@ -1319,12 +1553,12 @@ export async function createModelTurn(options: {
               });
         // Side by side rather than one after another, so a turn waits for the slowest of them and not their sum.
         [recap, memoryPart, referencePart] = await Promise.all([
-          fresh ? recapFor(options, input.conversationId, input.text) : Promise.resolve({ text: "", earlier: "" }),
+          fresh ? recapFor(options, input.conversationId, input.text, allowed) : Promise.resolve({ text: "", earlier: "" }),
           // Read fresh every turn, not captured once: a record the person deleted must stop being sent on the next
           // turn, which is what the Memory tab's promise to let them see the source and delete it has to mean.
           // Given the turn's text, so what is remembered about this subject comes first; a brief that cannot be read is
           // a less informed turn, not a failed one.
-          Promise.resolve(options.memoryBrief?.(input.conversationId, input.text))
+          Promise.resolve(options.memoryBrief?.(input.conversationId, input.text, allowed))
             .catch(() => "")
             .then((part) => part ?? ""),
           options.references === undefined
@@ -1358,8 +1592,30 @@ export async function createModelTurn(options: {
       // Built here rather than at the call, because `note` is optional under exactOptionalPropertyTypes: a
       // present key holding undefined is a different type from an absent key, and only one of them means
       // "this turn carries no extra instruction".
-      const note = withRecap(recap.text, input.note);
-      const brief = [referencePart, attachmentPart, memoryPart].filter((part) => part !== "").join("\n\n");
+      // The session's instruction code, said once in the host's own guidance before any block can carry it: on the first
+      // turn the session is prompted, and only while conditional instructions are on.
+      const statesNonce = options.instructions !== undefined && !turn.nonceStated;
+      const note = withRecap(
+        [recap.text, statesNonce ? instructionsNonceNote(turn.instructionNonce) : ""].filter((part) => part !== "").join("\n\n"),
+        input.note,
+      );
+      // Project guidance whose condition holds goes with the brief, after the person's words and labelled with its
+      // source: a pinned one every turn, an unpinned one the first time this session hears it.
+      const instructionPart = stateInstructions(turn, input.conversationId, false);
+      const brief = [referencePart, attachmentPart, memoryPart, instructionPart].filter((part) => part !== "").join("\n\n");
+      if (policy !== undefined && options.sessionPolicy !== undefined) {
+        try {
+          reportSessionTelemetry({
+            conversationId: input.conversationId,
+            mode: options.sessionPolicy.mode,
+            ...policy,
+            linesChanged: linesChanged(turn.lastBrief, brief),
+          });
+        } catch {
+          // A report that cannot be written is not a reason for the turn to fail.
+        }
+      }
+      turn.lastBrief = brief;
       // What the planner retrieved from further back goes with the data, after the caller's own: material, not guidance.
       const data = [input.data ?? "", recap.earlier].map((part) => part.trim()).filter((part) => part !== "").join("\n\n");
       const ui = uiNoteFor(turn, input.conversationId);
@@ -1381,6 +1637,8 @@ export async function createModelTurn(options: {
         }, budget.maxWallClockMs);
       });
 
+      // Marked only when the prompt that carries it is sent: a stopped turn leaves it for the next one.
+      if (statesNonce && !turn.stopped) turn.nonceStated = true;
       // A Stop that arrived while the prompt was being prepared means the prompt is never sent.
       const prompted = turn.stopped
         ? Promise.resolve()
@@ -1434,6 +1692,10 @@ export async function createModelTurn(options: {
         turn.inFlight = false;
         turn.startedAtMs = undefined;
         turn.lastUsedAtMs = Date.now();
+        turn.answered += 1;
+        turn.lastLatencyMs = Date.now() - startedAt;
+        turn.recentTexts.push(input.text.slice(0, 2_000));
+        if (turn.recentTexts.length > SESSION_POLICY_LIMITS.recentTexts) turn.recentTexts.shift();
       }
 
       // Trailing prose after the last view, and reasoning that never got closed by a later block.

@@ -1,13 +1,14 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ConversationId, Instant, Principal, TaskRecord } from "@clarkcant/contracts";
+import type { ConversationId, DataClass, Instant, Principal, TaskRecord } from "@clarkcant/contracts";
 import { advanceResolving, applyTaskEvent, createTask, type ConductorDeps } from "@clarkcant/core";
 import { getTask } from "@clarkcant/storage";
 
+import { createConditionalInstructions } from "../src/conditional-instructions.ts";
 import { BUNDLE_DATA_HEADER, type ContextBundles, createContextBundles } from "../src/context-bundle.ts";
 import { rememberMemory } from "../src/memory.ts";
 import { bootRuntime, type Runtime } from "../src/node.ts";
@@ -105,19 +106,52 @@ interface Dispatched {
   settled: boolean;
   bundles: ContextBundles | undefined;
   leaseHeld: boolean;
+  launched: unknown[];
 }
 
 async function dispatch(
   goal: string,
-  overrides: { owner?: boolean; bundles?: boolean; origin?: TaskRecord["origin"]; throwing?: "owner" | "bundles" } = {},
+  overrides: {
+    owner?: boolean;
+    bundles?: boolean;
+    origin?: TaskRecord["origin"];
+    throwing?: "owner" | "bundles";
+    /** Start the worker on a model that may receive only these classes. */
+    allowed?: readonly DataClass[];
+    /** Project instructions kept in the task's folder. */
+    instructions?: string;
+  } = {},
 ): Promise<Dispatched> {
   const { conductor, task } = setup(goal, overrides.origin);
+  if (overrides.instructions !== undefined && scratch !== undefined) {
+    mkdirSync(join(scratch, ".clarkcant", "instructions"), { recursive: true });
+    writeFileSync(join(scratch, ".clarkcant", "instructions.json"), JSON.stringify({ rules: [{ include: ["style"] }] }), "utf8");
+    writeFileSync(join(scratch, ".clarkcant", "instructions", "style.md"), overrides.instructions, "utf8");
+  }
+  const instructionRoot = scratch ?? "";
   const db = conductor.db;
   const bundles = overrides.bundles === false ? undefined : createContextBundles({ db });
   let seen: WorkerProcessOptions | undefined;
   let settled = false;
+  const launched: unknown[] = [];
+  const allowed = overrides.allowed;
   const dispatcher = createTaskDispatcher({
     conductor,
+    ...(overrides.instructions === undefined
+      ? {}
+      : { conditionalInstructions: () => createConditionalInstructions({ roots: () => [instructionRoot] }) }),
+    ...(allowed === undefined
+      ? {}
+      : {
+          workerModel: {
+            available: () => true,
+            launch: async (work) => {
+              launched.push(work);
+              return { model: { provider: "acme", id: "narrow" }, via: "configured" as const, credentialSource: "model-config" as const };
+            },
+          },
+          allowedDataClasses: (model: { provider: string; id: string }) => (model.id === "narrow" ? allowed : ["public", "internal"]),
+        }),
     projectRoots: () => [scratch ?? ""],
     ownedRoots: () => [scratch ?? ""],
     ...(overrides.owner === false
@@ -150,7 +184,7 @@ async function dispatch(
   const leaseHeld = db.prepare("SELECT COUNT(*) AS n FROM leases WHERE holder_task_id = ? AND released_at IS NULL").get(task.taskId) as {
     n: number;
   };
-  return { options: seen, settled, bundles, leaseHeld: leaseHeld.n > 0 };
+  return { options: seen, settled, bundles, leaseHeld: leaseHeld.n > 0, launched };
 }
 
 async function dispatchOnce(goal: string, overrides: { owner?: boolean; bundles?: boolean } = {}): Promise<WorkerProcessOptions> {
@@ -212,6 +246,31 @@ describe("a dispatched task's context", () => {
       runtime?.close();
       runtime = undefined;
     }
+  });
+
+  it("routes by the goal's data class, and is narrowed to what the launched model may receive", async () => {
+    const goal = `${GOAL}, gửi kết quả cho duy@example.com`;
+    const narrowed = await dispatch(goal, { allowed: ["public"] });
+    expect(narrowed.launched).toEqual([{ dataClass: "confidential" }]);
+    // The note is internal and this model may receive only public data: no reader, no count, nothing retrieved shown.
+    expect(narrowed.options?.brief.contextItems).toBeUndefined();
+    expect(narrowed.options?.onContext).toBeUndefined();
+    runtime?.close();
+    runtime = undefined;
+
+    const wide = await dispatch(GOAL, { allowed: ["public", "internal"] });
+    expect(wide.launched).toEqual([{ dataClass: "internal" }]);
+    expect(wide.options?.brief.contextItems).toBe(1);
+  });
+
+  it("carries the project's instructions for its folders in the brief, and none without them", async () => {
+    const withThem = await dispatch(GOAL, { instructions: "Viết báo cáo bằng tiếng Việt có dấu." });
+    expect(withThem.options?.brief.instructions).toContain("Viết báo cáo bằng tiếng Việt có dấu.");
+    expect(withThem.options?.brief.instructions).toContain('/.clarkcant/instructions/style.md">');
+    runtime?.close();
+    runtime = undefined;
+    const without = await dispatch(GOAL);
+    expect(without.options?.brief.instructions).toBeUndefined();
   });
 
   it("gives no context tool for a goal nothing matches", async () => {

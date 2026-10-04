@@ -1,4 +1,12 @@
-import type { ModelPool, ModelRole, UserModelProfile } from "@clarkcant/contracts";
+import {
+  type DataClass,
+  type ModelPool,
+  type ModelRole,
+  type UserModelProfile,
+  DEFAULT_ALLOWED_DATA_CLASSES,
+  allowedDataClassesFor,
+  intersectDataClasses,
+} from "@clarkcant/contracts";
 
 /**
  * Which model a background worker runs.
@@ -43,6 +51,11 @@ export interface CandidateFilterInput {
   neededContextWindow?: number;
   /** How many tokens the work may spend, checked against the profile's own ceiling. */
   neededTokens?: number;
+  /**
+   * The most sensitive data class the work carries (#433). A profile that may not receive it is left out in both role
+   * passes: relaxing the role is about a missing label, never about where data may go.
+   */
+  dataClass?: DataClass;
 }
 
 export interface FilterOutcome {
@@ -95,6 +108,10 @@ function filterByCapability(
       rejected.push({ alias: profile.alias, reason: `không nhận vai trò ${role}` });
       continue;
     }
+    if (input.dataClass !== undefined && !allowedDataClassesFor(profile).includes(input.dataClass)) {
+      rejected.push({ alias: profile.alias, reason: `không được nhận dữ liệu mức ${input.dataClass}` });
+      continue;
+    }
     if (!input.hasCredential(profile.provider)) {
       rejected.push({ alias: profile.alias, reason: `node chưa có credential cho ${profile.provider}` });
       continue;
@@ -140,6 +157,24 @@ export function toolCallsIn(
   modelId: string,
 ): boolean | undefined {
   return catalogue.find((entry) => entry.id === provider)?.models.find((model) => model.id === modelId)?.toolCalls;
+}
+
+/** Whether two model ids name the same model, ignoring a reasoning-effort suffix (`model:high`). */
+function sameModelId(left: string, right: string): boolean {
+  const base = (id: string): string => (id.includes(":") ? id.slice(0, id.lastIndexOf(":")) : id);
+  return left === right || base(left) === base(right);
+}
+
+/**
+ * The data classes a model may be sent, from every profile in the pool that names it.
+ *
+ * Disabled profiles count: switching a profile off says "not this week", not "this provider is now trusted". Several
+ * profiles for one model give what all of them permit; none gives the default, which is everything but
+ * credential-shaped text.
+ */
+export function allowedDataClassesForModel(pool: ModelPool, model: { provider: string; id: string }): readonly DataClass[] {
+  const matching = pool.profiles.filter((profile) => profile.provider === model.provider && sameModelId(profile.modelId, model.id));
+  return matching.length === 0 ? DEFAULT_ALLOWED_DATA_CLASSES : intersectDataClasses(matching.map((profile) => allowedDataClassesFor(profile)));
 }
 
 /** A short description per candidate, which is all the policy layer is shown. */

@@ -11,7 +11,7 @@ import type {
   Principal,
   TaskId,
 } from "@clarkcant/contracts";
-import { isTerminal } from "@clarkcant/contracts";
+import { DEFAULT_ALLOWED_DATA_CLASSES, type DataClass, dataClassOfText, isTerminal } from "@clarkcant/contracts";
 import {
   acquireLease,
   applyTaskEvent,
@@ -61,6 +61,7 @@ import {
   taskProfileDir,
 } from "./task-browser.ts";
 import { createWorkerCommandBroker, parseWorkerCommandRequest } from "./worker-command-broker.ts";
+import { type ConditionalInstructions, taskInstructions } from "./conditional-instructions.ts";
 import { type ContextBundles, type ContextReader, reportContextBundle } from "./context-bundle.ts";
 import { runWorkerProcess, type WorkerProcessResult } from "./worker-process.ts";
 import type { WorkView } from "./work-supervisor.ts";
@@ -163,7 +164,11 @@ export interface WorkerModelLaunch {
  */
 export interface WorkerModelSource {
   available(): boolean;
-  launch(): Promise<WorkerModelLaunch | undefined>;
+  /**
+   * `work.dataClass` is how sensitive the task's own request reads: routing prefers a model allowed to receive it, and
+   * never refuses the work for it.
+   */
+  launch(work?: { dataClass?: DataClass }): Promise<WorkerModelLaunch | undefined>;
   /**
    * Whether the models a worker could be started on can call tools, as their catalogue states it: `false` only when
    * every one of them is stated not to, `true` only when every one is stated to, and `undefined` otherwise. Asked
@@ -204,6 +209,16 @@ export interface TaskDispatcherDeps {
    * context planner is off, or this caller predates it. Read for `ownerPrincipalId`, and never without it.
    */
   contextBundles?: () => ContextBundles | undefined;
+  /**
+   * The data classes a model may be sent, from its profiles in the node's pool. The worker's retrieved context is
+   * narrowed to the model it actually launched on. Absent means the default for an unlabelled profile.
+   */
+  allowedDataClasses?: (model: { provider: string; id: string }) => readonly DataClass[];
+  /**
+   * Project guidance for the folders a task is given (#433), stated once in its brief. Absent, or answering undefined,
+   * means none: the switch is off, or this caller predates it.
+   */
+  conditionalInstructions?: () => ConditionalInstructions | undefined;
   /**
    * Reported once a run settles, so the conversation can say what happened without the caller asking.
    *
@@ -484,7 +499,10 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
    * peer delegated, an automation started or a signal raised carries a goal someone else wrote, and the owner's notes and
    * conversation are not part of what that grant covers.
    */
-  const taskContext = async (task: NonNullable<ReturnType<typeof getTask>>): Promise<ContextReader | undefined> => {
+  const taskContext = async (
+    task: NonNullable<ReturnType<typeof getTask>>,
+    launch: WorkerModelLaunch | undefined,
+  ): Promise<ContextReader | undefined> => {
     if (task.origin !== undefined && task.origin.kind !== "interactive") return undefined;
     const { conversationId, goal } = task;
     try {
@@ -493,10 +511,41 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       if (bundles === undefined || principalId === undefined) return undefined;
       const bundle = await bundles.bundleFor({ principalId, conversationId, query: goal });
       reportContextBundle({ conversationId, purpose: "task", bundle, stats: bundles.stats() });
-      const reader = bundles.reader(bundle, principalId);
+      const allowed =
+        launch === undefined || deps.allowedDataClasses === undefined
+          ? DEFAULT_ALLOWED_DATA_CLASSES
+          : deps.allowedDataClasses(launch.model);
+      const reader = bundles.reader(bundle, principalId, allowed);
       return reader.items > 0 ? reader : undefined;
     } catch {
       return undefined;
+    }
+  };
+  /*
+   * The project guidance that applies to a task, from the folders its plan grants: the repositories it works on in a
+   * worktree count as written, since the worktree is that repository's own tree. Checked against the model the worker
+   * launched on, like its retrieved context. A failure is a task without guidance, never a task that fails.
+   */
+  const instructionsFor = (
+    plan: { read: readonly string[]; write: readonly string[]; repositories: readonly string[]; scoped: boolean },
+    capability: string,
+    launch: WorkerModelLaunch | undefined,
+  ): string => {
+    try {
+      const instructions = deps.conditionalInstructions?.();
+      if (instructions === undefined) return "";
+      const write = [...(plan.scoped ? plan.write : plan.read), ...plan.repositories];
+      return taskInstructions(instructions, {
+        read: [...plan.read, ...plan.repositories],
+        write,
+        capability,
+        allowed:
+          launch === undefined || deps.allowedDataClasses === undefined
+            ? DEFAULT_ALLOWED_DATA_CLASSES
+            : deps.allowedDataClasses(launch.model),
+      });
+    } catch {
+      return "";
     }
   };
   let closing = false;
@@ -632,7 +681,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     if (deps.workerModel !== undefined) {
       let reason: string | undefined;
       try {
-        launch = await deps.workerModel.launch();
+        launch = await deps.workerModel.launch({ dataClass: dataClassOfText(task.goal) });
       } catch (cause) {
         reason = `the model for it could not be chosen (${cause instanceof Error ? cause.message : String(cause)})`;
       }
@@ -906,7 +955,8 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
      * the lease, the browser, the worktrees and the timer are still released below.
      */
     try {
-      const context = await taskContext(task);
+      const context = await taskContext(task, launch);
+      const instructions = browsing ? "" : instructionsFor(plan, job.capabilityRef, launch);
       const result = await runWorker({
         nodeId: job.executionNodeId,
         brief: {
@@ -922,6 +972,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           ...(launch === undefined ? {} : { model: launch.model }),
           ...(maxTokens === undefined ? {} : { maxTokens }),
           ...(context === undefined ? {} : { contextItems: context.items }),
+          ...(instructions === "" ? {} : { instructions }),
         },
         ...(launch === undefined
           ? {}

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { dataClassSchema, trustClassSchema } from "./data-class.ts";
+
 /**
  * The models a person keeps, and the alias they switch between.
  *
@@ -40,6 +42,13 @@ export const userModelProfileSchema = z.object({
   maxTokens: z.number().int().positive().max(10_000_000).optional(),
   maxWallClockMs: z.number().int().positive().max(86_400_000).optional(),
   notes: z.string().max(500).optional(),
+  /**
+   * The data classes this model may be sent (#433). Absent means what its trust class allows, or everything but
+   * credential-shaped text when that is absent too. It only narrows: see `allowedDataClassesFor`.
+   */
+  allowedDataClasses: z.array(dataClassSchema).max(4).optional(),
+  /** Where the model runs, which sets the default of the list above. */
+  trustClass: trustClassSchema.optional(),
 });
 export type UserModelProfile = z.infer<typeof userModelProfileSchema>;
 
