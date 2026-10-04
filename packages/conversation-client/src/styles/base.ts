@@ -294,6 +294,8 @@ body {
 }
 .cc-selection-menu button:hover { background: var(--cc-card); }
 .cc-credential-field { display: flex; flex-direction: column; gap: var(--cc-space-xs); font-size: var(--cc-text-label); }
+/* Each field's label belongs to the field below it, so the space before a label is wider than the space under it. */
+.cc-credential-field + .cc-credential-field, .cc-credential-field + .cc-chip-row { margin-top: var(--cc-space-sm); }
 .cc-credential-field input {
   font: inherit; color: inherit; padding: var(--cc-space-sm);
   background: var(--cc-input-bg, var(--cc-card)); border: var(--cc-line, 1px solid) var(--cc-border);

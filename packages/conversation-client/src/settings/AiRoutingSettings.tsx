@@ -6,7 +6,7 @@ import { PERSONAL_INSTRUCTIONS_MAX_CHARS, type ModelPool } from "@clarkcant/cont
 import { InlineStatus, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import { CredentialsSection, type CredentialEntry } from "./controls/credentials-manager-section.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
-import { useT } from "../i18n/locale-context.tsx";
+import { useLocale, useT } from "../i18n/locale-context.tsx";
 
 /**
  * Every credential the node holds, listed once. DESIGN.md 11.6 keeps a key's row in the domain that explains
@@ -43,6 +43,15 @@ export interface AiRoutingSettingsProps {
 
 export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsProps): ReactElement {
   const t = useT();
+  const locale = useLocale();
+  // In the units a person reads a limit in: "2 phút · 32.000 token" rather than "120000 ms · 32000 token".
+  const turnCap = (ms: number, tokens: number): string => {
+    const time =
+      ms >= 60_000 && ms % 60_000 === 0
+        ? `${String(ms / 60_000)} ${t("settings.ai.turnCap.minutes")}`
+        : `${String(Math.round(ms / 1000))} ${t("settings.ai.turnCap.seconds")}`;
+    return `${time} · ${tokens.toLocaleString(locale)} token`;
+  };
   const [catalogue, setCatalogue] = useState<
     | { id: string; models: { provider: string; id: string; contextWindow?: number; current: boolean }[] }[]
     | undefined
@@ -116,9 +125,7 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
               <code>{facts.model.id}</code>
             </SettingsRow>
             <SettingsRow label={t("settings.ai.turnCap.label")} description={t("settings.ai.turnCap.description")}>
-              <code>
-                {facts.model.maxWallClockMs} ms · {facts.model.maxTokens} token
-              </code>
+              <code>{turnCap(facts.model.maxWallClockMs, facts.model.maxTokens)}</code>
             </SettingsRow>
           </>
         )}

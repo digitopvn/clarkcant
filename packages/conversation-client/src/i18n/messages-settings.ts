@@ -193,7 +193,9 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.ai.model.description": "Lấy từ lựa chọn đã lưu, mặc định là CC_MODEL_ID.",
   "settings.ai.turnCap.label": "Trần một lượt",
   "settings.ai.turnCap.description": "Một lượt vượt trần sẽ bị dừng, không chạy tiếp.",
-  "settings.ai.chooseProvider.heading": "Chọn provider và model",
+  "settings.ai.turnCap.minutes": "phút",
+  "settings.ai.turnCap.seconds": "giây",
+  "settings.ai.chooseProvider.heading": "Chọn nhà cung cấp và model",
   "settings.ai.chooseProvider.none":
     "Node chưa báo provider nào. Danh sách này đọc từ pi trên máy, nên nó rỗng khi pi không thấy provider nào — hoặc khi node không đọc được pi.",
   "settings.ai.provider.placeholder": "Gõ để tìm provider",
@@ -709,6 +711,8 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.ai.model.description": "Taken from the saved choice, defaulting to CC_MODEL_ID.",
   "settings.ai.turnCap.label": "Per-turn ceiling",
   "settings.ai.turnCap.description": "A turn that exceeds the ceiling is stopped, not continued.",
+  "settings.ai.turnCap.minutes": "min",
+  "settings.ai.turnCap.seconds": "s",
   "settings.ai.chooseProvider.heading": "Choose provider and model",
   "settings.ai.chooseProvider.none":
     "The node has not reported any provider. This list is read from the local pi, so it is empty when pi sees no provider — or when the node cannot read pi.",
