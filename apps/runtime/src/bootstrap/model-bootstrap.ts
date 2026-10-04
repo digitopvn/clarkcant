@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { instantSchema, type MessageRecord } from "@clarkcant/contracts";
+import { instantSchema, type MessageRecord, type TurnOrigin } from "@clarkcant/contracts";
 import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { credentialNames, getNotification, latestMessages, messagesSince, readPreference } from "@clarkcant/storage";
@@ -85,7 +85,7 @@ export interface ModelBootstrapDeps {
  */
 export function browserTaskToolDepsFor(
   services: NodeServices,
-  turn: { principalId: string; conversationId: string },
+  turn: { principalId: string; conversationId: string; origin?: () => TurnOrigin | undefined },
 ): BrowserTaskToolDeps | undefined {
   if (services.taskDispatch?.workersRunAModel() !== true) return undefined;
   return {
@@ -106,6 +106,7 @@ export function browserTaskToolDepsFor(
         { db: services.runtime.db, now: () => instantSchema.parse(new Date().toISOString()) },
         turn.principalId,
       ),
+    ...(turn.origin === undefined ? {} : { origin: turn.origin }),
   };
 }
 
@@ -291,11 +292,14 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
       const browserTasks = browserTaskToolDepsFor(deps.services(), {
         principalId: search.principalId,
         conversationId: turn.conversationId,
+        origin: turn.origin,
       });
       const tools = createNodeTools({
         search,
         projects,
         command,
+        // Who asked for the turn, read per call: the command and terminal tools hand it to the execution policy.
+        origin: turn.origin,
         // The main agent's app-control channel: the same contract and audit trail a click or a typed
         // command uses, with `source: "agent"` on the record so the two are never indistinguishable
         // after the fact. `onEvent` is read lazily because this tool list is built once per session, not
@@ -390,12 +394,14 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           connections: deps.services().connections,
           conversationId: turn.conversationId,
           channel: turn.channel,
+          origin: turn.origin,
         },
         // The same path a widget button takes, so "add a note" typed or said and a click are one action.
         capabilities: {
           deps: () => capabilityInvokeDeps(deps.services()),
           conversationId: turn.conversationId,
           channel: turn.channel,
+          origin: turn.origin,
           // A long-running capability starts through this conversation's widget binding to it, which follows the job.
           widgets: () => deps.services(),
         },
@@ -410,6 +416,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           }),
           conversationId: turn.conversationId,
           channel: turn.channel,
+          origin: turn.origin,
         },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back

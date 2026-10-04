@@ -23,6 +23,7 @@ import {
 } from "../inbox/desktop-notify-status.ts";
 import { effectCategoryLabels } from "../inbox/inbox-model.ts";
 import { useT } from "../i18n/locale-context.tsx";
+import { askedByKey } from "../turn-origin-words.ts";
 import type { MessageKey } from "../i18n/messages.ts";
 
 /**
@@ -70,6 +71,8 @@ export interface RecentEffectEntry {
   action?: RecentEffectAction;
   mode: string;
   category: string;
+  /** Who asked for it, as the host recorded it; worded here, and left out when it is not one the client knows. */
+  origin?: string;
 }
 
 /**
@@ -347,6 +350,13 @@ function readBackgroundLimit(value: unknown): "1" | "3" | "5" {
 }
 
 const INBOX_NOTIFICATIONS_KEY = "inbox.notifications";
+
+const MACHINE_TURNS_KEY = "execution.machineTurns";
+
+/** The stored choice for turns a program started, falling back to the default: treated like the person's own. */
+function readMachineTurns(value: unknown): "as-person" | "ask" {
+  return value === "ask" ? "ask" : "as-person";
+}
 
 function groupLabelKey(group: InboxNotificationGroup): MessageKey {
   switch (group) {
@@ -705,6 +715,38 @@ export function ControlSettings({
       </section>
 
       {/*
+        Turns a program started rather than the person: an AI client over MCP, a relay, or a script over the CLI or
+        API. By default they are treated exactly like the person's own message and only recorded; the stricter choice
+        asks before a risky effect such a turn causes. Automations and other nodes keep their own rules.
+      */}
+      <section className="cc-panel-section" data-machine-turns="true">
+        <h3>{t("settings.control.machineTurns.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.control.machineTurns.intro")}</p>
+        <SettingsRow label={t("settings.control.machineTurns.label")}>
+          <SegmentedControl
+            name="machine-turns"
+            label={t("settings.control.machineTurns.label")}
+            options={[
+              {
+                value: "as-person",
+                label: t("settings.control.machineTurns.asPerson.label"),
+                note: t("settings.control.machineTurns.asPerson.note"),
+              },
+              {
+                value: "ask",
+                label: t("settings.control.machineTurns.ask.label"),
+                note: t("settings.control.machineTurns.ask.note"),
+              },
+            ]}
+            value={readMachineTurns(prefs.preference(MACHINE_TURNS_KEY)?.value)}
+            pending={prefs.pending === MACHINE_TURNS_KEY}
+            onChange={(value) => prefs.write(MACHINE_TURNS_KEY, value)}
+          />
+        </SettingsRow>
+        <InlineStatus status={prefs.status} forKey={MACHINE_TURNS_KEY} />
+      </section>
+
+      {/*
         How much background work runs at once. Read by the node at every admission, so a choice here applies to the
         next request without a restart; work already running is never stopped by lowering it.
       */}
@@ -742,12 +784,20 @@ export function ControlSettings({
           </p>
         ) : (
           <ul className="cc-effect-list">
-            {recentEffects.map((effect) => (
-              <li key={`${effect.at}-${effect.description}`} data-effect-entry="true">
-                <code>{effect.category}</code> {recentEffectText(effect, t)}
-                <span className="cc-setting-desc"> · {effect.mode} · {effect.at}</span>
-              </li>
-            ))}
+            {recentEffects.map((effect) => {
+              const askedBy = askedByKey(effect.origin);
+              return (
+                <li key={`${effect.at}-${effect.description}`} data-effect-entry="true">
+                  <code>{effect.category}</code> {recentEffectText(effect, t)}
+                  <span className="cc-setting-desc">
+                    {" "}
+                    · {effect.mode}
+                    {askedBy === undefined ? null : <span data-effect-origin={effect.origin}> · {t(askedBy)}</span>} ·{" "}
+                    {effect.at}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

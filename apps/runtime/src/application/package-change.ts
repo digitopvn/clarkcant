@@ -4,6 +4,8 @@ import { nowInstant, type ServiceConnectionRequirement } from "@clarkcant/contra
 import type { PackageConnectionBroker } from "../package-connections.ts";
 import { installedConnection, installedManifest } from "../package-resources.ts";
 import type { PackageInstallDeps } from "./package-install.ts";
+import type { TurnOrigin } from "@clarkcant/contracts";
+
 import { changePackage, type PackageChange, type PackageChangeOutcome, type PackageChangeSource } from "./package-lifecycle.ts";
 
 /**
@@ -17,7 +19,7 @@ import { changePackage, type PackageChange, type PackageChangeOutcome, type Pack
 export async function changePackageAndConnection(
   deps: PackageInstallDeps,
   connections: Pick<PackageConnectionBroker, "forget"> | undefined,
-  input: { action: PackageChange; packageId: string; source: PackageChangeSource; conversationId?: string },
+  input: { action: PackageChange; packageId: string; source: PackageChangeSource; conversationId?: string; origin?: TurnOrigin },
 ): Promise<PackageChangeOutcome> {
   const connection = input.action === "uninstall" ? declaredConnection(deps, input.packageId) : undefined;
   const outcome = changePackage(deps, input);

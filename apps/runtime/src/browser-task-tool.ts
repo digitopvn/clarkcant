@@ -1,4 +1,4 @@
-import type { ConversationId, MessageRecord } from "@clarkcant/contracts";
+import type { ConversationId, MessageRecord, TurnOrigin } from "@clarkcant/contracts";
 import { type TaskServiceDeps, advanceResolving, applyTaskEvent, createTask } from "@clarkcant/core";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
@@ -50,6 +50,11 @@ export interface BrowserTaskToolDeps {
   dispatcher: () => TaskDispatcher | undefined;
   /** The language the person reads the interface in, for the sentence the model is asked to pass on. Defaults to Vietnamese. */
   language?: () => "vi" | "en";
+  /**
+   * Who asked for the turn (`TurnOrigin`), read when the tool runs. Stored on the task's origin, so the dispatcher's
+   * policy decision before the worker starts sees it. Absent is the person.
+   */
+  origin?: () => TurnOrigin | undefined;
 }
 
 /**
@@ -66,6 +71,12 @@ const NO_TOOL_CAPABLE_MODEL: Readonly<Record<"vi" | "en", string>> = {
     "None of the models set up here can call tools, so none of them can use the browser. " +
     "Choose one that can in Settings → AI & Routing → Choose provider and model.",
 };
+
+/** The turn's origin for the task record, read when the task is created. */
+function turnOriginOf(deps: BrowserTaskToolDeps): { turnOrigin?: TurnOrigin } {
+  const origin = deps.origin?.();
+  return origin === undefined ? {} : { turnOrigin: origin };
+}
 
 type Checked = { ok: true; goal: string; urls: URL[]; sites: string[] } | { ok: false; text: string };
 
@@ -211,7 +222,7 @@ export function createBrowserTaskTool(deps: BrowserTaskToolDeps): ToolDefinition
           conversationId: deps.conversationId as ConversationId,
           goal,
           principal: { principalId: deps.principalId as never, kind: "user", nodeId: deps.tasks.nodeId as never },
-          origin: { kind: "interactive", principalId: deps.principalId, sites: checked.sites },
+          origin: { kind: "interactive", principalId: deps.principalId, sites: checked.sites, ...turnOriginOf(deps) },
         });
         const started = applyTaskEvent(deps.tasks, task.taskId, "resolve.start");
         const ready = started.ok
