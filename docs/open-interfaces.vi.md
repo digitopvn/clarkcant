@@ -342,7 +342,9 @@ có so với manifest đang cài, dạng `{ verdict: "wider" | "narrower" | "unc
 keyDestinations, browserTokens, connectionScopes, connectionEndpoints }`, mỗi tập là `{ added, removed, addedMore?,
 removedMore? }` với tối đa 32 mục mỗi danh sách và phần còn lại được đếm, `keyDestinations` là từng cặp (key, origin) mà
 một key được gửi tới, và `profile` gồm tên hai mức tài nguyên kèm từng giới hạn có đổi; hoặc `{ verdict: "unknown" }`
-khi gói đang được cài ở phiên bản khác và không so sánh được hai bản (`packages/contracts/src/reach-change.ts`). Web
+khi gói đang được cài ở phiên bản khác và không so sánh được hai bản (`packages/contracts/src/reach-change.ts`). Thông báo
+còn mang `unreadFields` (`{ count, names }`) khi listing của phiên bản được nêu có những trường node này không đọc được
+và đã bỏ đi, để thay đổi được hiển thị không bị coi là toàn bộ những gì listing nói. Web
 client đọc `GET /inbox` theo từng mục, nên một mục không khớp hợp đồng bị bỏ ra và được đếm, thay vì làm hỏng cả hộp
 thư. Thao
 tác được liệt kê kèm `unavailable` (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) nói rõ vì
@@ -559,9 +561,12 @@ và npm, nên một snapshot không còn generation nào dùng vẫn nằm trên
 Khi chế độ thực thi của người dùng yêu cầu hỏi trước khi cài, route trả `202` với
 `{ "code": "APPROVAL_REQUIRED", "approvalId" }` và không cài gì. Câu hỏi đó chờ trong `GET /inbox`, ở `waiting`, dưới
 dạng `{ "kind": "install-approval", approvalId, packageId, version, displayName, riskTier, permissions, description,
-operationDigest, requestedAt, expiresAt, reach?, reachChange? }`: `permissions` là những quyền mà listing nói gói xin,
+operationDigest, requestedAt, expiresAt, reach?, reachChange?, unreadFields? }`: `permissions` là những quyền mà listing nói gói xin,
 `reach` là những gì gói tiếp cận ngoài vùng cách ly, `reachChange` (với bản cập nhật của gói đã cài) là những gì phiên
-bản đó thêm hoặc bỏ so với bản đang cài, cùng dạng như trên thông báo cập nhật, còn `operationDigest`
+bản đó thêm hoặc bỏ so với bản đang cài, cùng dạng như trên thông báo cập nhật, `unreadFields` (`{ count, names }`) là
+các trường listing mang mà node này không đọc được và đã bỏ đi, được đếm đủ và chỉ nêu tên khi là đường dẫn định danh thuần, tối đa 8 tên (cùng trường này có trên mỗi dòng
+`marketplace-results` và trên thông báo cập nhật package; xem
+[directory metadata](widget-development.vi.md#18-directory-metadata)), còn `operationDigest`
 là digest của artifact được liệt kê mà câu hỏi nói tới. Mục này chỉ được liệt kê khi thư mục vẫn còn liệt kê đúng
 artifact đó; một gói hay phiên bản được phát hành lại từ đó bị bỏ ra, và cài lại nó sẽ hỏi về chính nó ở hiện tại.
 Người dùng quyết định bằng `POST /packages/approvals/:id/decision`

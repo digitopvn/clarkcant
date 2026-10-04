@@ -12,6 +12,7 @@ import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { TerminalCardBlock } from "./terminal-card.tsx";
 import { PackageReach, readReach } from "./package-reach.tsx";
+import { UnreadListingFieldsNote, readUnreadFields } from "./unread-listing-fields.tsx";
 import { MESSAGES_VI, type MessageKey } from "./i18n/messages.ts";
 
 /**
@@ -2038,6 +2039,8 @@ export function MarketplaceResultsBlock({
                 )}
                 {/* What installing lets it reach, before the Install press: the install refuses an artifact that differs. */}
                 <PackageReach reach={readReach(result.declaredReach)} />
+                {/* What the listing says that this node does not read, so the row does not pass for all of it. */}
+                <UnreadListingFieldsNote fields={readUnreadFields(result.unreadFields)} />
                 <div className="cc-marketplace-meta">
                   <span data-marketplace-source="true">{describePackageSource(result.source, t)}</span>
                   <span data-marketplace-risk={lane}>{riskLaneLabel(t, lane)}</span>
