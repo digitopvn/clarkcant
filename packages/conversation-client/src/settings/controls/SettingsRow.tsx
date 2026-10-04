@@ -68,10 +68,15 @@ export function ToolRow({ toolRef, summary, usable, blockedReason, t }: ToolRowP
           <code>{toolRef}</code>
         </span>
         <span className="cc-setting-desc">{summary}</span>
+        {/* The node's own account of why, which can run to a paragraph of evidence: one click away, so a list of
+            capabilities still reads as a list rather than as a wall of diagnostics. */}
         {blockedReason !== undefined && blockedReason !== "" && (
-          <span className="cc-setting-desc cc-tool-blocked" data-blocked-reason="true">
-            {blockedReason}
-          </span>
+          <details className="cc-tool-why">
+            <summary>{t("settings.toolRow.why")}</summary>
+            <span className="cc-setting-desc cc-tool-blocked" data-blocked-reason="true">
+              {blockedReason}
+            </span>
+          </details>
         )}
       </div>
       {/* A word, not a colour: the state has to read without the swatch. */}

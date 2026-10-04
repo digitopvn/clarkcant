@@ -100,7 +100,12 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 }
 .cc-tool-row:last-of-type { border-bottom: none; }
 .cc-tool-row code { font-family: var(--cc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text); }
-.cc-tool-blocked { color: var(--cc-warning); }
+.cc-tool-blocked { color: var(--cc-text-muted); }
+.cc-tool-why { margin-top: var(--cc-space-xxs); font-size: var(--cc-text-label); }
+.cc-tool-why > summary { cursor: pointer; width: fit-content; color: var(--cc-text-tertiary); }
+.cc-tool-why > summary:hover { color: var(--cc-text); }
+.cc-tool-why[open] > summary { margin-bottom: var(--cc-space-xxs); }
+.cc-memory-empty > p { margin: 0; }
 .cc-panel-note { margin: var(--cc-space-sm) 0 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-badge[data-selected="true"], .cc-swatch[aria-pressed="true"] {
   outline: 2px solid var(--cc-focus); outline-offset: 2px;

@@ -88,7 +88,7 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
         >
           <button
             type="button"
-            className="cc-badge"
+            className="cc-action"
             onClick={() => onOpenWidgetLibrary?.("browse")}
             data-widget-library-open="browse"
           >

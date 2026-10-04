@@ -90,9 +90,10 @@ export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
 
   if (panel.state === "empty") {
     return (
-      <p className="cc-memory-empty" data-memory-state="empty">
-        {t("settings.memory.empty")}
-      </p>
+      <div className="cc-memory-empty" data-memory-state="empty">
+        <p>{t("settings.memory.empty")}</p>
+        <p className="cc-panel-note">{t("settings.memory.emptyNote")}</p>
+      </div>
     );
   }
 

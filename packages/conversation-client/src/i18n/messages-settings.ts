@@ -36,6 +36,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.range.numberSuffix": "(số)",
   "settings.toolRow.usable": "dùng được",
   "settings.toolRow.unusable": "chưa dùng được",
+  "settings.toolRow.why": "Vì sao",
 
   // usePreferences (pure .ts, takes t)
   "settings.applies.immediate": "áp dụng ngay",
@@ -379,13 +380,13 @@ export const MESSAGES_SETTINGS_VI = {
 
   // ExtensionsSettings
   "settings.extensions.widgetLibrary.intro": "Xem những giao diện Clark có thể dùng trong hội thoại.",
-  "settings.extensions.widgetLibrary.label": "Widget Library",
+  "settings.extensions.widgetLibrary.label": "Thư viện widget",
   "settings.extensions.widgetLibrary.description":
     "Duyệt danh mục widget thật, kèm bản xem trước bằng chính renderer đang chạy trong hội thoại.",
   "settings.extensions.widgetLibrary.browse": "Duyệt",
-  "settings.extensions.capabilities.heading": "Capability trên node này",
+  "settings.extensions.capabilities.heading": "Khả năng trên node này",
   "settings.extensions.capabilities.intro": "Thứ gì chưa nạp thì nói rõ vì sao, không được làm tròn thành “dùng được”.",
-  "settings.extensions.capabilities.none": "Chưa có capability nào trên node này.",
+  "settings.extensions.capabilities.none": "Chưa có khả năng nào trên node này.",
   "settings.extensions.tools.heading": "Công cụ",
   "settings.extensions.piExtensions.heading": "Extension của pi trên máy này",
   "settings.extensions.piExtensions.none": "pi trên máy này chưa nạp extension nào. Danh sách chỉ có tên và loại, không bao giờ có nội dung tệp.",
@@ -493,6 +494,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.memory.loading": "Đang đọc những gì đã ghi nhớ…",
   "settings.memory.retry": "Thử lại",
   "settings.memory.empty": "Chưa có gì được ghi nhớ",
+  "settings.memory.emptyNote": "Những gì Clark ghi nhớ sẽ hiện ở đây, và bạn có thể xoá từng mục.",
   "settings.memory.deleteAria": "Xoá mục đã ghi nhớ",
   "settings.memory.delete": "Xoá",
 
@@ -554,6 +556,7 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.range.numberSuffix": "(number)",
   "settings.toolRow.usable": "usable",
   "settings.toolRow.unusable": "not usable yet",
+  "settings.toolRow.why": "Why",
 
   "settings.applies.immediate": "applies immediately",
   "settings.applies.nextTurn": "applies from the next turn",
@@ -1001,6 +1004,7 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.memory.loading": "Reading what has been remembered…",
   "settings.memory.retry": "Retry",
   "settings.memory.empty": "Nothing has been remembered yet",
+  "settings.memory.emptyNote": "What Clark remembers shows up here, and you can delete any of it.",
   "settings.memory.deleteAria": "Delete remembered item",
   "settings.memory.delete": "Delete",
 
