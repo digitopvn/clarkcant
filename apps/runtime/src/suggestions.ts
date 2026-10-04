@@ -179,8 +179,10 @@ export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
     });
   }
 
-  // (e) Directories used recently. `listProjects` is already ordered by last use, and the record carries the name.
-  for (const project of listProjects(deps.db, deps.nodeId, 5)) {
+  // (e) Directories used recently. `listProjects` is already ordered by last use, and the record carries the name. The
+  // index also holds every folder a scan found and nobody has opened — a games cache once filled this screen — so only
+  // a folder that was actually used is offered under "used recently".
+  for (const project of listProjects(deps.db, deps.nodeId, 5).filter((entry) => entry.lastUsedAt !== undefined)) {
     offer({
       label: `Mở dự án ${project.name}`,
       text: `Mở dự án ${project.name}`,

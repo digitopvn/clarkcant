@@ -173,6 +173,12 @@ describe("a node with records", () => {
     expect(found?.text).toContain("clarkcant");
   });
 
+  it("does not offer a folder the index found but nobody has used as one used recently", () => {
+    upsertProject(db, { ...(project("proj_found", "1070910") as object), lastUsedAt: null } as never);
+
+    expect(suggest().filter((item) => item.source === "project")).toEqual([]);
+  });
+
   it("never offers the same record twice", () => {
     conversation("conv_one");
     upsertProject(db, project("proj_one", "a"));
