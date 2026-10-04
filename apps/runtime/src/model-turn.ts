@@ -47,6 +47,7 @@ import {
   type ToolDefinition,
   type WorkerBrief,
   type WorkerEvent,
+  type WorkerSessionHandle,
 } from "@clarkcant/pi-adapter";
 
 import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
@@ -279,6 +280,12 @@ interface Turn {
    * describes - which is exactly what a first attempt at this did.
    */
   inFlight: boolean;
+  /**
+   * Settles when the running turn ends, however it ends; `endRun` is what settles it and clears `inFlight`. A message
+   * that cannot be steered into the running turn waits on this and then becomes a turn of its own.
+   */
+  ended: Promise<void>;
+  endRun: () => void;
   /** When the running turn started, so the mid-turn decider can weigh how long the work has gone on. */
   startedAtMs: number | undefined;
   /**
@@ -345,6 +352,11 @@ interface Turn {
    * session, and the old one is let go. The transcript is not touched.
    */
   rebuild: () => Promise<boolean>;
+}
+
+/** How a conversation's generation records its model: `provider/id`, or empty when nobody chose one. */
+function modelKey(model: { provider: string; id: string } | undefined): string {
+  return model === undefined ? "" : `${model.provider}/${model.id}`;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -1147,9 +1159,9 @@ export async function createModelTurn(options: {
       return existing;
     }
     /*
-     * A change of model waits for a turn boundary. A message that arrives while a turn is running joins that turn on
-     * the session it is running on; swapping and disposing the session underneath it would cut the running reply off.
-     * The model this conversation runs is not recorded as changed, so the next turn that starts makes the handoff.
+     * A change of model waits for a turn boundary. A message that arrives while a turn is running is steered into that
+     * turn (see `answer`); swapping and disposing the session underneath it would cut the running reply off. The model
+     * this conversation runs is not recorded as changed, so the next turn that starts makes the handoff.
      */
     if (existing?.inFlight === true) return existing;
 
@@ -1178,6 +1190,8 @@ export async function createModelTurn(options: {
       conversationId,
       fresh: true,
       inFlight: false,
+      ended: Promise.resolve(),
+      endRun: () => undefined,
       startedAtMs: undefined,
       stopped: false,
       settleStop: undefined,
@@ -1309,7 +1323,8 @@ export async function createModelTurn(options: {
 
     // Taken on by a handoff as well, so a later rebuild creates the session with this generation's tools.
     const rebuild = async (): Promise<boolean> => {
-      const handle = await adapter.createWorkerSession(briefFor(options.model?.()));
+      const model = options.model?.();
+      const handle = await adapter.createWorkerSession(briefFor(model));
       // A Stop while the fresh session was being created ended this turn: the old session is the stop's to dispose,
       // and the fresh one nobody will prompt goes now. The same when the node shut down meanwhile (its turn aborted).
       if (turn.stopped || turn.abort.signal.aborted) {
@@ -1317,15 +1332,41 @@ export async function createModelTurn(options: {
         return false;
       }
       adopt(handle.sessionId);
+      // The model the new session runs, so a change made meanwhile is not mistaken for one still to make.
+      generationModels.set(conversationId, modelKey(model));
       return true;
     };
 
     if (existing !== undefined) {
-      const { successor } = await adapter.handoff(existing.sessionId, briefFor(preferred));
+      let successor: WorkerSessionHandle;
+      try {
+        ({ successor } = await adapter.handoff(existing.sessionId, briefFor(preferred)));
+      } catch (cause) {
+        /*
+         * Nothing on the turn has changed yet, so the previous session is intact. It is not used in place of the model
+         * the person chose, though: answering on another model without saying so would misreport who answered. The
+         * person hears what failed, that nothing was lost, and what to do next.
+         */
+        const reason = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(
+          `Could not switch this conversation to ${preferredModel ?? "the chosen model"}: ${reason}. ` +
+            "The conversation is kept as it was. Send the message again to retry, or choose another model.",
+          { cause },
+        );
+      }
+      /*
+       * Idle eviction may have let this turn go while the successor was being created. Then the successor belongs to
+       * nothing that a Stop, a steer or shutdown could reach: it goes now, and the conversation starts a session the way
+       * any evicted one does.
+       */
+      if (turns.get(conversationId) !== existing) {
+        void adapter.dispose(successor.sessionId).catch(() => undefined);
+        return await turnFor(conversationId, principal);
+      }
       adopt(successor.sessionId);
       turn.registeredTools = registeredTools;
       turn.rebuild = rebuild;
-      generationModels.set(conversationId, preferredModel ?? "");
+      generationModels.set(conversationId, modelKey(preferred));
       return turn;
     }
 
@@ -1340,6 +1381,61 @@ export async function createModelTurn(options: {
 
     turns.set(conversationId, turn);
     return turn;
+  }
+
+  /** Adds a sentence to a running turn of the same origin, answering whether it was added (see `steer`). */
+  async function steerInto(turn: Turn, text: string, origin: TurnOrigin | undefined): Promise<boolean> {
+    if (!turn.inFlight || turn.sessionId === "") return false;
+    if ((origin ?? "person") !== (turn.origin ?? "person")) return false;
+    await turn.preparing;
+    // A Stop while it was being prepared ended the turn this was meant for.
+    if (!turn.inFlight || turn.stopped) return false;
+    await adapter.steer(turn.sessionId, text);
+    return true;
+  }
+
+  /**
+   * One preparation at a time per conversation, ending with the turn claimed.
+   *
+   * Preparing can wait on a handoff, and a second message in that wait would otherwise start a second handoff from the
+   * same session and dispose the first one's successor while it streams. A caller that finds a preparation pending
+   * waits for it and decides again. The claim is made before the next caller may look, so it either claims an idle
+   * turn or finds it running — never both callers claiming it.
+   */
+  const preparing = new Map<string, Promise<unknown>>();
+  async function claimTurn(
+    conversationId: string,
+    principal: Principal,
+    origin: TurnOrigin | undefined,
+  ): Promise<{ turn: Turn; joined: boolean; prepared: () => void }> {
+    for (let pending = preparing.get(conversationId); pending !== undefined; pending = preparing.get(conversationId)) {
+      await pending.catch(() => undefined);
+    }
+    const claim = (async () => {
+      const turn = await turnFor(conversationId, principal);
+      if (turn.inFlight) return { turn, joined: true, prepared: () => undefined };
+      // Running from here: a Stop reaches it, and a message steered meanwhile waits for `preparing` and then joins the
+      // session that is actually prompted. The origin is the claim's, so a message arriving next is compared with it.
+      turn.inFlight = true;
+      turn.origin = origin;
+      turn.ended = new Promise<void>((resolve) => {
+        turn.endRun = () => {
+          turn.inFlight = false;
+          resolve();
+        };
+      });
+      let prepared: () => void = () => undefined;
+      turn.preparing = new Promise<void>((resolve) => {
+        prepared = resolve;
+      });
+      return { turn, joined: false, prepared };
+    })();
+    preparing.set(conversationId, claim);
+    try {
+      return await claim;
+    } finally {
+      if (preparing.get(conversationId) === claim) preparing.delete(conversationId);
+    }
   }
 
   return {
@@ -1389,13 +1485,7 @@ export async function createModelTurn(options: {
      */
     steer: async (conversationId: string, text: string, origin?: TurnOrigin): Promise<boolean> => {
       const turn = turns.get(conversationId);
-      if (turn === undefined || !turn.inFlight || turn.sessionId === "") return false;
-      if ((origin ?? "person") !== (turn.origin ?? "person")) return false;
-      await turn.preparing;
-      // A Stop while it was being prepared ended the turn this was meant for.
-      if (!turn.inFlight || turn.stopped) return false;
-      await adapter.steer(turn.sessionId, text);
-      return true;
+      return turn === undefined ? false : await steerInto(turn, text, origin);
     },
 
     runningMs: (conversationId: string): number | undefined => {
@@ -1512,16 +1602,35 @@ export async function createModelTurn(options: {
       }
 
       const startedAt = Date.now();
-      const turn = await turnFor(input.conversationId, input.principal);
-      const alreadyRunning = turn.inFlight;
       /*
-       * Running from here, before anything is read for the prompt.
+       * Running from the claim, before anything is read for the prompt.
        *
        * Reading the recap, the memory and the tool plan can take a selector call each when an operator opted in, and a
        * message or a Stop arriving meanwhile must see a turn in flight: a second message is steered rather than started
        * alongside, and a Stop is honoured — the prompt below is then never sent.
        */
-      turn.inFlight = true;
+      let claimed = await claimTurn(input.conversationId, input.principal, input.origin);
+      /*
+       * A turn is already running. A second prompt on a session that is answering is refused by Pi, and it would make
+       * two replies out of one conversation, so the message joins the running turn the way a steer does. One of another
+       * origin is never steered into it: it waits for the running turn to end and then becomes a turn of its own.
+       */
+      while (claimed.joined) {
+        if (await steerInto(claimed.turn, input.text, input.origin)) {
+          return {
+            text: "",
+            segments: [],
+            provider: selection.provider,
+            model: selection.id,
+            elapsedMs: Date.now() - startedAt,
+            steered: true,
+          };
+        }
+        await claimed.turn.ended;
+        claimed = await claimTurn(input.conversationId, input.principal, input.origin);
+      }
+      const turn = claimed.turn;
+      const preparedResolve = claimed.prepared;
       turn.startedAtMs = startedAt;
       // Cleared before the prompt rather than after, so a turn that throws still leaves the
       // buffer empty for the next one instead of prepending the previous reply to it.
@@ -1539,19 +1648,14 @@ export async function createModelTurn(options: {
       const stopRequested = new Promise<void>((resolve) => {
         turn.settleStop = resolve;
       });
-      // Created before the first await: a message steered while this turn is being prepared — a rebuild included —
-      // waits for it, and then joins the session that is actually prompted.
-      let preparedResolve: () => void = () => undefined;
-      turn.preparing = new Promise<void>((resolve) => {
-        preparedResolve = resolve;
-      });
       // At the turn boundary, before anything is read: a rebuilt session is fresh, so the recap below briefs it. Any
-      // failure of the policy is reuse, which is what the session would have done without it.
-      const policy = await applySessionPolicy(turn, input.text, alreadyRunning).catch(() => undefined);
+      // failure of the policy is reuse, which is what the session would have done without it. The claim never hands
+      // over a running turn, so the policy always sees one that is not.
+      const policy = await applySessionPolicy(turn, input.text, false).catch(() => undefined);
       // Once, on the first turn this session answers: the second turn already has the first in its context,
-      // and repeating the brief each time would push the conversation out with its own summary.
+      // and repeating the brief each time would push the conversation out with its own summary. Cleared only once the
+      // prompt that carries it is sent, so a preparation that fails leaves the recap for the next turn.
       const fresh = turn.fresh;
-      turn.fresh = false;
       // What the model this conversation runs may be sent (#433), read now: the recap and the memory brief withhold
       // anything of another class before a selector or the provider sees it.
       const allowed = allowedFor(options.model?.() ?? selection);
@@ -1587,7 +1691,7 @@ export async function createModelTurn(options: {
         ]);
       } catch (cause) {
         // Nothing was sent: the turn was never running as far as anyone else is concerned.
-        turn.inFlight = false;
+        turn.endRun();
         turn.startedAtMs = undefined;
         turn.settleStop = undefined;
         turn.onEvent = undefined;
@@ -1658,11 +1762,14 @@ export async function createModelTurn(options: {
 
       // Marked only when the prompt that carries it is sent: a stopped turn leaves it for the next one.
       if (statesNonce && !turn.stopped) turn.nonceStated = true;
+      if (fresh && !turn.stopped) turn.fresh = false;
+      // The session this turn prompts, held so that whatever ends the turn lets go of this one and never another.
+      const promptedSession = turn.sessionId;
       // A Stop that arrived while the prompt was being prepared means the prompt is never sent.
       const prompted = turn.stopped
         ? Promise.resolve()
         : adapter.prompt(
-            turn.sessionId,
+            promptedSession,
             promptForTurn({
               text: input.text,
               ...(note === undefined ? {} : { note }),
@@ -1697,7 +1804,7 @@ export async function createModelTurn(options: {
           // Only this turn's entry: a stop may already have handed the conversation to the next message's session.
           if (turns.get(input.conversationId) === turn) turns.delete(input.conversationId);
           turn.unsubscribe();
-          void adapter.dispose(turn.sessionId).catch(() => undefined);
+          void adapter.dispose(promptedSession).catch(() => undefined);
           throw cause;
         }
       } finally {
@@ -1708,7 +1815,7 @@ export async function createModelTurn(options: {
         turn.onEvent = undefined;
         // Cleared here, in the one path that every outcome goes through: success, failure and cancellation all leave
         // `answer` through this block, and a stale marker would make the next message think a turn was still running.
-        turn.inFlight = false;
+        turn.endRun();
         turn.startedAtMs = undefined;
         turn.lastUsedAtMs = Date.now();
         turn.answered += 1;
@@ -1730,10 +1837,9 @@ export async function createModelTurn(options: {
 
       if (turn.stopped) {
         // Read before the session goes: the tokens a stopped turn spent are still worth reporting.
-        const metrics = turnMetrics({ adapter, sessionId: turn.sessionId, elapsedMs, model: selection.id });
+        const metrics = turnMetrics({ adapter, sessionId: promptedSession, elapsedMs, model: selection.id });
         turn.unsubscribe();
-        const sessionId = turn.sessionId;
-        void (turn.stopping ?? Promise.resolve()).then(() => adapter.dispose(sessionId)).catch(() => undefined);
+        void (turn.stopping ?? Promise.resolve()).then(() => adapter.dispose(promptedSession)).catch(() => undefined);
         // Stopped with nothing said yet is still an answer: the person asked for the stop, so it is not a failure.
         return { text, segments, provider: selection.provider, model: selection.id, elapsedMs, metrics, stopped: true };
       }

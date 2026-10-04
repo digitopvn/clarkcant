@@ -302,6 +302,11 @@ export interface ModelTurnReply {
    * record says it was stopped on request rather than that it finished or failed.
    */
   stopped?: true;
+  /**
+   * Present when the message was added to a turn that was already running rather than answered on its own. The running
+   * turn's reply answers it, so this one carries nothing and no message is written for it.
+   */
+  steered?: true;
 }
 
 /**
@@ -464,7 +469,7 @@ export interface ConductorOutcome {
   /** Set when a durable task was created rather than answered immediately. */
   taskId: string | undefined;
   /** How the utterance was resolved, for tests and for the UI's honest labelling. */
-  resolution: "sample" | "model" | "model-failed" | "task-dispatched" | "task-parked" | "clarification";
+  resolution: "sample" | "model" | "model-failed" | "steered" | "task-dispatched" | "task-parked" | "clarification";
 }
 
 /** Append an assistant message and return the stored record. */
@@ -912,6 +917,10 @@ async function runModelTurn(
     );
     return { messages: [message], taskId: undefined, resolution: "model-failed" };
   }
+
+  // Joined to the turn already running: that turn's reply is the answer, and an empty message here would read as the
+  // assistant having nothing to say.
+  if (reply.steered === true) return { messages: [], taskId: undefined, resolution: "steered" };
 
   const message = appendAssistant(
     deps,
