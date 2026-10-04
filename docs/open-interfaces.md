@@ -138,6 +138,10 @@ The origin stays with the work it started:
   is asked about again under `"ask"`. The approved effect's audit and activity rows keep the origin too.
 - A message whose origin differs from the running turn's is never steered into it. It interrupts and becomes a turn
   of its own with its own origin. A message sent to the background lane is recorded in the audit log with its origin.
+- A message that still reaches a turn already running (it arrived while that turn was being prepared) is never sent
+  to the model as a second prompt. One of the same origin is steered into the running turn, whose reply answers it:
+  the message response and the stream's `done` event report `resolution: "steered"` with no message ids. One of
+  another origin waits for the running turn to end and then becomes a turn of its own.
 
 `machineTurns` is part of the execution policy, and the policy routes (`PUT /preferences/execution.policy`,
 `execution.machineTurns`, their `/undo`, and `POST /autonomy`) are open to any token holder, including the relay and

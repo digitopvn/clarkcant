@@ -142,6 +142,10 @@ Nguồn gốc đi theo công việc mà nó bắt đầu:
 - Một tin nhắn có nguồn gốc khác với lượt đang chạy không bao giờ được nhập (steer) vào lượt đó. Nó ngắt lượt đang chạy
   và trở thành một lượt riêng với nguồn gốc của chính nó. Tin nhắn được chuyển sang làn chạy nền được ghi vào nhật ký
   audit cùng nguồn gốc.
+- Một tin nhắn vẫn tới được một lượt đang chạy (nó tới trong lúc lượt đó đang được chuẩn bị) không bao giờ được gửi tới
+  model thành một prompt thứ hai. Tin nhắn cùng nguồn gốc được chen (steer) vào lượt đang chạy, và câu trả lời của lượt
+  đó trả lời nó: phản hồi của tin nhắn và event `done` của stream báo `resolution: "steered"` và không có message id
+  nào. Tin nhắn có nguồn gốc khác chờ lượt đang chạy kết thúc rồi trở thành một lượt riêng.
 
 `machineTurns` là một phần của chính sách thực thi, và các route chính sách (`PUT /preferences/execution.policy`,
 `execution.machineTurns`, các route `/undo` của chúng, và `POST /autonomy`) mở cho mọi người giữ token, kể cả relay và
