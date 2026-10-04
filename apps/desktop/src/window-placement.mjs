@@ -27,6 +27,16 @@ const REACHABLE_STRIP = Object.freeze({ width: 120, height: 32 });
  * `openedAs` is the remembered size the window was opened with and what the OS actually made of it. On a scaled
  * display those differ by a rounding pixel or two, so a window nobody moved or resized is remembered as it was asked
  * for; otherwise it would grow a little at every launch.
+ *
+ * @param {{
+ *   normalBounds: { x: number; y: number; width: number; height: number };
+ *   maximized?: boolean;
+ *   fullScreen?: boolean;
+ *   openedAs?: {
+ *     requested: { x: number; y: number; width: number; height: number };
+ *     actual: { x: number; y: number; width: number; height: number };
+ *   };
+ * }} input
  */
 export function placementToRemember({ normalBounds, maximized, fullScreen, openedAs }) {
   const untouched = openedAs !== undefined && sameBounds(normalBounds, openedAs.actual);
