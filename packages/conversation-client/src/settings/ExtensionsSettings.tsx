@@ -81,7 +81,6 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
       */}
       <section className="cc-panel-section" data-widget-library-entry="true">
         <h3 data-marketplace-heading="true">{t("marketplace.heading")}</h3>
-        <p className="cc-panel-note">{t("settings.extensions.widgetLibrary.intro")}</p>
         <SettingsRow
           label={t("settings.extensions.widgetLibrary.label")}
           description={t("settings.extensions.widgetLibrary.description")}

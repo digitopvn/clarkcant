@@ -381,10 +381,9 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.voice.previewUnsupported": "Provider này chưa hỗ trợ nghe thử.",
 
   // ExtensionsSettings
-  "settings.extensions.widgetLibrary.intro": "Xem những giao diện Clark có thể dùng trong hội thoại.",
-  "settings.extensions.widgetLibrary.label": "Thư viện widget",
+  "settings.extensions.widgetLibrary.label": "Giao diện Clark có thể vẽ trong hội thoại",
   "settings.extensions.widgetLibrary.description":
-    "Duyệt danh mục widget thật, kèm bản xem trước bằng chính renderer đang chạy trong hội thoại.",
+    "Duyệt danh mục widget thật, mỗi widget có bản xem trước vẽ bằng đúng trình hiển thị của hội thoại.",
   "settings.extensions.widgetLibrary.browse": "Duyệt",
   "settings.extensions.capabilities.heading": "Khả năng trên node này",
   "settings.extensions.capabilities.intro": "Thứ gì chưa nạp thì nói rõ vì sao, không được làm tròn thành “dùng được”.",
@@ -504,7 +503,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.developer.widgetLab.heading": "Widget Lab",
   "settings.developer.widgetLab.intro": "Xem fixture, props, state, events, semantic output, kích thước và trạng thái trợ năng.",
   "settings.developer.widgetLab.label": "Widget Lab",
-  "settings.developer.widgetLab.description": "Mở đúng surface của Widget Library ở chế độ developer, kèm bảng inspector.",
+  "settings.developer.widgetLab.description": "Mở Thư viện widget ở chế độ nhà phát triển, kèm bảng kiểm tra.",
   "settings.developer.widgetLab.open": "Mở Lab",
   "settings.developer.node.heading": "Node này",
   "settings.developer.node.id.label": "Mã node",
@@ -894,8 +893,7 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.voice.preview": "▶ Preview",
   "settings.voice.previewUnsupported": "This provider does not support preview yet.",
 
-  "settings.extensions.widgetLibrary.intro": "See the interfaces Clark can use in the conversation.",
-  "settings.extensions.widgetLibrary.label": "Widget Library",
+  "settings.extensions.widgetLibrary.label": "Interfaces Clark can draw in the conversation",
   "settings.extensions.widgetLibrary.description":
     "Browse the real widget catalog, with a preview from the same renderer running in the conversation.",
   "settings.extensions.widgetLibrary.browse": "Browse",
