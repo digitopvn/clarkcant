@@ -771,7 +771,7 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.surface.openCurrent": "Mở bản hiện tại",
   "widgets.snapshot.unreadable":
     "Không đọc lại được phần này của cuộc trò chuyện nên nó không được hiển thị. Phần còn lại vẫn được giữ nguyên. Nếu cần, hãy nhờ Clark hiển thị lại.",
-  "widgets.surface.pinAgain": "Ghim lại",
+  "widgets.surface.pin": "Ghim lại",
 
   // DetachedWidgetSurface.tsx
   "widgets.detached.cannotOpen": "Không mở được widget này",
@@ -1747,7 +1747,7 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.surface.openCurrent": "Open current view",
   "widgets.snapshot.unreadable":
     "This part of the conversation could not be read back, so it is not shown. The rest is kept as it was. Ask Clark to show it again if you need it.",
-  "widgets.surface.pinAgain": "Pin again",
+  "widgets.surface.pin": "Pin",
 
   "widgets.detached.cannotOpen": "Could not open this widget",
   "widgets.detached.opening": "Opening widget…",

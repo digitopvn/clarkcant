@@ -791,7 +791,7 @@ export function useSurfaceRenderer({
                   .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
               }}
             >
-              {Renderer === undefined ? t("widgets.surface.openCurrent") : t("widgets.surface.pinAgain")}
+              {Renderer === undefined ? t("widgets.surface.openCurrent") : t("widgets.surface.pin")}
             </button>
           )}
         </div>
