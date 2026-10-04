@@ -11,7 +11,7 @@
 export const MESSAGES_SHELL_VI = {
   "shell.header.restartTitle": "Bắt đầu lại",
   "shell.header.restartAria": "Bắt đầu lại: về màn hình đầu và mở một phiên mới",
-  "shell.status.ready": "Ready",
+  "shell.status.ready": "Sẵn sàng",
   "shell.status.connecting": "Đang kết nối",
   "shell.status.offline": "Mất kết nối",
   "shell.connection.unreachable": "Không kết nối được tới node.",

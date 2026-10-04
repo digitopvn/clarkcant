@@ -88,7 +88,7 @@ async function open(page: Page): Promise<void> {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
   );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 const rootVar = (page: Page, name: string): Promise<string> =>
@@ -192,7 +192,7 @@ test("a recipe-and-effect theme reaches the page, brings its Orb default, and lo
   const chosen = await request.put(`${GATEWAY}/preferences/orb.profile`, { headers: headers(), data: { value: "calm" } });
   expect(chosen.ok()).toBe(true);
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect(conversationOrb(page)).toHaveAttribute("data-orb-profile", "calm", { timeout: 15_000 });
   await expect.poll(() => rootVar(page, "--cc-accent"), { timeout: 15_000 }).toBe(DEPTH_DARK_ACCENT);
 });

@@ -51,7 +51,7 @@ for (const theme of themes) for (const width of [1280, 390]) for (const scheme o
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: scheme, reducedMotion: "no-preference" });
     await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(node)}`);
-    await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
     const composer = page.locator("[data-composer='true']");
     await composer.fill("widget cách ly");
     await composer.press("Enter");

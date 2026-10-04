@@ -29,7 +29,7 @@ function token(): string {
 
 test("a reminder set up in the conversation is said there, and left in the inbox, when its signal arrives", async ({ page }) => {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 
   // A topic of this run's own, so a signal another spec or an earlier run sends never answers it. Base 36 rather than a
   // long run of digits, which the inbox would rightly mask as something that could be a secret.
@@ -75,7 +75,7 @@ test("a reminder set up in the conversation is said there, and left in the inbox
 
 test("an address in what the node says on its own opens as a link, the way a task's pull request is reported", async ({ page }) => {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 
   // A task's result and a reminder reach the conversation the same way, as a plain sentence from the node; a
   // fixture node runs no worker, so the reminder is the one of the two a browser can be sent here.

@@ -43,7 +43,7 @@ async function install(request: APIRequestContext): Promise<void> {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /** Open the newest notes widget live and wait until the host has said its export can run. */
@@ -97,7 +97,7 @@ test("a press starts a job whose service progress survives a remount, and the wi
 
   // A reload unmounts the frame. The remounted widget reads its JobRef from saved state and follows the same job.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   widget = await openLive(page);
   const resumed = widget.locator("[data-notes-job]");
   await expect(resumed).toHaveAttribute("data-notes-job-id", jobId, { timeout: 30_000 });

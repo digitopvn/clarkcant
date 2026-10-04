@@ -82,7 +82,7 @@ async function shownNotifications(page: Page): Promise<FakeNotification[]> {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /** Turns on web notifications from Settings → Control, the same steps the first test does by hand. */

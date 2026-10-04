@@ -83,7 +83,7 @@ async function bridgeMessages(page: Page): Promise<string[]> {
 
 async function openSpreadsheet(page: Page): Promise<FrameLocator> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await say(page, "bảng tính tham chiếu");
   const open = page.locator("[data-open-live]").last();
   await expect(open).toBeVisible({ timeout: 20_000 });
@@ -360,7 +360,7 @@ function stateWritten(page: Page, text: string): Promise<boolean> {
 /** A reload, and the same instance opened again: its frame is up, the sheet may still be loading. */
 async function reopenSpreadsheet(page: Page): Promise<FrameLocator> {
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const open = page.locator("[data-open-live]").last();
   await expect(open).toBeVisible({ timeout: 20_000 });
   await open.click();

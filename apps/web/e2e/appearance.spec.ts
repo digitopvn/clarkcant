@@ -36,7 +36,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /** The theme actually applied to the document, which is always a resolved dark or light. */
@@ -72,7 +72,7 @@ test("a theme choice changes the surface, follows the system, and survives a rel
   await page.locator('[data-theme-choice="light"]').click();
   await expect.poll(() => appliedTheme(page)).toBe("light");
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect.poll(() => appliedTheme(page)).toBe("light");
   await page.screenshot({ path: join(EVIDENCE, "theme-03-light-after-reload.png"), fullPage: true });
 });
@@ -426,7 +426,7 @@ test("personal instructions can be written, survive a reload, and are never sent
 
   // And it comes back after a reload, rather than being a value only this tab knew about.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await page.locator("[data-settings='true']").click();
   await page.locator("#cc-tab-ai").click();
   await expect(page.locator("[data-personal-instructions-input='true']")).toHaveValue(text);

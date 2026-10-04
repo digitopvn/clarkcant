@@ -125,7 +125,7 @@ async function simulateDesktop(page: Page, file: { name: string; text: string })
 
 async function openEditor(page: Page): Promise<FrameLocator> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await say(page, "mở trình soạn thảo văn bản");
   await expect(page.getByText("Fixture: trình soạn thảo văn bản mẫu").last()).toBeVisible({ timeout: 20_000 });
   const open = page.locator("[data-open-live]").last();
@@ -188,7 +188,7 @@ test("on the web, a file is opened, edited, saved as a download and opened again
   // The unsaved draft is in widget state: reloading the page brings it back, still unsaved.
   await page.waitForTimeout(800);
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   // The editor was pinned open, so the page brings it back by itself.
   await expect(page.locator("[data-pin-live] [data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", { timeout: 20_000 });
   const restored = page.frameLocator(FRAME);
@@ -384,7 +384,7 @@ test("typing on while the draft is being kept is not mistaken for another window
   await page.waitForTimeout(800);
   await page.unroute("**/widgets/*/state");
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("[data-pin-live] [data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", { timeout: 20_000 });
   const restored = page.frameLocator(FRAME);
   await expect(restored.locator("#root[data-editor-ready='true']")).toHaveCount(1, { timeout: 20_000 });

@@ -33,7 +33,7 @@ for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const
       await page.setViewportSize({ width, height: 900 });
       await page.emulateMedia({ colorScheme: scheme });
       await page.goto(`/?token=${encodeURIComponent(identity.localToken)}&gateway=${encodeURIComponent(gateway)}`);
-      await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+      await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible();
       const composer = page.locator('[data-composer="true"]').first();
       await composer.fill("Conversation draft survives Theme Lab");
       await composer.evaluate((element) => element.setAttribute("data-kept", "true"));

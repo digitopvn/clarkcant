@@ -72,7 +72,7 @@ test.afterEach(async ({ request }) => {
 /** Press Install on the listing and follow the chip to the inbox item it waits as. */
 async function askFromMarketplace(page: Page): Promise<{ approvalId: string }> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const composer = page.locator("[data-composer='true']");
   await composer.waitFor();
   await composer.fill("tìm gói");

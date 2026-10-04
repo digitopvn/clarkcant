@@ -57,7 +57,7 @@ async function openApp(page: Page): Promise<void> {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
   );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /** Start a conversation, so a voice session has somewhere to record into and to answer. */
@@ -241,7 +241,7 @@ test("the fixture route is not there unless a scripted provider is loaded", asyn
     data: { words: "" },
   });
   expect(refused.status()).toBe(400);
-  await expect(page.locator("text=Ready")).toBeVisible();
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible();
 });
 
 

@@ -30,7 +30,7 @@ function token(): string {
 
 async function openCredentials(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await page.locator("[data-settings='true']").click();
   await page.locator("#cc-tab-ai").click();
   await expect(page.locator("[data-credentials-section='true']")).toBeVisible();

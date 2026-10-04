@@ -29,7 +29,7 @@ function authorized(): Record<string, string> {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function say(page: Page, text: string): Promise<void> {
@@ -137,7 +137,7 @@ test("the conversation map is keyboard accessible, host-persisted, offline by de
   await expect(viewport).toHaveAttribute("data-map-zoom", String(startZoom));
   await expect.poll(() => heldState(page, conversation, instanceId), { timeout: 10_000 }).toMatchObject({ zoom: startZoom });
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const restored = page.locator(`[data-widget-instance='${instanceId}']`);
   await expect(restored.locator("[data-map-feature='halong']")).toHaveAttribute("data-selected", "true", { timeout: 20_000 });
   await expect(restored.locator("[data-map-viewport]")).toHaveAttribute("data-map-zoom", String(startZoom));

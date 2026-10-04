@@ -129,7 +129,7 @@ async function recordBridge(page: Page): Promise<void> {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${identity().token}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 /** Compose the lookup widget, open it live, and return the frame with the conversation and instance it was read for. */
@@ -338,7 +338,7 @@ test("the granted profile is shown and applied, the provider is reached with a k
 
   // A reload starts a fresh frame; the key is still nowhere it can reach.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   ({ widget } = await openLookup(page));
   for (const [where, text] of Object.entries(await pageHoldings(page, widget))) expect(text, `the key is in the ${where}`).not.toContain(KEY);
 });

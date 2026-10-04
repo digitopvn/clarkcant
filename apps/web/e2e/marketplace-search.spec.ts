@@ -28,7 +28,7 @@ function token(): string {
 /** The app connects to a node by token and gateway; a bare "/" reaches a page with no conversation on it. */
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(`http://127.0.0.1:${NODE_PORT}`)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function search(page: Page): Promise<void> {

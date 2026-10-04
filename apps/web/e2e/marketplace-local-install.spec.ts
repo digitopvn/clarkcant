@@ -104,7 +104,7 @@ test("Install on a listing by a path on this machine installs it, without asking
   expect(await installed(request)).toEqual([]);
 
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const composer = page.locator("[data-composer='true']");
   await composer.waitFor();
   await composer.fill("tìm gói trên máy");
@@ -133,7 +133,7 @@ test("an installed package runs from the copy the node made, so edits to its pat
   request,
 }) => {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const composer = page.locator("[data-composer='true']");
   await composer.waitFor();
   await composer.fill("tìm gói trên máy");
@@ -185,7 +185,7 @@ test("a row whose files changed after the list was made goes out of date, and it
   request,
 }) => {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const composer = page.locator("[data-composer='true']");
   await composer.waitFor();
   await composer.fill("tìm gói trên máy");

@@ -29,7 +29,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function say(page: Page, text: string): Promise<void> {
@@ -84,7 +84,7 @@ test("a grid of two tiles and a card is drawn as the tree says, and again from h
 
   // History: the reloaded conversation draws the same tree from the stored bundle.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const again = page.locator("[data-layout-root]").last();
   await expect(again.locator(":scope > [data-layout='grid'] > .cc-layout-grid-body > [data-layout='card'] [data-slot='table']")).toBeVisible({
     timeout: 30_000,

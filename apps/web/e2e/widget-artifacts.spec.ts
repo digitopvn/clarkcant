@@ -77,7 +77,7 @@ async function bridgeMessages(page: Page): Promise<string[]> {
 
 async function openFileWidget(page: Page): Promise<FrameLocator> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await say(page, "widget tệp");
   const open = page.locator("[data-open-live]").last();
   await expect(open).toBeVisible({ timeout: 20_000 });

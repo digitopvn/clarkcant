@@ -22,7 +22,7 @@ function authorized(): Record<string, string> {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function say(page: Page, text: string): Promise<void> {
@@ -132,7 +132,7 @@ test("the conversation diagram is drawn without script, moves along its edges by
   await expect.poll(() => heldState(page, conversation, instanceId), { timeout: 10_000 }).toEqual({ selectedId: "test" });
 
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   const restored = page.locator(".cc-diagram-root").last();
   await expect(restored.locator("[data-diagram-node='test']")).toHaveAttribute("aria-pressed", "true", { timeout: 20_000 });
   await restored.locator("[data-diagram-node='test']").focus();

@@ -40,7 +40,7 @@ async function openApp(page: Page, options: { compact?: boolean } = {}): Promise
   const compact = options.compact === true ? "&cc-compact=1" : "";
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}${compact}`);
   await expect(page.locator("textarea[aria-label='Nhập tin nhắn']")).toBeVisible();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 test("the compact surface is the whole window when the client is asked for it", async ({ page }) => {

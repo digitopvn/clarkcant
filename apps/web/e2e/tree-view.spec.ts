@@ -22,7 +22,7 @@ function authorized(): Record<string, string> {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function say(page: Page, text: string): Promise<void> {
@@ -109,7 +109,7 @@ test("the conversation tree is keyboard accessible, host-persisted and responsiv
   expect(pinResponse.status()).toBe(201);
   const pin = (await pinResponse.json()) as { pinId: string };
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(`[data-pin-id='${pin.pinId}']`)).toBeVisible({ timeout: 20_000 });
   const restored = page.getByRole("tree", { name: "Dự án" }).first();
   const restoredRow = (id: string): Locator => restored.locator(`[data-tree-row='${id}']`);

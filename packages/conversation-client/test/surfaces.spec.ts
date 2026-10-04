@@ -71,7 +71,7 @@ describe("the desktop pieces", () => {
   it("uses the same connection wording as the app window", () => {
     // Two surfaces describing one node differently is how a user learns to trust neither.
     for (const [connection, expected] of [
-      ["ready", "Ready"],
+      ["ready", "Sẵn sàng"],
       ["connecting", "Đang kết nối"],
       ["offline", "Mất kết nối"],
     ] as const) {

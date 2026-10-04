@@ -29,7 +29,7 @@ function token(): string {
 
 async function openApp(page: Page): Promise<void> {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
 }
 
 
@@ -64,7 +64,7 @@ test("switching the UI language changes visible labels, sets <html lang>, and su
 
   // And it survives a reload: the choice is read back from storage, not just held in this tab's state.
   await page.reload();
-  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.cc-status[data-connection="ready"]')).toBeVisible({ timeout: 15_000 });
   await expect.poll(() => page.evaluate(() => document.documentElement.lang)).toBe("en");
   await page.locator("[data-settings='true']").click();
   await expect(page.locator("#cc-tab-ai")).toHaveText("AI & Routing");
