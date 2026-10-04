@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type Instant, type MessageRecord } from "@clarkcant/contracts";
+import { type DataClass, type Instant, type MessageRecord } from "@clarkcant/contracts";
 import { appendMessage, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import {
@@ -21,6 +21,7 @@ import {
   searchSessions,
   textOfSessionEntry,
 } from "../src/session-search.ts";
+import { historySearchFor } from "../src/bootstrap/model-bootstrap.ts";
 import { SEARCH_TOTAL_BUDGET_MS } from "../src/jev-decider.ts";
 import type { JevConfig, JevTransport } from "../src/jev-selector.ts";
 import { parseTemporal, stripDiacritics } from "../src/temporal-parse.ts";
@@ -331,6 +332,33 @@ describe("the tool the main model sees", () => {
     expect(result.text).toContain("credential");
     expect(result.text).toContain("[redacted]");
     expect(result.text).not.toContain("sk-live-abcdef1234567890");
+  });
+
+  it("withholds a result above what the reading model may receive, and says so by count", async () => {
+    seed("gửi báo cáo đăng nhập cho duy@example.com", "msg_mail", "2026-09-16T02:00:00.000Z");
+    seed("lỗi đăng nhập ở middleware đã sửa", "msg_plain", "2026-09-16T02:05:00.000Z");
+    const narrowed = createSearchHistoryTool({ ...search, allowed: () => ["public", "internal"] });
+    const result = await narrowed.execute({ query: "đăng nhập" });
+    expect(result.text).toContain("middleware");
+    expect(result.text).not.toContain("báo cáo");
+    expect(result.text).toContain("1 kết quả bị giữ lại");
+
+    // With every result withheld, the tool says there is nothing it may return, not that nothing matched.
+    const none = await createSearchHistoryTool({ ...search, allowed: () => ["public"] }).execute({ query: "đăng nhập" });
+    expect(none.text).toContain("No matches this model may read");
+    expect(none.text).toContain("2 kết quả bị giữ lại");
+
+    // No ceiling — the planner switched off — withholds nothing.
+    expect((await createSearchHistoryTool(search).execute({ query: "đăng nhập" })).text).toContain("báo cáo");
+  });
+
+  it("is narrowed by the node only while the context planner is on", async () => {
+    seed("gửi báo cáo đăng nhập cho duy@example.com", "msg_mail", "2026-09-16T02:00:00.000Z");
+    const allowed = (): readonly DataClass[] => ["public", "internal"];
+    const on = createSearchHistoryTool(historySearchFor({}, search, allowed));
+    expect((await on.execute({ query: "đăng nhập" })).text).not.toContain("báo cáo");
+    const off = createSearchHistoryTool(historySearchFor({ CLARKCANT_CONTEXT_PLANNER: "off" }, search, allowed));
+    expect((await off.execute({ query: "đăng nhập" })).text).toContain("báo cáo");
   });
 });
 

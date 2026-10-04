@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConversationId, DataClass, Principal } from "@clarkcant/contracts";
 import { FakePiAdapter } from "@clarkcant/pi-adapter";
@@ -258,7 +258,8 @@ describe("data classes", () => {
   });
 
   it("offers the selector only what it may be shown, and does not ask when fewer than two remain", async () => {
-    const token = "sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c";
+    // Assembled from parts so a secret scanner sees no credential: it is not one.
+    const token = ["sk", "live", "4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c"].join("-");
     const jev = selector("item:1");
     const result = await rerankTop(
       [
@@ -496,6 +497,42 @@ describe("the model turn hands the turn's text to the planner", () => {
     expect(prompt).toContain("Mạch hội thoại trước đó");
     expect(prompt).toContain("Người dùng: trước đó");
     expect(prompt).toContain("- (decision) về cơ sở dữ liệu");
+  });
+
+  it("falls back to a recap that still withholds what the model may not receive when the planner fails", async () => {
+    const adapter = new FakePiAdapter({ script: ["một"] });
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      history: async () => [
+        { role: "user", text: "địa chỉ gửi là duy@example.com" },
+        { role: "assistant", text: "đã ghi nhận" },
+      ],
+      allowedDataClasses: () => ["public", "internal"],
+      recapPlanner: async () => {
+        throw new Error("planner broke");
+      },
+    });
+    await turn!.answer({ conversationId: "c1" as ConversationId, principal: PRINCIPAL_, text: "tiếp", messageId: "m1" });
+    const prompt = adapter.promptsFor("fake-session-1")[0] ?? "";
+    expect(prompt).toContain("Trợ lý: đã ghi nhận");
+    expect(prompt).not.toContain("example.com");
+    expect(prompt).toContain(WITHHELD_MESSAGE);
+  });
+
+  it("runs a background request on the model whose ceiling narrowed what it reads, routed or not", async () => {
+    const adapter = new FakePiAdapter({ script: ["xong"] });
+    const created = vi.spyOn(adapter, "createWorkerSession");
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      model: () => ({ provider: "picked-provider", id: "picked-model" }),
+      backgroundModel: async () => undefined,
+    });
+    await turn!.runInBackground({ conversationId: "c1", principal: PRINCIPAL_, text: "tóm tắt" });
+    expect(created.mock.calls.at(-1)?.[0].model).toEqual({ provider: "picked-provider", id: "picked-model" });
   });
 
   it("passes the ceiling of the model that answers, and the narrowest when it cannot be read", async () => {

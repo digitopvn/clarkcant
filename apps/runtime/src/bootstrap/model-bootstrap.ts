@@ -19,6 +19,7 @@ import {
   turnInstructions,
 } from "../conditional-instructions.ts";
 import { type BrowserTaskToolDeps, personTextOf } from "../browser-task-tool.ts";
+import { contextPlannerFromEnv } from "../context-planner.ts";
 import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { decideModelRoute } from "../jev-decider.ts";
@@ -31,6 +32,7 @@ import { askPeerCapabilities } from "../peer-capabilities.ts";
 import { type ProjectFinderDeps, resolveProject } from "../project-finder.ts";
 import { ownedResources } from "../preflight.ts";
 import type { RequestSecretDeps } from "../request-secret.ts";
+import type { SessionSearchDeps } from "../session-search.ts";
 import { registerSessionFile } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import { registerNodeTools } from "../tool-catalogue.ts";
@@ -139,6 +141,18 @@ export function nodeAllowedDataClasses(services: NodeServices, model: { provider
   return allowedDataClassesForModel(readModelPool(services.runtime.db, services.runtime.identity.ownerPrincipalId), model);
 }
 
+/**
+ * The history search the conversation's model reads itself, held to the same data-class ceiling as the recap (#433)
+ * while the context planner is on; with it off, nothing is withheld here either.
+ */
+export function historySearchFor(
+  env: NodeJS.ProcessEnv,
+  search: SessionSearchDeps,
+  allowed: (() => readonly DataClass[] | undefined) | undefined,
+): SessionSearchDeps {
+  return contextPlannerFromEnv(env) === "off" || allowed === undefined ? search : { ...search, allowed };
+}
+
 /** One reader of project instructions per node, so a conversation's turns and its tasks share the same cache. */
 const instructionReaders = new WeakMap<NodeServices, ConditionalInstructions>();
 
@@ -198,6 +212,15 @@ export async function routeNodeBackgroundModel(
     // What the work carries (#433): a profile that may not be sent it is not a candidate, whatever the selector thinks.
     ...(work.dataClass === undefined ? {} : { dataClass: work.dataClass }),
   });
+
+  // Nothing in the pool may be sent this work's class, so it falls back to the configured model: said once on stderr, by
+  // class and count only, so the change of model is visible rather than silent.
+  const refusedForClass = filtered.rejected.filter((entry) => entry.reason.startsWith("không được nhận dữ liệu mức")).length;
+  if (filtered.eligible.length === 0 && refusedForClass > 0) {
+    process.stderr.write(
+      `${JSON.stringify({ event: "model-route", fallback: "data-class", dataClass: work.dataClass, rejected: refusedForClass })}\n`,
+    );
+  }
 
   const decider = services.projects.decider;
   const routed = await routeBackgroundModel({
@@ -348,7 +371,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         origin: turn.origin,
       });
       const tools = createNodeTools({
-        search,
+        search: historySearchFor(deps.env, search, turn.allowed),
         projects,
         command,
         // Who asked for the turn, read per call: the command and terminal tools hand it to the execution policy.

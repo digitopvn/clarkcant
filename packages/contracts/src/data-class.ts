@@ -77,7 +77,51 @@ export function intersectDataClasses(lists: readonly (readonly DataClass[])[]): 
 }
 
 /** Shapes that are a credential: text carrying one is `secret`. */
-const CREDENTIAL_SHAPES = new Set(["jwt", "bearer", "prefixed-token", "named-secret"]);
+const CREDENTIAL_SHAPES = new Set([
+  "jwt",
+  "bearer",
+  "private-key",
+  "aws-access-key",
+  "github-token",
+  "google-api-key",
+  "url-credentials",
+  "prefixed-token",
+  "named-secret",
+]);
+
+/** Prefixes real tokens are issued with: a value after one of these is judged more leniently than after a plain word. */
+const ISSUED_PREFIX = /^(?:sk|pk|rk|ghp|gho|npm|xox[baprs])$/i;
+
+/**
+ * Whether a `prefixed-token` match is a token rather than an identifier.
+ *
+ * The redactor's shape matches `token_refresh_worker_2` and `api_v2_handler_migration_0012` as readily as a key, which
+ * is a fair trade when replacing text and a poor one when classifying it: a class decides where work may be routed. A
+ * token is a long run of letters and digits; an identifier is words joined by separators.
+ */
+function looksIssued(match: string): boolean {
+  const split = /^([A-Za-z]+)[-_](.+)$/.exec(match);
+  if (split === null) return false;
+  const prefix = split[1] ?? "";
+  const value = split[2] ?? "";
+  const mixed = /[A-Za-z]/.test(value) && /\d/.test(value);
+  if (!mixed) return false;
+  const longestRun = Math.max(...value.split(/[-_.]/).map((run) => run.length));
+  // `sk-live-4f9a…`, `xoxb-1234567890-…`: an issued prefix, a long value, and a long unbroken run in it.
+  if (ISSUED_PREFIX.test(prefix)) return value.length >= 16 && longestRun >= 10;
+  // After a plain word (`api`, `key`, `token`, `secret`), only one unbroken run of letters and digits is a token.
+  return /^[A-Za-z0-9]{16,}$/.test(value);
+}
+
+/**
+ * Whether a `named-secret` match carries a value rather than a type or a reference: `password: string` and
+ * `api_key: process.env.API_KEY` are code, `password = "hunter22"` is not.
+ */
+function looksAssigned(match: string): boolean {
+  const value = /[:=]\s*["']?(.+)$/.exec(match)?.[1] ?? "";
+  if (/^[A-Za-z_$][\w$]*(?:\.[\w$]+)+$/.test(value)) return false;
+  return /\d/.test(value) || /[:=]\s*["']/.test(match) || value.length >= 16;
+}
 /** Shapes that identify a person or their machine: text carrying one is `confidential`. */
 const PERSONAL_SHAPES = new Set(["email", "phone", "home-path", "windows-path"]);
 
@@ -95,9 +139,12 @@ export function dataClassOfText(text: string): DataClass {
     const credential = CREDENTIAL_SHAPES.has(shape.label);
     if (!credential && (!PERSONAL_SHAPES.has(shape.label) || found === "confidential")) continue;
     const matches = text.match(new RegExp(shape.pattern.source, shape.pattern.flags)) ?? [];
-    // The redactor's prefixed-token shape also matches identifiers such as `key_value_store` or `npm-registry-url`,
-    // which is a fair trade when replacing text and a poor one when withholding it: a token carries digits and length.
-    const hit = shape.label === "prefixed-token" ? matches.some((match) => match.length >= 20 && /\d/.test(match)) : matches.length > 0;
+    const hit =
+      shape.label === "prefixed-token"
+        ? matches.some(looksIssued)
+        : shape.label === "named-secret"
+          ? matches.some(looksAssigned)
+          : matches.length > 0;
     if (!hit) continue;
     if (credential) return "secret";
     found = "confidential";

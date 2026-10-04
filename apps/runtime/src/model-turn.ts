@@ -52,7 +52,7 @@ import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, Turn
 import { attachmentBrief } from "./attachments.ts";
 import { type ContextSource, readContextTool } from "./context-bundle.ts";
 import { type InstructionTouch, type TurnInstructions, rememberTouch, touchOfToolCall } from "./conditional-instructions.ts";
-import { legacyRecap } from "./context-planner.ts";
+import { legacyRecap, planRecap } from "./context-planner.ts";
 import {
   SESSION_POLICY_LIMITS,
   type SessionDecision,
@@ -330,7 +330,7 @@ interface Turn {
    * Replace the session with a fresh one, at a turn boundary: the new one is briefed by the recap like any fresh
    * session, and the old one is let go. The transcript is not touched.
    */
-  rebuild: () => Promise<void>;
+  rebuild: () => Promise<boolean>;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -415,7 +415,9 @@ async function recapFor(
     try {
       return await options.recapPlanner({ conversationId, query, messages, allowed });
     } catch {
-      // Planning is an improvement on the recap, never a condition for one.
+      // Planning is an improvement on the recap, never a condition for one — and never a way around its ceiling: the
+      // fallback is the fixed recap with the same withholding, not the unfiltered one.
+      return { text: planRecap({ messages, query: "", earlier: [], allowed }).text, earlier: "" };
     }
   }
   return { text: legacyRecap(messages), earlier: "" };
@@ -745,6 +747,8 @@ export async function createModelTurn(options: {
     messageId?: () => string | undefined;
     /** See `Turn.origin`; read the same way and for the same reason. */
     origin: () => TurnOrigin | undefined;
+    /** What the model answering this turn may be sent (#433), read at call time: a read tool withholds the rest. */
+    allowed?: () => readonly DataClass[];
   }) => readonly ToolDefinition[];
   /**
    * What was remembered, for the turn about to run.
@@ -844,6 +848,7 @@ export async function createModelTurn(options: {
       channel: () => turn.channel,
       messageId: () => turn.messageId,
       origin: () => turn.origin,
+      allowed: () => turn.allowed,
     }) ?? [];
   /*
    * The note about the screen for this turn, and the session's record of what it has now been told.
@@ -1002,8 +1007,7 @@ export async function createModelTurn(options: {
     let rebuilt = false;
     if (policy.mode === "rebuild" && decision.decision === "rebuild" && !turn.stopped) {
       try {
-        await turn.rebuild();
-        rebuilt = true;
+        rebuilt = await turn.rebuild();
       } catch {
         rebuilt = false;
       }
@@ -1162,7 +1166,7 @@ export async function createModelTurn(options: {
       recentTexts: [],
       lastLatencyMs: undefined,
       lastBrief: "",
-      rebuild: async () => undefined,
+      rebuild: async () => false,
     };
     /*
      * After a tool call: remember what it touched, and hand back the instructions that newly apply. A failure here is a
@@ -1254,8 +1258,14 @@ export async function createModelTurn(options: {
       return existing;
     }
 
-    turn.rebuild = async (): Promise<void> => {
+    turn.rebuild = async (): Promise<boolean> => {
       const handle = await adapter.createWorkerSession(briefFor(options.model?.()));
+      // A Stop while the fresh session was being created ended this turn: the old session is the stop's to dispose,
+      // and the fresh one nobody will prompt goes now.
+      if (turn.stopped) {
+        void adapter.dispose(handle.sessionId).catch(() => undefined);
+        return false;
+      }
       const previous = turn.sessionId;
       turn.unsubscribe();
       turn.sessionId = handle.sessionId;
@@ -1271,6 +1281,7 @@ export async function createModelTurn(options: {
       turn.recentTexts = [];
       turn.lastBrief = "";
       void adapter.dispose(previous).catch(() => undefined);
+      return true;
     };
 
     evictIdleTurns(Date.now());
@@ -1376,7 +1387,9 @@ export async function createModelTurn(options: {
         dataClassOfText(`${input.text}\n${input.data ?? ""}`),
         ...(context === undefined ? [] : [context.dataClass]),
       ]);
-      const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel({ dataClass });
+      // A route that fails is a run on the configured model, the same as one that found nothing eligible.
+      const routed =
+        options.backgroundModel === undefined ? undefined : await options.backgroundModel({ dataClass }).catch(() => undefined);
       const runsOn = routed ?? options.model?.() ?? selection;
       const allowed = allowedFor(runsOn);
       const narrowed = context?.readerFor(allowed);
@@ -1390,8 +1403,9 @@ export async function createModelTurn(options: {
         allowedCapabilityRefs: [],
         ...(reader === undefined ? {} : { customTools: [readContextTool(reader)] }),
         // Routed only for background work. Foreground honours the person's choice, and nobody is watching this run —
-        // which is exactly why the model for it is a decision rather than a setting.
-        ...(routed === undefined ? {} : { model: routed }),
+        // which is exactly why the model for it is a decision rather than a setting. Named even when nothing was routed,
+        // so the model that runs is the one whose data classes narrowed what it reads, not the adapter's boot default.
+        model: runsOn,
         ...(input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens }),
       });
       backgroundSessions.set(workId, handle.sessionId);
@@ -1478,8 +1492,15 @@ export async function createModelTurn(options: {
       const stopRequested = new Promise<void>((resolve) => {
         turn.settleStop = resolve;
       });
-      // At the turn boundary, before anything is read: a rebuilt session is fresh, so the recap below briefs it.
-      const policy = await applySessionPolicy(turn, input.text, alreadyRunning);
+      // Created before the first await: a message steered while this turn is being prepared — a rebuild included —
+      // waits for it, and then joins the session that is actually prompted.
+      let preparedResolve: () => void = () => undefined;
+      turn.preparing = new Promise<void>((resolve) => {
+        preparedResolve = resolve;
+      });
+      // At the turn boundary, before anything is read: a rebuilt session is fresh, so the recap below briefs it. Any
+      // failure of the policy is reuse, which is what the session would have done without it.
+      const policy = await applySessionPolicy(turn, input.text, alreadyRunning).catch(() => undefined);
       // Once, on the first turn this session answers: the second turn already has the first in its context,
       // and repeating the brief each time would push the conversation out with its own summary.
       const fresh = turn.fresh;
@@ -1489,10 +1510,6 @@ export async function createModelTurn(options: {
       const allowed = allowedFor(options.model?.() ?? selection);
       turn.allowed = allowed;
 
-      let preparedResolve: () => void = () => undefined;
-      turn.preparing = new Promise<void>((resolve) => {
-        preparedResolve = resolve;
-      });
       let recap: { text: string; earlier: string };
       let memoryPart: string;
       let referencePart: string;
@@ -1553,12 +1570,16 @@ export async function createModelTurn(options: {
       const instructionPart = stateInstructions(turn, input.conversationId, false);
       const brief = [referencePart, attachmentPart, memoryPart, instructionPart].filter((part) => part !== "").join("\n\n");
       if (policy !== undefined && options.sessionPolicy !== undefined) {
-        reportSessionTelemetry({
-          conversationId: input.conversationId,
-          mode: options.sessionPolicy.mode,
-          ...policy,
-          linesChanged: linesChanged(turn.lastBrief, brief),
-        });
+        try {
+          reportSessionTelemetry({
+            conversationId: input.conversationId,
+            mode: options.sessionPolicy.mode,
+            ...policy,
+            linesChanged: linesChanged(turn.lastBrief, brief),
+          });
+        } catch {
+          // A report that cannot be written is not a reason for the turn to fail.
+        }
       }
       turn.lastBrief = brief;
       // What the planner retrieved from further back goes with the data, after the caller's own: material, not guidance.

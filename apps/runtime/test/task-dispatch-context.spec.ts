@@ -266,7 +266,7 @@ describe("a dispatched task's context", () => {
   it("carries the project's instructions for its folders in the brief, and none without them", async () => {
     const withThem = await dispatch(GOAL, { instructions: "Viết báo cáo bằng tiếng Việt có dấu." });
     expect(withThem.options?.brief.instructions).toContain("Viết báo cáo bằng tiếng Việt có dấu.");
-    expect(withThem.options?.brief.instructions).toContain("/.clarkcant/instructions/style.md ---");
+    expect(withThem.options?.brief.instructions).toContain('/.clarkcant/instructions/style.md">');
     runtime?.close();
     runtime = undefined;
     const without = await dispatch(GOAL);

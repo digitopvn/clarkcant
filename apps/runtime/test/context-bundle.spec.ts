@@ -173,7 +173,13 @@ describe("a context bundle", () => {
     expect(narrowed.items).toBe(1);
     const listed = narrowed.answer({});
     expect(listed.kind === "done" ? listed.text : "").not.toContain("Users");
+    // Said by count, never by content, and never as something another tool would return.
+    expect(listed.kind === "done" ? listed.text : "").toContain("[1 mục bị giữ lại");
+    // Asked for by its position in the full bundle, the withheld item is not there either.
+    expect(narrowed.answer({ item: "c2" }).kind).toBe("refused");
     expect(source.readerFor(["public", "internal", "confidential"]).items).toBe(2);
+    const full = source.readerFor(["public", "internal", "confidential"]).answer({});
+    expect(full.kind === "done" ? full.text : "").not.toContain("bị giữ lại");
     // A stranger is given nothing, whatever the classes.
     expect(contextSourceOf(bundles, bundle, STRANGER)).toMatchObject({ items: 0 });
   });

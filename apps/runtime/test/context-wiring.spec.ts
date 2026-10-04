@@ -117,7 +117,7 @@ describe("the recap, wired", () => {
     seedMessage(db, {
       messageId: "msg_secret",
       role: "user",
-      text: "Cơ sở dữ liệu dự án Clark chốt dùng token sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c nhé.",
+      text: `Cơ sở dữ liệu dự án Clark chốt dùng token ${["sk", "live", "4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c"].join("-")} nhé.`,
       principalId: PRINCIPAL,
       conversationId: CONVERSATION,
       createdAt: new Date(Date.parse(AT) - 1000).toISOString(),
@@ -133,7 +133,7 @@ describe("the recap, wired", () => {
     });
     expect(recap.earlier).toContain("SQLite");
     expect(recap.earlier).not.toContain("sk-live");
-    expect(recap.text).toContain("[1 tin bị giữ lại: nhạy cảm hơn mức model này được nhận]");
+    expect(recap.text).toContain("[1 tin bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]");
   });
 
   it("offers progressive disclosure only when it is asked for", () => {

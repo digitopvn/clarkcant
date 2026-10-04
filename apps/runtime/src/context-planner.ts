@@ -153,11 +153,15 @@ export function permits(allowed: readonly DataClass[] | undefined, sensitivity: 
   return allowed === undefined || allowed.includes(sensitivity);
 }
 
-/** The line a brief carries when something was left out for its data class: a count and why, never what. */
+/**
+ * The line a brief carries when something was left out for its data class: a count and why, never what. It says the
+ * text is not to be looked for either: the history tool withholds it the same way, so pointing there would only spend a
+ * call.
+ */
 export function withheldLine(count: number, what: "memory" | "message"): string {
   return what === "memory"
-    ? `[${String(count)} điều đã ghi nhớ bị giữ lại: nhạy cảm hơn mức model này được nhận]`
-    : `[${String(count)} tin bị giữ lại: nhạy cảm hơn mức model này được nhận]`;
+    ? `[${String(count)} điều đã ghi nhớ bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]`
+    : `[${String(count)} tin bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]`;
 }
 
 /**

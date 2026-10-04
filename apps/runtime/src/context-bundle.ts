@@ -220,6 +220,12 @@ export function createContextBundles(deps: { db: Database; now?: () => number })
     // Read only for the principal it was made for; anything else is an empty bundle, not an error a caller could probe.
     // A reference the reading model may not receive is not in its list at all, so it cannot be asked for by label.
     const refs = principalId === bundle.principalId ? bundle.refs.filter((entry) => permits(allowed, entry.sensitivity)) : [];
+    // Said by count in the list, the same way the recap says it: never what, and never where to read it back.
+    const withheld = principalId === bundle.principalId ? bundle.refs.length - refs.length : 0;
+    const withheldNote =
+      withheld === 0
+        ? ""
+        : `\n[${String(withheld)} mục bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]`;
     const seen = new Set<string>();
     let reads = 0;
     const live = (): { item: string; label: string; text: string }[] => {
@@ -255,14 +261,14 @@ export function createContextBundles(deps: { db: Database; now?: () => number })
       const item = typeof raw === "string" && raw.trim() !== "" ? raw.trim().slice(0, 16) : undefined;
       const items = live();
       if (item === undefined) {
-        if (items.length === 0) return { kind: "done", text: `${BUNDLE_DATA_HEADER}\n(không còn mục nào)` };
+        if (items.length === 0) return { kind: "done", text: `${BUNDLE_DATA_HEADER}\n(không còn mục nào)${withheldNote}` };
         let text = BUNDLE_DATA_HEADER;
         for (const entry of items) {
           const next = `${text}\n${entry.item} · ${entry.label}: ${clip(entry.text, BUNDLE_LIMITS.previewMax)}`;
-          if (next.length > BUNDLE_LIMITS.indexMax) break;
+          if (next.length + withheldNote.length > BUNDLE_LIMITS.indexMax) break;
           text = next;
         }
-        return { kind: "done", text };
+        return { kind: "done", text: `${text}${withheldNote}` };
       }
       const chosen = items.find((entry) => entry.item === item);
       if (chosen === undefined) return { kind: "refused", text: `không có mục ${item}, hoặc nó đã bị xoá hay đã đổi` };

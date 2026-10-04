@@ -1,4 +1,4 @@
-import { type Instant, type MessageBlock, type MessageRecord, redactSecrets } from "@clarkcant/contracts";
+import { type DataClass, type Instant, type MessageBlock, type MessageRecord, dataClassOfText, redactSecrets } from "@clarkcant/contracts";
 import { readTranscriptFrom, type ToolDefinition } from "@clarkcant/pi-adapter";
 import {
   type Database,
@@ -51,6 +51,12 @@ export interface SessionSearchDeps {
    * (Phase 8: 96.8% of labelled lexical queries).
    */
   decider?: DecideDeps;
+  /**
+   * The data classes the model reading `search_history` may receive (#433), read per call. A result of any other class
+   * is withheld and counted, the same way the recap withholds it. Absent — the context planner switched off — withholds
+   * nothing.
+   */
+  allowed?: () => readonly DataClass[] | undefined;
   /** `rank` by default; `jev` asks the selector to choose between close results. */
   deciderMode?: SearchDeciderMode;
   /**
@@ -560,9 +566,18 @@ export function createSearchHistoryTool(deps: SessionSearchDeps): ToolDefinition
       const query = typeof params.query === "string" ? params.query : "";
       if (query.trim() === "") return { text: "No query was given." };
       const limit = typeof params.limit === "number" && params.limit > 0 ? Math.min(params.limit, 20) : 5;
-      const outcome = await searchSessions(deps, { text: query, limit });
+      const searched = await searchSessions(deps, { text: query, limit });
+      // Classified on the raw snippet, before redaction: what decides is what the stored text is, not what is left of it.
+      const allowed = deps.allowed?.();
+      const results =
+        allowed === undefined ? searched.results : searched.results.filter((hit) => allowed.includes(dataClassOfText(hit.snippet)));
+      const withheld = searched.results.length - results.length;
+      const withheldNote =
+        withheld === 0 ? "" : `\n[${String(withheld)} kết quả bị giữ lại: nhạy cảm hơn mức model này được nhận, và không công cụ nào trả lại nội dung đó]`;
+      const outcome = { ...searched, results };
 
       if (outcome.results.length === 0) {
+        if (withheld > 0) return { text: `No matches this model may read for "${outcome.searched}".${withheldNote}` };
         return {
           text:
             outcome.indexSize === 0
@@ -587,7 +602,7 @@ export function createSearchHistoryTool(deps: SessionSearchDeps): ToolDefinition
           (outcome.mode === "clarify" && outcome.clarification !== undefined
             ? `\n${outcome.clarification}`
             : "") +
-          `:\n${lines.join("\n")}`,
+          `:\n${lines.join("\n")}${withheldNote}`,
       };
     },
   };

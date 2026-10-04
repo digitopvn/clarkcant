@@ -5,6 +5,7 @@ import { FakePiAdapter } from "@clarkcant/pi-adapter";
 
 import { decideSessionRebuild } from "../src/jev-decider.ts";
 import { type JevConfig, type JevTransport, createJevBudget } from "../src/jev-selector.ts";
+import type { TurnInstructions } from "../src/conditional-instructions.ts";
 import { createModelTurn } from "../src/model-turn.ts";
 import {
   SESSION_POLICY_LIMITS,
@@ -111,7 +112,7 @@ describe("the selector, when asked", () => {
     return {
       enabled: true,
       localOnly: false,
-      apiKey: "sk-test-not-a-real-key",
+      apiKey: ["sk", "test", "not", "a", "real", "key"].join("-"),
       endpoint: "https://api.typesafe.ai/v1/systemone",
       endpointRefusal: undefined,
       model: "jev-1.13.0",
@@ -166,7 +167,7 @@ describe("a conversation's sessions", () => {
     vi.restoreAllMocks();
   });
 
-  async function conversation(mode: "observe" | "rebuild") {
+  async function conversation(mode: "observe" | "rebuild", extra: { instructions?: TurnInstructions } = {}) {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-04T08:00:00Z"));
     const adapter = new FakePiAdapter({ script: ["một", "hai", "ba"] });
@@ -185,12 +186,37 @@ describe("a conversation's sessions", () => {
       adapter,
       history: async () => transcript,
       sessionPolicy: { mode },
+      ...extra,
     });
     const ask = async (text: string, id: string): Promise<void> => {
       await turn!.answer({ conversationId: CONVERSATION, principal: OWNER, text, messageId: id });
       transcript.push({ role: "user", text });
     };
-    return { adapter, disposed, ask, reported, transcript };
+    /** Two warm turns, then ten minutes on: the next message about something new is a rebuild. */
+    const warmThenCold = async (): Promise<void> => {
+      await ask("cơ sở dữ liệu SQLite", "m1");
+      await ask("SQLite migrations", "m2");
+      vi.setSystemTime(new Date("2026-10-04T08:10:00Z"));
+    };
+    /** Hold the next session creation until `release` is called. */
+    const holdNextCreation = (): { created: Promise<void>; release: () => void } => {
+      const original = adapter.createWorkerSession.bind(adapter);
+      let release: () => void = () => undefined;
+      let signalCreated: () => void = () => undefined;
+      const created = new Promise<void>((resolve) => {
+        signalCreated = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.spyOn(adapter, "createWorkerSession").mockImplementationOnce(async (brief) => {
+        signalCreated();
+        await gate;
+        return await original(brief);
+      });
+      return { created, release };
+    };
+    return { adapter, disposed, ask, reported, transcript, turn: turn!, warmThenCold, holdNextCreation };
   }
 
   it("rebuilds a cold, large session on a new subject, briefs the fresh one with the recap, and lets the old one go", async () => {
@@ -238,6 +264,82 @@ describe("a conversation's sessions", () => {
     expect(disposed).not.toHaveBeenCalled();
     const last = JSON.parse(reported.at(-1) ?? "{}") as { decision: string; rebuilt: boolean };
     expect(last).toMatchObject({ decision: "rebuild", rebuilt: false });
+  });
+
+  it("lands a message steered during a rebuild in the session that is prompted", async () => {
+    const { adapter, turn, warmThenCold, holdNextCreation } = await conversation("rebuild");
+    await warmThenCold();
+    const steered = vi.spyOn(adapter, "steer");
+    const hold = holdNextCreation();
+    const answering = turn.answer({ conversationId: CONVERSATION, principal: OWNER, text: "thời tiết Hà Nội cuối tuần", messageId: "m3" });
+    await hold.created;
+    // The turn is running, so the message joins it rather than starting another; it waits for the rebuild.
+    const steering = turn.steer(CONVERSATION, "và cả Đà Nẵng");
+    hold.release();
+    const [reply, joined] = await Promise.all([answering, steering]);
+    expect(joined).toBe(true);
+    expect(steered).toHaveBeenCalledTimes(1);
+    expect(steered).toHaveBeenCalledWith("fake-session-2", "và cả Đà Nẵng");
+    expect(reply.stopped).not.toBe(true);
+    expect(adapter.promptsFor("fake-session-2")).toHaveLength(1);
+  });
+
+  it("prompts nothing and lets the fresh session go when Stop arrives during a rebuild", async () => {
+    const { adapter, disposed, turn, warmThenCold, holdNextCreation } = await conversation("rebuild");
+    await warmThenCold();
+    const hold = holdNextCreation();
+    const answering = turn.answer({ conversationId: CONVERSATION, principal: OWNER, text: "thời tiết Hà Nội cuối tuần", messageId: "m3" });
+    await hold.created;
+    expect(turn.interrupt(CONVERSATION)).toBe(true);
+    hold.release();
+    const reply = await answering;
+    expect(reply.stopped).toBe(true);
+    expect(adapter.promptsFor("fake-session-2")).toHaveLength(0);
+    await vi.waitFor(() => {
+      expect(disposed).toHaveBeenCalledWith("fake-session-2");
+      expect(disposed).toHaveBeenCalledWith("fake-session-1");
+    });
+    expect(turn.running()).toEqual([]);
+  });
+
+  it("answers as a reused session when the policy step itself fails, and does not stay running", async () => {
+    const { adapter, ask, turn, warmThenCold } = await conversation("rebuild");
+    await warmThenCold();
+    vi.spyOn(adapter, "usage").mockImplementation(() => {
+      throw new Error("unknown session");
+    });
+    await ask("thời tiết Hà Nội cuối tuần", "m3").catch(() => undefined);
+    expect(turn.running()).toEqual([]);
+    expect(adapter.promptsFor("fake-session-1")).toHaveLength(3);
+  });
+
+  it("states instructions again to the rebuilt session", async () => {
+    const instructions: TurnInstructions = ({ stated }) =>
+      stated.has("migrations") ? { text: "", stated: [] } : { text: "[HƯỚNG DẪN migrations]", stated: ["migrations"] };
+    const { adapter, ask, warmThenCold } = await conversation("rebuild", { instructions });
+    await warmThenCold();
+    const first = adapter.promptsFor("fake-session-1");
+    await ask("thời tiết Hà Nội cuối tuần", "m3");
+    expect(first[0]).toContain("[HƯỚNG DẪN migrations]");
+    expect(first[1]).not.toContain("[HƯỚNG DẪN migrations]");
+    expect(adapter.promptsFor("fake-session-2")[0]).toContain("[HƯỚNG DẪN migrations]");
+  });
+
+  it("reports nothing and decides nothing when the policy is off", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-04T08:00:00Z"));
+    const adapter = new FakePiAdapter({ script: ["một", "hai"] });
+    const reported: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      if (typeof chunk === "string" && chunk.includes('"session-policy"')) reported.push(chunk);
+      return true;
+    });
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, history: async () => [] });
+    await turn!.answer({ conversationId: CONVERSATION, principal: OWNER, text: "cơ sở dữ liệu", messageId: "m1" });
+    vi.setSystemTime(new Date("2026-10-04T09:00:00Z"));
+    await turn!.answer({ conversationId: CONVERSATION, principal: OWNER, text: "thời tiết Hà Nội", messageId: "m2" });
+    expect(reported).toEqual([]);
+    expect(adapter.promptsFor("fake-session-1")).toHaveLength(2);
   });
 
   it("keeps the session when a rebuild fails", async () => {

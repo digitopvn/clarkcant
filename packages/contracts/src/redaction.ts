@@ -13,11 +13,19 @@
 /** Ordered so a specific shape wins over the generic ones that would also match part of it. */
 export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
   { label: "jwt", pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g },
+  // A PEM private key, header to footer (or to the end of the text when the footer was cut off): the body is base64
+  // in lines too short for the base64 shape, so it is only caught as a block.
+  { label: "private-key", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g },
+  { label: "aws-access-key", pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
+  { label: "github-token", pattern: /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,})/g },
+  { label: "google-api-key", pattern: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g },
+  // A password in a URL (`postgres://user:pass@host`), before the email shape reads `pass@host` as an address.
+  { label: "url-credentials", pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/gi },
   { label: "bearer", pattern: /\bBearer\s+[A-Za-z0-9._~+/-]{10,}=*/g },
   { label: "prefixed-token", pattern: /\b(?:sk|pk|rk|ghp|gho|npm|xox[baprs]|api|key|token|secret)[-_][A-Za-z0-9._-]{8,}\b/gi },
   {
     label: "named-secret",
-    pattern: /(?:access_token|refresh_token|client_secret|api[_-]?key|password)"?\s*[:=]\s*"?[^"\s,}]{6,}/gi,
+    pattern: /(?:access_token|refresh_token|client_secret|secret_access_key|api[_-]?key|password)["']?\s*[:=]\s*["']?[^"'\s,}]{6,}/gi,
   },
   // `/` is a base64 character and a path separator. A run that starts a token may carry it, but a run
   // that continues a path or URL (right after `/`, `.`, `-`, `_` or `~`) is judged one segment at a
