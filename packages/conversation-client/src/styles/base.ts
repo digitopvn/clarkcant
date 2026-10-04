@@ -318,6 +318,18 @@ body {
   display: flex; align-items: center; gap: var(--cc-space-xs);
   color: var(--cc-text-muted); font-size: var(--cc-text-label);
 }
+/*
+ * A phone has room for the wordmark, the inbox and the gear, not also for a word saying all is well: there the green dot
+ * says it alone, and the word stays for a screen reader. Connecting and offline keep their words, because those are
+ * the states someone needs to read.
+ */
+@media (max-width: 480px) {
+  .cc-header { padding-inline: var(--cc-space-md); }
+  .cc-header-end { gap: var(--cc-space-sm); }
+  .cc-status[data-connection="ready"] .cc-status-label {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+}
 .cc-dot { width: 6px; height: 6px; border-radius: var(--cc-radius-pill); background: var(--cc-success); }
 .cc-dot[data-state="offline"] { background: var(--cc-danger); }
 .cc-dot[data-state="connecting"] { background: var(--cc-warning); }
