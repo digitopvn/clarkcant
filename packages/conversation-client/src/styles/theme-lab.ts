@@ -14,6 +14,8 @@ export const THEME_LAB_CSS = `
 .cc-theme-lab pre { max-width: 100%; overflow: auto; font-size: var(--cc-text-mono-sm); }
 .cc-theme-gallery-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--cc-space-lg); }
 .cc-theme-gallery-layout .cc-theme-options { max-height: 18rem; overflow-y: auto; }
+.cc-theme-picker { display: flex; flex-direction: column; align-items: stretch; gap: var(--cc-space-sm); }
+.cc-theme-picker > [data-theme-browse] { align-self: flex-start; }
 .cc-theme-recent { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
 .cc-theme-recent > span { font-size: var(--cc-text-label); line-height: var(--cc-leading-label); color: var(--cc-text-muted); }
 .cc-theme-accent { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-md); }
@@ -26,10 +28,12 @@ export const THEME_LAB_CSS = `
   border-color: var(--cc-input-edge, color-mix(in oklab, var(--cc-text) 12%, var(--cc-border))); border-radius: var(--cc-input-radius, var(--cc-radius-button));
 }
 .cc-theme-accent input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
-/* The customisation block opens a new group under the theme, so it is headed like one and set apart by a hairline. */
+/*
+ * The customisation block opens a new group under the theme, so it is headed like one. The theme row above already
+ * ends on a hairline; a second one here drew two rules a few pixels apart.
+ */
 [data-theme-customization] > h4 {
-  margin: var(--cc-space-lg) 0 var(--cc-space-sm); padding-top: var(--cc-space-lg);
-  border-top: var(--cc-line, 1px solid) var(--cc-border);
+  margin: var(--cc-space-lg) 0 var(--cc-space-sm);
   font-size: var(--cc-text-label); line-height: var(--cc-leading-label);
   text-transform: uppercase; letter-spacing: 0.06em; color: var(--cc-text-muted); font-weight: 600;
 }

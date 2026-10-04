@@ -314,41 +314,44 @@ export function ThemeSettings({ client, prefs, appearance, galleryRequest }: The
         description={t("settings.experience.themePicker.description")}
         layout="stacked"
       >
-        {listing === undefined ? (
-          <p className="cc-panel-note" data-theme-list="loading">
-            {unreachable ? t("settings.experience.themePicker.unreachable") : t("settings.experience.themePicker.loading")}
-          </p>
-        ) : galleryOpen ? null : (
-          <div
-            className="cc-theme-options"
-            role="group"
-            aria-label={t("settings.experience.themePicker.label")}
-            data-theme-gallery
-          >
-            {listing.themes.map((theme) => (
-              <ThemeOption
-                key={theme.themeRef}
-                theme={theme}
-                selected={selectedRef === theme.themeRef}
-                applied={appliedRef === theme.themeRef}
-                pending={prefs.pending === "experience.themeRef"}
-                onChoose={() => choose(theme.themeRef)}
-                t={t}
-              />
-            ))}
-          </div>
-        )}
+        <div className="cc-theme-picker">
+          {listing === undefined ? (
+            <p className="cc-panel-note" data-theme-list="loading">
+              {unreachable ? t("settings.experience.themePicker.unreachable") : t("settings.experience.themePicker.loading")}
+            </p>
+          ) : galleryOpen ? null : (
+            <div
+              className="cc-theme-options"
+              role="group"
+              aria-label={t("settings.experience.themePicker.label")}
+              data-theme-gallery
+            >
+              {listing.themes.map((theme) => (
+                <ThemeOption
+                  key={theme.themeRef}
+                  theme={theme}
+                  selected={selectedRef === theme.themeRef}
+                  applied={appliedRef === theme.themeRef}
+                  pending={prefs.pending === "experience.themeRef"}
+                  onChoose={() => choose(theme.themeRef)}
+                  t={t}
+                />
+              ))}
+            </div>
+          )}
+          {/* Inside the row: the way back and the way to more themes belong to the choice, not under a rule after it. */}
+          {galleryOpen || recent.length === 0 ? null : <div className="cc-theme-recent" role="group" aria-label={t("themeLab.recent")} data-theme-recent>
+            <span>{t("themeLab.recent")}</span>
+            {recent.map((theme) => <button key={theme.themeRef} type="button" className="cc-action"
+              disabled={prefs.pending !== undefined}
+              onClick={() => choose(theme.themeRef)}>{theme.displayName}</button>)}
+          </div>}
+          <button type="button" className="cc-action" data-theme-browse onClick={() => {
+            setPreviewRef(selectedRef);
+            setGalleryOpen(true);
+          }}>{t("themeLab.browse")}</button>
+        </div>
       </SettingsRow>
-      {galleryOpen || recent.length === 0 ? null : <div className="cc-theme-recent" role="group" aria-label={t("themeLab.recent")} data-theme-recent>
-        <span>{t("themeLab.recent")}</span>
-        {recent.map((theme) => <button key={theme.themeRef} type="button" className="cc-action"
-          disabled={prefs.pending !== undefined}
-          onClick={() => choose(theme.themeRef)}>{theme.displayName}</button>)}
-      </div>}
-      <button type="button" className="cc-action" data-theme-browse onClick={() => {
-        setPreviewRef(selectedRef);
-        setGalleryOpen(true);
-      }}>{t("themeLab.browse")}</button>
       <Modal open={galleryOpen} onClose={() => setGalleryOpen(false)} title={t("themeLab.title")}
         width="min(70rem, calc(100vw - var(--cc-space-xl)))">
         <div className="cc-theme-gallery-layout" data-theme-gallery ref={gallery}>
