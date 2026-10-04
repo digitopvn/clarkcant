@@ -704,5 +704,11 @@ describe("taking local paths out of a reason", () => {
     expect(redactLocalPaths('read "C:\\Program Files\\Pi\\cfg.json" failed')).toBe('read "<path>" failed');
     expect(redactLocalPaths("see file:///home/an/.pi/x.json and file://C:/Users/x")).toBe("see <path> and <path>");
     expect(redactLocalPaths("at /a/b (see https://example.com/docs/keys)")).toBe("at <path> (see https://example.com/docs/keys)");
+    // A folder named with three words: the words between the separators are taken too.
+    expect(redactLocalPaths("cannot open C:\\Users\\Nguyen Van An\\.pi\\agent\\auth.json now")).toBe("cannot open <path> now");
+    expect(redactLocalPaths("cannot open /home/Nguyen Van An/.pi/agent/auth.json now")).toBe("cannot open <path> now");
+    // Prose after a path is kept, including a word that holds a separator but starts in lower case or is a web address.
+    expect(redactLocalPaths("C:\\x\\y was not found, see docs\\setup.md")).toBe("<path> was not found, see docs\\setup.md");
+    expect(redactLocalPaths("C:\\x\\y See Https://example.com/a")).toBe("<path> See Https://example.com/a");
   });
 });

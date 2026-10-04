@@ -394,17 +394,32 @@ function modelKey(model: { provider: string; id: string } | undefined): string {
 
 /*
  * A path may hold spaces ("C:\Users\An Nguyen\..."), so a path runs on through each following word that still has a
- * separator in it and is not a web address; a word without one ("or", "(see") ends it.
+ * separator in it and is not a web address; a word without one ("or", "(see") ends it. A folder named with three or
+ * more words ("C:\Users\Nguyen Van An\...") has words with no separator in the middle: up to three capitalised words
+ * are taken too, but only when a capitalised word holding a separator follows them, so lower-case prose after a path
+ * is left alone. Best effort: a quoted path is taken whole whatever its words.
  */
 const PATH_CHAR = "[^\\s\"'`<>|]";
-const PATH_MORE = "(?: (?!\\S*://)" + PATH_CHAR + "*[\\\\/]" + PATH_CHAR + "*)*";
+const NAME_WORD = "\\p{Lu}[^\\s\"'`<>|\\\\/]*";
+const PATH_MORE =
+  "(?: (?:" +
+  NAME_WORD +
+  " ){0,3}(?!\\S*://)" +
+  NAME_WORD +
+  "[\\\\/]" +
+  PATH_CHAR +
+  "*| (?!\\S*://)" +
+  PATH_CHAR +
+  "*[\\\\/]" +
+  PATH_CHAR +
+  "*)*";
 const LOCAL_PATHS = [
   // file:// URLs name a place on a machine as surely as a bare path does.
   /\bfile:\/\/[^\s"'`<>|]*/gi,
-  new RegExp("(?<![\\w.:/\\\\])[A-Za-z]:[\\\\/]" + PATH_CHAR + "*" + PATH_MORE, "g"),
-  new RegExp("(?<![\\w.:/\\\\])\\\\\\\\" + PATH_CHAR + "+" + PATH_MORE, "g"),
-  new RegExp("(?<![\\w.:/\\\\])~[\\\\/]" + PATH_CHAR + "*" + PATH_MORE, "g"),
-  new RegExp("(?<![\\w.:/\\\\<])/(?:[^\\s/\"'`<>|]+/)+[^\\s/\"'`<>|]*" + PATH_MORE, "g"),
+  new RegExp("(?<![\\w.:/\\\\])[A-Za-z]:[\\\\/]" + PATH_CHAR + "*" + PATH_MORE, "gu"),
+  new RegExp("(?<![\\w.:/\\\\])\\\\\\\\" + PATH_CHAR + "+" + PATH_MORE, "gu"),
+  new RegExp("(?<![\\w.:/\\\\])~[\\\\/]" + PATH_CHAR + "*" + PATH_MORE, "gu"),
+  new RegExp("(?<![\\w.:/\\\\<])/(?:[^\\s/\"'`<>|]+/)+[^\\s/\"'`<>|]*" + PATH_MORE, "gu"),
 ];
 
 /**
@@ -1941,8 +1956,10 @@ export async function createModelTurn(options: {
        */
       /*
        * A drain that fails never costs the reply that already finished: the answer is kept, and the session the drain
-       * failed on is let go below, as a failed run's is. The late sentence is not lost — the conductor stored it as a
-       * message of its own — so the next turn's fresh session hears it in the recap.
+       * failed on is let go below, as a failed run's is. A late sentence steered through the conductor (the streaming,
+       * voice and waiting paths) was stored as a message of its own, so the next turn's fresh session hears it in the
+       * recap. One steered on the plain HTTP route was never stored, so it goes with the session and nothing answers
+       * it; the person has to send it again.
        */
       let replied = false;
       let drainFailed = false;
