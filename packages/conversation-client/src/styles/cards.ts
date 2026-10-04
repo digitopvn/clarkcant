@@ -48,7 +48,7 @@ export const CARDS_CSS = `
  * picture its captured size, so a 1280px frame ran past the card's edge and was cut off on the right.
  */
 .cc-card-preview { margin: 0; border-bottom: 1px solid var(--cc-border); background: var(--cc-elevated); }
-.cc-card-preview img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; }
+.cc-card-preview img { display: block; width: 100%; height: auto; max-height: 420px; object-fit: contain; }
 .cc-card-preview figcaption, .cc-card-preview-pending {
   margin: 0; padding: var(--cc-space-xs) var(--cc-space-md);
   color: var(--cc-text-muted); font-size: var(--cc-text-label);
