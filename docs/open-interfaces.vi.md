@@ -434,7 +434,7 @@ widget. App của chính người dùng vẫn gọi chúng như trước. Khi MC
 như vậy, một AI client hoặc một máy từ xa sẽ ghi với tư cách widget, nên node quyết định từng lần ghi theo chính sách thực
 thi của người dùng (`packages/contracts/src/machine-surfaces.ts`,
 `apps/runtime/src/application/machine-artifact-writes.ts`). Mỗi lần ghi là một hiệu ứng `local-write`, trừ việc bỏ một
-tệp không phải tệp đang ghi dở do chính bề mặt đó bắt đầu: việc này có thể xoá bản duy nhất của người dùng, nên nó là
+tệp không phải tệp đang ghi dở do chính bên yêu cầu đó bắt đầu (cùng kết nối relay, hoặc cùng bề mặt với MCP và `clarkcant api`): việc này có thể xoá bản duy nhất của người dùng, nên nó là
 `destructive`, và được hỏi ở chế độ Guarded, và vì không ai trong hội thoại yêu cầu nó, cả ở chế độ Autonomous.
 
 - **Chính sách cho chạy** (Autonomous, hoặc Guarded khi không có quy tắc nào hỏi): lần ghi chạy và trả lời như trên.
@@ -443,13 +443,18 @@ tệp không phải tệp đang ghi dở do chính bề mặt đó bắt đầu:
   `202 { outcome: "approval-required", approvalRequired: { approvalId }, operation, message }`. Chỉ người dùng quyết
   định thẻ đó, trên route quyết định chỉ dành cho người dùng; relay và `clarkcant api` từ chối route này với
   `403 PERSON_ONLY`, còn MCP không có công cụ nào cho nó. Mỗi thẻ là cho một tệp, không bao giờ cho từng chunk, và không
-  bao giờ chứa byte. Duyệt một lệnh tạo sẽ tạo tệp và cho bề mặt đã yêu cầu được ghi các chunk và chốt tệp đó trong 15
-  phút. Một chunk hoặc lệnh chốt cho một tệp đang ghi dở đã có sẽ hỏi cùng quyền ghi đó, và được gửi lại khi người dùng
-  duyệt. Quyền này kết thúc khi tệp được chốt, bị bỏ hoặc hết hạn. Đính kèm và bỏ tệp được hỏi từng lần một. Một biên
+  bao giờ chứa byte. Duyệt một lệnh tạo sẽ tạo tệp và cấp một quyền ghi trên tệp đó: các chunk và lệnh chốt của nó chạy
+  mà không cần thẻ khác trong 15 phút. Một chunk hoặc lệnh chốt cho một tệp đang ghi dở đã có sẽ hỏi cùng quyền ghi đó,
+  và được gửi lại khi người dùng duyệt. Quyền này kết thúc khi tệp được chốt, bị bỏ hoặc hết hạn. Ai giữ quyền này tuỳ
+  vào những gì node phân biệt được: qua relay WebSocket, chỉ đúng kết nối đã yêu cầu (node cấp cho mỗi socket một mã
+  riêng); lời gọi MCP và các lần chạy `clarkcant api` không mang danh tính riêng của từng client, nên ở đó là mọi client
+  của bề mặt đó, không chỉ client đã yêu cầu. Thẻ và biên nhận của nó nói rõ điều này, trước và sau khi người dùng quyết
+  định. Đính kèm và bỏ tệp được hỏi từng lần một. Một biên
   nhận (`widget_artifact_write`, có `args.approvalId` và `args.artifactId`, hoặc `args.code` khi thất bại) trả lời mọi
   thẻ đã được quyết định, kể cả thẻ không còn chạy được vì widget đã rời hội thoại, chính sách đã đổi, tệp đã thay đổi
   hoặc thẻ đã bị sửa. Hỏi lại đúng việc đó sẽ nhận lại thẻ đang chờ; quá 8 thẻ đang chờ từ một bề mặt trong một hội
-  thoại, câu trả lời là `429 APPROVALS_PENDING`.
+  thoại, câu trả lời là `429 APPROVALS_PENDING`. Số đếm này được giữ trong bộ nhớ, nên khởi động lại sẽ đặt lại nó;
+  các thẻ đã có trong hội thoại vẫn chờ người dùng.
 - **Chính sách từ chối** (một quy tắc từ chối loại hiệu ứng đó, hoặc lệnh cấm trên toàn node): `403 POLICY_REFUSED`,
   không có gì được ghi.
 

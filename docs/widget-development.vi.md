@@ -1863,7 +1863,7 @@ không có lời nhắc của host.
 Các thao tác ghi của chính widget (`create`, `write`, `finalize`, `attach`, `discard`) đến node qua host của nó và chạy
 như trước. Cũng những route đó khi do một bề mặt máy mang tới (MCP, relay WebSocket hoặc `clarkcant api`) là một client
 AI hoặc một máy từ xa đang ghi thay cho widget. Node quyết định từng lần ghi như vậy bằng chính sách thực thi của người
-dùng, như một tác động `local-write`, hoặc `destructive` khi bỏ một tệp không phải tệp đang ghi dở do chính bề mặt đó bắt
+dùng, như một tác động `local-write`, hoặc `destructive` khi bỏ một tệp không phải tệp đang ghi dở do chính kết nối relay đó (hoặc, với MCP và `clarkcant api`, chính bề mặt đó) bắt
 đầu: nó chạy, nó chờ người dùng trên một thẻ phê duyệt (mỗi tệp một thẻ, không bao giờ kèm byte), hoặc nó bị từ chối. Mỗi lần ghi
 như vậy được ghi vào nhật ký kiểm toán với bề mặt, instance, artifact và quyết định, không bao giờ kèm nội dung tệp
 ([open-interfaces.vi.md](open-interfaces.vi.md)). Widget không cần xử lý việc này: các lời gọi của chính nó không bao giờ

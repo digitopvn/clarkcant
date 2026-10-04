@@ -47,12 +47,15 @@ import type { NodeServices } from "../services.ts";
  * - The policy asks: a host-owned approval card goes into the widget's conversation and the caller is told
  *   `202 approval-required`. Only the person decides it, on the person-only decide route. A card is per file, never per
  *   chunk, and never carries bytes (a conversation is kept, searched, read by the model and may be synced to paired
- *   nodes): approving `create`, or write access to an existing working file, gives that surface a short-lived write
+ *   nodes): approving `create`, or write access to an existing working file, gives whoever asked a short-lived write
  *   right on that one file of that one instance, which covers its chunks and its finalize, each still audited, and ends
  *   on finalize, discard or expiry. `attach` and `discard` are asked about one by one.
  * - The policy refuses: `403 POLICY_REFUSED`, nothing written.
  *
  * Which surface asked is the marker the node's own surfaces set in a header (`machineSurfaceOf`), never a body field.
+ * "Whoever asked" is the WebSocket relay connection that carried the request, by the id the node gave that socket; MCP
+ * calls and `clarkcant api` runs carry no identity of their own, so for them it is every client of that surface, and
+ * the card and its receipt say so.
  */
 
 /** One write, already read from its request, in the shape every path runs. */
@@ -83,8 +86,14 @@ const APPROVAL_TTL_MS = 15 * 60_000;
 /** How long the person's approval of one file lets the surface that asked keep writing it. */
 const WRITE_RIGHT_TTL_MS = 15 * 60_000;
 const WRITE_RIGHT_MINUTES = WRITE_RIGHT_TTL_MS / 60_000;
-/** Cards one surface may keep waiting in one conversation; past this it is told to wait, not given another card. */
+/**
+ * Cards one surface may keep waiting in one conversation; past this it is told to wait, not given another card. Counted
+ * per surface kind, not per connection, so opening more sockets does not buy more cards. The count is kept in memory, so
+ * a restart resets it: cards already in the conversation still wait, but are no longer counted.
+ */
 const MAX_PENDING_CARDS = 8;
+/** A relay connection id as the node mints it (`randomUUID`); anything else is not one and is ignored. */
+const CONNECTION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Unfinished files a surface started that this node remembers, for the discard category. Oldest forgotten first. */
 const MAX_TRACKED_CREATIONS = 1024;
 /** A media type as `type/subtype`, bounded, before the broker's allowlist is even asked. */
@@ -159,7 +168,8 @@ export function performWidgetArtifactWrite(
  * forgets the count of waiting cards; each errs toward asking the person, never toward running.
  */
 interface WriteRight {
-  surface: MachineSurface;
+  /** `holderOf` whoever asked: one relay connection, or every client of a surface that has no connection identity. */
+  holder: string;
   conversationId: string;
   instanceId: string;
   artifactId: string;
@@ -169,7 +179,8 @@ interface WriteRight {
 
 interface MachineWriteState {
   rights: Map<string, WriteRight>;
-  started: Map<string, MachineSurface>;
+  /** Artifact id to the `holderOf` whoever started it. */
+  started: Map<string, string>;
   pending: Map<string, { surface: MachineSurface; conversationId: string }>;
 }
 
@@ -184,16 +195,32 @@ function stateOf(services: Pick<NodeServices, "runtime">): MachineWriteState {
   return state;
 }
 
-function rightKey(surface: MachineSurface, instanceId: string, artifactId: string): string {
-  return `${surface}\u0000${instanceId}\u0000${artifactId}`;
+/** Who asked: the surface, and the relay connection that carried the request when the node knows it. */
+export interface MachineAsker {
+  surface: MachineSurface;
+  connection?: string;
+}
+
+/** The relay connection a request names, when it is one: only the relay sets it, and only as an id the node minted. */
+export function connectionOf(surface: MachineSurface, value: unknown): string | undefined {
+  return surface === "relay" && typeof value === "string" && CONNECTION_ID.test(value) ? value : undefined;
+}
+
+/** What holds a write right and a start record: one relay connection, or the surface kind when there is no connection. */
+function holderOf(asker: MachineAsker): string {
+  return asker.connection === undefined ? asker.surface : `${asker.surface}\u0000${asker.connection}`;
+}
+
+function rightKey(holder: string, instanceId: string, artifactId: string): string {
+  return `${holder}\u0000${instanceId}\u0000${artifactId}`;
 }
 
 function currentRight(
   services: Pick<NodeServices, "runtime">,
-  input: { surface: MachineSurface; conversationId: string; instanceId: string; artifactId: string; nowMs: number },
+  input: { holder: string; conversationId: string; instanceId: string; artifactId: string; nowMs: number },
 ): WriteRight | undefined {
   const { rights } = stateOf(services);
-  const key = rightKey(input.surface, input.instanceId, input.artifactId);
+  const key = rightKey(input.holder, input.instanceId, input.artifactId);
   const right = rights.get(key);
   if (right === undefined) return undefined;
   if (right.expiresAtMs <= input.nowMs) {
@@ -210,9 +237,9 @@ function settleFile(services: Pick<NodeServices, "runtime">, artifactId: string)
   state.started.delete(artifactId);
 }
 
-function rememberStarted(services: Pick<NodeServices, "runtime">, artifactId: string, surface: MachineSurface): void {
+function rememberStarted(services: Pick<NodeServices, "runtime">, artifactId: string, holder: string): void {
   const { started } = stateOf(services);
-  started.set(artifactId, surface);
+  started.set(artifactId, holder);
   while (started.size > MAX_TRACKED_CREATIONS) {
     const oldest = started.keys().next().value;
     if (oldest === undefined) break;
@@ -221,17 +248,18 @@ function rememberStarted(services: Pick<NodeServices, "runtime">, artifactId: st
 }
 
 /** What a write that ran leaves this node to remember. */
-function afterWrite(services: Pick<NodeServices, "runtime">, surface: MachineSurface, write: WidgetArtifactWrite, performed: PerformedWrite): void {
+function afterWrite(services: Pick<NodeServices, "runtime">, holder: string, write: WidgetArtifactWrite, performed: PerformedWrite): void {
   if (!performed.ok) return;
-  if (write.operation === "create") rememberStarted(services, performed.artifactId, surface);
+  if (write.operation === "create") rememberStarted(services, performed.artifactId, holder);
   if (write.operation === "finalize" || write.operation === "discard") settleFile(services, performed.artifactId);
 }
 
 /**
- * The category a write is decided as. Discarding is `local-write` only for an unfinished file this same surface started,
- * which takes nothing from the person; anything else it deletes may be their only copy, so it is `destructive`.
+ * The category a write is decided as. Discarding is `local-write` only for an unfinished file the same asker started (the
+ * same relay connection, or the same surface when it has no connection identity), which takes nothing from the person;
+ * anything else it deletes may be their only copy, so it is `destructive`.
  */
-function categoryOf(services: MachineWriteServices, surface: MachineSurface, scope: WidgetArtifactScope, write: WidgetArtifactWrite): WriteCategory {
+function categoryOf(services: MachineWriteServices, holder: string, scope: WidgetArtifactScope, write: WidgetArtifactWrite): WriteCategory {
   if (write.operation !== "discard") return "local-write";
   const checked = checkArtifactOperation(brokerDepsOf(services), {
     principalId: scope.principalId,
@@ -239,7 +267,7 @@ function categoryOf(services: MachineWriteServices, surface: MachineSurface, sco
     artifactId: write.artifactId,
     need: "discard",
   });
-  return checked.ok && checked.ref.kind === "working" && stateOf(services).started.get(write.artifactId) === surface
+  return checked.ok && checked.ref.kind === "working" && stateOf(services).started.get(write.artifactId) === holder
     ? "local-write"
     : "destructive";
 }
@@ -250,6 +278,8 @@ type CardOperationName = "create" | "write" | "attach" | "discard";
 interface CardOperation {
   kind: typeof PAYLOAD_KIND;
   surface: MachineSurface;
+  /** The relay connection that asked, which alone receives the write right; absent where the surface has no identity. */
+  connection?: string;
   conversationId: string;
   instanceId: string;
   /** `write` is write access to one existing working file: its chunks and its finalize. */
@@ -272,6 +302,37 @@ const SURFACE_NAMES: Record<MachineSurface, Record<Locale, string>> = {
   "cli-api": { en: "The clarkcant api command", vi: "Lệnh clarkcant api" },
 };
 
+/**
+ * Who a write right goes to, as the card and the receipt name it. Only a relay connection is one client; MCP calls and
+ * `clarkcant api` runs carry no identity of their own, so their right is every client of that surface, and the person
+ * is told so before approving rather than led to think one client is being trusted.
+ */
+const SURFACE_HOLDERS: Record<MachineSurface, Record<Locale, string>> = {
+  mcp: { en: "any MCP client connected to this node (not just the one that asked)", vi: "mọi client MCP kết nối với node này (không chỉ client đã yêu cầu)" },
+  relay: { en: "any WebSocket relay client (not just the one that asked)", vi: "mọi client qua WebSocket relay (không chỉ client đã yêu cầu)" },
+  "cli-api": {
+    en: "any clarkcant api command run against this node (not just the one that asked)",
+    vi: "mọi lệnh clarkcant api gửi tới node này (không chỉ lệnh đã yêu cầu)",
+  },
+};
+const CONNECTION_HOLDER: Record<Locale, string> = { en: "only that WebSocket relay connection", vi: "chỉ kết nối WebSocket relay đó" };
+
+/** Who started an unfinished file, for a discard of it that is not destructive: the same holder that is asking now. */
+const SURFACE_STARTERS: Record<MachineSurface, Record<Locale, string>> = {
+  mcp: { en: "an MCP client", vi: "một client MCP" },
+  relay: { en: "a WebSocket relay client", vi: "một client qua WebSocket relay" },
+  "cli-api": { en: "a clarkcant api command", vi: "một lệnh clarkcant api" },
+};
+const CONNECTION_STARTER: Record<Locale, string> = { en: "this same connection", vi: "chính kết nối này" };
+
+function holderText(operation: CardOperation, locale: Locale): string {
+  return operation.connection === undefined ? SURFACE_HOLDERS[operation.surface][locale] : CONNECTION_HOLDER[locale];
+}
+
+function starterText(operation: CardOperation, locale: Locale): string {
+  return operation.connection === undefined ? SURFACE_STARTERS[operation.surface][locale] : CONNECTION_STARTER[locale];
+}
+
 function localeOf(services: MachineWriteServices, at: Instant): Locale {
   return preferredAppIntentLocale({ db: services.runtime.db, now: () => at }, services.runtime.identity.ownerPrincipalId);
 }
@@ -283,44 +344,46 @@ function bounded(text: string): string {
 /** The card's words, in the person's language. Every value in them was checked first: an allowlisted type, a node id. */
 function cardText(operation: CardOperation, locale: Locale): string {
   const who = SURFACE_NAMES[operation.surface][locale];
+  const holder = holderText(operation, locale);
   const id = operation.artifactId ?? "";
   const minutes = String(WRITE_RIGHT_MINUTES);
   if (locale === "en") {
     switch (operation.operation) {
       case "create":
-        return `${who} wants to create a new ${operation.mimeType ?? ""} file for the widget in this conversation and write it. Approving lets it write and finish that one file for ${minutes} minutes.`;
+        return `${who} wants to create a new ${operation.mimeType ?? ""} file for the widget in this conversation and write it. Approving lets ${holder} write and finish that one file for ${minutes} minutes.`;
       case "write":
-        return `${who} wants to write to the widget file ${id} and finish it. Approving lets it write that one file for ${minutes} minutes.`;
+        return `${who} wants to write to the widget file ${id} and finish it. Approving lets ${holder} write and finish that one file for ${minutes} minutes.`;
       case "attach":
         return `${who} wants to attach the widget file ${id} to this conversation.`;
       default:
         return operation.category === "destructive"
           ? `${who} wants to permanently delete the widget file ${id}. This cannot be undone; a copy already attached to the conversation stays.`
-          : `${who} wants to discard the unfinished widget file ${id} it started.`;
+          : `${who} wants to discard the unfinished widget file ${id}, which ${starterText(operation, locale)} started.`;
     }
   }
   switch (operation.operation) {
     case "create":
-      return `${who} muốn tạo một tệp ${operation.mimeType ?? ""} mới cho widget trong hội thoại này và ghi nội dung vào đó. Nếu bạn đồng ý, nó được ghi và hoàn tất đúng tệp đó trong ${minutes} phút.`;
+      return `${who} muốn tạo một tệp ${operation.mimeType ?? ""} mới cho widget trong hội thoại này và ghi nội dung vào đó. Nếu bạn đồng ý, ${holder} được ghi và hoàn tất đúng tệp đó trong ${minutes} phút.`;
     case "write":
-      return `${who} muốn ghi vào tệp widget ${id} và hoàn tất tệp đó. Nếu bạn đồng ý, nó được ghi đúng tệp đó trong ${minutes} phút.`;
+      return `${who} muốn ghi vào tệp widget ${id} và hoàn tất tệp đó. Nếu bạn đồng ý, ${holder} được ghi và hoàn tất đúng tệp đó trong ${minutes} phút.`;
     case "attach":
       return `${who} muốn đính kèm tệp widget ${id} vào hội thoại này.`;
     default:
       return operation.category === "destructive"
         ? `${who} muốn xoá vĩnh viễn tệp widget ${id}. Không thể hoàn tác; bản đã đính kèm vào hội thoại vẫn được giữ.`
-        : `${who} muốn bỏ tệp widget ${id} đang ghi dở mà nó đã bắt đầu.`;
+        : `${who} muốn bỏ tệp widget ${id} đang ghi dở do ${starterText(operation, locale)} bắt đầu.`;
   }
 }
 
 function receiptDone(operation: CardOperation, artifactId: string, locale: Locale): string {
   const minutes = String(WRITE_RIGHT_MINUTES);
+  const holder = holderText(operation, locale);
   if (locale === "en") {
     switch (operation.operation) {
       case "create":
-        return `Created widget file ${artifactId}. The client that asked may write and finish it for the next ${minutes} minutes.`;
+        return `Created widget file ${artifactId}. For the next ${minutes} minutes, ${holder} may write and finish it.`;
       case "write":
-        return `The client that asked may write widget file ${artifactId} for the next ${minutes} minutes.`;
+        return `For the next ${minutes} minutes, ${holder} may write and finish widget file ${artifactId}.`;
       case "attach":
         return `Attached widget file ${artifactId} to the conversation.`;
       default:
@@ -329,9 +392,9 @@ function receiptDone(operation: CardOperation, artifactId: string, locale: Local
   }
   switch (operation.operation) {
     case "create":
-      return `Đã tạo tệp widget ${artifactId}. Bên yêu cầu được ghi và hoàn tất tệp này trong ${minutes} phút tới.`;
+      return `Đã tạo tệp widget ${artifactId}. Trong ${minutes} phút tới, ${holder} được ghi và hoàn tất tệp này.`;
     case "write":
-      return `Bên yêu cầu được ghi tệp widget ${artifactId} trong ${minutes} phút tới.`;
+      return `Trong ${minutes} phút tới, ${holder} được ghi và hoàn tất tệp widget ${artifactId}.`;
     case "attach":
       return `Đã đính kèm tệp widget ${artifactId} vào hội thoại.`;
     default:
@@ -489,13 +552,20 @@ function precheck(
 }
 
 function cardOperationOf(
-  surface: MachineSurface,
+  asker: MachineAsker,
   scope: WidgetArtifactScope,
   write: WidgetArtifactWrite,
   category: WriteCategory,
   checked: { mimeType?: string; name?: string },
 ): CardOperation {
-  const base = { kind: PAYLOAD_KIND, surface, conversationId: scope.conversationId, instanceId: scope.instanceId, category } as const;
+  const base = {
+    kind: PAYLOAD_KIND,
+    surface: asker.surface,
+    ...(asker.connection === undefined ? {} : { connection: asker.connection }),
+    conversationId: scope.conversationId,
+    instanceId: scope.instanceId,
+    category,
+  } as const;
   switch (write.operation) {
     case "create":
       return { ...base, operation: "create", mimeType: checked.mimeType ?? write.mimeType, ...(checked.name === undefined ? {} : { name: checked.name }) };
@@ -548,10 +618,13 @@ function waitingCount(services: MachineWriteServices, surface: MachineSurface, c
  */
 export function decideMachineArtifactWrite(
   services: MachineWriteServices,
-  input: { surface: MachineSurface; scope: WidgetArtifactScope; write: WidgetArtifactWrite },
+  input: { surface: MachineSurface; connection?: unknown; scope: WidgetArtifactScope; write: WidgetArtifactWrite },
 ): GatewayResponse {
   const at = new Date().toISOString() as Instant;
   const { surface, scope, write } = input;
+  const connection = connectionOf(surface, input.connection);
+  const asker: MachineAsker = { surface, ...(connection === undefined ? {} : { connection }) };
+  const holder = holderOf(asker);
   const broker = brokerDepsOf(services);
 
   // Caller text is checked before it reaches anything a person or a model reads.
@@ -572,10 +645,11 @@ export function decideMachineArtifactWrite(
     return performed.response;
   }
 
-  const category = categoryOf(services, surface, scope, write);
+  const category = categoryOf(services, holder, scope, write);
   const operationDigest = digestOf({
     kind: PAYLOAD_KIND,
     surface,
+    connection: connection ?? null,
     conversationId: scope.conversationId,
     instanceId: scope.instanceId,
     operation: write.operation,
@@ -594,6 +668,13 @@ export function decideMachineArtifactWrite(
     intent: { kind: "system" },
   });
 
+  // The policy's risk-gate wording is about effects that leave the machine; deleting a widget file does not, so a
+  // destructive discard the policy asks about is explained as what it is. A rule's own wording is kept.
+  const reason =
+    decided.kind === "ask" && category === "destructive" && !decided.reason.startsWith("a rule")
+      ? "deleting a widget file the person may have no other copy of is destructive, so the person decides it"
+      : decided.reason;
+
   if (decided.kind === "deny") {
     audit(services, { asked, decision: `refused by the execution policy (${category}: ${decided.reason})`, outcome: "refused", at });
     return fail(403, "POLICY_REFUSED", `${decided.reason}; nothing was written`);
@@ -601,7 +682,7 @@ export function decideMachineArtifactWrite(
 
   if (decided.kind === "execute") {
     const performed = performWidgetArtifactWrite(broker, scope, write);
-    afterWrite(services, surface, write, performed);
+    afterWrite(services, holder, write, performed);
     if (performed.ok) {
       // After the broker accepted it: the activity stream shows effects that happened, not ones that were refused.
       recordEffectExecution(
@@ -632,7 +713,7 @@ export function decideMachineArtifactWrite(
   // The policy asks. A chunk or a finalize of a file the person already let this surface write runs under that right.
   if (write.operation === "write" || write.operation === "finalize") {
     const right = currentRight(services, {
-      surface,
+      holder,
       conversationId: scope.conversationId,
       instanceId: scope.instanceId,
       artifactId: write.artifactId,
@@ -640,11 +721,11 @@ export function decideMachineArtifactWrite(
     });
     if (right !== undefined) {
       const performed = performWidgetArtifactWrite(broker, scope, write);
-      afterWrite(services, surface, write, performed);
+      afterWrite(services, holder, write, performed);
       audit(services, {
         asked,
         decision: performed.ok
-          ? `covered by the person's approval on card ${right.approvalId} (${decided.reason})`
+          ? `covered by the person's approval on card ${right.approvalId} (${reason})`
           : `covered by the person's approval on card ${right.approvalId}, refused by the broker with ${performed.code}`,
         outcome: performed.ok ? "done" : "refused",
         at,
@@ -658,7 +739,7 @@ export function decideMachineArtifactWrite(
     audit(services, { asked, decision: `the policy asks, but the broker refuses it first with ${checked.code}`, outcome: "refused", at });
     return refusedBy(checked).response;
   }
-  const operation = cardOperationOf(surface, scope, write, category, checked);
+  const operation = cardOperationOf(asker, scope, write, category, checked);
   const digest = digestOf(operation);
   const retryNote =
     operation.operation === "write"
@@ -667,7 +748,7 @@ export function decideMachineArtifactWrite(
 
   const waiting = waitingCard(services, digest, at);
   if (waiting !== undefined) {
-    audit(services, { asked, decision: `the execution policy asks (${decided.reason}); already waiting on card ${waiting}`, outcome: "pending", at });
+    audit(services, { asked, decision: `the execution policy asks (${reason}); already waiting on card ${waiting}`, outcome: "pending", at });
     return json(202, {
       outcome: "approval-required",
       approvalRequired: { approvalId: waiting },
@@ -705,7 +786,7 @@ export function decideMachineArtifactWrite(
   stateOf(services).pending.set(approval.approvalId, { surface, conversationId: scope.conversationId });
   audit(services, {
     asked,
-    decision: `the execution policy asks (${category}: ${decided.reason}); waiting for the person on card ${approval.approvalId}`,
+    decision: `the execution policy asks (${category}: ${reason}); waiting for the person on card ${approval.approvalId}`,
     outcome: "pending",
     at,
   });
@@ -713,7 +794,7 @@ export function decideMachineArtifactWrite(
     outcome: "approval-required",
     approvalRequired: { approvalId: approval.approvalId },
     operation: write.operation,
-    message: `${decided.reason}; the person decides this on the card in the conversation, and nothing is written until they approve it${retryNote}`,
+    message: `${reason}; the person decides this on the card in the conversation, and nothing is written until they approve it${retryNote}`,
   });
 }
 
@@ -740,6 +821,7 @@ function readOperation(payload: string): CardOperation | undefined {
   const operations: readonly unknown[] = ["create", "write", "attach", "discard"];
   const categories: readonly unknown[] = ["local-write", "destructive"];
   if (machineSurfaceOf(parsed.surface) === undefined || !operations.includes(parsed.operation) || !categories.includes(parsed.category)) return undefined;
+  if (parsed.connection !== undefined && connectionOf(parsed.surface as MachineSurface, parsed.connection) === undefined) return undefined;
   if (typeof parsed.conversationId !== "string" || typeof parsed.instanceId !== "string") return undefined;
   if (parsed.operation === "create" ? typeof parsed.mimeType !== "string" : typeof parsed.artifactId !== "string") return undefined;
   if (parsed.name !== undefined && typeof parsed.name !== "string") return undefined;
@@ -821,7 +903,8 @@ export function runApprovedWidgetArtifactWrite(
         : operation.operation === "discard"
           ? { operation: "discard", artifactId: operation.artifactId ?? "" }
           : { operation: "finalize", artifactId: operation.artifactId ?? "" };
-  if (categoryOf(services, operation.surface, scope, write) !== operation.category) {
+  const holder = holderOf({ surface: operation.surface, ...(operation.connection === undefined ? {} : { connection: operation.connection }) });
+  if (categoryOf(services, holder, scope, write) !== operation.category) {
     audit(services, { asked, decision: `approved on card ${input.approvalId}, but the file changed since the card was shown`, outcome: "refused", at: input.at });
     return failed("APPROVAL_STALE", "the file changed since the card was shown; the approval does not cover what would run now", operation);
   }
@@ -846,10 +929,10 @@ export function runApprovedWidgetArtifactWrite(
             : refusedBy(checked);
         })()
       : performWidgetArtifactWrite(brokerDepsOf(services), scope, write);
-  if (operation.operation !== "write") afterWrite(services, operation.surface, write, performed);
+  if (operation.operation !== "write") afterWrite(services, holder, write, performed);
   if (performed.ok && (operation.operation === "create" || operation.operation === "write")) {
-    stateOf(services).rights.set(rightKey(operation.surface, operation.instanceId, performed.artifactId), {
-      surface: operation.surface,
+    stateOf(services).rights.set(rightKey(holder, operation.instanceId, performed.artifactId), {
+      holder,
       conversationId: operation.conversationId,
       instanceId: operation.instanceId,
       artifactId: performed.artifactId,

@@ -432,7 +432,7 @@ discard are a widget's acts. The person's own app calls them as before. When MCP
 `clarkcant api` carries one, an AI client or a remote machine would be writing as the widget, so the node decides each
 write under the person's execution policy (`packages/contracts/src/machine-surfaces.ts`,
 `apps/runtime/src/application/machine-artifact-writes.ts`). Each write is a `local-write` effect, except discarding a
-file that is not an unfinished one the same surface started: that may delete the person's only copy, so it is
+file that is not an unfinished one the same asker started (the same relay connection, or the same surface for MCP and `clarkcant api`): that may delete the person's only copy, so it is
 `destructive`, and it is asked about under Guarded and, since nobody in the conversation asked for it, under
 Autonomous too.
 
@@ -442,13 +442,18 @@ Autonomous too.
   `202 { outcome: "approval-required", approvalRequired: { approvalId }, operation, message }`. Only the person decides
   the card, on the person-only decide route; the relay and `clarkcant api` refuse that route with `403 PERSON_ONLY`, and
   MCP has no tool for it. A card is per file, never per chunk, and never carries bytes. Approving a create makes the
-  file and lets the surface that asked write its chunks and finalize it for 15 minutes. A chunk or finalize for an
-  existing working file asks for the same write access, and is sent again once the person approves. The access ends on
-  finalize, discard or expiry. Attach and discard are asked about one at a time. A receipt (`widget_artifact_write`,
+  file and gives a write right on it: its chunks and its finalize run without another card for 15 minutes. A chunk or
+  finalize for an existing working file asks for the same write access, and is sent again once the person approves.
+  The right ends on finalize, discard or expiry. Who holds it depends on what the node can tell apart: over the
+  WebSocket relay it is only the one connection that asked (the node gives each socket its own id); MCP calls and
+  `clarkcant api` runs carry no per-client identity, so there it is any client of that surface, not just the one that
+  asked. The card and its receipt say which, before and after the person decides. Attach and discard are asked about
+  one at a time. A receipt (`widget_artifact_write`,
   with `args.approvalId` and `args.artifactId`, or `args.code` when it failed) answers every decided card, including one
   that could no longer run because the widget left, the policy changed, the file changed or the card was tampered
   with. Asking again for the same thing answers the card already waiting; past 8 waiting cards from one surface in one
-  conversation, the answer is `429 APPROVALS_PENDING`.
+  conversation, the answer is `429 APPROVALS_PENDING`. That count is kept in memory, so a restart resets it; the
+  cards already in the conversation still wait for the person.
 - **The policy refuses** (a rule refusing the category, or a node-wide prohibition): `403 POLICY_REFUSED`, nothing
   written.
 

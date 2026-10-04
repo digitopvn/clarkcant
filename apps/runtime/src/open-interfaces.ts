@@ -57,7 +57,9 @@ export function discoveryDocument(): Record<string, unknown> {
       effectCategory: "local-write",
       // Discarding a file that is not an unfinished one the same surface started deletes what may be the person's only copy.
       destructive: ["DELETE /conversations/{conversationId}/widgets/{instanceId}/artifacts/{artifactId}"],
-      approval: { status: 202, outcome: "approval-required", per: "file" },
+      // The 15-minute write right an approved create or write access gives: held by the one relay connection that asked,
+      // or by every client of the surface where it has no per-client identity (MCP, clarkcant api).
+      approval: { status: 202, outcome: "approval-required", per: "file", writeRight: { minutes: 15, heldBy: { websocket: "connection", mcp: "surface", "cli api": "surface" } } },
       refusal: { status: 403, code: "POLICY_REFUSED" },
       pendingLimit: { status: 429, code: "APPROVALS_PENDING" },
     },
@@ -71,8 +73,10 @@ const MACHINE_WRITE_NOTE =
   "is destructive. It runs; or it answers 202 { outcome: \"approval-required\", approvalRequired: { approvalId } } while a " +
   "card in the conversation waits for the person (asking again answers the same card; 429 APPROVALS_PENDING past 8 " +
   "waiting cards from one surface in one conversation); or it is 403 POLICY_REFUSED. A card is per file and never " +
-  "carries bytes: approving a create, or write access to a working file, lets that surface write that file's chunks and " +
-  "finalize it for 15 minutes, so a chunk or finalize that got 202 is sent again once the person approves.";
+  "carries bytes: approving a create, or write access to a working file, lets whoever asked write that file's chunks " +
+  "and finalize it for 15 minutes, so a chunk or finalize that got 202 is sent again once the person approves. Whoever " +
+  "asked is the one WebSocket relay connection that carried it; MCP and clarkcant api have no per-client identity, so " +
+  "there it is every client of that surface, and the card says so.";
 
 const errorSchema = {
   type: "object",

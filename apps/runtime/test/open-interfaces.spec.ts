@@ -4,7 +4,7 @@ import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant } from "@clarkcant/contracts";
@@ -727,6 +727,111 @@ describe("widget artifact writes on machine surfaces", () => {
     expect(listArtifactsForConversation(services.runtime.db, conversationId)[0]?.sizeBytes).toBe(Buffer.byteLength(TEXT) * 2);
   });
 
+  it("holds an approved file's write right for that relay connection alone, in that conversation, until it expires", async () => {
+    setPolicy({ mode: "ask" });
+    const { conversationId, route } = await widget();
+    const instanceId = route.split("/")[4] ?? "";
+    const asker = await relayed();
+    const sibling = await relayed();
+
+    const asked = await asker.request("POST", route, { mimeType: "text/plain" });
+    const approvalId = approvalOf(asked.body);
+    // The card names who the right goes to before the person approves it, and the receipt says it again.
+    expect((await cardOf(conversationId, approvalId))?.operationDescription).toContain("chỉ kết nối WebSocket relay đó được ghi và hoàn tất");
+    expect((await decide(conversationId, approvalId)).status).toBe(200);
+    const receipt = receiptOf(await blocksOf(conversationId), approvalId);
+    expect(receipt?.label).toContain("chỉ kết nối WebSocket relay đó được ghi và hoàn tất tệp này");
+    const artifactId = (receipt?.args as { artifactId: string }).artifactId;
+
+    // Another relay connection, MCP and clarkcant api are each asked, not let through on the asker's right.
+    expect(await sibling.request("POST", `${route}/${artifactId}/chunks`, chunk(TEXT))).toMatchObject({ status: 202, body: { operation: "write" } });
+    expect(await http("POST", `${route}/${artifactId}/chunks`, chunk(TEXT), MCP)).toMatchObject({ status: 202 });
+    expect(await http("POST", `${route}/${artifactId}/chunks`, chunk(TEXT), { "x-clarkcant-surface": "cli-api" })).toMatchObject({ status: 202 });
+    // A plain HTTP caller naming the relay, even with a connection id of its own, is not the asker either.
+    expect(
+      await http("POST", `${route}/${artifactId}/chunks`, chunk(TEXT), { "x-clarkcant-surface": "relay", "x-clarkcant-surface-connection": "00000000-0000-4000-8000-000000000000" }),
+    ).toMatchObject({ status: 202 });
+
+    // Nor does the right reach another file of the same widget, or the same widget pinned in another conversation.
+    const other = artifactIdOf((await http("POST", route, { mimeType: "text/plain" })).body);
+    expect(await asker.request("POST", `${route}/${other}/chunks`, chunk(TEXT))).toMatchObject({ status: 202 });
+    const elsewhere = (await http("POST", "/conversations", { title: "nơi khác" })).body.conversationId as string;
+    expect(pinInstance(services.conductor, { conversationId: elsewhere, instanceId, displayMode: "compact", maxPins: 64 }).ok).toBe(true);
+    expect(await asker.request("POST", `/conversations/${elsewhere}/widgets/${instanceId}/artifacts/${artifactId}/chunks`, chunk(TEXT))).toMatchObject({ status: 202 });
+    // Nor another widget instance, whose share does not hold the file at all.
+    const { route: otherRoute } = await widget();
+    expect((await asker.request("POST", `${otherRoute}/${artifactId}/chunks`, chunk(TEXT))).status).not.toBe(200);
+
+    // The asker itself writes under it.
+    expect(await asker.request("POST", `${route}/${artifactId}/chunks`, chunk(TEXT))).toMatchObject({ status: 200 });
+
+    // Past the right's 15 minutes, the asker is asked again.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 16 * 60_000);
+      expect(await asker.request("POST", `${route}/${artifactId}/chunks`, chunk(TEXT, Buffer.byteLength(TEXT)))).toMatchObject({ status: 202 });
+    } finally {
+      vi.useRealTimers();
+    }
+    asker.close();
+    sibling.close();
+    expect(listArtifactsForConversation(services.runtime.db, conversationId).find((artifact) => artifact.artifactId === artifactId)?.sizeBytes).toBe(
+      Buffer.byteLength(TEXT),
+    );
+  });
+
+  it("ends the write right on a discard, and treats a file another connection started as not the asker's to drop", async () => {
+    setPolicy({ mode: "ask" });
+    const { conversationId, route } = await widget();
+    const asker = await relayed();
+    const sibling = await relayed();
+    const asked = await asker.request("POST", route, { mimeType: "text/plain" });
+    expect((await decide(conversationId, approvalOf(asked.body))).status).toBe(200);
+    const artifactId = (receiptOf(await blocksOf(conversationId), approvalOf(asked.body))?.args as { artifactId: string }).artifactId;
+    expect(await asker.request("POST", `${route}/${artifactId}/chunks`, chunk(TEXT))).toMatchObject({ status: 200 });
+
+    // Another connection dropping it would delete what it did not start: destructive, and worded for what it is.
+    const foreign = await sibling.request("DELETE", `${route}/${artifactId}`);
+    expect(foreign).toMatchObject({ status: 202, body: { operation: "discard" } });
+    expect((foreign.body as { message: string }).message).not.toContain("reaches past this machine");
+    expect((foreign.body as { message: string }).message).toContain("no other copy");
+    expect(await cardOf(conversationId, approvalOf(foreign.body))).toMatchObject({ effectCategory: "destructive" });
+
+    // The asker's own discard of its unfinished file is a local write, which Ask every time still asks about.
+    const own = await asker.request("DELETE", `${route}/${artifactId}`);
+    expect(own).toMatchObject({ status: 202 });
+    const ownCard = await cardOf(conversationId, approvalOf(own.body));
+    expect(ownCard).toMatchObject({ effectCategory: "local-write" });
+    expect(ownCard?.operationDescription).toContain("do chính kết nối này bắt đầu");
+    expect((await decide(conversationId, approvalOf(own.body))).status).toBe(200);
+    expect(listArtifactsForConversation(services.runtime.db, conversationId)).toEqual([]);
+
+    // The right went with the file: the next chunk is not covered by it.
+    const coveredBefore = artifactAudit().filter((event) => event.summary.includes("covered by the person's approval")).length;
+    expect((await asker.request("POST", `${route}/${artifactId}/chunks`, chunk(TEXT, Buffer.byteLength(TEXT)))).status).not.toBe(200);
+    expect(artifactAudit().filter((event) => event.summary.includes("covered by the person's approval"))).toHaveLength(coveredBefore);
+    asker.close();
+    sibling.close();
+  });
+
+  it("refuses an approved discard as stale when the file was finished after its card was shown", async () => {
+    setPolicy({ mode: "ask" });
+    const { conversationId, route } = await widget();
+    const relay = await relayed();
+    const asked = await relay.request("POST", route, { mimeType: "text/plain" });
+    expect((await decide(conversationId, approvalOf(asked.body))).status).toBe(200);
+    const artifactId = (receiptOf(await blocksOf(conversationId), approvalOf(asked.body))?.args as { artifactId: string }).artifactId;
+
+    const discard = await relay.request("DELETE", `${route}/${artifactId}`);
+    expect(await cardOf(conversationId, approvalOf(discard.body))).toMatchObject({ effectCategory: "local-write" });
+    // The person's app finishes the file before the card is decided: deleting it now would take a finished file.
+    expect((await http("POST", `${route}/${artifactId}/finalize`, {})).status).toBe(200);
+    expect((await decide(conversationId, approvalOf(discard.body))).body).toMatchObject({ code: "APPROVAL_STALE" });
+    expect(receiptOf(await blocksOf(conversationId), approvalOf(discard.body))).toMatchObject({ status: "failed", args: { code: "APPROVAL_STALE" } });
+    expect(listArtifactsForConversation(services.runtime.db, conversationId).map((artifact) => artifact.artifactId)).toContain(artifactId);
+    relay.close();
+  });
+
   it("answers a repeated request with the card already waiting, and stops minting cards past the limit", async () => {
     setPolicy({ mode: "ask" });
     const { conversationId, route } = await widget();
@@ -806,6 +911,10 @@ describe("widget artifact writes on machine surfaces", () => {
     const asked = await http("POST", route, { mimeType: "text/plain" }, MCP);
     expect((await cardOf(conversationId, approvalOf(asked.body)))?.operationDescription).toContain(
       "An MCP client wants to create a new text/plain file for the widget in this conversation",
+    );
+    // MCP calls carry no identity of their own, so the card says the right is every MCP client's, not one client's.
+    expect((await cardOf(conversationId, approvalOf(asked.body)))?.operationDescription).toContain(
+      "Approving lets any MCP client connected to this node (not just the one that asked) write and finish that one file for 15 minutes.",
     );
     expect((await decide(conversationId, approvalOf(asked.body), "denied")).status).toBe(200);
     expect(JSON.stringify(await blocksOf(conversationId))).toContain("Denied that widget file request. Nothing was written.");

@@ -21,7 +21,7 @@ import {
 import { readBlob } from "../blobs.ts";
 import type { NodeServices } from "../services.ts";
 import { contentDisposition } from "./content-disposition.ts";
-import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
+import { type GatewayRequest, type GatewayResponse, SURFACE_CONNECTION_HEADER, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
 
 /**
  * Files a widget holds by reference.
@@ -193,7 +193,12 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
   const surface = machineSurfaceOf(request.headers[SURFACE_HEADER]);
   const write = (planned: WidgetArtifactWrite): GatewayResponse =>
     surface !== undefined
-      ? decideMachineArtifactWrite(services, { surface, scope: { ...scope, conversationId }, write: planned })
+      ? decideMachineArtifactWrite(services, {
+          surface,
+          connection: request.headers[SURFACE_CONNECTION_HEADER],
+          scope: { ...scope, conversationId },
+          write: planned,
+        })
       : performWidgetArtifactWrite(broker, { ...scope, conversationId }, planned).response;
 
   // POST …/artifacts — a new working artifact the instance may write.

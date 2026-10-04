@@ -1870,7 +1870,7 @@ surfaces ([open-interfaces.md](open-interfaces.md)), and a widget cannot perform
 A widget's own writes (`create`, `write`, `finalize`, `attach`, `discard`) reach the node through its host and run
 as before. The same routes carried by a machine surface (MCP, the WebSocket relay or `clarkcant api`) are an AI client
 or a remote machine writing as the widget. The node decides each such write with the person's execution policy, as a
-`local-write` effect, or `destructive` for discarding a file that is not an unfinished one the same surface started: it
+`local-write` effect, or `destructive` for discarding a file that is not an unfinished one the same relay connection (or, for MCP and `clarkcant api`, the same surface) started: it
 runs, it waits for the person on an approval card (one per file, never with bytes), or it is refused. Every such write
 is audited with the surface, the instance, the artifact and the decision, never the bytes
 ([open-interfaces.md](open-interfaces.md)). A widget does not need to handle this: its own calls are never asked about.

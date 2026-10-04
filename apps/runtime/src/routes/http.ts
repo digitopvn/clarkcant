@@ -22,6 +22,14 @@ import { MACHINE_SURFACE_HEADER } from "@clarkcant/contracts";
  */
 export const SURFACE_HEADER = MACHINE_SURFACE_HEADER;
 
+/**
+ * Set by the WebSocket relay beside `SURFACE_HEADER`: an id the node gave that one socket when it opened, so a right the
+ * person grants to "the client that asked" is held by that connection, not by every relay client. A frame cannot set
+ * it. MCP calls are stateless and `clarkcant api` is one HTTP call per run, so neither has one. An HTTP caller could
+ * send it, but that caller can already write without any marker, so it is a way to be held to less, never to more.
+ */
+export const SURFACE_CONNECTION_HEADER = "x-clarkcant-surface-connection";
+
 export interface GatewayRequest {
   method: string;
   path: string;
