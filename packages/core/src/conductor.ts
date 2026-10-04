@@ -256,6 +256,11 @@ export interface ModelTurnInput {
   channel?: "voice" | "chat";
   /** See `UserMessageInput.origin`, which this carries through unchanged. */
   origin?: TurnOrigin;
+  /**
+   * The message carries attachments or references. Its turn reads them for its own prompt, so it is never joined to a
+   * turn that is already running: it waits for that turn to end and is answered with what it carries.
+   */
+  attached?: true;
 }
 
 /**
@@ -888,6 +893,7 @@ async function runModelTurn(
       ...(input.data === undefined ? {} : { data: input.data }),
       ...(input.channel === undefined ? {} : { channel: input.channel }),
       ...(input.origin === undefined ? {} : { origin: input.origin }),
+      ...((input.attachmentRefs?.length ?? 0) > 0 || (input.referenceBlocks?.length ?? 0) > 0 ? { attached: true as const } : {}),
       // Always supplied, and a no-op when nobody is streaming. A conditional spread here would have
       // to exist only to keep the optional field absent, which is a distinction nothing reads.
       onEvent: (event: ModelTurnEvent) => input.emit?.(event),

@@ -271,6 +271,12 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     env: deps.env,
     cwd: process.cwd(),
     model: chosenModel,
+    // The interface language the person chose, for the errors a turn words itself (a failed model switch).
+    language: () =>
+      preferredAppIntentLocale(
+        { db: deps.runtime.db, now: () => instantSchema.parse(new Date().toISOString()) },
+        deps.runtime.identity.ownerPrincipalId,
+      ),
     backgroundModel: async (work) => await routeNodeBackgroundModel(deps.services(), work),
     // What a model may be sent (#433): context above it is withheld before it reaches the prompt.
     allowedDataClasses: (model) => nodeAllowedDataClasses(deps.services(), model),

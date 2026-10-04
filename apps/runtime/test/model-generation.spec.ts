@@ -320,8 +320,8 @@ describe("a changed model", () => {
     // Not silently answered on the old model: the person chose another one, and they hear what happened.
     await expect(failure).rejects.toThrow(/Could not switch this conversation to fake-other\/fake-other-model/);
     await expect(failure).rejects.toThrow(/the provider refused the session/);
-    await expect(failure).rejects.toThrow(/The conversation is kept as it was/);
-    await expect(failure).rejects.toThrow(/retry, or choose another model/);
+    await expect(failure).rejects.toThrow(/Your message is saved and the conversation is unchanged/);
+    await expect(failure).rejects.toThrow(/Retry, or choose another model/);
     expect(disposed).not.toHaveBeenCalled();
     expect(turn.running()).toEqual([]);
 
@@ -337,6 +337,177 @@ describe("a changed model", () => {
     });
     expect(adapter.promptsFor("fake-session-1")).toHaveLength(2);
     expect(events.some((event) => event.type === "tool-start")).toBe(true);
+  });
+
+  it("says a failed switch in the person's language, without the local paths in the adapter's reason", async () => {
+    const adapter = new CountingAdapter({ script: ["một"] });
+    let preferred = FIRST;
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => preferred, language: () => "vi" });
+    if (turn === undefined) throw new Error("the model turn was not built");
+    await say(turn, "một", "msg_1");
+
+    preferred = OTHER;
+    const refused = gate();
+    refused.promise.catch(() => undefined);
+    refused.fail(new Error("no key in C:\\Users\\an\\.pi\\agent\\auth.json or /home/an/.pi/agent/models.json (see https://example.com/docs/keys)"));
+    adapter.holdHandoff = refused.promise;
+    const failure = say(turn, "hai", "msg_2");
+    await expect(failure).rejects.toThrow(/Không chuyển được cuộc trò chuyện này sang fake-other\/fake-other-model/);
+    await expect(failure).rejects.toThrow(/Tin nhắn của bạn đã được lưu/);
+    await expect(failure).rejects.toThrow(/Hãy thử lại, hoặc chọn model khác/);
+    const message = await failure.catch((cause: Error) => cause.message);
+    expect(message).toContain("no key in <path> or <path>");
+    expect(message).not.toMatch(/Users|home\/an/);
+    // A web address says nothing about this machine, and may be what tells the person where to look.
+    expect(message).toContain("https://example.com/docs/keys");
+  });
+
+  it("joins only bare words to a running turn: guidance, data, attachments and speech wait for a turn of their own", async () => {
+    const adapter = new CountingAdapter({ script: ["một", "hai", "ba", "bốn", "năm"] });
+    const steered = vi.spyOn(adapter, "steer");
+    const held = holdNextPrompt(adapter);
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => FIRST });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    const running = say(turn, "một", "msg_1");
+    await vi.waitFor(() => expect(adapter.isProcessing("fake-session-1")).toBe(true));
+    const base = { conversationId: CONVERSATION, principal: PRINCIPAL };
+    const waiting = [
+      turn.answer({ ...base, text: "đồng ý", messageId: "msg_note", note: "The person approved the request above." }),
+      turn.answer({ ...base, text: "đây là dữ liệu", messageId: "msg_data", data: "a,b\n1,2" }),
+      turn.answer({ ...base, text: "xem tệp này", messageId: "msg_file", attached: true }),
+      turn.answer({ ...base, text: "nói thêm", messageId: "msg_voice", channel: "voice" }),
+    ];
+    // Given time to join if they were going to: none does.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(steered).not.toHaveBeenCalled();
+
+    held.open();
+    await running;
+    const replies = await Promise.all(waiting);
+    // Each was answered as a turn of its own, with what it carried in its own prompt.
+    expect(replies.map((reply) => reply.steered)).toEqual([undefined, undefined, undefined, undefined]);
+    const prompts = adapter.promptsFor("fake-session-1");
+    expect(prompts).toHaveLength(5);
+    expect(prompts.some((prompt) => prompt.includes("The person approved the request above."))).toBe(true);
+    expect(prompts.some((prompt) => prompt.includes("a,b"))).toBe(true);
+    expect(steered).not.toHaveBeenCalled();
+  });
+
+  it("starts no message that was waiting when an emergency stop arrives", async () => {
+    const adapter = new CountingAdapter({ script: ["một", "hai"] });
+    const prompted = vi.spyOn(adapter, "prompt");
+    const held = holdNextPrompt(adapter);
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => FIRST });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    const running = say(turn, "một", "msg_1");
+    await vi.waitFor(() => expect(adapter.isProcessing("fake-session-1")).toBe(true));
+    const waiting = turn.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "đồng ý",
+      messageId: "msg_2",
+      note: "The person approved the request above.",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // What the emergency stop does: interrupt every conversation that reports running.
+    for (const conversationId of turn.running()) turn.interrupt(conversationId);
+    held.open();
+    expect((await running).stopped).toBe(true);
+    expect((await waiting).stopped).toBe(true);
+    // Sent before the stop, so never started: only the first message was ever prompted.
+    expect(prompted).toHaveBeenCalledTimes(1);
+    expect(turn.running()).toEqual([]);
+
+    // A message sent after the stop is answered as usual.
+    expect((await say(turn, "ba", "msg_3")).stopped).not.toBe(true);
+  });
+
+  it("stops a turn whose model switch is still pending, and lets the successor go when it arrives", async () => {
+    const adapter = new CountingAdapter({ script: ["một", "hai"] });
+    const disposed = vi.spyOn(adapter, "dispose");
+    let preferred = FIRST;
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => preferred });
+    if (turn === undefined) throw new Error("the model turn was not built");
+    await say(turn, "một", "msg_1");
+
+    preferred = OTHER;
+    const slow = gate();
+    adapter.holdHandoff = slow.promise;
+    const reply = say(turn, "hai", "msg_2");
+    await vi.waitFor(() => expect(adapter.handoffs).toHaveLength(1));
+    // Running as far as Stop is concerned, and Stop reaches it without waiting for the provider.
+    expect(turn.running()).toEqual([CONVERSATION]);
+    expect(turn.runningMs(CONVERSATION)).toBeTypeOf("number");
+    expect(turn.interrupt(CONVERSATION)).toBe(true);
+    expect((await reply).stopped).toBe(true);
+    expect(turn.running()).toEqual([]);
+
+    slow.open();
+    await vi.waitFor(() => expect(disposed).toHaveBeenCalledWith("fake-session-2"));
+    expect(adapter.promptsFor("fake-session-2")).toHaveLength(0);
+    // The conversation kept its session, and the next message makes the switch.
+    await say(turn, "ba", "msg_3");
+    expect(adapter.handoffs).toHaveLength(2);
+    expect(adapter.promptsFor("fake-session-3")).toHaveLength(1);
+  });
+
+  it("ends a setup that never finishes with a clear error, and does not hold the messages behind it", async () => {
+    const adapter = new CountingAdapter({ script: ["một", "hai"] });
+    const disposed = vi.spyOn(adapter, "dispose");
+    let preferred = FIRST;
+    const turn = await createModelTurn({
+      env: { ...ENV, CC_MODEL_MAX_WALL_CLOCK_MS: "150" },
+      cwd: process.cwd(),
+      adapter,
+      model: () => preferred,
+    });
+    if (turn === undefined) throw new Error("the model turn was not built");
+    await say(turn, "một", "msg_1");
+
+    preferred = OTHER;
+    const never = gate();
+    adapter.holdHandoff = never.promise;
+    const stuck = say(turn, "hai", "msg_2");
+    await vi.waitFor(() => expect(adapter.handoffs).toHaveLength(1));
+    const behind = say(turn, "ba", "msg_3");
+    await expect(stuck).rejects.toThrow(/Could not get ready to answer within 1 s/);
+    await expect(stuck).rejects.toThrow(/Your message is saved/);
+    // The message queued behind it makes its own switch and is answered.
+    expect((await behind).text).toBe("hai");
+    expect(adapter.handoffs).toHaveLength(2);
+
+    // The second switch created fake-session-2 and answered on it; the stuck successor, when it finally arrives as
+    // fake-session-3, is let go rather than adopted.
+    expect(adapter.promptsFor("fake-session-2")).toHaveLength(1);
+    never.open();
+    await vi.waitFor(() => expect(disposed).toHaveBeenCalledWith("fake-session-3"));
+    expect(disposed.mock.calls.filter(([id]) => id === "fake-session-2")).toHaveLength(0);
+  });
+
+  it("answers a steer that lands after Pi's last look at its queue, before the turn ends", async () => {
+    const adapter = new CountingAdapter({ script: ["một", "đã thêm"] });
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, model: () => FIRST });
+    if (turn === undefined) throw new Error("the model turn was not built");
+
+    const late = adapter.holdAfterLastCheck("fake-session-1");
+    const running = say(turn, "một", "msg_1");
+    await late.reached;
+    // Pi queues this rather than answering it in the run, because the run has already read its queue for the last time.
+    const joined = await say(turn, "và cả phần kia", "msg_2");
+    expect(joined.steered).toBe(true);
+    expect(adapter.hasQueuedMessages("fake-session-1")).toBe(true);
+    late.release();
+
+    const first = await running;
+    // The turn ran the session on what was queued, and the answer is part of the reply the person is watching.
+    expect(first.text).toContain("[steered: và cả phần kia]");
+    expect(first.text).toContain("đã thêm");
+    expect(adapter.hasQueuedMessages("fake-session-1")).toBe(false);
+    expect(adapter.promptsFor("fake-session-1")).toHaveLength(2);
+    expect(turn.running()).toEqual([]);
   });
 
   it("keeps the recap for the next turn when preparing the first prompt after a handoff fails", async () => {
