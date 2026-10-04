@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
+import { fitHead, fitTail } from "./card-text.ts";
 import { commandEnvironment } from "./child-env.ts";
 import { preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
 import { STOP_GRACE_MS, noteStarted, readProcStartTime, signalTree, stopTree } from "./process-tree.ts";
@@ -35,6 +36,14 @@ export const COMMAND_LIMITS = {
   /** Per stream. The output is quoted back into the conversation, which is not a log viewer. */
   maxOutputBytes: 8_000,
 } as const;
+
+/**
+ * `toolActivityBlockSchema`'s bounds on the line a reader sees and on the path shown beside it. Both are only read: the
+ * command and the folder it ran in travel whole in the block's `args`, so a long folder or reason is shortened here
+ * rather than costing the conversation the record of what ran.
+ */
+const ACTIVITY_LABEL_MAX = 300;
+const ACTIVITY_PATH_MAX = 1000;
 
 export interface CommandOutcome {
   exitCode: number | null;
@@ -439,11 +448,14 @@ export async function runGuardedCommand(input: {
       type: "tool-activity",
       toolCallId: `run-${input.operationId}`,
       name: "run_command",
-      label: `Chạy lệnh trong ${cwd}` + (because === "" ? "" : ` (${because})`) + (why === "" ? "" : `: ${why}`),
+      label: fitHead(
+        `Chạy lệnh trong ${cwd}` + (because === "" ? "" : ` (${because})`) + (why === "" ? "" : `: ${why}`),
+        ACTIVITY_LABEL_MAX,
+      ),
       status: succeeded ? "done" : "failed",
       args: { command, cwd, decision: "guarded", effect: input.envelope.classification.commandClass },
       result: commandOutput(outcome),
-      path: cwd,
+      path: fitTail(cwd, ACTIVITY_PATH_MAX),
       startedAt,
       endedAt: at(),
     },
@@ -615,13 +627,13 @@ export async function runApprovedCommand(input: {
       type: "tool-activity",
       toolCallId: `run-${input.approvalId}`,
       name: "run_command",
-      label: `Chạy lệnh trong ${resolvedCwd}`,
+      label: fitHead(`Chạy lệnh trong ${resolvedCwd}`, ACTIVITY_LABEL_MAX),
       status: succeeded ? "done" : "failed",
       // The approval id travels with the receipt so the interface can mark the card it answered as
       // decided, including after a reload.
       args: { command, cwd: resolvedCwd, approvalId: input.approvalId, decision: "granted" },
       result: commandOutput(outcome),
-      path: resolvedCwd,
+      path: fitTail(resolvedCwd, ACTIVITY_PATH_MAX),
       startedAt,
       endedAt: at(),
     },

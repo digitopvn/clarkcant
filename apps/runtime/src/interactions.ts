@@ -12,6 +12,8 @@ import {
   voicePromptFor,
 } from "@clarkcant/contracts";
 
+import { fitHead } from "./card-text.ts";
+
 /**
  * The one thing the node can be waiting for a person to answer.
  *
@@ -43,6 +45,15 @@ export const QUESTION_TTL_MS = 15 * 60_000;
 const SECRET_ASKING =
   /(api[\s_-]?key|access[\s_-]?token|auth[\s_-]?token|bearer\s|password|passphrase|mật\s*khẩu|mat\s*khau|private[\s_-]?key|client[\s_-]?secret|seed\s*phrase)/i;
 
+/**
+ * Whether any of `texts` reads as asking for a secret. Shared by every card whose answer goes back into the
+ * conversation: a question's words and options here, and `ask_user`'s form, whose submitted values reach the model as
+ * an ordinary message.
+ */
+export function asksForSecret(...texts: readonly string[]): boolean {
+  return SECRET_ASKING.test(texts.join(" "));
+}
+
 export const SECRET_REQUEST_MESSAGE =
   "This question appears to request a secret. Use request_secret instead.";
 
@@ -68,14 +79,57 @@ export type CreateQuestionResult =
  * of the tool that can actually do that job.
  */
 export function createQuestion(deps: InteractionDeps, raw: unknown): CreateQuestionResult {
+  const built = buildQuestionCard(deps, raw);
+  if (!built.ok) return built;
+  const { card } = built;
+  const interaction: QuestionInteraction = {
+    kind: "question",
+    interactionId: deps.newId("intr"),
+    conversationId: deps.conversationId,
+    questionId: card.questionId,
+    questionType: card.questionType,
+    prompt: card.prompt,
+    options: card.options,
+    allowOther: card.allowOther,
+    status: "waiting",
+    createdAt: card.createdAt,
+    ...(card.expiresAt === undefined ? {} : { expiresAt: card.expiresAt }),
+  };
+  deps.append({ at: card.createdAt, blocks: [card] });
+  return { ok: true, interaction, block: card };
+}
+
+/** What the card says out loud is bounded like what it shows (`questionCardBlockSchema.voicePrompt`). */
+const VOICE_PROMPT_MAX = 500;
+/** A question's answer, drop and ask-again records quote its prompt in their label (`toolActivityBlockSchema.label`). */
+const RECORD_LABEL_MAX = 300;
+
+/**
+ * The question card for a question, or the reason there is none, without recording anything.
+ *
+ * Shared by `ask_user_question`, which records the card itself, and `ask_user`, which hands it to the conductor, so
+ * both build the one shape the card contract accepts and refuse the same questions. Every value the card carries is
+ * within its bound: the question, the labels and the ids are checked by `askUserQuestionSchema`, which has the card's
+ * own bounds, and refused with the field that failed, because a label is what an answer is matched against and a
+ * shortened one could match another; the spoken form, which the host derives and nobody sends back, is shortened.
+ */
+export function buildQuestionCard(
+  deps: Pick<InteractionDeps, "now" | "newId">,
+  raw: unknown,
+):
+  | { ok: true; card: Extract<MessageBlock, { type: "question-card" }> }
+  | { ok: false; code: "INVALID_QUESTION" | "SECRET_REQUEST"; message: string } {
   const parsed = askUserQuestionSchema.safeParse(raw);
   if (!parsed.success) {
-    return { ok: false, code: "INVALID_QUESTION", message: "Câu hỏi không hợp lệ: cần `question` và `kind`." };
+    const problems = parsed.error.issues
+      .slice(0, 3)
+      .map((issue) => `${issue.path.length === 0 ? "input" : issue.path.join(".")}: ${issue.message}`)
+      .join("; ");
+    return { ok: false, code: "INVALID_QUESTION", message: `Câu hỏi không hợp lệ: ${problems}` };
   }
   const input: AskUserQuestionInput = parsed.data;
 
-  const asksForSecret = `${input.question} ${(input.options ?? []).map((option) => option.label).join(" ")}`;
-  if (SECRET_ASKING.test(asksForSecret)) {
+  if (asksForSecret(input.question, ...(input.options ?? []).map((option) => option.label))) {
     return { ok: false, code: "SECRET_REQUEST", message: SECRET_REQUEST_MESSAGE };
   }
 
@@ -97,37 +151,30 @@ export function createQuestion(deps: InteractionDeps, raw: unknown): CreateQuest
 
   const at = deps.now();
   const questionId = deps.newId("q");
-  const interaction: QuestionInteraction = {
-    kind: "question",
-    interactionId: deps.newId("intr"),
-    conversationId: deps.conversationId,
+  const card: Extract<MessageBlock, { type: "question-card" }> = {
+    type: "question-card",
+    owner: "host",
     questionId,
-    questionType: input.kind,
     prompt: input.question,
+    questionType: input.kind,
     options,
     allowOther: input.allowOther === true,
+    // Said now, from the options that are actually offered, so the spoken form cannot drift from the screen. A long
+    // question with many options can say more than the card holds, and the end of a list is what is cut.
+    voicePrompt: fitHead(
+      voicePromptFor({
+        prompt: input.question,
+        questionType: input.kind,
+        options,
+        ...(input.voicePrompt === undefined ? {} : { voicePrompt: input.voicePrompt }),
+      }),
+      VOICE_PROMPT_MAX,
+    ),
     status: "waiting",
     createdAt: at,
     expiresAt: new Date(Date.parse(at) + QUESTION_TTL_MS).toISOString() as Instant,
   };
-
-  const block: MessageBlock = {
-    type: "question-card",
-    owner: "host",
-    questionId,
-    prompt: interaction.prompt,
-    questionType: interaction.questionType,
-    options: interaction.options,
-    allowOther: interaction.allowOther,
-    // Said now, from the options that are actually offered, so the spoken form cannot drift from the screen.
-    voicePrompt: voicePromptFor({ ...interaction, ...(input.voicePrompt === undefined ? {} : { voicePrompt: input.voicePrompt }) }),
-    status: "waiting",
-    createdAt: at,
-    ...(interaction.expiresAt === undefined ? {} : { expiresAt: interaction.expiresAt }),
-  };
-
-  deps.append({ at, blocks: [block] });
-  return { ok: true, interaction, block };
+  return { ok: true, card };
 }
 
 /** A question card back into the interaction it stands for, so a surface reads one shape. */
@@ -236,7 +283,7 @@ export function answerQuestion(
       type: "tool-activity",
       toolCallId: deps.newId("call"),
       name: "ask_user_question",
-      label: `Trả lời: ${interaction.prompt}`,
+      label: fitHead(`Trả lời: ${interaction.prompt}`, RECORD_LABEL_MAX),
       status: "done",
       args: {
         questionId,
@@ -278,7 +325,7 @@ export function cancelQuestion(deps: InteractionDeps, questionId: string, reason
         type: "tool-activity",
         toolCallId: deps.newId("call"),
         name: "ask_user_question",
-        label: `Bỏ qua: ${interaction.prompt}`,
+        label: fitHead(`Bỏ qua: ${interaction.prompt}`, RECORD_LABEL_MAX),
         status: "done",
         args: { questionId, decision: "cancelled" },
         result: reason,
@@ -381,7 +428,7 @@ export function askQuestionAgain(deps: InteractionDeps, questionId: string): Ask
         type: "tool-activity",
         toolCallId: deps.newId("call"),
         name: "ask_user_question",
-        label: `Hỏi lại: ${previous.prompt}`,
+        label: fitHead(`Hỏi lại: ${previous.prompt}`, RECORD_LABEL_MAX),
         status: "done",
         args: { questionId, decision: "asked-again", askedAs: created.interaction.questionId },
         result: "Câu hỏi đã hết hạn được hỏi lại.",

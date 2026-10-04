@@ -2192,9 +2192,10 @@ thứ gì, nên sự đồng ý bao gồm đúng những gì đã hiện.
 Một mục trong thư mục cũng có thể nêu mức tài nguyên package yêu cầu trong `resources` (`{ version: 1, profile, gpu? }`,
 cùng dạng với trong manifest); mục không có trường này nghĩa là `interactive-light` và không có GPU, và
 `clark widget publish` chỉ ghi trường này từ manifest khi yêu cầu khác mặc định đó. Trường này ràng buộc theo cùng cách:
-artifact yêu cầu mức khác bị từ chối với `409 DECLARED_REACH_MISMATCH`. Node phát hành trước khi có trường này từ chối cả
-chỉ mục thư mục nếu có một mục mang trường nó không biết, nên chỉ mục liệt kê `resources` khác mặc định cần các node ít
-nhất mới bằng trường này.
+artifact yêu cầu mức khác bị từ chối với `409 DECLARED_REACH_MISMATCH`. Node phát hành trước khi có trường này và trước
+cách đọc khoan dung ở §18 từ chối cả chỉ mục thư mục nếu có một mục mang trường nó không biết, nên chỉ mục liệt kê
+`resources` khác mặc định cần các node ít nhất mới bằng trường này thì mọi node mới đọc được. Node có cách đọc khoan dung
+đọc mục đó mà bỏ trường ấy, và nói rõ điều này trên thẻ kết quả, câu hỏi cài đặt và thông báo cập nhật (§18).
 
 **Bản cập nhật hiện những gì.** Thông báo cập nhật package, và câu hỏi cài đặt mà bản cập nhật tạo ra khi chế độ thực thi
 hỏi trước, mang `reachChange` ([reach-change.ts](../packages/contracts/src/reach-change.ts)): mục trong thư mục của bản mới
@@ -2703,6 +2704,23 @@ vì đoán `web` rồi đưa một package native cho thứ không chạy đư�
 - changelog link.
 
 Các tín hiệu như downloads/reviews có thể thêm sau; không dùng popularity thay security/trust facts.
+
+**Đọc chỉ mục do thư mục mới hơn viết.** Chỉ mục là một mảng JSON các mục, không có phiên bản định dạng, và nhiều node
+thuộc các đời khác nhau dùng chung một chỉ mục. Node đọc từng mục bằng `readDirectoryEntry`
+([directory.ts](../packages/contracts/src/directory.ts)): trường nó không biết, ở cấp ngoài cùng của mục hoặc bên trong
+`publisher`, `preview` hay `hostApi`, bị bỏ đi và không bao giờ được chuyển tiếp, nên giá trị của nó không tới thẻ, câu
+hỏi hay lần cài nào. Mọi trường node biết vẫn được kiểm tra với đủ giới hạn, và `source`, `isolations`, `declaredReach`,
+`resources`, `widgetAppearance` vẫn nghiêm ngặt bên trong: một trường đã biết có giá trị sai, hoặc một trường lạ nằm
+trong một trong các trường đó, vẫn khiến node từ chối cả chỉ mục là không đọc được, kèm lý do. Những gì bị bỏ đều được
+nói ra, không bao giờ bị giấu: dòng `marketplace-results`, câu hỏi cài đặt trong hộp thư và thông báo cập nhật package
+mang `unreadFields` (`{ count, names }`, không bao giờ có giá trị), hiển thị là "Mục này có N thông tin mà bản Clark này
+không đọc được… Hãy cập nhật Clark để xem đầy đủ", vì trường node không biết có thể là trường mà node mới hơn coi là ràng
+buộc. `count` đếm mọi trường bị bỏ. `names` chứa tối đa 8 trường trong số đó, theo thứ tự mục liệt kê, và chỉ gồm đường
+dẫn định danh thuần (`UNREAD_FIELD_PATH_PATTERN`: một hoặc hai đoạn nối bằng dấu chấm, mỗi đoạn khớp
+`[A-Za-z_$][A-Za-z0-9_$-]{0,63}`); khóa có nội dung khác (ký tự điều khiển hướng chữ, xuống dòng, khoảng trắng, tên quá
+dài) được đếm mà không được nêu tên. Mỗi tên được hiển thị tách khỏi câu, dưới dạng mã. Lần cài vẫn từ chối artifact không khớp với những gì node này đọc
+được. Việc xuất bản vẫn nghiêm ngặt: mục mà `clark widget publish` viết ra được kiểm tra bằng `directoryEntrySchema` nghiêm
+ngặt, nơi một trường lạ là lỗi chứ không phải định dạng mới hơn.
 
 Pi package catalog là tham khảo tốt về discovery: package có manifest resources và preview image/video, được chia sẻ qua npm/git và index trong catalog. ClarkCant nên giữ ergonomics đó nhưng executable widget mặc định isolated thay vì full-process trust.
 
