@@ -426,6 +426,10 @@ export function SystemCardBlock({
     );
   }
 
+  // Internal identifiers (a task's or a node's id) are kept for whoever needs to quote them, one click down: read
+  // first, they put the machinery in front of the sentence that says what happened.
+  const plainFields = fields.filter((field) => !isInternalId(field.value));
+  const referenceFields = fields.filter((field) => isInternalId(field.value));
   return (
     <section className="cc-card" data-host-card="system" data-owner="host" data-status={status} data-subject={subject}>
       <header className="cc-card-head">
@@ -436,23 +440,12 @@ export function SystemCardBlock({
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{detail}</p>
-        {fields.length > 0 && (
-          <dl className="cc-fields">
-            {fields.map((field, index) => (
-              <Fragment key={index}>
-                <dt>{String(field.label ?? "")}</dt>
-                <dd>
-                  {/* A value that is only its own freshness ("sample", marked sample) is said once, in words. */}
-                  {field.value === field.freshness ? "" : String(field.value ?? "")}
-                  {typeof field.freshness === "string" && (
-                    <span className="cc-freshness" data-freshness={field.freshness}>
-                      {`${field.value === field.freshness ? "" : " · "}${freshnessLabel(field.freshness, t)}`}
-                    </span>
-                  )}
-                </dd>
-              </Fragment>
-            ))}
-          </dl>
+        {plainFields.length > 0 && cardFields(plainFields, t)}
+        {referenceFields.length > 0 && (
+          <details className="cc-text-alt" data-card-references="true">
+            <summary>{t("inbox.capability.details")}</summary>
+            {cardFields(referenceFields, t)}
+          </details>
         )}
       </div>
     </section>
@@ -1187,6 +1180,32 @@ const TASK_STATUS_TONE: Record<string, string> = {
 function taskStatusLabel(status: string, t: (key: MessageKey) => string): string {
   const key = `blocks.taskStatus.${status}`;
   return key in MESSAGES_VI ? t(key as MessageKey) : status;
+}
+
+/** A runtime identifier such as "task_muuej1j4c11811c" or "node_343a…": a lowercase prefix, then an opaque id. */
+function isInternalId(value: unknown): boolean {
+  return typeof value === "string" && /^[a-z]+_[0-9a-z]{8,}$/u.test(value);
+}
+
+function cardFields(fields: Record<string, unknown>[], t: (key: MessageKey) => string): ReactElement {
+  return (
+    <dl className="cc-fields">
+      {fields.map((field, index) => (
+        <Fragment key={index}>
+          <dt>{String(field.label ?? "")}</dt>
+          <dd>
+            {/* A value that is only its own freshness ("sample", marked sample) is said once, in words. */}
+            {field.value === field.freshness ? "" : String(field.value ?? "")}
+            {typeof field.freshness === "string" && (
+              <span className="cc-freshness" data-freshness={field.freshness}>
+                {`${field.value === field.freshness ? "" : " · "}${freshnessLabel(field.freshness, t)}`}
+              </span>
+            )}
+          </dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
 }
 
 function freshnessLabel(freshness: string, t: (key: MessageKey) => string): string {

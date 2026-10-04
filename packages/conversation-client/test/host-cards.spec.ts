@@ -291,6 +291,33 @@ describe("the model answer note", () => {
     const unknownFreshness = textOf(SystemCardBlock({ block: card([{ label: "X", value: "1", freshness: "stale-ish" }]) }));
     expect(unknownFreshness).toMatch(/1\s+· stale-ish/u);
   });
+
+  it("keeps a task's and a node's id one click down, under the facts a person reads", () => {
+    const parked = SystemCardBlock({
+      block: {
+        type: "system-card",
+        owner: "host",
+        subject: "capability",
+        status: "blocked",
+        title: "Cần một capability chưa cài",
+        detail: "Task đang chờ.",
+        fields: [
+          { label: "Capability", value: "project.code.change@1" },
+          { label: "Task", value: "task_muuej1j4c11811c" },
+          { label: "Node", value: "node_343a7787e51a4b02a02665e5" },
+        ],
+      },
+    });
+    const references = findAll(parked, "data-card-references");
+    expect(references).toHaveLength(1);
+    expect(references[0]?.type).toBe("details");
+    expect(textOf(references[0])).toContain("Chi tiết kỹ thuật");
+    expect(textOf(references[0])).toContain("task_muuej1j4c11811c");
+    expect(textOf(references[0])).toContain("node_343a7787e51a4b02a02665e5");
+    expect(textOf(references[0])).not.toContain("project.code.change@1");
+    const recipe = { type: "system-card", owner: "host", status: "done", title: "Mẫu", detail: "Chạy recipe.", fields: [{ label: "Recipe", value: "quick-play.chart.line" }] };
+    expect(findAll(SystemCardBlock({ block: recipe }), "data-card-references")).toHaveLength(0);
+  });
 });
 
 /**
