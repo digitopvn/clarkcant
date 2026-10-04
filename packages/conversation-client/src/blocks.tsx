@@ -2197,114 +2197,119 @@ export function MarketplaceResultsBlock({
 
   return (
     <div className="cc-card cc-marketplace" role="group" aria-label={t("blocks.marketplace.searchResultsAria")} data-marketplace="true">
-      <div className="cc-card-title">{t("blocks.marketplace.resultsIn").replace("{directory}", directory)}</div>
-      {reason !== undefined ? (
-        // A directory that could not be consulted is a different truth from one that had nothing, so it says so.
-        <p className="cc-card-note" data-marketplace-unavailable="true">
-          {reason}
-        </p>
-      ) : results.length === 0 ? (
-        <p className="cc-card-note">{t("blocks.marketplace.noMatch").replace("{query}", query)}</p>
-      ) : (
-        <ul className="cc-marketplace-list">
-          {results.map((raw, position) => {
-            const result = (raw ?? {}) as Record<string, unknown>;
-            const packageId = typeof result.packageId === "string" ? result.packageId : "";
-            const version = typeof result.version === "string" ? result.version : "";
-            const displayName = typeof result.displayName === "string" ? result.displayName : packageId;
-            const description = typeof result.description === "string" ? result.description : "";
-            const digest = typeof result.digest === "string" ? result.digest : "";
-            // What a listing by a path on this machine showed of its files, sent back so the install is of these files.
-            const contentDigest = typeof result.contentDigest === "string" && result.contentDigest !== "" ? result.contentDigest : undefined;
-            const lane = typeof result.riskTier === "string" ? result.riskTier : "";
-            const attempt = actions?.packageInstall?.[packageId];
-            /*
-             * Out of date only on a row that shows the digest the refused press sent: pressing it again would send the
-             * same digest and be refused the same way, so it offers a new search instead. A row from a newer search
-             * shows the files as they are now and is not affected.
-             */
-            const stale =
-              attempt?.status === "stale" && contentDigest !== undefined && attempt.staleContentDigest === contentDigest;
-            const installState = attempt?.status === "stale" && !stale ? undefined : attempt;
-            const stateId = `cc-marketplace-state-${packageId}-${String(position)}`;
-            return (
-              <li className="cc-marketplace-item" key={`${packageId}-${version}-${position}`} data-marketplace-package={packageId}>
-                <div className="cc-marketplace-name">
-                  {displayName} <span className="cc-marketplace-version">{version}</span>
-                </div>
-                {description !== "" && <div className="cc-marketplace-desc">{description}</div>}
-                {Array.isArray(result.widgetAppearance) && result.widgetAppearance.some((entry) =>
-                  entry !== null && typeof entry === "object" && entry.mode === "fixed") && (
-                  <div className="cc-marketplace-desc" data-widget-appearance="fixed">{t("widgets.appearance.fixed")}</div>
-                )}
-                {/* What installing lets it reach, before the Install press: the install refuses an artifact that differs. */}
-                <PackageReach reach={readReach(result.declaredReach)} />
-                {/* What the listing says that this node does not read, so the row does not pass for all of it. */}
-                <UnreadListingFieldsNote fields={readUnreadFields(result.unreadFields)} />
-                <div className="cc-marketplace-meta">
-                  <span data-marketplace-source="true">{describePackageSource(result.source, t)}</span>
-                  <span data-marketplace-risk={lane}>{riskLaneLabel(t, lane)}</span>
-                  {/* Truncated for the line, complete in the title: the digest is checkable, not decorative. */}
-                  <span className="cc-marketplace-digest" title={digest} data-marketplace-digest="true">
-                    {digest.length > 18 ? `${digest.slice(0, 18)}…` : digest}
-                  </span>
-                </div>
-                {/*
-                  Installing goes through the single install route, which applies the execution policy and the install
-                  supervisor that already existed. The card was deliberately without this control while that route did
-                  not exist, because a button whose action is missing is worse than no button; it exists now, so the
-                  control does too — and only where a caller supplied the action, which a read-only snapshot does not.
-                */}
-                {actions?.onInstallPackage !== undefined && (
-                  <div className="cc-marketplace-actions">
-                    <button
-                      type="button"
-                      className="cc-chip"
-                      data-install-package={packageId}
-                      disabled={installState?.status === "installing" || stale}
-                      {...(stale ? { title: t("blocks.marketplace.staleReason"), "aria-describedby": stateId } : {})}
-                      onClick={() =>
-                        actions.onInstallPackage?.({ packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) })
-                      }
-                    >
-                      {installState?.status === "installing" ? t("blocks.marketplace.installing") : t("blocks.marketplace.install")}
-                    </button>
-                    {installState !== undefined && installState.status !== "installing" && (
-                      <span id={stateId} className="cc-marketplace-install-state" data-install-state={installState.status}>
-                        {installState.message ?? ""}
-                      </span>
-                    )}
-                    {/* The way forward from an out-of-date list: the same search again, as the person's own message. */}
-                    {stale && actions.onSearchAgain !== undefined && (
+      <header className="cc-card-head">
+        <span className="cc-card-title">{t("blocks.marketplace.resultsIn").replace("{directory}", directory)}</span>
+      </header>
+      <div className="cc-card-body">
+        {reason !== undefined ? (
+          // A directory that could not be consulted is a different truth from one that had nothing, so it says so.
+          <p className="cc-card-note" data-marketplace-unavailable="true">
+            {reason}
+          </p>
+        ) : results.length === 0 ? (
+          <p className="cc-card-note">{t("blocks.marketplace.noMatch").replace("{query}", query)}</p>
+        ) : (
+          <ul className="cc-marketplace-list">
+            {results.map((raw, position) => {
+              const result = (raw ?? {}) as Record<string, unknown>;
+              const packageId = typeof result.packageId === "string" ? result.packageId : "";
+              const version = typeof result.version === "string" ? result.version : "";
+              const displayName = typeof result.displayName === "string" ? result.displayName : packageId;
+              const description = typeof result.description === "string" ? result.description : "";
+              const digest = typeof result.digest === "string" ? result.digest : "";
+              // What a listing by a path on this machine showed of its files, sent back so the install is of these files.
+              const contentDigest = typeof result.contentDigest === "string" && result.contentDigest !== "" ? result.contentDigest : undefined;
+              const lane = typeof result.riskTier === "string" ? result.riskTier : "";
+              const attempt = actions?.packageInstall?.[packageId];
+              /*
+               * Out of date only on a row that shows the digest the refused press sent: pressing it again would send the
+               * same digest and be refused the same way, so it offers a new search instead. A row from a newer search
+               * shows the files as they are now and is not affected.
+               */
+              const stale =
+                attempt?.status === "stale" && contentDigest !== undefined && attempt.staleContentDigest === contentDigest;
+              const installState = attempt?.status === "stale" && !stale ? undefined : attempt;
+              const stateId = `cc-marketplace-state-${packageId}-${String(position)}`;
+              return (
+                <li className="cc-marketplace-item" key={`${packageId}-${version}-${position}`} data-marketplace-package={packageId}>
+                  <div className="cc-marketplace-name">
+                    {displayName} <span className="cc-marketplace-version">{version}</span>
+                  </div>
+                  {description !== "" && <div className="cc-marketplace-desc">{description}</div>}
+                  {Array.isArray(result.widgetAppearance) && result.widgetAppearance.some((entry) =>
+                    entry !== null && typeof entry === "object" && entry.mode === "fixed") && (
+                    <div className="cc-marketplace-desc" data-widget-appearance="fixed">{t("widgets.appearance.fixed")}</div>
+                  )}
+                  {/* What installing lets it reach, before the Install press: the install refuses an artifact that differs. */}
+                  <PackageReach reach={readReach(result.declaredReach)} />
+                  {/* What the listing says that this node does not read, so the row does not pass for all of it. */}
+                  <UnreadListingFieldsNote fields={readUnreadFields(result.unreadFields)} />
+                  <div className="cc-marketplace-meta">
+                    <span data-marketplace-source="true">{describePackageSource(result.source, t)}</span>
+                    <span data-marketplace-risk={lane}>{riskLaneLabel(t, lane)}</span>
+                    {/* Truncated for the line, complete in the title: the digest is checkable, not decorative. */}
+                    <span className="cc-marketplace-digest" title={digest} data-marketplace-digest="true">
+                      {digest.length > 18 ? `${digest.slice(0, 18)}…` : digest}
+                    </span>
+                  </div>
+                  {/*
+                    Installing goes through the single install route, which applies the execution policy and the install
+                    supervisor that already existed. The card was deliberately without this control while that route did
+                    not exist, because a button whose action is missing is worse than no button; it exists now, so the
+                    control does too — and only where a caller supplied the action, which a read-only snapshot does not.
+                  */}
+                  {actions?.onInstallPackage !== undefined && (
+                    <div className="cc-card-actions cc-marketplace-actions">
                       <button
                         type="button"
-                        className="cc-chip"
-                        data-marketplace-search-again={packageId}
-                        onClick={() => actions.onSearchAgain?.({ query })}
+                        className="cc-action"
+                        data-emphasis="primary"
+                        data-install-package={packageId}
+                        disabled={installState?.status === "installing" || stale}
+                        {...(stale ? { title: t("blocks.marketplace.staleReason"), "aria-describedby": stateId } : {})}
+                        onClick={() =>
+                          actions.onInstallPackage?.({ packageId, version, ...(contentDigest === undefined ? {} : { contentDigest }) })
+                        }
                       >
-                        {t("blocks.marketplace.searchAgain")}
+                        {installState?.status === "installing" ? t("blocks.marketplace.installing") : t("blocks.marketplace.install")}
                       </button>
-                    )}
-                    {/* The install waits in the inbox, where the person decides it: one step there, never a decision here. */}
-                    {installState?.status === "approval-required" &&
-                      installState.approvalId !== undefined &&
-                      actions.onOpenInbox !== undefined && (
+                      {installState !== undefined && installState.status !== "installing" && (
+                        <span id={stateId} className="cc-marketplace-install-state" data-install-state={installState.status}>
+                          {installState.message ?? ""}
+                        </span>
+                      )}
+                      {/* The way forward from an out-of-date list: the same search again, as the person's own message. */}
+                      {stale && actions.onSearchAgain !== undefined && (
                         <button
                           type="button"
-                          className="cc-chip"
-                          data-install-open-inbox={installState.approvalId}
-                          onClick={() => actions.onOpenInbox?.(`install-approval:${installState.approvalId ?? ""}`)}
+                          className="cc-action"
+                          data-marketplace-search-again={packageId}
+                          onClick={() => actions.onSearchAgain?.({ query })}
                         >
-                          {t("blocks.marketplace.openInbox")}
+                          {t("blocks.marketplace.searchAgain")}
                         </button>
                       )}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                      {/* The install waits in the inbox, where the person decides it: one step there, never a decision here. */}
+                      {installState?.status === "approval-required" &&
+                        installState.approvalId !== undefined &&
+                        actions.onOpenInbox !== undefined && (
+                          <button
+                            type="button"
+                            className="cc-action"
+                            data-install-open-inbox={installState.approvalId}
+                            onClick={() => actions.onOpenInbox?.(`install-approval:${installState.approvalId ?? ""}`)}
+                          >
+                            {t("blocks.marketplace.openInbox")}
+                          </button>
+                        )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

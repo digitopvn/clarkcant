@@ -109,6 +109,15 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-artifact-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cc-space-xs); }
 .cc-artifact-notice p { flex: 1 1 16ch; min-width: 0; }
 .cc-artifact-notice[data-tone="error"] p { color: var(--cc-danger); }
+/* Marketplace results: one row per package, divided by a hairline rather than bulleted like prose. */
+.cc-marketplace-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.cc-marketplace-item { display: flex; flex-direction: column; gap: var(--cc-space-xxs); min-width: 0; padding-block: var(--cc-space-sm); }
+.cc-marketplace-item + .cc-marketplace-item { border-top: 1px solid var(--cc-border); }
+.cc-marketplace-item:first-child { padding-top: 0; }
+.cc-marketplace-item:last-child { padding-bottom: 0; }
+.cc-marketplace-name { font-weight: 600; overflow-wrap: anywhere; }
+.cc-marketplace-version { font-weight: 400; color: var(--cc-text-muted); font-size: var(--cc-text-label); }
+.cc-marketplace-desc { color: var(--cc-text); overflow-wrap: anywhere; }
 /* A marketplace result's source, risk lane and digest: three parts that read apart and wrap on a phone. */
 .cc-marketplace-meta { display: flex; flex-wrap: wrap; gap: var(--cc-space-xxs) var(--cc-space-md); min-width: 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-marketplace-meta > span { min-width: 0; overflow-wrap: anywhere; }
