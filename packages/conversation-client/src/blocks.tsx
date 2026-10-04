@@ -84,7 +84,9 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
   const status = typeof block.status === "string" ? block.status : "done";
   const name = typeof block.name === "string" ? block.name : "tool";
   const label = typeof block.label === "string" && block.label !== "" ? block.label : name;
-  const path = typeof block.path === "string" ? block.path : undefined;
+  // The path beside the label is for a call whose label does not say where; one that already names the folder in
+  // its own words would otherwise show it twice on the same line.
+  const path = typeof block.path === "string" && block.path !== "" && !label.includes(block.path) ? block.path : undefined;
   const result = typeof block.result === "string" ? block.result : "";
   const args = typeof block.args === "object" && block.args !== null ? (block.args as Record<string, unknown>) : {};
   const language = typeof block.language === "string" ? block.language : undefined;
