@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { type Instant, MAP_TILE_POLICY_PREFERENCE, MAP_TILE_SECRET_NAME, type MapTileProvider, mapTileKeyConsumer } from "@clarkcant/contracts";
 import { writeRegisteredPreference } from "@clarkcant/core";
-import { nodeStoreSecretBackend, putSecretMetadata } from "@clarkcant/storage";
+import { type InjectionPolicy, nodeStoreSecretBackend, putSecretMetadata } from "@clarkcant/storage";
 
 import { type MapTileCredential, createMapTileProxy, mapTileCredential, mapTileUrl, readMapTilePolicy, sniffTileType } from "../src/map-tiles.ts";
 import { handleMapTileRoutes } from "../src/routes/map-tiles.ts";
@@ -193,7 +193,7 @@ function owner(): string {
   return services.runtime.identity.ownerPrincipalId;
 }
 
-function storeKey(consumers: string[]): void {
+function storeKey(consumers: string[], injectionPolicy: InjectionPolicy = "http-header"): void {
   const db = services.runtime.db;
   putSecretMetadata(db, {
     secretId: "secret_tiles",
@@ -204,7 +204,7 @@ function storeKey(consumers: string[]): void {
     backend: "node-store",
     backendRef: MAP_TILE_SECRET_NAME,
     allowedConsumers: consumers,
-    injectionPolicy: "http-header",
+    injectionPolicy,
     at: AT,
   });
   nodeStoreSecretBackend(db, owner()).write(MAP_TILE_SECRET_NAME, KEY, AT);
@@ -305,6 +305,37 @@ describe("the tile routes on a node", () => {
     // The key is used through the broker, which leaves no value in the node's audit rows either.
     const rows = services.runtime.db.prepare("SELECT * FROM audit_log").all();
     expect(JSON.stringify(rows)).not.toContain(KEY);
+  });
+
+  it("passes on a tile the provider does not have as 404 MAP_TILE_MISSING, and a key the secret store refuses without offline", async () => {
+    setPolicy(PROVIDER);
+    const gone = await route("/map-tiles/1/0/0", "GET", createMapTileProxy({ fetch: fakeFetch(() => new Response("no tile", { status: 404 })).fetch }));
+    expect(gone).toMatchObject({ status: 404, body: { code: "MAP_TILE_MISSING" } });
+
+    // The key is saved for this origin, so the page is not told the maps are offline, but the secret store refuses to
+    // hand it over for a request header: the refusal is the broker's, not a missing or misbound key, and has no offline.
+    storeKey([BOUND], "process-env");
+    setPolicy({ ...PROVIDER, credential: { secret: MAP_TILE_SECRET_NAME, header: "x-api-key" } });
+    expect((await route("/map-tiles"))?.body).toMatchObject({ provider: { origin: "https://tiles.example" } });
+    const { fetch, seen } = fakeFetch(png);
+    const refused = await route("/map-tiles/1/0/0", "GET", createMapTileProxy({ fetch }));
+    expect(refused).toMatchObject({ status: 503, body: { code: "MAP_TILE_KEY_UNAVAILABLE", message: expect.stringContaining("EXPOSURE_NOT_ALLOWED") } });
+    expect(refused?.body).not.toHaveProperty("offline");
+    expect(seen).toHaveLength(0);
+  });
+
+  it("says offline on a key refusal found while the key is handed over, as it does before the fetch", async () => {
+    storeKey([BOUND]);
+    setPolicy({ ...PROVIDER, credential: { secret: MAP_TILE_SECRET_NAME, header: "x-api-key" } });
+    const { fetch, seen } = fakeFetch(png);
+    const real = createMapTileProxy({ fetch });
+    // The key is entered again for another origin after the route checked it and before the proxy hands it over.
+    const rebinding = { tile: (request: Parameters<typeof real.tile>[0]) => { storeKey([mapTileKeyConsumer("https://other.example")]); return real.tile(request); } };
+    expect(await route("/map-tiles/1/0/0", "GET", rebinding)).toMatchObject({
+      status: 503,
+      body: { code: "MAP_TILE_KEY_UNAVAILABLE", offline: "key-origin-mismatch" },
+    });
+    expect(seen).toHaveLength(0);
   });
 
   it("stops a cached tile as soon as its key is bound to another origin, without waiting for the cache", async () => {

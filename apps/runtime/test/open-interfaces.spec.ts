@@ -109,6 +109,46 @@ describe("discovery", () => {
     }
   });
 
+  it("lists every refusal of a map tile, and says when its key refusal carries offline", async () => {
+    const document = (await (await fetch(`${base}/openapi.json`)).json()) as {
+      paths: Record<string, { get: { description: string; responses: Record<string, { description: string; content?: unknown }> } }>;
+    };
+    const tile = document.paths["/map-tiles/{z}/{x}/{y}"]?.get;
+    expect(tile).toBeDefined();
+    for (const code of [
+      "404 MAP_TILES_OFF",
+      "404 MAP_TILE_MISSING",
+      "400 MAP_TILE_OUT_OF_BOUNDS",
+      "429 MAP_TILES_RATE_LIMITED",
+      "502 MAP_TILE_FAILED or MAP_TILE_REFUSED",
+      "503 MAP_TILE_KEY_UNAVAILABLE",
+    ]) {
+      expect(tile?.description).toContain(code);
+    }
+    expect(tile?.description).toContain("when the key is in place but the node's secret store refuses to hand it over, the 503 has no offline");
+    expect(tile?.description).toContain("whether the node finds that before asking the provider or while handing the key over");
+    for (const [status, codes] of [
+      ["400", ["MAP_TILE_OUT_OF_BOUNDS"]],
+      ["404", ["MAP_TILES_OFF", "MAP_TILE_MISSING"]],
+      ["429", ["MAP_TILES_RATE_LIMITED"]],
+      ["502", ["MAP_TILE_FAILED", "MAP_TILE_REFUSED"]],
+      ["503", ["MAP_TILE_KEY_UNAVAILABLE"]],
+    ] as const) {
+      for (const code of codes) expect(tile?.responses[status]?.description, status).toContain(code);
+      expect(JSON.stringify(tile?.responses[status]?.content), status).toContain("#/components/schemas/Error");
+    }
+    expect(tile?.responses["503"]?.content).toEqual({
+      "application/json": {
+        schema: {
+          allOf: [
+            { $ref: "#/components/schemas/Error" },
+            { properties: { offline: { type: "string", enum: ["key-unavailable", "key-origin-mismatch"] } } },
+          ],
+        },
+      },
+    });
+  });
+
   it("lets a browser preflight carry the MCP headers", async () => {
     const response = await fetch(`${base}/mcp`, { method: "OPTIONS" });
     expect(response.headers.get("access-control-allow-headers")).toContain("mcp-protocol-version");
