@@ -43,6 +43,16 @@ export const CARDS_CSS = `
 .cc-card-body { padding: var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 /* A badge in a card body is a mark, not a field: stretched across the column it read as an empty input. */
 .cc-card-body > .cc-badge { align-self: flex-start; }
+/*
+ * A session's last frame, across the top of its card. Without these the figure kept the browser's 40px indent and the
+ * picture its captured size, so a 1280px frame ran past the card's edge and was cut off on the right.
+ */
+.cc-card-preview { margin: 0; border-bottom: 1px solid var(--cc-border); background: var(--cc-elevated); }
+.cc-card-preview img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; }
+.cc-card-preview figcaption, .cc-card-preview-pending {
+  margin: 0; padding: var(--cc-space-xs) var(--cc-space-md);
+  color: var(--cc-text-muted); font-size: var(--cc-text-label);
+}
 .cc-fields { display: grid; grid-template-columns: max-content 1fr; gap: var(--cc-space-xs) var(--cc-space-md); margin: 0; }
 .cc-fields dt { color: var(--cc-text-muted); }
 .cc-fields dd { margin: 0; }

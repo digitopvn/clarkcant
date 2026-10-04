@@ -181,7 +181,7 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.session.running": "đang chạy",
   "blocks.session.whoIsDriving": "Ai đang điều khiển",
   "blocks.session.you": "bạn",
-  "blocks.session.agent": "agent",
+  "blocks.session.agent": "Clark",
   "blocks.session.needsPermission": "Chưa được cấp quyền xem màn hình",
   "blocks.session.cannotView": "Không xem được màn hình",
   "blocks.session.permissionNotice":
@@ -1166,7 +1166,7 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.session.running": "running",
   "blocks.session.whoIsDriving": "Who is in control",
   "blocks.session.you": "you",
-  "blocks.session.agent": "agent",
+  "blocks.session.agent": "Clark",
   "blocks.session.needsPermission": "Screen viewing permission not granted",
   "blocks.session.cannotView": "Cannot view the screen",
   "blocks.session.permissionNotice":

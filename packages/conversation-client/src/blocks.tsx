@@ -1916,6 +1916,7 @@ export function renderBlock(
           block={block}
           client={client}
           t={t}
+          locale={locale}
           {...(actions === undefined ? {} : { actions })}
         />
       );
@@ -2297,12 +2298,14 @@ function SessionPreviewFrame({
   digest,
   viewport,
   capturedAt,
+  locale,
 }: {
   client: GatewayClient | undefined;
   label: string;
   digest: string;
   viewport: { width: number; height: number } | undefined;
   capturedAt: string | undefined;
+  locale: string;
 }): ReactElement {
   const t = useT();
   const url = useObjectUrls(
@@ -2313,7 +2316,10 @@ function SessionPreviewFrame({
     [digest],
   )(digest);
 
-  const taken = capturedAt === undefined ? "" : t("blocks.session.takenAtSuffix").replace("{at}", capturedAt);
+  // Said the way the reader tells time; the exact instant stays on the `time` element for anything that needs it.
+  const readable = capturedAt === undefined ? undefined : readableInstant(capturedAt, locale);
+  const taken = readable === undefined ? "" : t("blocks.session.takenAtSuffix").replace("{at}", readable);
+  const [takenBefore = "", takenAfter = ""] = t("blocks.session.takenAtSuffix").split("{at}");
   return (
     /*
      * The digest is on the element as well as in the fetch, so an assertion can ask the node for the frame the
@@ -2334,7 +2340,13 @@ function SessionPreviewFrame({
       )}
       <figcaption>
         {t("blocks.session.captionPrefix")}
-        {taken}
+        {readable === undefined ? null : (
+          <>
+            {takenBefore}
+            <time dateTime={capturedAt}>{readable}</time>
+            {takenAfter}
+          </>
+        )}
         {t("blocks.session.captionSuffix")}
       </figcaption>
     </figure>
@@ -2346,11 +2358,14 @@ export function ControlSessionCardBlock({
   actions,
   client,
   t = defaultT,
+  locale = "vi",
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
   client?: GatewayClient | undefined;
   t?: (key: MessageKey) => string;
+  /** The interface language, for when the frame was taken; Vietnamese by default, like `t`. */
+  locale?: string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
 
@@ -2410,6 +2425,7 @@ export function ControlSessionCardBlock({
           digest={frameDigest}
           viewport={frameViewport}
           capturedAt={frameCapturedAt}
+          locale={locale}
         />
       )}
       <header className="cc-card-head">
@@ -2418,75 +2434,77 @@ export function ControlSessionCardBlock({
           {stopped ? t("blocks.session.stopped") : t("blocks.session.running")}
         </span>
       </header>
-      <dl className="cc-fields">
-        <dt>{t("blocks.session.whoIsDriving")}</dt>
-        <dd data-control-driver-label="true">{driver === "user" ? t("blocks.session.you") : t("blocks.session.agent")}</dd>
+      <div className="cc-card-body">
+        <dl className="cc-fields">
+          <dt>{t("blocks.session.whoIsDriving")}</dt>
+          <dd data-control-driver-label="true">{driver === "user" ? t("blocks.session.you") : t("blocks.session.agent")}</dd>
 
-      </dl>
-      {/*
-        Reported before any control, because it decides whether acting is possible at all. A desktop whose screen
-        the operating system has not granted to this node cannot be driven, and the permission is not the node's to
-        assume — so the card says what is missing and who owns it.
-      */}
-      {observable ? null : (
-        <p className="cc-freshness" data-control-preview-notice={declaredPreview}>
-          {declaredPreview === "needs-permission" ? t("blocks.session.needsPermission") : t("blocks.session.cannotView")}
-          {previewReason === undefined ? "" : `: ${previewReason}`}
-          {t("blocks.session.permissionNotice")}
-        </p>
-      )}
-      {running ? (
-        <div className="cc-card-actions">
-          {/*
-            Offered only while the agent still has the wheel, and only when something can carry the verb out: a
-            takeover control on a session the user already drives would be a control with nothing left to do.
-          */}
-          {driver === "agent" && actions?.onControlTakeover !== undefined ? (
-            <button
-              type="button"
-              className="cc-action"
-              data-control-takeover={sessionId}
-              disabled={busy}
-              onClick={() => actions.onControlTakeover?.({ sessionId })}
-            >
-              {busy ? t("blocks.session.switching") : t("blocks.session.takeControl")}
-            </button>
-          ) : null}
-          {actions?.onControlStop !== undefined ? (
-            <button
-              type="button"
-              className="cc-action"
-              data-control-stop={sessionId}
-              disabled={busy}
-              onClick={() => actions.onControlStop?.({ sessionId })}
-            >
-              {t("blocks.session.stopSession")}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {/*
-        Exactly one notice, decided in one place. Two overlapping branches would render two answers to the same
-        question — which is what a duplicate marker caught in the browser, and a reader would have seen the same
-        thing twice.
-      */}
-      {state?.status === "failed" ? (
-        <p className="cc-freshness" data-control-error="true">
-          {state.message}
-        </p>
-      ) : !running ? (
-        <p className="cc-freshness" data-control-notice="stopped">
-          {state?.status === "stopped" ? t("blocks.session.stoppedByYou") : t("blocks.session.stoppedOther")}
-        </p>
-      ) : state?.status === "taken-over" ? (
-        /*
-         * What takeover actually did. Not "you have control" alone: the user needs to know the agent's already
-         * planned action was refused, because that is the part that makes the browser theirs.
-         */
-        <p className="cc-freshness" data-control-notice="taken-over">
-          {t("blocks.session.takenOverNotice")}
-        </p>
-      ) : null}
+        </dl>
+        {/*
+          Reported before any control, because it decides whether acting is possible at all. A desktop whose screen
+          the operating system has not granted to this node cannot be driven, and the permission is not the node's to
+          assume — so the card says what is missing and who owns it.
+        */}
+        {observable ? null : (
+          <p className="cc-freshness" data-control-preview-notice={declaredPreview}>
+            {declaredPreview === "needs-permission" ? t("blocks.session.needsPermission") : t("blocks.session.cannotView")}
+            {previewReason === undefined ? "" : `: ${previewReason}`}
+            {t("blocks.session.permissionNotice")}
+          </p>
+        )}
+        {running ? (
+          <div className="cc-card-actions">
+            {/*
+              Offered only while the agent still has the wheel, and only when something can carry the verb out: a
+              takeover control on a session the user already drives would be a control with nothing left to do.
+            */}
+            {driver === "agent" && actions?.onControlTakeover !== undefined ? (
+              <button
+                type="button"
+                className="cc-action"
+                data-control-takeover={sessionId}
+                disabled={busy}
+                onClick={() => actions.onControlTakeover?.({ sessionId })}
+              >
+                {busy ? t("blocks.session.switching") : t("blocks.session.takeControl")}
+              </button>
+            ) : null}
+            {actions?.onControlStop !== undefined ? (
+              <button
+                type="button"
+                className="cc-action"
+                data-control-stop={sessionId}
+                disabled={busy}
+                onClick={() => actions.onControlStop?.({ sessionId })}
+              >
+                {t("blocks.session.stopSession")}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {/*
+          Exactly one notice, decided in one place. Two overlapping branches would render two answers to the same
+          question — which is what a duplicate marker caught in the browser, and a reader would have seen the same
+          thing twice.
+        */}
+        {state?.status === "failed" ? (
+          <p className="cc-freshness" data-control-error="true">
+            {state.message}
+          </p>
+        ) : !running ? (
+          <p className="cc-freshness" data-control-notice="stopped">
+            {state?.status === "stopped" ? t("blocks.session.stoppedByYou") : t("blocks.session.stoppedOther")}
+          </p>
+        ) : state?.status === "taken-over" ? (
+          /*
+           * What takeover actually did. Not "you have control" alone: the user needs to know the agent's already
+           * planned action was refused, because that is the part that makes the browser theirs.
+           */
+          <p className="cc-freshness" data-control-notice="taken-over">
+            {t("blocks.session.takenOverNotice")}
+          </p>
+        ) : null}
+      </div>
     </section>
   );
 }
