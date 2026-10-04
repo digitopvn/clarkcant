@@ -102,6 +102,20 @@ từ chương trình khác). Khi đó một lượt từ `mcp`, `relay` hoặc `
 từ chối hoặc lệnh cấm vẫn thắng; việc đọc, ghi cục bộ, lượt của chính người dùng, tự động hoá và node ngang hàng không
 đổi.
 
+Nguồn gốc đi theo công việc mà nó bắt đầu:
+
+- Khi người dùng duyệt một thẻ do lượt của một chương trình tạo ra, lượt tiếp tục sau khi duyệt vẫn giữ nguồn gốc của
+  chương trình đó. Người dùng chỉ duyệt đúng một tác động, không duyệt phần còn lại trong kế hoạch của chương trình, nên
+  với `"ask"` bước rủi ro tiếp theo vẫn được hỏi lại. Dòng audit và hoạt động của tác động đã duyệt cũng giữ nguồn gốc.
+- Một tin nhắn có nguồn gốc khác với lượt đang chạy không bao giờ được nhập (steer) vào lượt đó. Nó ngắt lượt đang chạy
+  và trở thành một lượt riêng với nguồn gốc của chính nó. Tin nhắn được chuyển sang làn chạy nền được ghi vào nhật ký
+  audit cùng nguồn gốc.
+
+`machineTurns` là một phần của chính sách thực thi, và các route chính sách (`PUT /preferences/execution.policy`,
+`execution.machineTurns`, các route `/undo` của chúng, và `POST /autonomy`) mở cho mọi người giữ token, kể cả relay và
+`clarkcant api`. Vì vậy một chương trình giữ token của node có thể đổi cài đặt này. Hoàn tác `execution.machineTurns`
+chỉ đặt lại đúng lựa chọn đó; nó trả về `undone: false` khi lần ghi chính sách gần nhất không đổi lựa chọn này.
+
 ### Xoá hội thoại
 
 Lệnh gõ “xoá hội thoại này” và lệnh nói tương ứng cùng đi qua intent `conversation.delete` như capability REST.

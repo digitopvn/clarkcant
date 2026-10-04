@@ -100,6 +100,19 @@ other programs). Then a turn from `mcp`, `relay` or `cli-api` asks before a risk
 `destructive`, `financial`, `communication`, `media-capture`) the policy would otherwise have run. A deny rule or a
 prohibition still wins; reads, local writes, the person's own turns, automations and peers are unchanged.
 
+The origin stays with the work it started:
+
+- When the person approves a card a program's turn raised, the turn that carries on after the approval keeps the
+  program's origin. The person approved that one effect, not the rest of the program's plan, so the next risky step
+  is asked about again under `"ask"`. The approved effect's audit and activity rows keep the origin too.
+- A message whose origin differs from the running turn's is never steered into it. It interrupts and becomes a turn
+  of its own with its own origin. A message sent to the background lane is recorded in the audit log with its origin.
+
+`machineTurns` is part of the execution policy, and the policy routes (`PUT /preferences/execution.policy`,
+`execution.machineTurns`, their `/undo`, and `POST /autonomy`) are open to any token holder, including the relay and
+`clarkcant api`. So a program holding the node token can change this setting. Undoing `execution.machineTurns` puts
+back only that choice; it answers `undone: false` when the last policy write did not change it.
+
 ### Conversation deletion
 
 The person's text command “delete this conversation” and spoken equivalent resolve to the same `conversation.delete`

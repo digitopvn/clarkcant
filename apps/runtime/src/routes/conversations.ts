@@ -19,6 +19,7 @@ import {
   type TurnOrigin,
   VIEW_STATE_WRITE_VARIANT,
   turnOriginOfSurfaceMark,
+  turnOriginSchema,
   actionInvocationSchema,
   capabilityRefSchema,
   conversationDeleteRequestSchema,
@@ -1137,7 +1138,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
         { text, runningMs: control.runningMs?.(conversationId) ?? 0 },
       );
       const action = decided.status === "decided" ? decided.action : "interrupt";
-      if (action === "steer" && (await control.steer(conversationId, text))) {
+      // A steer joins only a turn of the same origin; a program's message beside the person's turn becomes its own.
+      if (action === "steer" && (await control.steer(conversationId, text, composerSurface(request).origin))) {
         return json(202, {
           accepted: true,
           resolution: "steered",
@@ -1156,6 +1158,19 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
         if ("refusal" in started) {
           control.interrupt(conversationId);
         } else {
+          // A background request is never stored as a message, so who asked for it is written here: the run's id, not
+          // its words, which stay in the conversation's own record.
+          appendAuditEvent(services.runtime.db, {
+            auditId: services.conductor.newId("audit"),
+            principalId: runtime.identity.ownerPrincipalId,
+            nodeId: runtime.identity.nodeId,
+            kind: "interaction",
+            summary: "started a background request beside the running turn",
+            outcome: "done",
+            ref: started.sessionId,
+            origin: composerSurface(request).origin,
+            at: at() as never,
+          });
           return json(202, {
             accepted: true,
             resolution: "background",
@@ -1893,6 +1908,13 @@ export async function decideApprovalForNode(
   if (payload === undefined) {
     return { ok: false, code: "APPROVAL_PAYLOAD_MISSING", message: "the approved operation is not in this conversation" };
   }
+  /*
+   * Who asked for the operation, from the host-written card. The person decides it, but the person approved this one
+   * effect, not the rest of a program's plan: the records keep who asked, and the turn that carries on after the
+   * approval keeps that origin too, so a program's next risky step is still asked about under "Ask me first".
+   */
+  const askedBy = card?.type === "approval-card" ? turnOriginSchema.safeParse(card.origin).data : undefined;
+  const askedByRecord = askedBy === undefined ? {} : { origin: askedBy };
 
   const decided = decideApproval(coordination, {
     approvalId: input.approvalId as never,
@@ -1953,6 +1975,7 @@ export async function decideApprovalForNode(
       summary: written.description,
       outcome: "done",
       ref: input.approvalId,
+      ...askedByRecord,
       at: input.at,
     });
     return { ok: true, outcome: written.description };
@@ -1970,6 +1993,7 @@ export async function decideApprovalForNode(
       approvalId: input.approvalId,
       conversationId: input.conversationId,
       checkJobOrigin: (origin, ref) => checkApprovedJobOrigin(services, input.conversationId, origin, ref),
+      ...askedByRecord,
       ledger: (call) => {
         ledger = actionLedgerHooks(services, {
           conversationId: input.conversationId,
@@ -2010,6 +2034,7 @@ export async function decideApprovalForNode(
       summary: invoked.description,
       outcome: invoked.succeeded ? "done" : "failed",
       ref: input.approvalId,
+      ...askedByRecord,
       at: input.at,
     });
     return { ok: true, outcome: invoked.description };
@@ -2038,6 +2063,7 @@ export async function decideApprovalForNode(
     summary: ran.description,
     outcome: ran.outcome.exitCode === 0 && !ran.outcome.timedOut ? "done" : "failed",
     ref: input.approvalId,
+    ...askedByRecord,
     at: input.at,
   });
 
@@ -2067,8 +2093,9 @@ export async function decideApprovalForNode(
      */
     note: `${receipt}\n\nĐây là kết quả thật, không phải dự đoán. Hãy tiếp tục công việc đang làm dở.`,
     at: input.at,
-    // The person's approval is what starts this turn, whoever asked for the command.
-    origin: "person",
+    // The turn carries on with the plan of whoever asked for the command, so it keeps their origin: approving one
+    // effect is not approving the rest. A card without an origin was raised by the person's own turn.
+    origin: askedBy ?? "person",
   });
   // Indexed where the messages were written, so a continuation is findable like anything else said.
   indexMessages(services.search, {

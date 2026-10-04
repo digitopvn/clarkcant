@@ -691,6 +691,8 @@ export async function runApprovedCapability(
     conversationId: string;
     checkJobOrigin?: ApprovedJobOriginCheck;
     ledger?: (call: { ref: string; args: Record<string, unknown> }) => CapabilityLedgerHooks;
+    /** Who asked for the call, read from the card: the person decided it, but the record keeps who asked. */
+    origin?: TurnOrigin;
   },
 ): Promise<
   | {
@@ -763,6 +765,7 @@ export async function runApprovedCapability(
     approvedBy: { approvalId: input.approvalId, generation, effectCategory: effect.data },
     ...(jobOrigin === undefined ? {} : { jobOrigin }),
     ...(bindingGeneration === undefined ? {} : { bindingGeneration }),
+    ...(input.origin === undefined ? {} : { origin: input.origin }),
     ...(input.ledger?.({ ref, args }) ?? {}),
   });
   const succeeded = outcome.kind === "done" || outcome.kind === "job";

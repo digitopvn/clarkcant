@@ -18,6 +18,7 @@ import { EXECUTION_POLICY_PREFERENCE_KEY, readExecutionPolicy, registerCapabilit
 import { allRows, appendAuditEvent, latestMessages, listAuditEvents } from "@clarkcant/storage";
 
 import { invokeCapability } from "../src/application/capability-invoke.ts";
+import { appendHostReply } from "../src/routes/conversations.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { createMapTilesTool } from "../src/map-tiles-tool.ts";
 import { createNodeTools } from "../src/node-tools.ts";
@@ -198,6 +199,52 @@ describe("run_command", () => {
   });
 });
 
+describe("an approval of a program's command", () => {
+  it("keeps the program's origin on the turn that carries on, so its next risky step is still asked about", async () => {
+    // Ask every time, so even a local command raises a card; the opt-in is on, as a person relying on it would have it.
+    setPolicy({ mode: "ask", machineTurns: "ask" });
+    const ledger = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now, newId: services.conductor.newId };
+    const toolFor = (origin: TurnOrigin) => {
+      const tool = createNodeTools({
+        search: services.search,
+        projects: services.projects,
+        origin: () => origin,
+        command: {
+          approvals: () => ledger,
+          autonomy: () => readExecutionPolicy({ db: services.runtime.db, now }, owner()),
+          resources: () => ownedResources([dir, process.cwd()]),
+          fallbackCwd: () => dir,
+          newId: () => services.conductor.newId("tool"),
+        },
+      }).find((candidate) => candidate.name === "run_command");
+      if (tool === undefined) throw new Error("run_command is not registered");
+      return tool as unknown as { execute: (params: Record<string, unknown>) => Promise<{ hostCard?: Record<string, unknown> }> };
+    };
+
+    const asked = await toolFor("mcp").execute({ command: `node -e "process.stdout.write('approved-ran')"`, cwd: dir });
+    const card = asked.hostCard as { type: "approval-card"; approvalId: string; operationDigest: string; origin?: string };
+    expect(card).toMatchObject({ type: "approval-card", origin: "mcp" });
+    appendHostReply(services, { conversationId, blocks: [card as never], at: AT });
+
+    const decided = await request("POST", `/conversations/${conversationId}/approvals/${card.approvalId}/decide`, {
+      decision: "granted",
+      digest: card.operationDigest,
+    });
+    expect(decided.status).toBe(200);
+
+    // The person decided, but the record keeps who asked.
+    const audited = listAuditEvents(services.runtime.db, owner()).filter((entry) => entry.ref === card.approvalId);
+    expect(audited.map((entry) => entry.origin)).toEqual(["mcp"]);
+    // The turn that carries on is still the program's, not the person's.
+    const continued = originOf("Lệnh đã được duyệt và đã chạy xong.");
+    expect(continued).toBe("mcp");
+    // So the next risky step that turn takes is asked about again, rather than run on the strength of one approval.
+    setPolicy({ machineTurns: "ask" });
+    const next = await toolFor(continued as TurnOrigin).execute({ command: "git push origin main", cwd: dir });
+    expect(next.hostCard).toMatchObject({ type: "approval-card", origin: "mcp" });
+  });
+});
+
 describe("a capability invocation", () => {
   const REF = "com.example.mail.send@1" as CapabilityRef;
   const calls: string[] = [];
@@ -322,6 +369,22 @@ describe("the opt-in is a view of the one policy", () => {
     expect((await request("POST", "/preferences/execution.machineTurns/undo", {})).status).toBe(200);
     expect(readExecutionPolicy({ db: services.runtime.db, now }, owner()).machineTurns).toBeUndefined();
     expect((await request("PUT", "/preferences/execution.machineTurns", { value: "never" })).status).toBe(400);
+  });
+
+  it("undoes only this choice, and not a change to the mode written after it", async () => {
+    expect((await request("PUT", "/preferences/execution.machineTurns", { value: "ask" })).status).toBe(200);
+    expect((await request("PUT", "/preferences/execution.mode", { value: "ask" })).status).toBe(200);
+    // The last policy write changed the mode, not this choice: there is nothing of this key to undo, and the mode stays.
+    const refused = await request("POST", "/preferences/execution.machineTurns/undo", {});
+    expect(refused).toMatchObject({ status: 200, body: { undone: false } });
+    expect(readExecutionPolicy({ db: services.runtime.db, now }, owner())).toMatchObject({ mode: "ask", machineTurns: "ask" });
+
+    // A write that did change it is undone, and only this axis moves.
+    setPolicy({ mode: "ask", machineTurns: "ask" });
+    expect((await request("PUT", "/preferences/execution.machineTurns", { value: "as-person" })).status).toBe(200);
+    const undone = await request("POST", "/preferences/execution.machineTurns/undo", {});
+    expect(undone).toMatchObject({ status: 200, body: { undone: true, preference: { value: "ask" } } });
+    expect(readExecutionPolicy({ db: services.runtime.db, now }, owner())).toMatchObject({ mode: "ask", machineTurns: "ask" });
   });
 
   it("survives a save of the autonomy settings, which do not name it", async () => {

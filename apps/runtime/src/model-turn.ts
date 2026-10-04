@@ -136,8 +136,11 @@ export interface ModelTurn {
   running: () => string[];
   /** Stops the running turn for a conversation, answering whether there was one. */
   interrupt: (conversationId: string) => boolean;
-  /** Adds a sentence to the running turn, answering whether there was one to add it to. */
-  steer: (conversationId: string, text: string) => Promise<boolean>;
+  /**
+   * Adds a sentence to the running turn, answering whether it was added. A message whose origin differs from the
+   * running turn's is never added (absent is the person).
+   */
+  steer: (conversationId: string, text: string, origin?: TurnOrigin) => Promise<boolean>;
   /**
    * Runs one request in a worker of its own, answering with what that worker said.
    *
@@ -1028,10 +1031,15 @@ export async function createModelTurn(options: {
      *
      * What the adapter does with it is the adapter's business; the answer is what lets a caller decide what to do
      * when there was nothing to steer.
+     *
+     * Only a message from the same origin joins: a program's words steered into the person's turn would run as the
+     * person, past "Ask me first", and would be recorded as the person's. A message of another origin answers false,
+     * so the caller makes it a turn of its own with its own origin.
      */
-    steer: async (conversationId: string, text: string): Promise<boolean> => {
+    steer: async (conversationId: string, text: string, origin?: TurnOrigin): Promise<boolean> => {
       const turn = turns.get(conversationId);
       if (turn === undefined || !turn.inFlight || turn.sessionId === "") return false;
+      if ((origin ?? "person") !== (turn.origin ?? "person")) return false;
       await adapter.steer(turn.sessionId, text);
       return true;
     },

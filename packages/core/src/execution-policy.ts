@@ -52,7 +52,7 @@ import { appendEvent, type Database } from "@clarkcant/storage";
 import type { BrowserPress } from "./browser-press.ts";
 import { EXECUTION_POLICY_PREFERENCE_KEY, migrateExecutionPolicy } from "./execution-policy-migration.ts";
 import { readRegisteredPreference } from "./preference-registry.ts";
-import { deletePreference, type PreferenceDeps } from "./preferences.ts";
+import { deletePreference, getPreference, type PreferenceDeps } from "./preferences.ts";
 
 /** A consent boundary this application does not own and therefore cannot lift. */
 export type HardBoundaryKind = "os-permission" | "oauth" | "browser-permission" | "vendor-consent";
@@ -521,6 +521,23 @@ export function readExecutionPolicyPreference(
     };
   }
   return { ...stored, value: policy };
+}
+
+/**
+ * The person's choice about machine-surface turns now, and before the last write to the policy.
+ *
+ * The choice is one axis of the policy row, and undoing the row would undo every axis its last write changed; a caller
+ * that undoes only this choice needs to know what it was before that write, and whether that write changed it at all.
+ * Absent when no policy was ever written. A value the schema does not read counts as the default.
+ */
+export function readMachineTurnsLastChange(
+  deps: PreferenceDeps,
+  principalId: string,
+): { current: "as-person" | "ask"; previous: "as-person" | "ask" } | undefined {
+  const row = getPreference(deps, { principalId, key: EXECUTION_POLICY_PREFERENCE_KEY, scope: "global" });
+  if (row === undefined) return undefined;
+  const turnsOf = (value: unknown): "as-person" | "ask" => (parseExecutionPolicyConfig(value).machineTurns === "ask" ? "ask" : "as-person");
+  return { current: turnsOf(row.value), previous: turnsOf(row.previousValue) };
 }
 
 /**

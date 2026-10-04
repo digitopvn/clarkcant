@@ -302,7 +302,7 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.control.rules.default": "Theo mức",
   "settings.control.machineTurns.heading": "Yêu cầu từ chương trình khác",
   "settings.control.machineTurns.intro":
-    "Một ứng dụng AI qua MCP, một relay, hoặc một script dùng CLI hay API cũng có thể nhắn cho Clark. Mặc định Clark xử lý như tin nhắn bạn tự gõ, và ghi lại ai đã yêu cầu.",
+    "Một ứng dụng AI qua MCP, một relay, hoặc một script dùng CLI hay API cũng có thể nhắn cho Clark. Mặc định Clark xử lý như tin nhắn bạn tự gõ, và ghi lại ai đã yêu cầu. Lưu ý: chương trình nào giữ token của node này vẫn có thể đổi cài đặt này, hoặc gọi thẳng HTTP API mà xưng là bạn.",
   "settings.control.machineTurns.label": "Khi một chương trình nhắn",
   "settings.control.machineTurns.asPerson.label": "Như tôi",
   "settings.control.machineTurns.asPerson.note": "Theo đúng chính sách như tin nhắn của bạn.",
@@ -814,7 +814,7 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.control.rules.default": "Follow level",
   "settings.control.machineTurns.heading": "Requests from other programs",
   "settings.control.machineTurns.intro":
-    "An AI client over MCP, a relay, or a script using the CLI or API can message Clark too. By default Clark treats it like a message you typed, and records who asked.",
+    "An AI client over MCP, a relay, or a script using the CLI or API can message Clark too. By default Clark treats it like a message you typed, and records who asked. Note: a program holding this node's token can still change this setting, or call the HTTP API directly as you.",
   "settings.control.machineTurns.label": "When a program asks",
   "settings.control.machineTurns.asPerson.label": "Same as me",
   "settings.control.machineTurns.asPerson.note": "Follow the same policy as your own messages.",

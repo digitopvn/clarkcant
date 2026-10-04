@@ -13,7 +13,9 @@ import { z } from "zod";
  *
  * The node derives it from what it already knows about the request — the surface mark its own relays set, and which
  * code path accepted the message — and never from anything a client puts in a body. MCP and the WebSocket relay build
- * their own request headers, so a client on either cannot claim to be the person.
+ * their own request headers, so a client on either cannot claim to be the person on that surface. A program that holds the
+ * node's token and calls the HTTP API directly is trusted like the page: it can send the composer's mark and be recorded
+ * as the person, so this is a record of the path a message took, not proof of who typed it.
  *
  * Recorded, not acted on by default: the execution policy treats every origin exactly like the person unless the
  * person opts into asking for machine-surface turns (`ExecutionPolicyConfig.machineTurns`).

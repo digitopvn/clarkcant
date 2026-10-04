@@ -129,7 +129,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
     deps.services.turnControl = {
       running: () => modelTurn.running(),
       interrupt: (conversationId) => modelTurn.interrupt(conversationId),
-      steer: (conversationId, text) => modelTurn.steer(conversationId, text),
+      steer: (conversationId, text, origin) => modelTurn.steer(conversationId, text, origin),
       runInBackground: (input) => modelTurn.runInBackground(input),
       runningMs: (conversationId) => modelTurn.runningMs(conversationId),
     };

@@ -409,6 +409,8 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
           invocationId: `inv_${randomUUID()}`,
         },
         "voice",
+        // Spoken on the person's own voice surface, so it is the person who asked, as for a spoken turn.
+        "person",
       );
 
       const locale = preferredAppIntentLocale(appIntentDepsFor(deps.services), deps.services.runtime.identity.ownerPrincipalId);

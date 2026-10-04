@@ -16,6 +16,7 @@ import {
   legacyModeFromPolicy,
   readExecutionPolicy,
   readExecutionPolicyPreference,
+  readMachineTurnsLastChange,
   readRegisteredPreference,
   undoRegisteredPreference,
   writeRegisteredPreference,
@@ -214,6 +215,7 @@ export function undoPolicyPreference(
   input: { principalId: string; key: string },
 ): PreferenceUndoOutcome | undefined {
   if (!isLegacyPolicyKey(input.key)) return undefined;
+  if (input.key === MACHINE_TURNS_KEY) return undoMachineTurns(deps, input.principalId);
   const undone = undoRegisteredPreference(deps, {
     principalId: input.principalId,
     key: EXECUTION_POLICY_PREFERENCE_KEY,
@@ -228,6 +230,31 @@ export function undoPolicyPreference(
   return undone.undone
     ? { ok: true, undone: true, preference }
     : { ok: true, undone: false, preference, reason: undone.reason };
+}
+
+/**
+ * Undo the person's choice about machine-surface turns, and only that choice.
+ *
+ * The choice lives inside the one policy row, whose undo restores the whole row: undoing it after the mode or a rule
+ * was changed would have taken those back too. So this puts back only `machineTurns` as it was before the last write,
+ * and answers `undone: false` when the last write to the policy did not change it — there is nothing of this key to undo.
+ */
+function undoMachineTurns(deps: PreferenceDeps, principalId: string): PreferenceUndoOutcome {
+  const view = (): RegisteredPreference | undefined => {
+    const stored = readRegisteredPreference(deps, { principalId, key: MACHINE_TURNS_KEY });
+    return stored === undefined ? undefined : projectPolicyPreference(readExecutionPolicyPreference(deps, principalId), stored);
+  };
+  const change = readMachineTurnsLastChange(deps, principalId);
+  const before = view();
+  if (before === undefined) return { ok: false, code: "PREFERENCE_UNKNOWN", message: `${MACHINE_TURNS_KEY} is not a known preference` };
+  if (change === undefined || change.current === change.previous) {
+    return { ok: true, undone: false, preference: before, reason: "the last change to the policy did not change this setting" };
+  }
+  const written = writePolicyPreference(deps, { principalId, key: MACHINE_TURNS_KEY, value: change.previous });
+  if (written === undefined || !written.ok) {
+    return { ok: true, undone: false, preference: before, reason: written?.message ?? "the policy could not be written" };
+  }
+  return { ok: true, undone: true, preference: view() ?? before };
 }
 
 /**
