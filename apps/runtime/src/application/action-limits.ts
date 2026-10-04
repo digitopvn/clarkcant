@@ -36,6 +36,10 @@ export const ACTION_LIMITS: Record<Limited, Partial<Record<keyof ActionLimits, L
     deadlineMs: { default: 120_000, min: 1_000, max: 300_000 },
     maxCallsPerMinute: { default: 10, min: 1, max: 60 },
   },
+  // One request to the widget's own frame, bounded in time by the host's wait (`WIDGET_PERFORM_TIMEOUT_MS`).
+  perform: {
+    maxCallsPerMinute: { default: 30, min: 1, max: 120 },
+  },
 };
 
 /** The limits a binding of this kind runs under: what was asked for, clamped to the ceilings, with the rest defaulted. */

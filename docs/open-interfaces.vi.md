@@ -42,7 +42,7 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — xoá trên bề mặt của người dùng; policy có thể hỏi hoặc từ chối |
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — chờ câu trả lời |
-| POST | `/conversations/{id}/messages/stream` | như trên, trả về dạng SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `error`, `done` |
+| POST | `/conversations/{id}/messages/stream` | như trên, trả về dạng SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `widget-perform`, `error`, `done` |
 | POST | `/conversations/{id}/stop` | `{ source? }` — dừng câu trả lời đang viết; giữ phần đã viết, gắn nhãn đã dừng; trả về `{ stopped }` |
 | GET | `/conversations/{id}/timeline?after=N` | – |
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
@@ -69,6 +69,38 @@ trong vài giây, agent được báo là hành động chưa được xác nh�
 nhận `404 HOST_CONTROL_NOT_EXPECTED`), và route `/messages` thường không bao giờ chờ câu trả lời. Bản ghi audit của
 một hành động agent yêu cầu khi đang trả lời một câu nói có `source: "voice-agent"`, khác với lệnh do chính người dùng
 nói (`source: "voice"`).
+
+Event `widget-perform` là Clark nhờ một widget đang hiện trên trang thực hiện một trong các hành động mà gói của nó
+cung cấp (`offeredActions`, [widget-development.vi.md §10.3](widget-development.vi.md#103-hành-động-clark-thực-hiện-actionsperform1)).
+Node đã kiểm tra xong: binding, input so với schema đã khai báo, và chính sách thực thi của người dùng. Node chỉ gửi
+event này trên một yêu cầu stream mang `x-clarkcant-widget-perform: 1`, tức phiên bản mà trang chạy được. Mọi bên gọi
+khác không được gửi event nào, và lần thực hiện bị từ chối ngay với `FRAME_NOT_MOUNTED`. Điều này bao gồm route
+`/messages` thường, MCP, relay và `clarkcant api`.
+
+`request` của event là `{ v: 1, performId, instanceId, actionBindingId, action, input }`. Trang chuyển nó cho frame
+đang được mount và trả lời bằng `POST /app-intents/widget-perform/{performId}` với một trong các dạng:
+
+- `{ status: "done", output? }`;
+- `{ status: "refused", by: "page" | "widget", code, message }`;
+- `{ status: "no-answer", message }`.
+
+`by: "page"` chỉ được chấp nhận với các mã của chính trang, như `FRAME_NOT_MOUNTED`, `SURFACE_GONE`,
+`PERFORM_UNREADABLE` và `PERFORM_VERSION_UNSUPPORTED`. Trang không đọc được yêu cầu, hoặc nhận một phiên bản khác, vẫn
+trả lời theo `performId` của nó. Lời từ chối của widget tới Clark dưới dạng `WIDGET_REFUSED`, với mã của widget trong
+`widgetCode`.
+
+Mỗi `performId` chỉ được trả lời một lần; lần thứ hai nhận `404 WIDGET_PERFORM_NOT_EXPECTED`. Không có gì được xếp hàng
+chờ về sau. Nếu không có câu trả lời trong 8 giây, hoặc trang báo `no-answer`, lần thực hiện được ghi là chưa rõ kết quả
+và không được thử lại. Route báo cáo chỉ dành cho người dùng, giống route báo cáo host-control.
+
+Khi chính sách thực thi muốn hỏi trước, câu trả lời là một thẻ phê duyệt của host. Khi quyết định thẻ đó tại
+`POST /conversations/{id}/approvals/{approvalId}/decide` với cùng header, lần thực hiện đã được duyệt có thể được chuyển
+cho trang này. Khi đó câu trả lời của quyết định mang `perform` (yêu cầu), và trang báo cáo theo cùng cách. Một yêu cầu
+quyết định không có header thì phê duyệt mà không gửi gì, và biên nhận nói rõ điều đó. Cùng lần thực hiện đó được yêu
+cầu lại trong lúc thẻ của nó còn chờ thì được trả `202` với `approvalRequired.approvalId` của thẻ đó và
+`alreadyWaiting: true`, không có thẻ thứ hai. Một hội thoại giữ tối đa 8 thẻ perform đang chờ
+(`429 PERFORM_CARDS_WAITING`), và input dài hơn 1.200 ký tự khi viết dạng JSON bị từ chối (`413 PERFORM_INPUT_TOO_LONG`)
+vì thẻ hiện toàn bộ input.
 
 Trang của chính node gửi `x-clarkcant-surface: composer` kèm các tin nhắn người dùng gõ vào đó, và node lưu giá trị
 này thành `surface` của tin nhắn; một tin nhắn nói bằng giọng được chính node lưu với `surface: "voice"`. Một tin nhắn
@@ -679,7 +711,7 @@ nó sẽ cho phép client AI tự duyệt hành động bị guard của chính 
 các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng MCP từ chối mọi route ghi nhận quyết định
 của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard (trên thẻ, hoặc do một task đang
 chạy raise ra), quyết định capability của package, cài một gói (`POST /packages/install`) hoặc quyết định một lần
-cài mà chế độ thực thi của người dùng đã hỏi, xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, tin cậy một peer đã ghép cặp, cấp
+cài mà chế độ thực thi của người dùng đã hỏi, xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, báo cáo frame của widget đã làm gì với một hành động Clark nhờ nó thực hiện (`POST /app-intents/widget-perform/{performId}`), tin cậy một peer đã ghép cặp, cấp
 grant, xin token trình duyệt cho một frame (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; chỉ chrome
 của host đã mount frame mới xin, và một client máy xin tức là xin một credential để giữ), và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
 một client AI nói được "lần push đó đã thành công" thì có thể tự gỡ trạng thái chưa rõ của task của chính nó rồi tự

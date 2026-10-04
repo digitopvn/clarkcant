@@ -3,6 +3,7 @@ import {
   type ActionProposal,
   type CapabilityRef,
   type EffectCategory,
+  type OfferedAction,
   type WidgetInstance,
   actionProposalSchema,
   capabilityRefSchema,
@@ -114,6 +115,8 @@ export function compileWidgetAction(
     carries?: ActionInputSpec;
     /** Who is placing the button: a context reference to another widget must name one this person owns. */
     ownerPrincipalId?: string;
+    /** The actions the widget's definition offers; a `perform` binding can only name one of these. */
+    offeredActions?: readonly OfferedAction[];
   },
 ): WidgetActionCompile {
   const carries = input.carries;
@@ -129,6 +132,7 @@ export function compileWidgetAction(
   if (!parsed.success) return { ok: false, message: `the action is not one a button can hold: ${proposalProblem(parsed.error.issues)}` };
   let proposal: ActionProposal = parsed.data;
   let inputKeys: readonly string[] = [];
+  let declaredInput: Record<string, unknown> | undefined;
 
   const instanceGeneration = input.definitionRef.packageDigest;
   let packageGeneration = instanceGeneration;
@@ -260,10 +264,35 @@ export function compileWidgetAction(
       effectCategory = SEVERITY.find((category) => categories.includes(category)) ?? "read";
       break;
     }
+    case "perform": {
+      if (carries !== undefined) {
+        return {
+          ok: false,
+          message: `what a ${carries.noun} sends cannot go to an action a widget performs; its input is the one the widget declared`,
+        };
+      }
+      const name = proposal.action;
+      const offered = input.offeredActions?.find((candidate) => candidate.name === name);
+      if (offered === undefined) {
+        return {
+          ok: false,
+          message: `the widget does not offer an action named "${name}"; only the actions its definition declares can be performed`,
+        };
+      }
+      declaredInput = offered.inputSchema;
+      /*
+       * What the frame does is the widget's own: it changes what the widget holds, on this machine. The frame is granted
+       * nothing by it — anything it then asks the host for passes that request's own gate — so the category is the host's
+       * statement, never the package's.
+       */
+      effectCategory = "local-write";
+      break;
+    }
   }
 
   const inputSchema =
-    carries === undefined ? { type: "object", properties: {}, additionalProperties: false } : carries.schema(inputKeys);
+    declaredInput ??
+    (carries === undefined ? { type: "object", properties: {}, additionalProperties: false } : carries.schema(inputKeys));
   const limits = effectiveLimits(proposal.kind, proposal.kind === "view" ? undefined : proposal.limits);
   const compiled = compileActionBinding({
     bindingId: deps.newId("act"),
@@ -309,6 +338,8 @@ export function bindingAvailability(
         ? { available: true }
         : { available: false, code: "UNSUPPORTED_ACTION", reason: `"${proposal.operation}" is not a view operation this node performs` };
     case "agent":
+    case "perform":
+      // Whether the frame is mounted is known only to the page that shows it, and is asked when the action runs.
       return { available: true };
     case "workflow": {
       // Runnable only when every step that calls a service could be called now: a workflow that would stop at its

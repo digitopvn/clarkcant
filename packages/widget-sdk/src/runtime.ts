@@ -1,4 +1,6 @@
 import {
+  ACTIONS_PERFORM_EXTENSION,
+  PERFORM_OUTPUT_MAX_CHARS,
   APPEARANCE_EXTENSION,
   ARTIFACT_BRIDGE_LIMITS,
   ARTIFACTS_EXTENSION,
@@ -117,6 +119,10 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     string,
     { actionBindingId: string; resolve: (value: string | undefined) => void; reject: (error: Error) => void }
   >();
+  /** Handlers for the actions this widget offers Clark (`actions.perform@1`), by the name its definition declares. */
+  /** The refusals `actions.refuse` made, so a handler's deliberate refusal is told apart from any other coded error. */
+  const actionRefusals = new WeakMap<Error, { code: string; message: string }>();
+  const offeredHandlers = new Map<string, (input: Record<string, unknown>) => string | undefined | Promise<string | undefined>>();
   let availability: readonly ActionAvailability[] = [];
   const availabilityHandlers = new Set<(availability: readonly ActionAvailability[]) => void>();
   /** Extensions the host offered in `init`. A call into one it did not offer is refused here, never sent. */
@@ -362,6 +368,11 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       return;
     }
 
+    if (message.kind === "action.perform") {
+      void perform(message);
+      return;
+    }
+
     if (message.kind === "job.changed") {
       for (const subscription of jobSubscriptions) {
         if (!subscription.closed && subscription.jobId === message.job.jobId) deliverJob(subscription, message.job);
@@ -380,6 +391,52 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     if (message.status === "accepted") waiter.resolve(message.output);
     else waiter.reject(new Error(message.message));
   };
+
+  /**
+   * Run one offered action the host asked for, and answer it — always, once.
+   *
+   * A name nothing here handles is refused with `ACTION_NOT_OFFERED`, so the host's wait ends with a reason rather than
+   * at its timeout. Only a handler that throws a coded `CODE: why` error refuses: that is the widget saying it changed
+   * nothing. Any other throw is `failed` — the handler broke while it ran, so whatever it had already changed is
+   * unknown, and Clark is told so rather than "nothing changed". An answer that carries a token this frame was given is
+   * not sent; the handler ran, so that is `failed` as well.
+   */
+  async function perform(message: Extract<HostToWidgetMessage, { kind: "action.perform" }>): Promise<void> {
+    const answer = (fields: { status: "done" | "refused" | "failed"; output?: string; code?: string; message?: string }): void => {
+      if (status === "disposed" || nonce === undefined) return;
+      send({ kind: "action.performed", nonce, performId: message.performId, ...fields });
+    };
+    if (!extensions.has(ACTIONS_PERFORM_EXTENSION)) {
+      answer({ status: "refused", code: "EXTENSION_NOT_OFFERED", message: `the host did not offer ${ACTIONS_PERFORM_EXTENSION} to this frame` });
+      return;
+    }
+    const handler = offeredHandlers.get(message.action);
+    if (handler === undefined) {
+      answer({ status: "refused", code: "ACTION_NOT_OFFERED", message: `this widget does not handle an action named "${message.action}" right now` });
+      return;
+    }
+    try {
+      const output = await handler(freezeSnapshot(structuredClone(message.input)));
+      if (output !== undefined && carriesToken(output)) {
+        answer({ status: "failed", code: "TOKEN_NOT_ALLOWED", message: TOKEN_LEAK.slice("TOKEN_NOT_ALLOWED: ".length) });
+        return;
+      }
+      answer({
+        status: "done",
+        ...(output === undefined || output === "" ? {} : { output: String(output).slice(0, PERFORM_OUTPUT_MAX_CHARS) }),
+      });
+    } catch (cause) {
+      // Only an error made by `actions.refuse` is the widget saying it changed nothing. A coded message is not enough:
+      // the SDK's own rejections carry codes too, and one can come after the handler has already changed something.
+      const refused = cause instanceof Error ? actionRefusals.get(cause) : undefined;
+      if (refused !== undefined) {
+        answer({ status: "refused", code: refused.code, message: refused.message.slice(0, 600) });
+        return;
+      }
+      const text = cause instanceof Error ? cause.message : String(cause);
+      answer({ status: "failed", message: text.slice(0, 600) || "the widget's handler failed" });
+    }
+  }
 
   deps.endpoint.addEventListener("message", handleMessage);
 
@@ -588,6 +645,18 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       availability: () => availability,
       subscribe: (handler) => {
         availabilityHandlers.add(handler);
+      },
+      offer: (name, handler) => {
+        offeredHandlers.set(name, handler);
+        return () => {
+          if (offeredHandlers.get(name) === handler) offeredHandlers.delete(name);
+        };
+      },
+      refuse: (code, message) => {
+        if (!/^[A-Z][A-Z0-9_]{1,59}$/u.test(code)) throw new TypeError(`actions.refuse: "${code}" is not a refusal code`);
+        const error = new Error(`${code}: ${message}`);
+        actionRefusals.set(error, { code, message: String(message) });
+        return error;
       },
     },
     capabilities: {

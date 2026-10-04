@@ -6,6 +6,7 @@ import { liveReferences } from "./composer-trigger.ts";
 import type { ChosenReference } from "./use-composer-references.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { followScrollBehavior, followsBottom } from "./follow-bottom.ts";
+import { answerWidgetPerform } from "./frame-performs.ts";
 import type { AppIntentDecision, ComposerReference } from "@clarkcant/contracts";
 
 /** The node's own sentence for a refused send; the code in front of it belongs in a log, not the status line. */
@@ -223,6 +224,16 @@ export function useTurnSend({
           trimmed,
           {
             onEvent: (event) => {
+              // An action Clark asked a widget on this page to perform: handed to its mounted frame, and what the frame
+              // answered is reported back, because the node is waiting to tell Clark. Not a transcript segment either.
+              // Answered before the session check, always: a page that moved on says so (`SURFACE_GONE`) instead of
+              // leaving the node to wait for a report that would never come.
+              if (event.type === "widget-perform" || event.type === "widget-perform-unreadable") {
+                void answerWidgetPerform(event, (performId, report) => client.reportWidgetPerform(performId, report), {
+                  stale: sessionGeneration.current !== generation,
+                });
+                return;
+              }
               if (sessionGeneration.current !== generation) return;
               // An agent-issued app-control action is not a transcript segment: it is handed straight
               // to the same `pendingIntent` slot a typed command uses, so it reaches the one executor

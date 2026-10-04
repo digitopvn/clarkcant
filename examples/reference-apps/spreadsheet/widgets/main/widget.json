@@ -120,6 +120,35 @@
   ],
   "semanticDescription": "A spreadsheet: CSV and TSV import and export, editable cells and a closed set of formulas.",
   "requestedCapabilities": [],
+  "offeredActions": [
+    {
+      "name": "format",
+      "label": "Format cells",
+      "description": "Show the selected cells, or the cells of range, as a percentage, a number with two decimals, or plain. The values stay the same; Undo steps back.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "percent",
+              "number",
+              "plain"
+            ]
+          },
+          "range": {
+            "type": "string",
+            "maxLength": 24,
+            "pattern": "^[A-Za-z]{1,3}[0-9]{1,7}(:[A-Za-z]{1,3}[0-9]{1,7})?$"
+          }
+        },
+        "required": [
+          "format"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
   "sizing": {
     "compact": true,
     "expanded": true,

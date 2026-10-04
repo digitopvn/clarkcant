@@ -17,7 +17,7 @@
 
 import { delimiterFor, writeDelimited } from "./csv.js";
 import { evaluateSheet, isError } from "./formula.js";
-import { MAX_FORMATS, applyFormat, displayValue, formatAt, readFormatDirective } from "./formats.js";
+import { FORMAT_KINDS, MAX_FORMATS, applyFormat, displayValue, formatAt, readFormatDirective } from "./formats.js";
 import { semanticDocument } from "./semantic.js";
 import {
   MAX_CELLS,
@@ -29,6 +29,7 @@ import {
   createSheet,
   normalizeRange,
   parseCellName,
+  parseRangeName,
   rangeName,
   truncationNotice,
 } from "./sheet.js";
@@ -73,6 +74,9 @@ const TEXT = {
     refusedReply: "Câu trả lời của Clark không phải lệnh bảng tính này áp dụng được; không có gì thay đổi.",
     refusedRange: (range) => `Clark trả lời cho vùng ${range}, không phải vùng đang chọn; không có gì thay đổi.`,
     failed: (message) => `Không làm được: ${message}. Bảng tính giữ nguyên.`,
+    performBusy: "Bảng tính đang bận (đang mở, nhập, xuất hoặc chờ Clark); không có gì thay đổi.",
+    performRange: (range) => `“${range}” không phải một vùng ô của bảng tính này; không có gì thay đổi.`,
+    performFormat: (format) => `“${format}” không phải định dạng bảng tính này có; không có gì thay đổi.`,
     loading: "Đang mở bảng tính…",
     restoreFailed: (message) =>
       `Không đọc được bảng tính đã lưu: ${message}. Bảng tính đã lưu vẫn giữ nguyên; ở đây chỉ hiện các sửa đổi sau đó và không sửa được. Mở lại cuộc trò chuyện để thử lại, hoặc nhập một tệp để bắt đầu lại.`,
@@ -111,6 +115,9 @@ const TEXT = {
     refusedReply: "Clark's reply was not an instruction this sheet can apply; nothing was changed.",
     refusedRange: (range) => `Clark answered for ${range}, not the selected range; nothing was changed.`,
     failed: (message) => `That did not work: ${message}. The sheet is unchanged.`,
+    performBusy: "The sheet is busy (opening, importing, exporting or waiting for Clark); nothing was changed.",
+    performRange: (range) => `“${range}” is not a range of cells in this sheet; nothing was changed.`,
+    performFormat: (format) => `“${format}” is not a format this sheet has; nothing was changed.`,
     loading: "Opening the sheet…",
     restoreFailed: (message) =>
       `The saved sheet could not be read: ${message}. The saved sheet is kept as it was; only the edits made since are shown here, and they cannot be changed. Reopen the conversation to try again, or import a file to start over.`,
@@ -825,6 +832,44 @@ function mount(api) {
         setBusy(false);
       });
   });
+
+  /*
+   * The action this widget offers Clark (`offeredActions` in widget.json). The host has already checked the input
+   * against the declared schema and the person's policy; the widget still checks what only it knows — that the range is
+   * a range of this sheet and that the sheet is not busy — and refuses with a reason rather than guessing. The result is
+   * the same as a format the person asked for: kept in the state, shown in the status line, and undone by Undo.
+   */
+  if (typeof api.actions.offer === "function") {
+    api.actions.offer("format", async (input) => {
+      // A refusal is made with actions.refuse, and only before anything changed: that is what tells Clark nothing did.
+      if (busy || readOnly()) throw api.actions.refuse("SHEET_BUSY", t().performBusy);
+      const format = String(input.format ?? "");
+      if (!FORMAT_KINDS.includes(format)) throw api.actions.refuse("FORMAT_UNKNOWN", t().performFormat(format));
+      const named = typeof input.range === "string" ? input.range.trim().toUpperCase() : "";
+      const range = named === "" ? selection() : parseRangeName(named);
+      if (range === undefined || range.bottom >= MAX_ROWS || range.right >= MAX_COLUMNS) {
+        throw api.actions.refuse("RANGE_INVALID", t().performRange(named));
+      }
+      if (editing) closeEditor(true, false);
+      const next = applyFormat(formats, range, format);
+      formatHistory.push(formats);
+      if (formatHistory.length > MAX_UNDO) formatHistory.shift();
+      try {
+        await setFormats(next.formats);
+      } catch (error) {
+        // The sheet already shows the format, so this is not a refusal: whether it was kept is unknown. Any throw that
+        // is not actions.refuse is reported as a failure, which Clark treats as an uncertain outcome.
+        const why = error instanceof Error ? error.message : String(error);
+        throw new Error(`the format is shown on the sheet but could not be saved: ${why}`, { cause: error });
+      }
+      const name = rangeName(range);
+      const done = format === "percent" ? t().applied(name) : t().appliedOther(name, format);
+      const lost = next.dropped.map((entry) => entry.range).join(", ");
+      const said = lost === "" ? done : `${done} ${t().dropped(lost)}`;
+      say("formatted", said);
+      return said;
+    });
+  }
 
   /* ------------------------------------------------------------ the rest */
 

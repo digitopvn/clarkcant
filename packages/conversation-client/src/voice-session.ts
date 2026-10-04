@@ -1,5 +1,6 @@
-import { type AppIntentDecision, type VoiceState, appIntentDecisionSchema } from "@clarkcant/contracts";
+import { type AppIntentDecision, type VoiceState, WIDGET_PERFORM_VERSION, appIntentDecisionSchema, readWidgetPerformRequest } from "@clarkcant/contracts";
 
+import type { WidgetPerformEvent } from "./frame-performs.ts";
 import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS } from "./i18n/messages.ts";
 
@@ -64,6 +65,12 @@ export interface VoiceSessionEvents {
    * and the page has one executor for both a click and a voice. Only `kind: "intent"` may be run.
    */
   onAppIntent?(decision: AppIntentDecision): void;
+  /**
+   * An action Clark asked a widget on this page to perform while answering what was said. Passed on to whoever can
+   * reach the mounted frame, which reports what it answered over HTTP like the typed stream's page does. Only a session
+   * given this handler tells the node it can run one (`widgetPerform` on the auth frame); one without it is sent none.
+   */
+  onWidgetPerform?(event: WidgetPerformEvent): void;
   /**
    * The node's account of a spoken widget action, once it has run.
    *
@@ -242,6 +249,8 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
           type: "auth",
           token: options.token,
           ...(options.conversationId === undefined ? {} : { conversationId: options.conversationId }),
+          // This page can hand a perform of this version to a mounted frame and report back; the node sends none otherwise.
+          ...(events.onWidgetPerform === undefined ? {} : { widgetPerform: WIDGET_PERFORM_VERSION }),
         }),
       );
     });
@@ -299,6 +308,16 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
           // two independent checks that a page cannot act on a question.
           const parsed = appIntentDecisionSchema.safeParse(decision);
           if (parsed.success) events.onAppIntent?.(parsed.data);
+          return;
+        }
+        case "widget-perform": {
+          // Validated like a decision: a request that does not parse is not one to hand to a widget. It is still answered
+          // when its id can be read, because the node is waiting on that id.
+          const read = readWidgetPerformRequest(control["request"]);
+          if (read.kind === "request") events.onWidgetPerform?.({ type: "widget-perform", request: read.request });
+          else if (read.kind === "unreadable") {
+            events.onWidgetPerform?.({ type: "widget-perform-unreadable", performId: read.performId, report: read.report });
+          }
           return;
         }
         case "widget-action-result": {

@@ -13,6 +13,8 @@ import { TABLE } from "@clarkcant/data-canvas";
 import { getNotification, listArtifactsForConversation, listAuditEvents } from "@clarkcant/storage";
 
 import { attachApiSocket, type ApiSocket } from "../src/api-socket.ts";
+import { isWidgetArtifactWritePayload } from "../src/application/machine-artifact-writes.ts";
+import { isWidgetPerformPayload } from "../src/application/widget-actions.ts";
 import { recordNodeNotice } from "../src/notices.ts";
 import { MCP_PROTOCOL_VERSIONS } from "../src/open-interfaces.ts";
 import { createNodeServer } from "../src/server.ts";
@@ -403,6 +405,8 @@ describe("WebSocket gateway", () => {
       // The screen's report on an agent's app-control action: a machine surface forging it could tell the
       // model the screen changed when it did not.
       "/app-intents/host-control/ctl_x",
+      // The screen's report on what a widget did when Clark asked it: forged, it would tell the model a widget acted.
+      "/app-intents/widget-perform/perform_x",
       "/peers/node_x/confirm",
       "/grants",
       // A running task's approval has no card, but deciding it is the same person's decision.
@@ -903,6 +907,24 @@ describe("widget artifact writes on machine surfaces", () => {
     expect(recorded.document).toContain('"origin":"mcp"');
   });
 
+  it("keeps a widget file write card apart from a widget perform card in the decide route", async () => {
+    setPolicy({ mode: "ask" });
+    const { conversationId, route } = await widget();
+    const asked = await http("POST", route, { mimeType: "text/plain" }, MCP);
+    const approvalId = approvalOf(asked.body);
+    const payload = (await cardOf(conversationId, approvalId))?.payload as string;
+    // Each kind is read by its own exact payload kind, so neither branch of the decide route takes the other's card.
+    expect(isWidgetArtifactWritePayload(payload)).toBe(true);
+    expect(isWidgetPerformPayload(payload)).toBe(false);
+    expect(isWidgetArtifactWritePayload(JSON.stringify({ kind: "widget-perform", v: 1 }))).toBe(false);
+
+    // Approved, it runs as a file write and is answered by a file write's receipt, never a perform's.
+    expect((await decide(conversationId, approvalId)).status).toBe(200);
+    const blocks = await blocksOf(conversationId);
+    expect(receiptOf(blocks, approvalId)).toMatchObject({ status: "done", args: { operation: "create" } });
+    expect(blocks.some((block) => block.type === "tool-activity" && block.name === "perform_widget_action")).toBe(false);
+    expect(listArtifactsForConversation(services.runtime.db, conversationId)).toHaveLength(1);
+  });
   it("answers a repeated request with the card already waiting, and stops minting cards past the limit", async () => {
     setPolicy({ mode: "ask" });
     const { conversationId, route } = await widget();

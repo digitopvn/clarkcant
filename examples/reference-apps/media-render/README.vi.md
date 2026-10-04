@@ -36,9 +36,9 @@ Tiếng Anh: [README.md](README.md).
   nhỏ), dịch vụ không được chạy ở mức đó hay ở bất kỳ mức nhỏ hơn nào. Nút Dựng bị tắt, và lý do của host hiện ở chỗ
   đó.
 
-Hiện chỉ fixture model có kịch bản của repo mới đặt widget kèm `renderBinding`. Chưa có đường nào trong sản phẩm đặt
-một widget của gói đã cài kèm binding ([digitopvn/clarkcant#382](https://github.com/digitopvn/clarkcant/issues/382)),
-nên trong bản cài thật nút Dựng bị tắt và lý do được hiện ra.
+Hiện chỉ fixture model có kịch bản của repo mới đặt widget kèm `renderBinding`. Công cụ `place_widget` gắn các hành
+động widget cho Clark thực hiện và các nút "Nhờ Clark", không gắn binding tới capability của một service, nên trong
+bản cài thật nút Dựng bị tắt và lý do được hiện ra.
 
 ## Các tệp
 

@@ -646,6 +646,8 @@ export async function createModelTurn(options: {
     onEvent: () => ((event: ModelTurnEvent) => void) | undefined;
     /** See `Turn.channel`; read the same way and for the same reason. */
     channel: () => "voice" | "chat";
+    /** The message this turn's answer is being written as, read at call time: a widget placed now is captured against it. */
+    messageId?: () => string | undefined;
     /** See `Turn.origin`; read the same way and for the same reason. */
     origin: () => TurnOrigin | undefined;
   }) => readonly ToolDefinition[];
@@ -707,6 +709,7 @@ export async function createModelTurn(options: {
       conversationId: turn.conversationId,
       onEvent: () => turn.onEvent,
       channel: () => turn.channel,
+      messageId: () => turn.messageId,
       origin: () => turn.origin,
     }) ?? [];
   /*
