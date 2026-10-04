@@ -11,7 +11,13 @@ import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
-import { referenceBrief, referencesForLastUserMessage } from "../composer-references.ts";
+import { referenceBrief, referencedWork, referencesForLastUserMessage } from "../composer-references.ts";
+import {
+  type ConditionalInstructions,
+  conditionalInstructionsFromEnv,
+  createConditionalInstructions,
+  turnInstructions,
+} from "../conditional-instructions.ts";
 import { type BrowserTaskToolDeps, personTextOf } from "../browser-task-tool.ts";
 import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
@@ -131,6 +137,29 @@ export function workerModelCandidates(
  */
 export function nodeAllowedDataClasses(services: NodeServices, model: { provider: string; id: string }): readonly DataClass[] {
   return allowedDataClassesForModel(readModelPool(services.runtime.db, services.runtime.identity.ownerPrincipalId), model);
+}
+
+/** One reader of project instructions per node, so a conversation's turns and its tasks share the same cache. */
+const instructionReaders = new WeakMap<NodeServices, ConditionalInstructions>();
+
+/**
+ * The node's conditional instructions (#433), read from the projects inside its approved roots; undefined with
+ * `CLARKCANT_CONDITIONAL_INSTRUCTIONS=off`.
+ */
+export function nodeConditionalInstructions(env: NodeJS.ProcessEnv, services: NodeServices): ConditionalInstructions | undefined {
+  if (conditionalInstructionsFromEnv(env) === "off") return undefined;
+  let reader = instructionReaders.get(services);
+  if (reader === undefined) {
+    reader = createConditionalInstructions({
+      roots: () => services.projects.roots(),
+      // Which project's file could not be used, by folder name only: an operator can find it, nothing of it is printed.
+      onInvalid: ({ project }) => {
+        process.stderr.write(`${JSON.stringify({ event: "instructions-invalid", project })}\n`);
+      },
+    });
+    instructionReaders.set(services, reader);
+  }
+  return reader;
 }
 
 /**
@@ -280,6 +309,20 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
+    // Project guidance whose condition the conversation's work meets (#433): what its tool calls touched and what the
+    // message points at. Off with `CLARKCANT_CONDITIONAL_INSTRUCTIONS=off`.
+    ...(conditionalInstructionsFromEnv(deps.env) === "off"
+      ? {}
+      : {
+          instructions: turnInstructions({
+            instructions: { active: (state) => nodeConditionalInstructions(deps.env, deps.services())?.active(state) ?? [] },
+            referenced: (conversationId) =>
+              referencedWork(
+                deps.services().projects,
+                referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
+              ),
+          }),
+        }),
     /*
      * What the widgets the person changed now mean, read when a turn starts (#195).
      *

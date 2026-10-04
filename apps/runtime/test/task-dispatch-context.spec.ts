@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,7 @@ import type { ConversationId, DataClass, Instant, Principal, TaskRecord } from "
 import { advanceResolving, applyTaskEvent, createTask, type ConductorDeps } from "@clarkcant/core";
 import { getTask } from "@clarkcant/storage";
 
+import { createConditionalInstructions } from "../src/conditional-instructions.ts";
 import { BUNDLE_DATA_HEADER, type ContextBundles, createContextBundles } from "../src/context-bundle.ts";
 import { rememberMemory } from "../src/memory.ts";
 import { bootRuntime, type Runtime } from "../src/node.ts";
@@ -117,9 +118,17 @@ async function dispatch(
     throwing?: "owner" | "bundles";
     /** Start the worker on a model that may receive only these classes. */
     allowed?: readonly DataClass[];
+    /** Project instructions kept in the task's folder. */
+    instructions?: string;
   } = {},
 ): Promise<Dispatched> {
   const { conductor, task } = setup(goal, overrides.origin);
+  if (overrides.instructions !== undefined && scratch !== undefined) {
+    mkdirSync(join(scratch, ".clarkcant", "instructions"), { recursive: true });
+    writeFileSync(join(scratch, ".clarkcant", "instructions.json"), JSON.stringify({ rules: [{ include: ["style"] }] }), "utf8");
+    writeFileSync(join(scratch, ".clarkcant", "instructions", "style.md"), overrides.instructions, "utf8");
+  }
+  const instructionRoot = scratch ?? "";
   const db = conductor.db;
   const bundles = overrides.bundles === false ? undefined : createContextBundles({ db });
   let seen: WorkerProcessOptions | undefined;
@@ -128,6 +137,9 @@ async function dispatch(
   const allowed = overrides.allowed;
   const dispatcher = createTaskDispatcher({
     conductor,
+    ...(overrides.instructions === undefined
+      ? {}
+      : { conditionalInstructions: () => createConditionalInstructions({ roots: () => [instructionRoot] }) }),
     ...(allowed === undefined
       ? {}
       : {
@@ -249,6 +261,16 @@ describe("a dispatched task's context", () => {
     const wide = await dispatch(GOAL, { allowed: ["public", "internal"] });
     expect(wide.launched).toEqual([{ dataClass: "internal" }]);
     expect(wide.options?.brief.contextItems).toBe(1);
+  });
+
+  it("carries the project's instructions for its folders in the brief, and none without them", async () => {
+    const withThem = await dispatch(GOAL, { instructions: "Viết báo cáo bằng tiếng Việt có dấu." });
+    expect(withThem.options?.brief.instructions).toContain("Viết báo cáo bằng tiếng Việt có dấu.");
+    expect(withThem.options?.brief.instructions).toContain("/.clarkcant/instructions/style.md ---");
+    runtime?.close();
+    runtime = undefined;
+    const without = await dispatch(GOAL);
+    expect(without.options?.brief.instructions).toBeUndefined();
   });
 
   it("gives no context tool for a goal nothing matches", async () => {

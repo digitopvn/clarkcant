@@ -61,6 +61,7 @@ import {
   taskProfileDir,
 } from "./task-browser.ts";
 import { createWorkerCommandBroker, parseWorkerCommandRequest } from "./worker-command-broker.ts";
+import { type ConditionalInstructions, taskInstructions } from "./conditional-instructions.ts";
 import { type ContextBundles, type ContextReader, reportContextBundle } from "./context-bundle.ts";
 import { runWorkerProcess, type WorkerProcessResult } from "./worker-process.ts";
 import type { WorkView } from "./work-supervisor.ts";
@@ -213,6 +214,11 @@ export interface TaskDispatcherDeps {
    * narrowed to the model it actually launched on. Absent means the default for an unlabelled profile.
    */
   allowedDataClasses?: (model: { provider: string; id: string }) => readonly DataClass[];
+  /**
+   * Project guidance for the folders a task is given (#433), stated once in its brief. Absent, or answering undefined,
+   * means none: the switch is off, or this caller predates it.
+   */
+  conditionalInstructions?: () => ConditionalInstructions | undefined;
   /**
    * Reported once a run settles, so the conversation can say what happened without the caller asking.
    *
@@ -513,6 +519,33 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       return reader.items > 0 ? reader : undefined;
     } catch {
       return undefined;
+    }
+  };
+  /*
+   * The project guidance that applies to a task, from the folders its plan grants: the repositories it works on in a
+   * worktree count as written, since the worktree is that repository's own tree. Checked against the model the worker
+   * launched on, like its retrieved context. A failure is a task without guidance, never a task that fails.
+   */
+  const instructionsFor = (
+    plan: { read: readonly string[]; write: readonly string[]; repositories: readonly string[]; scoped: boolean },
+    capability: string,
+    launch: WorkerModelLaunch | undefined,
+  ): string => {
+    try {
+      const instructions = deps.conditionalInstructions?.();
+      if (instructions === undefined) return "";
+      const write = [...(plan.scoped ? plan.write : plan.read), ...plan.repositories];
+      return taskInstructions(instructions, {
+        read: [...plan.read, ...plan.repositories],
+        write,
+        capability,
+        allowed:
+          launch === undefined || deps.allowedDataClasses === undefined
+            ? DEFAULT_ALLOWED_DATA_CLASSES
+            : deps.allowedDataClasses(launch.model),
+      });
+    } catch {
+      return "";
     }
   };
   let closing = false;
@@ -923,6 +956,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
      */
     try {
       const context = await taskContext(task, launch);
+      const instructions = browsing ? "" : instructionsFor(plan, job.capabilityRef, launch);
       const result = await runWorker({
         nodeId: job.executionNodeId,
         brief: {
@@ -938,6 +972,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           ...(launch === undefined ? {} : { model: launch.model }),
           ...(maxTokens === undefined ? {} : { maxTokens }),
           ...(context === undefined ? {} : { contextItems: context.items }),
+          ...(instructions === "" ? {} : { instructions }),
         },
         ...(launch === undefined
           ? {}

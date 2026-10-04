@@ -51,6 +51,7 @@ import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, Turn
 
 import { attachmentBrief } from "./attachments.ts";
 import { type ContextSource, readContextTool } from "./context-bundle.ts";
+import { type InstructionTouch, type TurnInstructions, rememberTouch, touchOfToolCall } from "./conditional-instructions.ts";
 import { legacyRecap } from "./context-planner.ts";
 
 /**
@@ -297,6 +298,15 @@ interface Turn {
    * this, so it lands in the prompt's run rather than in a session that has not been prompted yet.
    */
   preparing: Promise<void> | undefined;
+  /**
+   * What this conversation's work has touched, newest kept (#433): the state conditional instructions are checked
+   * against. Kept across turns, because a rule about a folder still applies the turn after the folder was opened.
+   */
+  touched: InstructionTouch[];
+  /** The conditional instructions this session has been told, so an unpinned one is stated once per session. */
+  stated: Set<string>;
+  /** What the model answering may receive, set when a turn starts; read by a tool call's instructions. */
+  allowed: readonly DataClass[];
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -453,7 +463,11 @@ function flushReasoning(turn: Turn): void {
  * is why tool activity is captured here rather than from the adapter's own events: forwarding both
  * would draw every call twice.
  */
-function withActivity(turn: Turn, tool: ToolDefinition): ToolDefinition {
+/**
+ * `afterCall` adds to what the model reads back, never to the transcript's record: the conditional instructions a call
+ * newly made apply, labelled with where they came from.
+ */
+function withActivity(turn: Turn, tool: ToolDefinition, afterCall?: (name: string, params: Record<string, unknown>) => string): ToolDefinition {
   return {
     ...tool,
     execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
@@ -494,7 +508,8 @@ function withActivity(turn: Turn, tool: ToolDefinition): ToolDefinition {
           turn.segments.push({ kind: "host-card", block });
         }
         turn.segments.push({ kind: "block", block: record("done", answer.text) });
-        return answer;
+        const extra = afterCall?.(tool.name, params) ?? "";
+        return extra === "" ? answer : { ...answer, text: `${answer.text}\n\n${extra}` };
       } catch (cause) {
         // Returned rather than re-thrown, which is what `show_view` already does by hand: the model
         // gets the reason in the same turn and can correct itself, instead of the turn failing with
@@ -770,6 +785,11 @@ export async function createModelTurn(options: {
    * value has to be read when a turn starts rather than when this module is built.
    */
   personalInstructions?: () => string | undefined;
+  /**
+   * Conditional instructions (#433): project guidance whose condition the conversation's work now meets. Asked when a
+   * turn starts and after each tool call; absent states none, which is what the off switch does.
+   */
+  instructions?: TurnInstructions;
 }): Promise<ModelTurn | undefined> {
   /*
    * What this node runs: the choice somebody made, else what the environment names.
@@ -916,6 +936,18 @@ export async function createModelTurn(options: {
 
   const describe = (): string => `${selection.provider}/${selection.id}`;
 
+  /** The conditional instructions to state now, marked as told; nothing when there are none or they cannot be read. */
+  const stateInstructions = (turn: Turn, conversationId: string, newOnly: boolean): string => {
+    if (options.instructions === undefined) return "";
+    try {
+      const section = options.instructions({ conversationId, touched: turn.touched, stated: turn.stated, allowed: turn.allowed, newOnly });
+      for (const id of section.stated) turn.stated.add(id);
+      return section.text;
+    } catch {
+      return "";
+    }
+  };
+
   /*
    * What a model may be sent (#433). A pool that cannot be read is answered with `public` alone, which nothing the
    * conversation holds is: the turn runs without retrieved context rather than with a guess at what was allowed.
@@ -1047,13 +1079,27 @@ export async function createModelTurn(options: {
       activeTools: undefined,
       toolsUsed: new Set(),
       preparing: undefined,
+      touched: [],
+      stated: new Set(),
+      allowed: DEFAULT_ALLOWED_DATA_CLASSES,
+    };
+    /*
+     * After a tool call: remember what it touched, and hand back the instructions that newly apply. A failure here is a
+     * call answered without them, never a failed call.
+     */
+    const afterCall = (name: string, params: Record<string, unknown>): string => {
+      if (options.instructions === undefined) return "";
+      const touch = touchOfToolCall(name, params);
+      if (touch === undefined) return "";
+      rememberTouch(turn.touched, touch);
+      return stateInstructions(turn, conversationId, true);
     };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
     const customTools = [
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
       ...readExtraTools(turn),
-    ].map((tool) => withActivity(turn, tool));
+    ].map((tool) => withActivity(turn, tool, afterCall));
     turn.registeredTools = customTools.map((tool) => tool.name);
 
     const chosen = options.model?.();
@@ -1338,6 +1384,7 @@ export async function createModelTurn(options: {
       // What the model this conversation runs may be sent (#433), read now: the recap and the memory brief withhold
       // anything of another class before a selector or the provider sees it.
       const allowed = allowedFor(options.model?.() ?? selection);
+      turn.allowed = allowed;
 
       let preparedResolve: () => void = () => undefined;
       turn.preparing = new Promise<void>((resolve) => {
@@ -1398,7 +1445,10 @@ export async function createModelTurn(options: {
       // present key holding undefined is a different type from an absent key, and only one of them means
       // "this turn carries no extra instruction".
       const note = withRecap(recap.text, input.note);
-      const brief = [referencePart, attachmentPart, memoryPart].filter((part) => part !== "").join("\n\n");
+      // Project guidance whose condition holds goes with the brief, after the person's words and labelled with its
+      // source: a pinned one every turn, an unpinned one the first time this session hears it.
+      const instructionPart = stateInstructions(turn, input.conversationId, false);
+      const brief = [referencePart, attachmentPart, memoryPart, instructionPart].filter((part) => part !== "").join("\n\n");
       // What the planner retrieved from further back goes with the data, after the caller's own: material, not guidance.
       const data = [input.data ?? "", recap.earlier].map((part) => part.trim()).filter((part) => part !== "").join("\n\n");
       const ui = uiNoteFor(turn, input.conversationId);
