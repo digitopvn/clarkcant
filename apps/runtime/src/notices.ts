@@ -175,7 +175,8 @@ export function piUpdateNotice(input: {
     category: "update",
     severity: "info",
     title: "Có bản cập nhật cho Pi SDK",
-    body: `${input.currentVersion} → ${input.newVersion} · ${LANE_LABEL["trusted-native"]}`,
+    // What happens next, so the reader knows there is nothing to do: the SDK is part of ClarkCant, not installed alone.
+    body: `${input.currentVersion} → ${input.newVersion} · ${LANE_LABEL["trusted-native"]} · sẽ có trong bản ClarkCant tiếp theo, bạn không cần làm gì`,
     subject: { kind: "pi-update", packageName: input.packageName, version: input.newVersion },
     dedupKey: `update:pi:${input.packageName}@${input.newVersion}`,
     at: input.at,

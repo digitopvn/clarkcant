@@ -418,8 +418,12 @@ describe("an update notice", () => {
     expect((await check("1.2.0")).piUpdate).toBe(true);
     const pi = (await inbox()).notices.find((item) => item.subject?.kind === "pi-update");
     if (pi === undefined) throw new Error("the Pi update was not reported");
-    expect(pi.actions).toContainEqual({ id: "skip-version", placement: "menu" });
+    // It asks nothing of the person, so the buttons put it away rather than start a conversation about it.
+    expect(pi.actions?.slice(0, 2)).toEqual([{ id: "dismiss", placement: "primary" }, { id: "skip-version", placement: "secondary" }]);
+    expect(pi.actions).toContainEqual({ id: "ask-clark", placement: "menu" });
+    expect(pi.actions?.filter((action) => action.id === "dismiss")).toHaveLength(1);
     expect(pi.actions?.map((action) => action.id)).not.toContain("update");
+    expect(pi.body).toMatch(/không cần làm gì/);
 
     const skipped = await request("POST", `/inbox/notices/${pi.noticeId}/skip-version`);
     expect(skipped.body).toMatchObject({ skipped: true, subjectKind: "pi", version: "1.2.0" });
