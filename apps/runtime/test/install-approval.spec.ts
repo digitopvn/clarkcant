@@ -227,6 +227,25 @@ describe("an install the policy asks about waits in the inbox", () => {
     expect(Object.keys(item?.kind === "install-approval" ? (item.reach?.secrets[0] ?? {}) : {})).toEqual(["name", "purpose"]);
   });
 
+  it("installs from an index a newer directory wrote, and the question names what this node did not read", async () => {
+    // Another listing carries a field this node does not know: the directory is still read, and this one installs.
+    const newer = { ...entry({ packageId: "com.example.newer", displayName: "Newer" }), futureBinding: { gpu: "required" } };
+    writeIndex([entry(), newer]);
+    const plain = await askToInstall();
+    expect((await waiting())[0]).not.toHaveProperty("unreadFields");
+    expect((await decide(plain, "granted")).status).toBe(200);
+    expect(installedVersions()).toEqual([VERSION]);
+
+    // The listing that carries one is asked about with the field named, so the question does not pass for all of it.
+    const otherVersion = "1.3.0";
+    writeIndex([entry({ version: otherVersion, futureBinding: { gpu: "required" }, preview: { posterUrl: "https://example.com/p.png" } })]);
+    const asked = await call("POST", "/packages/install", { packageId: PACKAGE_ID, version: otherVersion });
+    expect(asked.status).toBe(202);
+    const [item] = await waiting();
+    expect(item).toMatchObject({ version: otherVersion, unreadFields: { count: 2, names: ["preview.posterUrl", "futureBinding"] } });
+    expect(JSON.stringify(item)).not.toContain("required");
+  });
+
   it("installs nothing on approval when the artifact declares a reach other than the question showed", async () => {
     // The question shows a browser token; the artifact (one widget file, no manifest) declares none.
     writeIndex([

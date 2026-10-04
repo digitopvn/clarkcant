@@ -38,10 +38,18 @@ export interface CredentialFieldInput {
 
 export type CredentialVaultOutcome = { ok: true; names: string[] } | { ok: false; code: string; message: string };
 
+/** How many consumers one secret records. */
+export const MAX_SECRET_CONSUMERS = 10;
+
 /** The consumers a form named, comma-separated when one secret serves several: `command:gh,command:git`. */
 export function consumersOf(value: unknown): string[] {
+  return distinctConsumers(value).slice(0, MAX_SECRET_CONSUMERS);
+}
+
+/** Every consumer a form named, each once, before the cap `consumersOf` applies. */
+export function distinctConsumers(value: unknown): string[] {
   if (typeof value !== "string") return [];
-  return [...new Set(value.split(",").map((entry) => entry.trim()).filter((entry) => entry !== ""))].slice(0, 10);
+  return [...new Set(value.split(",").map((entry) => entry.trim()).filter((entry) => entry !== ""))];
 }
 
 /**
