@@ -283,12 +283,16 @@ export function storePickedArtifact(
   return { ok: true, ref: artifactRefFromRecord(record) };
 }
 
-/** Start an empty working artifact the creating instance may write. */
-export function createWorkingArtifact(
-  deps: ArtifactBrokerDeps,
-  input: { principalId: string; conversationId: string; instanceId: string; mimeType: string; name?: string | undefined },
-): BrokerResult<{ ref: ArtifactRef }> {
-  sweepExpiredArtifacts(deps);
+/**
+ * Whether a working artifact of this type and name could be created for this instance, without creating it.
+ *
+ * `createWorkingArtifact`'s own checks, so a caller that must decide before it creates (an approval card a machine
+ * surface's request needs) refuses exactly what creating would.
+ */
+export function checkWorkingArtifactCandidate(
+  deps: Pick<ArtifactBrokerDeps, "db">,
+  input: { principalId: string; instanceId: string; mimeType: string; name?: string | undefined },
+): BrokerResult<{ mimeType: string; name: string }> {
   const mimeType = input.mimeType.trim().toLowerCase();
   if (classifyAttachment({ mime: mimeType }) === undefined) {
     return refuse("ARTIFACT_TYPE_UNSUPPORTED", `${mimeType === "" ? "an empty content type" : mimeType} is not a type a widget may create`);
@@ -305,6 +309,17 @@ export function createWorkingArtifact(
   // An empty artifact costs nothing, but one the widget could not write a byte to would only fail later.
   const overShare = checkInstanceQuota(deps.db, input.instanceId, 0);
   if (overShare !== undefined) return overShare;
+  return { ok: true, mimeType: checked.mime, name: checked.filename };
+}
+
+/** Start an empty working artifact the creating instance may write. */
+export function createWorkingArtifact(
+  deps: ArtifactBrokerDeps,
+  input: { principalId: string; conversationId: string; instanceId: string; mimeType: string; name?: string | undefined },
+): BrokerResult<{ ref: ArtifactRef }> {
+  sweepExpiredArtifacts(deps);
+  const checked = checkWorkingArtifactCandidate(deps, input);
+  if (!checked.ok) return checked;
 
   const now = deps.now();
   const artifactId = deps.newId("art");
@@ -318,8 +333,8 @@ export function createWorkingArtifact(
     state: "writable",
     conversationId: input.conversationId,
     instanceId: input.instanceId,
-    name: redactSecrets(checked.filename),
-    mimeType: checked.mime,
+    name: redactSecrets(checked.name),
+    mimeType: checked.mimeType,
     sizeBytes: 0,
     digest: undefined,
     blobPath: undefined,
@@ -688,18 +703,11 @@ export function revokeArtifactAccess(
   };
 }
 
-/**
- * Let go of a file the widget made: its row, its grants, and the bytes nothing else points at.
- *
- * Only the instance that created a working or finalized artifact may discard it, and only while the person has not
- * taken its access away. A file the person chose (`external`) is not the widget's to delete; neither is one another
- * widget made. A file the widget attached to the conversation stays attached — the attachment points at the same bytes,
- * so they are kept — and a file the person saved stays where they saved it.
- */
-export function discardArtifact(
-  deps: ArtifactBrokerDeps,
+/** Whether this instance may discard the artifact, and the record it would discard: `discardArtifact`'s own checks. */
+function checkDiscardable(
+  deps: Pick<ArtifactBrokerDeps, "db">,
   input: { principalId: string; instanceId: string; artifactId: string },
-): BrokerResult<object> {
+): BrokerResult<{ record: BrokerArtifactRecord }> {
   const record = getBrokerArtifact(deps.db, input.artifactId);
   if (record === undefined) return refuse("ARTIFACT_NOT_FOUND", ARTIFACT_NOT_ON_NODE);
   if (record.ownerPrincipalId !== input.principalId) {
@@ -717,6 +725,42 @@ export function discardArtifact(
   if (grant?.revokedAt !== undefined) {
     return refuse("ARTIFACT_GRANT_REVOKED", "this widget's access to that artifact was revoked");
   }
+  return { ok: true, record };
+}
+
+/**
+ * What an operation on an artifact would find, without performing it: the ref, after the same checks the operation
+ * makes first. `write` is the access a chunk or a finalize needs, `read` an attach's, `discard` a discard's.
+ *
+ * For a caller that must decide before it acts — an approval card a machine surface's request needs — so a card is
+ * never shown for an operation the broker would refuse anyway.
+ */
+export function checkArtifactOperation(
+  deps: ArtifactBrokerDeps,
+  input: { principalId: string; instanceId: string; artifactId: string; need: "read" | "write" | "discard" },
+): BrokerResult<{ ref: ArtifactRef }> {
+  const checked =
+    input.need === "discard"
+      ? checkDiscardable(deps, input)
+      : authorize(deps, { principalId: input.principalId, instanceId: input.instanceId, artifactId: input.artifactId, need: input.need });
+  return checked.ok ? { ok: true, ref: artifactRefFromRecord(checked.record) } : checked;
+}
+
+/**
+ * Let go of a file the widget made: its row, its grants, and the bytes nothing else points at.
+ *
+ * Only the instance that created a working or finalized artifact may discard it, and only while the person has not
+ * taken its access away. A file the person chose (`external`) is not the widget's to delete; neither is one another
+ * widget made. A file the widget attached to the conversation stays attached — the attachment points at the same bytes,
+ * so they are kept — and a file the person saved stays where they saved it.
+ */
+export function discardArtifact(
+  deps: ArtifactBrokerDeps,
+  input: { principalId: string; instanceId: string; artifactId: string },
+): BrokerResult<object> {
+  const checked = checkDiscardable(deps, input);
+  if (!checked.ok) return checked;
+  const { record } = checked;
   deleteBrokerArtifact(deps.db, record.artifactId);
   // The widget's own file: only its conversation's transcript can hold a frame of the same bytes (`blobStillReferenced`).
   releaseBytes(

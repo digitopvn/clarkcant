@@ -15,6 +15,8 @@ import {
   decideArtifactAccess,
   defaultArtifactName,
   isPersonOnlyRoute,
+  machineSurfaceOf,
+  policyGatedWidgetArtifactWrite,
   readArtifactViewer,
   sanitizeProposedArtifactName,
   validateAttachmentCandidate,
@@ -308,6 +310,46 @@ describe("routes only the person may call", () => {
     expect(isPersonOnlyRoute("GET", "/artifacts/art_x/content")).toBe(false);
     expect(isPersonOnlyRoute("POST", "/conversations/conv_x/widgets/winst_x/artifacts/art_x/chunks")).toBe(false);
     expect(isPersonOnlyRoute("POST", "/conversations/conv_x/widgets/winst_x/artifacts")).toBe(false);
+  });
+});
+
+describe("widget artifact writes a machine surface reaches only through the execution policy", () => {
+  const widget = "/conversations/conv_x/widgets/winst_x/artifacts";
+
+  it("names each write route by its operation, under any spelling the gateway accepts", () => {
+    expect(policyGatedWidgetArtifactWrite("POST", widget)).toBe("create");
+    expect(policyGatedWidgetArtifactWrite("post", `/${widget}/?x=1`)).toBe("create");
+    expect(policyGatedWidgetArtifactWrite("POST", `${widget}/art_x/chunks`)).toBe("write");
+    expect(policyGatedWidgetArtifactWrite("POST", `//conversations//conv_x/widgets/winst_x/artifacts/art_x/chunks/`)).toBe("write");
+    expect(policyGatedWidgetArtifactWrite("POST", `${widget}/art_x/finalize`)).toBe("finalize");
+    expect(policyGatedWidgetArtifactWrite("POST", `${widget}/art_x/attach`)).toBe("attach");
+    expect(policyGatedWidgetArtifactWrite("DELETE", `${widget}/art_x`)).toBe("discard");
+  });
+
+  it("leaves reads alone, and leaves Save As and the picker to the person-only classification", () => {
+    expect(policyGatedWidgetArtifactWrite("GET", `${widget}/art_x`)).toBeUndefined();
+    expect(policyGatedWidgetArtifactWrite("GET", `${widget}/art_x/content`)).toBeUndefined();
+    expect(policyGatedWidgetArtifactWrite("POST", `${widget}/pick`)).toBeUndefined();
+    expect(policyGatedWidgetArtifactWrite("POST", "/artifacts/art_x/export")).toBeUndefined();
+    expect(policyGatedWidgetArtifactWrite("POST", "/conversations/conv_x/widgets/winst_x/export")).toBeUndefined();
+    // No write route is also person-only: the two classifications never claim the same request.
+    for (const [method, path] of [
+      ["POST", widget],
+      ["POST", `${widget}/art_x/chunks`],
+      ["POST", `${widget}/art_x/finalize`],
+      ["POST", `${widget}/art_x/attach`],
+      ["DELETE", `${widget}/art_x`],
+    ] as const) {
+      expect(isPersonOnlyRoute(method, path)).toBe(false);
+    }
+  });
+
+  it("reads a machine surface only from the exact marker the node's own surfaces set", () => {
+    expect(machineSurfaceOf("mcp")).toBe("mcp");
+    expect(machineSurfaceOf("relay")).toBe("relay");
+    expect(machineSurfaceOf("cli-api")).toBe("cli-api");
+    // The page's composer, no marker, another spelling or a list of them is the person's app.
+    for (const marker of ["composer", undefined, "MCP", " relay", ["mcp"], 1]) expect(machineSurfaceOf(marker)).toBeUndefined();
   });
 });
 describe("a file card that points at an artifact", () => {

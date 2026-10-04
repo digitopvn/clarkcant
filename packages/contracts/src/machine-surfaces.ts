@@ -1,4 +1,5 @@
 import { MAP_TILE_POLICY_PREFERENCE } from "./map-view.ts";
+import { COMPOSER_SURFACE_HEADER } from "./surfaces.ts";
 
 /**
  * Routes a machine surface must not relay.
@@ -100,3 +101,56 @@ export const PERSON_ONLY_REFUSAL = Object.freeze({
   message:
     "approvals, grants, trust, file exports, widget browser tokens, deleting conversations, installing packages and updates, the map tile policy and its key, and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });
+
+/**
+ * The node's own machine surfaces, by the marker each puts on a request it carries: `mcp` from an MCP tool, `relay`
+ * from the WebSocket `request` frame, `cli-api` from `clarkcant api`. The marker travels in a header
+ * (`MACHINE_SURFACE_HEADER`), never in a body. Any HTTP caller can send it, so it is only ever a reason to decide more
+ * carefully, never a reason to allow something the person's own app could not do.
+ */
+export const MACHINE_SURFACES = ["mcp", "relay", "cli-api"] as const;
+export type MachineSurface = (typeof MACHINE_SURFACES)[number];
+export const MACHINE_SURFACE_HEADER = COMPOSER_SURFACE_HEADER;
+
+/** The machine surface a header value names, or nothing for the person's app, another value or a list of them. */
+export function machineSurfaceOf(marker: unknown): MachineSurface | undefined {
+  return typeof marker === "string" && (MACHINE_SURFACES as readonly string[]).includes(marker) ? (marker as MachineSurface) : undefined;
+}
+
+/** What a widget instance can do to the files in its share, through the write routes below. */
+export type WidgetArtifactWriteOperation = "create" | "write" | "finalize" | "attach" | "discard";
+
+/**
+ * Routes a machine surface reaches only through the execution policy.
+ *
+ * A widget instance's artifact writes — start a file, append a chunk, finalize it, attach it to the conversation,
+ * discard it — are a widget's acts, and an AI client or a remote machine carrying the person's token could otherwise
+ * make them as if it were the widget. They are not the person's decision the way an approval is, so they are not
+ * person-only: on a machine surface each one is an effect like any other, decided by the execution policy
+ * (`decideExecution`) and recorded in the audit log with the surface that carried it. The person's own app calls them
+ * as before. Reading stays reachable everywhere; Save As and picking a file stay person-only (`isPersonOnlyRoute`).
+ *
+ * Segments are split the way the gateway and `isPersonOnlyRoute` split them, so another spelling of the same path is
+ * classified the same way.
+ */
+export function policyGatedWidgetArtifactWrite(method: string, path: string): WidgetArtifactWriteOperation | undefined {
+  const verb = method.toUpperCase();
+  const segments = (path.split("?")[0] ?? "").split("/").filter((segment) => segment !== "");
+  if (segments[0] !== "conversations" || segments[2] !== "widgets" || segments[4] !== "artifacts") return undefined;
+  // POST /conversations/:id/widgets/:instanceId/artifacts
+  if (segments.length === 5) return verb === "POST" ? "create" : undefined;
+  // DELETE …/artifacts/:artifactId. `…/artifacts/pick` is person-only for POST and has no DELETE of its own.
+  if (segments.length === 6) return verb === "DELETE" ? "discard" : undefined;
+  if (segments.length !== 7 || verb !== "POST") return undefined;
+  // POST …/artifacts/:artifactId/chunks | finalize | attach
+  switch (segments[6]) {
+    case "chunks":
+      return "write";
+    case "finalize":
+      return "finalize";
+    case "attach":
+      return "attach";
+    default:
+      return undefined;
+  }
+}
