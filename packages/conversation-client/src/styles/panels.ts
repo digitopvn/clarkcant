@@ -106,6 +106,20 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-tool-why > summary:hover { color: var(--cc-text); }
 .cc-tool-why[open] > summary { margin-bottom: var(--cc-space-xxs); }
 .cc-memory-empty > p { margin: 0; }
+/* The tool lists: a subgroup heading in sentence case under the section's capitals, then one row per tool. */
+.cc-tool-list-heading {
+  margin: var(--cc-space-md) 0 var(--cc-space-xs); font-size: var(--cc-text-body-sm); font-weight: 600; color: var(--cc-text);
+}
+.cc-tool-list-heading:first-child { margin-top: 0; }
+.cc-tool-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.cc-tool-list > li {
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--cc-space-sm);
+  padding: var(--cc-space-xs) 0; border-top: var(--cc-line, 1px solid) var(--cc-border);
+}
+.cc-tool-list > li:first-child { border-top: 0; }
+.cc-tool-list > li > code { font-size: var(--cc-text-label); color: var(--cc-text-tertiary); }
+.cc-tool-list > li > .cc-tool-why { flex-basis: 100%; }
+.cc-tool-list .cc-tool-why .cc-panel-note { margin: 0; }
 .cc-panel-note { margin: var(--cc-space-sm) 0 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-badge[data-selected="true"], .cc-swatch[aria-pressed="true"] {
   outline: 2px solid var(--cc-focus); outline-offset: 2px;

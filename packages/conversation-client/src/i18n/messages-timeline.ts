@@ -651,9 +651,10 @@ export const MESSAGES_TIMELINE_VI = {
   // tool-lists.tsx
   "widgets.toolLists.readFailed": "Không đọc được danh sách công cụ từ node.",
   "widgets.toolLists.loading": "Đang đọc…",
-  "widgets.toolLists.nodeToolsTitle": "Công cụ của node này",
+  "widgets.toolLists.nodeToolsTitle": "Của node này",
   "widgets.toolLists.nodeToolsEmpty": "Node này chưa đăng ký công cụ nào.",
-  "widgets.toolLists.agentToolsTitle": "Công cụ của agent (pi)",
+  "widgets.toolLists.agentToolsTitle": "Của agent (pi)",
+  "widgets.toolLists.modelNote": "Chỉ dẫn cho model",
   "widgets.toolLists.agentToolsEmpty": "Agent không báo công cụ gốc nào.",
 
   // WidgetFrame.tsx
@@ -1586,9 +1587,10 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.details.unreadable": "This details card could not be read, so it is not shown.",
   "widgets.toolLists.readFailed": "Could not read the tool list from the node.",
   "widgets.toolLists.loading": "Reading…",
-  "widgets.toolLists.nodeToolsTitle": "This node's tools",
+  "widgets.toolLists.nodeToolsTitle": "On this node",
   "widgets.toolLists.nodeToolsEmpty": "This node has no registered tools.",
-  "widgets.toolLists.agentToolsTitle": "The agent's tools (pi)",
+  "widgets.toolLists.agentToolsTitle": "The agent's own (pi)",
+  "widgets.toolLists.modelNote": "What the model is told",
   "widgets.toolLists.agentToolsEmpty": "The agent reports no native tools.",
 
   "widgets.frame.opening": "Opening widget…",

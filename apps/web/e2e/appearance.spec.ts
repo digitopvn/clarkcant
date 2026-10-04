@@ -215,7 +215,7 @@ test("the extensions tab tells the node's tools from the agent's", async ({ page
   await page.locator("#cc-tab-extensions").click();
 
   // The agent's built-ins are a fixed list, so this half is exact.
-  await expect(page.locator("[data-tool-list='Công cụ của agent (pi)'] code").first()).toHaveText("read");
+  await expect(page.locator("[data-tool-list='agent'] code").first()).toHaveText("read");
 
   // The node's half is whatever the node reported, which is the point: the tab renders both sections and lists what
   // the node actually published - its tools, or a line saying it registered none. Asserting specific tool names here
