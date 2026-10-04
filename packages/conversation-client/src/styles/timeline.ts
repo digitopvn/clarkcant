@@ -90,6 +90,11 @@ export const TIMELINE_CSS = `
   --cc-hero-orb-size: min(394px, max(197px, calc(100vh - 420px)));
   width: var(--cc-hero-orb-size); height: var(--cc-hero-orb-size); flex: none; visibility: hidden;
 }
+/*
+ * The "no model yet" card is a second block above the heading, about a hundred pixels with its gap. The orb gives that
+ * room up rather than the note under the chips, which otherwise sank behind the composer on a laptop-height window.
+ */
+.cc-empty:has(> .cc-setup-card) > .cc-hero-orb { --cc-hero-orb-size: min(394px, max(197px, calc(100vh - 530px))); }
 .cc-empty-orb {
   border-radius: var(--cc-radius-pill);
   display: block;

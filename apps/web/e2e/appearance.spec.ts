@@ -178,6 +178,20 @@ test("on a phone the settings tab strip fades only the edges that have more beyo
   await strip.evaluate((element) => element.scrollTo({ left: element.scrollWidth }));
   await expect.poll(fades).toEqual([expect.not.stringMatching(/^0px$/), "0px"]);
 });
+test("on a laptop-height window the whole start screen sits above the composer, setup card included", async ({ page }) => {
+  for (const height of [720, 820]) {
+    await page.setViewportSize({ width: 1280, height });
+    await openApp(page);
+    // This node has no model, so the setup card is the extra block the start screen has to make room for.
+    await expect(page.locator("[data-needs-model='true']")).toBeVisible();
+    const [lastBottom, scrollBottom] = await page.evaluate(() => {
+      const empty = document.querySelector(".cc-empty");
+      const scroll = document.querySelector(".cc-scroll");
+      return [empty?.lastElementChild?.getBoundingClientRect().bottom ?? Infinity, scroll?.getBoundingClientRect().bottom ?? 0];
+    });
+    expect(lastBottom).toBeLessThanOrEqual(scrollBottom);
+  }
+});
 test("the orb is centred on the screen it is drawn over", async ({ page }) => {
   // This is a measurement, not a style assertion: the orb's position is computed from the box it
   // belongs to, and the canvas inside that box is larger than it, so "the rule is present" would not
