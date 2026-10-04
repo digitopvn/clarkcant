@@ -2088,11 +2088,16 @@ hành động đó.
 
 **Giọng nói.** Một yêu cầu bằng lời nói tới cùng công cụ đó qua lượt của Clark trong phiên giọng nói. Một lần bấm
 bằng giọng nói vào hành động được cho phép, khớp theo nhãn trên widget đang mở, đi qua cùng đường `invokeWidgetAction`
-như công cụ: cùng schema đã khai báo, chính sách thực thi và thẻ của host, sổ hiệu ứng, và nguồn gốc (`voice`, do người
-dùng yêu cầu). Yêu cầu tới frame qua chính trang của phiên giọng nói, và chỉ khi trang đó gửi `widgetPerform: 1` trong
-frame xác thực. Nếu không, lần bấm bị từ chối trước khi có gì được gửi, và người dùng được bảo hãy nhờ Clark. Bộ phân
-giải giọng nói khớp theo nhãn, nên một câu ngụ ý đối số mà không nói nhãn, như `định dạng chỗ này thành phần trăm`,
-chưa được khớp ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+như công cụ: cùng schema đã khai báo, chính sách thực thi, sổ hiệu ứng, và nguồn gốc (`voice`, do người dùng yêu cầu).
+Sổ hiệu ứng và nhật ký kiểm toán ghi rằng chính người dùng yêu cầu bằng giọng nói. Giọng nói không hỏi thêm một lời
+“đồng ý” trước; chính sách thực thi quyết định một lần. Khi chính sách hỏi, thẻ của host được đặt vào cuộc trò chuyện
+trước khi giọng nói báo điều đó, và người dùng duyệt thẻ ở đó bằng cách bấm hoặc nói “đồng ý”. Nói lại cùng hành động
+khi thẻ còn chờ sẽ được chỉ tới thẻ đó; không có thẻ thứ hai. Yêu cầu tới frame qua chính trang của phiên giọng nói, và
+chỉ khi trang đó gửi `widgetPerform: 1` trong frame xác thực. Nếu không, lần bấm bị từ chối trước khi có gì được gửi,
+và người dùng được bảo hãy nhờ Clark. Một lần bấm mà phiên đã đóng trước khi yêu cầu được gửi đi được ghi là chưa gửi,
+không phải kết quả chưa rõ. Câu trả lời của widget được đọc lên như lời của widget (“Widget báo: …”), trên một dòng,
+bằng ngôn ngữ của người dùng. Bộ phân giải giọng nói khớp theo nhãn, nên một câu ngụ ý đối số mà không nói nhãn, như
+`định dạng chỗ này thành phần trăm`, chưa được khớp ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Kiểm thử:
 
