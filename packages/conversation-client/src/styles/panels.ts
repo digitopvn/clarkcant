@@ -813,7 +813,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-widget-library-scrim { position: fixed; inset: 0; background: color-mix(in oklab, var(--cc-code) 78%, transparent); z-index: 80; }
 .cc-widget-library {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  width: min(1100px, calc(100vw - 24px)); max-height: calc(100vh - 32px);
+  /* One size for the gallery and a widget's page, so opening a card does not make the surface jump. */
+  width: min(1100px, calc(100vw - 24px)); height: calc(100vh - 32px);
   display: flex; flex-direction: column;
   background: var(--cc-elevated); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-modal);
   box-shadow: var(--cc-shadow-modal, 0 24px 64px color-mix(in oklab, var(--cc-code) 70%, transparent));
@@ -836,7 +837,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-widget-library-facets { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); padding: var(--cc-space-sm) var(--cc-space-lg); border-bottom: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-widget-library-facet { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-sm); border-radius: var(--cc-radius-button); border: var(--cc-line, 1px solid) var(--cc-border); background: transparent; color: inherit; }
 .cc-widget-library-facet[data-selected="true"] { border-color: var(--cc-accent); }
-.cc-widget-library-body { overflow-y: auto; padding: var(--cc-space-lg); }
+.cc-widget-library-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--cc-space-lg); }
+/* Close stays in the corner whether the search field or a widget's name fills the row beside it. */
+.cc-widget-library-head > [data-widget-library-close] { margin-left: auto; }
 .cc-widget-library-empty { margin: 0; color: var(--cc-text-muted); }
 .cc-library-builtin h3, .cc-library-provenance h3 { margin: 0 0 var(--cc-space-sm); font-weight: 600; }
 /* Installed packages are separated from the built-in catalog by a rule, so the two lists read as two

@@ -846,6 +846,8 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.library.semanticDescription": "Mô tả ngữ nghĩa",
   "widgets.library.source": "Nguồn",
   "widgets.library.status": "Trạng thái",
+  "widgets.library.statusStable": "Ổn định",
+  "widgets.library.statusExperimental": "Thử nghiệm",
   "widgets.library.textFallback": "Phương án chữ",
 
   // widget-library/HostCardShowcase.tsx
@@ -1769,6 +1771,8 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.library.semanticDescription": "Semantic description",
   "widgets.library.source": "Source",
   "widgets.library.status": "Status",
+  "widgets.library.statusStable": "Stable",
+  "widgets.library.statusExperimental": "Experimental",
   "widgets.library.textFallback": "Text fallback",
 
   "widgets.hostCards.title": "System cards",

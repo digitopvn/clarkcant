@@ -345,9 +345,15 @@ export function WidgetLibrarySurface({
                     <dt>{t("widgets.library.semanticDescription")}</dt>
                     <dd>{selected.description}</dd>
                     <dt>{t("widgets.library.source")}</dt>
-                    <dd>{selected.source === "builtin" ? "Built-in" : selected.source}</dd>
+                    <dd>
+                      {selected.source === "builtin"
+                        ? t("widgets.gallery.sourceBuiltin")
+                        : selected.source === "installed"
+                          ? t("widgets.gallery.sourceInstalled")
+                          : t("widgets.gallery.sourceLocal")}
+                    </dd>
                     <dt>{t("widgets.library.status")}</dt>
-                    <dd>{selected.status}</dd>
+                    <dd>{selected.status === "experimental" ? t("widgets.library.statusExperimental") : t("widgets.library.statusStable")}</dd>
                     <dt>{t("widgets.library.textFallback")}</dt>
                     <dd>{selected.definition.textFallback}</dd>
                   </dl>
