@@ -2,7 +2,17 @@ import { randomUUID } from "node:crypto";
 
 import type { ModelTurnEvent } from "@clarkcant/core";
 import { principalIdSchema, type TurnOrigin, type WidgetDefinition } from "@clarkcant/contracts";
-import { activeGenerations, captureSnapshot, createInstance, getActionBinding, getInstance, saveActionBindingWithinTransaction } from "@clarkcant/core";
+import {
+  activeGenerations,
+  captureSnapshot,
+  createInstance,
+  getActionBinding,
+  getCapability,
+  getInstance,
+  invocationPreflight,
+  packageProvidedCapabilities,
+  saveActionBindingWithinTransaction,
+} from "@clarkcant/core";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import { listConversationInstanceIds, transaction } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
@@ -262,11 +272,22 @@ const PLACE_ACTIONS = ["list", "place"] as const;
 const LISTED_WIDGETS = 20;
 const MAX_BUTTONS = 4;
 
-interface ButtonRequest {
-  prop: string;
-  label: string;
-  intent: string;
-  contextRefs?: unknown;
+/**
+ * A button the model asks for: one that asks Clark (`intent`), or one that calls a capability of the widget's own
+ * package service (`capabilityRef`). A capability button names the arguments the press sends (`inputs`) and the ones
+ * read from the widget's own state when it is pressed (`stateInputs`); everything else about it — the input schema, the
+ * effect category, the generation it is pinned to — comes from the registry, never from the model.
+ */
+type ButtonRequest =
+  | { kind: "agent"; prop: string; label: string; intent: string; contextRefs?: unknown }
+  | { kind: "invoke"; prop: string; label: string; capabilityRef: string; inputs: string[]; stateInputs: string[] };
+
+const BUTTON_SHAPE = "each button needs prop, label, and either intent or capabilityRef";
+
+function namesOf(value: unknown): string[] | undefined {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every((name) => typeof name === "string" && name.trim() !== "")) return undefined;
+  return [...new Set(value.map((name: string) => name.trim()))];
 }
 
 function buttonsOf(value: unknown): ButtonRequest[] | string {
@@ -275,47 +296,148 @@ function buttonsOf(value: unknown): ButtonRequest[] | string {
   if (value.length > MAX_BUTTONS) return `at most ${String(MAX_BUTTONS)} buttons`;
   const buttons: ButtonRequest[] = [];
   for (const entry of value) {
-    if (entry === null || typeof entry !== "object") return "each button needs prop, label and intent";
-    const { prop, label, intent, contextRefs } = entry as Record<string, unknown>;
-    if (typeof prop !== "string" || typeof label !== "string" || typeof intent !== "string" || label.trim() === "" || intent.trim() === "") {
-      return "each button needs prop, label and intent";
+    if (entry === null || typeof entry !== "object") return BUTTON_SHAPE;
+    const { prop, label, intent, contextRefs, capabilityRef, inputs, stateInputs } = entry as Record<string, unknown>;
+    if (typeof prop !== "string" || typeof label !== "string" || label.trim() === "") return BUTTON_SHAPE;
+    if (intent !== undefined && capabilityRef !== undefined) return "a button either asks Clark (intent) or calls a capability (capabilityRef), not both";
+    if (typeof capabilityRef === "string" && capabilityRef.trim() !== "") {
+      if (contextRefs !== undefined) return "contextRefs belong to a button that asks Clark, not one that calls a capability";
+      const sent = namesOf(inputs);
+      const read = namesOf(stateInputs);
+      if (sent === undefined || read === undefined) return "inputs and stateInputs are lists of argument names";
+      buttons.push({ kind: "invoke", prop, label: label.trim(), capabilityRef: capabilityRef.trim(), inputs: sent, stateInputs: read });
+      continue;
     }
-    buttons.push({ prop, label: label.trim(), intent: intent.trim(), ...(contextRefs === undefined ? {} : { contextRefs }) });
+    if (inputs !== undefined || stateInputs !== undefined) return "inputs and stateInputs belong to a button that calls a capability";
+    if (typeof intent !== "string" || intent.trim() === "") return BUTTON_SHAPE;
+    buttons.push({ kind: "agent", prop, label: label.trim(), intent: intent.trim(), ...(contextRefs === undefined ? {} : { contextRefs }) });
   }
   return buttons;
 }
 
-/** The widgets of packages this node runs now, each read from its running generation. */
-function installedWidgets(services: PlaceServices): { widgetId: string; summary: string }[] {
-  const node = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId };
-  const ids = new Set(activeGenerations(node).flatMap((generation) => [...(generation.widgetIds ?? [])]));
-  const rows: { widgetId: string; summary: string }[] = [];
-  for (const widgetId of ids) {
-    const found = locateIsolatedFrame(services.runtime, widgetId);
-    if (!found.ok || !found.active || found.definition.renderer !== "isolated-app") continue;
-    const definition = found.definition;
-    const offered = (definition.offeredActions ?? []).map((entry) => `${entry.name} (“${entry.label}”)`).join(", ");
-    rows.push({
-      widgetId,
-      summary:
-        `- ${widgetId}: ${definition.semanticDescription.slice(0, 300)} props schema: ${JSON.stringify(definition.propsSchema).slice(0, 800)}` +
-        (offered === "" ? "" : ` offered actions: ${offered}`),
-    });
-    if (rows.length >= LISTED_WIDGETS) break;
-  }
-  return rows;
+/**
+ * The input a capability button's press may send: the capability's own schema, cut down to the arguments the press
+ * sends. An argument also read from the widget's state is not required of the press, since the state supplies it.
+ */
+function pressInputSchema(keys: readonly string[], stateKeys: readonly string[], capabilitySchema?: Record<string, unknown>): Record<string, unknown> {
+  const declared = (capabilitySchema?.properties ?? {}) as Record<string, unknown>;
+  const required = Array.isArray(capabilitySchema?.required) ? (capabilitySchema.required as unknown[]).map(String) : [];
+  const stillRequired = required.filter((key) => keys.includes(key) && !stateKeys.includes(key));
+  // A property may point into the root's definitions with `$ref`; they are carried so the cut schema still resolves it.
+  const definitions = Object.fromEntries(
+    (["$defs", "definitions"] as const).flatMap((name) => (capabilitySchema?.[name] === undefined ? [] : [[name, capabilitySchema[name]]])),
+  );
+  return {
+    type: "object",
+    properties: Object.fromEntries(keys.map((key) => [key, Object.hasOwn(declared, key) ? declared[key] : {}])),
+    ...(stillRequired.length === 0 ? {} : { required: stillRequired }),
+    additionalProperties: false,
+    ...definitions,
+  };
 }
 
+/** The state keys a widget's state schema does not hold, when it says which it holds. */
+function notInState(definition: WidgetDefinition, keys: readonly string[]): string[] {
+  const schema = definition.stateSchema as { properties?: Record<string, unknown>; additionalProperties?: unknown } | undefined;
+  if (schema === undefined) return [...keys];
+  if (schema.additionalProperties !== false) return [];
+  return keys.filter((key) => !Object.hasOwn(schema.properties ?? {}, key));
+}
+
+/** Where a placed widget's definition is read from: the package this node runs (`locateIsolatedFrame`). */
+export type PlaceableWidgetLocator = (
+  services: PlaceServices,
+  widgetId: string,
+) =>
+  | { ok: false; message: string }
+  | {
+      ok: true;
+      active: boolean;
+      definition: WidgetDefinition;
+      /** The active generation of the package the definition was read from, by package identity; absent when none runs. */
+      generationId: string | undefined;
+    };
+
+const locateInstalled: PlaceableWidgetLocator = (services, widgetId) => locateIsolatedFrame(services.runtime, widgetId);
+
+/**
+ * The widgets of packages this node runs now, each with its own package's capabilities.
+ *
+ * A widget id is listed under a generation only when the definition placing it would read belongs to that same
+ * generation. Widget ids are not namespaced, so another package declaring the same id is not shown with this package's
+ * capabilities, and placing the id binds to the package the definition really comes from. Each id is located once.
+ *
+ * A package with widgets that was recorded before generations kept their widget ids is named after the widgets, on its
+ * own line that does not count toward the widgets shown.
+ */
+export function listPlaceableWidgets(services: PlaceServices, locate: PlaceableWidgetLocator = locateInstalled): { widgetId: string; summary: string }[] {
+  const node = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId };
+  const provided = packageProvidedCapabilities(node);
+  const located = new Map<string, ReturnType<PlaceableWidgetLocator>>();
+  const rows: { widgetId: string; summary: string }[] = [];
+  const unlisted: { widgetId: string; summary: string }[] = [];
+  for (const generation of activeGenerations(node)) {
+    if (generation.widgetIds === undefined) {
+      // Its install recorded a UI facet, but not which widgets: nothing here says which ids are this package's.
+      if (generation.uiOnlyFacets.includes("ui") && unlisted.length < LISTED_WIDGETS) {
+        unlisted.push({
+          widgetId: "",
+          summary: `- package ${generation.packageId} ${generation.version}: its widgets cannot be listed, because it was installed before this node recorded a package's widgets; reinstall or update the package to list them.`,
+        });
+      }
+      continue;
+    }
+    const mine = generation.widgetIds.flatMap((widgetId) => {
+      if (rows.some((row) => row.widgetId === widgetId)) return [];
+      let found = located.get(widgetId);
+      if (found === undefined) {
+        found = locate(services, widgetId);
+        located.set(widgetId, found);
+      }
+      if (!found.ok || !found.active || found.generationId !== generation.generationId || found.definition.renderer !== "isolated-app") return [];
+      return [{ widgetId, definition: found.definition }];
+    });
+    if (mine.length === 0) continue;
+    // What a capability button on this package's widgets may call: the package's own service, nothing else.
+    const own = provided
+      .filter((entry) => entry.generation === generation.generationId)
+      .flatMap((entry) => {
+        const descriptor = getCapability(node, entry.ref, node.nodeId);
+        if (descriptor === undefined) return [];
+        const ready = invocationPreflight(node, entry.ref);
+        return [
+          `${entry.ref} (“${descriptor.summary.slice(0, 160)}”, ${descriptor.effectCategory}${ready.ready ? "" : `, not ready: ${ready.message.slice(0, 160)}`}; ` +
+            `input schema: ${JSON.stringify(descriptor.inputSchema ?? {}).slice(0, 400)})`,
+        ];
+      });
+    for (const { widgetId, definition } of mine) {
+      const offered = (definition.offeredActions ?? []).map((entry) => `${entry.name} (“${entry.label}”)`).join(", ");
+      rows.push({
+        widgetId,
+        summary:
+          `- ${widgetId}: ${definition.semanticDescription.slice(0, 300)} props schema: ${JSON.stringify(definition.propsSchema).slice(0, 800)}` +
+          (definition.stateSchema === undefined ? "" : ` state schema: ${JSON.stringify(definition.stateSchema).slice(0, 400)}`) +
+          (offered === "" ? "" : ` offered actions: ${offered}`) +
+          (own.length === 0 ? "" : ` its package's capabilities: ${own.join("; ")}`),
+      });
+      if (rows.length >= LISTED_WIDGETS) return [...rows, ...unlisted];
+    }
+  }
+  return [...rows, ...unlisted];
+}
 export function createPlaceWidgetTool(deps: PlaceWidgetToolDeps): ToolDefinition {
   return {
     name: "place_widget",
     label: "Đặt widget của gói vào cuộc trò chuyện",
     description:
-      "Place a widget from an installed package into this conversation, such as a spreadsheet or a text editor. Call " +
-      "list first: it shows each installed widget's id, props schema and the actions it offers to Clark. Every offered " +
-      "action is bound when it is placed, so perform_widget_action can use it later. A widget whose props name a binding " +
-      "(for example an \"Ask Clark\" button) gets one through buttons: the prop to put its id in, the label the person " +
-      "sees, what Clark should do when it is pressed (intent), and optionally contextRefs such as [\"selection\", \"widget\"].",
+      "Place a widget from an installed package into this conversation, such as a spreadsheet, a text editor or an image " +
+      "generator. Call list first: it shows each installed widget's id, props and state schemas, the actions it offers to " +
+      "Clark, and its package's own capabilities. Every offered action is bound when it is placed, so perform_widget_action " +
+      "can use it later. A widget whose props name a binding gets one through buttons: the prop to put its id in and the " +
+      "label the person sees, then either what Clark should do when it is pressed (intent, optionally with contextRefs such " +
+      "as [\"selection\", \"widget\"]) or one of its package's capabilities to call (capabilityRef, with inputs: the arguments " +
+      "the widget sends when pressed, and stateInputs: the ones read from the widget's state). A button can only call its " +
+      "own package's capability; the execution policy still decides each press.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -326,16 +448,24 @@ export function createPlaceWidgetTool(deps: PlaceWidgetToolDeps): ToolDefinition
         props: { type: "object", description: "For place: the widget's props, matching its props schema." },
         buttons: {
           type: "array",
-          description: "For place, optional: buttons that ask Clark, each bound into a string prop the widget reads.",
+          description:
+            "For place, optional: buttons bound into string props the widget reads, each asking Clark (intent) or calling its package's capability (capabilityRef).",
           items: {
             type: "object",
             additionalProperties: false,
-            required: ["prop", "label", "intent"],
+            required: ["prop", "label"],
             properties: {
               prop: { type: "string" },
               label: { type: "string" },
-              intent: { type: "string" },
+              intent: { type: "string", description: "What Clark should do when pressed. Not with capabilityRef." },
               contextRefs: { type: "array", items: { type: "string" } },
+              capabilityRef: { type: "string", description: "A capability of the widget's own package, from list. Not with intent." },
+              inputs: { type: "array", items: { type: "string" }, description: "With capabilityRef: arguments the widget sends when pressed." },
+              stateInputs: {
+                type: "array",
+                items: { type: "string" },
+                description: "With capabilityRef: arguments read from the widget's state when pressed; a value the press sends wins.",
+              },
             },
           },
         },
@@ -347,7 +477,7 @@ export function createPlaceWidgetTool(deps: PlaceWidgetToolDeps): ToolDefinition
       if (!(PLACE_ACTIONS as readonly string[]).includes(action)) return { text: `"${action}" is not an action here; use list or place.` };
       const services = deps.services();
       if (action === "list") {
-        const rows = installedWidgets(services);
+        const rows = listPlaceableWidgets(services);
         return {
           text:
             rows.length === 0
@@ -365,12 +495,6 @@ export function createPlaceWidgetTool(deps: PlaceWidgetToolDeps): ToolDefinition
  * the instance created and captured against this turn's message. Refused whole, with nothing created, when any part
  * does not compile.
  */
-/** Where a placed widget's definition is read from: the package this node runs (`locateIsolatedFrame`). */
-export type PlaceableWidgetLocator = (
-  services: PlaceServices,
-  widgetId: string,
-) => { ok: false; message: string } | { ok: true; active: boolean; definition: WidgetDefinition };
-
 export function placeWidget(
   services: PlaceServices,
   deps: Pick<PlaceWidgetToolDeps, "messageId"> & { locate?: PlaceableWidgetLocator },
@@ -380,9 +504,10 @@ export function placeWidget(
   if (widgetId === "") return { text: "Name the widget to place by its id from list. Nothing was placed." };
   const messageId = deps.messageId();
   if (messageId === undefined) return { text: "The widget could not be placed: this turn has no message yet. Nothing was placed." };
-  const found = (deps.locate ?? ((placing, id) => locateIsolatedFrame(placing.runtime, id)))(services, widgetId);
+  const found = (deps.locate ?? locateInstalled)(services, widgetId);
   if (!found.ok) return { text: `Not placed: ${found.message}` };
-  if (!found.active) return { text: `Not placed: ${widgetId}'s package is not installed and running on this node.` };
+  if (!found.active || found.generationId === undefined) return { text: `Not placed: ${widgetId}'s package is not installed and running on this node.` };
+  const widgetGeneration = found.generationId;
   const definition = found.definition;
   if (definition.renderer !== "isolated-app") return { text: `Not placed: ${widgetId} is not a widget that runs in its own frame.` };
   const buttons = buttonsOf(params.buttons);
@@ -422,12 +547,34 @@ export function placeWidget(
       return { text: `Not placed: ${widgetId} has no string prop named ${button.prop} to put a button's id in.` };
     }
     if (Object.hasOwn(props, button.prop)) return { text: `Not placed: ${button.prop} is given both as a prop and as a button.` };
-    const result = compileWidgetAction(bindingDeps, {
-      definitionRef,
-      label: button.label,
-      action: { kind: "agent", intent: button.intent, ...(button.contextRefs === undefined ? {} : { contextRefs: button.contextRefs }) },
-      ownerPrincipalId: owner,
-    });
+    let result: ReturnType<typeof compileWidgetAction>;
+    if (button.kind === "invoke") {
+      const missing = notInState(definition, button.stateInputs);
+      if (missing.length > 0) return { text: `Not placed: ${widgetId}'s state holds no ${missing.join(", ")} for the button “${button.label}” to read.` };
+      const stateInputs = button.stateInputs;
+      result = compileWidgetAction(bindingDeps, {
+        definitionRef,
+        label: button.label,
+        action: { kind: "invoke", capabilityRef: button.capabilityRef, args: {} },
+        carries: {
+          source: "user-input",
+          noun: "button",
+          keys: button.inputs,
+          stateKeys: stateInputs,
+          schema: (keys, capabilitySchema) => pressInputSchema(keys, stateInputs, capabilitySchema),
+        },
+        ownerPrincipalId: owner,
+        // The grant: a placed widget's button reaches only the service its own package generation runs.
+        widgetGeneration,
+      });
+    } else {
+      result = compileWidgetAction(bindingDeps, {
+        definitionRef,
+        label: button.label,
+        action: { kind: "agent", intent: button.intent, ...(button.contextRefs === undefined ? {} : { contextRefs: button.contextRefs }) },
+        ownerPrincipalId: owner,
+      });
+    }
     if (!result.ok) return { text: `Not placed: the host refused the button “${button.label}”: ${result.message}` };
     props[button.prop] = result.bindTo("pending").actionBindingId;
     compiled.push(result);

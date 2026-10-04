@@ -38,9 +38,9 @@ Vietnamese: [README.vi.md](README.vi.md).
   too small), the service is not started at that size or any smaller one. Render is disabled, and the host's reason is
   shown in its place.
 
-Only the repository's scripted fixture model places the widget with `renderBinding` today. The `place_widget` tool
-binds a widget's offered actions and "Ask Clark" buttons, not a binding to a service's capability, so in a real
-installation Render is disabled and its reason is shown.
+The `place_widget` tool places the widget in a real installation, with `renderBinding` bound to the package's
+`render@1` and `source`, `gainDb`, `trimStartMs` and `trimEndMs` as its `inputs`; see
+[widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
 
 ## Files
 
