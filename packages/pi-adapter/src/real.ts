@@ -409,6 +409,9 @@ export class RealPiAdapter implements PiAdapter {
         withFileTypes: true,
       });
       return entries
+        // What pi would load: a folder, or a script file. A backup, a note or a config file left beside them is not an
+        // extension, and listing one as if it were tells the reader pi runs something it never does.
+        .filter((entry) => entry.isDirectory() || (/\.(?:ts|js|mjs|cjs|mts|cts)$/u.test(entry.name) && !entry.name.endsWith(".d.ts")))
         .map((entry) => ({
           name: entry.name,
           kind: entry.isDirectory() ? ("directory" as const) : ("file" as const),

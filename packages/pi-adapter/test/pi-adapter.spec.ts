@@ -503,6 +503,9 @@ describe("the extension listing", () => {
     // Written with contents that must not appear in the answer: the listing reports that a file is there, never what is
     // in it, because an extension on a real machine can hold a credential.
     writeFileSync(join(dir, "extensions", "notes.ts"), "const token = must-not-be-listed;");
+    // Left beside them and never loaded, so never listed.
+    writeFileSync(join(dir, "extensions", "notes.ts.bak.20260920"), "");
+    writeFileSync(join(dir, "extensions", "settings.json"), "{}");
 
     const adapter = new RealPiAdapter({
       cwd: process.cwd(),
