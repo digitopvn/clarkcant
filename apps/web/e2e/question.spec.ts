@@ -133,3 +133,22 @@ test("a form's draft survives a rerender, and submitting sends the answers as a 
   await expect(card.locator("[data-form-answer='field-1']")).toHaveText("clarkcant");
   await expect(card.locator(".cc-chip[data-form-answer]")).toHaveCount(0);
 });
+
+test("a form closed without an answer says it is closed rather than showing empty answers", async ({ page }) => {
+  await openApp(page);
+
+  const composer = page.locator("textarea[aria-label='Nhập tin nhắn']");
+  await composer.fill("cho tôi một biểu mẫu");
+  await composer.press("Enter");
+  const card = page.locator("[data-host-card='form']").last();
+  await expect(card).toHaveAttribute("data-form-open", "true", { timeout: 20_000 });
+
+  // Moving on without answering closes the form; nothing was sent from it.
+  await composer.fill("thử audio giả lập");
+  await composer.press("Enter");
+  await expect(card).toHaveAttribute("data-form-open", "false", { timeout: 20_000 });
+
+  // A dash per field would read as answers of nothing. The card says it is closed and where a sent answer would be.
+  await expect(card.locator("[data-form-closed='true']")).toContainText("đã đóng");
+  await expect(card.locator("[data-form-fields]")).toBeHidden();
+});

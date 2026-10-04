@@ -153,6 +153,7 @@ export const MESSAGES_TIMELINE_VI = {
 
   // blocks.tsx — form card
   "blocks.form.missingFieldsLabel": "Còn thiếu",
+  "blocks.form.closed": "Biểu mẫu này đã đóng. Câu trả lời đã gửi, nếu có, nằm trong tin nhắn của bạn ngay sau nó.",
 
   // blocks.tsx — marketplace
   "blocks.marketplace.searchResultsAria": "Kết quả tìm gói",
@@ -1140,6 +1141,7 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.attachment.retry": "Try again",
 
   "blocks.form.missingFieldsLabel": "Missing",
+  "blocks.form.closed": "This form is closed. Anything you sent from it is in your message right after it.",
 
   "blocks.marketplace.searchResultsAria": "Package search results",
   "blocks.marketplace.resultsIn": "Results in {directory}",

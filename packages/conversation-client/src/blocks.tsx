@@ -2007,6 +2007,11 @@ export function FormCardBlock({
   const [values, setValues] = useState<Record<string, string>>({});
   const missing = fields.filter((field) => field.required && (values[field.id] ?? "").trim() === "");
   const complete = missing.length === 0 && fields.length > 0;
+  /*
+   * A closed form this view holds no answers for: never sent, or sent before a reload emptied the draft. A dash per
+   * field would read as an answer of nothing, so the card says it is closed and where a sent answer lives instead.
+   */
+  const unanswered = !open && fields.every((field) => (values[field.id] ?? "").trim() === "");
 
   const summary = (): string => {
     const lines = fields
@@ -2031,7 +2036,12 @@ export function FormCardBlock({
         <span className="cc-card-title">{title}</span>
       </header>
       <div className="cc-card-body">
-        <div className="cc-form-fields" data-form-fields={fields.length}>
+        {unanswered ? (
+          <p className="cc-freshness" data-form-closed="true">
+            {t("blocks.form.closed")}
+          </p>
+        ) : null}
+        <div className="cc-form-fields" data-form-fields={fields.length} hidden={unanswered}>
           {fields.map((field) => (
             <label key={field.id} className="cc-credential-field">
               <span>
