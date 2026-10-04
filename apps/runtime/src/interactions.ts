@@ -45,6 +45,15 @@ export const QUESTION_TTL_MS = 15 * 60_000;
 const SECRET_ASKING =
   /(api[\s_-]?key|access[\s_-]?token|auth[\s_-]?token|bearer\s|password|passphrase|mật\s*khẩu|mat\s*khau|private[\s_-]?key|client[\s_-]?secret|seed\s*phrase)/i;
 
+/**
+ * Whether any of `texts` reads as asking for a secret. Shared by every card whose answer goes back into the
+ * conversation: a question's words and options here, and `ask_user`'s form, whose submitted values reach the model as
+ * an ordinary message.
+ */
+export function asksForSecret(...texts: readonly string[]): boolean {
+  return SECRET_ASKING.test(texts.join(" "));
+}
+
 export const SECRET_REQUEST_MESSAGE =
   "This question appears to request a secret. Use request_secret instead.";
 
@@ -92,6 +101,8 @@ export function createQuestion(deps: InteractionDeps, raw: unknown): CreateQuest
 
 /** What the card says out loud is bounded like what it shows (`questionCardBlockSchema.voicePrompt`). */
 const VOICE_PROMPT_MAX = 500;
+/** A question's answer, drop and ask-again records quote its prompt in their label (`toolActivityBlockSchema.label`). */
+const RECORD_LABEL_MAX = 300;
 
 /**
  * The question card for a question, or the reason there is none, without recording anything.
@@ -114,12 +125,11 @@ export function buildQuestionCard(
       .slice(0, 3)
       .map((issue) => `${issue.path.length === 0 ? "input" : issue.path.join(".")}: ${issue.message}`)
       .join("; ");
-    return { ok: false, code: "INVALID_QUESTION", message: `Câu hỏi không hợp lệ (cần \`question\` và \`kind\`): ${problems}` };
+    return { ok: false, code: "INVALID_QUESTION", message: `Câu hỏi không hợp lệ: ${problems}` };
   }
   const input: AskUserQuestionInput = parsed.data;
 
-  const asksForSecret = `${input.question} ${(input.options ?? []).map((option) => option.label).join(" ")}`;
-  if (SECRET_ASKING.test(asksForSecret)) {
+  if (asksForSecret(input.question, ...(input.options ?? []).map((option) => option.label))) {
     return { ok: false, code: "SECRET_REQUEST", message: SECRET_REQUEST_MESSAGE };
   }
 
@@ -273,7 +283,7 @@ export function answerQuestion(
       type: "tool-activity",
       toolCallId: deps.newId("call"),
       name: "ask_user_question",
-      label: `Trả lời: ${interaction.prompt}`,
+      label: fitHead(`Trả lời: ${interaction.prompt}`, RECORD_LABEL_MAX),
       status: "done",
       args: {
         questionId,
@@ -315,7 +325,7 @@ export function cancelQuestion(deps: InteractionDeps, questionId: string, reason
         type: "tool-activity",
         toolCallId: deps.newId("call"),
         name: "ask_user_question",
-        label: `Bỏ qua: ${interaction.prompt}`,
+        label: fitHead(`Bỏ qua: ${interaction.prompt}`, RECORD_LABEL_MAX),
         status: "done",
         args: { questionId, decision: "cancelled" },
         result: reason,
@@ -418,7 +428,7 @@ export function askQuestionAgain(deps: InteractionDeps, questionId: string): Ask
         type: "tool-activity",
         toolCallId: deps.newId("call"),
         name: "ask_user_question",
-        label: `Hỏi lại: ${previous.prompt}`,
+        label: fitHead(`Hỏi lại: ${previous.prompt}`, RECORD_LABEL_MAX),
         status: "done",
         args: { questionId, decision: "asked-again", askedAs: created.interaction.questionId },
         result: "Câu hỏi đã hết hạn được hỏi lại.",

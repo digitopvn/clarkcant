@@ -46,7 +46,7 @@ import { createRequestSecretTool, type RequestSecretDeps } from "./request-secre
 import type { InteractionDeps } from "./interactions.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
 import { applyGuardrailConstraints, preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
-import { SECRET_REQUEST_MESSAGE, buildQuestionCard, createQuestion } from "./interactions.ts";
+import { SECRET_REQUEST_MESSAGE, asksForSecret, buildQuestionCard, createQuestion } from "./interactions.ts";
 import type { SecretBroker } from "./secret-broker.ts";
 import type { OperationGuardInput, OperationGuardOutcome } from "./jev-decider.ts";
 import { extractPdfText } from "./pdf-text.ts";
@@ -1612,6 +1612,11 @@ export function createAskUserTool(
       if (fields.length > 0) {
         const title = typeof params.title === "string" && params.title.trim() !== "" ? params.title.trim() : question;
         if (title === "") return { text: "Một biểu mẫu cần `title` hoặc `question` nói nó dùng để làm gì." };
+        // A submitted form reaches the model as an ordinary message, so a form that asks for a secret is refused like a
+        // question that does, on the words the person reads before typing into it.
+        if (asksForSecret(title, ...fields.flatMap((field) => [String(field.label), String(field.placeholder ?? "")]))) {
+          return { text: SECRET_REQUEST_MESSAGE };
+        }
         const shown = fitHead(title, FORM_TITLE_MAX);
         return {
           text: `Đã gửi một biểu mẫu để hỏi người dùng: “${shown}”. Câu trả lời sẽ đến ở lượt kế tiếp — kết thúc lượt này.`,
@@ -1645,7 +1650,7 @@ export function createAskUserTool(
       // The one card shape `ask_user_question` builds, with its bounds and its refusals: the question and the labels are
       // refused rather than shortened when they are too long, because a shortened label could match a different answer.
       const built = buildQuestionCard({ newId, now }, { question, kind: "single-choice", options });
-      if (!built.ok) return { text: built.code === "SECRET_REQUEST" ? SECRET_REQUEST_MESSAGE : built.message };
+      if (!built.ok) return { text: built.message };
 
       return {
         text:

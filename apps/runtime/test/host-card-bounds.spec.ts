@@ -17,7 +17,15 @@ import { type Database, migrate, openDatabase } from "@clarkcant/storage";
 
 import { invokeCapability } from "../src/application/capability-invoke.ts";
 import { createAskUserQuestionTool } from "../src/ask-user-question.ts";
-import type { InteractionDeps } from "../src/interactions.ts";
+import { fitTail } from "../src/card-text.ts";
+import {
+  type InteractionDeps,
+  SECRET_REQUEST_MESSAGE,
+  answerQuestion,
+  askQuestionAgain,
+  cancelQuestion,
+  createQuestion,
+} from "../src/interactions.ts";
 import { createAskUserTool, createRunCommandTool } from "../src/node-tools.ts";
 import { ownedResources, preflightCommand } from "../src/preflight.ts";
 import { createRequestSecretTool } from "../src/request-secret.ts";
@@ -178,6 +186,45 @@ describe("the question and form cards ask_user builds", () => {
     const untitled = await ask({ fields: [{ label: "Tên" }] });
     expect(untitled.hostCard).toBeUndefined();
   });
+
+  it("refuses a question or a form that asks for a secret, because either answer reaches the model", async () => {
+    const question = await ask({ question: "Mật khẩu của bạn là gì?", options: [{ label: "a" }, { label: "b" }] });
+    expect(question.hostCard).toBeUndefined();
+    expect(question.text).toBe(SECRET_REQUEST_MESSAGE);
+
+    const byLabel = await ask({ question: "Đăng nhập", fields: [{ label: "Tên" }, { label: "Password" }] });
+    expect(byLabel.hostCard).toBeUndefined();
+    expect(byLabel.text).toBe(SECRET_REQUEST_MESSAGE);
+
+    const byTitle = await ask({ question: "q", title: "Your OpenAI API key", fields: [{ label: "Giá trị" }] });
+    expect(byTitle.hostCard).toBeUndefined();
+    expect(byTitle.text).toBe(SECRET_REQUEST_MESSAGE);
+
+    const byPlaceholder = await ask({ question: "q", fields: [{ label: "Giá trị", placeholder: "paste the access token" }] });
+    expect(byPlaceholder.hostCard).toBeUndefined();
+    expect(byPlaceholder.text).toBe(SECRET_REQUEST_MESSAGE);
+
+    const ordinary = await ask({ question: "Thông tin giao hàng", fields: [{ label: "Địa chỉ", placeholder: "Số nhà, đường" }] });
+    expect(expectValidCard(ordinary.hostCard).type).toBe("form-card");
+  });
+
+  it("shortens between the characters a person sees: flags, joined emoji and letters written with combining marks", async () => {
+    const flag = "🇻🇳";
+    const family = "👨‍👩‍👧";
+    const decomposed = "ế"; // ế as a base letter and two combining marks
+    for (const [character, kept] of [
+      [flag, 124],
+      [family, 62],
+      [decomposed, 166],
+    ] as const) {
+      const answer = await ask({ question: "Chọn một", options: [{ label: "a", detail: character.repeat(300) }, { label: "b" }] });
+      const card = expectValidCard(answer.hostCard);
+      if (card.type !== "question-card") throw new Error("expected a question card");
+      expect(card.options[0]?.description).toBe(`${character.repeat(kept)}…`);
+    }
+    expect(fitTail(`/${decomposed.repeat(10)}`, 8)).toBe(`…${decomposed.repeat(2)}`);
+    expect(fitTail(flag.repeat(5), 10)).toBe(`…${flag.repeat(2)}`);
+  });
 });
 
 describe("the question card ask_user_question records", () => {
@@ -205,6 +252,34 @@ describe("the question card ask_user_question records", () => {
     expect(parsed.voicePrompt).toHaveLength(500);
     // The card the transcript keeps is the same one.
     expect(appended).toEqual([card]);
+  });
+
+  it("records an answer, a drop and an ask-again for the longest question in blocks that parse", () => {
+    let now = AT;
+    const { deps, appended } = interactions();
+    const clocked: InteractionDeps = { ...deps, now: () => now };
+    const question = { question: "q".repeat(500), kind: "text" };
+
+    const answered = createQuestion(clocked, question);
+    if (!answered.ok) throw new Error(answered.message);
+    expect(answerQuestion(clocked, answered.interaction.questionId, { text: "x" }).ok).toBe(true);
+
+    const dropped = createQuestion(clocked, question);
+    if (!dropped.ok) throw new Error(dropped.message);
+    expect(cancelQuestion(clocked, dropped.interaction.questionId)).toBe(true);
+
+    const expired = createQuestion(clocked, question);
+    if (!expired.ok) throw new Error(expired.message);
+    now = new Date(Date.parse(AT) + 60 * 60_000).toISOString() as Instant;
+    expect(askQuestionAgain(clocked, expired.interaction.questionId).ok).toBe(true);
+
+    const records = appended.map((block) => expectValidCard(block as Record<string, unknown>)).filter((block) => block.type === "tool-activity");
+    expect(records).toHaveLength(3);
+    for (const record of records) {
+      if (record.type !== "tool-activity") throw new Error("expected a record");
+      expect(record.label).toHaveLength(300);
+      expect(record.label.endsWith("…")).toBe(true);
+    }
   });
 });
 
