@@ -88,7 +88,12 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
   const result = typeof block.result === "string" ? block.result : "";
   const args = typeof block.args === "object" && block.args !== null ? (block.args as Record<string, unknown>) : {};
   const language = typeof block.language === "string" ? block.language : undefined;
-  const [open, setOpen] = useState(status === "running" || status === "failed");
+  // The node's record of what became of a question (expired, cancelled, asked again) rather than a call that ran.
+  // The question card above already says it in words, so this is a quiet note: never a failure, never opened onto
+  // its JSON, and still there to open for anyone who wants the record.
+  const questionRecord = name === "ask_user_question" && typeof args.decision === "string" && args.decision !== "answered";
+  const mark = questionRecord ? "noted" : status;
+  const [open, setOpen] = useState(!questionRecord && (status === "running" || status === "failed"));
 
   // A call that finishes closes itself — keyed on the status so it happens once, and so a widget the
   // user opened by hand is not closed again underneath them.
@@ -101,13 +106,14 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
       className="cc-tool"
       data-tool-name={name}
       data-tool-status={status}
+      data-tool-record={questionRecord ? "question" : undefined}
       data-tool-call={typeof block.toolCallId === "string" ? block.toolCallId : undefined}
       open={open}
       onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
     >
       <summary className="cc-tool-head">
-        <span className="cc-tool-mark" data-status={status} aria-hidden="true">
-          {status === "running" ? "◐" : status === "failed" ? "✕" : "✓"}
+        <span className="cc-tool-mark" data-status={mark} aria-hidden="true">
+          {mark === "noted" ? "·" : mark === "running" ? "◐" : mark === "failed" ? "✕" : "✓"}
         </span>
         <span className="cc-tool-label">{label}</span>
         {path !== undefined && (
@@ -116,7 +122,9 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
           </code>
         )}
         <span className="cc-sr-only">
-          {status === "running"
+          {questionRecord
+            ? ""
+            : status === "running"
             ? t("blocks.tool.status.running")
             : status === "failed"
               ? t("blocks.tool.status.failed")
