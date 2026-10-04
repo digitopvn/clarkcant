@@ -18,8 +18,8 @@ import { DEFAULT_RESOURCE_PROFILE, type EngineCapacity, RESOURCE_PROFILES, type 
  *
  *   - **No network.** `--network none`: the service cannot reach the internet, the machine, or a sibling on localhost.
  *   - **Its package, read-only**, at `/pkg`, and **one private folder**, read-write, at `/data`. The root filesystem is
- *     read-only, `/run` and `/var/tmp` included under either engine; `/tmp` is a small memory-backed scratch space that
- *     cannot hold an executable.
+ *     read-only, `/run`, `/var/tmp` and `/dev` included under either engine, and there is no writable `/dev/shm`; `/tmp`
+ *     is the one small memory-backed scratch space, and it cannot hold an executable.
  *   - **No privilege.** A non-root user, every capability dropped, no privilege escalation, and bounded processes,
  *     memory and CPU. Under rootless Docker the user is the container's id 0, because that is the only id the daemon
  *     maps back to the person's own account; it holds none of those privileges either (`ROOTLESS_DOCKER_USER`).
@@ -365,8 +365,12 @@ export function serviceRunArgs(spec: ServiceContainerSpec): string[] {
     // that maps back to the person instead (`ROOTLESS_DOCKER_USER`).
     // Podman's `--read-only` also mounts writable tmpfs on `/run`, `/var/tmp` and `/tmp` by default, with its own sizes
     // and without `noexec`. Turned off, so `/tmp` above is the only scratch space, with the profile's size and `noexec`,
-    // and `/run` and `/var/tmp` stay read-only as they are under Docker.
+    // `/run` and `/var/tmp` stay read-only as they are under Docker, and Podman mounts `/dev` and `/dev/shm` read-only.
     ...(spec.engine === "podman" ? ["--userns", "keep-id", "--read-only-tmpfs=false"] : []),
+    // Docker's `/dev` is a writable tmpfs that allows executables, owned by the container's id 0 — the id a service runs
+    // as under rootless Docker — and its `/dev/shm` is a further 64 MiB outside the profile. A read-only `/dev` of our
+    // own (`dev`, so the device nodes the engine adds still work) closes both: Docker then mounts no `/dev/shm` on it.
+    ...(spec.engine === "docker" ? ["--tmpfs", "/dev:ro,nosuid,noexec,dev,mode=755"] : []),
     // The service's stdout is the protocol, which carries what a person gave it. Either engine would also keep a copy:
     // Docker in its log files, unrotated, for as long as the container lives; Podman in its log driver, which on a
     // systemd host is the person's journal and outlives the container. The host reads the stream itself and needs none.

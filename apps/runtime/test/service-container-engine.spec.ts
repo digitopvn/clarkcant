@@ -50,6 +50,7 @@ const engine = await detectServiceEngine({ timeoutMs: 10_000 });
 const NOTES_PACKAGE = fileURLToPath(new URL("../../web/e2e/fixtures/notes-service/", import.meta.url));
 
 const PROBE = `
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 const tried = {};
 async function attempt(name, work) {
@@ -60,9 +61,17 @@ await attempt("writePackage", () => writeFileSync("/pkg/escaped.txt", "x"));
 await attempt("writeRoot", () => writeFileSync("/etc/escaped.txt", "x"));
 await attempt("writeRun", () => writeFileSync("/run/escaped.txt", "x"));
 await attempt("writeVarTmp", () => writeFileSync("/var/tmp/escaped.txt", "x"));
-tried.tmpfs = Object.fromEntries(
-  readFileSync("/proc/mounts", "utf8").split("\\n").map((line) => line.split(" ")).filter((fields) => fields[2] === "tmpfs").map((fields) => [fields[1], fields[3]]),
-);
+// An executable written where the container can write, then run: only the write may succeed, and only in /tmp.
+for (const [name, folder] of [["Dev", "/dev"], ["Shm", "/dev/shm"], ["Tmp", "/tmp"]]) {
+  const file = folder + "/escaped.sh";
+  await attempt("write" + name, () => writeFileSync(file, "#!/bin/sh\\necho ran\\n", { mode: 0o755 }));
+  if (tried["write" + name] === "allowed") await attempt("exec" + name, () => execFileSync(file));
+}
+// Every mount a file can be written to: none but the scratch space and the private folder.
+const KERNEL = new Set(["proc", "sysfs", "devpts", "mqueue", "cgroup", "cgroup2"]);
+const mounts = readFileSync("/proc/mounts", "utf8").split("\\n").map((line) => line.split(" ")).filter((fields) => fields.length > 3);
+tried.writable = mounts.filter((fields) => !KERNEL.has(fields[2]) && fields[3].split(",").includes("rw")).map((fields) => fields[1]).sort();
+tried.tmpfs = Object.fromEntries(mounts.filter((fields) => fields[2] === "tmpfs").map((fields) => [fields[1], fields[3]]));
 await attempt("writeData", () => writeFileSync("/data/kept.txt", "kept"));
 tried.uid = process.getuid();
 tried.env = Object.keys(process.env).filter((key) => key.startsWith("CC_") || key.includes("KEY") || key.includes("TOKEN"));
@@ -150,6 +159,13 @@ describe.skipIf(!engine.available)("a service container on a real engine", () =>
     const scratch = (tmpfs["/tmp"] ?? "").split(",");
     expect(scratch).toContain("noexec");
     expect(scratch).toContain(`size=${String(RESOURCE_PROFILES["interactive-light"].container.tmpfsMib * 1024)}k`);
+    // Nothing the service writes can be run, and nothing outside /tmp and /data can be written: not /dev, which rootless
+    // Docker's id 0 would own, and not a /dev/shm outside the profile (absent under Docker, read-only under Podman).
+    expect(tried.writeDev).toBe("EROFS");
+    expect(["EROFS", "ENOENT"]).toContain(tried.writeShm);
+    expect(tried.writeTmp).toBe("allowed");
+    expect(tried.execTmp).toBe("EACCES");
+    expect(tried.writable).toEqual(["/data", "/tmp"]);
     expect(tried.writeData).toBe("allowed");
     expect(readFileSync(join(dir, "data", "kept.txt"), "utf8")).toBe("kept");
     // Rootless Docker runs the service as its id 0, the one id it maps back to the person; anywhere else it is not root.

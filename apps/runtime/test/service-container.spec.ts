@@ -95,8 +95,18 @@ describe("the service container's command line", () => {
     expect(podman).toContain("--read-only-tmpfs=false");
     const tmpfs = podman.flatMap((value, index, all) => (all[index - 1] === "--tmpfs" ? [value] : []));
     expect(tmpfs).toEqual(["/tmp:rw,noexec,nosuid,size=16m"]);
-    // Docker mounts nothing writable of its own under `--read-only`, and does not know the flag.
+    // Docker does not know the flag; its own writable mounts are handled below.
     expect(serviceRunArgs(SPEC).some((arg) => arg.startsWith("--read-only-tmpfs"))).toBe(false);
+  });
+
+  it("gives Docker a read-only /dev, so neither /dev nor a /dev/shm outside the profile can be written", () => {
+    for (const rootless of [false, true]) {
+      const docker = serviceRunArgs({ ...SPEC, rootless });
+      const tmpfs = docker.flatMap((value, index, all) => (all[index - 1] === "--tmpfs" ? [value] : []));
+      expect(tmpfs).toEqual(["/tmp:rw,noexec,nosuid,size=16m", "/dev:ro,nosuid,noexec,dev,mode=755"]);
+    }
+    // Podman's own read-only `/dev` comes with `--read-only-tmpfs=false`; it is not given a second one.
+    expect(serviceRunArgs({ ...SPEC, engine: "podman" }).some((arg) => arg.startsWith("/dev"))).toBe(false);
   });
 
   it("gives the engine's command line only what it needs to find itself, not the node's provider keys", () => {
