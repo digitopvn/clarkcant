@@ -347,7 +347,7 @@ test("an installed package's widget becomes a card, rendered by the catalog", as
   const card = page.locator("[data-widget-card='com.example.chart-widget/canvas.line@1']");
   await expect(card).toBeVisible({ timeout: 20_000 });
   // Labelled for what it is rather than mixed in with the built-ins.
-  await expect(card).toContainText("Local development package");
+  await expect(card).toContainText("Gói đang phát triển trên máy");
   // And the catalog's own card for the same definition is still there, rather than being replaced by the package's.
   await expect(page.locator("[data-widget-card='canvas.line@1']")).toBeVisible();
 

@@ -221,8 +221,8 @@ test("the extensions tab tells the node's tools from the agent's", async ({ page
   // the node actually published - its tools, or a line saying it registered none. Asserting specific tool names here
   // would make this test depend on how a fixture node happens to be configured rather than on whether the tab says
   // what the node says. The registration itself is covered where it is built: apps/runtime/test/tool-catalogue.spec.ts.
-  await expect(page.getByRole("heading", { name: "Công cụ của node này" })).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole("heading", { name: "Công cụ của agent (pi)" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Của node này" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("heading", { name: "Của agent (pi)" })).toBeVisible();
 
   await page.screenshot({ path: join(EVIDENCE, "tools-tab.png") });
 });
