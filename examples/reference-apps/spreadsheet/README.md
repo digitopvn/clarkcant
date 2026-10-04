@@ -46,7 +46,7 @@ document bounded, describes itself to Clark, and applies a change Clark chose.
   and refuses with `SHEET_BUSY`, `FORMAT_UNKNOWN` or `RANGE_INVALID` otherwise. A format that is shown but cannot be
   saved is reported as a failure, which Clark treats as an uncertain outcome. "Undo format" takes it back. The
   `place_widget` tool binds this action, and the `formatBinding` button when asked, in a real installation; see
-  [widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
+  [widget development §10.3](https://github.com/digitopvn/clarkcant/blob/main/docs/widget-development.md#103-actions-clark-performs-actionsperform1).
 
 Keyboard: the grid is one tab stop, and Tab and Shift+Tab leave it. Arrows move, Shift+arrows extend the selection,
 Home/End and Ctrl+Home/End jump, Page Up/Down page, Enter or F2 edits, typing starts an edit, Escape cancels an edit or
@@ -58,3 +58,28 @@ extend the selection. Buttons are at least 40 px high.
 
 Run `clark widget test examples/reference-apps/spreadsheet` and `clark widget pack examples/reference-apps/spreadsheet`.
 Unit tests are in `test/`, and the browser journey is `apps/web/e2e/spreadsheet.spec.ts`.
+
+## npm package: CSV Explorer
+
+This app is packaged for npm as **`@clarkcant/csv-explorer`** 1.0.0. Its licence is pending the maintainer's
+decision: `package.json` and `clarkcant.json` declare Apache-2.0 while the `LICENSE` file holds MIT text, and the
+package will not be published until the two agree. **It is not on npm yet.** Publishing needs an account that owns the `@clarkcant` npm scope, and no version has been
+published, so no Marketplace lists it either. The source is
+[examples/reference-apps/spreadsheet](https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/spreadsheet).
+Its package id is still `com.example.spreadsheet`, with publisher id `example`.
+
+- **What it asks for:** nothing. No network origin, no filesystem path, no microphone or camera, no requested
+  capability and no lifecycle script. Files reach it only through the host's picker and export prompt.
+- **Platforms:** `darwin-arm64`, `linux-x64`, `win32-x64` and `web`, as `clarkcant.json` declares. Other targets
+  (Intel macOS, Linux on arm64) are not declared.
+- **What the archive ships:** `clarkcant.json`, `widgets/`, the four `fixtures/` prop sets, the READMEs and the
+  licence. The tests stay in the repository.
+- **Build the archive:** `node packages/widget-cli/src/cli.ts widget pack examples/reference-apps/spreadsheet` writes
+  `dist/clarkcant-csv-explorer-1.0.0.tgz`, and `widget publish` prepares `dist/directory-entry.json`, which names that
+  exact npm version and the archive's content digest. Neither command uploads anything, and `dist/` is not committed.
+- **Install it today:** put the entry `widget publish --source local` prepares in a JSON array, point the node's
+  `CC_DIRECTORY_INDEX` at that file, and install it from Clark's directory search.
+- **Install it once published:** a node installs the exact npm version a directory entry names, and refuses the
+  archive unless npm's integrity and the entry's content digest both match.
+- **Known limits:** CSV and TSV only, no XLSX; the bounds above (25,000 cells, 64 columns, 5,000 rows, an 8 MiB read);
+  export writes values, not formulas or formats. The package has no preview screenshots yet.
