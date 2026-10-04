@@ -1140,6 +1140,20 @@ const TASK_STATUS_TONE: Record<string, string> = {
   working: "",
 };
 
+/**
+ * A task status in the reader's words. A status this build has no words for is shown as sent rather than hidden, so
+ * a newer node's state still reaches the person.
+ */
+function taskStatusLabel(status: string, t: (key: MessageKey) => string): string {
+  const key = `blocks.taskStatus.${status}`;
+  return key in MESSAGES_VI ? t(key as MessageKey) : status;
+}
+
+function evidenceLabel(evidence: string, t: (key: MessageKey) => string): string {
+  const key = `blocks.evidence.${evidence}`;
+  return key in MESSAGES_VI ? t(key as MessageKey) : evidence;
+}
+
 function fieldText(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
@@ -1178,7 +1192,7 @@ export function TaskProgressCardBlock({
       <header className="cc-card-head">
         <span className="cc-card-title">{goal}</span>
         <span className="cc-badge" data-tone={TASK_STATUS_TONE[status] ?? ""}>
-          {status}
+          {taskStatusLabel(status, t)}
         </span>
       </header>
       <div className="cc-card-body">
@@ -1256,7 +1270,13 @@ export function TaskProgressCardBlock({
  * questions: whether the run ended, and whether it achieved anything. Collapsing them into one
  * badge is how a task that stopped without evidence comes to be read as a success.
  */
-export function TaskSummaryCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function TaskSummaryCardBlock({
+  block,
+  t = defaultT,
+}: {
+  block: Record<string, unknown>;
+  t?: (key: MessageKey) => string;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
   const goal = fieldText(block.goal);
   const outcome = fieldText(block.outcome, "not-verified");
@@ -1270,14 +1290,14 @@ export function TaskSummaryCardBlock({ block }: { block: Record<string, unknown>
       <header className="cc-card-head">
         <span className="cc-card-title">{goal}</span>
         <span className="cc-badge" data-tone={TASK_STATUS_TONE[outcome] ?? ""}>
-          {outcome}
+          {taskStatusLabel(outcome, t)}
         </span>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{summary}</p>
         <p className="cc-evidence" data-verdict={evidence} style={{ margin: 0 }}>
           <span className="cc-badge" data-tone={evidence === "verified" ? "ok" : evidence === "contradicted" ? "danger" : "warn"}>
-            {evidence}
+            {evidenceLabel(evidence, t)}
           </span>
           <span className="cc-freshness">{`${(durationMs / 1000).toFixed(1)}s`}</span>
         </p>
@@ -1334,7 +1354,7 @@ export function TaskOverviewCardBlock({
             return (
               <li key={index} data-task-status={status}>
                 <span className="cc-badge" data-tone={TASK_STATUS_TONE[status] ?? ""}>
-                  {status}
+                  {taskStatusLabel(status, t)}
                 </span>
                 <span>{fieldText(task.goal)}</span>
                 <span className="cc-freshness">{fieldText(task.updatedAt)}</span>
@@ -1798,7 +1818,7 @@ export function renderBlock(
         <TaskProgressCardBlock key={index} block={block} t={t} {...(actions === undefined ? {} : { actions })} />
       );
     case "task-summary-card":
-      return <TaskSummaryCardBlock key={index} block={block} />;
+      return <TaskSummaryCardBlock key={index} block={block} t={t} />;
     case "task-overview-card":
       return <TaskOverviewCardBlock key={index} block={block} t={t} />;
     case "code-diff-card":

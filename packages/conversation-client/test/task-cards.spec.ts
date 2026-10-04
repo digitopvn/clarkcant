@@ -9,7 +9,7 @@ import {
   renderBlock,
 } from "../src/blocks.tsx";
 import { type BlockActions } from "../src/blocks.tsx";
-import { findAll, nonHost } from "./block-helpers.ts";
+import { findAll, nonHost, textOf } from "./block-helpers.ts";
 
 /**
  * The task cards.
@@ -124,6 +124,15 @@ describe("a finished task", () => {
     }) as ReactElement<Record<string, unknown>>;
     expect(element.props["data-outcome"]).toBe("not-verified");
     expect(findAll(element, "data-verdict")[0]!.props["data-verdict"]).toBe("not-verified");
+  });
+
+  it("names the outcome and the evidence in the reader's words, not the wire's", () => {
+    const text = textOf(TaskSummaryCardBlock({ block: SUMMARY }));
+    expect(text).toContain("thành công");
+    expect(text).toContain("đã kiểm chứng");
+    expect(text).not.toContain("succeeded");
+    // A state this build has no words for still reaches the person rather than vanishing.
+    expect(textOf(TaskSummaryCardBlock({ block: { ...SUMMARY, outcome: "paused" } }))).toContain("paused");
   });
 });
 
