@@ -36,12 +36,12 @@ import {
   settleInvokeAction,
   writeViewState,
 } from "@clarkcant/core";
-import { appendAuditEvent, asJsonValue, hasUnsettledEffect, listConversationInstanceIds, payloadDigest } from "@clarkcant/storage";
+import { appendAuditEvent, asJsonValue, hasUnsettledEffect, listConversationInstanceIds, payloadDigest, transaction } from "@clarkcant/storage";
 
 import { preferredAppIntentLocale } from "../app-intents.ts";
 
 import { readArtifactForContext } from "../artifact-broker.ts";
-import { appendHostReply, blocksOfConversation, startBackgroundWork } from "../routes/conversations.ts";
+import { appendHostReply, blocksOfConversation, indexHostReply, startBackgroundWork, writeHostReply } from "../routes/conversations.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { AGENT_ITEM_KEY } from "./action-bindings.ts";
@@ -1371,22 +1371,38 @@ async function invokePerformAction(
         outcome: "refused",
       });
     }
-    const approval = requestApproval(
-      { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now, newId: services.conductor.newId },
-      { operationDigest, operationDescription, effectCategory: "local-write", ttlMs: PERFORM_APPROVAL_TTL_MS },
-    );
-    mintedPerformCards.get(services.runtime.db)?.set(approval.approvalId, request.conversationId);
-    recordInvokeAction(services.conductor, {
-      invocationId: request.invocationId,
-      actionBindingId: request.actionBindingId,
-      instanceId: checked.instance.instanceId,
-      digest: checked.digest,
-      result: { kind: "approval-required", approvalId: approval.approvalId },
+    // The approval, the invocation's answer and the card are written together: a card that failed to land never leaves
+    // an approval waiting unseen, and an approval that failed never leaves a card nobody can answer.
+    const { approval, card, placed } = transaction(services.runtime.db, () => {
+      const approval = requestApproval(
+        { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now, newId: services.conductor.newId },
+        { operationDigest, operationDescription, effectCategory: "local-write", ttlMs: PERFORM_APPROVAL_TTL_MS },
+      );
+      recordInvokeAction(services.conductor, {
+        invocationId: request.invocationId,
+        actionBindingId: request.actionBindingId,
+        instanceId: checked.instance.instanceId,
+        digest: checked.digest,
+        result: { kind: "approval-required", approvalId: approval.approvalId },
+      });
+      const card = cardOf(approval);
+      // Placed before the result returns, so whoever reports "a card asks you" reports one that is there. A model turn
+      // writes it into its own answer instead (`cardInTurn`), where it lands with the words that explain it.
+      const placed =
+        options.cardInTurn === true
+          ? undefined
+          : writeHostReply(services, { conversationId: request.conversationId, blocks: [approvalCardBlockSchema.parse(card)], at });
+      return { approval, card, placed };
     });
-    const card = cardOf(approval);
-    // Placed before the result returns, so whoever reports "a card asks you" reports one that is there. A model turn
-    // writes it into its own answer instead (`cardInTurn`), where it lands with the words that explain it.
-    if (options.cardInTurn !== true) appendHostReply(services, { conversationId: request.conversationId, blocks: [approvalCardBlockSchema.parse(card)], at });
+    mintedPerformCards.get(services.runtime.db)?.set(approval.approvalId, request.conversationId);
+    // Search indexing opens its own transaction, so it follows the commit; a card that is not yet searchable is still there.
+    if (placed !== undefined) {
+      try {
+        indexHostReply(services, placed);
+      } catch {
+        // The card is written and answerable; only its search entry is missing.
+      }
+    }
     return {
       ok: true,
       status: 202,

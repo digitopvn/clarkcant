@@ -23,7 +23,7 @@ import {
   invokeWidgetAction,
   widgetActionTarget,
 } from "../gateway.ts";
-import { spokenActionDone, spokenActionRefusal, spokenActionWaiting } from "../application/action-speech.ts";
+import { spokenActionDone, spokenActionFailed, spokenActionRefusal, spokenActionWaiting } from "../application/action-speech.ts";
 import type { WidgetPerformer } from "../application/widget-actions.ts";
 import { carryOutSpokenStop } from "../application/stop-turn.ts";
 import { readThemeRegistry, themeRegistryDeps } from "../application/themes.ts";
@@ -40,7 +40,7 @@ import {
   type VoiceGatewayOptions,
   attachVoiceGateway,
 } from "../voice-session.ts";
-import { NO_FOCUSED_SURFACE_SAY, type VoiceWidgetRun } from "../widget-voice-action.ts";
+import { NO_FOCUSED_SURFACE_SAY, type VoiceWidgetApproval, type VoiceWidgetRun } from "../widget-voice-action.ts";
 
 /**
  * The voice socket, and everything a live session needs to reach the rest of the node.
@@ -212,9 +212,9 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
                   onAppIntent(event.decision);
                 }
                 if (event.type === "widget-perform" && onWidgetPerform !== undefined) {
-                  // Same canonical path as a typed turn: the page showing the widget asks its frame and reports back.
-                  deps.services.widgetPerforms.expect(event.request.performId);
-                  onWidgetPerform(event.request);
+                  // Same canonical path as a typed turn: the page showing the widget asks its frame and reports back. A
+                  // closed socket sent nothing, so the turn's wait hears "nobody to ask", not an unknown outcome.
+                  deliverToVoiceFrame(deps.services, onWidgetPerform, event.request);
                 }
               },
             }),
@@ -264,34 +264,8 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         ...(pending === undefined ? {} : { pendingInteraction: pending }),
       };
     },
-    /**
-     * Carry out what the user just said yes or no to.
-     *
-     * The same function the HTTP route calls, so a decision made by voice and a decision made by pressing the
-     * card mean exactly the same thing: the same digest check, the same receipt in the same conversation.
-     */
-    decideApproval: async ({ conversationId, approvalId, decision, digest, onWidgetPerform }) => {
-      const result = await decideApprovalForNode(deps.services, {
-        conversationId,
-        approvalId,
-        decision,
-        digest,
-        // An approved widget action goes to the frame on the page this voice session runs on, which reports back like a
-        // typed turn's page does. A session that cannot run one gets "approved, nothing sent".
-        ...(onWidgetPerform === undefined ? {} : { perform: voicePerformer(deps.services, onWidgetPerform) }),
-        principal: {
-          principalId: deps.services.runtime.identity.ownerPrincipalId,
-          kind: "user",
-          nodeId: deps.services.runtime.identity.nodeId,
-        },
-        at: new Date().toISOString() as never,
-      });
-      return result.ok
-        ? // The agent's continuation is what the person should hear: the command ran, and this is what the agent
-          // made of it. `message` is spoken by the session.
-          { ok: true, message: result.continuation ?? result.outcome ?? "Đã chạy xong lệnh đó." }
-        : { ok: false, message: result.message };
-    },
+    /** Carry out what the user just said yes or no to (`decideSpokenApproval`). */
+    decideApproval: (input) => decideSpokenApproval(deps.services, input),
     /**
      * Record what the person just said, through the same function the HTTP route calls.
      *
@@ -421,6 +395,39 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
 }
 
 type SpokenWidgetActionInput = Parameters<NonNullable<VoiceGatewayOptions["widgetAction"]>>[0];
+type SpokenApprovalInput = Parameters<NonNullable<VoiceGatewayOptions["decideApproval"]>>[0];
+
+/**
+ * Carry out what the person just said yes or no to.
+ *
+ * The same function the HTTP route calls, so a decision made by voice and a decision made by pressing the card mean
+ * exactly the same thing: the same digest check, the same receipt in the same conversation.
+ */
+export async function decideSpokenApproval(
+  services: NodeServices,
+  { conversationId, approvalId, decision, digest, onWidgetPerform }: SpokenApprovalInput,
+): Promise<{ ok: boolean; message: string }> {
+  const result = await decideApprovalForNode(services, {
+    conversationId,
+    approvalId,
+    decision,
+    digest,
+    // An approved widget action goes to the frame on the page this voice session runs on, which reports back like a
+    // typed turn's page does. A session that cannot run one gets "approved, nothing sent".
+    ...(onWidgetPerform === undefined ? {} : { perform: voicePerformer(services, onWidgetPerform) }),
+    principal: {
+      principalId: services.runtime.identity.ownerPrincipalId,
+      kind: "user",
+      nodeId: services.runtime.identity.nodeId,
+    },
+    at: new Date().toISOString() as never,
+  });
+  return result.ok
+    ? // The agent's continuation is what the person should hear: the command ran, and this is what the agent
+      // made of it. `message` is spoken by the session.
+      { ok: true, message: result.continuation ?? result.outcome ?? "Đã chạy xong lệnh đó." }
+    : { ok: false, message: result.message };
+}
 
 /**
  * The frame on a voice session's page, as a performer: the node expects the report, the request goes out on the
@@ -428,16 +435,24 @@ type SpokenWidgetActionInput = Parameters<NonNullable<VoiceGatewayOptions["widge
  * decided by voice, so both hand an offered action over the same way.
  */
 export function voicePerformer(services: NodeServices, onWidgetPerform: VoiceFrameSink): WidgetPerformer {
-  return async (request) => {
-    services.widgetPerforms.expect(request.performId);
-    if (!onWidgetPerform(request)) {
-      // The session closed before this went out (a press queued behind a long answer): nothing reached a frame, so this
-      // is "nobody to ask" with nothing sent, never an unknown outcome the inbox would ask about.
-      services.widgetPerforms.forget(request.performId);
-      return "no-surface";
-    }
-    return services.widgetPerforms.wait(request.performId);
-  };
+  return async (request) =>
+    deliverToVoiceFrame(services, onWidgetPerform, request) ? services.widgetPerforms.wait(request.performId) : "no-surface";
+}
+
+/**
+ * Hand a perform to the voice session's page, expecting its report only when it really went out. A session that
+ * closed before this was sent (a press queued behind a long answer, a turn outliving its socket) reached no frame, so
+ * the wait answers "nobody to ask" with nothing sent — never an unknown outcome the inbox would ask about.
+ */
+export function deliverToVoiceFrame(
+  services: Pick<NodeServices, "widgetPerforms">,
+  onWidgetPerform: VoiceFrameSink,
+  request: Parameters<VoiceFrameSink>[0],
+): boolean {
+  services.widgetPerforms.expect(request.performId);
+  if (onWidgetPerform(request)) return true;
+  services.widgetPerforms.forget(request.performId);
+  return false;
 }
 
 /**
@@ -448,7 +463,35 @@ export function voicePerformer(services: NodeServices, onWidgetPerform: VoiceFra
  * is a request to do the thing, not a claim about which revision it was looking at. An action the widget offers to
  * Clark reaches the frame through the session's page when that page can perform one, and is refused otherwise.
  */
-export async function spokenWidgetAction(
+export async function spokenWidgetAction(services: NodeServices, input: SpokenWidgetActionInput): Promise<VoiceWidgetRun> {
+  try {
+    return await runSpokenWidgetAction(services, input);
+  } catch {
+    // Said, not swallowed: a throw here would otherwise leave the person hearing nothing at all. Nothing is claimed
+    // about the widget, because the throw may have come after something was sent.
+    const locale = preferredAppIntentLocale(appIntentDepsFor(services), services.runtime.identity.ownerPrincipalId);
+    return { ok: false, say: spokenActionFailed(input.action.label, locale) };
+  }
+}
+
+/**
+ * The approval an action's 202 answered with, as the voice session asks it: only while it still waits, with the
+ * digest and description its card carries, so the spoken answer goes through the same check a click does.
+ */
+function pendingApprovalOf(services: NodeServices, body: Record<string, unknown>): VoiceWidgetApproval | undefined {
+  const required = body.approvalRequired as { approvalId?: unknown } | undefined;
+  const approvalId = typeof required?.approvalId === "string" ? required.approvalId : undefined;
+  if (approvalId === undefined || approvalId === "") return undefined;
+  const row = services.runtime.db
+    .prepare(
+      `SELECT operation_digest AS digest, operation_description AS description FROM approvals
+        WHERE approval_id = ? AND decision = 'pending' AND expires_at > ?`,
+    )
+    .get(approvalId, new Date().toISOString()) as { digest: string; description: string } | undefined;
+  return row === undefined ? undefined : { kind: "approval", approvalId, digest: row.digest, description: row.description };
+}
+
+async function runSpokenWidgetAction(
   services: NodeServices,
   { conversationId, action, focused, onWidgetPerform }: SpokenWidgetActionInput,
 ): Promise<VoiceWidgetRun> {
@@ -510,9 +553,17 @@ export async function spokenWidgetAction(
   if (result.status === 202) {
     // The policy asked. The card is already in the conversation - placed by the dispatch before it answered, or waiting
     // there from an earlier ask of the same operation - so this says so; saying "done" would claim something that has
-    // not happened, and the person answers the card, not this sentence.
+    // not happened. The person answers the card: by a click, or by the yes or no this session now listens for, which is
+    // decided through the same route a click is.
     const waiting = result.body.alreadyWaiting === true ? "approval-waiting" : "approval";
-    return { ok: true, instanceId, revision: target.revision, say: spokenActionWaiting(action.label, waiting, locale) };
+    const pendingInteraction = pendingApprovalOf(services, result.body);
+    return {
+      ok: true,
+      instanceId,
+      revision: target.revision,
+      say: spokenActionWaiting(action.label, waiting, locale, pendingInteraction !== undefined),
+      ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
+    };
   }
   const landedOn = typeof result.body.revision === "number" ? result.body.revision : target.revision;
   // A service or a frame answers with what it did, and that answer is what the person asked to hear: read out as the

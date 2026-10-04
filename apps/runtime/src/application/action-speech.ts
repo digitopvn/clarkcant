@@ -106,11 +106,22 @@ export function spokenActionRefusal(label: string, refusal: SpokenRefusal, local
  * The sentence voice says for an action that started in the background, started a package job, or waits on an approval
  * card. A job has only started: its widget follows the progress and the conversation says when it ended.
  */
-export function spokenActionWaiting(label: string, waiting: "background" | "job" | "approval" | "approval-waiting", locale: SpeechLocale): string {
+export function spokenActionWaiting(
+  label: string,
+  waiting: "background" | "job" | "approval" | "approval-waiting",
+  locale: SpeechLocale,
+  // The voice session now listens for the person's answer to the card, so the sentence says which words decide it.
+  answerAloud = false,
+): string {
+  const invite = !answerAloud
+    ? ""
+    : locale === "vi"
+      ? " Bạn nói “đồng ý” để duyệt hoặc “không” để từ chối."
+      : " Say “yes” to approve or “no” to refuse.";
   if (waiting === "approval-waiting") {
     return locale === "vi"
-      ? `“${label}” vẫn đang chờ bạn duyệt trên thẻ đã có trong cuộc trò chuyện. Chưa có gì được gửi.`
-      : `“${label}” is still waiting for your approval on the card already in the conversation. Nothing was sent.`;
+      ? `“${label}” vẫn đang chờ bạn duyệt trên thẻ đã có trong cuộc trò chuyện. Chưa có gì được gửi.${invite}`
+      : `“${label}” is still waiting for your approval on the card already in the conversation. Nothing was sent.${invite}`;
   }
   if (waiting === "job") {
     return locale === "vi"
@@ -123,8 +134,15 @@ export function spokenActionWaiting(label: string, waiting: "background" | "job"
       : `I am doing “${label}” in the background. The result will appear in the conversation when it is done.`;
   }
   return locale === "vi"
-    ? `“${label}” cần bạn duyệt trước. Tôi đã đặt thẻ duyệt trong cuộc trò chuyện.`
-    : `“${label}” needs your approval first. I placed the approval card in the conversation.`;
+    ? `“${label}” cần bạn duyệt trước. Tôi đã đặt thẻ duyệt trong cuộc trò chuyện.${invite}`
+    : `“${label}” needs your approval first. I placed the approval card in the conversation.${invite}`;
+}
+
+/** What voice says when a spoken widget action failed before it could answer: nothing is claimed about the widget. */
+export function spokenActionFailed(label: string, locale: SpeechLocale): string {
+  return locale === "vi"
+    ? `Tôi không xử lý được “${label}” vì một lỗi trên máy này. Bạn kiểm tra cuộc trò chuyện trước khi thử lại nhé.`
+    : `I could not handle “${label}” because of an error on this machine. Check the conversation before trying again.`;
 }
 
 /** The longest part of what a widget or its service answered that voice reads out. */

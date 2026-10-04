@@ -158,9 +158,10 @@ export interface VoiceGatewayOptions {
     onAppIntent?: (decision: AppIntentDecision) => void;
     /**
      * Forwards an action Clark asked a widget's frame to perform while answering this utterance. The page showing
-     * the widget hands it to the frame and reports what it answered over HTTP, exactly as for a typed turn.
+     * the widget hands it to the frame and reports what it answered over HTTP, exactly as for a typed turn. `false` when
+     * the socket was already closed and nothing went out.
      */
-    onWidgetPerform?: (request: WidgetPerformRequest) => void;
+    onWidgetPerform?: VoiceFrameSink;
   }) => Promise<VoiceAnswerResult | undefined>;
   /**
    * Record the user's spoken decision on an operation.
@@ -581,24 +582,41 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       const run = options.widgetAction;
       const runIn = conversationId;
       if (run === undefined || runIn === undefined) return;
-      answerQueue = answerQueue.then(async () => {
-        const outcome = await run({
-          conversationId: runIn,
-          action,
-          focused: focusedViewNow(),
-          ...frameSink(),
+      answerQueue = answerQueue
+        .then(async () => {
+          const outcome = await run({
+            conversationId: runIn,
+            action,
+            focused: focusedViewNow(),
+            ...frameSink(),
+          });
+          // The page is told what changed rather than that something changed: it updates the same state a click
+          // updates, and it can only do that from the node's own account of the revision it landed on.
+          send({
+            type: "widget-action-result",
+            ok: outcome.ok,
+            say: outcome.say,
+            ...(outcome.ok ? { instanceId: outcome.instanceId, revision: outcome.revision } : {}),
+          });
+          // The press placed an approval card, or found one waiting: the next sentence answers it, through the same
+          // decision a click on the card makes, exactly as for a card an agent's turn placed. The press itself never
+          // approves anything; only the person's next words can.
+          if (outcome.ok && outcome.pendingInteraction !== undefined) waiting = outcome.pendingInteraction;
+          send({ type: "transcript", role: "assistant", text: outcome.say, final: true });
+          say(outcome.say);
+        })
+        .catch((cause: unknown) => {
+          // The runner answers its own failures in the person's language; this is the last resort for one that threw
+          // anyway. The session goes on, and the person hears that it failed rather than nothing at all.
+          send({
+            type: "error",
+            code: "VOICE_WIDGET_ACTION_FAILED",
+            message: cause instanceof Error ? cause.message : "the widget action could not be run",
+          });
+          const failed = "Tui không xử lý được hành động đó vì một lỗi trên máy này. Bạn kiểm tra cuộc trò chuyện trước khi thử lại nhé.";
+          send({ type: "transcript", role: "assistant", text: failed, final: true });
+          say(failed);
         });
-        // The page is told what changed rather than that something changed: it updates the same state a click updates,
-        // and it can only do that from the node's own account of the revision it landed on.
-        send({
-          type: "widget-action-result",
-          ok: outcome.ok,
-          say: outcome.say,
-          ...(outcome.ok ? { instanceId: outcome.instanceId, revision: outcome.revision } : {}),
-        });
-        send({ type: "transcript", role: "assistant", text: outcome.say, final: true });
-        say(outcome.say);
-      });
     };
 
     const ask = (at: Instant): void => {

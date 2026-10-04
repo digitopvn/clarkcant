@@ -960,6 +960,19 @@ export function appendHostReply(
   services: Pick<NodeServices, "runtime" | "conductor" | "search">,
   input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant },
 ): { messageId: string } {
+  const message = writeHostReply(services, input);
+  indexHostReply(services, message);
+  return { messageId: message.messageId };
+}
+
+/**
+ * Writes the host's reply without indexing it, so a caller can make it part of its own transaction; the search index
+ * opens a transaction of its own and is updated after the commit (`indexHostReply`).
+ */
+export function writeHostReply(
+  services: Pick<NodeServices, "runtime" | "conductor">,
+  input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant },
+): MessageRecord {
   const blocks: MessageBlock[] =
     input.blocks ?? [{ type: "text", format: "plain", content: input.text ?? "", streaming: false }];
   const message: MessageRecord = {
@@ -972,8 +985,11 @@ export function appendHostReply(
     delivery: "accepted",
   };
   appendMessage(services.runtime.db, message, nextMessageSequence(services.runtime.db, input.conversationId));
-  indexMessages(services.search, { conversationId: input.conversationId, messages: [message], at: input.at });
-  return { messageId: message.messageId };
+  return message;
+}
+
+export function indexHostReply(services: Pick<NodeServices, "search">, message: MessageRecord): void {
+  indexMessages(services.search, { conversationId: message.conversationId, messages: [message], at: message.createdAt });
 }
 
 

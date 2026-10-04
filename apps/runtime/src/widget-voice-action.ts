@@ -156,6 +156,14 @@ export function describeVoiceWidgetAction(action: VoiceWidgetAction): string {
     : `Tôi ${action.label} nhé.`;
 }
 
+/** An approval card a spoken widget action waits on, as the voice session asks it out loud. */
+export interface VoiceWidgetApproval {
+  kind: "approval";
+  approvalId: string;
+  digest: string;
+  description: string;
+}
+
 /**
  * What running a spoken widget action did.
  *
@@ -163,5 +171,16 @@ export function describeVoiceWidgetAction(action: VoiceWidgetAction): string {
  * click would have updated - and it can only do that from the node's own account of what changed.
  */
 export type VoiceWidgetRun =
-  | { ok: true; instanceId: string; revision: number; say: string }
+  | {
+      ok: true;
+      instanceId: string;
+      revision: number;
+      say: string;
+      /**
+       * The approval card the press placed, or found already waiting, in the conversation. The session then takes the
+       * person's spoken yes or no as the answer to that card, through the same decision a click on it makes; the press
+       * itself never approves it.
+       */
+      pendingInteraction?: VoiceWidgetApproval;
+    }
   | { ok: false; say: string };
