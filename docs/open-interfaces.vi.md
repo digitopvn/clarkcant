@@ -477,7 +477,7 @@ như vậy, một AI client hoặc một máy từ xa sẽ ghi với tư cách w
 thi của người dùng (`packages/contracts/src/machine-surfaces.ts`,
 `apps/runtime/src/application/machine-artifact-writes.ts`). Mỗi lần ghi là một hiệu ứng `local-write`, trừ việc bỏ một
 tệp không phải tệp đang ghi dở do chính bên yêu cầu đó bắt đầu (cùng kết nối relay, hoặc cùng bề mặt với MCP và `clarkcant api`): việc này có thể xoá bản duy nhất của người dùng, nên nó là
-`destructive`, và được hỏi ở chế độ Guarded, và vì không ai trong hội thoại yêu cầu nó, cả ở chế độ Autonomous.
+`destructive`, và được hỏi ở chế độ Guarded, và vì không ai trong hội thoại yêu cầu nó, cả ở chế độ Autonomous. Khi người dùng đã chọn được hỏi về các lượt từ bề mặt máy (`machineTurns: "ask"`), mỗi lần ghi được quyết định như một lượt do bề mặt đó yêu cầu: khi đó một lần bỏ tệp `destructive` vẫn được hỏi kể cả khi có quy tắc cho chạy hiệu ứng destructive, và thẻ nói rõ ai đã yêu cầu.
 
 - **Chính sách cho chạy** (Autonomous, hoặc Guarded khi không có quy tắc nào hỏi): lần ghi chạy và trả lời như trên.
 - **Chính sách hỏi** (Hỏi mỗi lần, một quy tắc yêu cầu hỏi, hoặc một lần bỏ tệp `destructive`): không có gì được ghi.

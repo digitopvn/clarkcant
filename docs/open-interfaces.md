@@ -474,7 +474,7 @@ write under the person's execution policy (`packages/contracts/src/machine-surfa
 `apps/runtime/src/application/machine-artifact-writes.ts`). Each write is a `local-write` effect, except discarding a
 file that is not an unfinished one the same asker started (the same relay connection, or the same surface for MCP and `clarkcant api`): that may delete the person's only copy, so it is
 `destructive`, and it is asked about under Guarded and, since nobody in the conversation asked for it, under
-Autonomous too.
+Autonomous too. When the person opted to be asked about machine-surface turns (`machineTurns: "ask"`), each write is decided as a turn that surface asked for: a destructive discard is then asked about even over a rule that runs destructive effects, and the card says who asked.
 
 - **The policy runs it** (Autonomous, or Guarded with no rule asking): the write runs and answers as above.
 - **The policy asks** (Ask every time, a rule that asks, or a destructive discard): nothing is written. A host-owned

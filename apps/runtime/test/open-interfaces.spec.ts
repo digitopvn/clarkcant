@@ -629,7 +629,11 @@ describe("widget artifact writes on machine surfaces", () => {
     setPolicy({ mode: "guarded" });
     const { route } = await widget();
     const fromApp = artifactIdOf((await http("POST", route, { mimeType: "text/plain" })).body);
-    expect(await http("DELETE", `${route}/${fromApp}`, undefined, MCP)).toMatchObject({ status: 202, body: { operation: "discard" } });
+    const asked = await http("DELETE", `${route}/${fromApp}`, undefined, MCP);
+    expect(asked).toMatchObject({ status: 202, body: { operation: "discard" } });
+    // Deleting a local widget file does not reach past this machine, and the caller is told what it is instead.
+    expect(asked.body.message).not.toContain("reaches past this machine");
+    expect(asked.body.message).toContain("no other copy");
 
     const finished = artifactIdOf((await http("POST", route, { mimeType: "text/plain" }, MCP)).body);
     expect((await http("POST", `${route}/${finished}/finalize`, {}, MCP)).status).toBe(200);
@@ -794,7 +798,7 @@ describe("widget artifact writes on machine surfaces", () => {
     const foreign = await sibling.request("DELETE", `${route}/${artifactId}`);
     expect(foreign).toMatchObject({ status: 202, body: { operation: "discard" } });
     expect((foreign.body as { message: string }).message).not.toContain("reaches past this machine");
-    expect((foreign.body as { message: string }).message).toContain("no other copy");
+    expect((foreign.body as { message: string }).message).toContain("ask every time");
     expect(await cardOf(conversationId, approvalOf(foreign.body))).toMatchObject({ effectCategory: "destructive" });
 
     // The asker's own discard of its unfinished file is a local write, which Ask every time still asks about.
@@ -830,6 +834,33 @@ describe("widget artifact writes on machine surfaces", () => {
     expect(receiptOf(await blocksOf(conversationId), approvalOf(discard.body))).toMatchObject({ status: "failed", args: { code: "APPROVAL_STALE" } });
     expect(listArtifactsForConversation(services.runtime.db, conversationId).map((artifact) => artifact.artifactId)).toContain(artifactId);
     relay.close();
+  });
+
+  it("decides a machine write as its surface's turn once the person asks to be asked about machine turns", async () => {
+    // A rule lets destructive effects run without asking; on its own it lets an MCP client delete a finished file.
+    setPolicy({ mode: "guarded", rules: [{ effectCategory: "destructive", decision: "execute" }] });
+    const { route } = await widget();
+    const finish = async (): Promise<string> => {
+      const id = artifactIdOf((await http("POST", route, { mimeType: "text/plain" }, MCP)).body);
+      expect((await http("POST", `${route}/${id}/finalize`, {}, MCP)).status).toBe(200);
+      return id;
+    };
+    expect((await http("DELETE", `${route}/${await finish()}`, undefined, MCP)).status).toBe(200);
+
+    // Opted in, the same discard is decided as a turn MCP asked for: asked about above the rule, and saying who asked.
+    setPolicy({ mode: "guarded", rules: [{ effectCategory: "destructive", decision: "execute" }], machineTurns: "ask" });
+    const asked = await http("DELETE", `${route}/${await finish()}`, undefined, MCP);
+    expect(asked).toMatchObject({ status: 202, body: { outcome: "approval-required", operation: "discard" } });
+    expect(asked.body.message).toContain("an AI client over MCP asked for a destructive effect");
+    expect(artifactAudit().at(-1)?.summary).toContain("(mcp, discard): the execution policy asks (destructive: an AI client over MCP asked for a destructive effect)");
+
+    // A local write still runs, and the activity record names the surface that asked for it.
+    const created = await http("POST", route, { mimeType: "text/plain" }, MCP);
+    expect(created.status).toBe(201);
+    const recorded = services.runtime.db
+      .prepare("SELECT document FROM events WHERE kind = 'effect.executed' ORDER BY rowid DESC LIMIT 1")
+      .get() as { document: string };
+    expect(recorded.document).toContain('"origin":"mcp"');
   });
 
   it("answers a repeated request with the card already waiting, and stops minting cards past the limit", async () => {

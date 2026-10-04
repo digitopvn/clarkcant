@@ -6,13 +6,15 @@ import {
   type Instant,
   type MachineSurface,
   type MessageBlock,
+  type TurnOrigin,
   approvalCardBlockSchema,
   artifactIdSchema,
   artifactNameSchema,
   artifactRefusalStatus,
   machineSurfaceOf,
+  turnOriginOfSurfaceMark,
 } from "@clarkcant/contracts";
-import { decideExecution, getInstance, readExecutionPolicy, recordEffectExecution, requestApproval } from "@clarkcant/core";
+import { type ExecutionIntent, type ExecutionQuestion, decideExecution, getInstance, readExecutionPolicy, recordEffectExecution, requestApproval } from "@clarkcant/core";
 import { type AuditOutcome, appendAuditEvent, asJsonValue, instanceIsInConversation, oneRow, payloadDigest } from "@clarkcant/storage";
 
 import { preferredAppIntentLocale } from "../app-intents.ts";
@@ -611,6 +613,19 @@ function waitingCount(services: MachineWriteServices, surface: MachineSurface, c
 }
 
 /**
+ * The intent a machine surface's write is decided with.
+ *
+ * Not the person asking in the conversation: a client they connected, acting on its own initiative, so by default the
+ * node's own `system` intent, which is what makes a destructive discard asked about under Autonomous too. When the
+ * person opted into `machineTurns: "ask"`, the write is decided as a turn that surface asked for instead, so the policy's
+ * machine-turn check names who asked; that check asks about every risky effect above any rule or mode, so it is never
+ * looser than `system`.
+ */
+function machineWriteIntent(policy: ExecutionQuestion["policy"], origin: TurnOrigin): ExecutionIntent {
+  return policy.machineTurns === "ask" ? { kind: "interactive", origin } : { kind: "system" };
+}
+
+/**
  * Decide and, when the policy allows it, run one write a machine surface carried.
  *
  * Called by the artifact routes for every write a request carrying a machine surface's marker makes; everything else
@@ -660,20 +675,21 @@ export function decideMachineArtifactWrite(
       : {}),
   });
   const policy = readExecutionPolicy({ db: services.runtime.db, now: () => at }, scope.principalId);
+  const origin = turnOriginOfSurfaceMark(surface);
   const decided = decideExecution({
     policy,
     action: { kind: "effect", category, operationDigest },
-    // Not the person asking in the conversation: a client they connected, acting on its own initiative. That is what
-    // makes a destructive discard asked about under Autonomous too.
-    intent: { kind: "system" },
+    intent: machineWriteIntent(policy, origin),
   });
 
-  // The policy's risk-gate wording is about effects that leave the machine; deleting a widget file does not, so a
-  // destructive discard the policy asks about is explained as what it is. A rule's own wording is kept.
+  // Why the policy asks, as the card's own reason says it. Its risk-gate wording is about effects that leave the machine;
+  // deleting a widget file does not, so a destructive discard is explained as what it is. Any other reason is kept.
   const reason =
-    decided.kind === "ask" && category === "destructive" && !decided.reason.startsWith("a rule")
-      ? "deleting a widget file the person may have no other copy of is destructive, so the person decides it"
-      : decided.reason;
+    decided.kind !== "ask"
+      ? decided.reason
+      : category === "destructive" && decided.approvalSpec.because.includes("reaches past this machine")
+        ? "deleting a widget file the person may have no other copy of is destructive, so the person decides it"
+        : decided.approvalSpec.because;
 
   if (decided.kind === "deny") {
     audit(services, { asked, decision: `refused by the execution policy (${category}: ${decided.reason})`, outcome: "refused", at });
@@ -695,6 +711,7 @@ export function decideMachineArtifactWrite(
           operationDigest,
           conversationId: scope.conversationId,
           description: describeAsked(asked),
+          origin,
         },
       );
     }
@@ -912,7 +929,7 @@ export function runApprovedWidgetArtifactWrite(
   const now = decideExecution({
     policy,
     action: { kind: "effect", category: operation.category, operationDigest: input.expectedDigest },
-    intent: { kind: "system" },
+    intent: machineWriteIntent(policy, turnOriginOfSurfaceMark(operation.surface)),
   });
   if (now.kind === "deny") {
     audit(services, { asked, decision: `approved on card ${input.approvalId}, then refused by the execution policy (${now.reason})`, outcome: "refused", at: input.at });
