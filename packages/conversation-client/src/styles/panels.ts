@@ -539,7 +539,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 }
 .cc-toggle-track {
   width: 38px; height: 22px; border-radius: var(--cc-radius-pill);
-  background: var(--cc-card); border: var(--cc-line, 1px solid) var(--cc-border); position: relative;
+  /* The off track is drawn as a recess with a visible edge: on a raised surface the plain card fill vanished,
+     leaving a lone grey knob that read as a radio button. */
+  background: color-mix(in oklab, var(--cc-text) 10%, var(--cc-card));
+  border: var(--cc-line, 1px solid) color-mix(in oklab, var(--cc-text) 20%, var(--cc-border)); position: relative;
   transition: background var(--cc-motion-micro) var(--cc-motion-easing), border-color var(--cc-motion-micro) var(--cc-motion-easing);
 }
 .cc-toggle-track::after {
@@ -924,7 +927,17 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
  * sized for two lines of text rather than one verb.
  */
 .cc-tabpanel .cc-chip-row { justify-content: flex-start; }
-.cc-tabpanel .cc-chip-row > .cc-chip { padding: var(--cc-space-xs) var(--cc-space-lg); }
+.cc-tabpanel .cc-chip-row > .cc-chip, .cc-tabpanel .cc-panel-row > .cc-chip {
+  justify-content: center; min-height: 32px; padding: var(--cc-space-xs) var(--cc-space-lg);
+  font-size: var(--cc-text-body-sm); border-radius: var(--cc-radius-button);
+  background: var(--cc-button-bg, color-mix(in oklab, var(--cc-text) 5%, var(--cc-elevated)));
+  border-color: var(--cc-button-edge, color-mix(in oklab, var(--cc-text) 16%, var(--cc-border)));
+}
+.cc-tabpanel :is(.cc-chip-row, .cc-panel-row) > .cc-chip:hover:not(:disabled) { border-color: var(--cc-accent); }
+.cc-tabpanel .cc-chip-row { margin-top: var(--cc-space-xs); }
+/* Each stored key is its own small form; a hairline between them keeps one key's buttons from reading as the next's. */
+.cc-credential-form p { margin: 0; }
+.cc-credential-form + .cc-credential-form { margin-top: var(--cc-space-md); padding-top: var(--cc-space-md); border-top: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-tabpanel .cc-chip:disabled { opacity: 0.45; cursor: default; border-color: var(--cc-border); }
 
 /* A wide table scrolls inside its own box instead of widening the dialog. */
@@ -937,6 +950,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-guard-classes { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--cc-space-xs) var(--cc-space-md); }
 .cc-guard-classes label { display: inline-flex; align-items: center; gap: var(--cc-space-xs); cursor: pointer; font-size: var(--cc-text-label); color: var(--cc-text); }
 .cc-guard-classes input { accent-color: var(--cc-accent); margin: 0; }
+.cc-setting-row[data-layout="stacked"] .cc-guard-classes { justify-content: flex-start; }
 
 /* A definition list's value may be a path or an id; it wraps rather than pushing the column off the page. */
 .cc-fields { grid-template-columns: max-content minmax(0, 1fr); }

@@ -276,6 +276,7 @@ function ExecutionPolicySettings({
       </SettingsRow>
 
       <SettingsRow
+        layout="stacked"
         label={t("settings.control.guardedCategories.label")}
         description={t("settings.control.guardedCategories.description")}
       >
