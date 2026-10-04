@@ -14,6 +14,9 @@ export const TIMELINE_CSS = `
   /* Positioned so the leaving hero can be taken out of the flow inside it, and below the orb layer
      so the transcript is never drawn over the orb's light. */
   position: relative; z-index: 0;
+  /* Room for the scrollbar on both edges, always: the transcript stays centred over the composer, and it does not
+     shift sideways the moment a reply grows long enough to scroll. */
+  scrollbar-gutter: stable both-edges;
 }
 .cc-timeline {
   max-width: var(--cc-conversation-max-width); margin: 0 auto;
