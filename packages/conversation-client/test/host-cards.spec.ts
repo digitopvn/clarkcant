@@ -10,6 +10,7 @@ import {
   readableElapsed,
   renderBlock,
 } from "../src/blocks.tsx";
+import { MESSAGES_EN, type MessageKey } from "../src/i18n/messages.ts";
 import { findAll, nonHost, textOf } from "./block-helpers.ts";
 
 /**
@@ -269,6 +270,15 @@ describe("the model answer note", () => {
     const element = SystemCardBlock({ block: failed });
     expect(element?.type).toBe("section");
     expect(textOf(element)).toContain("provider exploded");
+  });
+
+  it("says its state in words, not as the wire's status id", () => {
+    const failed = { ...note, status: "blocked", title: "Không gọi được model", detail: "provider exploded" };
+    expect(textOf(SystemCardBlock({ block: failed }))).toContain("bị chặn");
+    expect(textOf(SystemCardBlock({ block: failed }))).not.toContain("blocked");
+    const english = (key: MessageKey): string => MESSAGES_EN[key];
+    expect(textOf(SystemCardBlock({ block: { ...failed, status: "needs-sign-in" }, t: english }))).toContain("needs sign-in");
+    expect(textOf(SystemCardBlock({ block: { ...failed, status: "something-new" } }))).toContain("something-new");
   });
 });
 

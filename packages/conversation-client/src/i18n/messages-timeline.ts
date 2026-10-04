@@ -93,6 +93,10 @@ export const MESSAGES_TIMELINE_VI = {
 
   // blocks.tsx — task progress card
   "blocks.task.started": "Bắt đầu",
+  "blocks.cardStatus.ready": "sẵn sàng",
+  "blocks.cardStatus.downloading": "đang tải",
+  "blocks.cardStatus.verifying": "đang kiểm tra",
+  "blocks.cardStatus.needs-sign-in": "cần đăng nhập",
   "blocks.taskStatus.queued": "đang chờ",
   "blocks.taskStatus.working": "đang làm",
   "blocks.taskStatus.blocked": "bị chặn",
@@ -1081,6 +1085,10 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.credential.notInTranscript": "What you enter does not go into the conversation or the model.",
 
   "blocks.task.started": "Started",
+  "blocks.cardStatus.ready": "ready",
+  "blocks.cardStatus.downloading": "downloading",
+  "blocks.cardStatus.verifying": "verifying",
+  "blocks.cardStatus.needs-sign-in": "needs sign-in",
   "blocks.taskStatus.queued": "queued",
   "blocks.taskStatus.working": "working",
   "blocks.taskStatus.blocked": "blocked",

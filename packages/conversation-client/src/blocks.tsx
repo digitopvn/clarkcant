@@ -355,7 +355,13 @@ export function readableInstant(value: string, locale: string, now: Date = new D
  * outright rather than rendered with weaker chrome — the whole point of the attribute is
  * that it cannot be obtained by anyone except the host.
  */
-export function SystemCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function SystemCardBlock({
+  block,
+  t = defaultT,
+}: {
+  block: Record<string, unknown>;
+  t?: (key: MessageKey) => string;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
 
   const title = typeof block.title === "string" ? block.title : "";
@@ -425,7 +431,7 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
       <header className="cc-card-head">
         <span className="cc-card-title">{title}</span>
         <span className="cc-badge" data-tone={CARD_TONE[status] ?? ""}>
-          {status}
+          {cardStatusLabel(status, t)}
         </span>
       </header>
       <div className="cc-card-body">
@@ -1180,6 +1186,12 @@ function taskStatusLabel(status: string, t: (key: MessageKey) => string): string
   return key in MESSAGES_VI ? t(key as MessageKey) : status;
 }
 
+/** A system card's state in words: the card's own states first, then the ones it shares with a task. */
+function cardStatusLabel(status: string, t: (key: MessageKey) => string): string {
+  const key = `blocks.cardStatus.${status}`;
+  return key in MESSAGES_VI ? t(key as MessageKey) : taskStatusLabel(status, t);
+}
+
 function evidenceLabel(evidence: string, t: (key: MessageKey) => string): string {
   const key = `blocks.evidence.${evidence}`;
   return key in MESSAGES_VI ? t(key as MessageKey) : evidence;
@@ -1840,7 +1852,7 @@ export function renderBlock(
       // passes whether or not the dispatcher hands it anything.
       return <ArtifactBlock key={index} block={block} t={t} {...(actions === undefined ? {} : { actions })} />;
     case "system-card":
-      return <SystemCardBlock key={index} block={block} />;
+      return <SystemCardBlock key={index} block={block} t={t} />;
     case "approval-card":
       return <ApprovalCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "question-card":
