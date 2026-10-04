@@ -63,7 +63,7 @@ export function ConversationHeader({
             permanent line of noise, and the count only matters when it is not zero. `backgroundTick` is what makes it
             appear at once for work that may already be over by the next poll. */}
         <BackgroundSessionsMark client={client} refreshKey={backgroundTick} />
-        {/* What is waiting for the person and what is new, drawn only while either is not zero. */}
+        {/* The way to the inbox, always there once the node answers; it carries a count while something waits or is new. */}
         <InboxMark client={client} refreshKey={inboxRefreshKey} onOpen={onOpenInbox} />
         {/*
           The gear is the only settings affordance, which is why it is here rather than in a

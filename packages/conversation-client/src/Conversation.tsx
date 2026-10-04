@@ -32,6 +32,7 @@ import { useAppearance } from "./use-appearance.ts";
 import { chooseThemeShown, resetAppearanceShown } from "./appearance-actions.ts";
 import { useTheme } from "./use-theme.ts";
 import { useLocale } from "./i18n/use-locale.ts";
+import { AgentAvatarProvider } from "./AgentAvatar.tsx";
 import { LocaleProvider } from "./i18n/locale-context.tsx";
 import { useConnectionStatus } from "./use-connection-status.ts";
 import { ConnectionNotice } from "./connection-notice.tsx";
@@ -475,6 +476,7 @@ export function Conversation({
 
   return (
     <LocaleProvider value={localeState}>
+    <AgentAvatarProvider profile={orbProfile}>
     <div
       className="cc-shell"
       data-view={heroPhase === "shown" ? "hero" : "conversation"}
@@ -743,6 +745,7 @@ export function Conversation({
         />
       )}
     </div>
+    </AgentAvatarProvider>
     </LocaleProvider>
   );
 }

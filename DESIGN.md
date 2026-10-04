@@ -386,7 +386,7 @@ Do not show tool count, node ID or Pi internals persistently.
 
 The background task count only appears when >0. When work is waiting because a concurrency limit was hit, the mark states the number waiting ("2 waiting") instead of pretending everything is running.
 
-Same for the inbox mark: it only appears when there's something waiting on the user or an unread notification, and it says so in words ("2 waiting on you · 1 new notification"), not with a colored dot. See §6.7.
+The inbox mark differs in one way: it stays on the header as a plain bell even at zero, because it is the pointer way back to notifications already read. It carries a count only when there's something waiting on the user or an unread notification, and it says so in words ("2 waiting on you · 1 new notification"), not with a colored dot. See §6.7.
 
 ### 6.2 Hero
 
@@ -473,11 +473,12 @@ the inbox or on the card is one and the same.
 
 Shipped:
 
-- **A mark on the header** (§6.1), absent when empty. When something is waiting, the mark carries a warning edge;
+- **A mark on the header** (§6.1), always present once the node answers: a plain bell with no count when empty, so
+  already-read notifications can be reopened by pointer and keyboard. When something is waiting, the mark carries a warning edge;
   when there's only a new notification, it doesn't. Polled like the background-task mark, and re-read right after a
   decision or when the transcript changes.
 - **Opened by click, keyboard, typed command or voice** ("open the inbox", "show notifications", "open my inbox") via
-  the same `inbox.open` intent. When the mark is absent (nothing new), the command still opens the inbox to review
+  the same `inbox.open` intent. When nothing is new, the bell and the command both still open the inbox to review
   already-read notifications.
 - **Host-owned modal** (§12: it's a decision surface, no nested modals; opening Settings closes the inbox). Escape
   closes it and returns focus. Clearly states when the node read the inbox; never implies it's live.

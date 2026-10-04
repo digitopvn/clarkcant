@@ -6,6 +6,7 @@ import { CATALOG_ENTRIES } from "@clarkcant/widget-catalog";
 
 import { ApprovalCardBlock, ConnectionCardBlock, TextBlock } from "./blocks.tsx";
 import { ConversationComposerBar } from "./ConversationComposerBar.tsx";
+import { AgentAvatarProvider } from "./AgentAvatar.tsx";
 import { TranscriptRow } from "./transcript-row.tsx";
 import { WidgetPreview } from "./widget-library/WidgetPreview.tsx";
 import { Orb } from "./Orb.tsx";
@@ -75,7 +76,7 @@ export function ThemeLabPreview({ theme, themeRef, problem, customization }: The
       <div className="cc-dot-grid" aria-hidden="true" style={{ backgroundImage: backdrop.image }} />
       <Orb size={96} profile={profile} appearanceRevision={snapshot.revision} />
       <h3>{t("themeLab.conversation")}</h3>
-      <TranscriptRow role="assistant" index={0} settled={false}><TextBlock block={{ content: t("themeLab.reply") }} /></TranscriptRow>
+      <AgentAvatarProvider profile={profile}><TranscriptRow role="assistant" index={0} settled={false}><TextBlock block={{ content: t("themeLab.reply") }} /></TranscriptRow></AgentAvatarProvider>
       {messages.map((text, index) => <TranscriptRow key={index} role="user" index={index} settled={false}><TextBlock block={{ content: text }} /></TranscriptRow>)}
       <ConversationComposerBar composerWrap={composerWrap} composerInput={composerInput} attachmentInput={attachmentInput}
         dragging={false} setDragging={() => setNotice(t("themeLab.localOnly"))} addFiles={async () => setNotice(t("themeLab.localOnly"))}

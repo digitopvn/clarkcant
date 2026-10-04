@@ -9,7 +9,7 @@ import {
   decideFailureMessageKey,
   inboxMarkState,
   inboxMarkText,
-  inboxMarkVisible,
+  inboxMarkHasNews,
   nextNoticeFocusTarget,
   noticeActionGroups,
   noticeConversationTarget,
@@ -171,10 +171,12 @@ describe("a quieted kind, in words", () => {
 });
 
 describe("the header mark", () => {
-  it("is absent at zero and while the node has not answered", () => {
-    expect(inboxMarkVisible(undefined)).toBe(false);
-    expect(inboxMarkVisible({ waiting: 0, unread: 0 })).toBe(false);
-    expect(inboxMarkVisible({ waiting: 0, unread: 1 })).toBe(true);
+  it("carries a count only while something is waiting or new, and stays a plain bell at zero", () => {
+    expect(inboxMarkHasNews(undefined)).toBe(false);
+    expect(inboxMarkHasNews({ waiting: 0, unread: 0 })).toBe(false);
+    expect(inboxMarkHasNews({ waiting: 0, unread: 1 })).toBe(true);
+    // Read notices can still be opened again: at zero the mark is drawn as the empty bell, not removed.
+    expect(inboxMarkState({ waiting: 0, unread: 0 })).toBe("empty");
   });
 
   it("says what is waiting before what is new, and only what is not zero", () => {

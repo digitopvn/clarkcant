@@ -29,6 +29,7 @@ import {
   type TurnOrigin,
   type WidgetSemanticDoc,
   modelChangeNeedsGeneration,
+  redactSecrets,
   uiContextNote,
 } from "@clarkcant/contracts";
 
@@ -380,6 +381,11 @@ interface Turn {
   lastLatencyMs: number | undefined;
   /** The brief the last turn was given, so the next can count what changed. */
   lastBrief: string;
+  /**
+   * What the provider said when it refused this turn, cleared when a turn starts. Pi settles a refused turn the way it
+   * settles an answer, so without this the person would hear that nothing was written rather than why.
+   */
+  providerError: string | undefined;
   /**
    * Replace the session with a fresh one, at a turn boundary: the new one is briefed by the recap like any fresh
    * session, and the old one is let go. The transcript is not touched.
@@ -1102,7 +1108,23 @@ export async function createModelTurn(options: {
    */
   const generationModels = new Map<string, string>();
 
-  const describe = (): string => `${selection.provider}/${selection.id}`;
+  /**
+   * The model a conversation's turn runs on: its current generation's, else the one the person chose, else the one this
+   * node started with. Read per turn rather than captured at boot, so a reply and an error name the model that actually
+   * answered — a choice made after the node started is otherwise misreported as the boot model.
+   */
+  const runningModel = (conversationId: string): ModelSelection => {
+    const generation = generationModels.get(conversationId) ?? "";
+    const slash = generation.indexOf("/");
+    if (slash > 0 && slash < generation.length - 1) {
+      return { provider: generation.slice(0, slash), id: generation.slice(slash + 1) };
+    }
+    return options.model?.() ?? selection;
+  };
+  const describe = (conversationId?: string): string => {
+    const model = conversationId === undefined ? (options.model?.() ?? selection) : runningModel(conversationId);
+    return `${model.provider}/${model.id}`;
+  };
 
   const language = (): "vi" | "en" => {
     try {
@@ -1126,6 +1148,13 @@ export async function createModelTurn(options: {
     language() === "vi"
       ? "Tin nhắn này đã được dừng trước khi bắt đầu, nên model chưa viết gì cho nó. Tin nhắn vẫn được lưu."
       : "This message was stopped before it started, so the model wrote nothing for it. The message is still saved.";
+  /** A turn that ran but brought back no reply: what failed and why, that the message is kept, and what to do next. */
+  const turnFailed = (model: string, reason: string): string =>
+    language() === "vi"
+      ? `${model} không trả lời được tin nhắn này: ${reason}. ` +
+        "Tin nhắn của bạn đã được lưu và cuộc trò chuyện vẫn giữ nguyên. Hãy thử lại, hoặc chọn model khác trong Cài đặt."
+      : `${model} could not answer this message: ${reason}. ` +
+        "Your message is saved and the conversation is unchanged. Retry, or choose another model in Settings.";
   const startFailed = (model: string, reason: string): string =>
     language() === "vi"
       ? `Không bắt đầu được cuộc trò chuyện này trên ${model}: ${reason}. ` +
@@ -1380,6 +1409,7 @@ export async function createModelTurn(options: {
       recentTexts: [],
       lastLatencyMs: undefined,
       lastBrief: "",
+      providerError: undefined,
       rebuild: async () => false,
     };
     /*
@@ -1450,7 +1480,9 @@ export async function createModelTurn(options: {
           flushText(target);
           target.reasoning.push(event.delta);
           target.onEvent?.({ type: "reasoning-delta", text: event.delta });
+          return;
         }
+        if (event.type === "error") target.providerError = event.message;
       });
 
     /*
@@ -1735,6 +1767,8 @@ export async function createModelTurn(options: {
     }
 
     const startedAt = Date.now();
+    // Read when asked rather than here: the claim below may hand this conversation to a new generation.
+    const runsOn = (): ModelSelection => runningModel(input.conversationId);
     /*
      * Running from the claim, before anything is read for the prompt.
      *
@@ -1747,8 +1781,8 @@ export async function createModelTurn(options: {
     const stoppedBeforeStart = (): ModelTurnReply => ({
       text: "",
       segments: [],
-      provider: selection.provider,
-      model: selection.id,
+      provider: runsOn().provider,
+      model: runsOn().id,
       elapsedMs: Date.now() - startedAt,
       stopped: true,
       // Never started, so the card must not say the model wrote anything.
@@ -1775,8 +1809,8 @@ export async function createModelTurn(options: {
         return {
           text: "",
           segments: [],
-          provider: selection.provider,
-          model: selection.id,
+          provider: runsOn().provider,
+          model: runsOn().id,
           elapsedMs: Date.now() - startedAt,
           steered: true,
         };
@@ -1798,6 +1832,7 @@ export async function createModelTurn(options: {
       turn.pending.length = 0;
       turn.reasoning.length = 0;
       turn.segments.length = 0;
+      turn.providerError = undefined;
       turn.messageId = input.messageId;
       turn.userMessageId = input.userMessageId;
       turn.onEvent = input.onEvent;
@@ -1870,15 +1905,15 @@ export async function createModelTurn(options: {
          */
         const elapsedMs = Date.now() - startedAt;
         const sessionId = turn.sessionId;
-        const metrics = turnMetrics({ adapter, sessionId, elapsedMs, model: selection.id });
+        const metrics = turnMetrics({ adapter, sessionId, elapsedMs, model: runsOn().id });
         turn.lastUsedAtMs = Date.now();
         turn.unsubscribe();
         void (turn.stopping ?? Promise.resolve()).then(() => adapter.dispose(sessionId)).catch(() => undefined);
         return {
           text: "",
           segments: [],
-          provider: selection.provider,
-          model: selection.id,
+          provider: runsOn().provider,
+          model: runsOn().id,
           elapsedMs,
           metrics,
           stopped: true,
@@ -1931,7 +1966,14 @@ export async function createModelTurn(options: {
           turn.abort.abort();
           void adapter.abort(turn.sessionId, `turn exceeded ${budget.maxWallClockMs} ms`);
           reject(
-            new Error(`${describe()} did not finish within ${budget.maxWallClockMs} ms; the turn was stopped`),
+            new Error(
+              turnFailed(
+                describe(input.conversationId),
+                language() === "vi"
+                  ? `chưa xong sau ${budget.maxWallClockMs} ms nên lượt này đã được dừng`
+                  : `it did not finish within ${budget.maxWallClockMs} ms, so the turn was stopped`,
+              ),
+            ),
           );
         }, budget.maxWallClockMs);
       });
@@ -2043,11 +2085,11 @@ export async function createModelTurn(options: {
 
       if (turn.stopped) {
         // Read before the session goes: the tokens a stopped turn spent are still worth reporting.
-        const metrics = turnMetrics({ adapter, sessionId: promptedSession, elapsedMs, model: selection.id });
+        const metrics = turnMetrics({ adapter, sessionId: promptedSession, elapsedMs, model: runsOn().id });
         turn.unsubscribe();
         void (turn.stopping ?? Promise.resolve()).then(() => adapter.dispose(promptedSession)).catch(() => undefined);
         // Stopped with nothing said yet is still an answer: the person asked for the stop, so it is not a failure.
-        return { text, segments, provider: selection.provider, model: selection.id, elapsedMs, metrics, stopped: true };
+        return { text, segments, provider: runsOn().provider, model: runsOn().id, elapsedMs, metrics, stopped: true };
       }
 
       if (drainFailed) {
@@ -2064,7 +2106,14 @@ export async function createModelTurn(options: {
       if (segments.length === 0) {
         // A settled run that produced nothing at all is not a reply. Saying so is better than
         // appending an empty message that reads as the assistant having nothing to say.
-        throw new Error(`${describe()} ended the turn without producing any text after ${elapsedMs} ms`);
+        // The provider's own refusal when there is one — the reason a person can act on — else that nothing came back.
+        const reason =
+          turn.providerError !== undefined
+            ? redactSecrets(redactLocalPaths(turn.providerError))
+            : language() === "vi"
+              ? `model kết thúc lượt mà không viết gì sau ${elapsedMs} ms`
+              : `the model ended its turn without writing anything after ${elapsedMs} ms`;
+        throw new Error(turnFailed(describe(input.conversationId), reason));
       }
 
       // A reply that is only a view is a reply. Refusing it would make the one thing this node
@@ -2072,10 +2121,10 @@ export async function createModelTurn(options: {
       return {
         text,
         segments,
-        provider: selection.provider,
-        model: selection.id,
+        provider: runsOn().provider,
+        model: runsOn().id,
         elapsedMs,
-        metrics: turnMetrics({ adapter, sessionId: turn.sessionId, elapsedMs, model: selection.id }),
+        metrics: turnMetrics({ adapter, sessionId: turn.sessionId, elapsedMs, model: runsOn().id }),
       };
     } finally {
       if (timer !== undefined) clearTimeout(timer);

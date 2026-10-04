@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement, t
 
 import { createOrbRenderer, orbPointerFromClient, type OrbOptions, type OrbPointerRect, type OrbPointerSample } from "./orb.ts";
 import { orbFallbackBackground, type ResolvedOrbProfile } from "./orb-profile.ts";
+import { orbOptionsFromProfile } from "./orb-snapshot.ts";
 import { readDocumentAppearance, subscribeToDocumentTheme } from "./theme.ts";
 import { usePlatformReducedMotion } from "./typewriter.ts";
 
@@ -89,7 +90,7 @@ function parseCssColor(value: string): readonly number[] | undefined {
  * rectangle. Read rather than hardcoded, and re-read whenever the theme changes, because a colour
  * captured at mount becomes the previous theme's colour the moment someone switches.
  */
-function readCanvasColor(element: Element): readonly number[] | undefined {
+export function readCanvasColor(element: Element): readonly number[] | undefined {
   if (typeof getComputedStyle !== "function") return undefined;
   const raw = getComputedStyle(element).getPropertyValue("--cc-canvas").trim();
   return raw === "" ? undefined : parseCssColor(raw);
@@ -134,21 +135,7 @@ export function Orb({
    * A prop is a decision about this particular orb — the hero is drawn at its own radius — and a profile is
    * a preference about the orb in general, so the more specific one wins.
    */
-  const profileOptions: OrbOptions =
-    profile === undefined
-      ? {}
-      : {
-          radius: profile.optical.radius,
-          exposure: profile.optical.exposure,
-          chromatic: profile.optical.chromatic,
-          glow: profile.optical.glow,
-          sheen: profile.optical.sheen,
-          speed: profile.speed,
-          physics: profile.physics,
-          style: profile.style,
-          ...(Object.keys(profile.palette).length === 0 ? {} : { palette: profile.palette }),
-        };
-  const effective: OrbOptions = { ...profileOptions, ...options };
+  const effective: OrbOptions = { ...orbOptionsFromProfile(profile), ...options };
 
   useEffect(() => {
     const canvas = canvasRef.current;

@@ -319,6 +319,8 @@ body {
   transition-property: transform; transition-duration: var(--cc-motion-micro); transition-timing-function: var(--cc-motion-bounce);
 }
 .cc-inbox-mark[data-inbox-mark="waiting"] { border-color: color-mix(in oklab, var(--cc-warning) 55%, transparent); }
+.cc-inbox-mark[data-inbox-mark="empty"] { padding: 2px; min-width: 26px; justify-content: center; border-color: transparent; color: var(--cc-text-muted); }
+.cc-inbox-mark .cc-icon { flex: none; }
 .cc-inbox-mark:hover { background: var(--cc-elevated); }
 .cc-inbox-mark:active { transform: scale(0.97); }
 .cc-inbox-mark:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }

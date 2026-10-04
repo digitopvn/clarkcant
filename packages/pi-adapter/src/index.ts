@@ -18,6 +18,7 @@ export {
   hasPersonalInstructions,
   type PersonalInstructionsInput,
 } from "./personal-instructions.ts";
+export { providerErrorReason } from "./provider-error.ts";
 export { DEFAULT_FAKE_SKILLS, FakePiAdapter, fakeSkillRevision, type FakeSkill, type ScriptedTurn } from "./fake.ts";
 export {
   RealPiAdapter,

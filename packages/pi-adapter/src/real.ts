@@ -93,6 +93,7 @@ export const REQUIRED_SDK_EXPORTS = [
 ] as const;
 
 import { composePersonalInstructions } from "./personal-instructions.ts";
+import { providerErrorReason } from "./provider-error.ts";
 
 export interface RealPiAdapterOptions {
   /** Working directory for the worker; also the loader's discovery root. */
@@ -888,7 +889,7 @@ export class RealPiAdapter implements PiAdapter {
     const messages = (entry.session.agent.state as { messages?: readonly unknown[] }).messages;
     const last = messages?.at(-1) as { role?: unknown; stopReason?: unknown; errorMessage?: unknown } | undefined;
     if (last?.role === "assistant" && last.stopReason === "error" && !this.#aborted.has(sessionId)) {
-      const reason = typeof last.errorMessage === "string" && last.errorMessage !== "" ? last.errorMessage : "no reason given";
+      const reason = providerErrorReason(last.errorMessage);
       for (const listener of entry.listeners) {
         listener({ type: "error", sessionId, message: `the model's provider refused the turn: ${reason}` });
       }
