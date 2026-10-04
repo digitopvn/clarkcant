@@ -88,6 +88,7 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.credential.needed": "Cần thông tin đăng nhập",
   "blocks.credential.usedByLabel": "Sẽ được dùng bởi",
   "blocks.credential.storedOnLabel": "Lưu trên",
+  "blocks.credential.vaultLabel": "Kho lưu",
   "blocks.credential.save": "Lưu",
   "blocks.credential.notInTranscript": "Giá trị bạn nhập không đi vào hội thoại, không vào model.",
 
@@ -1083,6 +1084,7 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.credential.needed": "Credentials needed",
   "blocks.credential.usedByLabel": "Will be used by",
   "blocks.credential.storedOnLabel": "Stored on",
+  "blocks.credential.vaultLabel": "Vault",
   "blocks.credential.save": "Save",
   "blocks.credential.notInTranscript": "What you enter does not go into the conversation or the model.",
 

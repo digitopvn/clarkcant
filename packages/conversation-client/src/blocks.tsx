@@ -1074,7 +1074,6 @@ export function CredentialCardBlock({
     <section className="cc-card" data-host-card="credential" data-owner="host">
       <header className="cc-card-head">
         <span className="cc-card-title">{t("blocks.credential.needed")}</span>
-        <span className="cc-badge">{destination}</span>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{purpose}</p>
@@ -1083,16 +1082,26 @@ export function CredentialCardBlock({
             {description}
           </p>
         )}
-        {consumer !== "" && (
-          <p className="cc-freshness" style={{ margin: 0 }} data-credential-consumer={consumer}>
-            {t("blocks.credential.usedByLabel")}: {consumer}
+        {/*
+          Who will use it and where it is kept are machine names (a capability, a node, a vault). They stay one press
+          away for the person who wants to check them, and out of the way of the person who only needs to paste a key.
+        */}
+        <details className="cc-text-alt" data-credential-references="true">
+          <summary>{t("inbox.capability.details")}</summary>
+          {consumer !== "" && (
+            <p className="cc-freshness" style={{ margin: 0 }} data-credential-consumer={consumer}>
+              {t("blocks.credential.usedByLabel")}: {consumer}
+            </p>
+          )}
+          {scope !== "" && (
+            <p className="cc-freshness" style={{ margin: 0 }} data-credential-scope={scope}>
+              {t("blocks.credential.storedOnLabel")}: {scope}
+            </p>
+          )}
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-destination={destination}>
+            {t("blocks.credential.vaultLabel")}: {destination}
           </p>
-        )}
-        {scope !== "" && (
-          <p className="cc-freshness" style={{ margin: 0 }} data-credential-scope={scope}>
-            {t("blocks.credential.storedOnLabel")}: {scope}
-          </p>
-        )}
+        </details>
         {fields.length === 0 ? null : (
           <form
             className="cc-credential-form"
@@ -1129,15 +1138,17 @@ export function CredentialCardBlock({
                 />
               </label>
             ))}
-            <button
-              type="submit"
-              className="cc-icon-btn"
-              style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
-              disabled={!complete}
-              data-credential-submit="true"
-            >
-              {t("blocks.credential.save")}
-            </button>
+            <div className="cc-card-actions">
+              <button
+                type="submit"
+                className="cc-action"
+                data-emphasis="primary"
+                disabled={!complete}
+                data-credential-submit="true"
+              >
+                {t("blocks.credential.save")}
+              </button>
+            </div>
           </form>
         )}
         {status !== undefined && (
