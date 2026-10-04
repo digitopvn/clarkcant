@@ -24,6 +24,8 @@ export const MESSAGES_TIMELINE_VI = {
   // blocks.tsx — reasoning
   "blocks.reasoning.label": "Suy luận của agent",
   "blocks.reasoning.writing": "đang viết…",
+  "blocks.workSteps.done": "Đã làm {count} bước",
+  "blocks.workSteps.failed": "{count} bước lỗi",
 
   // blocks.tsx — artifact
   "blocks.artifact.fromAnotherNode": " · từ một node khác",
@@ -988,6 +990,8 @@ export const MESSAGES_TIMELINE_EN = {
 
   "blocks.reasoning.label": "Agent reasoning",
   "blocks.reasoning.writing": "writing…",
+  "blocks.workSteps.done": "Worked through {count} steps",
+  "blocks.workSteps.failed": "{count} failed",
 
   "blocks.artifact.fromAnotherNode": " · from another node",
   "blocks.artifact.opening": "Opening…",

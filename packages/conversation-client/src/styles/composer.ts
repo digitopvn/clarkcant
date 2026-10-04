@@ -571,5 +571,26 @@ div.cc-attachment { flex-wrap: wrap; }
 .cc-reasoning-writing {
   flex: none; font-size: var(--cc-text-meta); color: var(--cc-text-muted);
 }
+/*
+ * A run of steps folded into one receipt line. Open, the steps hang off a rule under the line's mark, so they read as
+ * what that line was made of rather than as more of the reply.
+ */
+.cc-work-steps { margin-inline: calc(-1 * var(--cc-space-sm)); }
+.cc-work-steps > .cc-tool-head {
+  border-radius: var(--cc-radius-button);
+  transition: background-color var(--cc-motion-normal) var(--cc-motion-easing);
+}
+.cc-work-steps > .cc-tool-head:hover { background: color-mix(in oklab, var(--cc-card) 70%, transparent); }
+.cc-work-steps > .cc-tool-head:hover .cc-tool-label, .cc-work-steps[open] > .cc-tool-head .cc-tool-label { color: var(--cc-text); }
+.cc-work-steps-failed { color: var(--cc-danger); }
+.cc-work-steps-body {
+  display: flex; flex-direction: column;
+  margin-left: calc(var(--cc-space-sm) + 0.5em); padding-left: var(--cc-space-xs);
+  border-left: var(--cc-line, 1px solid) var(--cc-border);
+}
+.cc-work-steps-body > .cc-tool { margin-inline: 0; }
+.cc-work-steps + .cc-tool, .cc-tool + .cc-work-steps, .cc-work-steps + .cc-work-steps {
+  margin-top: calc(var(--cc-space-xxs) - var(--cc-space-sm));
+}
 }
 `;

@@ -71,9 +71,9 @@ export function TextBlock({ block }: { block: Record<string, unknown> }): ReactE
 /**
  * A tool call, drawn as a widget that opens and closes.
  *
- * Open while it runs, closed once it is done: a call in flight is the thing the user is waiting on, and
- * a call that finished is a receipt they can open if they want it. A failure stays open, because the
- * one thing nobody wants collapsed is the reason something did not work.
+ * Compact while it runs and once it is done: the spinning mark and the label already say what is happening, and the
+ * arguments are machinery the person opens only if they want it. A failure opens, because the one thing nobody wants
+ * collapsed is the reason something did not work.
  *
  * The state is a `details` element with React driving its open attribute, rather than a div with a click
  * handler: a disclosure built from the platform is keyboard operable, announced as one, and reachable
@@ -95,13 +95,13 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
   // its JSON, and still there to open for anyone who wants the record.
   const questionRecord = name === "ask_user_question" && typeof args.decision === "string" && args.decision !== "answered";
   const mark = questionRecord ? "noted" : status;
-  const [open, setOpen] = useState(!questionRecord && (status === "running" || status === "failed"));
+  const [open, setOpen] = useState(!questionRecord && status === "failed");
 
-  // A call that finishes closes itself — keyed on the status so it happens once, and so a widget the
-  // user opened by hand is not closed again underneath them.
+  // A call that fails opens itself — keyed on the status so it happens once, and so a widget the user closed by hand
+  // is not opened again underneath them.
   useEffect(() => {
-    if (status === "done") setOpen(false);
-  }, [status]);
+    if (status === "failed" && !questionRecord) setOpen(true);
+  }, [status, questionRecord]);
 
   return (
     <details
