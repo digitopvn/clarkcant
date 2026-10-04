@@ -44,6 +44,8 @@ export type IsolatedFrameLookup =
        * its `stateVersion`, the keys it says are view state and the migrations that carry older state forward.
        */
       definition: WidgetDefinition;
+      /** The directory entry the definition was read from, so whoever needs its package reads that one entry. */
+      entry: DirectoryEntry;
     }
   | {
       ok: false;
@@ -168,6 +170,7 @@ export function findIsolatedFrame(input: {
       resources: pkg.manifest.resources,
       browserTokens: declaration.kind === "ui" ? (declaration.browserTokens?.providers ?? []) : [],
       definition: facet.definition,
+      entry,
     };
   }
 

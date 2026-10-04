@@ -40,10 +40,10 @@ issues is a random test value kept only in its memory. A real provider replaces 
 - `dev/service.test.mjs` — the service against the fake connector; portable, so a scaffolded copy keeps it.
 - `fixtures/` — the four prop sets the conformance suite requires.
 
-Only the repository's scripted fixture model places the widget with its two bindings (`listBinding`,
-`updateBinding`) today. The `place_widget` tool binds a widget's offered actions and "Ask Clark" buttons, not a
-binding to a service's capability; see
-[widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
+The `place_widget` tool places the widget in a real installation with its two bindings: `listBinding` to
+`list-tasks@1`, and `updateBinding` to `update-task@1` with `id` and `title` as its `inputs`. A button can only call
+its own package's capability, and until the account is connected each one is placed disabled with the node's reason;
+see [widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
 
 ## Check it
 

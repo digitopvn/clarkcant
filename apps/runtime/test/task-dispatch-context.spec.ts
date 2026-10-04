@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import { advanceResolving, applyTaskEvent, createTask, type ConductorDeps } from
 import { getTask } from "@clarkcant/storage";
 
 import { createConditionalInstructions } from "../src/conditional-instructions.ts";
+import type { BackgroundFallback } from "../src/model-turn.ts";
 import { BUNDLE_DATA_HEADER, type ContextBundles, createContextBundles } from "../src/context-bundle.ts";
 import { rememberMemory } from "../src/memory.ts";
 import { bootRuntime, type Runtime } from "../src/node.ts";
@@ -120,6 +122,10 @@ async function dispatch(
     allowed?: readonly DataClass[];
     /** Project instructions kept in the task's folder. */
     instructions?: string;
+    /** Why routing fell back to the node's own model, as the launch reports it. */
+    fallback?: BackgroundFallback;
+    /** Report the worker process as started, so the host writes its audit row. */
+    recordsStart?: boolean;
   } = {},
 ): Promise<Dispatched> {
   const { conductor, task } = setup(goal, overrides.origin);
@@ -147,7 +153,12 @@ async function dispatch(
             available: () => true,
             launch: async (work) => {
               launched.push(work);
-              return { model: { provider: "acme", id: "narrow" }, via: "configured" as const, credentialSource: "model-config" as const };
+              return {
+                model: { provider: "acme", id: "narrow" },
+                via: "configured" as const,
+                ...(overrides.fallback === undefined ? {} : { fallback: overrides.fallback }),
+                credentialSource: "model-config" as const,
+              };
             },
           },
           allowedDataClasses: (model: { provider: string; id: string }) => (model.id === "narrow" ? allowed : ["public", "internal"]),
@@ -175,6 +186,8 @@ async function dispatch(
     },
     runWorker: async (options) => {
       seen = options;
+      // A worker process "exists" here, which is when the host writes which model it was started on.
+      if (overrides.recordsStart === true) options.onChild?.({ pid: undefined } as ChildProcess);
       return emptyResult();
     },
   });
@@ -261,6 +274,37 @@ describe("a dispatched task's context", () => {
     const wide = await dispatch(GOAL, { allowed: ["public", "internal"] });
     expect(wide.launched).toEqual([{ dataClass: "internal" }]);
     expect(wide.options?.brief.contextItems).toBe(1);
+  });
+
+  it("records on the audit trail why its model is the node's own when routing fell back", async () => {
+    const trail = (): string[] =>
+      (runtime?.db.prepare("SELECT summary FROM audit_log WHERE kind = 'model'").all() as { summary: string }[]).map(
+        (row) => row.summary,
+      );
+    const goal = `${GOAL}, gửi kết quả cho duy@example.com`;
+    const cases: Array<{ fallback?: BackgroundFallback; says: string }> = [
+      {
+        fallback: { reason: "data-class", dataClass: "confidential" },
+        says: "(the model this node runs, because no model in the pool may receive confidential data; key from",
+      },
+      { fallback: { reason: "route-failed" }, says: "(the model this node runs, because routing failed; key from" },
+      { says: "(the model this node runs; key from" },
+    ];
+    for (const { fallback, says } of cases) {
+      await dispatch(goal, {
+        allowed: ["public", "internal", "confidential"],
+        recordsStart: true,
+        ...(fallback === undefined ? {} : { fallback }),
+      });
+      const rows = trail();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toContain("worker started on acme/narrow");
+      expect(rows[0]).toContain(says);
+      // The class is named, never the text that made the goal that class.
+      expect(rows[0]).not.toContain("duy@example.com");
+      runtime?.close();
+      runtime = undefined;
+    }
   });
 
   it("carries the project's instructions for its folders in the brief, and none without them", async () => {

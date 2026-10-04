@@ -2005,12 +2005,37 @@ offered action is a `perform {action}` proposal. It compiles like any action bin
 `local-write` and the declared input schema. An action the definition does not offer is refused when it is compiled.
 
 **Placing.** The agent tool `place_widget` places a widget from an installed, active package whose renderer is
-`isolated-app`. `list` shows each installed widget's id, props schema and offered actions. `place` binds every offered
-action, plus up to 4 optional "Ask Clark" buttons. Each button is bound into a string prop the widget reads, and names
-the prop, the label, the intent and optional `contextRefs`. Placing is all or nothing. Two buttons on one prop, a prop
-given both as a value and as a button, or a binding the host refuses leaves nothing created. This is the product path
-that gives a package widget its bindings in a real installation. Binding a service capability through `place_widget`
-is not supported yet ([#445](https://github.com/digitopvn/clarkcant/issues/445)).
+`isolated-app`. `list` shows each installed widget's id, props and state schemas, offered actions, and its own
+package's service capabilities with their effect category, readiness and input schema. `place` binds every offered
+action, plus up to 4 optional buttons. Each button is bound into a string prop the widget reads, and names the prop and
+the label. It then either asks Clark, with an intent and optional `contextRefs`, or calls a capability, with
+`capabilityRef`, `inputs` and `stateInputs` ([#445](https://github.com/digitopvn/clarkcant/issues/445)):
+
+- `inputs` are the arguments the widget sends with a press. `stateInputs` are read from the widget's own state when it
+  is pressed, and a value the press sends under the same key wins.
+- The capability must be served by the active generation of the package the widget's definition is read from: the
+  package the node loads the widget's frame from, matched by package id and version. Widget ids are not namespaced, so
+  another package that declares the same widget id grants nothing. A widget is never bound to another package's
+  service. `list` shows a widget only under its own package's capabilities. A package with widgets that was recorded
+  before the node kept its widget ids is named, after the widgets, as one to reinstall or update to list them; its
+  widgets still place by id.
+- The host compiles the button as an `invoke` binding. The effect category comes from the registry, the binding is
+  pinned to the serving generation, and the recorded input schema is the capability's own, cut down to `inputs`. If the
+  service has not listed its tools yet, only the names are recorded; every call is still checked against the
+  capability's own schema when it runs. Definitions the schema's properties refer to (`$defs`, `definitions`) are
+  carried with it.
+- A capability whose input schema does not set `additionalProperties: false` takes any argument name. The model can
+  then name any argument in `inputs`, and the press accepts any value for a name the schema does not describe.
+  Declare `additionalProperties: false` and a schema for every argument a widget may send.
+- A capability that is not ready yet, for example one still missing its key or connection, is still bound. The frame's
+  live view lists the binding as unavailable with the node's reason until it is ready. A capability the node has not
+  registered at all yet is refused with a sentence that says to try again. This happens on a service's first start,
+  before it has written its rows.
+
+Every press then goes through the same `invokeCapability` path, the execution policy and the effect ledger as any other
+`invoke`. Placing is all or nothing. Two buttons on one prop, a prop given both as a value and as a button, a state key
+the widget's state schema does not hold, or a binding the host refuses leaves nothing created. This is the product path
+that gives a package widget its bindings in a real installation.
 
 **Performing.** The agent tool `perform_widget_action` has two actions. `list` shows the actions offered by widgets in
 this conversation, with their binding ids and input schemas. `perform` runs one by its binding id. It takes the same
@@ -3523,9 +3548,10 @@ service reaches a provider with a key it never holds.
   same widget and job with a service that draws the image itself, declares no provider, and so only reads. Both pass
   `clark widget test` and `pack` as created. `pure-ui` and both of these go through one copier in the CLI.
 
-Only the repository's scripted fixture model places the widget with `generateBinding` today. `place_widget`
-([§10.3](#103-actions-clark-performs-actionsperform1)) binds a widget's offered actions and "Ask Clark" buttons, not
-a binding to a service's capability, so in a real installation the widget says it is not connected to the service.
+`place_widget` ([§10.3](#103-actions-clark-performs-actionsperform1)) places the widget in a real installation, with
+`generateBinding` bound to the package's `image.generate@1` capability. `prompt` is listed in both `inputs` and
+`stateInputs`: a press sends the prompt, and a spoken "tạo ảnh" runs the draft the frame keeps in its state. Until the
+person stores the provider key, the button is placed but disabled, with the node's reason.
 
 Tests: [service-job.spec.ts](../examples/reference-apps/image-generator/test/service-job.spec.ts) for the service
 against the fake provider through the job host, the egress broker and the artifact broker (completion, progress,
@@ -3572,9 +3598,9 @@ stop. `clark widget init --template media-tool` starts a new package from it.
 - **Fixture pacing.** A node started with `CC_MODEL_FIXTURE=1` holds each answer to a service's file read back 700 ms
   (`timings.artifactReadDelayMs` on the service host), so the journey can watch progress and stop a render mid-way. The
   service's tool has no pacing argument, and neither does the `media-tool` template.
-- **Placement.** Only the repository's scripted fixture model places the widget with its `renderBinding` today.
-  `place_widget` ([§10.3](#103-actions-clark-performs-actionsperform1)) binds offered actions and "Ask Clark" buttons,
-  not a binding to a service's capability, so in a real installation Render shows that reason.
+- **Placement.** `place_widget` ([§10.3](#103-actions-clark-performs-actionsperform1)) places the widget in a real
+  installation, with `renderBinding` bound to the package's `render@1` capability and `source`, `gainDb`, `trimStartMs`
+  and `trimEndMs` as its `inputs`.
 
 Tests: [wav.spec.ts](../examples/reference-apps/media-render/test/wav.spec.ts) for the transform and its pinned digest,
 [service.spec.ts](../examples/reference-apps/media-render/test/service.spec.ts) for the service process (progress,

@@ -287,6 +287,51 @@ describe("a background run", () => {
     expect(prompt).not.toContain("Users");
   });
 
+  it("runs on the configured model when the route fails, whether it rejects or throws before returning", async () => {
+    const failures: Array<() => Promise<never>> = [
+      async () => {
+        throw new Error("pool unreadable");
+      },
+      // Not an async function: it throws before there is a promise to catch.
+      () => {
+        throw new Error("router not ready");
+      },
+    ];
+    for (const backgroundModel of failures) {
+      const adapter = new BriefRecordingAdapter({ script: ["xong", "xong"] });
+      const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, backgroundModel });
+      await expect(
+        turn!.runInBackground({ conversationId: CONVERSATION as ConversationId, principal: OWNER, text: QUERY }),
+      ).resolves.toBe("xong");
+      expect(adapter.briefs[0]?.model).toMatchObject({ provider: "test-provider", id: "test-model" });
+      // A dispatched worker treats the same failure the same way, and keeps the reason for its record.
+      await expect(turn!.workerModel({ dataClass: "internal" })).resolves.toMatchObject({
+        provider: "test-provider",
+        id: "test-model",
+        via: "configured",
+        fallback: { reason: "route-failed" },
+      });
+    }
+  });
+
+  it("gives a dispatched worker the reason routing fell back, and none when it routed or routes nothing", async () => {
+    const adapter = new BriefRecordingAdapter({ script: [] });
+    const answers = [
+      { fallback: { reason: "data-class" as const, dataClass: "confidential" as const } },
+      { provider: "routed-provider", id: "routed-model" },
+      undefined,
+    ];
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter, backgroundModel: async () => answers.shift() });
+    expect(await turn!.workerModel({ dataClass: "confidential" })).toMatchObject({
+      via: "configured",
+      fallback: { reason: "data-class", dataClass: "confidential" },
+    });
+    const routed = await turn!.workerModel({ dataClass: "internal" });
+    expect(routed).toMatchObject({ provider: "routed-provider", id: "routed-model", via: "routed" });
+    expect(routed).not.toHaveProperty("fallback");
+    expect(await turn!.workerModel()).not.toHaveProperty("fallback");
+  });
+
   it("still runs when retrieval fails", async () => {
     const adapter = new BriefRecordingAdapter({ script: ["xong"] });
     const turn = await createModelTurn({

@@ -132,6 +132,31 @@ describe("which instructions apply", () => {
     expect(reader.active({ touched: [write(join(project, "README.md"))], role: "foreground", skills: [] })).toEqual([]);
   });
 
+  it("reads a versioned file and a legacy one with no version alike, and nothing from a version it does not know", () => {
+    const file = join(project, "packages", "storage", "migrations", "0002.sql");
+    const rule = { when: { path: "packages/storage/**", operation: "write" }, include: ["migrations"] };
+    snippet("migrations", MIGRATIONS);
+    const invalid: { project: string; reason: string }[] = [];
+    const reader = createConditionalInstructions({ roots: () => [root], onInvalid: (input) => invalid.push(input) });
+    const state = { touched: [write(file)], role: "foreground" as const, skills: [] };
+
+    rules({ version: 1, rules: [rule] });
+    expect(reader.active(state)).toHaveLength(1);
+    // Each write differs in size, so the reader's cache, kept while modification time and size are unchanged, rereads it.
+    rules({ rules: [rule] });
+    expect(reader.active(state)).toHaveLength(1);
+    rules({ version: 2, rules: [rule] });
+    expect(reader.active(state)).toEqual([]);
+    // Said as a version this build does not read, not as a broken file: the fix is to update ClarkCant.
+    expect(invalid).toEqual([{ project: "clark", reason: "unknown-version" }]);
+    // An editor's $schema is no reason to drop the file; any other unknown top-level key is.
+    rules({ $schema: "https://example.invalid/instructions.schema.json", version: 1, rules: [rule] });
+    expect(reader.active(state)).toHaveLength(1);
+    rules({ version: 1, rules: [rule], extra: true });
+    expect(reader.active(state)).toEqual([]);
+    expect(invalid.at(-1)).toEqual({ project: "clark", reason: "shape" });
+  });
+
   it("checks project, capability, role and skill when a rule names them", () => {
     rules({
       rules: [
@@ -171,8 +196,8 @@ describe("which instructions apply", () => {
   it("reads no more rules than its bound, clips a long snippet, and states nothing for a broken file", () => {
     rules({ rules: Array.from({ length: 40 }, (_, index) => ({ when: {}, include: [`s${String(index)}`] })) });
     for (let index = 0; index < 40; index += 1) snippet(`s${String(index)}`, index === 0 ? "x".repeat(5_000) : `quy tắc ${String(index)}`);
-    const invalid: string[] = [];
-    const reader = createConditionalInstructions({ roots: () => [root], onInvalid: ({ project: name }) => invalid.push(name) });
+    const invalid: { project: string; reason: string }[] = [];
+    const reader = createConditionalInstructions({ roots: () => [root], onInvalid: (input) => invalid.push(input) });
     const active = reader.active({ touched: [write(join(project, "a.ts"))], role: "foreground", skills: [] });
     expect(active).toHaveLength(INSTRUCTION_LIMITS.rules);
     expect(active[0]?.text.length).toBeLessThan(INSTRUCTION_LIMITS.snippetChars + 20);
@@ -180,7 +205,51 @@ describe("which instructions apply", () => {
 
     writeFileSync(join(project, ".clarkcant", "instructions.json"), "{ not json", "utf8");
     expect(reader.active({ touched: [write(join(project, "a.ts"))], role: "foreground", skills: [] })).toEqual([]);
-    expect(invalid).toEqual(["clark"]);
+    expect(invalid).toEqual([{ project: "clark", reason: "not-json" }]);
+
+    // A file over the bound is not read at all, and that is said too, once while it stays unchanged.
+    rules({ rules: [], pad: "x".repeat(INSTRUCTION_LIMITS.rulesFileBytes) });
+    expect(reader.active({ touched: [write(join(project, "a.ts"))], role: "foreground", skills: [] })).toEqual([]);
+    expect(reader.active({ touched: [write(join(project, "a.ts"))], role: "foreground", skills: [] })).toEqual([]);
+    expect(invalid).toEqual([
+      { project: "clark", reason: "not-json" },
+      { project: "clark", reason: "too-large" },
+    ]);
+  });
+
+  it("holds a path condition for a scope when the glob could match inside it, comparing the glob's literal prefix", () => {
+    rules({
+      version: 1,
+      rules: [
+        { when: { path: "packages/storage/**" }, include: ["storage"] },
+        { when: { path: "*.sql" }, include: ["sql"] },
+        { when: { path: "packages/*/migrations/**" }, include: ["any-migrations"] },
+      ],
+    });
+    snippet("storage", "storage");
+    snippet("sql", "sql");
+    snippet("any-migrations", "any migrations");
+    const reader = createConditionalInstructions({ roots: () => [root] });
+    const scoped = (...parts: string[]): string[] =>
+      reader
+        .active({ touched: [{ path: join(project, ...parts), operation: "read", scope: true }], role: "task", skills: [] })
+        .map((entry) => entry.text)
+        .sort();
+    // The whole project: every glob could match something in it.
+    expect(scoped()).toEqual(["any migrations", "sql", "storage"]);
+    // A folder above the literal prefix, a folder at it, and one below it that the globs match outright.
+    expect(scoped("packages")).toEqual(["any migrations", "sql", "storage"]);
+    expect(scoped("packages", "storage")).toEqual(["sql", "storage"]);
+    expect(scoped("packages", "storage", "migrations")).toEqual(["any migrations", "sql", "storage"]);
+    // A sibling folder: only the bare name, which matches anywhere.
+    expect(scoped("apps")).toEqual(["sql"]);
+    // Only the literal prefix is compared: a wildcard before the scope's depth is not looked through, so that rule waits
+    // for a touch that matches it.
+    expect(scoped("packages", "storage")).not.toContain("any migrations");
+    // The scope is relative to the project, and a path the same glob names outside a scope does not hold it.
+    expect(
+      reader.active({ touched: [{ path: join(project, "packages"), operation: "read" }], role: "task", skills: [] }),
+    ).toEqual([]);
   });
 
   /** A directory link that needs no privilege on Windows; `undefined` where none can be made. */

@@ -79,8 +79,7 @@ import { buildViewCatalog } from "../view-catalog.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
 import { conversationOfferedActions, createPerformWidgetActionTool, createPlaceWidgetTool } from "../widget-perform-tool.ts";
 
-/** The reference image generator's definition, as its package ships it, and the job capability its button calls. */
-const IMAGE_GENERATOR_DEFINITION = new URL("../../../../examples/reference-apps/image-generator/widgets/main/widget.json", import.meta.url);
+/** The job capability the reference image generator's button calls. */
 const IMAGE_GENERATE = "com.clarkcant.reference.image-generator.image.generate@1" as CapabilityRef;
 
 /**
@@ -325,8 +324,7 @@ const CONNECTED_APP_DEFINITION = new URL("../../../../examples/reference-apps/co
 const TEXT_EDITOR_REWRITE_INTENT =
   "Viết lại đoạn văn bản đang được chọn trong trình soạn thảo. Chỉ trả lời bằng đoạn thay thế, trong một khối ``` duy nhất.";
 
-/** The reference media render tool's definition, as its package ships it, and the capability its button calls. */
-const MEDIA_RENDER_DEFINITION = new URL("../../../../examples/reference-apps/media-render/widgets/main/widget.json", import.meta.url);
+/** The capability the reference media render tool's Render button calls. */
 const MEDIA_RENDER_CAPABILITY = "com.clarkcant.reference.media-render.render@1";
 
 /**
@@ -2077,8 +2075,10 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      */
     /*
      * An installed package's widget, placed through the `place_widget` tool the model has: its offered actions bound for
-     * Clark, and its "Ask Clark" button bound into the prop the widget reads. Only the two reference apps are scripted,
-     * each with the button its own journey presses; the package must be installed first, as a model's placement needs.
+     * Clark, and each button bound into the prop the widget reads: the spreadsheet's and the text editor's ask Clark, the
+     * image generator's, media render's and connected app's call their own package's capability. Only the reference apps
+     * are scripted, each with the buttons its widget reads; the package must be installed first, as a model's placement
+     * needs.
      */
     const placing = /^place widget (\S+)$/u.exec(input.text.trim());
     if (placing !== null) {
@@ -2091,6 +2091,21 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         "com.clarkcant.reference.text-editor.main@1": {
           props: { title: "Trình soạn thảo (place_widget)" },
           buttons: [{ prop: "rewriteBinding", label: "Nhờ Clark viết lại đoạn đã chọn", intent: TEXT_EDITOR_REWRITE_INTENT, contextRefs: ["selection", "widget"] }],
+        },
+        "com.clarkcant.reference.image-generator.main@1": {
+          props: { title: "Trình tạo ảnh (place_widget)" },
+          buttons: [{ prop: "generateBinding", label: "Tạo ảnh", capabilityRef: IMAGE_GENERATE, inputs: ["prompt"], stateInputs: ["prompt"] }],
+        },
+        "com.clarkcant.reference.media-render.main@1": {
+          props: { title: "Trình dựng âm thanh (place_widget)" },
+          buttons: [{ prop: "renderBinding", label: "Dựng", capabilityRef: MEDIA_RENDER_CAPABILITY, inputs: ["source", "gainDb", "trimStartMs", "trimEndMs"] }],
+        },
+        "com.clarkcant.reference.connected-app.main@1": {
+          props: { title: "Công việc (place_widget)" },
+          buttons: [
+            { prop: "listBinding", label: "Tải công việc", capabilityRef: "com.clarkcant.reference.connected-app.list-tasks@1" },
+            { prop: "updateBinding", label: "Lưu công việc", capabilityRef: "com.clarkcant.reference.connected-app.update-task@1", inputs: ["id", "title"] },
+          ],
         },
       };
       const tool = createPlaceWidgetTool({ services: deps.services, conversationId: input.conversationId, messageId: () => input.messageId });
@@ -2653,76 +2668,6 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
-     * The reference media render tool, placed with its own Render button.
-     *
-     * The definition is the package's own `widget.json`, read from disk, so the instance is one the directory entry
-     * serves. The button is an `invoke` binding made here, for the same reason as the notes widget's below: nothing in
-     * the product places a package widget with its own binding yet. Its id reaches the frame through props, because the
-     * frame can only press a binding the instance holds. The widget sends only the clip and the parameters a person
-     * sets; a journey can watch progress and stop a render mid-way because a fixture node answers each read the service
-     * makes a moment late (`FIXTURE_ARTIFACT_READ_DELAY_MS`), not because the package has a pacing argument.
-     */
-    if (/trình dựng âm thanh|media render tool/i.test(input.text)) {
-      const definition = widgetDefinitionSchema.parse(JSON.parse(readFileSync(MEDIA_RENDER_DEFINITION, "utf8")));
-      const conductor = deps.services().conductor;
-      const packageDigest = definitionDigest(definition);
-      const served = deps.services().serviceHost?.serves(MEDIA_RENDER_CAPABILITY);
-      const instance = createInstance(conductor, {
-        definition,
-        packageDigest,
-        ownerPrincipalId: input.principal.principalId,
-        props: { title: "Trình dựng âm thanh (fixture)", renderBinding: "binding_media_render" },
-      });
-      saveActionBinding(conductor, {
-        // Fixed, because the fixture's props name it.
-        actionBindingId: "binding_media_render",
-        label: "Dựng",
-        proposal: {
-          kind: "invoke" as const,
-          capabilityRef: MEDIA_RENDER_CAPABILITY,
-          args: {},
-          bindings: [
-            { target: "source", source: "user-input" as const },
-            { target: "gainDb", source: "user-input" as const },
-            { target: "trimStartMs", source: "user-input" as const },
-            { target: "trimEndMs", source: "user-input" as const },
-          ],
-        },
-        inputSchema: {
-          type: "object",
-          properties: {
-            source: { type: "string", pattern: "^art_[A-Za-z0-9_-]{1,120}$" },
-            gainDb: { type: "number", minimum: -24, maximum: 12 },
-            trimStartMs: { type: "integer", minimum: 0, maximum: 7_200_000 },
-            trimEndMs: { type: "integer", minimum: 0, maximum: 7_200_000 },
-          },
-          required: ["source", "gainDb"],
-          additionalProperties: false,
-        },
-        effectCategory: "read" as const,
-        instanceId: instance.instanceId,
-        definitionId: definition.id,
-        packageGeneration: served?.generationId ?? packageDigest,
-        allowedDataRefs: [],
-        fixedConstraints: {},
-        requiresApproval: false,
-        limits: {},
-        bindingDigest: "sha256:binding_media_render",
-        createdAt: instantSchema.parse(new Date().toISOString()),
-      });
-      const snapshot = captureSnapshot(conductor, {
-        messageId: input.messageId,
-        instance,
-        textAlternative: definition.textFallback,
-        presentationRef: `isolated:${definition.id}`,
-      });
-      return {
-        text: "Fixture: trình dựng âm thanh mẫu, nút Dựng gọi dịch vụ của gói (không phải model thật).",
-        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
-      };
-    }
-
-    /*
      * The notes widget, whose buttons call its package's own service.
      *
      * The bindings are `invoke` bindings made here, because nothing in the product makes them for a package widget
@@ -2914,66 +2859,6 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           definitionRef: { id: definition.id, version: definition.version },
           snapshot,
         },
-      };
-    }
-
-    /*
-     * The reference image generator, placed with its "Tạo ảnh" button bound to the package's job capability.
-     *
-     * The definition is the package's own `widget.json`, read from disk, so the instance is one the directory entry
-     * serves. The binding takes the prompt from the widget's state (the draft the frame keeps there), or from what the
-     * press sends, which wins: a spoken "tạo ảnh" runs the draft, a click or Clark sends the prompt. Its id reaches the
-     * frame through props, because the frame can only press a binding the instance holds.
-     */
-    if (/trình tạo ảnh|image generator/i.test(input.text)) {
-      const definition = widgetDefinitionSchema.parse(JSON.parse(readFileSync(IMAGE_GENERATOR_DEFINITION, "utf8")));
-      const conductor = deps.services().conductor;
-      const served = deps.services().serviceHost?.serves(IMAGE_GENERATE);
-      const generateBinding = conductor.newId("binding_image");
-      const instance = createInstance(conductor, {
-        definition,
-        packageDigest: definitionDigest(definition),
-        ownerPrincipalId: input.principal.principalId,
-        props: { title: "Trình tạo ảnh (fixture)", generateBinding },
-      });
-      saveActionBinding(conductor, {
-        actionBindingId: generateBinding,
-        label: "Tạo ảnh",
-        proposal: {
-          kind: "invoke" as const,
-          capabilityRef: IMAGE_GENERATE,
-          args: {},
-          bindings: [
-            { target: "prompt", source: "widget-state" as const },
-            { target: "prompt", source: "user-input" as const },
-          ],
-        },
-        inputSchema: {
-          type: "object",
-          properties: { prompt: { type: "string", minLength: 1, maxLength: 500 } },
-          additionalProperties: false,
-        },
-        // As the package declares it: asking a provider to draw writes to someone else's service.
-        effectCategory: "external-write" as const,
-        instanceId: instance.instanceId,
-        definitionId: definition.id,
-        packageGeneration: served?.generationId ?? definitionDigest(definition),
-        allowedDataRefs: [],
-        fixedConstraints: {},
-        requiresApproval: false,
-        limits: {},
-        bindingDigest: `sha256:${generateBinding}`,
-        createdAt: instantSchema.parse(new Date().toISOString()),
-      });
-      const snapshot = captureSnapshot(conductor, {
-        messageId: input.messageId,
-        instance,
-        textAlternative: definition.textFallback,
-        presentationRef: `isolated:${definition.id}`,
-      });
-      return {
-        text: "Fixture: trình tạo ảnh mẫu, nút gọi dịch vụ của gói như một job (không phải model thật).",
-        block: { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot },
       };
     }
 
