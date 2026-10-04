@@ -549,8 +549,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-segmented-wrap { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; }
 .cc-segmented { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); justify-content: flex-end; }
 .cc-segmented[data-pending="true"] { opacity: 0.6; }
-/* The note belongs to the whole group, so it is aligned with the controls rather than with the label. */
-.cc-segmented-wrap > .cc-panel-note { margin: 0; text-align: right; max-width: 34ch; }
+/*
+ * The note belongs to the whole group, so it sits under the controls rather than under the label: as wide as the
+ * row of choices and starting where they start. A note set flush right ran two or three ragged lines that were
+ * hard to read from their first word. Containment keeps a long note from widening the column it explains, and the
+ * minimum keeps it from becoming one word a line under a choice of two.
+ */
+.cc-segmented-wrap > .cc-panel-note { margin: 0; align-self: stretch; text-align: start; contain: inline-size; min-width: 20ch; }
 
 .cc-toggle-wrap { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; }
 /*
@@ -1021,7 +1026,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   .cc-setting-control { flex: initial; flex-wrap: wrap; justify-content: flex-start; }
   .cc-segmented-wrap, .cc-toggle-wrap, .cc-range { align-items: flex-start; }
   .cc-segmented { justify-content: flex-start; }
-  .cc-segmented-wrap > .cc-panel-note, .cc-toggle-wrap > .cc-panel-note { text-align: left; max-width: none; }
+  .cc-segmented-wrap > .cc-panel-note, .cc-toggle-wrap > .cc-panel-note { text-align: left; max-width: none; contain: none; min-width: 0; }
   .cc-range { min-width: 0; width: 100%; }
   .cc-range > .cc-setting-desc { align-self: flex-start; }
   .cc-guard-classes { justify-content: flex-start; }
