@@ -26,10 +26,12 @@ file, on the web as a download — without ever seeing where the file lives. It 
   editor shows it with the text it would replace, and changes the text only when the person accepts it and the range
   still holds the text Clark read; Ctrl+Z undoes it.
 
-Only the repository's scripted fixture model places the editor with `rewriteBinding` today. No product path places
-an installed package widget with a binding yet, so in a real installation the button is disabled with its reason
-shown. That, and a request typed in the composer changing the editor's text, are tracked in
-[digitopvn/clarkcant#382](https://github.com/digitopvn/clarkcant/issues/382).
+The `place_widget` tool binds `rewriteBinding` when Clark places the editor with that button; without it the button is
+disabled with its reason shown. The editor also offers Clark a `replaceSelection` action (`{text, expected?}`) through
+`actions.perform@1`, so a request typed in the composer, such as "uppercase the selection", can replace the selected
+text: the editor refuses when it is busy, when nothing usable is selected or when the selection no longer holds
+`expected`, and Ctrl+Z undoes the change. See
+[widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
 
 ## Files
 

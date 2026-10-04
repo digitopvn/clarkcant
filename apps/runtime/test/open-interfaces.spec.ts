@@ -401,6 +401,8 @@ describe("WebSocket gateway", () => {
       // The screen's report on an agent's app-control action: a machine surface forging it could tell the
       // model the screen changed when it did not.
       "/app-intents/host-control/ctl_x",
+      // The screen's report on what a widget did when Clark asked it: forged, it would tell the model a widget acted.
+      "/app-intents/widget-perform/perform_x",
       "/peers/node_x/confirm",
       "/grants",
       // A running task's approval has no card, but deciding it is the same person's decision.

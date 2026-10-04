@@ -334,7 +334,10 @@ Every widget definition must declare:
 - text fallback;
 - effect categories;
 - dataset refs;
-- entry artifact for executable UI.
+- entry artifact for executable UI;
+- `offeredActions` — at most 16 actions an isolated widget lets Clark perform, each `{name, label, description,
+  inputSchema}` with an object input schema. They are bound like any other action and performed through
+  `actions.perform@1` ([§10.3](#103-actions-clark-performs-actionsperform1)).
 
 Do not use props as a channel for code, callbacks, arbitrary HTML, secrets or arbitrary URLs.
 
@@ -1703,6 +1706,7 @@ Author-facing target:
     actions.invoke(bindingId, input, invocationId)
     actions.availability()
     actions.subscribe(handler)
+    actions.offer(name, handler)
 
     capabilities.request(ref, justification)
 
@@ -1977,6 +1981,120 @@ Tests: [jobs.spec.ts](../packages/contracts/test/jobs.spec.ts) for the rules,
 [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts) for the SDK, and the browser journey
 [package-job.spec.ts](../apps/web/e2e/package-job.spec.ts). The journey follows a real service's progress across a
 reload, refuses a forged JobRef, cancels from the widget, completes with a file and ends a job with emergency Stop.
+
+### 10.3 Actions Clark performs (`actions.perform@1`)
+
+An isolated widget can let Clark do something inside it, such as format the selected cells or replace the selected
+text. The widget declares what it offers; Clark asks; the frame does it and says what happened. Clark never writes
+into the frame and never approves the action itself.
+
+**Declaring.** The definition lists `offeredActions` (at most 16). Each has a `name`, a `label`, a `description` and an
+object `inputSchema`. A name starts with a lowercase letter and holds at most 64 letters, digits, `.`, `_` or `-`. An
+offered action is a `perform {action}` proposal. It compiles like any action binding, with the effect category
+`local-write` and the declared input schema. An action the definition does not offer is refused when it is compiled.
+
+**Placing.** The agent tool `place_widget` places a widget from an installed, active package whose renderer is
+`isolated-app`. `list` shows each installed widget's id, props schema and offered actions. `place` binds every offered
+action, plus up to 4 optional "Ask Clark" buttons. Each button is bound into a string prop the widget reads, and names
+the prop, the label, the intent and optional `contextRefs`. Placing is all or nothing. Two buttons on one prop, a prop
+given both as a value and as a button, or a binding the host refuses leaves nothing created. This is the product path
+that gives a package widget its bindings in a real installation. Binding a service capability through `place_widget`
+is not supported yet ([#445](https://github.com/digitopvn/clarkcant/issues/445)).
+
+**Performing.** The agent tool `perform_widget_action` has two actions. `list` shows the actions offered by widgets in
+this conversation, with their binding ids and input schemas. `perform` runs one by its binding id. It takes the same
+path as a press:
+
+- the binding's gate;
+- the input checked against the declared schema (`INVALID_INPUT`);
+- the execution policy;
+- the effect ledger;
+- the audit line "Clark asked widget … to perform …".
+
+The policy is told who asked for the turn (`TurnOrigin`). A perform is a `local-write`, which is not a risky effect, so
+`machineTurns: "ask"` alone does not ask about it; a rule or mode that asks does. Who asked is written on the approval
+card and on the audit lines, also after the person approves.
+
+The result is marked as Clark's (`performedBy: "clark"`). What the widget said is given to the model as data, never as
+instructions. A person's click on a perform binding is refused (`NOT_AUTHORIZED`): the frame's own buttons do the work
+directly. Perform bindings are not listed among the widget's presses, so neither the frame nor a spoken command can
+press one.
+
+**The policy decides, and the person approves.** A policy that denies refuses with `POLICY_REFUSED`. A policy that asks
+puts a host-owned approval card in the conversation, and nothing is sent until the person approves it. The card shows
+the whole input: its description carries it for the inbox and a spoken question, and the card lays it out in full. An
+input longer than 1,200 characters as JSON is refused with `PERFORM_INPUT_TOO_LONG` instead of being shown in part.
+Asking again for the same action with the same input while its card waits returns that card's approval, not a second
+card, and a conversation holds at most 8 waiting perform cards (`PERFORM_CARDS_WAITING` after that). Approving asks
+the frame then, but only if the screen you approve on still shows the widget; approving from the inbox, or from a page
+without the widget, is answered "approved, not performed", with nothing sent. The approval re-checks the card's payload
+against the decided digest (which covers the conversation, the widget, the binding, the action and the input), the
+binding, the input, the policy and the ledger. Neither the widget nor the model can approve.
+
+**The frame does it.** The node sends a versioned `widget-perform` event (`v: 1`) only to a caller that said it can run
+one:
+
+- a page stream request carrying the `x-clarkcant-widget-perform: 1` header;
+- a voice session whose `auth` frame carries `widgetPerform: 1`.
+
+The page hands the event to the mounted frame as `action.perform`. It then reports the frame's `action.performed`
+answer at `POST /app-intents/widget-perform/{performId}` ([open interfaces](open-interfaces.md)). In the frame:
+
+```js
+const stop = api.actions.offer("format", async (input) => {
+  if (busy) throw api.actions.refuse("SHEET_BUSY", "the sheet is busy; try again in a moment.");
+  applyFormat(input.format);
+  return `Formatted ${selection} as ${input.format}.`; // what Clark is told, at most 4,000 characters
+});
+```
+
+The handler gets a frozen copy of the checked input. A returned string is the tool's result. An error made by
+`api.actions.refuse(code, message)` is the widget's deliberate refusal: the node answers `WIDGET_REFUSED` with the
+widget's own code in `widgetCode`, kept apart from the host's codes. Only throw it before changing anything. Any other
+error is reported as `failed`, which Clark treats as an uncertain outcome, because the handler may already have changed
+something. That includes an error whose message merely looks coded, and the SDK's own rejections, such as a refused
+state write (`STATE_REVISION_STALE: …`) or artifact request, even though they carry a code. An action
+with no handler is refused with `ACTION_NOT_OFFERED`. Output that carries a token is dropped, and the outcome becomes
+uncertain.
+
+**Not open means not performed.** A perform is refused with `FRAME_NOT_MOUNTED` in these cases:
+
+- no page is showing the widget;
+- the caller running the turn cannot reach a frame (the CLI, a relay, an older page, or a detached desktop window);
+- the frame is not mounted.
+
+A page whose conversation changed before it could ask answers `SURFACE_GONE`. A page that cannot read the event
+answers `PERFORM_UNREADABLE`, or `PERFORM_VERSION_UNSUPPORTED` for another version. Nothing is queued for later and
+nothing reaches the widget.
+
+A frame has 6 seconds to answer; the node waits at most 8. The outcome is uncertain (`WIDGET_NO_ANSWER`,
+`WIDGET_PERFORM_STOPPED`) in these cases:
+
+- the frame does not answer;
+- the frame fails while performing;
+- a Stop arrives during the wait.
+
+The ledger records an uncertain outcome as unknown. Until the person settles it, the same action with the same input on
+the same widget is refused with `PERFORM_OUTCOME_UNKNOWN`. A refusal frees the invocation, so the action can be tried
+again.
+
+**Voice.** A spoken request reaches the same tool through Clark's turn in the voice session. A spoken press of an
+offered action is refused, with nothing sent, and the person is told to ask Clark instead
+([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+
+Tests:
+
+- [widget-perform.spec.ts](../apps/runtime/test/widget-perform.spec.ts): the undeclared action, schema mismatch,
+  unmounted frame, a caller that cannot perform, page and widget refusals, failure, timeout, Stop, the
+  uncertain-outcome guard, policy and the approval card, voice, the press lists, the tools and placement.
+- [app-intents.spec.ts](../apps/runtime/test/app-intents.spec.ts): the page's report.
+- [frame-performs.spec.ts](../packages/conversation-client/test/frame-performs.spec.ts): the page's frame lookup and
+  answers.
+- [session.spec.ts](../packages/widget-host/test/session.spec.ts) and
+  [runtime.spec.ts](../packages/widget-sdk/test/runtime.spec.ts): the bridge.
+- The browser journey [widget-perform.spec.ts](../apps/web/e2e/widget-perform.spec.ts): formats a spreadsheet range
+  and replaces an editor's selection from what the person types in the composer. It also checks that a plain HTTP
+  stream and a closed widget are both refused with `FRAME_NOT_MOUNTED`.
 
 ---
 
@@ -3188,11 +3306,10 @@ excerpt is cut at 200 UTF-16 units, the host's limit for one value, and the cut 
 a selected id (`chars:6-11`). The host bounds, redacts and marks all of it as the widget's own words.
 
 **Asking Clark to change the selection.** The editor presses an `agent` binding whose `contextRefs` are
-`["selection", "widget"]`, named by its `rewriteBinding` prop. Today only the repository's scripted fixture model
-places the editor with that binding; no product path places an installed package widget with a binding yet. In a
-real installation the button therefore stays disabled, with its reason shown ("Clark chưa được gắn vào trình soạn
-thảo này…"), until [#382](https://github.com/digitopvn/clarkcant/issues/382) lands. When the binding is there and the
-person presses *Nhờ Clark viết lại đoạn chọn*:
+`["selection", "widget"]`, named by its `rewriteBinding` prop. `place_widget` ([§10.3](#103-actions-clark-performs-actionsperform1))
+binds it when Clark places the editor with that button; without a binding the button stays disabled, with its reason
+shown ("Clark chưa được gắn vào trình soạn thảo này…"). When the binding is there and the person presses *Nhờ Clark
+viết lại đoạn chọn*:
 
 1. The editor asks only about a selection the host passes to Clark unchanged. The host flattens line breaks, tabs and
    runs of spaces, removes invisible characters, redacts secret-shaped text and cuts a value at 200 UTF-16 units, so a
@@ -3221,10 +3338,14 @@ person presses *Nhờ Clark viết lại đoạn chọn*:
 
 Clark never writes into the frame, and no model approves a save: export stays the person's act in the host's prompt.
 
-**Known gap.** Typing a request in the composer ("make the second line shorter") cannot change the editor today, and
-no product path places the editor with its rewrite binding. No agent tool can perform an isolated widget's own
-action, so a change reaches the frame only through the editor's own button. Clark can still read the editor through
-the next-turn note and `inspect_ui`. Both are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382).
+**Asking in the composer.** The editor offers `replaceSelection` (`{text, expected?}`, text at most 4,000 characters)
+through `actions.perform@1` ([§10.3](#103-actions-clark-performs-actionsperform1)). When the person types a request
+such as "uppercase the selection", Clark can call `perform_widget_action` with the replacement and the text it read as
+`expected`. The editor refuses while it is busy (`EDITOR_BUSY`), when nothing usable is selected
+(`NO_USABLE_SELECTION`) or when the selection no longer holds `expected` (`SELECTION_CHANGED`); otherwise it removes
+control characters, replaces the selection through the browser's editing so Ctrl+Z undoes it, and says "Clark đã thay
+đoạn đã chọn. Thay đổi chưa được lưu vào tệp; Ctrl+Z để hoàn tác." The change is an unsaved edit; saving stays the
+person's act.
 
 **Accessibility.** Every control is a native button or the text area, in a fixed tab order, with a visible focus ring.
 The host's prompts and the editor's panels take the keyboard at their titles, except that the two-views question
@@ -3314,12 +3435,15 @@ describes itself to Clark and applies a change Clark chose.
 - **Pointer and touch.** A mouse selects by click, Shift+click or drag. On touch, a tap selects a cell and a swipe
   scrolls the grid. "Select range" makes the following taps extend the selection from the cell tapped before; tap it
   again to stop. Buttons are at least 40 px high.
+- **Formatting from the composer.** The sheet offers `format` (`{format: percent|number|plain, range?}`) through
+  `actions.perform@1` ([§10.3](#103-actions-clark-performs-actionsperform1)). When the person types "format this as
+  a percentage", Clark can call `perform_widget_action`; the sheet formats the given range, or the selection when no
+  range is given, and says so in its status line ("Clark đã định dạng B2:C3 thành phần trăm."). It refuses while busy
+  or read-only (`SHEET_BUSY`), for an unknown format (`FORMAT_UNKNOWN`) and for a range it cannot read or that is past
+  the sheet's bounds (`RANGE_INVALID`). "Undo format" steps back Clark's format like any other.
 
-Two limits are stated rather than hidden. Nothing in the product places a package widget with a bound action yet: in the
-browser suite the fixture node places the spreadsheet and compiles its binding the way the host compiles a model's
-proposal. And a request typed in the composer reaches Clark through the semantic note but cannot change the frame. Both
-are tracked in [#382](https://github.com/digitopvn/clarkcant/issues/382). A press straight after the selection changes
-is not one of them: before it runs the press, the host sends the widget's pending semantic document and waits until
+`place_widget` places the sheet and binds both the offered `format` action and, when asked, the "format as percent"
+button's `formatBinding`. Before it runs a press, the host sends the widget's pending semantic document and waits until
 the node holds it ([§24.1](#241-text-editor)), so Clark reads the range selected at the press. A reply that names
 another range is still refused, and nothing changes.
 
@@ -3388,9 +3512,9 @@ service reaches a provider with a key it never holds.
   same widget and job with a service that draws the image itself, declares no provider, and so only reads. Both pass
   `clark widget test` and `pack` as created. `pure-ui` and both of these go through one copier in the CLI.
 
-Only the repository's scripted fixture model places the widget with `generateBinding` today. No product path places
-an installed package widget with a binding yet ([#382](https://github.com/digitopvn/clarkcant/issues/382)), so in a
-real installation the widget says it is not connected to the service.
+Only the repository's scripted fixture model places the widget with `generateBinding` today. `place_widget`
+([§10.3](#103-actions-clark-performs-actionsperform1)) binds a widget's offered actions and "Ask Clark" buttons, not
+a binding to a service's capability, so in a real installation the widget says it is not connected to the service.
 
 Tests: [service-job.spec.ts](../examples/reference-apps/image-generator/test/service-job.spec.ts) for the service
 against the fake provider through the job host, the egress broker and the artifact broker (completion, progress,
@@ -3437,9 +3561,9 @@ stop. `clark widget init --template media-tool` starts a new package from it.
 - **Fixture pacing.** A node started with `CC_MODEL_FIXTURE=1` holds each answer to a service's file read back 700 ms
   (`timings.artifactReadDelayMs` on the service host), so the journey can watch progress and stop a render mid-way. The
   service's tool has no pacing argument, and neither does the `media-tool` template.
-- **Placement.** Only the repository's scripted fixture model places the widget with its `renderBinding` today. No
-  product path yet places an installed package's widget with a binding
-  ([#382](https://github.com/digitopvn/clarkcant/issues/382)), so in a real installation Render shows that reason.
+- **Placement.** Only the repository's scripted fixture model places the widget with its `renderBinding` today.
+  `place_widget` ([§10.3](#103-actions-clark-performs-actionsperform1)) binds offered actions and "Ask Clark" buttons,
+  not a binding to a service's capability, so in a real installation Render shows that reason.
 
 Tests: [wav.spec.ts](../examples/reference-apps/media-render/test/wav.spec.ts) for the transform and its pinned digest,
 [service.spec.ts](../examples/reference-apps/media-render/test/service.spec.ts) for the service process (progress,

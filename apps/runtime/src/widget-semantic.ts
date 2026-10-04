@@ -79,12 +79,14 @@ export type SemanticDeps = WidgetDeps;
  * The actions a person can take on the widget, from the instance's bindings and nowhere else.
  *
  * A view binding is left out: it is how the widget's own controls write their state, which the values already say,
- * not something the agent would offer to do.
+ * not something the agent would offer to do. So is a perform binding: it is an action the widget offers to Clark, which
+ * the person reaches by asking Clark or in the widget itself — never a press, so it is not listed as one, and a spoken
+ * command cannot match it.
  */
 function actionsOf(deps: SemanticDeps, bindingIds: readonly string[]): SemanticAction[] {
   return bindingIds.flatMap((bindingId) => {
     const binding = getActionBinding(deps, bindingId);
-    if (binding === undefined || binding.proposal.kind === "view") return [];
+    if (binding === undefined || binding.proposal.kind === "view" || binding.proposal.kind === "perform") return [];
     return [{ actionBindingId: binding.actionBindingId, label: binding.label, requiresApproval: binding.requiresApproval }];
   });
 }

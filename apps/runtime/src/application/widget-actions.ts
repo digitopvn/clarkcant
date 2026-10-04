@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   type ActionBinding,
   type ActionProposal,
@@ -6,8 +8,12 @@ import {
   type ListItem,
   type WidgetInstance,
   type TurnOrigin,
+  type WidgetPerformRequest,
   type WorkflowRunReport,
+  PAGE_PERFORM_REFUSAL_CODES,
   VIEW_STATE_WRITE_VARIANT,
+  WIDGET_PERFORM_VERSION,
+  approvalCardBlockSchema,
   checkFormValues,
   describeFieldValue,
 } from "@clarkcant/contracts";
@@ -16,6 +22,7 @@ import {
   type BoundActionResult,
   checkBoundAction,
   checkInvokeAction,
+  decideExecution,
   forgetStartedInvokeAction,
   getActionBinding,
   getInstance,
@@ -24,19 +31,22 @@ import {
   readExecutionPolicy,
   readWidgetStateRow,
   recordInvokeAction,
+  requestApproval,
   reservedInvocationIdRefusal,
   settleInvokeAction,
   writeViewState,
 } from "@clarkcant/core";
-import { appendAuditEvent, listConversationInstanceIds } from "@clarkcant/storage";
+import { appendAuditEvent, asJsonValue, hasUnsettledEffect, listConversationInstanceIds, payloadDigest } from "@clarkcant/storage";
+
+import { preferredAppIntentLocale } from "../app-intents.ts";
 
 import { readArtifactForContext } from "../artifact-broker.ts";
-import { appendHostReply, startBackgroundWork } from "../routes/conversations.ts";
+import { appendHostReply, blocksOfConversation, startBackgroundWork } from "../routes/conversations.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { AGENT_ITEM_KEY } from "./action-bindings.ts";
 import { estimateTokens, renderActionContext, resolveActionContext } from "./action-context.ts";
-import { type OpenedActionEffect, openActionEffect, settleActionEffect } from "./action-effects.ts";
+import { type OpenedActionEffect, effectOperationDigest, openActionEffect, settleActionEffect } from "./action-effects.ts";
 import { ACTION_LIMITS, admitCall, bindingLimits, rateLimitedMessage } from "./action-limits.ts";
 import { actionRunning, beginActionRun, endActionRun } from "./action-runs.ts";
 import {
@@ -49,6 +59,7 @@ import {
   validateArgs,
 } from "./capability-invoke.ts";
 import { type StepCall, runWorkflow } from "./workflow-executor.ts";
+import type { WidgetPerformAwaited } from "../widget-perform-acks.ts";
 
 const FORM_DEFINITION_ID = "canvas.form@1";
 const LIST_DEFINITION_ID = "canvas.list@1";
@@ -119,13 +130,13 @@ export function widgetActionTarget(
   services: Pick<NodeServices, "conductor">,
   instanceId: string,
   actionBindingId: string,
-): { revision: number; bindingDigest: string } | undefined {
+): { revision: number; bindingDigest: string; kind: string } | undefined {
   const instance = getInstance(services.conductor, instanceId);
   if (instance === undefined) return undefined;
   if (!instance.actionBindingIds.includes(actionBindingId)) return undefined;
   const binding = getActionBinding(services.conductor, actionBindingId);
   if (binding === undefined) return undefined;
-  return { revision: instance.revision, bindingDigest: binding.bindingDigest };
+  return { revision: instance.revision, bindingDigest: binding.bindingDigest, kind: binding.proposal.kind };
 }
 
 /** One widget action invocation, as either a click or a spoken command asks for it. */
@@ -181,11 +192,21 @@ function statusOf(code: string): number {
     case "TURN_IN_PROGRESS":
     case "SERVICE_CANCELLED":
     case "WORKFLOW_STOPPED":
+    case "FRAME_NOT_MOUNTED":
+    case "FRAME_NOT_READY":
+    case "SURFACE_GONE":
+    case "PERFORM_IN_PROGRESS":
+    case "PERFORM_BUSY":
+    case "PERFORM_OUTCOME_UNKNOWN":
+    case "WIDGET_REFUSED":
+    case "WIDGET_PERFORM_STOPPED":
       return 409;
     case "RATE_LIMITED":
     case "JOB_LIMIT_REACHED":
+    case "PERFORM_CARDS_WAITING":
       return 429;
     case "ARTIFACT_INPUT_TOO_LARGE":
+    case "PERFORM_INPUT_TOO_LONG":
       return 413;
     case "SERVICE_TOOL_FAILED":
       return 502;
@@ -198,6 +219,7 @@ function statusOf(code: string): number {
     case "SERVICE_TIMED_OUT":
     case "SERVICE_UNREACHABLE":
     case "WORKFLOW_DEADLINE":
+    case "WIDGET_NO_ANSWER":
       return 504;
     default:
       return 400;
@@ -889,6 +911,600 @@ async function invokeWorkflowAction(
 }
 
 /**
+ * Hands one perform to the page that shows the widget and waits for its report: what the frame answered, `"no-surface"`
+ * when no live page was there to ask, or `"timeout"`. The signal is the conversation's Stop.
+ */
+export type WidgetPerformer = (request: WidgetPerformRequest, signal: AbortSignal) => Promise<WidgetPerformAwaited>;
+
+/** Options only some callers have: the live page a perform is handed to. */
+export interface WidgetActionOptions {
+  perform?: WidgetPerformer;
+}
+
+/** How long a person has to answer the card a perform's policy asked for: as long as any other host card. */
+const PERFORM_APPROVAL_TTL_MS = 15 * 60_000;
+
+/** What one perform's digest covers: the conversation it was asked in, the widget, the binding as it was, the action and the input. */
+interface PerformOperation {
+  conversationId: string;
+  instanceId: string;
+  actionBindingId: string;
+  bindingDigest: string;
+  action: string;
+  input: Record<string, unknown>;
+}
+
+/**
+ * The digest the policy and the approval card see for one perform. The conversation and the binding are part of it, so
+ * a card approves this action of this widget as it was offered, in this conversation, and two requests for the same
+ * operation are recognised as one.
+ */
+function performDigest(operation: PerformOperation): string {
+  return `sha256:${payloadDigest(asJsonValue({ kind: "widget-perform", ...operation, input: operation.input as never }))}`;
+}
+
+/**
+ * The longest input, written as JSON, an approval card shows. The card's description carries the whole input — the
+ * inbox and a spoken question read only the description — so a longer one is refused rather than shown in part: the
+ * person approves only what they can read.
+ */
+export const PERFORM_CARD_INPUT_MAX_CHARS = 1_200;
+
+/** How many perform cards may wait for the person at once in one conversation, so a looping model cannot fill it. */
+export const PERFORM_CARDS_WAITING_MAX = 8;
+
+/** The perform cards this process minted, by approval id, with their conversation: counted before the turn is written. */
+const mintedPerformCards = new WeakMap<object, Map<string, string>>();
+
+/** A perform card still waiting for exactly this operation, so asking again is answered with it, never a second card. */
+function waitingPerformCard(services: WidgetActionServices, digest: string, at: Instant): string | undefined {
+  return (
+    services.runtime.db
+      .prepare(
+        `SELECT approval_id FROM approvals
+          WHERE operation_digest = ? AND decision = 'pending' AND expires_at > ? AND task_id IS NULL
+          ORDER BY requested_at DESC LIMIT 1`,
+      )
+      .get(digest, at) as { approval_id: string } | undefined
+  )?.approval_id;
+}
+
+/**
+ * The perform cards still waiting in a conversation: those this process minted (the turn that shows them may not be
+ * written yet) and those already in the conversation (minted before a restart), each counted once and only while its
+ * approval is pending and unexpired.
+ */
+function waitingPerformCards(services: WidgetActionServices, conversationId: string, at: Instant): number {
+  const minted = mintedPerformCards.get(services.runtime.db) ?? new Map<string, string>();
+  mintedPerformCards.set(services.runtime.db, minted);
+  const ids = new Set<string>();
+  for (const [approvalId, conversation] of minted) if (conversation === conversationId) ids.add(approvalId);
+  for (const block of blocksOfConversation(services, conversationId)) {
+    if (block.type === "approval-card" && typeof block.approvalId === "string" && typeof block.payload === "string" && isWidgetPerformPayload(block.payload)) {
+      ids.add(block.approvalId);
+    }
+  }
+  const read = services.runtime.db.prepare("SELECT decision, expires_at FROM approvals WHERE approval_id = ?");
+  let waiting = 0;
+  for (const approvalId of ids) {
+    const row = read.get(approvalId) as { decision: string; expires_at: string } | undefined;
+    if (row !== undefined && row.decision === "pending" && row.expires_at > at) waiting += 1;
+    else minted.delete(approvalId);
+  }
+  return waiting;
+}
+
+/** The ledger's name for an action a widget offers, as `capabilityRef`: the widget and the action, never the instance. */
+function performRef(definitionId: string, action: string): string {
+  return `widget:${definitionId}#${action}`.slice(0, 160);
+}
+
+/** What the ledger records a perform was sent with: the instance as well as the input, so the same input on another
+ * copy of the widget is another operation. */
+function performLedgerArgs(instanceId: string, input: Record<string, unknown>): Record<string, unknown> {
+  return { instanceId, input };
+}
+
+/** Clark's own line in the audit log for a perform, so what Clark did is never recorded as the person's press. */
+function auditPerform(
+  services: WidgetActionServices,
+  request: WidgetActionRequest,
+  label: string,
+  outcome: "done" | "failed" | "refused" | "stopped",
+  said: string,
+  /** Who asked for the turn that asked Clark to perform it (`TurnOrigin`). Absent is the person. */
+  origin?: TurnOrigin,
+): void {
+  try {
+    appendAuditEvent(services.runtime.db, {
+      auditId: services.conductor.newId("audit"),
+      principalId: request.principalId,
+      nodeId: services.runtime.identity.nodeId,
+      kind: "interaction",
+      summary: `Clark asked widget ${request.instanceId} to perform “${label}”: ${said}`.slice(0, 500),
+      outcome,
+      at: new Date().toISOString() as Instant,
+      ref: request.invocationId,
+      ...(origin === undefined ? {} : { origin }),
+    });
+  } catch {
+    // The audit line is a record of what happened, not a condition of it.
+  }
+}
+
+/** Why a perform found nobody to ask. Said the same whether no screen was live or the surface running the turn has none. */
+function notMountedMessage(label: string): string {
+  return `“${label}” can only be performed by a screen that shows the widget, and the surface running this turn cannot reach one. Nothing was sent.`;
+}
+
+/** The perform-specific checks that come after the gate and before anything is sent, shared by a call and an approval. */
+type PerformChecked = { ok: true; checked: Admitted; proposal: Extract<ActionProposal, { kind: "perform" }>; label: string } | { ok: false; result: WidgetActionResult };
+
+/**
+ * The gate, the declared input schema, and the rule that an action whose last attempt has no known outcome is not sent
+ * again: the effect ledger still holds that attempt, handed off or `unknown`, until the person says what came of it.
+ * Each call mints its own invocation id, so this — not the id — is what keeps Clark from retrying one.
+ */
+function checkPerform(services: WidgetActionServices, request: WidgetActionRequest): PerformChecked {
+  const checked = checkBoundAction(services.conductor, request, "perform");
+  if (!checked.ok) return { ok: false, result: gateRefusal(checked) };
+  if (checked.duplicate !== undefined) return { ok: false, result: replay(services, checked, request, checked.duplicate) };
+  const problem = actionInputProblem(checked.instance, checked.binding, request.input);
+  if (problem !== undefined) return { ok: false, result: refusal("INVALID_INPUT", problem) };
+  const proposal = checked.binding.proposal as Extract<ActionProposal, { kind: "perform" }>;
+  const label = checked.binding.label;
+  const ref = performRef(checked.instance.definitionRef.id, proposal.action);
+  const unknownBefore = hasUnsettledEffect(services.runtime.db, {
+    conversationId: request.conversationId,
+    capabilityRef: ref,
+    operationDigest: effectOperationDigest(ref, performLedgerArgs(request.instanceId, request.input)),
+  });
+  if (unknownBefore) {
+    return {
+      ok: false,
+      result: refusal(
+        "PERFORM_OUTCOME_UNKNOWN",
+        `“${label}” was already sent to this widget with the same input, and whether it took effect is still unknown. It is not sent again until the person says whether it did. Nothing was sent.`,
+        { outcome: "refused" },
+      ),
+    };
+  }
+  return { ok: true, checked, proposal, label };
+}
+
+/**
+ * Hand an admitted perform to the page and settle what came back: the ledger opened before the page is asked, the
+ * answer read against it, the invocation recorded, and Clark's line in the audit log.
+ */
+async function runPerform(
+  services: WidgetActionServices,
+  request: WidgetActionRequest,
+  target: Extract<PerformChecked, { ok: true }>,
+  perform: WidgetPerformer,
+  origin?: TurnOrigin,
+): Promise<WidgetActionResult> {
+  const { checked, proposal, label } = target;
+  const limits = bindingLimits(checked.binding);
+  const admitted = admit(services, checked, request, limits.maxCallsPerMinute ?? ACTION_LIMITS.perform.maxCallsPerMinute?.default ?? 1);
+  if (!admitted.ok) return admitted.result;
+
+  // Random, because the page answers by this id alone: a counter would let another page guess the next one.
+  const performId = `perform_${randomUUID().replaceAll("-", "")}`;
+  const intent = `Clark asked “${checked.instance.definitionRef.id}” to ${label}`;
+  let opened: OpenedActionEffect;
+  try {
+    opened = openActionEffect(services, {
+      conversationId: request.conversationId,
+      principalId: request.principalId,
+      capabilityRef: performRef(checked.instance.definitionRef.id, proposal.action),
+      args: performLedgerArgs(request.instanceId, request.input),
+      intent,
+      effectCategory: "local-write",
+    });
+  } catch (cause) {
+    endActionRun(request.invocationId);
+    forgetStartedInvokeAction(services.conductor, request.invocationId);
+    return refusal("LEDGER_UNAVAILABLE", `the effect ledger could not be written, so nothing was sent: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+
+  let answered: WidgetPerformAwaited | "stopped";
+  try {
+    const signal = admitted.controller.signal;
+    const stopped = new Promise<"stopped">((resolve) => {
+      if (signal.aborted) resolve("stopped");
+      else signal.addEventListener("abort", () => resolve("stopped"), { once: true });
+    });
+    answered = await Promise.race([
+      perform(
+        {
+          v: WIDGET_PERFORM_VERSION,
+          performId,
+          instanceId: request.instanceId,
+          actionBindingId: request.actionBindingId,
+          action: proposal.action,
+          input: request.input,
+        },
+        signal,
+      ),
+      stopped,
+    ]);
+  } catch (cause) {
+    answered = { status: "no-answer", message: cause instanceof Error ? cause.message : String(cause) };
+  } finally {
+    endActionRun(request.invocationId);
+  }
+
+  if (answered === "no-surface" || (typeof answered === "object" && answered.status === "refused")) {
+    // Nothing was handed to the widget, or the widget refused before changing anything: the id is freed.
+    const pageCode =
+      typeof answered === "object" && answered.by === "page" && (PAGE_PERFORM_REFUSAL_CODES as readonly string[]).includes(answered.code)
+        ? answered.code
+        : undefined;
+    const code = answered === "no-surface" ? "FRAME_NOT_MOUNTED" : pageCode ?? "WIDGET_REFUSED";
+    const message =
+      answered === "no-surface"
+        ? notMountedMessage(label)
+        : pageCode !== undefined
+          ? `the screen could not ask the widget to ${label}: ${answered.message}`
+          : `the widget refused “${label}” and says it changed nothing: ${answered.message}`;
+    settleActionEffect(services, opened, { kind: "not-sent", reason: message });
+    forgetStartedInvokeAction(services.conductor, request.invocationId);
+    auditPerform(services, request, label, "refused", message, origin);
+    // The widget's own code is its word, kept apart from the host's codes so neither the model nor the audit can mistake
+    // a widget's "POLICY_REFUSED" for the host's.
+    const widgetCode = typeof answered === "object" && pageCode === undefined ? answered.code : undefined;
+    return refusal(code, message, { outcome: "refused", ...(widgetCode === undefined ? {} : { widgetCode }) });
+  }
+  if (typeof answered === "object" && answered.status === "done") {
+    const output = answered.output ?? "";
+    settleActionEffect(services, opened, { kind: "answered", evidence: `the widget performed it${output === "" ? "" : `: ${output.slice(0, 200)}`}` });
+    settle(services, checked, request, { kind: "done", output });
+    auditPerform(services, request, label, "done", output === "" ? "done" : output.slice(0, 200), origin);
+    return {
+      ok: true,
+      status: 200,
+      body: actionBody(services, checked, request.conversationId, false, { outcome: "done", output, performedBy: "clark" }),
+    };
+  }
+  const stoppedNow = answered === "stopped";
+  const why =
+    answered === "stopped"
+      ? "you stopped it before the widget answered"
+      : answered === "timeout"
+        ? "the screen did not report back in time"
+        : answered.message;
+  const ledger = settleActionEffect(services, opened, {
+    kind: "no-answer",
+    stopped: stoppedNow,
+    reason: `the widget was asked to ${label} and no answer came back: ${why}`,
+  });
+  const next = ledger.recorded ? "The inbox asks you to say whether it did." : "Check the widget before asking again.";
+  const said = `“${label}” was sent to the widget, but ${why}, so whether it took effect is unknown. It was not retried. ${next}`;
+  settle(services, checked, request, {
+    kind: "uncertain",
+    code: stoppedNow ? "WIDGET_PERFORM_STOPPED" : "WIDGET_NO_ANSWER",
+    message: said,
+    ...(ledger.recorded ? { taskId: opened.taskId } : {}),
+  });
+  auditPerform(services, request, label, stoppedNow ? "stopped" : "failed", said, origin);
+  return refusal(stoppedNow ? "WIDGET_PERFORM_STOPPED" : "WIDGET_NO_ANSWER", said, {
+    outcome: "uncertain",
+    mayHaveRun: true,
+    recorded: ledger.recorded,
+    ...(ledger.recorded ? { taskId: opened.taskId } : {}),
+  });
+}
+
+/**
+ * The words on the host's card for a perform the policy asked about, in the person's language, with the whole input:
+ * never cut, because the inbox and a spoken question read only these words (`PERFORM_CARD_INPUT_MAX_CHARS`).
+ */
+function performApprovalDescription(locale: "vi" | "en", label: string, widgetId: string, sent: string): string {
+  return locale === "en"
+    ? `Clark asks the widget ${widgetId} to ${label}${sent === "" ? "" : ` with ${sent}`}`
+    : `Clark muốn widget ${widgetId} thực hiện “${label}”${sent === "" ? "" : ` với ${sent}`}`;
+}
+
+/** What an approval card for a perform carries, so the approved operation is the one that was shown. */
+interface PerformApprovalPayload {
+  kind: "widget-perform";
+  instanceId: string;
+  actionBindingId: string;
+  bindingDigest: string;
+  action: string;
+  label: string;
+  input: Record<string, unknown>;
+}
+
+/** Whether an approval card's payload is a perform rather than a command, a capability call or a tile policy. */
+export function isWidgetPerformPayload(payload: string): boolean {
+  try {
+    return (JSON.parse(payload) as { kind?: unknown }).kind === "widget-perform";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The `perform` half: Clark asking an isolated widget's frame to do one of the actions its package declared.
+ *
+ * Only Clark (`agent`) — or the person speaking to Clark (`voice`) — performs one: a click or a frame naming a perform
+ * binding is refused, because the action is the widget's own and the page already reaches it directly. The same gate
+ * every bound action passes runs first, then the declared input schema, then the rule that an attempt of unknown outcome
+ * is not repeated, then the person's execution policy decides on a `local-write`: the widget never approves its own
+ * action, and the model never approves on its behalf. A policy that asks puts a host-owned card in the conversation
+ * (`approval-required`, the card in `body.card` for the caller to place); approving it asks the frame then, through
+ * `runApprovedPerform`, if the screen the person approves on still shows it. The same operation asked for again while
+ * its card waits gets that card, not a second one, and a conversation holds at most `PERFORM_CARDS_WAITING_MAX`.
+ *
+ * Inside the effect ledger like a service call: written down as handed off before the page is asked, settled on the
+ * frame's answer. A frame that was asked and did not answer in time, failed while performing, or a Stop while waiting,
+ * may have done it: that is uncertain, recorded against the invocation id and never retried. No live page, or a page
+ * with no such frame mounted, is a refusal with nothing sent and nothing queued.
+ */
+async function invokePerformAction(
+  services: WidgetActionServices,
+  request: WidgetActionRequest,
+  perform: WidgetPerformer | undefined,
+  origin?: TurnOrigin,
+): Promise<WidgetActionResult> {
+  const target = checkPerform(services, request);
+  if (!target.ok) return target.result;
+  const { checked, proposal, label } = target;
+  if (perform === undefined) return refusal("FRAME_NOT_MOUNTED", notMountedMessage(label), { outcome: "refused" });
+
+  const now = (): Instant => new Date().toISOString() as Instant;
+  const policy = readExecutionPolicy({ db: services.runtime.db, now }, services.runtime.identity.ownerPrincipalId);
+  const operationDigest = performDigest({
+    conversationId: request.conversationId,
+    instanceId: request.instanceId,
+    actionBindingId: request.actionBindingId,
+    bindingDigest: checked.binding.bindingDigest,
+    action: proposal.action,
+    input: request.input,
+  });
+  const decided = decideExecution({
+    policy,
+    action: { kind: "effect", category: "local-write", operationDigest: operationDigest as never },
+    // Who asked for the turn: a program on a machine surface is asked about when the person chose `machineTurns: "ask"`.
+    intent: origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin },
+  });
+  if (decided.kind === "deny") {
+    auditPerform(services, request, label, "refused", decided.reason, origin);
+    return refusal("POLICY_REFUSED", `${decided.reason}. Nothing was sent to the widget.`, { outcome: "refused" });
+  }
+  if (decided.kind === "ask") {
+    // The person chose to be asked: a host-owned card, answered by them alone. Nothing is sent until they approve, and
+    // then only to the screen they approve on, if it still shows the widget.
+    const at = now();
+    const waiting = waitingPerformCard(services, operationDigest, at);
+    if (waiting !== undefined) {
+      // The same operation already waits on a card: one card, one decision, one run. No second card is drawn.
+      recordInvokeAction(services.conductor, {
+        invocationId: request.invocationId,
+        actionBindingId: request.actionBindingId,
+        instanceId: checked.instance.instanceId,
+        digest: checked.digest,
+        result: { kind: "approval-required", approvalId: waiting },
+      });
+      return {
+        ok: true,
+        status: 202,
+        body: actionBody(services, checked, request.conversationId, false, {
+          outcome: "approval-required",
+          approvalRequired: { approvalId: waiting },
+          alreadyWaiting: true,
+        }),
+      };
+    }
+    const inputText = Object.keys(request.input).length === 0 ? "" : JSON.stringify(request.input);
+    if (inputText.length > PERFORM_CARD_INPUT_MAX_CHARS) {
+      return refusal(
+        "PERFORM_INPUT_TOO_LONG",
+        `the input is ${String(inputText.length)} characters, more than the ${String(PERFORM_CARD_INPUT_MAX_CHARS)} an approval card shows in full, and the person approves only what they can read. Nothing was sent; perform it in smaller steps.`,
+        { outcome: "refused" },
+      );
+    }
+    if (waitingPerformCards(services, request.conversationId, at) >= PERFORM_CARDS_WAITING_MAX) {
+      return refusal(
+        "PERFORM_CARDS_WAITING",
+        `${String(PERFORM_CARDS_WAITING_MAX)} approval cards for widget actions already wait for the person in this conversation. Nothing was sent; wait for their answers before asking again.`,
+        { outcome: "refused" },
+      );
+    }
+    const locale = preferredAppIntentLocale({ db: services.runtime.db, now }, services.runtime.identity.ownerPrincipalId);
+    const payload: PerformApprovalPayload = {
+      kind: "widget-perform",
+      instanceId: request.instanceId,
+      actionBindingId: request.actionBindingId,
+      bindingDigest: checked.binding.bindingDigest,
+      action: proposal.action,
+      label,
+      input: request.input,
+    };
+    const operationDescription = performApprovalDescription(locale, label, checked.instance.definitionRef.id, inputText);
+    const cardOf = (approval: { approvalId: string; expiresAt: string; decision: string }) => ({
+      type: "approval-card" as const,
+      owner: "host" as const,
+      approvalId: approval.approvalId,
+      operationDescription,
+      operationDigest,
+      payload: JSON.stringify(payload),
+      effectCategory: "local-write" as const,
+      expiresAt: approval.expiresAt,
+      decider: "user" as const,
+      decision: approval.decision,
+      // Written on the host's card, so the decision route keeps who asked when the person approves.
+      ...(origin === undefined ? {} : { origin }),
+    });
+    // Checked against the block schema before an approval exists, so a card that could not be drawn never waits unseen.
+    if (!approvalCardBlockSchema.safeParse(cardOf({ approvalId: "appr_check", expiresAt: at, decision: "pending" })).success) {
+      return refusal("PERFORM_INPUT_TOO_LONG", "the approval card for this action could not be drawn in full. Nothing was sent; perform it in smaller steps.", {
+        outcome: "refused",
+      });
+    }
+    const approval = requestApproval(
+      { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now, newId: services.conductor.newId },
+      { operationDigest, operationDescription, effectCategory: "local-write", ttlMs: PERFORM_APPROVAL_TTL_MS },
+    );
+    mintedPerformCards.get(services.runtime.db)?.set(approval.approvalId, request.conversationId);
+    recordInvokeAction(services.conductor, {
+      invocationId: request.invocationId,
+      actionBindingId: request.actionBindingId,
+      instanceId: checked.instance.instanceId,
+      digest: checked.digest,
+      result: { kind: "approval-required", approvalId: approval.approvalId },
+    });
+    const card = cardOf(approval);
+    return {
+      ok: true,
+      status: 202,
+      body: actionBody(services, checked, request.conversationId, false, {
+        outcome: "approval-required",
+        approvalRequired: { approvalId: approval.approvalId },
+        card,
+      }),
+    };
+  }
+  return runPerform(services, request, target, perform, origin);
+}
+
+/**
+ * Perform an action a person approved on the host's card.
+ *
+ * The card's payload is hashed again against the digest the decision covered, so what runs is what was shown. The
+ * widget must still carry the same binding it had when the card was drawn, the input must still pass its schema, an
+ * attempt of unknown outcome still blocks a second, and a refusal the person set after the card was shown still stands.
+ * Then the frame is asked through `perform` — only a screen that shows the widget now can be — and nothing is queued
+ * when there is none: the person is told it was approved and not sent.
+ */
+export async function runApprovedPerform(
+  services: WidgetActionServices,
+  input: {
+    payload: string;
+    expectedDigest: string;
+    conversationId: string;
+    principalId: string;
+    perform: WidgetPerformer | undefined;
+    /** Who asked for the perform, read from the card: the person decided it, but the record keeps who asked. */
+    origin?: TurnOrigin;
+  },
+): Promise<{ ok: true; label: string; result: WidgetActionResult } | { ok: false; code: string; message: string }> {
+  let parsed: Partial<PerformApprovalPayload>;
+  try {
+    parsed = JSON.parse(input.payload) as Partial<PerformApprovalPayload>;
+  } catch {
+    return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload is not readable" };
+  }
+  const { instanceId, actionBindingId, bindingDigest, action, label } = parsed;
+  const performInput = parsed.input;
+  if (
+    typeof instanceId !== "string" ||
+    typeof actionBindingId !== "string" ||
+    typeof bindingDigest !== "string" ||
+    typeof action !== "string" ||
+    typeof label !== "string" ||
+    performInput === null ||
+    typeof performInput !== "object" ||
+    Array.isArray(performInput)
+  ) {
+    return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload names no widget action" };
+  }
+  const shownDigest = performDigest({
+    conversationId: input.conversationId,
+    instanceId,
+    actionBindingId,
+    bindingDigest,
+    action,
+    input: performInput as Record<string, unknown>,
+  });
+  if (shownDigest !== input.expectedDigest) {
+    return { ok: false, code: "APPROVAL_FORGED", message: "the operation changed after it was displayed; the decision does not cover what would run" };
+  }
+  const cursor = widgetActionTarget(services, instanceId, actionBindingId);
+  if (cursor === undefined || cursor.bindingDigest !== bindingDigest) {
+    return {
+      ok: true,
+      label,
+      result: refusal("BINDING_STALE", `the widget no longer offers “${label}” as it did when the card was shown. Nothing was sent.`, { outcome: "refused" }),
+    };
+  }
+  const request: WidgetActionRequest = {
+    conversationId: input.conversationId,
+    principalId: input.principalId,
+    instanceId,
+    actionBindingId,
+    expectedRevision: cursor.revision,
+    expectedBindingDigest: bindingDigest,
+    input: performInput,
+    invocationId: `inv_${randomUUID()}`,
+  };
+  const target = checkPerform(services, request);
+  if (!target.ok) return { ok: true, label, result: target.result };
+  if (target.proposal.action !== action) {
+    return { ok: false, code: "APPROVAL_FORGED", message: "the approved binding performs another action than the one shown" };
+  }
+  if (input.perform === undefined) return { ok: true, label, result: refusal("FRAME_NOT_MOUNTED", notMountedMessage(label), { outcome: "refused" }) };
+  const now = (): Instant => new Date().toISOString() as Instant;
+  const decided = decideExecution({
+    policy: readExecutionPolicy({ db: services.runtime.db, now }, services.runtime.identity.ownerPrincipalId),
+    action: { kind: "effect", category: "local-write", operationDigest: input.expectedDigest as never },
+    intent: input.origin === undefined ? { kind: "interactive" } : { kind: "interactive", origin: input.origin },
+  });
+  if (decided.kind === "deny") {
+    auditPerform(services, request, label, "refused", decided.reason, input.origin);
+    return { ok: true, label, result: refusal("POLICY_REFUSED", `${decided.reason}. Nothing was sent to the widget.`, { outcome: "refused" }) };
+  }
+  return { ok: true, label, result: await runPerform(services, request, target, input.perform, input.origin) };
+}
+
+/**
+ * What a person reads after approving a perform, in their language: done, refused with nothing sent, or unknown.
+ * Written from the code, never from the widget's own words alone, so a widget cannot make the receipt claim more.
+ */
+export function performReceipt(locale: "vi" | "en", label: string, result: WidgetActionResult): { text: string; succeeded: boolean } {
+  if (result.ok) {
+    return { text: locale === "en" ? `Approved: the widget performed “${label}”.` : `Đã duyệt: widget đã thực hiện “${label}”.`, succeeded: true };
+  }
+  if (result.detail?.outcome === "uncertain") {
+    return {
+      text:
+        locale === "en"
+          ? `Approved and sent “${label}” to the widget, but whether it took effect is unknown. It was not retried; the inbox asks you whether it did.`
+          : `Đã duyệt và gửi “${label}” tới widget, nhưng chưa rõ nó đã có hiệu lực chưa. Không thử lại; hộp thư sẽ hỏi bạn.`,
+      succeeded: false,
+    };
+  }
+  const why =
+    result.code === "FRAME_NOT_MOUNTED" || result.code === "SURFACE_GONE"
+      ? locale === "en"
+        ? "the screen you approved on does not show the widget now"
+        : "màn hình bạn duyệt lúc này không hiện widget đó"
+      : result.code === "WIDGET_REFUSED"
+        ? locale === "en"
+          ? "the widget refused it"
+          : "widget từ chối"
+        : result.code === "POLICY_REFUSED"
+          ? locale === "en"
+            ? "your execution policy now refuses it"
+            : "chính sách thực thi của bạn giờ từ chối việc này"
+          : result.code === "PERFORM_OUTCOME_UNKNOWN"
+            ? locale === "en"
+              ? "an earlier attempt with the same input still has an unknown outcome"
+              : "một lần gửi trước với cùng dữ liệu vẫn chưa rõ kết quả"
+            : locale === "en"
+              ? `it could not be performed (${result.code})`
+              : `không thực hiện được (${result.code})`;
+  return {
+    text:
+      locale === "en"
+        ? `Approved, but “${label}” was not performed: ${why}. Nothing was sent.`
+        : `Đã duyệt, nhưng “${label}” không được thực hiện: ${why}. Không có gì được gửi.`,
+    succeeded: false,
+  };
+}
+
+/**
  * Invoke a widget action.
  *
  * The single path a click and a spoken command both take. Everything that decides whether an action may run lives
@@ -909,6 +1525,7 @@ export async function invokeWidgetAction(
    * turn's origin. Handed to the execution policy with a service call and to the turn an agent button starts.
    */
   origin?: TurnOrigin,
+  options: WidgetActionOptions = {},
 ): Promise<WidgetActionResult> {
   // The guard main added at the route, kept where the invocation actually happens so both callers get it.
   if (!Number.isFinite(request.expectedRevision)) {
@@ -937,6 +1554,14 @@ export async function invokeWidgetAction(
     return invokeAgentAction(services, request, source, origin);
   }
   if (kind === "workflow") return invokeWorkflowAction(services, request, capabilitySource, origin);
+  if (kind === "perform") {
+    // An offered action is Clark's to perform on the widget. A press or a frame naming its binding would be the widget
+    // asking itself through the host, which is not a path anything needs and not one the gate should open.
+    if (source === "click") {
+      return refusal("NOT_AUTHORIZED", "an action a widget offers to Clark is performed by Clark, not pressed. Nothing was sent.");
+    }
+    return invokePerformAction(services, request, options.perform, origin);
+  }
 
   // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take
   // instead of the next time the node starts.

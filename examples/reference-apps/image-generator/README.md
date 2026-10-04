@@ -43,9 +43,9 @@ only from a POST whose prompt is in a JSON body (a prompt in the URL is refused)
 GET, advances one step per poll and returns a deterministic PNG. A real provider is
 [digitopvn/clarkcant#321](https://github.com/digitopvn/clarkcant/issues/321).
 
-Only the repository's scripted fixture model places the widget with `generateBinding` today. No product path places
-an installed package widget with a binding yet, so in a real installation the widget says it is not connected to the
-service. That is tracked in [digitopvn/clarkcant#382](https://github.com/digitopvn/clarkcant/issues/382).
+Only the repository's scripted fixture model places the widget with `generateBinding` today. The `place_widget` tool
+binds a widget's offered actions and "Ask Clark" buttons, not a binding to a service's capability, so in a real
+installation the widget says it is not connected to the service.
 
 ## Files
 

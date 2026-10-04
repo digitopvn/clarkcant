@@ -82,6 +82,33 @@ export const stateMigrationStepSchema = z
   .refine((step) => step.to === step.from + 1, { message: "a migration step moves exactly one stateVersion" });
 export type StateMigrationStep = z.infer<typeof stateMigrationStepSchema>;
 
+/** The name an isolated widget offers an action under, and the frame registers its handler by. */
+export const offeredActionNameSchema = z.string().regex(/^[a-z][A-Za-z0-9._-]{0,63}$/, {
+  message: "an offered action's name starts with a lowercase letter and holds at most 64 letters, digits, '.', '_' or '-'",
+});
+
+/**
+ * An action an isolated widget offers Clark: something the frame itself does, such as formatting the selected cells.
+ *
+ * Declared in the package's definition, reviewed with it at install, and never something a frame announces at runtime.
+ * The host compiles one `perform` binding per declaration when it places the widget, and holds every use to the
+ * declared `inputSchema` before the frame is asked. The label and description are the author's words: a model reads
+ * them as data about the widget, never as instructions.
+ */
+export const offeredActionSchema = z.strictObject({
+  name: offeredActionNameSchema,
+  label: z.string().min(1).max(120),
+  description: z.string().min(1).max(500),
+  /** JSON Schema for the input. An object schema, so every use sends named values the host can check. */
+  inputSchema: z.record(z.string(), z.unknown()).refine((schema) => schema.type === "object", {
+    message: "an offered action's inputSchema is an object schema",
+  }),
+});
+export type OfferedAction = z.infer<typeof offeredActionSchema>;
+
+/** How many actions one widget may offer. */
+export const MAX_OFFERED_ACTIONS = 16;
+
 export const widgetDefinitionSchema = z.strictObject({
   id: z.string().min(1).max(160),
   version: z.string().min(1).max(80),
@@ -122,6 +149,17 @@ export const widgetDefinitionSchema = z.strictObject({
   effectCategories: z.array(effectCategorySchema).max(16),
   /** Data refs the definition needs at render time, resolved by the host. */
   datasetRefs: z.array(z.string().min(1).max(200)).max(64),
+  /**
+   * Actions an isolated widget offers Clark, performed by the frame itself (`actions.perform@1`). Only an
+   * `isolated-app` can perform one; names are unique.
+   */
+  offeredActions: z
+    .array(offeredActionSchema)
+    .max(MAX_OFFERED_ACTIONS)
+    .refine((actions) => new Set(actions.map((action) => action.name)).size === actions.length, {
+      message: "each offered action has its own name",
+    })
+    .optional(),
 });
 export type WidgetDefinition = z.infer<typeof widgetDefinitionSchema>;
 
@@ -300,6 +338,15 @@ export const actionProposalSchema = z.discriminatedUnion("kind", [
     steps: z.array(workflowStepSchema).min(1).max(16),
     inputSchema: z.record(z.string(), z.unknown()).optional(),
     limits: actionLimitsSchema.pick({ deadlineMs: true, maxCallsPerMinute: true }).optional(),
+  }),
+  /**
+   * An action the widget's own frame performs, named as its definition offers it (`offeredActions`). Only Clark asks
+   * for one; the frame runs it and its answer is the outcome.
+   */
+  z.strictObject({
+    kind: z.literal("perform"),
+    action: offeredActionNameSchema,
+    limits: actionLimitsSchema.pick({ maxCallsPerMinute: true }).optional(),
   }),
 ]);
 export type ActionProposal = z.infer<typeof actionProposalSchema>;

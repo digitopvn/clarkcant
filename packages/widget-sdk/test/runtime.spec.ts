@@ -894,3 +894,90 @@ describe("the tokens@1 extension", () => {
     await expect(asking).rejects.toThrow(/disposed/);
   });
 });
+
+describe("actions.perform@1", () => {
+  const performed = (bus: ReturnType<typeof channel>) => bus.sent.filter((message) => (message as { kind?: string }).kind === "action.performed");
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("runs the offered handler with the host's input and answers with what it said", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    const seen: unknown[] = [];
+    // Offered before init: registering a handler is not a send.
+    runtime.api().actions.offer("format", (input) => {
+      seen.push(input);
+      return "formatted B2:B4";
+    });
+    bus.deliver(initMessage({ extensions: ["actions.perform@1"] }));
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "format", input: { format: "percent" } });
+    await flush();
+    expect(seen).toEqual([{ format: "percent" }]);
+    expect(performed(bus)).toEqual([{ kind: "action.performed", nonce: NONCE, performId: "perf_1", status: "done", output: "formatted B2:B4" }]);
+  });
+
+  it("refuses an action it does not handle, and keeps the code of a refusal made with actions.refuse", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    runtime.api().actions.offer("format", () => {
+      throw runtime.api().actions.refuse("NO_SELECTION", "select some cells first");
+    });
+    bus.deliver(initMessage({ extensions: ["actions.perform@1"] }));
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "rename", input: {} });
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_2", action: "format", input: {} });
+    await flush();
+    expect(performed(bus)).toEqual([
+      expect.objectContaining({ performId: "perf_1", status: "refused", code: "ACTION_NOT_OFFERED" }),
+      expect.objectContaining({ performId: "perf_2", status: "refused", code: "NO_SELECTION", message: "select some cells first" }),
+    ]);
+  });
+
+  it("reports a throw without a code as a failure, since the handler may have changed something first", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    runtime.api().actions.offer("format", async () => {
+      throw new Error("the format is shown but could not be saved");
+    });
+    bus.deliver(initMessage({ extensions: ["actions.perform@1"] }));
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "format", input: {} });
+    await flush();
+    expect(performed(bus)).toEqual([
+      { kind: "action.performed", nonce: NONCE, performId: "perf_1", status: "failed", message: "the format is shown but could not be saved" },
+    ]);
+  });
+
+  it("reports a coded error that is not a refusal as a failure, including the SDK's own rejection after a change", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    const api = runtime.api();
+    api.actions.offer("format", async () => {
+      // The handler changes the state first; the host then refuses the write with a coded reason.
+      await api.state.update(0, { format: "percent" });
+      return "done";
+    });
+    api.actions.offer("rename", () => {
+      throw new Error("NO_SELECTION: a coded message alone is not a refusal");
+    });
+    bus.deliver(initMessage({ extensions: ["actions.perform@1"] }));
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "format", input: {} });
+    await flush();
+    bus.deliver({ kind: "state", nonce: NONCE, state: {}, revision: 1, refused: { code: "STATE_REVISION_STALE", message: "another surface saved first" } });
+    await flush();
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_2", action: "rename", input: {} });
+    await flush();
+    expect(performed(bus)).toEqual([
+      expect.objectContaining({ performId: "perf_1", status: "failed", message: expect.stringContaining("STATE_REVISION_STALE") }),
+      expect.objectContaining({ performId: "perf_2", status: "failed" }),
+    ]);
+    expect(() => api.actions.refuse("not a code", "x")).toThrow(TypeError);
+  });
+
+  it("refuses a perform when the host did not offer the extension", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    runtime.api().actions.offer("format", () => "done");
+    bus.deliver(initMessage());
+    bus.deliver({ kind: "action.perform", nonce: NONCE, performId: "perf_1", action: "format", input: {} });
+    await flush();
+    expect(performed(bus)).toEqual([expect.objectContaining({ status: "refused", code: "EXTENSION_NOT_OFFERED" })]);
+  });
+});

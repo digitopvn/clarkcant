@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import { getCapability } from "@clarkcant/core";
 import type { TurnOrigin } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
@@ -13,9 +11,8 @@ import {
   type CapabilityBindingTarget,
   type WidgetActionServices,
   conversationCapabilityBindings,
-  invokeWidgetAction,
-  widgetActionTarget,
 } from "./application/widget-actions.ts";
+import { pressWidgetBinding } from "./widget-perform-tool.ts";
 
 /**
  * Calling an installed package's service capability from the conversation.
@@ -93,23 +90,17 @@ async function startJobThroughWidget(
     return `Có nhiều nút gọi được ${call.ref}; gọi lại với instanceId và actionBindingId của nút người dùng muốn:\n${listTargets(targets)}\nChưa có gì được chạy.`;
   }
   const [target] = targets as [CapabilityBindingTarget];
-  const cursor = widgetActionTarget(services, target.instanceId, target.actionBindingId);
-  if (cursor === undefined) return `Không gọi được: nút “${target.label}” không còn trên widget đó. Không có gì được chạy.`;
-  const result = await invokeWidgetAction(
-    services,
-    {
-      conversationId: call.conversationId,
-      principalId: services.runtime.identity.ownerPrincipalId,
-      instanceId: target.instanceId,
-      actionBindingId: target.actionBindingId,
-      expectedRevision: cursor.revision,
-      expectedBindingDigest: cursor.bindingDigest,
-      input: call.args,
-      invocationId: `inv_${randomUUID()}`,
-    },
-    call.source,
-    call.origin,
-  );
+  // The same dispatch `perform_widget_action` uses: the node's own cursor, a fresh invocation, Clark as the source.
+  const pressed = await pressWidgetBinding(services, {
+    conversationId: call.conversationId,
+    instanceId: target.instanceId,
+    actionBindingId: target.actionBindingId,
+    input: call.args,
+    source: call.source,
+    ...(call.origin === undefined ? {} : { origin: call.origin }),
+  });
+  if (pressed.kind === "gone") return `Không gọi được: nút “${target.label}” không còn trên widget đó. Không có gì được chạy.`;
+  const result = pressed.result;
   if (!result.ok) {
     const mayHaveRun = result.detail?.outcome === "uncertain";
     return mayHaveRun

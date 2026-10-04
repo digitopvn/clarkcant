@@ -38,9 +38,9 @@ Vietnamese: [README.vi.md](README.vi.md).
   too small), the service is not started at that size or any smaller one. Render is disabled, and the host's reason is
   shown in its place.
 
-Only the repository's scripted fixture model places the widget with `renderBinding` today. No product path places an
-installed package widget with a binding yet ([digitopvn/clarkcant#382](https://github.com/digitopvn/clarkcant/issues/382)),
-so in a real installation Render is disabled and its reason is shown.
+Only the repository's scripted fixture model places the widget with `renderBinding` today. The `place_widget` tool
+binds a widget's offered actions and "Ask Clark" buttons, not a binding to a service's capability, so in a real
+installation Render is disabled and its reason is shown.
 
 ## Files
 

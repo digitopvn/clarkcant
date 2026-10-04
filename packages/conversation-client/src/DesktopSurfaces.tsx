@@ -697,6 +697,7 @@ export function PinnedLiveSurface({
           url={client.nodeUrl(frame.url)}
           urlExpiresAt={frame.urlExpiresAt}
           renewUrl={renewFrameUrl}
+          {...(frame.offeredActions === undefined ? {} : { offeredActions: frame.offeredActions })}
           title={title ?? instanceId}
           props={live.props}
           state={live.state}
