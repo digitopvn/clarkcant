@@ -1,0 +1,28 @@
+{
+  "name": "@clarkcant/csv-explorer",
+  "version": "1.0.0",
+  "description": "CSV Explorer: a ClarkCant widget that imports and exports CSV and TSV through host files, computes formulas and applies the formatting Clark chooses.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "clarkcant",
+    "clarkcant-widget"
+  ],
+  "homepage": "https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/spreadsheet",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/digitopvn/clarkcant.git",
+    "directory": "examples/reference-apps/spreadsheet"
+  },
+  "bugs": {
+    "url": "https://github.com/digitopvn/clarkcant/issues"
+  },
+  "files": [
+    "clarkcant.json",
+    "widgets/",
+    "fixtures/compact.json",
+    "fixtures/default.json",
+    "fixtures/empty.json",
+    "fixtures/error.json"
+  ]
+}

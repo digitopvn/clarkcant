@@ -40,7 +40,7 @@ Vietnamese: [README.vi.md](README.vi.md).
 
 The `place_widget` tool places the widget in a real installation, with `renderBinding` bound to the package's
 `render@1` and `source`, `gainDb`, `trimStartMs` and `trimEndMs` as its `inputs`; see
-[widget development §10.3](../../../docs/widget-development.md#103-actions-clark-performs-actionsperform1).
+[widget development §10.3](https://github.com/digitopvn/clarkcant/blob/main/docs/widget-development.md#103-actions-clark-performs-actionsperform1).
 
 ## Files
 
@@ -64,3 +64,31 @@ corepack pnpm exec vitest run examples/reference-apps/media-render apps/runtime/
 The browser journeys are in `apps/web/e2e/media-render.spec.ts`. They cover a clip larger than one chunk rendered
 with progress and a preview, a stop mid-way, a remount, the unavailable profile, keyboard only, light and dark,
 390 px and reduced motion. They need a container engine that runs Linux containers.
+
+## npm package: Media Converter
+
+This app is packaged for npm as **`@clarkcant/media-converter`** 1.0.0 under Apache-2.0 (`package.json`, `LICENSE`).
+**It is not on npm yet.** Publishing needs an account that owns the `@clarkcant` npm scope, and no version has been
+published, so no Marketplace lists it either. The source is
+[examples/reference-apps/media-render](https://github.com/digitopvn/clarkcant/tree/main/examples/reference-apps/media-render).
+
+- **What it asks for:** no network origin, no filesystem path, no microphone or camera, no requested capability and
+  no lifecycle script. It declares a service facet with one `read` capability that runs as a job, and the
+  `background-compute` resource profile. The service reads only the clip a call names, through the host.
+- **Container engine:** installing needs none. Rendering does: the node runs the service in a container engine that
+  runs Linux containers. Without one, or with one too small for `background-compute`, Render is disabled and the
+  host's reason is shown.
+- **Platforms:** `darwin-arm64`, `linux-x64`, `win32-x64` and `web`, as `clarkcant.json` declares. Other targets
+  (Intel macOS, Linux on arm64) are not declared.
+- **What the archive ships:** `clarkcant.json`, `widgets/`, `service/`, the four `fixtures/` prop sets, the READMEs and
+  the licence. The tests and the `clark widget dev` job fixture stay in the repository.
+- **Build the archive:** `node packages/widget-cli/src/cli.ts widget pack examples/reference-apps/media-render` writes
+  `dist/clarkcant-media-converter-1.0.0.tgz`, and `widget publish` prepares `dist/directory-entry.json`, which names
+  that exact npm version and the archive's content digest. Neither command uploads anything, and `dist/` is not
+  committed.
+- **Install it today:** put the entry `widget publish --source local` prepares in a JSON array, point the node's
+  `CC_DIRECTORY_INDEX` at that file, and install it from Clark's directory search.
+- **Install it once published:** a node installs the exact npm version a directory entry names, and refuses the
+  archive unless npm's integrity and the entry's content digest both match.
+- **Known limits:** 16-bit PCM WAV only, mono or stereo; a clip over 25 MiB or longer than an hour is refused; the
+  widget has no audio player. The package has no preview screenshots yet.

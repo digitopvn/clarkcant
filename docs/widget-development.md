@@ -2704,6 +2704,10 @@ Templates:
 `media-tool` and `connected-app` today. `editor`, `media` and the MCP
 App adapter are not implemented yet.
 
+A reference template leaves the app's own `package.json`, `LICENSE` and READMEs behind, since they name the reference's
+npm identity (such as `@clarkcant/quick-notes`, §24.1): the copy gets a `package.json` named after its own id, an MIT
+`LICENSE` and its own README.
+
 ### dev
 
 A local isolated host with:
@@ -3361,6 +3365,14 @@ contracts in [§10](#10-widget-sdk-surface). It is one isolated UI facet with no
 opens a text file, edits it, saves it and asks Clark to rewrite a selection, and the frame never sees where the file
 lives. `clark widget init --template pure-ui` starts a new package from a copy of it ([§16](#16-developer-cli-target)).
 
+**npm package.** It is packaged as **Quick Notes**, `@clarkcant/quick-notes` 1.0.0, with its own `package.json`,
+Apache-2.0 `LICENSE` and README. `clark widget pack` builds `dist/clarkcant-quick-notes-1.0.0.tgz`, and `publish`
+prepares the npm directory entry ([§16](#16-developer-cli-target)). It is **not published to npm yet**: the publishing
+account has to own the `@clarkcant` scope first.
+[reference-packages-npm-install.spec.ts](../apps/runtime/test/reference-packages-npm-install.spec.ts) packs a copy
+with the CLI, installs that archive through `POST /packages/install` from a local registry answering like npm's, and
+refuses a tampered archive.
+
 **The package.** `clarkcant.json` is a schema-version-2 manifest for every platform and the web. `widget.json` takes
 two props: `title`, and `rewriteBinding`, the id of the `agent` binding the editor may press. Its `stateSchema` admits
 only `file`, `base` (two `ArtifactRef`s), `draft` and `draftTooLarge`, with `additionalProperties: false`. The rules
@@ -3479,6 +3491,12 @@ directions, that no place on disk or file handle crosses the bridge.
 `examples/reference-apps/spreadsheet` ([#318](https://github.com/digitopvn/clarkcant/issues/318), part of [#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with one
 isolated UI facet and no service. It shows a widget that works on a file, keeps a large document within bounds,
 describes itself to Clark and applies a change Clark chose.
+
+**npm package.** It is packaged as **CSV Explorer**, `@clarkcant/csv-explorer` 1.0.0, with its own `package.json`,
+Apache-2.0 `LICENSE` and READMEs; its package id stays `com.example.spreadsheet`. `clark widget pack` builds
+`dist/clarkcant-csv-explorer-1.0.0.tgz`, and `publish` prepares the npm directory entry. It is **not published to npm
+yet**: the publishing account has to own the `@clarkcant` scope first. The same
+[install test](../apps/runtime/test/reference-packages-npm-install.spec.ts) as §24.1 covers it.
 
 - **Files.** CSV and TSV come in through `api.artifacts.pick` ([§10.1](#101-files-by-reference-artifacts1)) and are
   read in 256 KiB chunks; the widget never sees a path. An export is a new file written through `create`, `write`,
@@ -3639,6 +3657,13 @@ page, the bridge, the node's files and tables, and the service's container.
 [#200](https://github.com/digitopvn/clarkcant/issues/200)) is a manifest v2 package with an isolated UI facet and a
 service. It renders a WAV clip the person picks, with a gain change and a trim, as a job the widget follows and can
 stop. `clark widget init --template media-tool` starts a new package from it.
+
+**npm package.** It is packaged as **Media Converter**, `@clarkcant/media-converter` 1.0.0, with its own
+`package.json`, Apache-2.0 `LICENSE` and READMEs. `clark widget pack` builds
+`dist/clarkcant-media-converter-1.0.0.tgz`, and `publish` prepares the npm directory entry. It is **not published to
+npm yet**: the publishing account has to own the `@clarkcant` scope first. Installing it needs no container engine,
+and the same [install test](../apps/runtime/test/reference-packages-npm-install.spec.ts) as §24.1 installs it;
+rendering needs a container engine that runs Linux containers.
 
 - **Files by reference.** The widget picks the clip through `api.artifacts.pick` ([§10.1](#101-files-by-reference-artifacts1))
   and keeps only its `ArtifactRef`. Its `render` binding sends the service the clip's artifact id, and the service
