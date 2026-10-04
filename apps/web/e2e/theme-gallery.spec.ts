@@ -51,7 +51,7 @@ for (const width of [1280, 390]) for (const scheme of ["dark", "light"] as const
       expect(before.selectedRef).toBe("builtin:clark");
       const draft = preview.locator('[data-composer="true"]');
       await draft.fill("Local example draft");
-      const modalOpener = preview.locator("button").filter({ hasText: /Mở modal ví dụ|Open example modal/ });
+      const modalOpener = preview.locator("button").filter({ hasText: /Mở hộp thoại ví dụ|Open example modal/ });
       await modalOpener.click();
       await expect(page.locator('[data-modal="true"]')).toHaveCount(3);
       await page.keyboard.press("Escape");

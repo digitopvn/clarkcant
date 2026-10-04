@@ -55,7 +55,7 @@ for (const width of [1280, 390]) {
         writeFileSync(path, "{ invalid JSON");
         await expect(page.locator(".cc-theme-notice")).toBeVisible();
         await expect(textarea).toHaveValue("Preserved after a bad edit");
-        const modalOpener = preview.locator('button').filter({ hasText: /Mở modal ví dụ|Open example modal/ });
+        const modalOpener = preview.locator('button').filter({ hasText: /Mở hộp thoại ví dụ|Open example modal/ });
         await expect(modalOpener).toHaveCSS("min-height", "32px");
         await expect(preview.locator("input[aria-label]").first()).toHaveCSS("min-height", "44px");
         await modalOpener.click();

@@ -86,8 +86,11 @@ export function ThemeLabPreview({ theme, themeRef, problem, customization }: The
       {notice === undefined ? null : <p role="status">{notice}</p>}
       <section className="cc-panel-section"><h3>{t("themeLab.controls")}</h3>
         <SettingsRow label={t("themeLab.field")}><input className="cc-field-input" aria-label={t("themeLab.field")} value={field} onChange={(event) => setField(event.target.value)} /></SettingsRow>
-        <button type="button" className="cc-action" onClick={() => setModal(true)}>{t("themeLab.modal")}</button>
-        <button type="button" className="cc-action" disabled>{t("settings.applies.immediate")}</button>
+        {/* The resting and the disabled button side by side, the way a card offers them, with the gap a card gives them. */}
+        <div className="cc-card-actions">
+          <button type="button" className="cc-action" onClick={() => setModal(true)}>{t("themeLab.modal")}</button>
+          <button type="button" className="cc-action" disabled>{t("themeLab.disabledButton")}</button>
+        </div>
       </section>
       <SettingsRow label={t("themeLab.settings")}><ToggleSwitch name="example-motion" label={t("themeLab.reduced")} checked={reduced} onChange={setReduced} /></SettingsRow>
       {widget === undefined || fixture === undefined ? null : <WidgetPreview entry={widget} fixture={fixture} />}

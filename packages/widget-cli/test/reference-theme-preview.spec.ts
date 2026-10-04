@@ -73,7 +73,7 @@ for (const name of names) describe(`${name} production components on this platfo
         await browserExpect(preview.locator("[data-orb-profile]").first()).toHaveAttribute("data-orb-profile", theme.document.orb!.profile);
         const draft = preview.locator("textarea");
         await draft.fill("A real local preview draft");
-        const opener = preview.getByRole("button", { name: /Open example modal|Mở modal ví dụ/ });
+        const opener = preview.getByRole("button", { name: /Open example modal|Mở hộp thoại ví dụ/ });
         await browserExpect(opener).toHaveCSS("min-height", "32px");
         await browserExpect(preview.locator(".cc-field-input").first()).toHaveCSS("min-height", "44px");
         expect(await opener.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe("none");
