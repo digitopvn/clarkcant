@@ -2093,14 +2093,16 @@ again.
 offered action, matched by its label on the focused widget, goes through the same `invokeWidgetAction` path as the tool:
 the same declared schema, execution policy, ledger, and origin (`voice`, asked by the person). The ledger and the audit
 log record that the person asked by voice. Voice does not ask for a spoken yes first; the execution policy decides
-once. When the policy asks, the host card is placed in the conversation before voice says so, and the person approves
-it there by click or by a spoken yes. Saying the same action again while that card waits points to it; no second card
-is drawn. The request reaches the frame through the voice session's own page, and only when that page sent
-`widgetPerform: 1` in its auth frame. Otherwise the press is refused before anything is sent, and the person is told to
+once. When the policy asks, the host card and its approval are written together, before voice says so. The person
+answers the card there by click, or by the spoken yes or no that voice then asks for; the spoken answer goes through the
+same decision a click makes, and the press never approves itself. Saying the same action again while that card waits
+points to it and asks again; no second card is drawn. The request reaches the frame through the voice session's own
+page, and only when that page sent `widgetPerform: 1` in its auth frame. Otherwise the press is refused before anything is sent, and the person is told to
 ask Clark instead. A press whose session closed before the request went out is recorded as not sent, not as an unknown
 outcome. What the widget answers is read out as the widget's words ("The widget says: …"), on one line, in the
-person's language. The voice resolver matches labels, so a sentence that implies the arguments without naming the
-label, such as `format this as a percentage`, is not matched yet
+person's language, with its quotes neutralised and bidi or zero-width controls removed. A press that fails on the node
+is said as failed, in the person's language, and the session goes on. The voice resolver matches labels, so a sentence
+that implies the arguments without naming the label, such as `format this as a percentage`, is not matched yet
 ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Tests:
