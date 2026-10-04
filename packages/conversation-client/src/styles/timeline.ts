@@ -18,6 +18,13 @@ export const TIMELINE_CSS = `
      shift sideways the moment a reply grows long enough to scroll. */
   scrollbar-gutter: stable both-edges;
 }
+/*
+ * On the start screen the transcript area is only as tall as the group in it, so the body can centre the orb, the
+ * heading, the chips and the input under them as one composition. It still shrinks and scrolls when that group is
+ * taller than the window. Here rather than beside the body rule in base: a later layer wins whatever the selector,
+ * and the rule above had left the input at the foot of a tall window, a screen away from the chips.
+ */
+.cc-shell[data-view="hero"] .cc-scroll { flex: 0 1 auto; }
 .cc-timeline {
   max-width: var(--cc-conversation-max-width); margin: 0 auto;
   padding: var(--cc-space-xl) var(--cc-space-lg) var(--cc-space-lg);
