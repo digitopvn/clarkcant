@@ -310,6 +310,8 @@ div.cc-attachment { flex-wrap: wrap; }
 /* The model line is two facts - which model, and how to change it - so they get the statusline's gap rather than
    running together as one word. */
 .cc-model-switch { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--cc-space-sm); }
+/* Under the pill it belongs to, from the pill's own inset, rather than in the corner of the window or touching its edge. */
+.cc-model-switch { box-sizing: border-box; max-width: var(--cc-composer-max-width); margin: var(--cc-space-xs) auto 0; padding-inline: var(--cc-space-md); }
 .cc-model-switch [data-model-note] { color: var(--cc-text-tertiary); }
 /* A key chord is advice for a keyboard. On a touch screen with nothing to press it is a hint that cannot be followed. */
 @media (hover: none) and (pointer: coarse) { .cc-model-switch [data-model-note="shortcut"] { display: none; } }
