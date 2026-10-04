@@ -141,6 +141,15 @@ export interface BackgroundRunInput {
 }
 
 /**
+ * Why background work runs on the configured model for a reason worth recording, rather than because the node simply
+ * routes nothing: no model in the pool may receive the work's data class, or the route itself failed.
+ */
+export type BackgroundFallback = { reason: "data-class"; dataClass: DataClass } | { reason: "route-failed" };
+
+/** What routing answers for background work: a model to run, or the reason it falls back to the configured one. */
+export type BackgroundRoute = { provider: string; id: string } | { fallback: BackgroundFallback };
+
+/**
  * How long a conversation's session is kept once nobody is using it, and how many are kept at all.
  *
  * A session is a provider connection and a context window held in memory. Keeping one per conversation for as long as
@@ -183,7 +192,9 @@ export interface ModelTurn {
    * it: the policy layer's route among the node's pool when it gives one, else the model this node runs now (the
    * person's pick, else the environment's). Never a separate setting, so there is one place that decides.
    */
-  workerModel: (work?: { dataClass?: DataClass }) => Promise<ModelSelection & { via: "routed" | "configured" }>;
+  workerModel: (
+    work?: { dataClass?: DataClass },
+  ) => Promise<ModelSelection & { via: "routed" | "configured"; fallback?: BackgroundFallback }>;
 
   /** The model this node runs now, the person's pick else the environment's: what a worker falls back to when routing chooses nothing. */
   configuredModel: () => ModelSelection;
@@ -689,7 +700,7 @@ export async function createModelTurn(options: {
    * the policy layer — all of which are read at the moment a worker is about to start rather than at boot. Absent
    * means workers run whatever the node is configured with.
    */
-  backgroundModel?: (work?: { dataClass?: DataClass }) => Promise<{ provider: string; id: string } | undefined>;
+  backgroundModel?: (work?: { dataClass?: DataClass }) => Promise<BackgroundRoute | undefined>;
   /**
    * The data classes a model may be sent (#433), from the profiles that name it. Read for the model about to receive
    * context: the conversation's for a turn, the routed or fallback one for a background run. Absent means everything but
@@ -1060,6 +1071,26 @@ export async function createModelTurn(options: {
     }
   };
 
+  /*
+   * The one routing step for background work, shared by a background run and a dispatched worker so both treat a failed
+   * route the same way. Routing must never be the reason work does not start: a route that rejects, or throws before it
+   * returns a promise, is a run on the configured model, and the reason is kept for the record.
+   */
+  const routeBackground = async (work: {
+    dataClass?: DataClass;
+  }): Promise<{ routed?: { provider: string; id: string }; fallback?: BackgroundFallback }> => {
+    if (options.backgroundModel === undefined) return {};
+    let route: BackgroundRoute | undefined;
+    try {
+      route = await options.backgroundModel(work);
+    } catch {
+      return { fallback: { reason: "route-failed" } };
+    }
+    if (route === undefined) return {};
+    if ("fallback" in route) return { fallback: route.fallback };
+    return { routed: { provider: route.provider, id: route.id } };
+  };
+
   /**
    * The one tool.
    *
@@ -1384,14 +1415,13 @@ export async function createModelTurn(options: {
       return turn?.inFlight === true && turn.startedAtMs !== undefined ? Date.now() - turn.startedAtMs : undefined;
     },
 
-    workerModel: async (work?: { dataClass?: DataClass }): Promise<ModelSelection & { via: "routed" | "configured" }> => {
-      // Routing must never be the reason a worker does not start: a route that fails falls back like one that found
-      // nothing eligible.
-      const routed =
-        options.backgroundModel === undefined ? undefined : await options.backgroundModel(work).catch(() => undefined);
+    workerModel: async (
+      work?: { dataClass?: DataClass },
+    ): Promise<ModelSelection & { via: "routed" | "configured"; fallback?: BackgroundFallback }> => {
+      const { routed, fallback } = await routeBackground(work ?? {});
       if (routed !== undefined) return { provider: routed.provider, id: routed.id, via: "routed" };
       const current = options.model?.() ?? selection;
-      return { ...current, via: "configured" };
+      return { ...current, via: "configured", ...(fallback === undefined ? {} : { fallback }) };
     },
 
     configuredModel: (): ModelSelection => options.model?.() ?? selection,
@@ -1416,8 +1446,7 @@ export async function createModelTurn(options: {
         ...(context === undefined ? [] : [context.dataClass]),
       ]);
       // A route that fails is a run on the configured model, the same as one that found nothing eligible.
-      const routed =
-        options.backgroundModel === undefined ? undefined : await options.backgroundModel({ dataClass }).catch(() => undefined);
+      const { routed } = await routeBackground({ dataClass });
       const runsOn = routed ?? options.model?.() ?? selection;
       const allowed = allowedFor(runsOn);
       const narrowed = context?.readerFor(allowed);

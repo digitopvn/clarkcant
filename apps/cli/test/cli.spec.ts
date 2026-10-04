@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -92,6 +92,122 @@ describe("the identity file's token", () => {
   });
 });
 
+describe("instructions check", () => {
+  const RULE = { when: { path: "packages/storage/**", operation: "write" }, include: ["migrations"] };
+  /** A project folder with an instructions file, and the snippets it includes unless told otherwise. */
+  const project = (file: unknown, snippets: string[] = ["migrations"]): string => {
+    const folder = mkdtempSync(join(dir, "project-"));
+    mkdirSync(join(folder, ".clarkcant", "instructions"), { recursive: true });
+    writeFileSync(join(folder, ".clarkcant", "instructions.json"), typeof file === "string" ? file : JSON.stringify(file));
+    for (const name of snippets) writeFileSync(join(folder, ".clarkcant", "instructions", `${name}.md`), "words");
+    return folder;
+  };
+  const instructions = (folder: string): string => join(folder, ".clarkcant", "instructions.json");
+  /** Reads through the real file system, and remembers what it was asked to read. */
+  const spy = (): { read: string[]; readFile: (path: string) => string } => {
+    const read: string[] = [];
+    return {
+      read,
+      readFile: (path) => {
+        read.push(path);
+        return readFileSync(path, "utf8");
+      },
+    };
+  };
+
+  it("passes a versioned file without talking to a node", async () => {
+    const file = instructions(project({ version: 1, rules: [RULE] }));
+    const fake = spy();
+    let fetched = false;
+    const run = io({
+      readFile: fake.readFile,
+      fetch: (async () => {
+        fetched = true;
+        throw new Error("no node");
+      }) as typeof fetch,
+    });
+    expect(await runCli(["instructions", "check", file], run)).toBe(0);
+    expect(run.out.join("")).toBe(`${file}: ok (1 rule)\n`);
+    // Not even the identity file is read: only the instructions file.
+    expect(fake.read).toEqual([file]);
+    expect(fetched).toBe(false);
+  });
+
+  it("checks a project folder's file, and accepts an editor's $schema", async () => {
+    const folder = project({ $schema: "https://example.invalid/instructions.json", version: 1, rules: [RULE] });
+    const run = io();
+    expect(await runCli(["instructions", "check", folder], run)).toBe(0);
+    expect(run.out.join("")).toBe(`${instructions(folder)}: ok (1 rule)\n`);
+  });
+
+  it("reports a missing version and each invalid rule, one line each, in the field's own words", async () => {
+    const file = instructions(
+      project({ rules: [RULE, { include: ["../out"] }, { when: { operation: "delete", role: ["task", 3] }, include: ["migrations"] }] }),
+    );
+    const run = io();
+    expect(await runCli(["instructions", "check", file], run)).toBe(1);
+    expect(run.out.join("").trimEnd().split("\n")).toEqual([
+      `${file}: version: missing; write "version": 1 (a node still reads a file without it as version 1)`,
+      `${file}: rules[1].include[0]: must be a snippet name of lowercase letters, digits and -`,
+      `${file}: rules[2].when.operation: must be one of read, write, command, test, deploy or a list of 1 to 16 of them`,
+      `${file}: rules[2].when.role: item [1] must be one of foreground, background, task`,
+    ]);
+  });
+
+  it("says once that a newer version needs a newer ClarkCant, without judging the rest by version 1", async () => {
+    const file = instructions(project({ version: 2, rules: [{ ...RULE, future: true }] }));
+    const run = io();
+    expect(await runCli(["instructions", "check", file, "--json"], run)).toBe(1);
+    expect(JSON.parse(run.out.join(""))).toEqual({
+      path: file,
+      ok: false,
+      problems: ["version 2 is newer than this build reads (1); update ClarkCant"],
+      warnings: [],
+    });
+  });
+
+  it("warns about an include with no snippet file, without failing the check", async () => {
+    const file = instructions(project({ version: 1, rules: [{ ...RULE, include: ["migrations", "gone"] }] }));
+    const run = io();
+    expect(await runCli(["instructions", "check", file], run)).toBe(0);
+    expect(run.out.join("").trimEnd().split("\n")).toEqual([
+      `${file}: warning: rules[0].include[1]: no instructions/gone.md beside this file, so the rule states nothing for it`,
+      `${file}: ok (1 rule)`,
+    ]);
+  });
+
+  it("answers JSON, and says plainly when the file cannot be read, is too large or is not JSON", async () => {
+    const ok = instructions(project({ version: 1, rules: [] }));
+    const asJson = io();
+    expect(await runCli(["instructions", "check", ok, "--json"], asJson)).toBe(0);
+    expect(JSON.parse(asJson.out.join(""))).toEqual({ path: ok, ok: true, problems: [], warnings: [] });
+
+    const bad = instructions(project("{ not json"));
+    const broken = io();
+    expect(await runCli(["instructions", "check", bad], broken)).toBe(1);
+    expect(broken.out.join("")).toBe(`${bad}: file: not valid JSON\n`);
+
+    // Too large is said from the size alone: the file is never read.
+    const large = instructions(project(`{"version":1,"rules":[],"pad":"${"x".repeat(70 * 1024)}"}`));
+    const fake = spy();
+    const tooLarge = io({ readFile: fake.readFile });
+    expect(await runCli(["instructions", "check", large], tooLarge)).toBe(1);
+    expect(tooLarge.out.join("")).toBe(`${large}: file: larger than 65536 bytes, so a node does not read it\n`);
+    expect(fake.read).toEqual([]);
+
+    const gone = join(dir, "gone.json");
+    const missing = io();
+    expect(await runCli(["instructions", "check", gone], missing)).toBe(1);
+    expect(missing.err.join("")).toContain(`could not read ${gone}`);
+    // A folder with no instructions file names the file it looked for.
+    const empty = mkdtempSync(join(dir, "empty-"));
+    const none = io();
+    expect(await runCli(["instructions", "check", empty], none)).toBe(1);
+    expect(none.err.join("")).toContain(`could not read ${instructions(empty)}`);
+    const wrong = io();
+    expect(await runCli(["instructions", "fix"], wrong)).toBe(1);
+  });
+});
 describe("commands", () => {
   it("reports the node's status", async () => {
     const run = io();

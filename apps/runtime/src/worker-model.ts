@@ -66,6 +66,7 @@ export function nodeWorkerModel(input: {
           ...(chosen.thinkingLevel === undefined ? {} : { thinkingLevel: chosen.thinkingLevel }),
         },
         via: chosen.via,
+        ...(chosen.fallback === undefined ? {} : { fallback: chosen.fallback }),
         ...(credential === undefined ? {} : { credential }),
         credentialSource: fromEnvironment !== undefined ? "environment" : stored !== undefined ? "stored" : "model-config",
         ...(agentDir === undefined ? {} : { agentDir }),
