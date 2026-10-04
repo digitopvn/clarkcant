@@ -869,16 +869,18 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-host-card-caption { font-size: var(--cc-text-label); font-style: italic; }
 .cc-host-card-open { color: inherit; }
 .cc-widget-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--cc-space-md); grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-.cc-widget-card { margin: 0; }
-.cc-widget-card-btn { display: flex; flex-direction: column; gap: var(--cc-space-sm); width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; padding: var(--cc-space-md); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card); background: transparent; }
+/* Cards in one row share its height, so the row reads as a row and every source line sits on the same baseline. */
+.cc-widget-card { margin: 0; display: flex; }
+.cc-widget-card-btn { flex: 1; display: flex; flex-direction: column; gap: var(--cc-space-sm); width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; padding: var(--cc-space-md); border: var(--cc-line, 1px solid) var(--cc-border); border-radius: var(--cc-radius-card); background: transparent; transition: border-color var(--cc-motion-micro) var(--cc-motion-easing); }
+.cc-widget-card-btn:hover { border-color: color-mix(in oklab, var(--cc-text) 24%, var(--cc-border)); }
 .cc-widget-card-btn:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-widget-card-preview { display: block; min-height: 96px; overflow: hidden; pointer-events: none; }
 .cc-widget-card-text { display: block; color: var(--cc-text-muted); }
-.cc-widget-card-meta { display: flex; flex-direction: column; gap: var(--cc-space-xxs); }
+.cc-widget-card-meta { flex: 1; display: flex; flex-direction: column; gap: var(--cc-space-xxs); }
 .cc-widget-card-name { font-weight: 600; }
 .cc-widget-card-family { color: var(--cc-text-muted); }
 .cc-widget-card-desc { color: var(--cc-text-muted); }
-.cc-widget-card-source { color: var(--cc-text-muted); font-size: var(--cc-text-label); }
+.cc-widget-card-source { margin-top: auto; padding-top: var(--cc-space-xs); color: var(--cc-text-muted); font-size: var(--cc-text-label); }
 .cc-widget-preview { display: block; }
 .cc-widget-preview-missing { margin: 0; color: var(--cc-text-muted); }
 .cc-widget-detail { display: flex; flex-direction: column; gap: var(--cc-space-lg); }
