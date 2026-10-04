@@ -1867,6 +1867,13 @@ the refusal's code; the widget gets the code and a fixed sentence, and nothing f
 its own error code (`EBUSY`), never a path. Picking and saving are the person's acts: the node refuses them on machine
 surfaces ([open-interfaces.md](open-interfaces.md)), and a widget cannot perform either without the host's prompt.
 
+A widget's own writes (`create`, `write`, `finalize`, `attach`, `discard`) reach the node through its host and run
+as before. The same routes carried by a machine surface (MCP, the WebSocket relay or `clarkcant api`) are an AI client
+or a remote machine writing as the widget. The node decides each such write with the person's execution policy as a
+`local-write` effect: it runs, it waits for the person on an approval card, or it is refused. Every such write is
+audited with the surface, the instance, the artifact and the decision, never the bytes
+([open-interfaces.md](open-interfaces.md)). A widget does not need to handle this: its own calls are never asked about.
+
 A frame's file requests are rate-limited: a burst of 300, then 10 a second, counted before a request is checked, and at
 most 4 wait for an answer at once. A message from another window is refused before it is counted, so one widget
 cannot spend another's rate. The SDK queues the rest, so a widget that reads a large file in a loop is paced

@@ -7,8 +7,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 
-import type { Instant } from "@clarkcant/contracts";
-import { getNotification } from "@clarkcant/storage";
+import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant } from "@clarkcant/contracts";
+import { EXECUTION_POLICY_PREFERENCE_KEY, createInstance, pinInstance, writeRegisteredPreference } from "@clarkcant/core";
+import { TABLE } from "@clarkcant/data-canvas";
+import { getNotification, listArtifactsForConversation, listAuditEvents } from "@clarkcant/storage";
 
 import { attachApiSocket, type ApiSocket } from "../src/api-socket.ts";
 import { recordNodeNotice } from "../src/notices.ts";
@@ -474,5 +476,257 @@ describe("WebSocket gateway", () => {
     client.send({ type: "request", id: "y", method: "GET", path: "/node" });
     expect(await client.next()).toMatchObject({ type: "response", id: "y", status: 200 });
     client.close();
+  });
+});
+
+/**
+ * A widget instance's artifact writes, carried by a machine surface (#355).
+ *
+ * The owner's decision: a relay, an MCP client or `clarkcant api` may write as a widget only through the execution
+ * policy, and every such write is audited. The person's own app is unchanged.
+ */
+describe("widget artifact writes on machine surfaces", () => {
+  const TEXT = "ghi chú của widget\n";
+  const SECRET_TEXT = "nội dung không được vào nhật ký";
+
+  function setPolicy(value: Record<string, unknown>): void {
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => new Date().toISOString() as Instant },
+      {
+        principalId: services.runtime.identity.ownerPrincipalId,
+        key: EXECUTION_POLICY_PREFERENCE_KEY,
+        value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, ...value },
+        source: "user",
+      },
+    );
+    if (!written.ok) throw new Error(written.message);
+  }
+
+  async function http(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: Record<string, unknown> }> {
+    const response = await fetch(`${base}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token()}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+        ...headers,
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  }
+
+  /** A conversation holding one widget instance, and the instance's artifact route. */
+  async function widget(): Promise<{ conversationId: string; route: string }> {
+    const created = await http("POST", "/conversations", { title: "tệp widget" });
+    const conversationId = created.body.conversationId as string;
+    const instanceId = createInstance(services.conductor, {
+      definition: TABLE,
+      packageDigest: "sha256:table",
+      ownerPrincipalId: services.runtime.identity.ownerPrincipalId as never,
+      props: { title: "Tệp", datasetRef: "dataset_none", columns: ["name"] },
+    }).instanceId;
+    expect(pinInstance(services.conductor, { conversationId, instanceId, displayMode: "compact", maxPins: 64 }).ok).toBe(true);
+    return { conversationId, route: `/conversations/${conversationId}/widgets/${instanceId}/artifacts` };
+  }
+
+  async function relayed(): Promise<{ request: (method: string, path: string, body?: unknown, extra?: Record<string, unknown>) => Promise<Record<string, unknown>>; close: () => void }> {
+    const client = await openSocket();
+    client.send({ type: "auth", token: token() });
+    await client.next();
+    let id = 0;
+    return {
+      request: async (method, path, body, extra = {}) => {
+        id += 1;
+        client.send({ type: "request", id, method, path, ...(body === undefined ? {} : { body }), ...extra });
+        return client.next();
+      },
+      close: () => client.close(),
+    };
+  }
+
+  function artifactAudit(): { summary: string; outcome: string; ref?: string }[] {
+    return listAuditEvents(services.runtime.db, services.runtime.identity.ownerPrincipalId)
+      .filter((event) => event.kind === "widget-artifact")
+      .reverse();
+  }
+
+  it("runs every write a relay carries under Autonomous, and audits each with the surface, never the bytes", async () => {
+    const { conversationId, route } = await widget();
+    const relay = await relayed();
+
+    const created = await relay.request("POST", route, { mimeType: "text/plain", name: "ghi-chu.txt" });
+    expect(created).toMatchObject({ type: "response", status: 201 });
+    const artifactId = ((created.body as { artifactRef: { artifactId: string } }).artifactRef).artifactId;
+    const chunk = { offset: 0, contentBase64: Buffer.from(TEXT + SECRET_TEXT).toString("base64") };
+    expect(await relay.request("POST", `${route}/${artifactId}/chunks`, chunk)).toMatchObject({ status: 200 });
+    expect(await relay.request("POST", `${route}/${artifactId}/finalize`)).toMatchObject({ status: 200 });
+    expect(await relay.request("POST", `${route}/${artifactId}/attach`, {})).toMatchObject({ status: 201 });
+    expect(await relay.request("DELETE", `${route}/${artifactId}`)).toMatchObject({ status: 200, body: { discarded: true, artifactId } });
+    relay.close();
+
+    const audit = artifactAudit();
+    expect(audit.map((event) => /\(relay, (\w+)\)/.exec(event.summary)?.[1])).toEqual(["create", "write", "finalize", "attach", "discard"]);
+    for (const event of audit) {
+      expect(event.outcome).toBe("done");
+      expect(event.ref).toBe(artifactId);
+      expect(event.summary).toContain("run by the execution policy (autonomous");
+      expect(event.summary).toContain(artifactId);
+      expect(event.summary).not.toContain(SECRET_TEXT);
+      expect(event.summary).not.toContain(chunk.contentBase64);
+    }
+    // The activity stream shows each write the policy ran, as it shows any other effect it allowed.
+    const activity = services.runtime.db
+      .prepare("SELECT count(*) AS n FROM events WHERE kind = 'effect.executed' AND conversation_id = ?")
+      .get(conversationId) as { n: number };
+    expect(activity.n).toBe(5);
+  });
+
+  it("asks the person under Ask every time, writes nothing until they approve, and never lets the relay approve", async () => {
+    setPolicy({ mode: "ask" });
+    const { conversationId, route } = await widget();
+    const relay = await relayed();
+
+    const asked = await relay.request("POST", route, { mimeType: "text/plain", name: "ghi-chu.txt" });
+    expect(asked).toMatchObject({ status: 202, body: { outcome: "approval-required", operation: "create" } });
+    const approvalId = (asked.body as { approvalRequired: { approvalId: string } }).approvalRequired.approvalId;
+    expect(listArtifactsForConversation(services.runtime.db, conversationId)).toEqual([]);
+
+    // The card is the host's, in the widget's conversation, bound to the operation's digest.
+    const timeline = await http("GET", `/conversations/${conversationId}/timeline`);
+    const cards = (timeline.body.messages as { blocks: Record<string, unknown>[] }[])
+      .flatMap((message) => message.blocks)
+      .filter((block) => block.type === "approval-card");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({ owner: "host", approvalId, effectCategory: "local-write", decision: "pending" });
+    const digest = cards[0]?.operationDigest as string;
+
+    // The client that asked cannot decide its own request.
+    expect(await relay.request("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, { decision: "granted", digest })).toMatchObject({
+      status: 403,
+      body: { code: "PERSON_ONLY" },
+    });
+    expect(listArtifactsForConversation(services.runtime.db, conversationId)).toEqual([]);
+    expect(artifactAudit().map((event) => event.outcome)).toEqual(["pending"]);
+
+    // The person approves on their own surface, and the write runs from the card.
+    const decided = await http("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, { decision: "granted", digest });
+    expect(decided.status).toBe(200);
+    const made = listArtifactsForConversation(services.runtime.db, conversationId);
+    expect(made).toHaveLength(1);
+    const receipt = (decided.body.timeline as { messages: { blocks: Record<string, unknown>[] }[] }).messages
+      .flatMap((message) => message.blocks)
+      .find((block) => block.type === "tool-activity" && block.name === "widget_artifact_write");
+    expect(receipt).toMatchObject({ status: "done", args: { approvalId, decision: "granted", operation: "create", artifactId: made[0]?.artifactId } });
+    expect(artifactAudit().at(-1)).toMatchObject({ outcome: "done", ref: made[0]?.artifactId });
+    expect(artifactAudit().at(-1)?.summary).toContain(`approved by the person on card ${approvalId}`);
+
+    // A small chunk is asked about the same way; one too large for a card is refused with nothing written.
+    const artifactId = made[0]?.artifactId ?? "";
+    const small = await relay.request("POST", `${route}/${artifactId}/chunks`, { offset: 0, contentBase64: Buffer.from(TEXT).toString("base64") });
+    expect(small).toMatchObject({ status: 202, body: { outcome: "approval-required", operation: "write" } });
+    const large = await relay.request("POST", `${route}/${artifactId}/chunks`, { offset: 0, contentBase64: Buffer.alloc(8_000, 65).toString("base64") });
+    expect(large).toMatchObject({ status: 413, body: { code: "APPROVAL_UNAVAILABLE" } });
+    expect(listArtifactsForConversation(services.runtime.db, conversationId)[0]?.sizeBytes).toBe(0);
+    relay.close();
+  });
+
+  it("records the person's refusal, and writes nothing", async () => {
+    setPolicy({ mode: "ask" });
+    const { conversationId, route } = await widget();
+    const asked = await http("POST", route, { mimeType: "text/plain" }, { "x-clarkcant-surface": "mcp" });
+    expect(asked.status).toBe(202);
+    const approvalId = (asked.body.approvalRequired as { approvalId: string }).approvalId;
+    const timeline = await http("GET", `/conversations/${conversationId}/timeline`);
+    const card = (timeline.body.messages as { blocks: Record<string, unknown>[] }[])
+      .flatMap((message) => message.blocks)
+      .find((block) => block.type === "approval-card");
+    const denied = await http("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, {
+      decision: "denied",
+      digest: card?.operationDigest,
+    });
+    expect(denied.status).toBe(200);
+    expect(listArtifactsForConversation(services.runtime.db, conversationId)).toEqual([]);
+    expect(artifactAudit().at(-1)).toMatchObject({ outcome: "refused" });
+    expect(artifactAudit().at(-1)?.summary).toContain("(mcp, create)");
+    expect(artifactAudit().at(-1)?.summary).toContain(`denied by the person on card ${approvalId}`);
+  });
+
+  it("refuses under a rule or a prohibition that refuses local writes, on every machine surface", async () => {
+    const { conversationId, route } = await widget();
+    for (const policy of [{ mode: "guarded", rules: [{ effectCategory: "local-write", decision: "deny" }] }, { prohibition: "all" }]) {
+      setPolicy(policy);
+      for (const surface of ["mcp", "relay", "cli-api"]) {
+        const refused = await http("POST", route, { mimeType: "text/plain" }, { "x-clarkcant-surface": surface });
+        expect(refused, `${surface} ${JSON.stringify(policy)}`).toMatchObject({ status: 403, body: { code: "POLICY_REFUSED" } });
+      }
+    }
+    expect(listArtifactsForConversation(services.runtime.db, conversationId)).toEqual([]);
+    const audit = artifactAudit();
+    expect(audit).toHaveLength(6);
+    expect(audit.every((event) => event.outcome === "refused" && event.summary.includes("refused by the execution policy"))).toBe(true);
+    expect(audit.map((event) => /\((mcp|relay|cli-api), create\)/.exec(event.summary)?.[1])).toEqual(["mcp", "relay", "cli-api", "mcp", "relay", "cli-api"]);
+  });
+
+  it("runs Guarded local writes without asking, as the policy says", async () => {
+    setPolicy({ mode: "guarded" });
+    const { route } = await widget();
+    expect(await http("POST", route, { mimeType: "text/plain" }, { "x-clarkcant-surface": "cli-api" })).toMatchObject({ status: 201 });
+    expect(artifactAudit().at(-1)?.summary).toContain("run by the execution policy (guarded");
+  });
+
+  it("leaves the person's own app as it was, under the strictest mode", async () => {
+    setPolicy({ mode: "ask" });
+    const { route } = await widget();
+    // No marker, or the composer's own: the person's app. It writes directly and nothing is audited as a machine write.
+    for (const headers of [{}, { "x-clarkcant-surface": "composer" }]) {
+      const created = await http("POST", route, { mimeType: "text/plain" }, headers);
+      expect(created.status).toBe(201);
+      const artifactId = (created.body.artifactRef as { artifactId: string }).artifactId;
+      expect((await http("POST", `${route}/${artifactId}/chunks`, { offset: 0, contentBase64: Buffer.from(TEXT).toString("base64") }, headers)).status).toBe(200);
+      expect((await http("POST", `${route}/${artifactId}/finalize`, {}, headers)).status).toBe(200);
+      expect((await http("POST", `${route}/${artifactId}/attach`, {}, headers)).status).toBe(201);
+      expect((await http("DELETE", `${route}/${artifactId}`, undefined, headers)).status).toBe(200);
+    }
+    expect(artifactAudit()).toEqual([]);
+  });
+
+  it("takes the surface from the relay itself, never from a body or a frame's own headers", async () => {
+    setPolicy({ mode: "ask" });
+    const { route } = await widget();
+    const relay = await relayed();
+    const spoofed = await relay.request(
+      "POST",
+      route,
+      { mimeType: "text/plain", surface: "composer", "x-clarkcant-surface": "composer", headers: { "x-clarkcant-surface": "composer" } },
+      { headers: { "x-clarkcant-surface": "composer" } },
+    );
+    expect(spoofed).toMatchObject({ status: 202, body: { outcome: "approval-required" } });
+    relay.close();
+    // And a body naming a machine surface does not make the person's app one: only the header the surfaces set does.
+    expect((await http("POST", route, { mimeType: "text/plain", surface: "relay", "x-clarkcant-surface": "relay" })).status).toBe(201);
+  });
+
+  it("still reads, and still refuses Save As and the picker, on a machine surface", async () => {
+    setPolicy({ mode: "ask" });
+    const { route } = await widget();
+    const created = await http("POST", route, { mimeType: "text/plain" });
+    const artifactId = (created.body.artifactRef as { artifactId: string }).artifactId;
+    const relay = await relayed();
+    expect(await relay.request("GET", `${route}/${artifactId}`)).toMatchObject({ status: 200 });
+    expect(await relay.request("POST", `/artifacts/${artifactId}/export`, {})).toMatchObject({ status: 403, body: { code: "PERSON_ONLY" } });
+    expect(await relay.request("POST", `${route}/pick`, {})).toMatchObject({ status: 403, body: { code: "PERSON_ONLY" } });
+    relay.close();
+    expect(artifactAudit()).toEqual([]);
+  });
+
+  it("tells a tool up front which writes the policy decides on a machine surface", async () => {
+    const discovery = (await (await fetch(`${base}/.well-known/clarkcant.json`)).json()) as Record<string, unknown>;
+    expect(discovery.policyGatedOnMachineSurfaces).toMatchObject({
+      on: ["websocket", "mcp", "cli api"],
+      effectCategory: "local-write",
+      approval: { status: 202, outcome: "approval-required" },
+      refusal: { status: 403, code: "POLICY_REFUSED" },
+    });
+    expect((discovery.policyGatedOnMachineSurfaces as { routes: string[] }).routes).toHaveLength(5);
   });
 });

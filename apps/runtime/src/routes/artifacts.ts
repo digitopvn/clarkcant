@@ -6,26 +6,23 @@ import {
   artifactFileName,
   artifactNameSchema,
   artifactRefusalStatus,
+  machineSurfaceOf,
+  policyGatedWidgetArtifactWrite,
 } from "@clarkcant/contracts";
 import { getInstance } from "@clarkcant/core";
 import { getBrokerArtifact, getConversation, instanceIsInConversation } from "@clarkcant/storage";
 
+import { describeArtifact, exportArtifactBytes, readArtifactRange, storePickedArtifact } from "../artifact-broker.ts";
 import {
-  type ArtifactBrokerDeps,
-  appendArtifactChunk,
-  attachArtifact,
-  createWorkingArtifact,
-  describeArtifact,
-  discardArtifact,
-  exportArtifactBytes,
-  finalizeArtifact,
-  readArtifactRange,
-  storePickedArtifact,
-} from "../artifact-broker.ts";
+  type WidgetArtifactWrite,
+  brokerDepsOf,
+  decideMachineArtifactWrite,
+  performWidgetArtifactWrite,
+} from "../application/machine-artifact-writes.ts";
 import { readBlob } from "../blobs.ts";
 import type { NodeServices } from "../services.ts";
 import { contentDisposition } from "./content-disposition.ts";
-import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
+import { type GatewayRequest, type GatewayResponse, SURFACE_HEADER, fail, json, readJson } from "./http.ts";
 
 /**
  * Files a widget holds by reference.
@@ -40,25 +37,20 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *   never a permission. `POST …/pick` is person-only for the same reason as export: a grant to a picked file is the
  *   person's choice in host chrome, not something a machine surface can make. Taking a widget's access away is the
  *   person's act too, so it has no route until host chrome offers it (#343); `revokeArtifactAccess` is what that uses.
+ *   The writes — create, chunks, finalize, attach, discard — run as before for the person's own app; carried by a
+ *   machine surface (`policyGatedWidgetArtifactWrite`), each is decided by the execution policy and audited
+ *   (`decideMachineArtifactWrite`).
  *
  * No answer here carries a path, a staging name or where a picked file was read from: only an `ArtifactRef`, bytes,
  * or a refusal that names what was wrong.
  */
 export interface ArtifactRouteDeps {
-  services: Pick<NodeServices, "runtime" | "conductor">;
+  services: Pick<NodeServices, "runtime" | "conductor" | "search">;
   request: GatewayRequest;
   segments: string[];
 }
 
-function brokerDeps(services: ArtifactRouteDeps["services"]): ArtifactBrokerDeps {
-  return {
-    db: services.runtime.db,
-    dataDir: services.runtime.dataDir,
-    nodeId: services.runtime.identity.nodeId,
-    newId: (prefix) => services.conductor.newId(prefix),
-    now: () => new Date(),
-  };
-}
+const brokerDeps = brokerDepsOf;
 
 function refused(refusal: ArtifactRefusal): GatewayResponse {
   return fail(artifactRefusalStatus(refusal.code), refusal.code, refusal.message);
@@ -195,19 +187,25 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
   const broker = brokerDeps(services);
   const scope = { principalId, instanceId };
 
+  /*
+   * A write, once read from the request. The person's own app runs it as before; a machine surface's marker on a route
+   * `policyGatedWidgetArtifactWrite` names sends it through the execution policy and the audit instead. The marker is
+   * the header the node's own surfaces set, never a body field.
+   */
+  const surface = machineSurfaceOf(request.headers[SURFACE_HEADER]);
+  const write = (planned: WidgetArtifactWrite): GatewayResponse =>
+    surface !== undefined && policyGatedWidgetArtifactWrite(request.method, request.path) !== undefined
+      ? decideMachineArtifactWrite(services, { surface, scope: { ...scope, conversationId }, write: planned })
+      : performWidgetArtifactWrite(broker, { ...scope, conversationId }, planned).response;
+
   // POST …/artifacts — a new working artifact the instance may write.
   if (segments.length === 5 && request.method === "POST") {
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
     const mimeType = text(parsed.value.mimeType);
     if (mimeType === undefined) return fail(400, "INVALID_SCHEMA", "a new artifact names its content type as mimeType");
-    const created = createWorkingArtifact(broker, {
-      ...scope,
-      conversationId,
-      mimeType,
-      name: text(parsed.value.name),
-    });
-    return created.ok ? json(201, { artifactRef: created.ref }) : refused(created);
+    const name = text(parsed.value.name);
+    return write({ operation: "create", mimeType, ...(name === undefined ? {} : { name }) });
   }
 
   // POST …/artifacts/pick — a file the person chose in host chrome. Person-only: see `isPersonOnlyRoute`.
@@ -245,10 +243,7 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
   }
 
   // DELETE …/artifacts/:id — the widget lets go of a file it made, and the bytes nothing else points at go with it.
-  if (segments.length === 6 && request.method === "DELETE") {
-    const discarded = discardArtifact(broker, target);
-    return discarded.ok ? json(200, { discarded: true, artifactId }) : refused(discarded);
-  }
+  if (segments.length === 6 && request.method === "DELETE") return write({ operation: "discard", artifactId });
 
   if (segments.length === 7 && segments[6] === "content" && request.method === "GET") {
     const read = readArtifactRange(broker, {
@@ -270,13 +265,17 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
     if (!parsed.ok) return parsed.response;
     const bytes = decodeBase64(parsed.value.contentBase64, ARTIFACT_CHUNK_BASE64_MAX);
     if (!bytes.ok) return bytes.response;
-    const written = appendArtifactChunk(broker, { ...target, offset: parsed.value.offset, bytes: bytes.bytes });
-    return written.ok ? json(200, { artifactRef: written.ref }) : refused(written);
+    return write({
+      operation: "write",
+      artifactId,
+      offset: parsed.value.offset,
+      contentBase64: parsed.value.contentBase64 as string,
+      bytes: bytes.bytes,
+    });
   }
 
   if (segments.length === 7 && segments[6] === "finalize" && request.method === "POST") {
-    const finalized = finalizeArtifact(broker, target);
-    return finalized.ok ? json(200, { artifactRef: finalized.ref }) : refused(finalized);
+    return write({ operation: "finalize", artifactId });
   }
 
   // POST …/attach — `{ name? }`: a name the widget proposes, which the broker makes safe; never taken as it is.
@@ -287,10 +286,7 @@ function widgetRoutes(deps: ArtifactRouteDeps): GatewayResponse {
     if (proposed !== undefined && typeof proposed !== "string") {
       return fail(400, "INVALID_SCHEMA", "a proposed name for the attachment is a string");
     }
-    const attached = attachArtifact(broker, { ...target, name: proposed });
-    return attached.ok
-      ? json(201, { artifactRef: attached.ref, attachmentRef: attached.attachmentRef })
-      : refused(attached);
+    return write({ operation: "attach", artifactId, ...(proposed === undefined ? {} : { name: proposed }) });
   }
 
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);

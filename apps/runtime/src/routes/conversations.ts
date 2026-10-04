@@ -105,6 +105,11 @@ import {
   runApprovedCapability,
 } from "../application/capability-invoke.ts";
 import { isMapTilePolicyPayload, runApprovedMapTilePolicy } from "../application/map-tile-policy.ts";
+import {
+  isWidgetArtifactWritePayload,
+  recordDeniedWidgetArtifactWrite,
+  runApprovedWidgetArtifactWrite,
+} from "../application/machine-artifact-writes.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -1894,12 +1899,16 @@ export async function decideApprovalForNode(
 
   const capabilityCall = isCapabilityPayload(payload);
   const tilePolicyChange = isMapTilePolicyPayload(payload);
+  const artifactWrite = isWidgetArtifactWritePayload(payload);
   if (input.decision === "denied") {
+    if (artifactWrite) recordDeniedWidgetArtifactWrite(services, { payload, approvalId: input.approvalId, at: input.at });
     // A record rather than a sentence, because the card reads its decision from the transcript: a refusal written
     // only as text left the card offering Approve and Deny again after it had been denied.
     const refused = tilePolicyChange
       ? "Đã từ chối đổi chính sách ô bản đồ. Không có gì thay đổi."
-      : capabilityCall
+      : artifactWrite
+        ? "Đã từ chối ghi tệp widget đó. Không có gì được ghi."
+        : capabilityCall
         ? "Đã từ chối gọi capability đó. Không có gì được chạy."
         : "Đã từ chối chạy lệnh đó. Không có gì được chạy.";
     appendHostReply(services, {
@@ -1945,6 +1954,21 @@ export async function decideApprovalForNode(
       ref: input.approvalId,
       at: input.at,
     });
+    return { ok: true, outcome: written.description };
+  }
+
+  if (artifactWrite) {
+    // A widget file write a machine surface carried: the card's payload is hashed again against the digest the decision
+    // covered, the widget is checked again, and the write is audited with the surface that asked for it.
+    const written = runApprovedWidgetArtifactWrite(services, {
+      payload,
+      expectedDigest: decided.approval.operationDigest,
+      approvalId: input.approvalId,
+      conversationId: input.conversationId,
+      at: input.at,
+    });
+    if (!written.ok) return { ok: false, code: written.code, message: written.message };
+    appendHostReply(services, { conversationId: input.conversationId, blocks: written.blocks, at: input.at });
     return { ok: true, outcome: written.description };
   }
 

@@ -427,6 +427,30 @@ carries a path.
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | `{ name? }` – `201 { artifactRef, attachmentRef }` through the attachment pipeline; the person sends it with their next message. `name` is the widget's proposed file name, which the node sanitizes, as it sanitizes the artifact's own name when `name` is absent (a non-string `name` is `400 INVALID_SCHEMA`). The first attach decides the name: attaching the same artifact again returns that attachment, whatever `name` it proposes |
 | DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – discards a file this instance made, with its bytes unless an attachment or another record still points at them; another's is `403 ARTIFACT_NOT_CREATOR` |
 
+**On a machine surface, the five write routes go through the execution policy.** Create, chunks, finalize, attach and
+discard are a widget's acts. The person's own app calls them as before. When MCP, the WebSocket relay or
+`clarkcant api` carries one, an AI client or a remote machine would be writing as the widget, so the node decides each
+write as a `local-write` effect under the person's execution policy (`policyGatedWidgetArtifactWrite` in
+`packages/contracts/src/machine-surfaces.ts`):
+
+- **Autonomous**, or **Guarded** with no rule asking about `local-write`: the write runs and answers as above.
+- **Ask every time**, or a rule that asks: nothing is written. A host-owned approval card goes into the widget's
+  conversation, and the caller gets `202 { outcome: "approval-required", approvalRequired: { approvalId }, operation,
+  message }`. Only the person decides the card, on the person-only decide route; the relay and `clarkcant api` refuse
+  that route with `403 PERSON_ONLY`, and MCP has no tool for it. When they approve, the node runs the write from the
+  card's own payload after checking it against the digest the card showed, and adds a `widget_artifact_write` receipt
+  whose `args.artifactId` names the file (for a create, the new one). A chunk whose operation does not fit on a card
+  (over 4,000 characters, about 2.9 KB of bytes) is refused with `413 APPROVAL_UNAVAILABLE`: send smaller chunks, or
+  change the policy.
+- A rule refusing `local-write`, or a node-wide prohibition: `403 POLICY_REFUSED`, nothing written.
+
+Every write a machine surface carries is recorded in the audit log (kind `widget-artifact`) with the surface (`mcp`,
+`relay` or `cli-api`), the widget instance, the artifact id, the operation and the decision. A write the policy ran also
+gets an activity record. The audit never holds the file's bytes. The surface is read from the `x-clarkcant-surface`
+header that the node's own surfaces set (`clarkcant api` sends `cli-api`). A body field never sets it, and a WebSocket
+frame cannot set it either. Any HTTP caller could send the header, so it can only make a write go through the policy;
+it never lets one skip it. Reads stay reachable on every surface. Save As and the picker stay person-only.
+
 Package jobs a widget follows (`jobs@1`, [widget-development.md §10.2](widget-development.md#102-long-running-jobs-jobs1))
 are in `/openapi.json`. A press on a binding whose capability runs as a job answers with a JobRef (`job_…`) instead of
 waiting for the service; these routes read and stop it. A JobRef is a pointer, not a permission: the node answers only

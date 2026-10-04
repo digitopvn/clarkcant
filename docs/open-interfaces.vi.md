@@ -429,6 +429,31 @@ câu trả lời nào mang đường dẫn.
 | POST | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}/attach` | `{ name? }` – `201 { artifactRef, attachmentRef }` qua luồng đính kèm; người dùng gửi nó cùng tin nhắn kế tiếp. `name` là tên tệp widget đề xuất, được node làm sạch, giống như node làm sạch tên riêng của artifact khi không có `name` (`name` không phải chuỗi sẽ nhận `400 INVALID_SCHEMA`). Lần đính kèm đầu tiên quyết định tên: đính kèm lại cùng artifact đó sẽ trả về đúng tệp đính kèm ấy, dù đề xuất `name` nào |
 | DELETE | `/conversations/{id}/widgets/{instanceId}/artifacts/{artifactId}` | – bỏ một tệp instance này đã tạo, cùng byte của nó trừ khi một tệp đính kèm hoặc bản ghi khác vẫn trỏ tới; tệp của instance khác là `403 ARTIFACT_NOT_CREATOR` |
 
+**Trên bề mặt máy, năm route ghi đi qua chính sách thực thi.** Tạo, ghi chunk, chốt, đính kèm và bỏ tệp là việc của
+widget. App của chính người dùng vẫn gọi chúng như trước. Khi MCP, relay WebSocket hoặc `clarkcant api` mang một lời gọi
+như vậy, một AI client hoặc một máy từ xa sẽ ghi với tư cách widget, nên node quyết định từng lần ghi như một hiệu ứng
+`local-write` theo chính sách thực thi của người dùng (`policyGatedWidgetArtifactWrite` trong
+`packages/contracts/src/machine-surfaces.ts`):
+
+- **Autonomous**, hoặc **Guarded** khi không có quy tắc nào hỏi về `local-write`: lần ghi chạy và trả lời như trên.
+- **Hỏi mỗi lần** (Ask every time), hoặc một quy tắc yêu cầu hỏi: không có gì được ghi. Một thẻ phê duyệt do host sở hữu
+  được thêm vào hội thoại của widget, và bên gọi nhận `202 { outcome: "approval-required", approvalRequired: { approvalId },
+  operation, message }`. Chỉ người dùng quyết định thẻ đó, trên route quyết định chỉ dành cho người dùng; relay và
+  `clarkcant api` từ chối route này với `403 PERSON_ONLY`, còn MCP không có công cụ nào cho nó. Khi người dùng duyệt, node
+  chạy lần ghi từ chính payload của thẻ sau khi đối chiếu với digest mà thẻ đã hiển thị, rồi thêm một biên nhận
+  `widget_artifact_write` có `args.artifactId` chỉ tệp (với lệnh tạo là tệp mới). Một chunk mà thao tác của nó không vừa
+  trên thẻ (quá 4.000 ký tự, khoảng 2,9 KB dữ liệu) bị từ chối với `413 APPROVAL_UNAVAILABLE`: hãy gửi chunk nhỏ hơn, hoặc
+  đổi chính sách.
+- Một quy tắc từ chối `local-write`, hoặc lệnh cấm trên toàn node: `403 POLICY_REFUSED`, không có gì được ghi.
+
+Mọi lần ghi do bề mặt máy mang tới đều được ghi vào nhật ký kiểm toán (loại `widget-artifact`) cùng bề mặt (`mcp`,
+`relay` hoặc `cli-api`), instance widget, mã artifact, thao tác và quyết định. Lần ghi mà chính sách cho chạy cũng có một
+bản ghi hoạt động. Nhật ký kiểm toán không bao giờ chứa byte của tệp. Bề mặt được đọc từ header `x-clarkcant-surface` mà
+các bề mặt của chính node đặt (`clarkcant api` gửi `cli-api`). Một trường trong body không bao giờ đặt được nó, và một
+frame WebSocket cũng không. Bất kỳ bên gọi HTTP nào cũng có thể gửi header này, nên nó chỉ có thể khiến một lần ghi phải
+đi qua chính sách; nó không bao giờ giúp lần ghi bỏ qua chính sách. Các route đọc vẫn dùng được trên mọi bề mặt. Save As
+và bộ chọn tệp vẫn chỉ dành cho người dùng.
+
 Các job của package mà widget theo dõi (`jobs@1`, [widget-development.vi.md §10.2](widget-development.vi.md#102-job-chạy-lâu-jobs1))
 có trong `/openapi.json`. Một lần bấm vào binding có capability chạy dưới dạng job trả về một JobRef (`job_…`) thay vì
 chờ service; các route này đọc và dừng job đó. JobRef là con trỏ, không phải quyền: node chỉ trả lời khi chính một
