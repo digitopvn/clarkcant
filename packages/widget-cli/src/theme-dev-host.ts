@@ -7,6 +7,7 @@ import { installedThemes } from "@clarkcant/core";
 import type { ThemeDocument } from "@clarkcant/contracts";
 
 import { closeDevModuleServer, createDevModuleServer } from "./dev-module-server.ts";
+import { browserRuntime } from "./package-assets.ts";
 import { runThemeConformance } from "./theme-conformance.ts";
 import type { ConformanceReport } from "./conformance.ts";
 
@@ -29,6 +30,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
   const root = resolve(options.root);
   const initial = readThemeDevView(root);
   if (initial.themes.length === 0) throw new Error(initial.problem ?? "No theme facet to preview");
+  const runtime = browserRuntime("theme-dev-runtime");
   let vite: ViteDevServer | undefined;
   const clients = new Set<ServerResponse>();
   let reloads = 0;
@@ -41,7 +43,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
     const path = new URL(request.url ?? "/", `http://${address}`).pathname;
     if (path === "/") {
       if (vite === undefined) { response.writeHead(503); response.end("Preview server is starting"); return; }
-      void vite.transformIndexHtml("/", '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ClarkCant Theme Lab</title></head><body><main id="cc-theme-dev-root"></main><script type="module" src="/src/theme-dev-runtime.tsx"></script></body></html>')
+      void vite.transformIndexHtml("/", `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ClarkCant Theme Lab</title></head><body><main id="cc-theme-dev-root"></main><script type="module" src="${runtime.url}"></script></body></html>`)
         .then((html) => {
           response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
           response.end(html);
@@ -69,7 +71,7 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
       request.on("close", () => clients.delete(response));
       return;
     }
-    if (path.startsWith("/src/") || path.startsWith("/@") || path.startsWith("/node_modules/")) {
+    if (path.startsWith("/src/") || path.startsWith("/runtime/") || path.startsWith("/@") || path.startsWith("/node_modules/")) {
       if (vite === undefined) { response.writeHead(503); response.end("Preview server is starting"); return; }
       vite.middlewares(request, response, () => { response.writeHead(404); response.end("Not found"); });
       return;
@@ -87,10 +89,11 @@ export async function startThemeDevHost(options: { root: string; port?: number; 
     vite = await createDevModuleServer(false, server, bound.port, {
       isolatedCache: true,
       // This custom preview has no workspace HTML entry to scan. Keep Vite's cold-start optimizer
-      // bounded to the runtime's React and CommonJS highlighting entries instead of scanning the workspace.
+      // bounded to the runtime's React and CommonJS highlighting entries instead of scanning the workspace. An
+      // installed CLI serves a self-contained bundle that imports nothing, so there is nothing to prebundle.
       optimizeDeps: {
         noDiscovery: true,
-        include: ["react", "react-dom/client", "@clarkcant/conversation-client > highlight.js/lib/common"],
+        include: runtime.prebundled ? [] : ["react", "react-dom/client", "@clarkcant/conversation-client > highlight.js/lib/common"],
       },
     });
   } catch (error) {

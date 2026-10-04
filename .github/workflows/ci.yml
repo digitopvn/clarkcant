@@ -319,6 +319,42 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # The widget author tooling as an outside project gets it: both packages packed from this commit, installed from the
+  # archives into an empty project under the runner's temporary directory, and used there — init, test, pack, the dev
+  # hosts over HTTP, and the SDK's imports and declarations. The release workflow runs the same smoke on every OS and
+  # Node version before it publishes; here it runs on each OS once, beside the other jobs rather than in front of them.
+  widget-tooling-smoke:
+    name: widget tooling smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: "22.19"
+          - os: macos-latest
+            node: "24"
+          - os: windows-latest
+            node: "24"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Pack, install outside the repository and use the widget tooling
+        run: node tools/smoke-widget-tooling.mjs
+
   # A package service runs in a container as the node's own user, which rootless Docker maps onto a subordinate id the
   # person does not own. The service-container suite is run here against a rootless daemon set up on the runner, so the
   # notes package's service really adds and lists a note in a folder the person owns, instead of that being assumed from

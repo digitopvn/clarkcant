@@ -2670,6 +2670,73 @@ cùng state như **Khôi phục**, và khi đó không còn gì để khôi ph�
     clark widget pack
     clark widget publish
 
+### Bắt đầu nhanh bên ngoài repository này
+
+`@clarkcant/widget-cli` (lệnh `clark`) và `@clarkcant/widget-sdk` được build từ repository này thành các package npm
+không cần bản checkout ClarkCant. **Trạng thái: chưa có phiên bản nào trên npm.** Workflow phát hành bên dưới đã có,
+nhưng cho tới khi nó chạy, cài từ registry sẽ thất bại; hãy cài các archive build từ bản checkout
+(xem [Trước khi phát hành](#trước-khi-phát-hành)).
+
+Trên một máy sạch có Node 22.19 trở lên và pnpm (`corepack enable pnpm`), trên macOS, Windows hoặc Linux:
+
+    mkdir my-widgets && cd my-widgets
+    pnpm init
+    pnpm add -D @clarkcant/widget-cli
+    pnpm exec clark widget init quick-notes --template pure-ui
+    pnpm exec clark widget test quick-notes
+    pnpm exec clark widget dev quick-notes      # in URL của dev host; Ctrl-C để dừng
+    pnpm exec clark widget pack quick-notes
+    npm publish quick-notes/dist/quick-notes-0.1.0.tgz
+
+- **Template.** `blank`, `form` và `dashboard` là một widget isolated tối giản. `pure-ui` (trình soạn thảo văn bản),
+  `media-tool`, `ai-generator`, `ui-with-service` và `connected-app` sao chép một ứng dụng tham chiếu mà chính các kiểm
+  thử của repository này giữ cho chạy được ([init](#init)). Tên thư mục trở thành đoạn cuối của package id
+  (`com.example.quick-notes`) và tên npm (`quick-notes`); hãy đổi tên, hoặc dùng scope của bạn, trước khi publish.
+- **SDK.** `pnpm add -D @clarkcant/widget-sdk` cung cấp các mô-đun ES an toàn cho trình duyệt kèm khai báo kiểu: `.`
+  chứa các hợp đồng và runtime cầu nối (`createWidgetRuntime`, `MessageEndpoint`, …), còn `./dom` gắn appearance của
+  host vào một phần tử (`bindAppearance`):
+
+      import { createWidgetRuntime } from "@clarkcant/widget-sdk";
+      import { bindAppearance } from "@clarkcant/widget-sdk/dom";
+
+  Dev host và node đã đưa runtime cho frame của package dưới dạng `window.clarkcantWidget`, nên các template không
+  cần import. Một package widget không được khai báo `dependencies` npm ([pack](#pack)): frame nào import SDK thì bundle
+  nó vào các file được phát hành, và giữ SDK là development dependency của project build ra frame đó.
+- **Test, dev, pack.** `test` chạy bộ conformance; `dev` phục vụ package trong host isolated cục bộ trên `127.0.0.1`;
+  `pack` ghi `dist/<name>-<version>.tgz` bằng `pnpm pack` và từ chối archive nào tự nó không qua được bộ kiểm tra.
+- **Publish lên npm không phải là được Marketplace index.** `npm publish` chỉ đưa archive lên registry npm. Marketplace
+  index các package npm mang keyword `clarkcant`, hoặc nhận một bản submit; `clark widget publish` chỉ chuẩn bị
+  directory entry đó ([publish](#publish)). Phát triển hay dùng một widget riêng tư không cần cả hai: một đường dẫn
+  local không cần tài khoản.
+
+#### Trước khi phát hành
+
+Từ một bản checkout, chạy `pnpm install` rồi `pnpm build:widget-tooling` sẽ ghi
+`dist/widget-tooling/archives/clarkcant-widget-cli-<version>.tgz` và `clarkcant-widget-sdk-<version>.tgz`. Cài chúng
+vào project thay cho các phiên bản trên registry:
+
+    pnpm add -D /path/to/clarkcant-widget-cli-<version>.tgz /path/to/clarkcant-widget-sdk-<version>.tgz
+
+`pnpm smoke:widget-tooling` làm toàn bộ việc này trên hệ điều hành hiện tại: nó pack cả hai package, cài vào một
+project trống bên ngoài repository, chạy `init` (blank và `pure-ui`), `test`, `pack`, các dev host cho widget, catalog
+và theme qua HTTP, rồi import và kiểm tra kiểu SDK.
+
+#### Cách build và phát hành các package
+
+Trong repository này cả hai package vẫn `private` và resolve tới mã nguồn TypeScript, như mọi workspace package khác.
+`tools/build-widget-tooling.mjs` sinh một thư mục package riêng cho từng package trong `dist/widget-tooling/`: mã được
+bundle bằng esbuild, các workspace package được nhúng vào và mọi import bên thứ ba được khai báo đúng phiên bản chính
+xác mà repository pin; các khai báo kiểu của SDK; các template của CLI (`templates/`) và các mô-đun trình duyệt của dev
+host dưới dạng bundle tự đủ (`runtime/`). `package.json` được sinh ra không chứa specifier `workspace:` nào và không có
+lifecycle script.
+
+`.github/workflows/release-widget-tooling.yml` phát hành chúng: khi có tag `widget-tooling-v<version>` nêu version của
+`@clarkcant/widget-cli`, hoặc khi chạy thủ công, workflow pack các archive một lần, chạy smoke với chính các archive đó
+trên Ubuntu, Windows và macOS với Node 22.19 và 24, rồi publish đúng các archive đó bằng
+`npm publish --provenance --access public`. Lần chạy thủ công không chọn `publish` dừng ở `npm publish --dry-run`. Các
+version là version trong `package.json` của chính từng package, và version nào đã có trên npm sẽ được bỏ qua. Token npm
+là secret `NPM_TOKEN`, chỉ được đưa cho bước publish.
+
 ### init
 
 Templates:

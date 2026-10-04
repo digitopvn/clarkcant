@@ -47,8 +47,12 @@ function scriptJson(value: unknown): string {
  *
  * The definition id is safe in the title because it is a catalog id by the time it reaches here — `catalogTarget`
  * is what decides whether an id is one, and this page is only served for an id that resolved.
+ *
+ * `moduleUrl` is the source module in this repository and the bundled one in an installed CLI; the dev host passes
+ * what `package-assets.ts` resolved. It is a parameter rather than a lookup here because `catalog-runtime.tsx` imports
+ * this file into the browser, where the filesystem check that lookup makes does not exist.
  */
-export function catalogFrameHtml(input: CatalogRuntimeInput): string {
+export function catalogFrameHtml(input: CatalogRuntimeInput, moduleUrl = "/src/catalog-runtime.tsx"): string {
   return [
     "<!doctype html>",
     '<html lang="vi">',
@@ -59,7 +63,7 @@ export function catalogFrameHtml(input: CatalogRuntimeInput): string {
     "  <body>",
     '    <div id="cc-catalog-root"></div>',
     `    <script>window.__CC_CATALOG__ = ${scriptJson(input)};</script>`,
-    '    <script type="module" src="/src/catalog-runtime.tsx"></script>',
+    `    <script type="module" src="${moduleUrl}"></script>`,
     "  </body>",
     "</html>",
     "",

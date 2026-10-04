@@ -1,4 +1,4 @@
-import { fileURLToPath } from "node:url";
+import { referenceAppDirectory } from "./package-assets.ts";
 
 /**
  * The `clark widget init` templates that are copies of a reference app, described as data.
@@ -44,10 +44,11 @@ export interface ReferenceCopy {
 /** The origin an `ai-generator` copy starts with: plainly not a provider, so nobody publishes it by accident. */
 export const PLACEHOLDER_PROVIDER_ORIGIN = "https://images.example.com";
 
-const TEXT_EDITOR = fileURLToPath(new URL("../../../examples/reference-apps/text-editor/", import.meta.url));
-const IMAGE_GENERATOR = fileURLToPath(new URL("../../../examples/reference-apps/image-generator/", import.meta.url));
-const MEDIA_RENDER = fileURLToPath(new URL("../../../examples/reference-apps/media-render/", import.meta.url));
-const CONNECTED_APP = fileURLToPath(new URL("../../../examples/reference-apps/connected-app/", import.meta.url));
+// The checkout's reference apps, or the copies an installed CLI carries (`package-assets.ts`).
+const TEXT_EDITOR = referenceAppDirectory("text-editor");
+const IMAGE_GENERATOR = referenceAppDirectory("image-generator");
+const MEDIA_RENDER = referenceAppDirectory("media-render");
+const CONNECTED_APP = referenceAppDirectory("connected-app");
 
 type Facet = JsonDocument & { kind?: unknown; egress?: unknown; capabilities?: unknown };
 

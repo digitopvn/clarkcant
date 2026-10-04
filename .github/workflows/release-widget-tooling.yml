@@ -1,0 +1,170 @@
+name: Release widget tooling
+
+# Publishes @clarkcant/widget-cli (the `clark` command) and @clarkcant/widget-sdk to npm.
+#
+# The archives are built once, from the exact commit, by tools/build-widget-tooling.mjs. Every supported OS and Node
+# version then installs those same archives into an empty project outside the repository and uses them
+# (tools/smoke-widget-tooling.mjs), and only those archives are published. A version already on npm is skipped, so a
+# rerun after a partial failure publishes only what is missing.
+#
+# Triggers:
+#   - a tag widget-tooling-v<version>, where <version> is @clarkcant/widget-cli's version: build, smoke, publish;
+#   - a manual run: build and smoke, then an `npm publish --dry-run`, or a real publish when `publish` is checked.
+#
+# Credentials: the npm token is the NPM_TOKEN repository secret. It reaches exactly one step, the publish, through
+# NODE_AUTH_TOKEN, which actions/setup-node's generated user config (outside the repository) reads. It is never echoed,
+# never written to a package file, and never present while repository or package code runs in the build or smoke jobs.
+
+on:
+  push:
+    tags: ["widget-tooling-v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to npm after the smoke passes (unchecked runs `npm publish --dry-run`)
+        type: boolean
+        default: false
+
+# Least privilege: the jobs read the repository; only the publish job adds an OIDC token for npm provenance.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-widget-tooling
+  cancel-in-progress: false
+
+jobs:
+  pack:
+    name: pack the archives
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and pack @clarkcant/widget-cli and @clarkcant/widget-sdk
+        run: node tools/build-widget-tooling.mjs --pack
+
+      - name: Read the versions being released
+        id: versions
+        run: |
+          cli="$(node -p "require('./dist/widget-tooling/widget-cli/package.json').version")"
+          sdk="$(node -p "require('./dist/widget-tooling/widget-sdk/package.json').version")"
+          echo "cli=$cli" >> "$GITHUB_OUTPUT"
+          echo "@clarkcant/widget-cli@$cli, @clarkcant/widget-sdk@$sdk"
+
+      # A tag names the CLI version it releases; a tag that disagrees with the source would publish something else.
+      - name: Check the tag names the CLI version
+        if: github.event_name == 'push'
+        env:
+          TAG: ${{ github.ref_name }}
+          CLI_VERSION: ${{ steps.versions.outputs.cli }}
+        run: |
+          if [ "$TAG" != "widget-tooling-v$CLI_VERSION" ]; then
+            echo "Tag $TAG does not match @clarkcant/widget-cli $CLI_VERSION (expected widget-tooling-v$CLI_VERSION)" >&2
+            exit 1
+          fi
+
+      - name: Keep the archives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: widget-tooling-archives
+          path: dist/widget-tooling/archives/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke:
+    name: smoke (${{ matrix.os }}, node ${{ matrix.node }})
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ["22.19", "24"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      # The smoke script itself comes from the checkout; the packages it installs are the downloaded archives.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch the archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: widget-tooling-archives
+          path: ${{ runner.temp }}/widget-tooling-archives
+
+      - name: Install the archives into an empty project and use them
+        run: node tools/smoke-widget-tooling.mjs --archives "${{ runner.temp }}/widget-tooling-archives"
+
+  publish:
+    name: publish to npm
+    needs: [pack, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm provenance: the registry records that these archives were built by this workflow from this commit.
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+
+      - name: Fetch the archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: widget-tooling-archives
+          path: archives
+
+      - name: Dry run
+        if: github.event_name == 'workflow_dispatch' && !inputs.publish
+        run: |
+          for archive in archives/*.tgz; do
+            npm publish "$archive" --dry-run --access public
+          done
+
+      # No repository code runs here: npm reads each archive's own package.json, which holds no lifecycle script.
+      - name: Publish
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "The NPM_TOKEN secret is not set, so nothing was published" >&2
+            exit 1
+          fi
+          for archive in archives/*.tgz; do
+            manifest="$(tar -xzOf "$archive" package/package.json)"
+            name="$(printf '%s' "$manifest" | node -e 'let s="";process.stdin.on("data",(c)=>s+=c).on("end",()=>process.stdout.write(JSON.parse(s).name))')"
+            version="$(printf '%s' "$manifest" | node -e 'let s="";process.stdin.on("data",(c)=>s+=c).on("end",()=>process.stdout.write(JSON.parse(s).version))')"
+            if npm view "$name@$version" version > /dev/null 2>&1; then
+              echo "$name@$version is already on npm; skipped"
+              continue
+            fi
+            npm publish "$archive" --provenance --access public
+            echo "published $name@$version"
+          done

@@ -747,8 +747,17 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   ${builtin === undefined ? `package: ${dir}` : `catalog widget: ${builtin}`}
   ctrl-c để dừng
 `);
-    // Stay alive until ctrl-c: the listening server keeps the event loop busy, which is the whole of "running".
-    await new Promise(() => {});
+    // Stay alive until ctrl-c or a termination request, then close the host the way `clark theme dev` does, so its
+    // module server's scratch cache and the lease store are released rather than left behind by the exit.
+    await new Promise<void>((done, failed) => {
+      const stop = (): void => {
+        process.removeListener("SIGINT", stop);
+        process.removeListener("SIGTERM", stop);
+        void host.close().then(done, failed);
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
     return 0;
   }
   if (command === "publish") {
