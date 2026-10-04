@@ -36,9 +36,19 @@ const isBrowserRuntime = (name: string): name is BrowserRuntime => Object.hasOwn
 /**
  * A reference app's own files that describe or test that app rather than the package a person starts from. `path`
  * is relative to the app, with `/` separators; a directory is passed with a trailing `/`.
+ *
+ * `package.json` is among them because a reference app carries its own npm identity (`@clarkcant/quick-notes`); a
+ * copy names itself, so the copier writes a fresh one rather than inheriting a name the author does not own.
  */
 export function skippedFromReference(path: string): boolean {
-  return path.startsWith("test/") || path.startsWith("dist/") || path === "README.md" || path === "README.vi.md" || path === "LICENSE";
+  return (
+    path.startsWith("test/") ||
+    path.startsWith("dist/") ||
+    path === "README.md" ||
+    path === "README.vi.md" ||
+    path === "LICENSE" ||
+    path === "package.json"
+  );
 }
 
 export interface PackageAssets {

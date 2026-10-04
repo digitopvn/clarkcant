@@ -2772,6 +2772,10 @@ Hiện tại `clark widget init --template` nhận `blank`, `form`, `dashboard`,
 `ui-with-service`, `media-tool` và `connected-app`. `editor`, `media` và MCP App
 adapter chưa được triển khai.
 
+Template tham chiếu không sao chép `package.json`, `LICENSE` và các README của chính ứng dụng, vì chúng mang danh tính npm
+của ứng dụng tham chiếu (ví dụ `@clarkcant/quick-notes`, §24.1): bản sao nhận một `package.json` đặt theo id của chính
+nó, một `LICENSE` MIT và README riêng.
+
 ### dev
 
 Local isolated host có:
@@ -2902,8 +2906,10 @@ riêng ba kết quả — prepared: yes; published to npm: no; Marketplace submi
     npm publish dist/<name>-<version>.tgz
 
 Hãy publish file đó thay vì chạy `npm publish` trong thư mục package, để registry phục vụ đúng các byte có integrity
-và content digest mà entry đã nêu. Sau đó Marketplace index các package npm mang keyword `clarkcant`, hoặc nhận một
-bản submit. Source local/git vẫn là development path first-class.
+và content digest mà entry đã nêu. npm mặc định để package có scope (`@scope/name`) ở chế độ hạn chế, nên một package có
+scope muốn công khai phải khai báo `"publishConfig": { "access": "public" }` trong `package.json`, như các ứng dụng tham
+chiếu (§24); `npm publish <tarball>` đọc giá trị này từ archive. Sau đó Marketplace index các package npm mang keyword
+`clarkcant`, hoặc nhận một bản submit. Source local/git vẫn là development path first-class.
 
 Trước khi ghi entry, publish so các definition với lần chuẩn bị trước (`dist/published-definitions.json`) và
 từ chối version vi phạm quy tắc ở §20. File này là mốc so sánh nên cần được commit cùng source; nếu đã có
@@ -3432,6 +3438,14 @@ nào. Người dùng mở một tệp văn bản, sửa, lưu và nhờ Clark vi
 nằm ở đâu. `clark widget init --template pure-ui` tạo một package mới từ bản sao của nó
 ([§16](#16-developer-cli-target)).
 
+**Gói npm.** Ứng dụng được đóng gói thành **Quick Notes**, `@clarkcant/quick-notes` 1.0.0, có `package.json`, `LICENSE`
+Apache-2.0 và README riêng. `clark widget pack` tạo `dist/clarkcant-quick-notes-1.0.0.tgz`, và `publish` chuẩn bị
+directory entry npm ([§16](#16-developer-cli-target)). Gói **chưa được phát hành lên npm**: tài khoản phát hành phải sở
+hữu scope `@clarkcant` trước.
+[reference-packages-npm-install.spec.ts](../apps/runtime/test/reference-packages-npm-install.spec.ts) đóng gói một bản
+sao bằng CLI, cài đúng archive đó qua `POST /packages/install` từ một registry cục bộ trả lời như npm, và từ chối một
+archive bị sửa.
+
 **Package.** `clarkcant.json` là manifest schema phiên bản 2 cho mọi nền tảng và cho web. `widget.json` nhận hai
 prop: `title`, và `rewriteBinding` là id của binding `agent` mà trình soạn thảo được phép bấm. `stateSchema` chỉ nhận
 `file`, `base` (hai `ArtifactRef`), `draft` và `draftTooLarge`, với `additionalProperties: false`. Các quy tắc là hàm
@@ -3554,6 +3568,13 @@ trên đĩa hay file handle nào đi qua bridge.
 `examples/reference-apps/spreadsheet` ([#318](https://github.com/digitopvn/clarkcant/issues/318), thuộc [#200](https://github.com/digitopvn/clarkcant/issues/200)) là một package manifest v2 có một facet
 giao diện cách ly và không có service. Package cho thấy một widget làm việc với tệp, giữ một tài liệu lớn trong giới
 hạn, tự mô tả cho Clark và áp dụng một thay đổi do Clark chọn.
+
+**Gói npm.** Ứng dụng được đóng gói thành **CSV Explorer**, `@clarkcant/csv-explorer` 1.0.0, có `package.json`
+và các README riêng; package id vẫn là `com.example.spreadsheet`. `clark widget pack` tạo
+`dist/clarkcant-csv-explorer-1.0.0.tgz`, và `publish` chuẩn bị directory entry npm. Gói **chưa được phát hành lên
+npm**: tài khoản phát hành phải sở hữu scope `@clarkcant` trước, và giấy phép đang chờ người bảo trì quyết định (các
+manifest khai báo Apache-2.0 trong khi tệp `LICENSE` chứa văn bản MIT). Cùng
+[bài test cài đặt](../apps/runtime/test/reference-packages-npm-install.spec.ts) như §24.1 kiểm tra gói này.
 
 - **Tệp.** CSV và TSV được nhập qua `api.artifacts.pick` ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)) và đọc theo
   từng đoạn 256 KiB; widget không bao giờ thấy đường dẫn. Xuất ghi một tệp mới qua `create`, `write`, `finalize` và
@@ -3713,6 +3734,13 @@ chuyển động. Sau mỗi hành trình, key được tìm trong trang, bridge,
 [#200](https://github.com/digitopvn/clarkcant/issues/200)) là một package manifest v2 có một facet giao diện cách ly
 và một service. Package dựng lại một tệp WAV người dùng chọn, với mức âm lượng mới và phần cắt, thành một job mà widget
 theo dõi được và dừng được. `clark widget init --template media-tool` tạo package mới từ package này.
+
+**Gói npm.** Ứng dụng được đóng gói thành **Media Converter**, `@clarkcant/media-converter` 1.0.0, có `package.json`,
+`LICENSE` Apache-2.0 và các README riêng. `clark widget pack` tạo `dist/clarkcant-media-converter-1.0.0.tgz`, và
+`publish` chuẩn bị directory entry npm. Gói **chưa được phát hành lên npm**: tài khoản phát hành phải sở hữu scope
+`@clarkcant` trước. Cài gói không cần container engine, và cùng
+[bài test cài đặt](../apps/runtime/test/reference-packages-npm-install.spec.ts) như §24.1 cài gói này; muốn dựng âm
+thanh thì cần một container engine chạy được container Linux.
 
 - **Tệp theo tham chiếu.** Widget chọn tệp qua `api.artifacts.pick` ([§10.1](#101-tệp-theo-tham-chiếu-artifacts1)) và
   chỉ giữ `ArtifactRef` của nó. Binding `render` của widget gửi cho service mã artifact của tệp, và service đọc dữ liệu
