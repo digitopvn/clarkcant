@@ -790,7 +790,7 @@ with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
 | `clarkcant api <METHOD> <path> [jsonBody]` | any route except a person's decision or installing a package |
 | `clarkcant mcp` | MCP over stdio |
 | `clarkcant discover` | the discovery document |
-| `clarkcant instructions check [file]` | checks a project's `.clarkcant/instructions.json` offline (see below) |
+| `clarkcant instructions check [file\|folder]` | checks a project's `.clarkcant/instructions.json` offline (see below) |
 
 Connection: `--url` / `CLARKCANT_URL`, `--token` / `CLARKCANT_TOKEN`, else `identity.json` in `--data-dir` /
 `CLARKCANT_DATA_DIR` (default `~/.clarkcant`). The identity file is only read for a node on this machine
@@ -817,16 +817,24 @@ it, and `clarkcant instructions check` validates it with the same schema. How a 
 ```
 
 - `version` is required in a file written now. Version 1 is the only version. A file without `version`, written before
-  the field was required, is still read as version 1. The node does not read a file with a version it does not know.
+  the field was required, is still read as version 1. The node does not read a file with a version it does not know,
+  and the check says in one line that the file needs a newer ClarkCant.
 - `rules` holds at most 32 rules. Each rule has `when`, an `include` list of 1 to 8 snippet names (lowercase letters,
   digits and `-`, up to 64 characters), and an optional `pin`. `when` may name `project`, `path`, `operation`
   (`read`, `write`, `command`, `test`, `deploy`), `capability`, `role` (`foreground`, `background`, `task`) and
   `skill`. Each takes one value or a list of up to 16. A `path` glob has at most 200 characters, 16 wildcards and
-  32 folders. Unknown fields are refused, and a file larger than 64 KB is not read.
-- The node leaves out a rule that does not parse and applies the rest. `clarkcant instructions check` holds a file to the
-  rules for writing it: a missing `version` and every invalid rule are each reported on their own line, and the exit
-  code is 1. `--json` prints `{ path, ok, problems }`. The default file is `.clarkcant/instructions.json` in the current
-  folder.
+  32 folders. A file larger than 64 KB is not read.
+- Unknown keys: at the top level only `$schema` (a string, for an editor's JSON schema) is allowed, and any other
+  unknown top-level key makes the node read nothing from the file. An unknown key inside a rule or inside its `when`
+  leaves out only that rule. The check reports both.
+- The node leaves out a rule that does not parse and applies the rest. When it reads nothing from a file, it writes one
+  `instructions-invalid` line to stderr with the project folder's name and a `reason`: `too-large`, `not-json`,
+  `shape` or `unknown-version`.
+- `clarkcant instructions check` holds a file to the rules for writing it: a missing `version` and every invalid rule
+  are each reported on their own line, and the exit code is 1. A rule that includes a name with no
+  `instructions/<name>.md` beside the file is a warning; the exit code stays 0. `--json` prints
+  `{ path, ok, problems, warnings }`. The default file is `.clarkcant/instructions.json` in the current folder, and a
+  project folder can be given instead of the file.
 - An instruction grants nothing. The node reads it only from a project inside a root the person granted, and every
   effect still goes through the execution policy. A package cannot contribute rules yet.
 

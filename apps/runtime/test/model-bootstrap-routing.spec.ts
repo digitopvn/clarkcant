@@ -122,7 +122,21 @@ describe("why background work falls back to the configured model", () => {
     };
     const captured = stderrLines();
     try {
-      expect(await routeOrFallBack(services, { dataClass: "internal" })).toEqual({ fallback: { reason: "route-failed" } });
+      expect(await routeOrFallBack(() => services, { dataClass: "internal" })).toEqual({ fallback: { reason: "route-failed" } });
+    } finally {
+      captured.restore();
+    }
+    expect(captured.lines).toEqual([`${JSON.stringify({ event: "model-route", fallback: "route-failed" })}\n`]);
+  });
+
+  it("says so too when the node cannot give its services yet", async () => {
+    const captured = stderrLines();
+    try {
+      expect(
+        await routeOrFallBack(() => {
+          throw new Error("services not ready");
+        }),
+      ).toEqual({ fallback: { reason: "route-failed" } });
     } finally {
       captured.restore();
     }

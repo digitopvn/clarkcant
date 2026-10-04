@@ -10,6 +10,8 @@ import {
   instructionGlobProblem,
   normalInstructionGlob,
   PROJECT_INSTRUCTION_LIMITS,
+  PROJECT_INSTRUCTIONS_PATH,
+  type ProjectInstructionsInvalidReason,
   readProjectInstructions,
 } from "@clarkcant/contracts";
 
@@ -212,15 +214,15 @@ export function globMatches(glob: CompiledGlob, relativePath: string): boolean {
  * The rules of one file, read through the shared contract: a file with no `version` is read as version 1, and a rule
  * that does not parse is left out on its own while the rest still apply.
  */
-function parseRules(raw: string): Rule[] | undefined {
+function parseRules(raw: string): Rule[] | { invalid: ProjectInstructionsInvalidReason } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return undefined;
+    return { invalid: "not-json" };
   }
   const file = readProjectInstructions(parsed);
-  if (file === undefined) return undefined;
+  if (!file.ok) return { invalid: file.reason };
   const rules: Rule[] = [];
   for (const rule of file.rules) {
     const when = rule.when;
@@ -284,8 +286,8 @@ export interface ConditionalInstructions {
  */
 export function createConditionalInstructions(deps: {
   roots: () => readonly string[];
-  /** Told once per rules file that cannot be used, by project folder name only. */
-  onInvalid?: (input: { project: string }) => void;
+  /** Told once per rules file that cannot be used, by project folder name only, with why. */
+  onInvalid?: (input: { project: string; reason: ProjectInstructionsInvalidReason }) => void;
 }): ConditionalInstructions {
   const files = new Map<string, { stamp: string; value: unknown }>();
   const cached = <T>(path: string, read: (path: string, size: number) => T, limit: number): T | undefined => {
@@ -321,14 +323,20 @@ export function createConditionalInstructions(deps: {
 
   const rulesOf = (project: string): Rule[] | undefined =>
     cached(
-      join(project, ".clarkcant", "instructions.json"),
-      (path) => {
+      join(project, ...PROJECT_INSTRUCTIONS_PATH.split("/")),
+      (path, size) => {
         if (!inside(project, path)) return undefined;
+        if (size > INSTRUCTION_LIMITS.rulesFileBytes) {
+          deps.onInvalid?.({ project: basename(project), reason: "too-large" });
+          return undefined;
+        }
         const rules = parseRules(readFileSync(path, "utf8"));
-        if (rules === undefined) deps.onInvalid?.({ project: basename(project) });
-        return rules ?? [];
+        if (Array.isArray(rules)) return rules;
+        deps.onInvalid?.({ project: basename(project), reason: rules.invalid });
+        return [];
       },
-      INSTRUCTION_LIMITS.rulesFileBytes,
+      // The size is checked above, so a file too large to read is still reported, once per change.
+      Number.POSITIVE_INFINITY,
     );
 
   const snippetOf = (project: string, name: string): string | undefined => {

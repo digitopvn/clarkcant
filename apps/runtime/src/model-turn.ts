@@ -141,13 +141,6 @@ export interface BackgroundRunInput {
 }
 
 /**
- * How long a conversation's session is kept once nobody is using it, and how many are kept at all.
- *
- * A session is a provider connection and a context window held in memory. Keeping one per conversation for as long as
- * the process lives is a leak that grows with every conversation a person ever opened; dropping an idle one costs a
- * recap on the next message, which is what a fresh session already does after a failure.
- */
-/**
  * Why background work runs on the configured model for a reason worth recording, rather than because the node simply
  * routes nothing: no model in the pool may receive the work's data class, or the route itself failed.
  */
@@ -156,6 +149,13 @@ export type BackgroundFallback = { reason: "data-class"; dataClass: DataClass } 
 /** What routing answers for background work: a model to run, or the reason it falls back to the configured one. */
 export type BackgroundRoute = { provider: string; id: string } | { fallback: BackgroundFallback };
 
+/**
+ * How long a conversation's session is kept once nobody is using it, and how many are kept at all.
+ *
+ * A session is a provider connection and a context window held in memory. Keeping one per conversation for as long as
+ * the process lives is a leak that grows with every conversation a person ever opened; dropping an idle one costs a
+ * recap on the next message, which is what a fresh session already does after a failure.
+ */
 export const TURN_IDLE_MS = 30 * 60_000;
 export const MAX_IDLE_TURNS = 16;
 

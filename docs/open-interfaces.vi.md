@@ -795,7 +795,7 @@ lạc với node nào mà kiểm tra một tệp cục bộ theo một hợp đ�
 | `clarkcant api <METHOD> <path> [jsonBody]` | gọi route bất kỳ, trừ quyết định của con người và việc cài gói |
 | `clarkcant mcp` | MCP qua stdio |
 | `clarkcant discover` | discovery document |
-| `clarkcant instructions check [file]` | kiểm tra ngoại tuyến tệp `.clarkcant/instructions.json` của một dự án (xem bên dưới) |
+| `clarkcant instructions check [file\|folder]` | kiểm tra ngoại tuyến tệp `.clarkcant/instructions.json` của một dự án (xem bên dưới) |
 
 Kết nối: `--url` / `CLARKCANT_URL`, `--token` / `CLARKCANT_TOKEN`, nếu không thì đọc `identity.json` trong
 `--data-dir` / `CLARKCANT_DATA_DIR` (mặc định `~/.clarkcant`). File identity chỉ được đọc cho node trên chính máy
@@ -822,16 +822,24 @@ này, và `clarkcant instructions check` cũng dùng đúng schema đó để ki
 ```
 
 - Tệp viết từ bây giờ phải có `version`. Hiện chỉ có phiên bản 1. Một tệp không có `version`, được viết trước khi trường
-  này trở thành bắt buộc, vẫn được đọc như phiên bản 1. Node không đọc tệp có phiên bản mà nó không biết.
+  này trở thành bắt buộc, vẫn được đọc như phiên bản 1. Node không đọc tệp có phiên bản mà nó không biết, và lệnh kiểm
+  tra báo trong một dòng rằng tệp cần một bản ClarkCant mới hơn.
 - `rules` chứa tối đa 32 quy tắc. Mỗi quy tắc có `when`, danh sách `include` gồm 1 đến 8 tên đoạn hướng dẫn (chữ
   thường, chữ số và `-`, tối đa 64 ký tự), và `pin` không bắt buộc. `when` có thể nêu `project`, `path`, `operation`
   (`read`, `write`, `command`, `test`, `deploy`), `capability`, `role` (`foreground`, `background`, `task`) và `skill`.
   Mỗi trường nhận một giá trị hoặc một danh sách tối đa 16 giá trị. Một glob `path` có tối đa 200 ký tự, 16 ký tự đại
-  diện và 32 thư mục. Trường lạ bị từ chối, và tệp lớn hơn 64 KB không được đọc.
-- Node bỏ qua quy tắc không phân tích được và vẫn áp dụng các quy tắc còn lại. `clarkcant instructions check` kiểm tra
-  tệp theo quy tắc dành cho việc viết tệp: thiếu `version` và từng quy tắc không hợp lệ đều được báo trên một dòng
-  riêng, và mã thoát là 1. `--json` in `{ path, ok, problems }`. Tệp mặc định là `.clarkcant/instructions.json` trong
-  thư mục hiện tại.
+  diện và 32 thư mục. Tệp lớn hơn 64 KB không được đọc.
+- Khóa lạ: ở cấp cao nhất chỉ cho phép `$schema` (một chuỗi, dành cho JSON schema của trình soạn thảo), và mọi khóa lạ
+  khác ở cấp cao nhất khiến node không đọc gì từ tệp. Một khóa lạ bên trong một quy tắc hoặc bên trong `when` của nó chỉ
+  làm bỏ qua quy tắc đó. Lệnh kiểm tra báo cả hai trường hợp.
+- Node bỏ qua quy tắc không phân tích được và vẫn áp dụng các quy tắc còn lại. Khi không đọc được gì từ một tệp, node
+  ghi một dòng `instructions-invalid` ra stderr, kèm tên thư mục dự án và một `reason`: `too-large`, `not-json`,
+  `shape` hoặc `unknown-version`.
+- `clarkcant instructions check` kiểm tra tệp theo quy tắc dành cho việc viết tệp: thiếu `version` và từng quy tắc
+  không hợp lệ đều được báo trên một dòng riêng, và mã thoát là 1. Một quy tắc include một tên không có
+  `instructions/<name>.md` nằm cạnh tệp chỉ là cảnh báo; mã thoát vẫn là 0. `--json` in
+  `{ path, ok, problems, warnings }`. Tệp mặc định là `.clarkcant/instructions.json` trong thư mục hiện tại, và có thể
+  truyền thư mục dự án thay cho tệp.
 - Một hướng dẫn không cấp quyền gì. Node chỉ đọc nó từ một dự án nằm trong root mà người dùng đã cấp, và mọi tác động
   vẫn đi qua chính sách thực thi. Hiện một gói chưa thể đóng góp quy tắc.
 

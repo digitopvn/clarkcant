@@ -167,8 +167,9 @@ export function nodeConditionalInstructions(env: NodeJS.ProcessEnv, services: No
     reader = createConditionalInstructions({
       roots: () => services.projects.roots(),
       // Which project's file could not be used, by folder name only: an operator can find it, nothing of it is printed.
-      onInvalid: ({ project }) => {
-        process.stderr.write(`${JSON.stringify({ event: "instructions-invalid", project })}\n`);
+      // The reason says what to do: fix the file, or update ClarkCant for a version it does not read yet.
+      onInvalid: ({ project, reason }) => {
+        process.stderr.write(`${JSON.stringify({ event: "instructions-invalid", project, reason })}\n`);
       },
     });
     instructionReaders.set(services, reader);
@@ -252,16 +253,21 @@ export async function routeNodeBackgroundModel(
 /**
  * The node's route, with a failure answered as a fallback rather than thrown: the work runs on the configured model,
  * the same as when nothing is eligible, and the failure is said once on stderr — that it failed, never what with — the
- * same way the data-class fallback is.
+ * same way the data-class fallback is. The services are asked for inside the same guard, so a node that cannot give them
+ * yet still says so.
  */
-export async function routeOrFallBack(services: NodeServices, work: { dataClass?: DataClass } = {}): Promise<BackgroundRoute | undefined> {
+export async function routeOrFallBack(
+  services: () => NodeServices,
+  work: { dataClass?: DataClass } = {},
+): Promise<BackgroundRoute | undefined> {
   try {
-    return await routeNodeBackgroundModel(services, work);
+    return await routeNodeBackgroundModel(services(), work);
   } catch {
     process.stderr.write(`${JSON.stringify({ event: "model-route", fallback: "route-failed" })}\n`);
     return { fallback: { reason: "route-failed" } };
   }
 }
+
 /**
  * Build the model turn, or `undefined` when this node has no model.
  */
@@ -287,7 +293,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     env: deps.env,
     cwd: process.cwd(),
     model: chosenModel,
-    backgroundModel: async (work) => await routeOrFallBack(deps.services(), work),
+    backgroundModel: async (work) => await routeOrFallBack(deps.services, work),
     // What a model may be sent (#433): context above it is withheld before it reaches the prompt.
     allowedDataClasses: (model) => nodeAllowedDataClasses(deps.services(), model),
     /*
