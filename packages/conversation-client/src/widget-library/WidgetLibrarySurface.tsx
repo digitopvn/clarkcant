@@ -228,7 +228,7 @@ export function WidgetLibrarySurface({
           {selected !== undefined && develop && (
             <button
               type="button"
-              className="cc-badge cc-widget-lab-pane-toggle"
+              className="cc-action cc-widget-lab-pane-toggle"
               aria-pressed={showInspector}
               onClick={() => setShowInspector((current) => !current)}
               data-widget-lab-pane-toggle="true"

@@ -58,7 +58,7 @@ export function MenuBarPopover({
       <p className="cc-freshness" style={{ margin: 0 }} data-menu-task-count={activeTaskCount}>
         {activeTaskCount === 0 ? t("shell.menubar.noTasks") : t("shell.menubar.taskCount").replace("{count}", String(activeTaskCount))}
       </p>
-      <button type="button" className="cc-badge" onClick={onOpenApp} style={{ cursor: "pointer", font: "inherit" }}>
+      <button type="button" className="cc-action" onClick={onOpenApp}>
         {t("shell.menubar.openWindow")}
       </button>
     </div>
@@ -104,7 +104,7 @@ export function DesktopNotification({ title, body }: DesktopNotificationProps): 
 
   return (
     <div className="cc-notification-trigger" data-notification-outcome={outcome}>
-      <button type="button" className="cc-badge" onClick={send} style={{ cursor: "pointer", font: "inherit" }}>
+      <button type="button" className="cc-action" onClick={send}>
         {t("shell.notification.notifyMe")}
       </button>
       {outcome === "unsupported" && (
