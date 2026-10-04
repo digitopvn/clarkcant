@@ -92,6 +92,63 @@ describe("the identity file's token", () => {
   });
 });
 
+describe("instructions check", () => {
+  const RULE = { when: { path: "packages/storage/**", operation: "write" }, include: ["migrations"] };
+  const files = (contents: Record<string, string>): { read: string[]; readFile: (path: string) => string } => {
+    const read: string[] = [];
+    return {
+      read,
+      readFile: (path) => {
+        read.push(path);
+        const text = contents[path];
+        if (text === undefined) throw new Error("no such file");
+        return text;
+      },
+    };
+  };
+
+  it("passes a versioned file without talking to a node", async () => {
+    const fake = files({ ".clarkcant/instructions.json": JSON.stringify({ version: 1, rules: [RULE] }) });
+    let fetched = false;
+    const run = io({
+      readFile: fake.readFile,
+      fetch: (async () => {
+        fetched = true;
+        throw new Error("no node");
+      }) as typeof fetch,
+    });
+    expect(await runCli(["instructions", "check"], run)).toBe(0);
+    expect(run.out.join("")).toBe(".clarkcant/instructions.json: ok (1 rule)\n");
+    // Not even the identity file is read: only the instructions file.
+    expect(fake.read).toEqual([".clarkcant/instructions.json"]);
+    expect(fetched).toBe(false);
+  });
+
+  it("reports a missing version and each invalid rule, one line each", async () => {
+    const fake = files({ "x.json": JSON.stringify({ rules: [RULE, { include: ["../out"] }] }) });
+    const run = io({ readFile: fake.readFile });
+    expect(await runCli(["instructions", "check", "x.json"], run)).toBe(1);
+    const lines = run.out.join("").trimEnd().split("\n");
+    expect(lines[0]).toBe('x.json: version: missing; write "version": 1 (a node still reads a file without it as version 1)');
+    expect(lines[1]).toMatch(/^x\.json: rules\[1\]\.include\[0\]: must be a snippet name/);
+  });
+
+  it("answers JSON, and says plainly when the file cannot be read or parsed", async () => {
+    const fake = files({ "bad.json": "{ not json", "ok.json": JSON.stringify({ version: 1, rules: [] }) });
+    const asJson = io({ readFile: fake.readFile });
+    expect(await runCli(["instructions", "check", "ok.json", "--json"], asJson)).toBe(0);
+    expect(JSON.parse(asJson.out.join(""))).toEqual({ path: "ok.json", ok: true, problems: [] });
+    const broken = io({ readFile: fake.readFile });
+    expect(await runCli(["instructions", "check", "bad.json"], broken)).toBe(1);
+    expect(broken.out.join("")).toBe("bad.json: file: not valid JSON\n");
+    const missing = io({ readFile: fake.readFile });
+    expect(await runCli(["instructions", "check", "gone.json"], missing)).toBe(1);
+    expect(missing.err.join("")).toContain("could not read gone.json");
+    const wrong = io({ readFile: fake.readFile });
+    expect(await runCli(["instructions", "fix"], wrong)).toBe(1);
+  });
+});
+
 describe("commands", () => {
   it("reports the node's status", async () => {
     const run = io();

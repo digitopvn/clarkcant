@@ -2,14 +2,25 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { isPersonOnlyRoute, MACHINE_SURFACE_HEADER, type MessageBlock, messageBlocksAsText, PERSON_ONLY_REFUSAL, parseSseChunk } from "@clarkcant/contracts";
+import {
+  isPersonOnlyRoute,
+  MACHINE_SURFACE_HEADER,
+  type MessageBlock,
+  messageBlocksAsText,
+  PERSON_ONLY_REFUSAL,
+  PROJECT_INSTRUCTION_LIMITS,
+  PROJECT_INSTRUCTIONS_PATH,
+  parseSseChunk,
+  projectInstructionsProblems,
+} from "@clarkcant/contracts";
 
 /**
  * The `clarkcant` command.
  *
- * A client of a node's open gateway and nothing more: every command is a request to a route any other app could make
- * with the same token, so what the terminal can do is exactly what HTTP, MCP and the WebSocket can do. It never opens
- * the node's database or starts a node of its own.
+ * A client of a node's open gateway: every command is a request to a route any other app could make with the same
+ * token, so what the terminal can do is exactly what HTTP, MCP and the WebSocket can do. It never opens the node's
+ * database or starts a node of its own. The one exception, `instructions check`, talks to no node at all: it checks a
+ * local file against an open contract.
  *
  * Kept free of `process` so a test can drive it: the entry point hands in the environment, the streams and `fetch`.
  */
@@ -43,6 +54,7 @@ Commands:
   api <METHOD> <path> [jsonBody]       Call any REST route except a person's decision
   mcp                                  Serve MCP over stdio, bridged to the node's /mcp
   discover                             Print the node's discovery document
+  instructions check [file]            Check a project's ${PROJECT_INSTRUCTIONS_PATH} offline
 
 Options:
   --url <url>          Node URL (CLARKCANT_URL, default ${DEFAULT_URL})
@@ -144,6 +156,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     io.stdout(USAGE);
     return command === undefined && !flags.has("h") && !flags.has("help") ? 1 : 0;
   }
+
+  // Offline: no connection is resolved, so not even the identity file is read.
+  if (command === "instructions") return checkInstructions(rest, io, flags.has("json"));
 
   const connection = resolveConnection(flags, io);
   const asJson = flags.has("json");
@@ -291,6 +306,50 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     }
     throw cause;
   }
+}
+
+/**
+ * `clarkcant instructions check [file]`: a project's conditional instructions against the open contract
+ * (`project-instructions.ts` in `@clarkcant/contracts`), the same schema the node reads with. Checked as a file is
+ * written now, so a missing `version` is reported even though a node still reads such a file as version 1.
+ */
+function checkInstructions(rest: string[], io: CliIo, asJson: boolean): number {
+  const [action, path = PROJECT_INSTRUCTIONS_PATH, extra] = rest;
+  if (action !== "check" || extra !== undefined) {
+    io.stderr(`clarkcant: instructions has one command: clarkcant instructions check [file]\n`);
+    return 1;
+  }
+  const read = io.readFile ?? ((file: string) => readFileSync(file, "utf8"));
+  let text: string;
+  try {
+    text = read(path);
+  } catch (cause) {
+    io.stderr(`clarkcant: could not read ${path} (${cause instanceof Error ? cause.message : String(cause)})\n`);
+    return 1;
+  }
+  let problems: string[];
+  let rules = 0;
+  if (Buffer.byteLength(text, "utf8") > PROJECT_INSTRUCTION_LIMITS.fileBytes) {
+    problems = [`file: larger than ${String(PROJECT_INSTRUCTION_LIMITS.fileBytes)} bytes, so a node does not read it`];
+  } else {
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+      problems = projectInstructionsProblems(value);
+      const listed = (value as { rules?: unknown } | null)?.rules;
+      rules = Array.isArray(listed) ? listed.length : 0;
+    } catch {
+      problems = ["file: not valid JSON"];
+    }
+  }
+  if (asJson) {
+    io.stdout(`${JSON.stringify({ path, ok: problems.length === 0, problems }, null, 2)}\n`);
+  } else if (problems.length === 0) {
+    io.stdout(`${path}: ok (${String(rules)} ${rules === 1 ? "rule" : "rules"})\n`);
+  } else {
+    io.stdout(`${problems.map((problem) => `${path}: ${problem}`).join("\n")}\n`);
+  }
+  return problems.length === 0 ? 0 : 1;
 }
 
 interface AskContext {

@@ -132,6 +132,24 @@ describe("which instructions apply", () => {
     expect(reader.active({ touched: [write(join(project, "README.md"))], role: "foreground", skills: [] })).toEqual([]);
   });
 
+  it("reads a versioned file and a legacy one with no version alike, and nothing from a version it does not know", () => {
+    const file = join(project, "packages", "storage", "migrations", "0002.sql");
+    const rule = { when: { path: "packages/storage/**", operation: "write" }, include: ["migrations"] };
+    snippet("migrations", MIGRATIONS);
+    const invalid: string[] = [];
+    const reader = createConditionalInstructions({ roots: () => [root], onInvalid: ({ project: name }) => invalid.push(name) });
+    const state = { touched: [write(file)], role: "foreground" as const, skills: [] };
+
+    rules({ version: 1, rules: [rule] });
+    expect(reader.active(state)).toHaveLength(1);
+    // Each write differs in size, so the reader's cache, kept while modification time and size are unchanged, rereads it.
+    rules({ rules: [rule] });
+    expect(reader.active(state)).toHaveLength(1);
+    rules({ version: 2, rules: [rule] });
+    expect(reader.active(state)).toEqual([]);
+    expect(invalid).toEqual(["clark"]);
+  });
+
   it("checks project, capability, role and skill when a rule names them", () => {
     rules({
       rules: [

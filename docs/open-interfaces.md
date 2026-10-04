@@ -777,8 +777,9 @@ stdio, for clients that launch a process (the bridge reads the token from `~/.cl
 
 ## CLI
 
-`apps/cli` (`@clarkcant/cli`) is a client of the gateway and nothing more. It is not published to npm yet; run it
-from a checkout with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
+`apps/cli` (`@clarkcant/cli`) is a client of the gateway. The only exception is `instructions check`, which contacts
+no node and checks a local file against an open contract. The CLI is not published to npm yet; run it from a checkout
+with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
 
 | Command | |
 |---|---|
@@ -789,12 +790,45 @@ from a checkout with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
 | `clarkcant api <METHOD> <path> [jsonBody]` | any route except a person's decision or installing a package |
 | `clarkcant mcp` | MCP over stdio |
 | `clarkcant discover` | the discovery document |
+| `clarkcant instructions check [file]` | checks a project's `.clarkcant/instructions.json` offline (see below) |
 
 Connection: `--url` / `CLARKCANT_URL`, `--token` / `CLARKCANT_TOKEN`, else `identity.json` in `--data-dir` /
 `CLARKCANT_DATA_DIR` (default `~/.clarkcant`). The identity file is only read for a node on this machine
 (`localhost`, `127.x`, `::1`); a remote `--url` needs `--token` or `CLARKCANT_TOKEN`, so the local token is never sent
 to another host. `clarkcant mcp` forwards each line as it arrives, so a `ping` is answered while a long call runs.
 `--json` prints raw JSON.
+
+## Project instructions file
+
+`<project>/.clarkcant/instructions.json` holds a project's conditional instructions: rules that state a snippet
+(`<project>/.clarkcant/instructions/<name>.md`) while the work touches what the rule is about. It is a versioned open
+contract. The schema is `packages/contracts/src/project-instructions.ts`
+(`projectInstructionsFileSchema`, `readProjectInstructions`, `projectInstructionsProblems`). The node reads the file with
+it, and `clarkcant instructions check` validates it with the same schema. How a rule applies is described in
+[system-architecture.md §7.2](system-architecture.md).
+
+```json
+{
+  "version": 1,
+  "rules": [
+    { "when": { "path": "packages/storage/**", "operation": "write" }, "include": ["migrations"], "pin": false }
+  ]
+}
+```
+
+- `version` is required in a file written now. Version 1 is the only version. A file without `version`, written before
+  the field was required, is still read as version 1. The node does not read a file with a version it does not know.
+- `rules` holds at most 32 rules. Each rule has `when`, an `include` list of 1 to 8 snippet names (lowercase letters,
+  digits and `-`, up to 64 characters), and an optional `pin`. `when` may name `project`, `path`, `operation`
+  (`read`, `write`, `command`, `test`, `deploy`), `capability`, `role` (`foreground`, `background`, `task`) and
+  `skill`. Each takes one value or a list of up to 16. A `path` glob has at most 200 characters, 16 wildcards and
+  32 folders. Unknown fields are refused, and a file larger than 64 KB is not read.
+- The node leaves out a rule that does not parse and applies the rest. `clarkcant instructions check` holds a file to the
+  rules for writing it: a missing `version` and every invalid rule are each reported on their own line, and the exit
+  code is 1. `--json` prints `{ path, ok, problems }`. The default file is `.clarkcant/instructions.json` in the current
+  folder.
+- An instruction grants nothing. The node reads it only from a project inside a root the person granted, and every
+  effect still goes through the execution policy. A package cannot contribute rules yet.
 
 ## Changing a surface
 

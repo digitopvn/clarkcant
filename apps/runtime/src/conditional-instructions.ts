@@ -2,8 +2,16 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import { type DataClass, dataClassOfText } from "@clarkcant/contracts";
-import { z } from "zod";
+import {
+  type DataClass,
+  dataClassOfText,
+  type InstructionOperation,
+  type InstructionRole,
+  instructionGlobProblem,
+  normalInstructionGlob,
+  PROJECT_INSTRUCTION_LIMITS,
+  readProjectInstructions,
+} from "@clarkcant/contracts";
 
 import { permits } from "./context-planner.ts";
 import { isWithinRoot } from "./path-roots.ts";
@@ -15,7 +23,8 @@ import { isWithinRoot } from "./path-roots.ts";
  * `<project>/.clarkcant/instructions/<name>.md`. A rule names a condition — which project, which paths, which kind of
  * operation, which tool or capability, which role, which referenced skill — and the snippets to include while it holds.
  * "Writing under `packages/storage/**` follows the migration policy" is stated when a write there happens, not on every
- * turn of every conversation.
+ * turn of every conversation. The file's shape is the open contract in `@clarkcant/contracts`
+ * (`project-instructions.ts`); this module decides when a rule holds and what is stated.
  *
  * What has to hold:
  *
@@ -30,15 +39,15 @@ import { isWithinRoot } from "./path-roots.ts";
 
 export const INSTRUCTION_LIMITS = {
   /** Rules read from one project's file; the rest are ignored. */
-  rules: 32,
+  rules: PROJECT_INSTRUCTION_LIMITS.rules,
   /** Snippets one rule may include. */
-  includesPerRule: 8,
+  includesPerRule: PROJECT_INSTRUCTION_LIMITS.includesPerRule,
   /** Characters of one snippet; a longer one is clipped and says so. */
   snippetChars: 4_000,
   /** Characters of instructions stated in one turn or one tool result; the rest wait for the next. */
   turnChars: 6_000,
   /** Bytes of a rules file; a larger one is not read. */
-  rulesFileBytes: 64 * 1024,
+  rulesFileBytes: PROJECT_INSTRUCTION_LIMITS.fileBytes,
   /** Folders walked up from a touched path looking for a project's rules. */
   walkDepth: 32,
   /** What a session remembers having touched, newest kept. */
@@ -50,9 +59,7 @@ export function conditionalInstructionsFromEnv(env: NodeJS.ProcessEnv): "on" | "
   return env.CLARKCANT_CONDITIONAL_INSTRUCTIONS?.trim().toLowerCase() === "off" ? "off" : "on";
 }
 
-export const INSTRUCTION_OPERATIONS = ["read", "write", "command", "test", "deploy"] as const;
-export type InstructionOperation = (typeof INSTRUCTION_OPERATIONS)[number];
-export type InstructionRole = "foreground" | "background" | "task";
+export { INSTRUCTION_OPERATIONS, type InstructionOperation, type InstructionRole } from "@clarkcant/contracts";
 
 /** One thing the work touched: where, how, and through which tool or capability. */
 export interface InstructionTouch {
@@ -85,30 +92,6 @@ export interface ActiveInstruction {
   pin: boolean;
 }
 
-const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const oneOrMany = <T extends z.ZodType>(schema: T) => z.union([schema, z.array(schema).min(1).max(16)]);
-const shortText = z.string().min(1).max(200);
-
-const ruleSchema = z.strictObject({
-  when: z
-    .strictObject({
-      project: oneOrMany(shortText).optional(),
-      path: oneOrMany(shortText).optional(),
-      operation: oneOrMany(z.enum(INSTRUCTION_OPERATIONS)).optional(),
-      capability: oneOrMany(shortText).optional(),
-      role: oneOrMany(z.enum(["foreground", "background", "task"])).optional(),
-      skill: oneOrMany(shortText).optional(),
-    })
-    .default({}),
-  include: z.array(z.string().regex(NAME)).min(1).max(INSTRUCTION_LIMITS.includesPerRule),
-  pin: z.boolean().optional(),
-});
-
-const rulesFileSchema = z.strictObject({
-  version: z.literal(1).optional(),
-  rules: z.array(z.unknown()).max(1_000),
-});
-
 interface Rule {
   project?: readonly string[];
   path?: readonly CompiledGlob[];
@@ -123,20 +106,15 @@ interface Rule {
 const list = <T>(value: T | readonly T[] | undefined): readonly T[] | undefined =>
   value === undefined ? undefined : Array.isArray(value) ? value : [value as T];
 
-function normalGlob(glob: string): string {
-  return glob.replace(/\\/g, "/").replace(/^\.\//, "");
-}
-
 /**
- * How large a path glob may be. A glob comes from a repository file, so its cost must not depend on what the
- * repository's author chose: matching is segment by segment with no regular expression, and these caps bound the work.
+ * How large a path glob may be, from the contract. A glob comes from a repository file, so its cost must not depend on
+ * what the repository's author chose: matching is segment by segment with no regular expression, and these caps bound
+ * the work. A glob over them is not used, and its rule is left out.
  */
 export const GLOB_LIMITS = {
-  chars: 200,
-  /** `*`, `**` and `?` in one glob; a glob with more is not used, and its rule is left out. */
-  wildcards: 16,
-  /** Folders in one glob. */
-  segments: 32,
+  chars: PROJECT_INSTRUCTION_LIMITS.globChars,
+  wildcards: PROJECT_INSTRUCTION_LIMITS.globWildcards,
+  segments: PROJECT_INSTRUCTION_LIMITS.globSegments,
 } as const;
 
 /**
@@ -159,9 +137,8 @@ const fold = (text: string): string => (FOLD_CASE ? text.toLowerCase() : text);
 
 /** The glob ready to match, or `undefined` for one that is empty or over the limits. */
 export function compileGlob(glob: string): CompiledGlob | undefined {
-  const pattern = normalGlob(glob);
-  if (pattern === "" || pattern.length > GLOB_LIMITS.chars) return undefined;
-  if ((pattern.match(/[*?]/g) ?? []).length > GLOB_LIMITS.wildcards) return undefined;
+  if (instructionGlobProblem(glob) !== undefined) return undefined;
+  const pattern = normalInstructionGlob(glob);
   const segments: string[] = [];
   for (const segment of fold(pattern).split("/")) {
     if (segment === "") continue;
@@ -169,7 +146,7 @@ export function compileGlob(glob: string): CompiledGlob | undefined {
     if (segment === "**" && segments.at(-1) === "**") continue;
     segments.push(segment);
   }
-  if (segments.length === 0 || segments.length > GLOB_LIMITS.segments) return undefined;
+  if (segments.length === 0) return undefined;
   return { glob: pattern, segments, anywhere: !pattern.includes("/") };
 }
 
@@ -230,6 +207,11 @@ export function globMatches(glob: CompiledGlob, relativePath: string): boolean {
   };
   return go(0, 0);
 }
+
+/**
+ * The rules of one file, read through the shared contract: a file with no `version` is read as version 1, and a rule
+ * that does not parse is left out on its own while the rest still apply.
+ */
 function parseRules(raw: string): Rule[] | undefined {
   let parsed: unknown;
   try {
@@ -237,16 +219,13 @@ function parseRules(raw: string): Rule[] | undefined {
   } catch {
     return undefined;
   }
-  const file = rulesFileSchema.safeParse(parsed);
-  if (!file.success) return undefined;
+  const file = readProjectInstructions(parsed);
+  if (file === undefined) return undefined;
   const rules: Rule[] = [];
-  // A rule that does not parse is left out on its own; the rest of the file still applies.
-  for (const entry of file.data.rules.slice(0, INSTRUCTION_LIMITS.rules)) {
-    const rule = ruleSchema.safeParse(entry);
-    if (!rule.success) continue;
-    const when = rule.data.when;
+  for (const rule of file.rules) {
+    const when = rule.when;
     const globs = list(when.path)?.map(compileGlob);
-    // A glob over the limits leaves its rule out, the same as any other rule that does not parse.
+    // The contract already refuses a glob over the limits; one that still does not compile leaves its rule out too.
     if (globs?.some((glob) => glob === undefined) === true) continue;
     const project = list(when.project);
     const operation = list(when.operation);
@@ -260,8 +239,8 @@ function parseRules(raw: string): Rule[] | undefined {
       ...(capability === undefined ? {} : { capability }),
       ...(role === undefined ? {} : { role }),
       ...(skill === undefined ? {} : { skill }),
-      include: [...new Set(rule.data.include)],
-      pin: rule.data.pin === true,
+      include: [...new Set(rule.include)],
+      pin: rule.pin === true,
     });
   }
   return rules;

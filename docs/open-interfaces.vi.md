@@ -782,7 +782,8 @@ socket `/voice` và `/terminal`:
 
 ## CLI
 
-`apps/cli` (`@clarkcant/cli`) chỉ là client của gateway. Chưa publish lên npm; chạy từ checkout bằng
+`apps/cli` (`@clarkcant/cli`) là client của gateway. Ngoại lệ duy nhất là `instructions check`: lệnh này không liên
+lạc với node nào mà kiểm tra một tệp cục bộ theo một hợp đồng mở. CLI chưa được publish lên npm; chạy từ checkout bằng
 `node apps/cli/src/main.ts` hoặc `pnpm clarkcant`.
 
 | Lệnh | |
@@ -794,12 +795,45 @@ socket `/voice` và `/terminal`:
 | `clarkcant api <METHOD> <path> [jsonBody]` | gọi route bất kỳ, trừ quyết định của con người và việc cài gói |
 | `clarkcant mcp` | MCP qua stdio |
 | `clarkcant discover` | discovery document |
+| `clarkcant instructions check [file]` | kiểm tra ngoại tuyến tệp `.clarkcant/instructions.json` của một dự án (xem bên dưới) |
 
 Kết nối: `--url` / `CLARKCANT_URL`, `--token` / `CLARKCANT_TOKEN`, nếu không thì đọc `identity.json` trong
 `--data-dir` / `CLARKCANT_DATA_DIR` (mặc định `~/.clarkcant`). File identity chỉ được đọc cho node trên chính máy
 này (`localhost`, `127.x`, `::1`); `--url` trỏ tới máy khác cần `--token` hoặc `CLARKCANT_TOKEN`, nên token cục bộ không
 bao giờ bị gửi sang host khác. `clarkcant mcp` chuyển tiếp từng dòng ngay khi nhận, nên `ping` vẫn được trả lời trong
 lúc một lệnh gọi dài đang chạy. `--json` in JSON thô.
+
+## Tệp hướng dẫn của dự án
+
+`<project>/.clarkcant/instructions.json` chứa các hướng dẫn có điều kiện của một dự án. Mỗi quy tắc nêu một đoạn hướng
+dẫn (`<project>/.clarkcant/instructions/<name>.md`) khi công việc chạm vào đúng thứ mà quy tắc nói tới. Đây là một hợp
+đồng mở có phiên bản. Schema nằm ở `packages/contracts/src/project-instructions.ts`
+(`projectInstructionsFileSchema`, `readProjectInstructions`, `projectInstructionsProblems`). Node đọc tệp bằng schema
+này, và `clarkcant instructions check` cũng dùng đúng schema đó để kiểm tra. Cách một quy tắc được áp dụng được mô tả ở
+[system-architecture.vi.md §7.2](system-architecture.vi.md).
+
+```json
+{
+  "version": 1,
+  "rules": [
+    { "when": { "path": "packages/storage/**", "operation": "write" }, "include": ["migrations"], "pin": false }
+  ]
+}
+```
+
+- Tệp viết từ bây giờ phải có `version`. Hiện chỉ có phiên bản 1. Một tệp không có `version`, được viết trước khi trường
+  này trở thành bắt buộc, vẫn được đọc như phiên bản 1. Node không đọc tệp có phiên bản mà nó không biết.
+- `rules` chứa tối đa 32 quy tắc. Mỗi quy tắc có `when`, danh sách `include` gồm 1 đến 8 tên đoạn hướng dẫn (chữ
+  thường, chữ số và `-`, tối đa 64 ký tự), và `pin` không bắt buộc. `when` có thể nêu `project`, `path`, `operation`
+  (`read`, `write`, `command`, `test`, `deploy`), `capability`, `role` (`foreground`, `background`, `task`) và `skill`.
+  Mỗi trường nhận một giá trị hoặc một danh sách tối đa 16 giá trị. Một glob `path` có tối đa 200 ký tự, 16 ký tự đại
+  diện và 32 thư mục. Trường lạ bị từ chối, và tệp lớn hơn 64 KB không được đọc.
+- Node bỏ qua quy tắc không phân tích được và vẫn áp dụng các quy tắc còn lại. `clarkcant instructions check` kiểm tra
+  tệp theo quy tắc dành cho việc viết tệp: thiếu `version` và từng quy tắc không hợp lệ đều được báo trên một dòng
+  riêng, và mã thoát là 1. `--json` in `{ path, ok, problems }`. Tệp mặc định là `.clarkcant/instructions.json` trong
+  thư mục hiện tại.
+- Một hướng dẫn không cấp quyền gì. Node chỉ đọc nó từ một dự án nằm trong root mà người dùng đã cấp, và mọi tác động
+  vẫn đi qua chính sách thực thi. Hiện một gói chưa thể đóng góp quy tắc.
 
 ## Thay đổi một bề mặt
 
