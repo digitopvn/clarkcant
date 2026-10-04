@@ -51,7 +51,7 @@ const NOTES_PACKAGE = fileURLToPath(new URL("../../web/e2e/fixtures/notes-servic
 
 const PROBE = `
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 const tried = {};
 async function attempt(name, work) {
   try { await work(); tried[name] = "allowed"; } catch (error) { tried[name] = error.code ?? error.cause?.code ?? error.name; }
@@ -67,10 +67,16 @@ for (const [name, folder] of [["Dev", "/dev"], ["Shm", "/dev/shm"], ["Tmp", "/tm
   await attempt("write" + name, () => writeFileSync(file, "#!/bin/sh\\necho ran\\n", { mode: 0o755 }));
   if (tried["write" + name] === "allowed") await attempt("exec" + name, () => execFileSync(file));
 }
-// Every mount a file can be written to: none but the scratch space and the private folder.
+// Every mount a file can be written to: none but the scratch space and the private folder. Kernel filesystems hold no
+// files, and a device node is no folder: rootless engines bind the host's /dev/null and its kind onto /dev and onto the
+// /proc paths they mask, writable as a device and nothing more.
 const KERNEL = new Set(["proc", "sysfs", "devpts", "mqueue", "cgroup", "cgroup2"]);
+const isDevice = (path) => { try { return statSync(path).isCharacterDevice(); } catch { return false; } };
 const mounts = readFileSync("/proc/mounts", "utf8").split("\\n").map((line) => line.split(" ")).filter((fields) => fields.length > 3);
-tried.writable = mounts.filter((fields) => !KERNEL.has(fields[2]) && fields[3].split(",").includes("rw")).map((fields) => fields[1]).sort();
+tried.writable = mounts
+  .filter((fields) => !KERNEL.has(fields[2]) && fields[3].split(",").includes("rw") && !isDevice(fields[1]))
+  .map((fields) => fields[1])
+  .sort();
 tried.tmpfs = Object.fromEntries(mounts.filter((fields) => fields[2] === "tmpfs").map((fields) => [fields[1], fields[3]]));
 await attempt("writeData", () => writeFileSync("/data/kept.txt", "kept"));
 tried.uid = process.getuid();
