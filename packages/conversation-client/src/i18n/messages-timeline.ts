@@ -244,7 +244,8 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.note.placeholder": "Viết gì đó…",
   "widgets.note.unsaved": "Có thay đổi chưa lưu.",
   "widgets.note.saved": "Đã lưu.",
-  "widgets.note.currentRevision": "Bản lưu hiện tại: revision {revision}.",
+  "widgets.note.currentRevision": "Đã lưu bản {revision}.",
+  "widgets.note.neverSaved": "Chưa lưu lần nào.",
   "widgets.note.conflict":
     "Bản trên máy đã đổi ở chỗ khác. Bản nháp của bạn vẫn còn — chọn giữ bản nháp hoặc tải bản mới.",
   "widgets.note.save": "Lưu",
@@ -1226,7 +1227,8 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.note.placeholder": "Write something…",
   "widgets.note.unsaved": "Unsaved changes.",
   "widgets.note.saved": "Saved.",
-  "widgets.note.currentRevision": "Current save: revision {revision}.",
+  "widgets.note.currentRevision": "Saved version {revision}.",
+  "widgets.note.neverSaved": "Not saved yet.",
   "widgets.note.conflict":
     "The saved copy changed elsewhere. Your draft is still here — choose to keep your draft or load the newer copy.",
   "widgets.note.save": "Save",

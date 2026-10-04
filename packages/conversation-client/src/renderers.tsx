@@ -1031,7 +1031,8 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
         <div className="cc-note-meta" data-note-status={status} role="status">
           {status === "draft" && t("widgets.note.unsaved")}
           {status === "saved" && t("widgets.note.saved")}
-          {status === "idle" && t("widgets.note.currentRevision").replace("{revision}", String(revision))}
+          {status === "idle" &&
+            (revision === 0 ? t("widgets.note.neverSaved") : t("widgets.note.currentRevision").replace("{revision}", String(revision)))}
           {status === "conflict" && t("widgets.note.conflict")}
         </div>
         <div className="cc-card-actions">

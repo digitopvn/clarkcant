@@ -280,6 +280,17 @@ describe("the model answer note", () => {
     expect(textOf(SystemCardBlock({ block: { ...failed, status: "needs-sign-in" }, t: english }))).toContain("needs sign-in");
     expect(textOf(SystemCardBlock({ block: { ...failed, status: "something-new" } }))).toContain("something-new");
   });
+
+  it("says a field's freshness in words, once when the value is only that freshness", () => {
+    const card = (fields: Record<string, unknown>[]): Record<string, unknown> => ({ type: "system-card", owner: "host", status: "ready", title: "Ghi chú", fields });
+    const sample = textOf(SystemCardBlock({ block: card([{ label: "Nguồn dữ liệu", value: "sample", freshness: "sample" }]) }));
+    expect(sample).toContain("dữ liệu mẫu");
+    expect(sample).not.toContain("sample");
+    const cached = textOf(SystemCardBlock({ block: card([{ label: "Nhiệt độ", value: "31°C", freshness: "cached" }]) }));
+    expect(cached).toMatch(/31°C\s+· dữ liệu đã lưu/u);
+    const unknownFreshness = textOf(SystemCardBlock({ block: card([{ label: "X", value: "1", freshness: "stale-ish" }]) }));
+    expect(unknownFreshness).toMatch(/1\s+· stale-ish/u);
+  });
 });
 
 /**

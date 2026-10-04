@@ -110,6 +110,7 @@ test("a suggestion produces a labelled sample with a real widget", async ({ page
   // A real chart drew from a real dataset, and it admits the data is sampled.
   await expect(page.locator('[data-widget-role="chart"]').first()).toBeVisible();
   await expect(page.locator("[data-freshness='sample']").first()).toBeVisible();
+  await expect(page.locator("[data-host-card='system'] [data-freshness='sample']").first()).toHaveText("dữ liệu mẫu");
   await expect(page.locator("[data-chart-summary='true']").first()).not.toBeEmpty();
   // Drawn once: the reference to the same instance does not print the catalog's description under the chart.
   await expect(page.locator("[data-widget-placeholder]")).toHaveCount(0);
@@ -176,6 +177,8 @@ test("the composer is keyboard operable end to end", async ({ page }) => {
   await page.keyboard.type("cho tui xem tổng quan");
   await page.keyboard.press("Enter");
   await expect(page.locator("[data-slot='metrics']")).toBeVisible({ timeout: 20_000 });
+  // A note nobody has saved says so in words, not as "revision 0".
+  await expect(page.locator("[data-note-status='idle']").first()).toHaveText("Chưa lưu lần nào.");
   const area = page.locator(".cc-note-area").first();
   await area.click();
   await page.keyboard.type("ghi chú thử");

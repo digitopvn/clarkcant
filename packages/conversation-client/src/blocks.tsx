@@ -442,9 +442,12 @@ export function SystemCardBlock({
               <Fragment key={index}>
                 <dt>{String(field.label ?? "")}</dt>
                 <dd>
-                  {String(field.value ?? "")}
+                  {/* A value that is only its own freshness ("sample", marked sample) is said once, in words. */}
+                  {field.value === field.freshness ? "" : String(field.value ?? "")}
                   {typeof field.freshness === "string" && (
-                    <span className="cc-freshness" data-freshness={field.freshness}>{` · ${field.freshness}`}</span>
+                    <span className="cc-freshness" data-freshness={field.freshness}>
+                      {`${field.value === field.freshness ? "" : " · "}${freshnessLabel(field.freshness, t)}`}
+                    </span>
                   )}
                 </dd>
               </Fragment>
@@ -1184,6 +1187,11 @@ const TASK_STATUS_TONE: Record<string, string> = {
 function taskStatusLabel(status: string, t: (key: MessageKey) => string): string {
   const key = `blocks.taskStatus.${status}`;
   return key in MESSAGES_VI ? t(key as MessageKey) : status;
+}
+
+function freshnessLabel(freshness: string, t: (key: MessageKey) => string): string {
+  const key = `widgets.freshness.${freshness}`;
+  return key in MESSAGES_VI ? t(key as MessageKey) : freshness;
 }
 
 /** A system card's state in words: the card's own states first, then the ones it shares with a task. */
