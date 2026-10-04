@@ -60,6 +60,12 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.approval.deny": "Từ chối",
   "blocks.approval.decided": "đã quyết định",
   "blocks.approval.denied": "đã từ chối",
+  "turnOrigin.askedBy.person": "Do bạn yêu cầu",
+  "turnOrigin.askedBy.mcp": "Do một ứng dụng AI yêu cầu qua MCP",
+  "turnOrigin.askedBy.relay": "Do một ứng dụng kết nối yêu cầu qua relay",
+  "turnOrigin.askedBy.cliApi": "Do một chương trình yêu cầu qua CLI hoặc API",
+  "turnOrigin.askedBy.automation": "Do một tác vụ tự động yêu cầu",
+  "turnOrigin.askedBy.peer": "Do một máy khác của bạn yêu cầu",
 
   // blocks.tsx — connection card
   "blocks.connection.unverified": "Chưa xác minh tài khoản.",
@@ -997,6 +1003,12 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.approval.deny": "Deny",
   "blocks.approval.decided": "decided",
   "blocks.approval.denied": "denied",
+  "turnOrigin.askedBy.person": "Asked by you",
+  "turnOrigin.askedBy.mcp": "Asked by an AI client over MCP",
+  "turnOrigin.askedBy.relay": "Asked by a connected client over the relay",
+  "turnOrigin.askedBy.cliApi": "Asked by a program over the CLI or API",
+  "turnOrigin.askedBy.automation": "Asked by an automation",
+  "turnOrigin.askedBy.peer": "Asked by another of your machines",
 
   "blocks.connection.unverified": "Account not verified.",
   "blocks.connection.accountLabel": "Account",

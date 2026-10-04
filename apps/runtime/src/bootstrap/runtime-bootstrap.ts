@@ -240,6 +240,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
         summary: event.summary,
         outcome: event.outcome,
         ...(event.ref === undefined ? {} : { ref: event.ref }),
+        ...(event.origin === undefined ? {} : { origin: event.origin }),
         at: new Date().toISOString() as Instant,
       }),
   };

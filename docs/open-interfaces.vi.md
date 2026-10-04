@@ -76,6 +76,32 @@ gửi không kèm header (MCP, relay WebSocket, `clarkcant api`, một script) �
 surface mới được tính là lời của chính người dùng ở những chỗ điều đó quan trọng, chẳng hạn các trang mà một việc trên
 trình duyệt được phép thao tác; mọi giá trị khác của header đều bị bỏ qua.
 
+### Ai đã yêu cầu: nguồn gốc của một lượt
+
+Node cũng ghi lại ai đã bắt đầu mỗi lượt, thành `origin` của tin nhắn người dùng, ngay khi nhận tin nhắn. Giá trị này
+được đọc từ những gì gateway đã biết, không bao giờ từ thân request:
+
+| `origin` | Khi nào |
+|---|---|
+| `person` | trang của chính node gửi tin nhắn (`x-clarkcant-surface: composer`), tin nhắn được nói, hoặc người dùng trả lời một thẻ hay bấm một hành động widget trong trang |
+| `mcp` | MCP `ask_clark`, gửi kèm `x-clarkcant-surface: mcp` |
+| `relay` | relay WebSocket, gửi kèm `x-clarkcant-surface: relay` |
+| `cli-api` | mọi người giữ token khác: `clarkcant api`, một script, hoặc mọi giá trị khác của header |
+| `automation` | tác vụ của một tự động hoá đã lên lịch hoặc thường trực |
+| `peer` | tác vụ một node khác uỷ cho node này |
+
+Một trường trong thân như `"origin": "person"` bị bỏ qua, nên một bề mặt máy không thể tự nhận là người dùng. Token là
+ranh giới tin cậy, giống như với `surface`: người giữ token tự gửi header của ô soạn thảo được xem như chính trang.
+
+Nguồn gốc được chuyển cho chính sách thực thi như một phần của ý định, và được ghi trên thẻ duyệt mà lượt đó tạo ra,
+trên dòng của nó trong `GET /activity` (`origin`), và trong nhật ký audit. Mặc định nó không đổi quyết định nào: một
+lượt do ứng dụng AI bắt đầu qua MCP được quyết định y như tin nhắn của chính người dùng. Người muốn chặt hơn đặt
+`machineTurns` của chính sách thành `"ask"` (preference `execution.machineTurns`, hoặc Cài đặt → Kiểm soát → Yêu cầu
+từ chương trình khác). Khi đó một lượt từ `mcp`, `relay` hoặc `cli-api` sẽ hỏi trước một tác động rủi ro
+(`external-write`, `destructive`, `financial`, `communication`, `media-capture`) mà chính sách lẽ ra đã chạy. Quy tắc
+từ chối hoặc lệnh cấm vẫn thắng; việc đọc, ghi cục bộ, lượt của chính người dùng, tự động hoá và node ngang hàng không
+đổi.
+
 ### Xoá hội thoại
 
 Lệnh gõ “xoá hội thoại này” và lệnh nói tương ứng cùng đi qua intent `conversation.delete` như capability REST.

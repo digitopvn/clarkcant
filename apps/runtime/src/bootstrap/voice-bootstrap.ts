@@ -191,6 +191,8 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         channel: "voice",
         // What the person said, heard on their own voice surface: it counts as their words (`MessageRecord.surface`).
         surface: "voice",
+        // And it is the person who asked.
+        origin: "person",
         // The voice surface is a caller holding an open stream like any other, so it gets the same
         // events the typed path gets. Text is forwarded, accumulated: the surface replaces what it shows, so a
         // frame has to carry the answer so far rather than the fragment that just arrived. `accumulateAnswerText`

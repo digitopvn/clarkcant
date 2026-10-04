@@ -94,6 +94,8 @@ export function policyFromAutonomySettings(
     prohibition: named.success && named.data === "deny" ? "all" : current.prohibition,
     rules: [...current.rules],
     guardrails: family.guardrails ?? current.guardrails,
+    // The legacy shape cannot speak about machine-surface turns either, so the person's opt-in is kept as it was.
+    ...(current.machineTurns === undefined ? {} : { machineTurns: current.machineTurns }),
   };
 }
 
@@ -143,7 +145,9 @@ export function projectPolicyPreference(
       ? parsed.data.mode
       : preference.key === LEGACY_EXECUTION_RULES_KEY
         ? parsed.data.rules
-        : undefined;
+        : preference.key === MACHINE_TURNS_KEY
+          ? (parsed.data.machineTurns ?? "as-person")
+          : undefined;
   if (projected === undefined) return preference;
   return {
     ...preference,
@@ -165,12 +169,15 @@ export function writePolicyPreference(
   deps: PreferenceDeps,
   input: { principalId: string; key: string; value: unknown },
 ): PreferenceWriteOutcome | undefined {
-  if (input.key !== LEGACY_EXECUTION_MODE_KEY && input.key !== LEGACY_EXECUTION_RULES_KEY) return undefined;
+  if (!isLegacyPolicyKey(input.key)) return undefined;
   const current = readExecutionPolicy(deps, input.principalId);
+  // The canonical schema checks the value, so a value none of these accept is refused by name rather than stored.
   const next =
     input.key === LEGACY_EXECUTION_MODE_KEY
       ? { ...current, mode: input.value }
-      : { ...current, rules: input.value };
+      : input.key === LEGACY_EXECUTION_RULES_KEY
+        ? { ...current, rules: input.value }
+        : { ...current, machineTurns: input.value };
   return writeRegisteredPreference(deps, {
     principalId: input.principalId,
     key: EXECUTION_POLICY_PREFERENCE_KEY,
@@ -179,9 +186,15 @@ export function writePolicyPreference(
   });
 }
 
-/** Whether a key is one of the two the compatibility surface translates. */
+/**
+ * The key a surface writes the person's choice about machine-surface turns under: a view of the policy's
+ * `machineTurns`, translated the same way as the two legacy keys so it is never a second copy of the policy.
+ */
+export const MACHINE_TURNS_KEY = "execution.machineTurns";
+
+/** Whether a key is one the compatibility surface translates into the one policy. */
 function isLegacyPolicyKey(key: string): boolean {
-  return key === LEGACY_EXECUTION_MODE_KEY || key === LEGACY_EXECUTION_RULES_KEY;
+  return key === LEGACY_EXECUTION_MODE_KEY || key === LEGACY_EXECUTION_RULES_KEY || key === MACHINE_TURNS_KEY;
 }
 
 /**

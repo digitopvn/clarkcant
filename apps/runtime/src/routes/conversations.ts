@@ -16,7 +16,9 @@ import {
   type ResourceProfile,
   type ResourceRequest,
   COMPOSER_SURFACE_HEADER,
+  type TurnOrigin,
   VIEW_STATE_WRITE_VARIANT,
+  turnOriginOfSurfaceMark,
   actionInvocationSchema,
   capabilityRefSchema,
   conversationDeleteRequestSchema,
@@ -628,6 +630,8 @@ export async function answerQuestionForNode(
     confirmed?: unknown;
     viaVoice?: boolean;
     at: Instant;
+    /** Who answered (`TurnOrigin`), decided by the caller from the path the answer came on. Absent is the person. */
+    origin?: TurnOrigin;
   },
 ): Promise<{ ok: true; note: string } | { ok: false; code: string; message: string }> {
   const answered = answerQuestion(interactionDepsFor(services, input.conversationId), input.questionId, {
@@ -652,6 +656,7 @@ export async function answerQuestionForNode(
     text: answered.note,
     note: `${answered.note}\n\nĐây là câu trả lời của người dùng cho câu hỏi bạn đã hỏi. Hãy tiếp tục công việc đang làm dở.`,
     at: input.at,
+    origin: input.origin ?? "person",
   });
   return { ok: true, note: answered.note };
 }
@@ -906,9 +911,12 @@ function backgroundEndingReply(signal: AbortSignal, cause: unknown, title: strin
  * Whether a message was typed into the page's composer: the header the page sends, which no relay forwards
  * (`COMPOSER_SURFACE_HEADER`). Anything else — no header, another value, a list of them — is not the composer.
  */
-function composerSurface(request: GatewayRequest): { surface?: MessageSurface } {
+function composerSurface(request: GatewayRequest): { surface?: MessageSurface; origin: TurnOrigin } {
   const value = request.headers[COMPOSER_SURFACE_HEADER];
-  return value === "composer" ? { surface: "composer" } : {};
+  // Who asked, from the same mark: the composer is the person, MCP and the relay overwrite the header with their own
+  // name, and anything else is a program on the HTTP API. Never from the body (`turnOriginOfSurfaceMark`).
+  const origin = turnOriginOfSurfaceMark(value);
+  return value === "composer" ? { surface: "composer", origin } : { origin };
 }
 
 export function appendHostReply(
@@ -1357,6 +1365,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       confirmed: parsed.value.confirmed,
       viaVoice: parsed.value.viaVoice === true,
       at: at() as never,
+      // Who answered, from the surface mark like a message: the page's card, or a program on a machine surface.
+      origin: composerSurface(request).origin,
     });
     if (!answered.ok) {
       const status = answered.code === "QUESTION_NOT_FOUND" ? 404 : 409;
@@ -1520,7 +1530,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       principalId: runtime.identity.ownerPrincipalId,
       ...(sequence === undefined ? {} : { sequence }),
     };
-    const result = variant === VIEW_STATE_WRITE_VARIANT ? writeWidgetViewState(services, invocation) : await invokeWidgetAction(services, invocation);
+    const result = variant === VIEW_STATE_WRITE_VARIANT ? writeWidgetViewState(services, invocation) : await invokeWidgetAction(services, invocation, "click", composerSurface(request).origin);
 
     if (result.ok) {
       touchWidget(runtime.db, conversationId, instanceId);
@@ -2057,6 +2067,8 @@ export async function decideApprovalForNode(
      */
     note: `${receipt}\n\nĐây là kết quả thật, không phải dự đoán. Hãy tiếp tục công việc đang làm dở.`,
     at: input.at,
+    // The person's approval is what starts this turn, whoever asked for the command.
+    origin: "person",
   });
   // Indexed where the messages were written, so a continuation is findable like anything else said.
   indexMessages(services.search, {
@@ -2104,6 +2116,7 @@ async function streamUserMessage(
     referenceBlocks?: readonly ReferenceBlock[];
     demo?: boolean;
     surface?: MessageSurface;
+    origin?: TurnOrigin;
   },
   send: (chunk: string) => void,
 ): Promise<void> {
@@ -2117,6 +2130,7 @@ async function streamUserMessage(
       referenceBlocks: input.referenceBlocks ?? [],
       ...(input.demo === true ? { demo: true } : {}),
       ...(input.surface === undefined ? {} : { surface: input.surface }),
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
       emit: (event) => {
         // One frame per event the turn produced, named as the turn named it. Translating here would
         // mean two vocabularies for the same facts, and the transcript stores one of them.

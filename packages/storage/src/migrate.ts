@@ -1691,6 +1691,20 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    /*
+     * Who asked for the turn an audited act came from: person, mcp, relay, cli-api, automation or peer. NULL for an
+     * event no turn caused and for every event written before it was recorded.
+     */
+    version: 43,
+    name: "audit_turn_origin",
+    reversible: true,
+    up(db) {
+      db.exec(`
+        ALTER TABLE audit_log ADD COLUMN origin TEXT;
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

@@ -20,6 +20,7 @@ import {
   type Instant,
   type MessageBlock,
   type Principal,
+  type TurnOrigin,
   type WidgetSemanticDoc,
   modelChangeNeedsGeneration,
   uiContextNote,
@@ -223,6 +224,12 @@ interface Turn {
    * a typed message and then a spoken one must not keep reporting the first message's channel.
    */
   channel: "voice" | "chat";
+  /**
+   * Who asked for the message this turn is answering (`TurnOrigin`), on the same lifecycle as `channel`: a session that
+   * answers an AI client's turn and then the person's must not keep handing the first origin to its tools. Undefined is
+   * the person.
+   */
+  origin: TurnOrigin | undefined;
   /** Numbers the tool calls this turn made, so a start and an end can name the same widget. */
   toolSequence: number;
   unsubscribe: () => void;
@@ -636,6 +643,8 @@ export async function createModelTurn(options: {
     onEvent: () => ((event: ModelTurnEvent) => void) | undefined;
     /** See `Turn.channel`; read the same way and for the same reason. */
     channel: () => "voice" | "chat";
+    /** See `Turn.origin`; read the same way and for the same reason. */
+    origin: () => TurnOrigin | undefined;
   }) => readonly ToolDefinition[];
   /**
    * What was remembered, for the turn about to run.
@@ -695,6 +704,7 @@ export async function createModelTurn(options: {
       conversationId: turn.conversationId,
       onEvent: () => turn.onEvent,
       channel: () => turn.channel,
+      origin: () => turn.origin,
     }) ?? [];
   /*
    * The note about the screen for this turn, and the session's record of what it has now been told.
@@ -878,6 +888,7 @@ export async function createModelTurn(options: {
       segments: [],
       onEvent: undefined,
       channel: "chat",
+      origin: undefined,
       toolSequence: 0,
       unsubscribe: () => {},
       abort: new AbortController(),
@@ -1147,6 +1158,7 @@ export async function createModelTurn(options: {
       turn.messageId = input.messageId;
       turn.onEvent = input.onEvent;
       turn.channel = input.channel ?? "chat";
+      turn.origin = input.origin;
       turn.toolSequence = 0;
       turn.abort = new AbortController();
       turn.stopped = false;

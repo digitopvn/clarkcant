@@ -11,6 +11,7 @@ import {
   type Principal,
   type ReferenceBlock,
   type TaskRecord,
+  type TurnOrigin,
   type WidgetDefinition,
   assertBlockProvenance,
   attachmentRefSchema,
@@ -134,6 +135,8 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
     emit?: (event: ConductorEmit) => void;
     /** See `UserMessageInput.channel`, carried through unchanged. */
     channel?: "voice" | "chat";
+    /** See `UserMessageInput.origin`, carried through unchanged: a fixture's real tool hands it to the policy too. */
+    origin?: TurnOrigin;
     /** See `UserMessageInput.note`, carried through unchanged: a fixture standing in for the model reads it too. */
     note?: string;
     /** See `UserMessageInput.data`, carried through unchanged for the same reason. */
@@ -250,6 +253,8 @@ export interface ModelTurnInput {
   onEvent?: (event: ModelTurnEvent) => void;
   /** See `UserMessageInput.channel`, which this carries through unchanged. */
   channel?: "voice" | "chat";
+  /** See `UserMessageInput.origin`, which this carries through unchanged. */
+  origin?: TurnOrigin;
 }
 
 /**
@@ -386,6 +391,12 @@ export interface UserMessageInput {
    */
   surface?: MessageSurface;
   /**
+   * Who asked for this turn (`TurnOrigin`), decided by the caller from the code path that accepted the message — the
+   * gateway's surface mark, the voice path, an automation, a peer — and never from a body. Stored on the message and
+   * carried to the model turn's tools, which hand it to the execution policy. Absent is read as the person.
+   */
+  origin?: TurnOrigin;
+  /**
    * Files this message carries.
    *
    * The refs arrive already authorised — the gateway resolves each id against the conversation and the
@@ -512,6 +523,7 @@ function appendUser(
   at: Instant,
   extraBlocks: readonly MessageBlock[] = [],
   surface?: MessageSurface,
+  origin?: TurnOrigin,
 ): MessageRecord {
   const message: MessageRecord = {
     messageId: deps.newId("msg") as MessageRecord["messageId"],
@@ -532,6 +544,7 @@ function appendUser(
     createdAt: at,
     delivery: "accepted",
     ...(surface === undefined ? {} : { surface }),
+    ...(origin === undefined ? {} : { origin }),
   };
   appendMessage(deps.db, message, nextMessageSequence(deps.db, conversationId));
   return message;
@@ -590,7 +603,7 @@ export function recordVoiceTranscript(
 
   if (input.userText.trim() !== "") {
     // Said aloud in a voice session: the person's own words, on their own surface.
-    recorded.push(appendUser(deps, input.conversationId, input.userText, input.at, [], "voice"));
+    recorded.push(appendUser(deps, input.conversationId, input.userText, input.at, [], "voice", "person"));
   }
 
   if (input.assistantText.trim() !== "") {
@@ -627,6 +640,7 @@ export async function handleUserMessage(
     at,
     [...attachmentBlocks(input.attachmentRefs ?? []), ...referenceBlocks(input.referenceBlocks ?? [])],
     input.surface,
+    input.origin,
   );
   void userMessage;
 
@@ -646,6 +660,7 @@ export async function handleUserMessage(
       at,
       ...(input.emit === undefined ? {} : { emit: input.emit }),
       ...(input.channel === undefined ? {} : { channel: input.channel }),
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(input.note === undefined ? {} : { note: input.note }),
       ...(input.data === undefined ? {} : { data: input.data }),
     });
@@ -699,6 +714,9 @@ export async function handleUserMessage(
     conversationId: input.conversationId,
     goal: input.text,
     principal: input.principal,
+    ...(input.origin === undefined
+      ? {}
+      : { origin: { kind: "interactive", principalId: input.principal.principalId, turnOrigin: input.origin } }),
   });
 
   // Resolution. A task with no eligible capability parks on a capability rather than
@@ -857,6 +875,7 @@ async function runModelTurn(
       ...(input.note === undefined ? {} : { note: input.note }),
       ...(input.data === undefined ? {} : { data: input.data }),
       ...(input.channel === undefined ? {} : { channel: input.channel }),
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
       // Always supplied, and a no-op when nobody is streaming. A conditional spread here would have
       // to exist only to keep the optional field absent, which is a distinction nothing reads.
       onEvent: (event: ModelTurnEvent) => input.emit?.(event),

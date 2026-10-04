@@ -75,6 +75,31 @@ message posted without the header (MCP, the WebSocket relay, `clarkcant api`, a 
 Only a message with a surface counts as the person's own words where that matters, such as which sites a browser task
 may act on; any other value of the header is ignored.
 
+### Who asked: a turn's origin
+
+The node also records who started each turn, as the user message's `origin`, when it accepts the message. It is read
+from what the gateway already knows and never from the request body:
+
+| `origin` | Set when |
+|---|---|
+| `person` | the node's own page sent the message (`x-clarkcant-surface: composer`), it was spoken, or the person answered a card or pressed a widget action in the page |
+| `mcp` | MCP `ask_clark`, which posts with `x-clarkcant-surface: mcp` |
+| `relay` | the WebSocket relay, which posts with `x-clarkcant-surface: relay` |
+| `cli-api` | any other token holder: `clarkcant api`, a script, or any other value of the header |
+| `automation` | a scheduled or standing automation's task |
+| `peer` | a task another node delegated to this one |
+
+A body field such as `"origin": "person"` is ignored, so a machine surface cannot claim to be the person. The token
+is the trust boundary, as it is for `surface`: a holder that sends the composer's header itself is treated as the page.
+
+The origin is passed to the execution policy as part of the intent, and is written on the approval card a turn
+causes, on its row in `GET /activity` (`origin`), and in the audit log. By default it changes no decision: a turn an
+AI client started over MCP is decided exactly as the person's own message is. A person who wants more sets the
+policy's `machineTurns` to `"ask"` (the `execution.machineTurns` preference, or Settings → Control → Requests from
+other programs). Then a turn from `mcp`, `relay` or `cli-api` asks before a risky effect (`external-write`,
+`destructive`, `financial`, `communication`, `media-capture`) the policy would otherwise have run. A deny rule or a
+prohibition still wins; reads, local writes, the person's own turns, automations and peers are unchanged.
+
 ### Conversation deletion
 
 The person's text command “delete this conversation” and spoken equivalent resolve to the same `conversation.delete`
