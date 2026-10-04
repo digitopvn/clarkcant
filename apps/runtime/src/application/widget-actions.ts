@@ -45,7 +45,7 @@ import { appendHostReply, blocksOfConversation, indexHostReply, startBackgroundW
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { AGENT_ITEM_KEY } from "./action-bindings.ts";
-import { estimateTokens, renderActionContext, resolveActionContext } from "./action-context.ts";
+import { estimateTokens, inertQuotedLine, renderActionContext, resolveActionContext } from "./action-context.ts";
 import { type OpenedActionEffect, effectOperationDigest, openActionEffect, settleActionEffect } from "./action-effects.ts";
 import { ACTION_LIMITS, admitCall, bindingLimits, rateLimitedMessage } from "./action-limits.ts";
 import { actionRunning, beginActionRun, endActionRun } from "./action-runs.ts";
@@ -1175,7 +1175,13 @@ async function runPerform(
     // The widget's own code is its word, kept apart from the host's codes so neither the model nor the audit can mistake
     // a widget's "POLICY_REFUSED" for the host's.
     const widgetCode = typeof answered === "object" && pageCode === undefined ? answered.code : undefined;
-    return refusal(code, message, { outcome: "refused", ...(widgetCode === undefined ? {} : { widgetCode }) });
+    // The widget's reason, apart from the host's sentence, so a surface that reads it out can attribute it to the widget.
+    const widgetMessage = typeof answered === "object" && pageCode === undefined && typeof answered.message === "string" ? answered.message : "";
+    return refusal(code, message, {
+      outcome: "refused",
+      ...(widgetCode === undefined ? {} : { widgetCode }),
+      ...(widgetMessage === "" ? {} : { widgetMessage }),
+    });
   }
   if (typeof answered === "object" && answered.status === "done") {
     const output = answered.output ?? "";
@@ -1513,9 +1519,12 @@ export async function runApprovedPerform(
 
 /**
  * What a person reads after approving a perform, in their language: done, refused with nothing sent, or unknown.
- * Written from the code, never from the widget's own words alone, so a widget cannot make the receipt claim more.
+ * Written from the code, never from the widget's own words alone, so a widget cannot make the receipt claim more. The
+ * label comes from the widget's manifest, so it is quoted the way the widget's other words are: nothing in it can close
+ * the quote or read as structure.
  */
-export function performReceipt(locale: "vi" | "en", label: string, result: WidgetActionResult): { text: string; succeeded: boolean } {
+export function performReceipt(locale: "vi" | "en", rawLabel: string, result: WidgetActionResult): { text: string; succeeded: boolean } {
+  const label = inertQuotedLine(rawLabel);
   if (result.ok) {
     return { text: locale === "en" ? `Approved: the widget performed “${label}”.` : `Đã duyệt: widget đã thực hiện “${label}”.`, succeeded: true };
   }

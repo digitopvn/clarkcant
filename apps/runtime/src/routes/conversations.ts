@@ -2158,9 +2158,15 @@ export async function decideApprovalForNode(
       ...askedByRecord,
       at: input.at,
     });
-    // What the widget answered, kept apart from the host's receipt so a surface that reads it out attributes it to the
-    // widget rather than to Clark (`spokenWidgetWords`).
-    const output = performed.result.ok && typeof performed.result.body.output === "string" ? performed.result.body.output : "";
+    // What the widget answered - its output, or its reason for refusing - kept apart from the host's receipt so a surface
+    // that reads it out attributes it to the widget rather than to Clark (`spokenWidgetWords`).
+    const output = performed.result.ok
+      ? typeof performed.result.body.output === "string"
+        ? performed.result.body.output
+        : ""
+      : performed.result.code === "WIDGET_REFUSED" && typeof performed.result.detail?.widgetMessage === "string"
+        ? performed.result.detail.widgetMessage
+        : "";
     return { ok: true, outcome: receipt.text, ...(output === "" ? {} : { widgetOutput: output }) };
   }
 

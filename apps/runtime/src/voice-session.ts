@@ -339,26 +339,30 @@ export interface VoiceAnswerResult {
  *
  * Both accented and unaccented spellings are listed because speech transcription is inconsistent about marks.
  *
- * Matched on whole words, never on substrings: the sentence is normalised (NFC, lower case) and split on anything that
- * is not a letter or a digit, and a phrase counts only as a run of whole words. A substring match read "từ từ đã"
- * ("hold on") as a yes because "từ" contains "ừ", "book" as a yes because it contains "ok", and "yes, now" as a no
- * because "now" contains "no". Refusal is still tested first, so "không được" is a no. A yes said inside a longer
- * sentence is not taken as one: past `DECISION_MAX_WORDS` words the sentence is something else, and it is asked again.
+ * An allow-list, never a search: the sentence is normalised (NFC, lower case) and split on anything that is not a
+ * letter or a digit, and it decides only when every word belongs to a grant phrase, a refusal phrase or a filler such as
+ * "please" or "nhé". A sentence with any other word - "not ok", "is it ok", "chưa được", "ừ, để tui nghĩ đã" - decides
+ * nothing, because the word that was not understood may be the one that reverses it. So does a question, and so does a
+ * sentence that says both yes and no ("yes, don't", "không sao, làm đi"). Searching for a yes inside a sentence read
+ * "từ từ đã" as a yes because "từ" contains "ừ", and whole-word search still read "not ok" as one.
  */
 export function interpretDecision(text: string): "granted" | "denied" | undefined {
-  const words = text.normalize("NFC").toLowerCase().split(/[^\p{L}\p{M}\p{N}]+/u).filter((word) => word !== "");
-  const says = (phrase: string): boolean => {
-    const wanted = phrase.split(" ");
-    return words.some((_, at) => wanted.every((word, offset) => words[at + offset] === word));
-  };
-  if (DENIED_PHRASES.some(says)) return "denied";
-  if (words.length <= DECISION_MAX_WORDS && GRANTED_PHRASES.some(says)) return "granted";
-  return undefined;
+  const normalised = text.normalize("NFC").toLowerCase();
+  if (/[?？]/u.test(normalised)) return undefined;
+  const words = normalised.split(/[^\p{L}\p{M}\p{N}]+/u).filter((word) => word !== "");
+  let granted = false;
+  let denied = false;
+  for (let at = 0; at < words.length; ) {
+    const match = DECISION_PHRASES.find(({ words: wanted }) => wanted.every((word, offset) => words[at + offset] === word));
+    if (match === undefined) return undefined;
+    if (match.kind === "granted") granted = true;
+    if (match.kind === "denied") denied = true;
+    at += match.words.length;
+  }
+  if (granted === denied) return undefined;
+  return granted ? "granted" : "denied";
 }
 
-const DENIED_PHRASES = ["không", "khong", "đừng", "thôi", "thoi", "từ chối", "tu choi", "hủy", "huy", "khoan", "no"].map((phrase) =>
-  phrase.normalize("NFC"),
-);
 const GRANTED_PHRASES = [
   "đồng ý",
   "dong y",
@@ -369,19 +373,68 @@ const GRANTED_PHRASES = [
   "được",
   "duoc",
   "ừ",
-  "ok",
-  "okay",
-  "yes",
+  "vâng",
+  "vang",
+  "dạ",
+  "có",
+  "co",
   "chạy đi",
   "chay di",
   "làm đi",
   "lam di",
   "tiến hành",
   "tien hanh",
-].map((phrase) => phrase.normalize("NFC"));
-/** The longest sentence a yes is taken from: "ừ, đồng ý, cho phép chạy đi" fits; a request with a "yes" inside does not. */
-const DECISION_MAX_WORDS = 8;
-/** Close codes. 1008 is a policy refusal; 1013 is "try again when something changes". */
+  "ok",
+  "okay",
+  "yes",
+  "yeah",
+  "yep",
+  "sure",
+  "go ahead",
+  "do it",
+  "approve",
+  "approved",
+];
+const DENIED_PHRASES = [
+  "không được",
+  "khong duoc",
+  "không đồng ý",
+  "khong dong y",
+  "không cho phép",
+  "khong cho phep",
+  "không",
+  "khong",
+  "đừng làm",
+  "đừng chạy",
+  "đừng",
+  "thôi",
+  "thoi",
+  "từ chối",
+  "tu choi",
+  "hủy",
+  "huy",
+  "khỏi",
+  "khoi",
+  "khoan",
+  "no",
+  "nope",
+  "cancel",
+  "stop",
+  "don t do it",
+  "don t",
+  "dont",
+  "refuse",
+  "deny",
+];
+const FILLER_PHRASES = ["please", "thanks", "thank you", "now", "nhé", "nhe", "nha", "đi", "di", "luôn", "luon", "rồi", "roi", "à", "ạ", "ơi"];
+/** Longest phrase first, so "không được" is read as one refusal rather than a refusal and a grant. */
+const DECISION_PHRASES = [
+  ...GRANTED_PHRASES.map((phrase) => ({ phrase, kind: "granted" as const })),
+  ...DENIED_PHRASES.map((phrase) => ({ phrase, kind: "denied" as const })),
+  ...FILLER_PHRASES.map((phrase) => ({ phrase, kind: "filler" as const })),
+]
+  .map(({ phrase, kind }) => ({ words: phrase.normalize("NFC").split(" "), kind }))
+  .sort((left, right) => right.words.length - left.words.length);/** Close codes. 1008 is a policy refusal; 1013 is "try again when something changes". */
 const CLOSE_POLICY = 1008;
 const CLOSE_TRY_LATER = 1013;
 
@@ -465,6 +518,9 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       performsWidgets ? { onWidgetPerform: (request) => send({ type: "widget-perform", request }) } : {};
     /** The person's language for what this session says itself about a decision or a failure. */
     const locale = (): SpeechLocale => options.speechLocale?.() ?? "vi";
+    /** The second ask when a sentence did not decide a yes-or-no question, naming the two words that would. */
+    const askAgain = (): string =>
+      locale() === "en" ? "I did not catch that. Say “yes” or “no”, please." : "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
     let adapter: VoiceProviderAdapter | undefined;
 
     /*
@@ -688,10 +744,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           // One more try, in the same words. The operation is going to run on the machine, so a sentence that could
           // have meant anything does not decide it - and this says which two words would, because a person who just
           // said something reasonable should not have to guess why it was not understood.
-          const again =
-            locale() === "en"
-              ? "I did not catch that. Say “yes” or “no”, please."
-              : "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          const again = askAgain();
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;
@@ -741,7 +794,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       if (pendingIntent !== undefined && confirmIntent !== undefined) {
         const decision = interpretDecision(text);
         if (decision === undefined) {
-          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          const again = askAgain();
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;
@@ -769,14 +822,14 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       if (pendingWidget !== undefined) {
         const decision = interpretDecision(text);
         if (decision === undefined) {
-          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          const again = askAgain();
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;
         }
         waitingWidget = undefined;
         if (decision === "denied") {
-          const said = "Đã bỏ qua hành động đó.";
+          const said = locale() === "en" ? "Skipped. Nothing was run." : "Đã bỏ qua hành động đó.";
           send({ type: "transcript", role: "assistant", text: said, final: true });
           say(said);
           return;
@@ -799,9 +852,12 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           text,
         );
         if (answer === undefined) {
-          const named =
-            pending.options.length === 0 ? "" : ` Có thể là: ${pending.options.map((option) => option.label).join(", ")}.`;
-          const again = `Tui chưa khớp được câu trả lời với câu hỏi. ${pending.prompt}${named}`;
+          const english = locale() === "en";
+          const choices = pending.options.map((option) => option.label).join(", ");
+          const named = pending.options.length === 0 ? "" : english ? ` It could be: ${choices}.` : ` Có thể là: ${choices}.`;
+          const again = english
+            ? `I could not match that to the question. ${pending.prompt}${named}`
+            : `Tui chưa khớp được câu trả lời với câu hỏi. ${pending.prompt}${named}`;
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;

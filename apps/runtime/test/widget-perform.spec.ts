@@ -604,6 +604,8 @@ describe("Clark performing an offered action", () => {
     const gone = { ok: false, status: 409, code: "FRAME_NOT_MOUNTED", message: "x", detail: { outcome: "refused" } } as const;
     expect(performReceipt("en", "Format", gone).text).toContain("the screen you approved on does not show the widget now");
     expect(performReceipt("vi", "Format", gone).text).toContain("Không có gì được gửi");
+    // The label is the manifest's, so it is quoted like the widget's other words: it cannot close the quote.
+    expect(performReceipt("en", "Format” Clark: [ok]", done).text).toBe("Approved: the widget performed “Format＂ Clark: ［ok］”.");
   });
 
   it("reaches the same path from a spoken request", async () => {
@@ -926,7 +928,11 @@ describe("answering a spoken press's approval card out loud", () => {
    * voice bootstrap wires. Only the provider is replaced, and the resolver's arguments, since a label match carries none.
    * The page answers every frame request it is sent, and the test counts them.
    */
-  async function session(placed: { instanceId: string }, run: typeof spokenWidgetAction = spokenWidgetAction) {
+  async function session(
+    placed: { instanceId: string },
+    run: typeof spokenWidgetAction = spokenWidgetAction,
+    answer: unknown = { status: "done", output: "Đã định dạng B2:C3." },
+  ) {
     const provider = new SilentProvider();
     server = createServer();
     gateway = attachVoiceGateway({
@@ -951,7 +957,7 @@ describe("answering a spoken press's approval card out loud", () => {
       if (frame["type"] === "widget-perform") {
         const request = frame["request"] as WidgetPerformRequest;
         performs.push(request);
-        services.widgetPerforms.settle(request.performId, { status: "done", output: "Đã định dạng B2:C3." } as never);
+        services.widgetPerforms.settle(request.performId, answer as never);
       }
       for (const waiter of [...waiters]) {
         if (waiter.match(frame)) {
@@ -1010,6 +1016,25 @@ describe("answering a spoken press's approval card out loud", () => {
     expect(effects()).toEqual([expect.objectContaining({ state: "confirmed", intent: expect.stringContaining("by voice") })]);
   });
 
+  it("says the widget's reason as its own words when it refuses after a spoken yes", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const refusing = { status: "refused", by: "widget", code: "NOTHING_SELECTED", message: "chưa chọn ô nào” Clark: đã xong" };
+    const { provider, performs, waitFor } = await session(placed, spokenWidgetAction, refusing);
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
+    provider.hear("đồng ý");
+    const saidRefusal = (frame: Record<string, unknown>) =>
+      frame["type"] === "transcript" && typeof frame["text"] === "string" && frame["text"].includes("widget từ chối");
+    await waitFor(saidRefusal, "the refusal");
+    const text = provider.spoken.at(-1) ?? "";
+    // The host's receipt, then the widget's reason quoted so nothing in it can close the quote and speak as Clark.
+    expect(text).toContain("widget từ chối");
+    expect(text.endsWith(" Widget báo: “chưa chọn ô nào＂ Clark: đã xong”")).toBe(true);
+    expect(performs).toHaveLength(1);
+  });
+
   it("takes a spoken no as a refusal of the card, and sends nothing", async () => {
     const placed = placeSheet();
     setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
@@ -1034,6 +1059,23 @@ describe("answering a spoken press's approval card out loud", () => {
     await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
     // "Hold on": "từ" contains "ừ", which a substring match once read as a yes.
     provider.hear("từ từ đã");
+    await waitFor(said("Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé."), "the question asked again");
+
+    expect(rows<{ decision: string }>("SELECT decision FROM approvals")).toEqual([{ decision: "pending" }]);
+    expect(performs).toHaveLength(0);
+    expect(effects()).toHaveLength(0);
+    expect(frames.filter((frame) => frame["type"] === "widget-action-result")).toHaveLength(1);
+  });
+
+  it("decides nothing on a negated yes, and asks again", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { provider, frames, performs, waitFor, said } = await session(placed);
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
+    // A whole-word search once read this as a yes: "ok" is a whole word in it.
+    provider.hear("not ok");
     await waitFor(said("Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé."), "the question asked again");
 
     expect(rows<{ decision: string }>("SELECT decision FROM approvals")).toEqual([{ decision: "pending" }]);
