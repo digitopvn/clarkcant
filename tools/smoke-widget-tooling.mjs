@@ -370,7 +370,8 @@ async function main() {
     mkdirSync(join(project, "vendor"), { recursive: true });
     for (const archive of [archives.cli, archives.sdk]) copyFileSync(archive, join(project, "vendor", basename(archive)));
     writeFileSync(join(project, "package.json"), `${JSON.stringify({ name: "widget-tooling-smoke", version: "0.0.0", private: true, type: "module" }, null, 2)}\n`);
-    run("pnpm", ["add", "--save-exact", "-D", `./vendor/${basename(archives.cli)}`, `./vendor/${basename(archives.sdk)}`, `typescript@${TYPESCRIPT_VERSION}`], project);
+    // The same supply-chain hold the repository applies: no dependency published less than a day ago.
+    run("pnpm", ["add", "--config.minimum-release-age=1440", "--save-exact", "-D", `./vendor/${basename(archives.cli)}`, `./vendor/${basename(archives.sdk)}`, `typescript@${TYPESCRIPT_VERSION}`], project);
     const cliEntry = checkInstalled(project);
     log("  installed both archives into an empty project outside the repository");
 
