@@ -147,12 +147,13 @@ describe("clark widget pack builds the npm archive", () => {
   it("refuses an archive that would publish a credential-shaped file, even one the file list names", async () => {
     const io = quiet();
     const root = await scaffold();
-    writeFileSync(join(root, ".npmrc"), "//registry.npmjs.org/:_authToken=not-a-real-token\n");
+    // npm and pnpm already leave `.npmrc` out of an archive on some platforms, so the file under test is one they keep.
+    writeFileSync(join(root, ".env.local"), "PROVIDER_KEY=not-a-real-key\n");
     editJson(join(root, "package.json"), (pkg) => {
-      pkg["files"] = [...(pkg["files"] as string[]), ".npmrc"];
+      pkg["files"] = [...(pkg["files"] as string[]), ".env.local"];
     });
     expect(await runCli(["widget", "pack", root])).toBe(1);
-    expect(io.err()).toContain(".npmrc");
+    expect(io.err()).toContain(".env.local");
     expect(existsSync(join(root, "dist", "artifact.json"))).toBe(false);
   });
 
