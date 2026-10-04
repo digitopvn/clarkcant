@@ -1,0 +1,272 @@
+name: Release widget tooling
+
+# Publishes @clarkcant/widget-cli (the `clark` command) and @clarkcant/widget-sdk to npm.
+#
+# The archives are built once, from the exact commit, by tools/build-widget-tooling.mjs. Every supported OS and Node
+# version then installs those same archives into an empty project outside the repository and uses them
+# (tools/smoke-widget-tooling.mjs), and only those archives are published.
+#
+# Triggers and what each may do:
+#   - a tag widget-tooling-v<version>, where <version> is @clarkcant/widget-cli's version: build, smoke, publish;
+#   - a manual run from such a tag with `publish` checked: the same;
+#   - any other manual run (any branch, or `publish` unchecked): build, smoke, then `npm publish --dry-run` only. A
+#     branch can never publish, whatever is checked.
+#
+# Versions: the tag must name the CLI's version. Each package's version is then checked against npm before anything is
+# published: a version npm does not have is published; a version npm already has with the same archive integrity is
+# skipped, so a rerun after a partial failure publishes only what is missing; a version npm already has with different
+# contents fails the run before either package is published. So the SDK (versioned on its own) cannot change while
+# keeping a published version number, and a release that publishes nothing new can only be a rerun of identical bytes.
+#
+# Gate: the publish job runs in the `npm-release` GitHub environment. Configure that environment (Settings >
+# Environments) with deployment tags restricted to `widget-tooling-v*` and with required reviewers, so a publish waits
+# for a person and a workflow on another ref cannot reach the environment's secret.
+#
+# Credentials: npm trusted publishing (OIDC) is the intended path. Once each package's trusted publisher on npmjs.com
+# names this repository and this workflow file, `npm publish` exchanges the job's OIDC token for a short-lived publish
+# token and no npm secret is needed. A package's first version, published before a trusted publisher can be set on it,
+# needs the NPM_TOKEN secret of the `npm-release` environment. When that secret is set it reaches exactly one step, the
+# publish, through NODE_AUTH_TOKEN; the npm config written there names the variable, never its value. It is never
+# echoed, never written to a package file, and never present while repository or package code runs in the build or
+# smoke jobs. Provenance is attested either way.
+
+on:
+  push:
+    tags: ["widget-tooling-v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to npm after the smoke passes (only from a widget-tooling-v* tag; otherwise a dry run)
+        type: boolean
+        default: false
+
+# Least privilege: the jobs read the repository; only the publish job adds an OIDC token for npm.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-widget-tooling
+  cancel-in-progress: false
+
+jobs:
+  pack:
+    name: pack the archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and pack @clarkcant/widget-cli and @clarkcant/widget-sdk
+        run: node tools/build-widget-tooling.mjs --pack
+
+      - name: Read the versions being released
+        id: versions
+        run: |
+          cli="$(node -p "require('./dist/widget-tooling/widget-cli/package.json').version")"
+          sdk="$(node -p "require('./dist/widget-tooling/widget-sdk/package.json').version")"
+          echo "cli=$cli" >> "$GITHUB_OUTPUT"
+          echo "@clarkcant/widget-cli@$cli, @clarkcant/widget-sdk@$sdk"
+
+      # A tag names the CLI version it releases; a tag that disagrees with the source would publish something else.
+      # Checked for every run from a tag, manual or pushed. The SDK's version is checked against npm at publish time.
+      - name: Check the tag names the CLI version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ github.ref_name }}
+          CLI_VERSION: ${{ steps.versions.outputs.cli }}
+        run: |
+          if [ "$TAG" != "widget-tooling-v$CLI_VERSION" ]; then
+            echo "Tag $TAG does not match @clarkcant/widget-cli $CLI_VERSION (expected widget-tooling-v$CLI_VERSION)" >&2
+            exit 1
+          fi
+
+      - name: Keep the archives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: widget-tooling-archives
+          path: dist/widget-tooling/archives/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke:
+    name: smoke (${{ matrix.os }}, node ${{ matrix.node }})
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ["22.19", "24"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      # No workspace install: with --archives the smoke builds nothing and imports only Node builtins from the
+      # checkout. The packages it installs are the downloaded archives.
+      - name: Fetch the archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: widget-tooling-archives
+          path: ${{ runner.temp }}/widget-tooling-archives
+
+      - name: Install the archives into an empty project and use them
+        run: node tools/smoke-widget-tooling.mjs --archives "${{ runner.temp }}/widget-tooling-archives"
+
+  dry-run:
+    name: npm publish --dry-run
+    needs: [pack, smoke]
+    if: ${{ !(startsWith(github.ref, 'refs/tags/widget-tooling-v') && (github.event_name == 'push' || inputs.publish == true)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Fetch the archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: widget-tooling-archives
+          path: archives
+
+      - name: Say why this run does not publish
+        if: ${{ inputs.publish == true }}
+        env:
+          REF: ${{ github.ref }}
+        run: echo "::warning::$REF is not a widget-tooling-v* tag, so this run only dry-runs the publish"
+
+      - name: Dry run
+        run: |
+          for archive in archives/*.tgz; do
+            npm publish "$archive" --dry-run --access public
+          done
+
+  publish:
+    name: publish to npm
+    needs: [pack, smoke]
+    if: ${{ startsWith(github.ref, 'refs/tags/widget-tooling-v') && (github.event_name == 'push' || inputs.publish == true) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Restricted to widget-tooling-v* tags with required reviewers; see the header.
+    environment: npm-release
+    permissions:
+      contents: read
+      # Trusted publishing and npm provenance: the registry records that these archives were built by this workflow.
+      id-token: write
+    steps:
+      - name: Refuse any ref but a release tag
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          case "$REF" in
+            refs/tags/widget-tooling-v*) ;;
+            *) echo "$REF is not a widget-tooling-v* tag; nothing may be published from it" >&2; exit 1 ;;
+          esac
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      # Trusted publishing needs npm 11.5.1 or later; Node 24 ships it. Checked rather than installed, so no
+      # package is fetched and run in the job that holds the publish credentials.
+      - name: Check npm can publish with OIDC
+        run: |
+          current="$(npm --version)"
+          node -e '
+            const [have, need] = process.argv.slice(1).map((v) => v.split(".").map(Number));
+            for (let i = 0; i < 3; i++) if (have[i] !== need[i]) process.exit(have[i] > need[i] ? 0 : 1);
+          ' "$current" 11.5.1 || { echo "npm $current cannot use trusted publishing; it needs 11.5.1 or later" >&2; exit 1; }
+          echo "npm $current"
+
+      - name: Fetch the archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: widget-tooling-archives
+          path: archives
+
+      # No repository code runs here: npm reads each archive's own package.json, which holds no lifecycle script.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npm-release.npmrc"
+          : > "$NPM_CONFIG_USERCONFIG"
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            # The config names the variable; npm reads its value at run time, so the token is never written down.
+            echo '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
+            echo "NPM_TOKEN is set; it is used for a package without a trusted publisher"
+          else
+            echo "NPM_TOKEN is not set; publishing through trusted publishing (OIDC) only"
+          fi
+
+          field() { tar -xzOf "$1" package/package.json | node -e 'let s="";process.stdin.on("data",(c)=>s+=c).on("end",()=>process.stdout.write(String(JSON.parse(s)[process.argv[1]])))' "$2"; }
+
+          shopt -s nullglob
+          archives=(archives/*.tgz)
+          if [ "${#archives[@]}" -ne 2 ]; then
+            echo "expected the two archives, found ${#archives[@]}" >&2
+            exit 1
+          fi
+
+          # Decide every archive before publishing any, so a conflict on one never leaves the other half-released.
+          to_publish=()
+          identical=0
+          for archive in "${archives[@]}"; do
+            name="$(field "$archive" name)"
+            version="$(field "$archive" version)"
+            local_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | base64 -w0)"
+            if remote="$(npm view "$name@$version" dist.integrity 2> "$RUNNER_TEMP/npm-view.err")"; then
+              :
+            elif grep -q E404 "$RUNNER_TEMP/npm-view.err"; then
+              remote=""
+            else
+              cat "$RUNNER_TEMP/npm-view.err" >&2
+              echo "could not ask npm whether $name@$version is published" >&2
+              exit 1
+            fi
+            if [ -z "$remote" ]; then
+              echo "$name@$version is new: $local_integrity"
+              to_publish+=("$archive")
+            elif [ "$remote" = "$local_integrity" ]; then
+              echo "$name@$version is already on npm with these exact contents; skipped"
+              identical=$((identical + 1))
+            else
+              echo "::error::$name@$version is already on npm with different contents (npm $remote, this build $local_integrity). Bump its version."
+              exit 1
+            fi
+          done
+
+          for archive in "${to_publish[@]}"; do
+            npm publish "$archive" --provenance --access public
+            echo "published $(field "$archive" name)@$(field "$archive" version)"
+          done
+
+          if [ "${#to_publish[@]}" -eq 0 ] && [ "$identical" -eq 0 ]; then
+            echo "nothing was published and nothing matched a published version" >&2
+            exit 1
+          fi
+          echo "published ${#to_publish[@]}, already published with identical contents $identical"

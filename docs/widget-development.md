@@ -2679,6 +2679,86 @@ with their state, as Restore would, and there is then nothing left to restore.
     clark widget pack
     clark widget publish
 
+### Quickstart outside this repository
+
+`@clarkcant/widget-cli` (the `clark` command) and `@clarkcant/widget-sdk` are built from this repository as npm
+packages that need no ClarkCant checkout. **Status: no version is on npm yet.** The release workflow below exists, but
+until it has run, installing from the registry fails; install the archives built from a checkout instead (see
+[Before a release](#before-a-release)).
+
+On a clean machine with Node 22.19 or later and pnpm (`corepack enable pnpm`), on macOS, Windows or Linux:
+
+    mkdir my-widgets && cd my-widgets
+    pnpm init
+    pnpm add -D @clarkcant/widget-cli
+    pnpm exec clark widget init quick-notes --template pure-ui
+    pnpm exec clark widget test quick-notes
+    pnpm exec clark widget dev quick-notes      # prints the dev host's URL; Ctrl-C stops it
+    pnpm exec clark widget pack quick-notes
+    npm publish quick-notes/dist/quick-notes-0.1.0.tgz
+
+- **Template.** `blank`, `form` and `dashboard` are a minimal isolated widget. `pure-ui` (a text editor), `media-tool`,
+  `ai-generator`, `ui-with-service` and `connected-app` copy a reference app that this repository's own tests keep
+  working ([init](#init)). The directory name becomes the last segment of the package id (`com.example.quick-notes`)
+  and the npm name (`quick-notes`); rename it, or use a scope you own, before publishing.
+- **SDK.** `pnpm add -D @clarkcant/widget-sdk` gives browser-safe ES modules with type declarations: `.` holds the
+  contracts and the bridge runtime (`createWidgetRuntime`, `MessageEndpoint`, …) and `./dom` binds the host's
+  appearance to an element (`bindAppearance`):
+
+      import { createWidgetRuntime } from "@clarkcant/widget-sdk";
+      import { bindAppearance } from "@clarkcant/widget-sdk/dom";
+
+  The dev host and a node already give a package frame the runtime as `window.clarkcantWidget`, so the templates need
+  no import. A widget package may not declare npm `dependencies` ([pack](#pack)): a frame that imports the SDK bundles
+  it into the files it ships, and keeps the SDK a development dependency of the project that builds it.
+- **Test, dev, pack.** `test` runs the conformance suite; `dev` serves the package in the local isolated host on
+  `127.0.0.1`; `pack` writes `dist/<name>-<version>.tgz` with `pnpm pack` and refuses an archive that would not pass
+  the suite on its own.
+- **npm publication is not Marketplace indexing.** `npm publish` puts the archive on the npm registry and nothing more.
+  A Marketplace indexes npm packages carrying the `clarkcant` keyword, or takes a submission; `clark widget publish`
+  only prepares that directory entry ([publish](#publish)). Neither is needed to develop or use a private widget: a
+  local path needs no account.
+
+#### Before a release
+
+From a checkout, `pnpm install` then `pnpm build:widget-tooling` writes
+`dist/widget-tooling/archives/clarkcant-widget-cli-<version>.tgz` and `clarkcant-widget-sdk-<version>.tgz`. Install
+them in the project instead of the registry versions:
+
+    pnpm add -D /path/to/clarkcant-widget-cli-<version>.tgz /path/to/clarkcant-widget-sdk-<version>.tgz
+
+`pnpm smoke:widget-tooling` does all of this on the current OS: it packs both packages, installs them into an empty
+project outside the repository, runs `init` (blank and `pure-ui`), `test`, `pack`, the widget, catalog and theme dev
+hosts over HTTP, and imports and type-checks the SDK.
+
+#### How the packages are built and released
+
+Inside this repository both packages stay `private` and resolve to their TypeScript source, like every workspace
+package. `tools/build-widget-tooling.mjs` generates a separate package directory for each under
+`dist/widget-tooling/`: the code bundled with esbuild, the workspace packages inlined and every third-party import
+declared at the exact version the repository pins; the SDK's declarations; the CLI's templates (`templates/`) and the
+dev hosts' browser modules as self-contained bundles (`runtime/`), which the installed dev hosts serve from disk as they
+are. The CLI's `THIRD_PARTY_NOTICES.md` lists the third-party code those bundles inline, with each licence. The
+generated `package.json` holds no `workspace:` specifier and no lifecycle script. `clark --version` prints the installed
+CLI's version.
+
+`.github/workflows/release-widget-tooling.yml` releases them. Every run packs the archives once and runs the smoke
+against those archives on Ubuntu, Windows and macOS with Node 22.19 and 24. Only a run from a `widget-tooling-v<version>`
+tag naming `@clarkcant/widget-cli`'s version publishes: the tag push itself, or a manual run from that tag with
+`publish` checked. Any other run, including a manual run from a branch with `publish` checked, stops at
+`npm publish --dry-run`.
+
+Before publishing anything, the workflow compares each package's version with npm. A version npm does not have is
+published with `npm publish --provenance --access public`. A version npm already has with the same archive integrity is
+skipped, so a rerun publishes only what is missing. A version npm already has with different contents fails the run
+before either package is published, so a changed package always needs a new version.
+
+The publish job runs in the `npm-release` GitHub environment. Its maintainers must restrict that environment's
+deployments to `widget-tooling-v*` tags and require a reviewer. npm trusted publishing (OIDC) is the intended
+credential: once each package's trusted publisher on npmjs.com names this repository and workflow, no npm secret is
+needed. A package's first version, published before a trusted publisher can be set on it, needs the environment's
+`NPM_TOKEN` secret, which reaches only the publish step.
+
 ### init
 
 Templates:
