@@ -18,6 +18,7 @@ import { recordVoiceTranscript } from "@clarkcant/core";
 import { GeminiLiveAdapter, type VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
 
+import { type SpeechLocale, spokenApprovalDecided } from "./application/action-speech.ts";
 import { tokenMatches } from "./gateway.ts";
 import {
   NO_FOCUSED_SURFACE_SAY,
@@ -100,6 +101,12 @@ import { focusedSemanticView } from "./widget-semantic.ts";
  */
 const DEFAULT_HEARTBEAT_MS = 15_000;
 
+/**
+ * Hands a `widget-perform` to the page this voice session runs on. `true` when it went out on the open socket; `false`
+ * when the session had already closed, so nothing reached a frame and nothing can have run.
+ */
+export type VoiceFrameSink = (request: WidgetPerformRequest) => boolean;
+
 export interface VoiceGatewayOptions {
   server: Server;
   services: NodeServices;
@@ -152,9 +159,10 @@ export interface VoiceGatewayOptions {
     onAppIntent?: (decision: AppIntentDecision) => void;
     /**
      * Forwards an action Clark asked a widget's frame to perform while answering this utterance. The page showing
-     * the widget hands it to the frame and reports what it answered over HTTP, exactly as for a typed turn.
+     * the widget hands it to the frame and reports what it answered over HTTP, exactly as for a typed turn. `false` when
+     * the socket was already closed and nothing went out.
      */
-    onWidgetPerform?: (request: WidgetPerformRequest) => void;
+    onWidgetPerform?: VoiceFrameSink;
   }) => Promise<VoiceAnswerResult | undefined>;
   /**
    * Record the user's spoken decision on an operation.
@@ -168,7 +176,7 @@ export interface VoiceGatewayOptions {
     decision: "granted" | "denied";
     digest: string;
     /** Present when this page can run a `widget-perform`: an approved widget action is handed to its frame through it. */
-    onWidgetPerform?: (request: WidgetPerformRequest) => void;
+    onWidgetPerform?: VoiceFrameSink;
   }) => Promise<{ ok: boolean; message: string }>;
   /**
    * Answer a question the agent asked, through the same route a click uses.
@@ -193,6 +201,15 @@ export interface VoiceGatewayOptions {
    * act" true rather than a slogan.
    */
   pendingFor?: (conversationId: ConversationId) => PendingVoiceInteraction | undefined;
+  /**
+   * Whether an approval this session is about to take a sentence as the answer to still waits: pending and unexpired.
+   *
+   * A card can be decided by a click, or expire, while the session is listening for a yes or no. Asked before a
+   * sentence is read as the answer, so a card that no longer waits does not swallow the person's next sentence.
+   */
+  approvalWaits?: (approvalId: string) => boolean;
+  /** The person's language for what the session itself says about a decision or a failure. Vietnamese when absent. */
+  speechLocale?: () => SpeechLocale;
 
   /**
    * What a sentence means to the application, as opposed to what it means to the agent.
@@ -222,6 +239,12 @@ export interface VoiceGatewayOptions {
     conversationId: ConversationId;
     action: VoiceWidgetAction;
     focused: SemanticView | undefined;
+    /**
+     * Hands an offered action to the frame on the page this session runs on, as a typed turn's and an approval's
+     * performs are. Present only when the page said it runs the `widget-perform` version (`auth.widgetPerform`); absent,
+     * nobody can ask a frame and an offered action is refused before anything is sent.
+     */
+    onWidgetPerform?: VoiceFrameSink;
   }) => Promise<VoiceWidgetRun>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
@@ -315,35 +338,106 @@ export interface VoiceAnswerResult {
  * response to a mumble about something that is going to run.
  *
  * Both accented and unaccented spellings are listed because speech transcription is inconsistent about marks.
+ *
+ * An allow-list, never a search: the sentence is normalised (NFC, lower case) and split on anything that is not a
+ * letter or a digit, and it decides only when every word belongs to a grant phrase, a refusal phrase or a filler such as
+ * "please" or "nhé". A sentence with any other word - "not ok", "is it ok", "chưa được", "ừ, để tui nghĩ đã" - decides
+ * nothing, because the word that was not understood may be the one that reverses it. So does a question, and so does a
+ * sentence that says both yes and no ("yes, don't", "không sao, làm đi"). Searching for a yes inside a sentence read
+ * "từ từ đã" as a yes because "từ" contains "ừ", and whole-word search still read "not ok" as one.
  */
 export function interpretDecision(text: string): "granted" | "denied" | undefined {
-  const said = text.toLowerCase();
-  const denied = ["không", "khong", "đừng", "thôi", "thoi", "từ chối", "tu choi", "hủy", "huy", "khoan", "no"];
-  const granted = [
-    "đồng ý",
-    "dong y",
-    "cho phép",
-    "cho phep",
-    "duyệt",
-    "duyet",
-    "được",
-    "duoc",
-    "ừ",
-    "ok",
-    "yes",
-    "chạy đi",
-    "chay di",
-    "làm đi",
-    "lam di",
-    "tiến hành",
-    "tien hanh",
-  ];
-  // Refusal is tested first: "không được" contains a word that would otherwise read as permission.
-  if (denied.some((word) => said.includes(word))) return "denied";
-  if (granted.some((word) => said.includes(word))) return "granted";
-  return undefined;
+  const normalised = text.normalize("NFC").toLowerCase();
+  if (/[?？‽]/u.test(normalised)) return undefined;
+  const words = normalised.split(/[^\p{L}\p{M}\p{N}]+/u).filter((word) => word !== "");
+  let granted = false;
+  let denied = false;
+  for (let at = 0; at < words.length; ) {
+    const match = DECISION_PHRASES.find(({ words: wanted }) => wanted.every((word, offset) => words[at + offset] === word));
+    if (match === undefined) return undefined;
+    if (match.kind === "granted") granted = true;
+    if (match.kind === "denied") denied = true;
+    at += match.words.length;
+  }
+  if (granted === denied) return undefined;
+  return granted ? "granted" : "denied";
 }
 
+const GRANTED_PHRASES = [
+  "đồng ý",
+  "dong y",
+  "cho phép",
+  "cho phep",
+  "duyệt",
+  "duyet",
+  "được",
+  "duoc",
+  "ừ",
+  "vâng",
+  "vang",
+  "dạ",
+  "có",
+  "co",
+  "chạy đi",
+  "chay di",
+  "làm đi",
+  "lam di",
+  "tiến hành",
+  "tien hanh",
+  "ok",
+  "okay",
+  "yes",
+  "yeah",
+  "yep",
+  "sure",
+  "go ahead",
+  "do it",
+  "approve",
+  "approved",
+];
+const DENIED_PHRASES = [
+  "không được",
+  "khong duoc",
+  "không đồng ý",
+  "khong dong y",
+  "không cho phép",
+  "dạ không",
+  "vâng không",
+  "khong cho phep",
+  "không",
+  "khong",
+  "đừng làm",
+  "đừng chạy",
+  "đừng",
+  "thôi",
+  "thoi",
+  "từ chối",
+  "tu choi",
+  "hủy",
+  "huy",
+  "khỏi",
+  "khoi",
+  "khoan",
+  "no",
+  "nope",
+  "cancel",
+  "stop",
+  "don t do it",
+  "don t",
+  "dont",
+  "refuse",
+  "deny",
+];
+/** No "à": a sentence ending in it ("được à", "ok à") asks, it does not answer. */
+const FILLER_PHRASES = ["please", "thanks", "thank you", "now", "nhé", "nhe", "nha", "đi", "di", "luôn", "luon", "rồi", "roi", "ạ", "ơi"];
+/** Longest phrase first, so "không được" is read as one refusal rather than a refusal and a grant. */
+const DECISION_PHRASES = [
+  ...GRANTED_PHRASES.map((phrase) => ({ phrase, kind: "granted" as const })),
+  ...DENIED_PHRASES.map((phrase) => ({ phrase, kind: "denied" as const })),
+  ...FILLER_PHRASES.map((phrase) => ({ phrase, kind: "filler" as const })),
+]
+  .map(({ phrase, kind }) => ({ words: phrase.normalize("NFC").split(" "), kind }))
+  .sort((left, right) => right.words.length - left.words.length);
 /** Close codes. 1008 is a policy refusal; 1013 is "try again when something changes". */
 const CLOSE_POLICY = 1008;
 const CLOSE_TRY_LATER = 1013;
@@ -423,6 +517,14 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     let conversationId: ConversationId | undefined;
     /** Whether the page said it can hand a `widget-perform` to a mounted frame and report back (the auth frame). */
     let performsWidgets = false;
+    /** The `onWidgetPerform` a turn, a decided approval or a spoken press carries: present only when `performsWidgets`. */
+    const frameSink = (): { onWidgetPerform?: VoiceFrameSink } =>
+      performsWidgets ? { onWidgetPerform: (request) => send({ type: "widget-perform", request }) } : {};
+    /** The person's language for what this session says itself about a decision or a failure. */
+    const locale = (): SpeechLocale => options.speechLocale?.() ?? "vi";
+    /** The second ask when a sentence did not decide a yes-or-no question, naming the two words that would. */
+    const askAgain = (): string =>
+      locale() === "en" ? "I did not catch that. Say “yes” or “no”, please." : "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
     let adapter: VoiceProviderAdapter | undefined;
 
     /*
@@ -480,8 +582,11 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
      */
     let answerQueue: Promise<void> = Promise.resolve();
 
-    const send = (payload: unknown): void => {
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
+    /** Sends a frame to the page; `false` when the socket has closed and nothing went out. */
+    const send = (payload: unknown): boolean => {
+      if (ws.readyState !== ws.OPEN) return false;
+      ws.send(JSON.stringify(payload));
+      return true;
     };
 
     const deny = (code: string, message: string, extra: Record<string, unknown> = {}, closeCode = CLOSE_POLICY): void => {
@@ -563,19 +668,41 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       const run = options.widgetAction;
       const runIn = conversationId;
       if (run === undefined || runIn === undefined) return;
-      answerQueue = answerQueue.then(async () => {
-        const outcome = await run({ conversationId: runIn, action, focused: focusedViewNow() });
-        // The page is told what changed rather than that something changed: it updates the same state a click updates,
-        // and it can only do that from the node's own account of the revision it landed on.
-        send({
-          type: "widget-action-result",
-          ok: outcome.ok,
-          say: outcome.say,
-          ...(outcome.ok ? { instanceId: outcome.instanceId, revision: outcome.revision } : {}),
+      answerQueue = answerQueue
+        .then(async () => {
+          const outcome = await run({
+            conversationId: runIn,
+            action,
+            focused: focusedViewNow(),
+            ...frameSink(),
+          });
+          // The page is told what changed rather than that something changed: it updates the same state a click
+          // updates, and it can only do that from the node's own account of the revision it landed on.
+          send({
+            type: "widget-action-result",
+            ok: outcome.ok,
+            say: outcome.say,
+            ...(outcome.ok ? { instanceId: outcome.instanceId, revision: outcome.revision } : {}),
+          });
+          // The press placed an approval card, or found one waiting: the next sentence answers it, through the same
+          // decision a click on the card makes, exactly as for a card an agent's turn placed. The press itself never
+          // approves anything; only the person's next words can.
+          if (outcome.ok && outcome.pendingInteraction !== undefined) waiting = outcome.pendingInteraction;
+          send({ type: "transcript", role: "assistant", text: outcome.say, final: true });
+          say(outcome.say);
+        })
+        .catch(() => {
+          // The runner answers its own failures in the person's language; this is the last resort for one that threw
+          // anyway. The session goes on, and the person hears that it failed rather than nothing at all.
+          // The frame names the failure without its internals (a storage message, say).
+          const failed =
+            locale() === "en"
+              ? "I could not handle that action because of an error on this machine. Check the conversation before trying again."
+              : "Tui không xử lý được hành động đó vì một lỗi trên máy này. Bạn kiểm tra cuộc trò chuyện trước khi thử lại nhé.";
+          send({ type: "error", code: "VOICE_WIDGET_ACTION_FAILED", message: failed });
+          send({ type: "transcript", role: "assistant", text: failed, final: true });
+          say(failed);
         });
-        send({ type: "transcript", role: "assistant", text: outcome.say, final: true });
-        say(outcome.say);
-      });
     };
 
     const ask = (at: Instant): void => {
@@ -610,6 +737,9 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       // A sentence said while something is pending is an answer, not a new request for the agent. The question need
       // not have been asked here: what is pending belongs to the conversation, so a card a click asked is answerable
       // by a sentence and a card this session asked is answerable by a click.
+      // An approval this session remembers may have been decided by a click, or expired, since it was asked: then it no
+      // longer waits, and the sentence is not an answer to it but whatever it is on its own.
+      if (waiting?.kind === "approval" && options.approvalWaits?.(waiting.approvalId) === false) waiting = undefined;
       const pending = waiting ?? options.pendingFor?.(askIn);
       if (pending !== undefined && pending.kind === "approval" && options.decideApproval !== undefined) {
         const decide = options.decideApproval;
@@ -618,7 +748,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           // One more try, in the same words. The operation is going to run on the machine, so a sentence that could
           // have meant anything does not decide it - and this says which two words would, because a person who just
           // said something reasonable should not have to guess why it was not understood.
-          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          const again = askAgain();
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;
@@ -631,13 +761,17 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             approvalId: pending.approvalId,
             decision,
             digest: pending.digest,
-            ...(performsWidgets ? { onWidgetPerform: (request: WidgetPerformRequest) => send({ type: "widget-perform", request }) } : {}),
+            ...frameSink(),
           });
+          // What the decision came to, as the node reports it: for a widget action, whether the widget did it and what it
+          // answered. Never "running it now", which would be said before anyone knows.
           const said = decided.ok
-            ? decision === "granted"
-              ? "Đã duyệt. Tui chạy lệnh đó ngay."
-              : "Đã từ chối. Không có gì được chạy."
-            : `Không thực hiện được: ${decided.message}`;
+            ? decided.message.trim() !== ""
+              ? decided.message
+              : spokenApprovalDecided(decision, locale())
+            : locale() === "en"
+              ? `Could not do it: ${decided.message}`
+              : `Không thực hiện được: ${decided.message}`;
           send({ type: "transcript", role: "assistant", text: said, final: true });
           say(said);
         });
@@ -664,7 +798,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       if (pendingIntent !== undefined && confirmIntent !== undefined) {
         const decision = interpretDecision(text);
         if (decision === undefined) {
-          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          const again = askAgain();
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;
@@ -692,14 +826,14 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       if (pendingWidget !== undefined) {
         const decision = interpretDecision(text);
         if (decision === undefined) {
-          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          const again = askAgain();
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;
         }
         waitingWidget = undefined;
         if (decision === "denied") {
-          const said = "Đã bỏ qua hành động đó.";
+          const said = locale() === "en" ? "Skipped. Nothing was run." : "Đã bỏ qua hành động đó.";
           send({ type: "transcript", role: "assistant", text: said, final: true });
           say(said);
           return;
@@ -722,9 +856,12 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           text,
         );
         if (answer === undefined) {
-          const named =
-            pending.options.length === 0 ? "" : ` Có thể là: ${pending.options.map((option) => option.label).join(", ")}.`;
-          const again = `Tui chưa khớp được câu trả lời với câu hỏi. ${pending.prompt}${named}`;
+          const english = locale() === "en";
+          const choices = pending.options.map((option) => option.label).join(", ");
+          const named = pending.options.length === 0 ? "" : english ? ` It could be: ${choices}.` : ` Có thể là: ${choices}.`;
+          const again = english
+            ? `I could not match that to the question. ${pending.prompt}${named}`
+            : `Tui chưa khớp được câu trả lời với câu hỏi. ${pending.prompt}${named}`;
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;
@@ -739,7 +876,13 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             ...(answer.optionIds === undefined ? {} : { optionIds: answer.optionIds }),
             ...(answer.confirmed === undefined ? {} : { confirmed: answer.confirmed }),
           });
-          const said = recorded.ok ? "Đã ghi câu trả lời của bạn." : `Không ghi được câu trả lời: ${recorded.message}`;
+          const said = recorded.ok
+            ? locale() === "en"
+              ? "I recorded your answer."
+              : "Đã ghi câu trả lời của bạn."
+            : locale() === "en"
+              ? `Could not record the answer: ${recorded.message}`
+              : `Không ghi được câu trả lời: ${recorded.message}`;
           send({ type: "transcript", role: "assistant", text: said, final: true });
           say(said);
         });
@@ -821,7 +964,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             onAppIntent: (decision) => send({ type: "app-intent", decision }),
             // Only to a page that said it can hand one to a frame and report back: any other surface is sent none, and
             // the node learns at once that nobody can ask a frame rather than waiting on a report that cannot come.
-            ...(performsWidgets ? { onWidgetPerform: (request: WidgetPerformRequest) => send({ type: "widget-perform", request }) } : {}),
+            ...frameSink(),
           });
           if (result === undefined) return;
           answeredMessages += result.recordedMessages;

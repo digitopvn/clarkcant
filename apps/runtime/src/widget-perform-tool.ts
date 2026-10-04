@@ -18,7 +18,7 @@ import { listConversationInstanceIds, transaction } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 
 import { compileWidgetAction } from "./application/action-bindings.ts";
-import { inertContextText } from "./application/action-context.ts";
+import { inertContextText, inertLine, inertQuotedLine } from "./application/action-context.ts";
 import {
   type WidgetActionOptions,
   type WidgetActionResult,
@@ -140,14 +140,6 @@ function describeOffered(targets: readonly OfferedActionTarget[]): string {
   );
 }
 
-/**
- * A widget's words on one line, unable to act as structure in the prompt: brackets become their full-width forms and
- * every control character or line separator becomes a space. Used for sentences that carry what a widget said.
- */
-function inertLine(text: string): string {
-  // eslint-disable-next-line no-control-regex
-  return text.replace(/\[/gu, "［").replace(/\]/gu, "］").replace(/[\x00-\x1f\x7f\u2028\u2029\u0085]/gu, " ");
-}
 
 /** A widget's output as a block of data: control characters dropped, then made inert like any widget context. */
 function inertBlock(text: string): string {
@@ -177,7 +169,7 @@ function describePerform(label: string, result: WidgetActionResult): string {
         : "";
     return `Done: the widget performed “${label}”.${output}`;
   }
-  const widgetCode = typeof result.detail?.widgetCode === "string" ? ` [widget code ${inertLine(result.detail.widgetCode)}]` : "";
+  const widgetCode = typeof result.detail?.widgetCode === "string" ? ` [widget code ${inertQuotedLine(result.detail.widgetCode)}]` : "";
   if (result.detail?.outcome === "uncertain") {
     return `Unknown: ${inertLine(result.message)} (${result.code}). Do not perform it again before the person confirms.`;
   }
@@ -244,7 +236,8 @@ export function createPerformWidgetActionTool(deps: PerformWidgetActionToolDeps)
         input,
         source: deps.channel() === "voice" ? "voice" : "agent",
         ...(origin === undefined ? {} : { origin }),
-        options: perform === undefined ? {} : { perform },
+        // The card a policy asks for goes into this turn's answer (`hostCard` below), not into a reply of its own.
+        options: { cardInTurn: true, ...(perform === undefined ? {} : { perform }) },
       });
       if (pressed.kind === "gone") return { text: `“${target.label}” is no longer on that widget. Nothing was performed.` };
       const result = pressed.result;

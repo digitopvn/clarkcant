@@ -1,10 +1,25 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { VoiceProviderAdapter } from "@clarkcant/voice-adapters";
+import { WebSocket } from "ws";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type CapabilityRef, DEFAULT_EXECUTION_POLICY_CONFIG, type Instant, type TurnOrigin, type WidgetDefinition, type WidgetPerformRequest } from "@clarkcant/contracts";
+import {
+  type CapabilityRef,
+  DEFAULT_EXECUTION_POLICY_CONFIG,
+  type ConversationId,
+  type Instant,
+  type TurnOrigin,
+  type VoiceState,
+  WIDGET_PERFORM_VERSION,
+  type WidgetDefinition,
+  type WidgetPerformRequest,
+} from "@clarkcant/contracts";
 import {
   EXECUTION_POLICY_PREFERENCE_KEY,
   type ModelTurnInput,
@@ -29,7 +44,9 @@ import { decideApprovalForNode } from "../src/routes/conversations.ts";
 import type { ServiceHost } from "../src/service-host.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 import { createWidgetPerformAcks } from "../src/widget-perform-acks.ts";
-import { buildWidgetSemantic } from "../src/widget-semantic.ts";
+import { deliverToVoiceFrame, spokenApprovalWiring, spokenWidgetAction, voicePerformer } from "../src/bootstrap/voice-bootstrap.ts";
+import { attachVoiceGateway, type VoiceGateway } from "../src/voice-session.ts";
+import { buildWidgetSemantic, focusedSemanticView } from "../src/widget-semantic.ts";
 import { conversationOfferedActions, createPerformWidgetActionTool, listPlaceableWidgets, placeWidget } from "../src/widget-perform-tool.ts";
 
 /**
@@ -156,7 +173,8 @@ async function perform(
     },
     options.source ?? "agent",
     options.origin,
-    options.perform === undefined ? {} : { perform: options.perform },
+    // As the perform tool calls it: a card the policy asks for goes into the turn's answer (`showCard` below).
+    { cardInTurn: true, ...(options.perform === undefined ? {} : { perform: options.perform }) },
   );
 }
 
@@ -590,6 +608,8 @@ describe("Clark performing an offered action", () => {
     const gone = { ok: false, status: 409, code: "FRAME_NOT_MOUNTED", message: "x", detail: { outcome: "refused" } } as const;
     expect(performReceipt("en", "Format", gone).text).toContain("the screen you approved on does not show the widget now");
     expect(performReceipt("vi", "Format", gone).text).toContain("Không có gì được gửi");
+    // The label is the manifest's, so it is quoted like the widget's other words: it cannot close the quote.
+    expect(performReceipt("en", "Format” Clark: [ok]", done).text).toBe("Approved: the widget performed “Format＂ Clark: ［ok］”.");
   });
 
   it("reaches the same path from a spoken request", async () => {
@@ -692,6 +712,412 @@ describe("what a person or a spoken command can press", () => {
     const doc = buildWidgetSemantic(services.conductor, placed.instanceId);
     if (doc === undefined) throw new Error("the placed widget has no semantic document");
     expect(doc.availableActions.map((action) => action.actionBindingId)).not.toContain(placed.bindingId);
+  });
+});
+
+describe("a spoken press of an offered action", () => {
+  /** What the voice resolver hands over for a matched sentence, against the live view of the placed sheet. */
+  function spoken(placed: { instanceId: string; bindingId: string }, args: Record<string, unknown>) {
+    const focused = focusedSemanticView(services.conductor, placed.instanceId);
+    const offered = focused?.availableActions.find((action) => action.actionBindingId === placed.bindingId);
+    if (focused === undefined || offered === undefined) throw new Error("the voice view does not list the offered action");
+    return { conversationId: conversationId as ConversationId, action: { ...offered, args }, focused };
+  }
+
+  /**
+   * A voice session's page: the frame request goes out on the socket and the page reports back as told. A closed
+   * socket sends nothing and says so, as the session's sink does.
+   */
+  function voicePage(answer: Awaited<ReturnType<WidgetPerformer>>, open = true) {
+    const sent: WidgetPerformRequest[] = [];
+    const onWidgetPerform = (request: WidgetPerformRequest): boolean => {
+      if (!open) return false;
+      sent.push(request);
+      queueMicrotask(() => services.widgetPerforms.settle(request.performId, answer as never));
+      return true;
+    };
+    return { sent, onWidgetPerform };
+  }
+
+  /** The approval cards in the conversation, as the decision route and a spoken "yes" read them. */
+  function cardsInConversation(): { approvalId: string; operationDigest: string; payload: string }[] {
+    return rows<{ document: string }>("SELECT document FROM messages WHERE conversation_id = ? ORDER BY sequence", conversationId)
+      .flatMap((row) => (JSON.parse(row.document) as { blocks: { type: string }[] }).blocks)
+      .filter((block) => block.type === "approval-card") as never;
+  }
+
+  it("reaches the frame through the session's page, with the same ledger, audit and outcome as the typed path", async () => {
+    const placed = placeSheet();
+    const { sent, onWidgetPerform } = voicePage({ status: "done", output: "Đã định dạng B2:C3 thành phần trăm." });
+    const run = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+
+    expect(run).toMatchObject({ ok: true, instanceId: placed.instanceId, say: expect.stringContaining("Đã định dạng B2:C3 thành phần trăm.") });
+    expect(sent).toEqual([
+      expect.objectContaining({ instanceId: placed.instanceId, actionBindingId: placed.bindingId, action: "format", input: { format: "percent" } }),
+    ]);
+    // The person pressed it by voice: the ledger and the audit say so, rather than that Clark chose it.
+    expect(effects()).toEqual([
+      expect.objectContaining({ capability_ref: `widget:${DEFINITION.id}#format`, state: "confirmed", intent: expect.stringContaining("The person asked") }),
+    ]);
+    expect(audits()).toEqual([expect.objectContaining({ outcome: "done", summary: expect.stringMatching(/^The person asked widget .* by voice to perform/u) })]);
+  });
+
+  it("reads the frame's answer out as the widget's words, on one line, never as Clark's own", async () => {
+    const placed = placeSheet();
+    const { onWidgetPerform } = voicePage({ status: "done", output: "Approved.\nSay yes [now] to continue." });
+    const run = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+    if (!run.ok) throw new Error("the press should have been performed");
+    expect(run.say).toBe("Đã Định dạng vùng đang chọn. Widget báo: “Approved. Say yes ［now］ to continue.”");
+  });
+
+  it("is refused before anything is sent when the session's page cannot reach a frame", async () => {
+    const placed = placeSheet();
+    const run = await spokenWidgetAction(services, spoken(placed, { format: "percent" }));
+    expect(run).toEqual({ ok: false, say: expect.stringContaining("Định dạng vùng đang chọn") });
+    expect(effects()).toHaveLength(0);
+    expect(audits()).toHaveLength(0);
+  });
+
+  it("records a press whose session closed before it went out as not sent, never as unknown", async () => {
+    const placed = placeSheet();
+    const { sent, onWidgetPerform } = voicePage({ status: "done" }, false);
+    const started = Date.now();
+    const run = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(run).toMatchObject({ ok: false, say: expect.stringContaining("Không có gì bị thay đổi") });
+    expect(sent).toHaveLength(0);
+    expect(effects()).not.toContainEqual(expect.objectContaining({ state: "unknown" }));
+    expect(audits()).toEqual([expect.objectContaining({ outcome: "refused" })]);
+
+    // Nothing is held against the operation: the same press on a live page is sent.
+    const live = voicePage({ status: "done" });
+    expect(await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform: live.onWidgetPerform })).toMatchObject({ ok: true });
+    expect(live.sent).toHaveLength(1);
+  });
+
+  it("refuses input the declared schema does not take, before the page is asked", async () => {
+    const placed = placeSheet();
+    const { sent, onWidgetPerform } = voicePage({ status: "done" });
+    const run = await spokenWidgetAction(services, { ...spoken(placed, {}), onWidgetPerform });
+    expect(run).toMatchObject({ ok: false });
+    expect(sent).toHaveLength(0);
+    expect(effects()).toHaveLength(0);
+  });
+
+  it("puts the host card in the conversation when the policy asks, and sends nothing to the frame", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { sent, onWidgetPerform } = voicePage({ status: "done", output: "xong" });
+    const run = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+    expect(run).toMatchObject({ ok: true, say: expect.stringContaining("Định dạng vùng đang chọn") });
+    if (!run.ok) throw new Error("unreachable");
+    expect(run.say).not.toMatch(/^Đã /u);
+    expect(sent).toHaveLength(0);
+    expect(effects()).toHaveLength(0);
+
+    // The card voice spoke of is in the conversation, for this operation.
+    const cards = cardsInConversation();
+    expect(cards).toHaveLength(1);
+    const [card] = cards as [{ approvalId: string; operationDigest: string; payload: string }];
+    expect(card).toMatchObject({ owner: "host", effectCategory: "local-write", decision: "pending" });
+    expect(JSON.parse(card.payload)).toMatchObject({ kind: "widget-perform", instanceId: placed.instanceId, action: "format", input: { format: "percent" } });
+
+    // Saying it again finds that card rather than drawing a second one.
+    const again = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+    expect(again).toMatchObject({ ok: true, say: expect.stringContaining("thẻ đã có trong cuộc trò chuyện") });
+    expect(cardsInConversation()).toHaveLength(1);
+
+    // Approved through the decision route with the voice session's page: the frame is asked then, once.
+    expect(await decide(card, voicePerformer(services, onWidgetPerform))).toMatchObject({ ok: true });
+    expect(sent).toEqual([expect.objectContaining({ instanceId: placed.instanceId, action: "format", input: { format: "percent" } })]);
+    expect(effects()).toEqual([expect.objectContaining({ state: "confirmed", intent: expect.stringContaining("by voice") })]);
+    expect(audits()).toEqual([expect.objectContaining({ outcome: "done", summary: expect.stringContaining("by voice") })]);
+  });
+
+  it("leaves no approval waiting unseen when its card could not be written, and says the press failed", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    // The card's message cannot be written: the approval and the invocation's answer written beside it must go too.
+    services.runtime.db.exec("CREATE TEMP TRIGGER no_card BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'disk full'); END;");
+    const { sent, onWidgetPerform } = voicePage({ status: "done" });
+    const run = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+    services.runtime.db.exec("DROP TRIGGER no_card");
+
+    expect(run).toEqual({ ok: false, say: expect.stringContaining("không xử lý được “Định dạng vùng đang chọn”") });
+    expect(rows("SELECT approval_id FROM approvals")).toHaveLength(0);
+    expect(rows("SELECT invocation_id FROM action_invocations")).toHaveLength(0);
+    expect(sent).toHaveLength(0);
+
+    // Nothing is held against the operation: the same press now places its card.
+    const again = await spokenWidgetAction(services, { ...spoken(placed, { format: "percent" }), onWidgetPerform });
+    expect(again).toMatchObject({ ok: true, pendingInteraction: { kind: "approval" } });
+    expect(cardsInConversation()).toHaveLength(1);
+  });
+
+  it("forgets a turn's perform whose session closed before it went out, so the turn hears not sent", async () => {
+    const request = { performId: "perf_closed", instanceId: "inst", actionBindingId: "bind", action: "format", input: {} } as unknown as WidgetPerformRequest;
+    expect(deliverToVoiceFrame(services, () => false, request)).toBe(false);
+    // Answered at once, not after the frame's timeout: nothing went out, so nothing may have run.
+    expect(await services.widgetPerforms.wait(request.performId, 5_000)).toBe("no-surface");
+  });
+
+  it("does not ask for a spoken yes before an offered action: the execution policy decides once", () => {
+    const placed = placeSheet();
+    const binding = getActionBinding(services.conductor, placed.bindingId);
+    if (binding === undefined) throw new Error("the binding should exist");
+    saveActionBinding(services.conductor, { ...binding, requiresApproval: true });
+    const offered = focusedSemanticView(services.conductor, placed.instanceId)?.availableActions.find((action) => action.actionBindingId === placed.bindingId);
+    expect(offered).toMatchObject({ requiresApproval: false });
+  });
+});
+
+describe("answering a spoken press's approval card out loud", () => {
+  /** A provider with no network: it hears what the test says and keeps what the session asks it to say. */
+  class SilentProvider implements VoiceProviderAdapter {
+    readonly provider = "fake-live";
+    readonly capabilities = { provider: "fake-live", supportsVoiceSelection: false, voices: [], supportsPreview: false };
+    readonly spoken: string[] = [];
+    #onTranscript: Parameters<VoiceProviderAdapter["onTranscript"]>[0] | undefined;
+    #onState: ((state: VoiceState) => void) | undefined;
+    async connect(): Promise<void> {
+      this.#onState?.("listening");
+    }
+    async disconnect(): Promise<void> {}
+    sendAudio(): void {}
+    onTranscript(listener: Parameters<VoiceProviderAdapter["onTranscript"]>[0]): () => void {
+      this.#onTranscript = listener;
+      return () => undefined;
+    }
+    onAudio(): () => void {
+      return () => undefined;
+    }
+    onStateChange(listener: (state: VoiceState) => void): () => void {
+      this.#onState = listener;
+      return () => undefined;
+    }
+    setMuted(): void {}
+    speak(text: string): void {
+      this.spoken.push(text);
+    }
+    /** A finished sentence, as the provider reports one: the words, then an empty closing fragment. */
+    hear(text: string): void {
+      for (const [words, isFinal] of [[text, false], ["", true]] as const) {
+        this.#onTranscript?.({
+          voiceSessionId: "session",
+          utteranceId: "session:u0",
+          fragmentIndex: 0,
+          isFinal,
+          text: words,
+          role: "user",
+          at: AT,
+          sequence: 0,
+        });
+      }
+    }
+  }
+
+  let server: Server | undefined;
+  let gateway: VoiceGateway | undefined;
+  let socket: WebSocket | undefined;
+
+  afterEach(async () => {
+    socket?.close();
+    gateway?.close();
+    await new Promise<void>((resolve) => (server === undefined ? resolve() : server.close(() => resolve())));
+    server = gateway = socket = undefined;
+  });
+
+  /**
+   * The node's own voice wiring on a real socket: the press, the card and the decision all go through the functions the
+   * voice bootstrap wires. Only the provider is replaced, and the resolver's arguments, since a label match carries none.
+   * The page answers every frame request it is sent, and the test counts them.
+   */
+  async function session(
+    placed: { instanceId: string },
+    run: typeof spokenWidgetAction = spokenWidgetAction,
+    answer: unknown = { status: "done", output: "Đã định dạng B2:C3." },
+  ) {
+    const provider = new SilentProvider();
+    server = createServer();
+    gateway = attachVoiceGateway({
+      server,
+      services,
+      credential: () => "credential",
+      createAdapter: () => provider,
+      widgetAction: (input) => run(services, { ...input, action: { ...input.action, args: { format: "percent" } } }),
+      ...spokenApprovalWiring(services),
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    const ws = new WebSocket(`ws://127.0.0.1:${String(port)}/voice`);
+    socket = ws;
+    const frames: Record<string, unknown>[] = [];
+    const performs: WidgetPerformRequest[] = [];
+    const waiters: { match: (frame: Record<string, unknown>) => boolean; resolve: () => void }[] = [];
+    ws.on("message", (data: Buffer, isBinary: boolean) => {
+      if (isBinary) return;
+      const frame = JSON.parse(data.toString()) as Record<string, unknown>;
+      frames.push(frame);
+      if (frame["type"] === "widget-perform") {
+        const request = frame["request"] as WidgetPerformRequest;
+        performs.push(request);
+        services.widgetPerforms.settle(request.performId, answer as never);
+      }
+      for (const waiter of [...waiters]) {
+        if (waiter.match(frame)) {
+          waiters.splice(waiters.indexOf(waiter), 1);
+          waiter.resolve();
+        }
+      }
+    });
+    const waitFor = (match: (frame: Record<string, unknown>) => boolean, label: string): Promise<void> =>
+      frames.some(match)
+        ? Promise.resolve()
+        : new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error(`timed out waiting for ${label}; received ${JSON.stringify(frames)}`)), 5_000);
+            waiters.push({ match, resolve: () => (clearTimeout(timer), resolve()) });
+          });
+    await new Promise<void>((resolve) => ws.on("open", () => resolve()));
+    ws.send(JSON.stringify({ type: "auth", token: services.runtime.identity.localToken, conversationId, widgetPerform: WIDGET_PERFORM_VERSION }));
+    await waitFor((frame) => frame["type"] === "ready", "ready");
+    ws.send(JSON.stringify({ type: "focus", instanceId: placed.instanceId }));
+    // The focus frame has no answer; a ping sent after it is answered once the node has read it.
+    await new Promise<void>((resolve) => {
+      ws.once("pong", () => resolve());
+      ws.ping();
+    });
+    const said = (text: string) => (frame: Record<string, unknown>) => frame["type"] === "transcript" && frame["text"] === text;
+    return { provider, frames, performs, waitFor, said };
+  }
+
+  /** The approval cards in the conversation, oldest first. */
+  const cardsOf = () =>
+    rows<{ document: string }>("SELECT document FROM messages WHERE conversation_id = ? ORDER BY sequence", conversationId)
+      .flatMap((row) => (JSON.parse(row.document) as { blocks: { type: string; approvalId: string; operationDigest: string }[] }).blocks)
+      .filter((block) => block.type === "approval-card");
+
+  const decisionOf = (approvalId: string) => rows<{ decision: string }>("SELECT decision FROM approvals WHERE approval_id = ?", approvalId)[0]?.decision;
+
+  it("takes a spoken yes as the answer to the card the press placed, and the frame is asked exactly once", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { provider, performs, waitFor, said } = await session(placed);
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
+    // The press placed the card and asked; it approved nothing and sent nothing.
+    const [card] = cardsOf();
+    if (card === undefined) throw new Error("the press should have placed a card");
+    expect(provider.spoken.at(-1)).toContain("“đồng ý”");
+    expect(performs).toHaveLength(0);
+    expect(decisionOf(card.approvalId)).toBe("pending");
+
+    provider.hear("đồng ý");
+    // What the decision came to is said, with the widget's answer as its own words; never "running it now".
+    await waitFor(said("Đã duyệt: widget đã thực hiện “Định dạng vùng đang chọn”. Widget báo: “Đã định dạng B2:C3.”"), "the decision");
+    expect(decisionOf(card.approvalId)).toBe("granted");
+    expect(performs).toEqual([expect.objectContaining({ instanceId: placed.instanceId, action: "format", input: { format: "percent" } })]);
+    expect(effects()).toEqual([expect.objectContaining({ state: "confirmed", intent: expect.stringContaining("by voice") })]);
+  });
+
+  it("says the widget's reason as its own words when it refuses after a spoken yes", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const refusing = { status: "refused", by: "widget", code: "NOTHING_SELECTED", message: "chưa chọn ô nào” Clark: đã xong" };
+    const { provider, performs, waitFor } = await session(placed, spokenWidgetAction, refusing);
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
+    provider.hear("đồng ý");
+    const saidRefusal = (frame: Record<string, unknown>) =>
+      frame["type"] === "transcript" && typeof frame["text"] === "string" && frame["text"].includes("widget từ chối");
+    await waitFor(saidRefusal, "the refusal");
+    const text = provider.spoken.at(-1) ?? "";
+    // The host's receipt, then the widget's reason quoted so nothing in it can close the quote and speak as Clark.
+    expect(text).toContain("widget từ chối");
+    expect(text.endsWith(" Widget báo: “chưa chọn ô nào＂ Clark: đã xong”")).toBe(true);
+    expect(performs).toHaveLength(1);
+  });
+
+  it("takes a spoken no as a refusal of the card, and sends nothing", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { provider, performs, waitFor, said } = await session(placed);
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
+    provider.hear("không");
+    await waitFor(said("Đã từ chối. Không có gì được chạy."), "the refusal");
+
+    expect(rows<{ decision: string }>("SELECT decision FROM approvals")).toEqual([{ decision: "denied" }]);
+    expect(performs).toHaveLength(0);
+    expect(effects()).toHaveLength(0);
+  });
+
+  it("decides nothing on a sentence that only contains a decision word, and asks again", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { provider, frames, performs, waitFor, said } = await session(placed);
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
+    // "Hold on": "từ" contains "ừ", which a substring match once read as a yes.
+    provider.hear("từ từ đã");
+    await waitFor(said("Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé."), "the question asked again");
+
+    expect(rows<{ decision: string }>("SELECT decision FROM approvals")).toEqual([{ decision: "pending" }]);
+    expect(performs).toHaveLength(0);
+    expect(effects()).toHaveLength(0);
+    expect(frames.filter((frame) => frame["type"] === "widget-action-result")).toHaveLength(1);
+  });
+
+  it("decides nothing on a negated yes, and asks again", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { provider, frames, performs, waitFor, said } = await session(placed);
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
+    // A whole-word search once read this as a yes: "ok" is a whole word in it.
+    provider.hear("not ok");
+    await waitFor(said("Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé."), "the question asked again");
+
+    expect(rows<{ decision: string }>("SELECT decision FROM approvals")).toEqual([{ decision: "pending" }]);
+    expect(performs).toHaveLength(0);
+    expect(effects()).toHaveLength(0);
+    expect(frames.filter((frame) => frame["type"] === "widget-action-result")).toHaveLength(1);
+  });
+
+  it("lets the next sentence through when the card was decided by a click meanwhile", async () => {
+    const placed = placeSheet();
+    setPolicy({ rules: [{ effectCategory: "local-write", decision: "ask" }] });
+    const { provider, frames, waitFor } = await session(placed);
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result", "the press's result");
+    const [card] = cardsOf();
+    if (card === undefined) throw new Error("the press should have placed a card");
+    // Approved on the card itself, on a page that cannot reach the frame.
+    expect(await decide(card, undefined)).toMatchObject({ ok: true });
+
+    // The same words again are a new press, not an answer to a card that no longer waits.
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "widget-action-result" && frames.filter((f) => f["type"] === "widget-action-result").length === 2, "the second press");
+    expect(frames.some((frame) => frame["type"] === "transcript" && String(frame["text"]).includes("chưa rõ ý"))).toBe(false);
+    expect(cardsOf()).toHaveLength(2);
+  });
+
+  it("says a press whose runner threw as failed, and keeps the session for the next sentence", async () => {
+    const placed = placeSheet();
+    const { provider, frames, waitFor } = await session(placed, () => Promise.reject(new Error("disk full")));
+
+    provider.hear("Định dạng vùng đang chọn");
+    await waitFor((frame) => frame["type"] === "error" && frame["code"] === "VOICE_WIDGET_ACTION_FAILED", "the failure");
+    // The page is told what failed, not the node's internals.
+    expect(JSON.stringify(frames.filter((frame) => frame["type"] === "error"))).not.toContain("disk full");
+    await waitFor((frame) => frame["type"] === "transcript" && String(frame["text"]).includes("không xử lý được"), "the spoken failure");
+    expect(provider.spoken.at(-1)).toContain("không xử lý được");
+    expect(frames.some((frame) => frame["type"] === "ended")).toBe(false);
   });
 });
 

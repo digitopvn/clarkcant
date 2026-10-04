@@ -842,7 +842,8 @@ describe("approving a command by voice", () => {
     await client.waitFor(asked, "the approval question");
 
     sayFor(adapter, "đồng ý");
-    await client.waitFor(said("Đã duyệt. Tui chạy lệnh đó ngay."), "the decision");
+    // What the node reports the decision came to is what is said; never a "running it now" before anyone knows.
+    await client.waitFor(said("đã chạy"), "the decision");
 
     // Exactly the binding the button sends: the same approval and the same digest that was displayed.
     expect(calls).toEqual([{ approvalId: PROPOSAL.approvalId, decision: "granted", digest: PROPOSAL.digest }]);
@@ -853,7 +854,7 @@ describe("approving a command by voice", () => {
 
     sayFor(adapter, "clone giúp tui một repo");
     await client.waitFor(asked, "the approval question");
-    sayFor(adapter, "không cho phép đâu");
+    sayFor(adapter, "không cho phép");
 
     await client.waitFor(said("Đã từ chối. Không có gì được chạy."), "the refusal");
     expect(calls.map((call) => call.decision)).toEqual(["denied"]);
@@ -909,6 +910,74 @@ describe("reading a spoken decision", () => {
   it("accepts the spellings a transcriber may drop the marks from", () => {
     expect(interpretDecision("dong y")).toBe("granted");
     expect(interpretDecision("tu choi")).toBe("denied");
+  });
+
+  it("matches whole words only, so a word that merely contains a decision word decides nothing", () => {
+    // "ừ" inside "từ", "ok" inside "book" and "look", "no" inside "know" and "now".
+    expect(interpretDecision("từ từ đã")).toBeUndefined();
+    expect(interpretDecision("để tôi xem lại từ đầu")).toBeUndefined();
+    expect(interpretDecision("I want to book a table")).toBeUndefined();
+    expect(interpretDecision("look at the chart first")).toBeUndefined();
+    expect(interpretDecision("I know")).toBeUndefined();
+    expect(interpretDecision("yes, now")).toBe("granted");
+    expect(interpretDecision("ok")).toBe("granted");
+    expect(interpretDecision("đồng ý")).toBe("granted");
+    expect(interpretDecision("không")).toBe("denied");
+    expect(interpretDecision("no")).toBe("denied");
+  });
+
+  it("reads a transcript in decomposed form the same as a composed one", () => {
+    expect(interpretDecision("đồng ý".normalize("NFD"))).toBe("granted");
+    expect(interpretDecision("Không.".normalize("NFD"))).toBe("denied");
+  });
+
+  it("takes no yes from a longer sentence that only contains one: it is asked again", () => {
+    expect(interpretDecision("yes I would like you to open the report and then email it to the whole team")).toBeUndefined();
+  });
+
+  it("decides only a sentence whose every word is a yes, a no or a filler", () => {
+    for (const granted of ["ok", "okay", "yes please", "yeah sure", "go ahead", "do it", "ok luôn", "được", "làm đi nhé", "ừ", "có ạ", "vâng", "Đồng ý nhé!"]) {
+      expect(interpretDecision(granted), granted).toBe("granted");
+    }
+    for (const denied of ["no", "nope", "cancel", "stop", "don't", "no thanks", "không", "thôi", "đừng", "hủy", "khỏi", "không được", "thôi nhé", "dạ không", "vâng không", "dạ không ạ"]) {
+      expect(interpretDecision(denied), denied).toBe("denied");
+    }
+  });
+
+  it("decides nothing when a word it does not know could reverse the sentence", () => {
+    // Every one of these was granted by the whole-word search, which looked for a yes anywhere in a short sentence.
+    for (const negated of [
+      "not ok",
+      "not okay",
+      "I'm not ok with that",
+      "cannot say ok",
+      "isn't ok",
+      "never ok",
+      "ok wait",
+      "okay hold on",
+      "chưa được",
+      "chua duoc",
+      "hông được",
+      "hổng được",
+      "sao được",
+      "làm sao được",
+      "ừ, để tui nghĩ đã",
+      "ờ được",
+    ]) {
+      expect(interpretDecision(negated), negated).toBeUndefined();
+    }
+  });
+
+  it("decides nothing on a question", () => {
+    for (const question of ["is it ok", "what does yes do", "what happens if I say yes", "ok what is this", "ok chưa?", "được không?", "ok?", "ok‽", "được à", "ok à", "có à", "đồng ý à", "được rồi à"]) {
+      expect(interpretDecision(question), question).toBeUndefined();
+    }
+  });
+
+  it("decides nothing on a sentence that says both yes and no, and reads “không sao” as no refusal", () => {
+    for (const mixed of ["yes, don't", "yes but no", "ok không", "không sao, làm đi", "không sao", "khong sao"]) {
+      expect(interpretDecision(mixed), mixed).toBeUndefined();
+    }
   });
 });
 
@@ -1140,6 +1209,37 @@ describe("a spoken command to the application", () => {
       granted.binary === false ? (granted.control["decision"] as { intent: { kind: string } }) : undefined;
     expect(decided?.intent.kind).toBe("app.quit");
     expect(executableFrames(client)).toHaveLength(1);
+  });
+
+  it("asks again in the person's language, and confirms nothing, on a negated yes", async () => {
+    const adapter = new FakeAdapter();
+    const decisions: string[] = [];
+    const client = await opened(
+      {
+        speechLocale: () => "en",
+        resolveAppIntent: () => QUIT_QUESTION,
+        confirmAppIntent: ({ decision }) => {
+          decisions.push(decision);
+          return { kind: "refused", say: "Skipped." };
+        },
+      },
+      adapter,
+    );
+
+    say(adapter, "thoát ứng dụng");
+    await client.waitFor(
+      (message) =>
+        !message.binary &&
+        (message.control["decision"] as { kind?: string } | undefined)?.kind === "needs-confirmation",
+      "the confirmation question",
+    );
+    say(adapter, "not ok");
+    await client.waitFor(
+      (message) =>
+        !message.binary && message.control["type"] === "transcript" && message.control["text"] === "I did not catch that. Say “yes” or “no”, please.",
+      "the question asked again",
+    );
+    expect(decisions).toEqual([]);
   });
 
   it("says it does not understand a command it cannot match, and runs nothing", async () => {

@@ -274,6 +274,28 @@ export function inertContextText(text: string): string {
 }
 
 /**
+ * A widget's words on one line, unable to act as structure in the prompt or as markup in a sentence: brackets become
+ * their full-width forms and every control character or line separator becomes a space. Used for sentences that carry
+ * what a widget said, to the model or out loud; host-authored codes and messages pass through it unchanged otherwise.
+ */
+export function inertLine(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\[/gu, "［").replace(/\]/gu, "］").replace(/[\x00-\x1f\x7f\u2028\u2029\u0085]/gu, " ");
+}
+
+/**
+ * A widget's own words on one line, set inside a quote: `inertLine`, and in addition no quote can close the one the
+ * sentence puts them in — double quotes become the full-width ＂ and single quotes the apostrophe ʼ — and bidi and
+ * zero-width controls, which could reorder or hide what is read, are removed. Used for widget-authored text only.
+ */
+export function inertQuotedLine(text: string): string {
+  return inertLine(text)
+    .replace(/["\u201c\u201d\u201e\u201f\u00ab\u00bb]/gu, "＂")
+    .replace(/['\u2018\u2019\u201a\u201b]/gu, "\u02bc")
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/gu, "");
+}
+
+/**
  * The resolved context as the model is given it: a heading that says what it is, then one entry per reference, each
  * naming where its words came from. The caller sends it as the turn's data section, never inside the guidance note.
  */

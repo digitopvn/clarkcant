@@ -2110,8 +2110,28 @@ trên cùng widget bị từ chối với `PERFORM_OUTCOME_UNKNOWN`. Một lời
 hành động đó.
 
 **Giọng nói.** Một yêu cầu bằng lời nói tới cùng công cụ đó qua lượt của Clark trong phiên giọng nói. Một lần bấm
-bằng giọng nói vào hành động được cho phép bị từ chối, không có gì được gửi, và người dùng được bảo hãy nhờ Clark
-([#444](https://github.com/digitopvn/clarkcant/issues/444)).
+bằng giọng nói vào hành động được cho phép, khớp theo nhãn trên widget đang mở, đi qua cùng đường `invokeWidgetAction`
+như công cụ: cùng schema đã khai báo, chính sách thực thi, sổ hiệu ứng, và nguồn gốc (`voice`, do người dùng yêu cầu).
+Sổ hiệu ứng và nhật ký kiểm toán ghi rằng chính người dùng yêu cầu bằng giọng nói. Giọng nói không hỏi thêm một lời
+“đồng ý” trước; chính sách thực thi quyết định một lần. Khi chính sách hỏi, thẻ của host và yêu cầu phê duyệt của nó
+được ghi cùng lúc, trước khi giọng nói báo điều đó. Người dùng trả lời thẻ ở đó bằng cách bấm, hoặc bằng lời “đồng ý”
+hay “không” mà giọng nói hỏi sau đó. Câu trả lời bằng lời đi qua cùng quyết định như một lần bấm, và lần bấm bằng giọng
+nói không bao giờ tự duyệt chính nó. Một câu chỉ quyết định thẻ khi mọi từ trong câu đều là từ
+đồng ý (“yes”, “ok”, “go ahead”, “đồng ý”, “được”), hoặc mọi từ đều là từ từ chối (“no”, “cancel”, “don't”, “không”,
+“thôi”), ngoài ra chỉ có từ đệm như “please” hay “nhé”. Có bất kỳ từ nào khác, một câu hỏi, hoặc vừa đồng ý vừa từ chối
+thì không quyết định gì, và giọng nói hỏi lại: “not ok”, “is it ok”, “yes, don't”, “chưa được” và “từ từ đã” đều được
+hỏi lại. Khi thẻ đã được quyết định bằng cách
+bấm hoặc đã hết hạn, câu nói tiếp theo không còn được coi là câu trả lời cho thẻ đó. Sau một lời “đồng ý”, giọng nói nói
+kết quả của quyết định: widget đã làm hay chưa, và câu trả lời của widget như lời của chính widget, không bao giờ nói
+“tôi chạy ngay”. Nói lại cùng hành động khi thẻ còn chờ sẽ được chỉ tới thẻ đó và hỏi lại; không có thẻ thứ hai. Yêu cầu
+tới frame qua chính trang của phiên giọng nói, và chỉ khi trang đó gửi `widgetPerform: 1` trong frame xác thực. Nếu
+không, lần bấm bị từ chối trước khi có gì được gửi, và người dùng được bảo hãy nhờ Clark. Một lần bấm mà phiên đã đóng
+trước khi yêu cầu được gửi đi được ghi là chưa gửi, không phải kết quả chưa rõ. Câu trả lời của widget, sau một lần bấm
+trực tiếp hay sau một lời “đồng ý”, được đọc lên như lời của widget (“Widget báo: …”), trên một dòng, bằng ngôn ngữ của
+người dùng, với dấu ngoặc kép được vô hiệu hóa và các ký tự điều khiển hướng chữ hay ký tự độ rộng bằng không bị loại
+bỏ. Một lần bấm thất bại trên node được báo là thất bại, bằng ngôn ngữ của người dùng, và phiên vẫn tiếp tục. Bộ phân
+giải giọng nói khớp theo nhãn, nên một câu ngụ ý đối số mà không nói nhãn, như `định dạng chỗ này thành phần trăm`, chưa
+được khớp ([#444](https://github.com/digitopvn/clarkcant/issues/444)).
 
 Kiểm thử:
 
