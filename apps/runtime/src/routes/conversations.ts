@@ -18,6 +18,9 @@ import {
   COMPOSER_SURFACE_HEADER,
   type TurnOrigin,
   VIEW_STATE_WRITE_VARIANT,
+  WIDGET_PERFORM_HEADER,
+  WIDGET_PERFORM_VERSION,
+  type WidgetPerformRequest,
   turnOriginOfSurfaceMark,
   turnOriginSchema,
   actionInvocationSchema,
@@ -87,7 +90,16 @@ import { activeGenerationWithResolvedGrants } from "../application/package-insta
 import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../application/stop-turn.ts";
 import { bindingAvailability } from "../application/action-bindings.ts";
 import { settleActionEffect } from "../application/action-effects.ts";
-import { actionLedgerHooks, invokeWidgetAction, settleCallOutcome, writeWidgetViewState } from "../application/widget-actions.ts";
+import {
+  type WidgetPerformer,
+  actionLedgerHooks,
+  invokeWidgetAction,
+  isWidgetPerformPayload,
+  performReceipt,
+  runApprovedPerform,
+  settleCallOutcome,
+  writeWidgetViewState,
+} from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
 import { resolveComposerReferences } from "../composer-references.ts";
 import { type InteractionDeps, answerQuestion, askQuestionAgain, cancelQuestion } from "../interactions.ts";
@@ -138,7 +150,7 @@ import { exportTableCsv } from "./table-export.ts";
  */
 export type ConversationServices = Pick<
   NodeServices,
-  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl" | "hostControl"
+  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl" | "hostControl" | "widgetPerforms"
 >;
 
 /** What the conversation routes need. */
@@ -349,7 +361,9 @@ function resolveLiveWidget(
      */
     const bindings = instance.actionBindingIds.flatMap((bindingId): FrameBindingRow[] => {
       const binding = getActionBinding(services.conductor, bindingId);
-      if (binding === undefined) return [];
+      // An action the widget offers to Clark is not a binding its frame presses: the frame runs it when asked
+      // (`actions.perform@1`), and a press naming it is refused. So it is not announced to the frame as one.
+      if (binding === undefined || binding.proposal.kind === "perform") return [];
       const base = {
         actionBindingId: binding.actionBindingId,
         label: binding.label,
@@ -474,6 +488,13 @@ function resolveLiveWidget(
          * frame that may use it. Every request is still decided by the node against the declaration.
          */
         ...(isolated.browserTokens.length === 0 ? {} : { browserTokens: isolated.browserTokens.map((entry) => entry.provider) }),
+        /*
+         * The actions the package declared it offers to Clark, by name, so host chrome offers `actions.perform@1` only to
+         * a frame that has some. Which one runs, with what input, is still decided on the node before the frame is asked.
+         */
+        ...((isolated.definition.offeredActions ?? []).length === 0
+          ? {}
+          : { offeredActions: (isolated.definition.offeredActions ?? []).map((offered) => offered.name) }),
       },
       /*
        * The same shape the composition path returns, and for the same reason: an invocation is re-authorized
@@ -562,7 +583,7 @@ function resolveLiveWidget(
  * Both halves are read fresh rather than captured when the request was made: an approval can sit for a
  * quarter of an hour, and a project that was indexed then may not be known now.
  */
-function blocksOfConversation(
+export function blocksOfConversation(
   services: Pick<NodeServices, "runtime">,
   conversationId: string,
 ): Record<string, unknown>[] {
@@ -918,6 +939,15 @@ function composerSurface(request: GatewayRequest): { surface?: MessageSurface; o
   // name, and anything else is a program on the HTTP API. Never from the body (`turnOriginOfSurfaceMark`).
   const origin = turnOriginOfSurfaceMark(value);
   return value === "composer" ? { surface: "composer", origin } : { origin };
+}
+
+/**
+ * Whether the caller said it can hand a `widget-perform` of this version to a mounted frame and report back
+ * (`WIDGET_PERFORM_HEADER`). The node's own page says so; a relay, the CLI or an older page does not, and is never sent
+ * one: the dispatch then learns at once that nobody can ask a frame, instead of waiting for a report that cannot come.
+ */
+function performsWidgets(request: GatewayRequest): boolean {
+  return request.headers[WIDGET_PERFORM_HEADER] === String(WIDGET_PERFORM_VERSION);
 }
 
 export function appendHostReply(
@@ -1312,6 +1342,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
               referenceBlocks: references.blocks,
               ...(parsed.value.demo === true ? { demo: true } : {}),
               ...composerSurface(request),
+              performsWidgets: performsWidgets(request),
             },
             send,
           ),
@@ -1337,14 +1368,43 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       return fail(400, "INVALID_SCHEMA", "a decision must carry decision: granted|denied and the digest it was shown");
     }
 
-    const decided = await decideApprovalForNode(services, {
+    /*
+     * An approved widget action is performed by the frame on the deciding page, which is waiting for this answer and
+     * cannot hear an event meanwhile. So when the page says it can run one, the request is handed back in this answer
+     * (`perform`), the page asks its frame and reports at the usual route, and the decision finishes — receipt, ledger,
+     * audit — when that report arrives. Every other decision answers when it is done, as it always has.
+     */
+    let deliver: ((performRequest: WidgetPerformRequest) => void) | undefined;
+    const delivered = new Promise<WidgetPerformRequest>((resolve) => {
+      deliver = resolve;
+    });
+    const perform: WidgetPerformer | undefined = performsWidgets(request)
+      ? async (performRequest) => {
+          services.widgetPerforms.expect(performRequest.performId);
+          deliver?.(performRequest);
+          return services.widgetPerforms.wait(performRequest.performId);
+        }
+      : undefined;
+    const deciding = decideApprovalForNode(services, {
       conversationId,
       approvalId,
       decision,
       digest,
       principal,
       at: at() as never,
+      ...(perform === undefined ? {} : { perform }),
     });
+    const first = await Promise.race([
+      deciding.then((value) => ({ kind: "decided" as const, value })),
+      delivered.then((value) => ({ kind: "perform" as const, value })),
+    ]);
+    if (first.kind === "perform") {
+      deciding.catch((cause: unknown) => {
+        process.stderr.write(`approval ${approvalId}: an approved widget action did not finish (${cause instanceof Error ? cause.message : String(cause)})\n`);
+      });
+      return json(200, { decision, perform: first.value, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+    }
+    const decided = first.value;
     if (!decided.ok) return fail(409, decided.code, decided.message);
 
     return json(200, {
@@ -1863,7 +1923,7 @@ function checkApprovedJobOrigin(
  * something that did not happen is how a transcript starts lying.
  */
 export async function decideApprovalForNode(
-  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "projects" | "serviceHost" | "packageJobs">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "projects" | "serviceHost" | "packageJobs" | "turnControl">,
   input: {
     conversationId: string;
     approvalId: string;
@@ -1871,6 +1931,11 @@ export async function decideApprovalForNode(
     digest: string;
     principal: { principalId: string; kind: "user"; nodeId: string };
     at: Instant;
+    /**
+     * The page that decided, when it can hand an approved widget action to the frame it shows (`WidgetPerformer`).
+     * Without it an approved perform is answered "approved, nothing sent": only a live screen reaches a frame.
+     */
+    perform?: WidgetPerformer;
   },
 ): Promise<{ ok: true; outcome?: string; continuation?: string } | { ok: false; code: string; message: string }> {
   const coordination = {
@@ -1926,14 +1991,20 @@ export async function decideApprovalForNode(
 
   const capabilityCall = isCapabilityPayload(payload);
   const tilePolicyChange = isMapTilePolicyPayload(payload);
+  const widgetPerform = isWidgetPerformPayload(payload);
+  const locale = preferredAppIntentLocale({ db: services.runtime.db, now: () => input.at }, services.runtime.identity.ownerPrincipalId);
   if (input.decision === "denied") {
     // A record rather than a sentence, because the card reads its decision from the transcript: a refusal written
     // only as text left the card offering Approve and Deny again after it had been denied.
     const refused = tilePolicyChange
       ? "Đã từ chối đổi chính sách ô bản đồ. Không có gì thay đổi."
-      : capabilityCall
-        ? "Đã từ chối gọi capability đó. Không có gì được chạy."
-        : "Đã từ chối chạy lệnh đó. Không có gì được chạy.";
+      : widgetPerform
+        ? locale === "en"
+          ? "Refused: the widget was not asked to do it. Nothing was sent."
+          : "Đã từ chối: widget không được yêu cầu làm việc đó. Không có gì được gửi."
+        : capabilityCall
+          ? "Đã từ chối gọi capability đó. Không có gì được chạy."
+          : "Đã từ chối chạy lệnh đó. Không có gì được chạy.";
     appendHostReply(services, {
       conversationId: input.conversationId,
       blocks: [
@@ -1979,6 +2050,73 @@ export async function decideApprovalForNode(
       at: input.at,
     });
     return { ok: true, outcome: written.description };
+  }
+
+  if (widgetPerform) {
+    // An action Clark asked a widget to perform, approved on the host's card: the payload is hashed again, the binding,
+    // the input and the policy are checked again, and the frame is asked only if a screen still shows it.
+    const performed = await runApprovedPerform(services, {
+      payload,
+      expectedDigest: decided.approval.operationDigest,
+      conversationId: input.conversationId,
+      principalId: input.principal.principalId,
+      perform: input.perform,
+      ...askedByRecord,
+    });
+    if (!performed.ok) {
+      // The approval is already spent, so the card is answered here too: without a receipt it would keep offering
+      // Approve for a decision the node no longer accepts.
+      appendHostReply(services, {
+        conversationId: input.conversationId,
+        blocks: [
+          {
+            type: "tool-activity",
+            toolCallId: `perform-${input.approvalId}`,
+            name: "perform_widget_action",
+            label:
+              locale === "en"
+                ? `Approved, but nothing was performed: the operation changed after it was shown, or could not be read (${performed.code}). Nothing was sent.`
+                : `Đã duyệt, nhưng không có gì được thực hiện: thao tác đã đổi sau khi hiện, hoặc không đọc được (${performed.code}). Không có gì được gửi.`,
+            status: "failed",
+            args: { approvalId: input.approvalId, decision: "granted" },
+            startedAt: input.at,
+            endedAt: input.at,
+          },
+        ],
+        at: input.at,
+      });
+      return { ok: false, code: performed.code, message: performed.message };
+    }
+    const receipt = performReceipt(locale, performed.label, performed.result);
+    appendHostReply(services, {
+      conversationId: input.conversationId,
+      blocks: [
+        {
+          type: "tool-activity",
+          toolCallId: `perform-${input.approvalId}`,
+          name: "perform_widget_action",
+          label: receipt.text,
+          status: receipt.succeeded ? "done" : "failed",
+          // The approval id travels with the receipt so the card it answered reads as decided, including after a reload.
+          args: { approvalId: input.approvalId, decision: "granted" },
+          startedAt: input.at,
+          endedAt: new Date().toISOString() as Instant,
+        },
+      ],
+      at: input.at,
+    });
+    appendAuditEvent(services.runtime.db, {
+      auditId: services.conductor.newId("audit"),
+      principalId: services.runtime.identity.ownerPrincipalId,
+      nodeId: services.runtime.identity.nodeId,
+      kind: "approval",
+      summary: receipt.text.slice(0, 500),
+      outcome: receipt.succeeded ? "done" : "failed",
+      ref: input.approvalId,
+      ...askedByRecord,
+      at: input.at,
+    });
+    return { ok: true, outcome: receipt.text };
   }
 
   if (capabilityCall) {
@@ -2133,7 +2271,7 @@ function sse(event: string, payload: unknown): string {
  * long since been written.
  */
 async function streamUserMessage(
-  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "hostControl">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "hostControl" | "widgetPerforms">,
   input: {
     conversationId: string;
     principal: Principal;
@@ -2143,6 +2281,8 @@ async function streamUserMessage(
     referenceBlocks?: readonly ReferenceBlock[];
     demo?: boolean;
     surface?: MessageSurface;
+    /** The caller runs `widget-perform` events (`performsWidgets`); without it none is sent or waited for. */
+    performsWidgets?: boolean;
     origin?: TurnOrigin;
   },
   send: (chunk: string) => void,
@@ -2175,6 +2315,14 @@ async function streamUserMessage(
           // tool is waiting to hear it.
           services.hostControl.expect(event.decision);
           send(sse("host-control", { decision: event.decision }));
+        } else if (event.type === "widget-perform") {
+          // An action Clark asked a widget's frame to perform. Only this page can reach the mounted frame, so it is
+          // expected before it is sent, and the dispatch waits for the page's report of what the frame answered. A caller
+          // that cannot run one is sent nothing and nothing is expected, so the dispatch hears "nobody to ask" at once.
+          if (input.performsWidgets === true) {
+            services.widgetPerforms.expect(event.request.performId);
+            send(sse("widget-perform", { request: event.request }));
+          }
         }
       },
     });

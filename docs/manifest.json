@@ -130,43 +130,43 @@
     },
     {
       "path": "system-architecture.md",
-      "bytes": 109424,
-      "sha256": "0d852b75f5d6112a98447b615528afbc6ca8c0febcd30f07afc1a55840ce1e45"
+      "bytes": 116479,
+      "sha256": "2fcca0c96f359995c36b3395d61f80962748dc84b0f1df8e22d9016ed8354eb7"
     },
     {
       "path": "system-architecture.vi.md",
-      "bytes": 122514,
-      "sha256": "33ee136ecd66a333ebaddca3f252165471f888ab03926888997a0f10ceaf0299"
+      "bytes": 131551,
+      "sha256": "91a2bc3538b88888d3a8085ea5cfacfe87c780f1fbc7693d68d53a6b5b041864"
     },
     {
       "path": "widget-development.md",
-      "bytes": 261249,
-      "sha256": "cd5f8dd7cc429a69785e0ab93a6649738805a2acc2dd68d8660afc87bd63ce20"
+      "bytes": 270003,
+      "sha256": "59a77ccb25cee0c6ef0778ee4f3907c4de4cd4db92205ba116443d01d6be2359"
     },
     {
       "path": "widget-development.vi.md",
-      "bytes": 314771,
-      "sha256": "406ff5937c017e9e3702b9840bbd8e6136422b424609c3f7469b7d7e9897b023"
+      "bytes": 325575,
+      "sha256": "ab7b0c3239434609a8db13cf4af72a0eb2e318685e0645c71f983e28152ba663"
     },
     {
       "path": "widgets-and-extensions.md",
-      "bytes": 76128,
-      "sha256": "32711f4ff4e0324a237cc66ee1aeda5cbbadae9ab8425b7ad450374e64f95b7f"
+      "bytes": 76303,
+      "sha256": "db48531d4d746bf714edbc51a4c33d6ab8ae366efe2d81168b4947955b338fae"
     },
     {
       "path": "widgets-and-extensions.vi.md",
-      "bytes": 85946,
-      "sha256": "a6797c879371563e7fdeb06f9107ac98db198559204ae8aeb7ae5dac100dffc2"
+      "bytes": 86093,
+      "sha256": "aa4c4099b1f22034bf2fee58bde69e6c1838bc5a990ab1111870e3acc6768707"
     },
     {
       "path": "mini-app/jev-configuration.md",
-      "bytes": 13457,
-      "sha256": "801277f2159a5d7fe46a74c40d44d7b3fc040ba037dcc94b75c734f04b5f8b14"
+      "bytes": 15027,
+      "sha256": "abe3a74d6b71483ee6b6597bb1b9a7140bed9b76f874f6b71b37550e74905d18"
     },
     {
       "path": "mini-app/jev-configuration.vi.md",
-      "bytes": 13460,
-      "sha256": "0ec9b8d1ca3a4b03b5307fc92bfc73051122e4958079aa31b121d1c42fc46348"
+      "bytes": 15356,
+      "sha256": "db7dd9997f0214320f14d539e064561df16566b54da9457166a2b0e81477bec1"
     },
     {
       "path": "voice-live-provider.md",

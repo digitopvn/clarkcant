@@ -638,7 +638,84 @@ export async function decideTurnAction(
     model: deps.jev.config.model,
   };
 }
+/** The most candidates a context-focus question ever offers. */
+export const CONTEXT_FOCUS_TOP_K = 8;
 
+/**
+ * Which of a few remembered notes or earlier messages matters most for the message being answered.
+ *
+ * Asked by the context planner only when its own ranking is too close to call. The answer reorders: the chosen
+ * candidate goes first and every other one stays where it was, so a wrong answer costs a position, never a record.
+ * Texts are redacted and clipped before they leave the node, and candidates are offered by position rather than by id.
+ */
+export async function decideContextFocus(
+  deps: DecideDeps,
+  input: { query: string; candidates: readonly { id: string; text: string }[] },
+): Promise<{ status: "chosen"; id: string; confidence: number; model: string } | { status: "rank"; reason: string }> {
+  const offered = input.candidates.slice(0, CONTEXT_FOCUS_TOP_K);
+  if (offered.length < 2) return { status: "rank", reason: "there was nothing to choose between" };
+  const refused = jevCallRefusal(deps.jev.config);
+  if (refused !== undefined) return { status: "rank", reason: refused };
+
+  const criteria: Record<string, string | null> = {};
+  offered.forEach((candidate, index) => {
+    criteria[`item:${String(index)}`] = redactSecrets(candidate.text).replace(/\s+/g, " ").slice(0, 200);
+  });
+  const outcome = await askChoice(deps.jev, {
+    state: { message: redactSecrets(input.query).slice(0, 300) },
+    instructions:
+      "Which of these remembered notes or earlier messages matters most for answering the message? Choose none if none of them does.",
+    criteria,
+    questionId: "context-focus",
+    budget: deps.budget(),
+  });
+  if (outcome.status !== "answered") {
+    return { status: "rank", reason: outcome.status === "unavailable" ? outcome.reason : `the selector did not decide: ${outcome.reason}` };
+  }
+  if (!outcome.value.substantive) return { status: "rank", reason: "the selector chose none of them" };
+  const decisive = isDecisive(outcome.value.top, outcome.value.runnerUp, deps.jev.config.confidenceFloor, deps.jev.config.marginFloor);
+  if (!decisive.decisive) return { status: "rank", reason: decisive.reason };
+  const index = Number.parseInt(outcome.value.choice.replace(/^item:/, ""), 10);
+  const chosen = Number.isInteger(index) ? offered[index] : undefined;
+  if (chosen === undefined) return { status: "rank", reason: "the selector chose something that was not offered" };
+  return { status: "chosen", id: chosen.id, confidence: outcome.value.confidence ?? outcome.value.top, model: deps.jev.config.model };
+}
+
+/**
+ * Which family of tools a message most needs, when its own words do not say.
+ *
+ * Asked only by progressive tool disclosure, only when an operator opted in, and only on a session's first turn. An
+ * undecided answer means the turn is offered every tool, so this can save tokens and never cost a capability the
+ * conversation had: the families offered are the ones the session was created with.
+ */
+export async function decideToolFamily(
+  deps: DecideDeps,
+  input: { text: string; families: Readonly<Record<string, string>> },
+): Promise<{ status: "chosen"; family: string; confidence: number; model: string } | { status: "all"; reason: string }> {
+  const names = Object.keys(input.families);
+  if (names.length < 2) return { status: "all", reason: "there was nothing to choose between" };
+  const refused = jevCallRefusal(deps.jev.config);
+  if (refused !== undefined) return { status: "all", reason: refused };
+  const criteria: Record<string, string | null> = {};
+  for (const name of names) criteria[`family:${name}`] = input.families[name] ?? null;
+  const outcome = await askChoice(deps.jev, {
+    state: { message: redactSecrets(input.text).slice(0, 400) },
+    instructions:
+      "Which kind of tool will answering this message most likely need? Choose none if it needs no tool or more than one kind.",
+    criteria,
+    questionId: "tool-family",
+    budget: deps.budget(),
+  });
+  if (outcome.status !== "answered") {
+    return { status: "all", reason: outcome.status === "unavailable" ? outcome.reason : `the selector did not decide: ${outcome.reason}` };
+  }
+  if (!outcome.value.substantive) return { status: "all", reason: "the selector chose none of them" };
+  const decisive = isDecisive(outcome.value.top, outcome.value.runnerUp, deps.jev.config.confidenceFloor, deps.jev.config.marginFloor);
+  if (!decisive.decisive) return { status: "all", reason: decisive.reason };
+  const family = outcome.value.choice.replace(/^family:/, "");
+  if (!names.includes(family)) return { status: "all", reason: "the selector chose something that was not offered" };
+  return { status: "chosen", family, confidence: outcome.value.confidence ?? outcome.value.top, model: deps.jev.config.model };
+}
 
 /**
  * Choose which retrieved result the user meant.

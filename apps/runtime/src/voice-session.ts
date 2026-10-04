@@ -3,6 +3,8 @@ import type { IncomingMessage, Server } from "node:http";
 import {
   answerFromUtterance,
   type AppIntentDecision,
+  type WidgetPerformRequest,
+  WIDGET_PERFORM_VERSION,
   type AppIntentResolution,
   type ConfirmationDecision,
   type ConversationId,
@@ -42,7 +44,8 @@ import { focusedSemanticView } from "./widget-semantic.ts";
  * Text frames are JSON control messages; binary frames are always raw PCM16 audio.
  *
  * Client to node:
- *   `{ type: "auth", token, conversationId? }` — must be the first frame, see below
+ *   `{ type: "auth", token, conversationId?, widgetPerform? }` — must be the first frame, see below; `widgetPerform`
+ *                                              names the `widget-perform` version the page runs, and only then is one sent
  *   `{ type: "focus", instanceId }`            — which widget the person is looking at, if any
  *   `{ type: "end" }`                          — end the session politely
  *   binary                                     — PCM16, 16 kHz, mono
@@ -54,6 +57,7 @@ import { focusedSemanticView } from "./widget-semantic.ts";
  *   `{ type: "transcript", role, text, final }`
  *   `{ type: "app-intent", decision }`          — the application's answer to a command it was given
  *   `{ type: "widget-action-result", instanceId, revision, ok, say }` — what came of a spoken widget action
+ *   `{ type: "widget-perform", request }`     — an action Clark asked a widget's frame to perform; the page reports back
  *   `{ type: "error", code, message }`
  *   `{ type: "ended", recordedMessages }`
  *   binary                                     — PCM16, 24 kHz, mono
@@ -146,6 +150,11 @@ export interface VoiceGatewayOptions {
      * over the SSE stream this socket has no part in.
      */
     onAppIntent?: (decision: AppIntentDecision) => void;
+    /**
+     * Forwards an action Clark asked a widget's frame to perform while answering this utterance. The page showing
+     * the widget hands it to the frame and reports what it answered over HTTP, exactly as for a typed turn.
+     */
+    onWidgetPerform?: (request: WidgetPerformRequest) => void;
   }) => Promise<VoiceAnswerResult | undefined>;
   /**
    * Record the user's spoken decision on an operation.
@@ -158,6 +167,8 @@ export interface VoiceGatewayOptions {
     approvalId: string;
     decision: "granted" | "denied";
     digest: string;
+    /** Present when this page can run a `widget-perform`: an approved widget action is handed to its frame through it. */
+    onWidgetPerform?: (request: WidgetPerformRequest) => void;
   }) => Promise<{ ok: boolean; message: string }>;
   /**
    * Answer a question the agent asked, through the same route a click uses.
@@ -410,6 +421,8 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
 
     let authenticated = false;
     let conversationId: ConversationId | undefined;
+    /** Whether the page said it can hand a `widget-perform` to a mounted frame and report back (the auth frame). */
+    let performsWidgets = false;
     let adapter: VoiceProviderAdapter | undefined;
 
     /*
@@ -618,6 +631,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             approvalId: pending.approvalId,
             decision,
             digest: pending.digest,
+            ...(performsWidgets ? { onWidgetPerform: (request: WidgetPerformRequest) => send({ type: "widget-perform", request }) } : {}),
           });
           const said = decided.ok
             ? decision === "granted"
@@ -805,6 +819,9 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             // Reuses the same wire frame a deterministic spoken app-command already sends, so the browser
             // needs no new handler to run a `control_app` decision through `runAppIntent`.
             onAppIntent: (decision) => send({ type: "app-intent", decision }),
+            // Only to a page that said it can hand one to a frame and report back: any other surface is sent none, and
+            // the node learns at once that nobody can ask a frame rather than waiting on a report that cannot come.
+            ...(performsWidgets ? { onWidgetPerform: (request: WidgetPerformRequest) => send({ type: "widget-perform", request }) } : {}),
           });
           if (result === undefined) return;
           answeredMessages += result.recordedMessages;
@@ -929,6 +946,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
 
       const requested = message["conversationId"];
       conversationId = typeof requested === "string" && requested !== "" ? (requested as ConversationId) : undefined;
+      performsWidgets = message["widgetPerform"] === WIDGET_PERFORM_VERSION;
 
       authenticated = true;
       active = { sessionId, holder };

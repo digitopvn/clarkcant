@@ -618,6 +618,14 @@ export function captureCompositeSurface(
 
   const bindings = input.bindings ?? [];
   for (const { binding, sectionId } of bindings) {
+    // A composed surface is drawn by the host, so it has no frame to perform an action an isolated widget offers.
+    if (binding.proposal.kind === "perform") {
+      return {
+        ok: false,
+        code: "SPEC_INVALID",
+        message: `action binding ${binding.actionBindingId} is performed by an isolated widget's frame, which a composed surface does not have`,
+      };
+    }
     if (input.instanceId !== undefined && binding.instanceId !== input.instanceId) {
       return {
         ok: false,
@@ -647,14 +655,21 @@ export function captureCompositeSurface(
   const snapshotId = deps.newId("wsnap");
   const bundleId = deps.newId("bundle");
 
-  const actions: CompositionActionRef[] = bindings.map(({ binding, sectionId }) => ({
-    actionBindingId: binding.actionBindingId,
-    sectionId,
-    label: binding.label,
-    kind: binding.proposal.kind,
-    effectCategory: binding.effectCategory,
-    ...(binding.proposal.kind === "view" ? { operation: binding.proposal.operation } : {}),
-  }));
+  const actions: CompositionActionRef[] = bindings.flatMap(({ binding, sectionId }) => {
+    const kind = binding.proposal.kind;
+    // Refused above; narrowed again here for the type.
+    if (kind === "perform") return [];
+    return [
+      {
+        actionBindingId: binding.actionBindingId,
+        sectionId,
+        label: binding.label,
+        kind,
+        effectCategory: binding.effectCategory,
+        ...(binding.proposal.kind === "view" ? { operation: binding.proposal.operation } : {}),
+      },
+    ];
+  });
 
   const composition: SurfaceCompositionSpec = {
     schemaVersion: input.layout === undefined ? SURFACE_COMPOSITION_SCHEMA_VERSION : LAYOUT_COMPOSITION_SCHEMA_VERSION,

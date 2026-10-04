@@ -827,13 +827,16 @@ export function ApprovalCardBlock({
             {t(askedBy)}
           </p>
         )}
-        {payload !== undefined && (
-          <CodeBlock
-            code={commandOf(payload) ?? payload}
-            {...(commandOf(payload) === undefined ? {} : { language: "bash" })}
-            label={t(isTilePolicyPayload(payload) ? "blocks.approval.tilePolicyLabel" : "blocks.approval.commandLabel")}
-          />
-        )}
+        {payload !== undefined &&
+          (performInputOf(payload) !== undefined ? (
+            <CodeBlock code={performInputOf(payload) ?? ""} language="json" label={t("blocks.approval.performInputLabel")} />
+          ) : (
+            <CodeBlock
+              code={commandOf(payload) ?? payload}
+              {...(commandOf(payload) === undefined ? {} : { language: "bash" })}
+              label={t(isTilePolicyPayload(payload) ? "blocks.approval.tilePolicyLabel" : "blocks.approval.commandLabel")}
+            />
+          ))}
         {/* The digest is shown so an approved plan cannot be swapped for another one. */}
         <p className="cc-freshness" style={{ margin: 0 }}>
           operation {digest.slice(0, 20)}…
@@ -882,6 +885,16 @@ function commandOf(payload: string): string | undefined {
   try {
     const parsed = JSON.parse(payload) as { command?: unknown };
     return typeof parsed.command === "string" ? parsed.command : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The whole input a widget action's card would send, laid out to read, or `undefined` for any other payload. */
+function performInputOf(payload: string): string | undefined {
+  try {
+    const parsed = JSON.parse(payload) as { kind?: unknown; input?: unknown };
+    return parsed.kind === "widget-perform" ? JSON.stringify(parsed.input ?? {}, null, 2) : undefined;
   } catch {
     return undefined;
   }

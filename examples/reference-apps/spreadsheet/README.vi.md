@@ -39,8 +39,15 @@ một tài liệu lớn trong giới hạn, tự mô tả cho Clark và áp dụ
   tới khi có câu trả lời; nếu không, nó nói rõ. Bảng giữ tối đa 32 định dạng, và dòng trạng thái nêu tên định dạng phải
   bỏ. "Hoàn tác định dạng", hoặc Ctrl+Z trong lưới, lấy lại thay đổi của Clark. Trước khi chạy lần bấm,
   host gửi tài liệu ngữ nghĩa đang chờ của widget và chờ đến khi node đã giữ nó, nên một lần bấm ngay sau khi đổi vùng
-  chọn vẫn tới Clark với đúng vùng đó. Một yêu cầu gõ trong ô soạn tin tới được Clark qua tài liệu ngữ nghĩa nhưng không thay đổi
-  được frame; khoảng trống này được theo dõi ở [#382](https://github.com/digitopvn/clarkcant/issues/382).
+  chọn vẫn tới Clark với đúng vùng đó.
+- **Định dạng từ ô soạn tin.** Widget cho Clark thực hiện hành động `format` (`{format: percent|number|plain,
+  range?}`) qua `actions.perform@1`. Một yêu cầu gõ trong ô soạn tin, như "định dạng phần trăm cho vùng này", cho phép
+  Clark gọi `perform_widget_action`; bảng định dạng vùng được nêu, hoặc vùng đang chọn, báo trên dòng trạng thái, và
+  từ chối bằng `SHEET_BUSY`, `FORMAT_UNKNOWN` hoặc `RANGE_INVALID` trong các trường hợp còn lại. Một định dạng đã hiện
+  nhưng không lưu được thì được báo là lỗi, và Clark coi đó là kết quả không chắc chắn. "Hoàn tác định dạng"
+  lấy lại thay đổi đó. Công cụ `place_widget` gắn hành động này, và cả nút `formatBinding` khi được yêu cầu, trong bản
+  cài thật; xem
+  [phát triển widget §10.3](../../../docs/widget-development.vi.md#103-hành-động-clark-thực-hiện-actionsperform1).
 
 Bàn phím: lưới là một điểm dừng Tab, và Tab, Shift+Tab rời lưới. Phím mũi tên để di chuyển, Shift+mũi tên mở rộng vùng
 chọn, Home/End và Ctrl+Home/End để nhảy, Page Up/Down để lật trang, Enter hoặc F2 để sửa, gõ phím để bắt đầu sửa,

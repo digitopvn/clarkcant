@@ -77,6 +77,7 @@ import { type NodeServices } from "../services.ts";
 import { createTaskBrowserBroker, taskProfileDir } from "../task-browser.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
+import { conversationOfferedActions, createPerformWidgetActionTool, createPlaceWidgetTool } from "../widget-perform-tool.ts";
 
 /** The reference image generator's definition, as its package ships it, and the job capability its button calls. */
 const IMAGE_GENERATOR_DEFINITION = new URL("../../../../examples/reference-apps/image-generator/widgets/main/widget.json", import.meta.url);
@@ -125,6 +126,7 @@ export interface FixtureModelDeps {
     | "controlSessions"
     | "terminals"
     | "hostControl"
+    | "widgetPerforms"
     | "serviceHost"
     | "automation"
     | "projects"
@@ -2073,6 +2075,73 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * the node resolves a definition to a package by reading that package's own `widget.json`, so a fixture that
      * disagreed with the file would describe a widget nothing can serve.
      */
+    /*
+     * An installed package's widget, placed through the `place_widget` tool the model has: its offered actions bound for
+     * Clark, and its "Ask Clark" button bound into the prop the widget reads. Only the two reference apps are scripted,
+     * each with the button its own journey presses; the package must be installed first, as a model's placement needs.
+     */
+    const placing = /^place widget (\S+)$/u.exec(input.text.trim());
+    if (placing !== null) {
+      const widgetId = placing[1] ?? "";
+      const scripted: Record<string, { props: Record<string, unknown>; buttons: Record<string, unknown>[] }> = {
+        "com.example.spreadsheet.main@1": {
+          props: { title: "Bảng tính (place_widget)", locale: "vi" },
+          buttons: [{ prop: "formatBinding", label: "Định dạng vùng chọn thành phần trăm", intent: SPREADSHEET_FORMAT_INTENT, contextRefs: ["selection", "widget"] }],
+        },
+        "com.clarkcant.reference.text-editor.main@1": {
+          props: { title: "Trình soạn thảo (place_widget)" },
+          buttons: [{ prop: "rewriteBinding", label: "Nhờ Clark viết lại đoạn đã chọn", intent: TEXT_EDITOR_REWRITE_INTENT, contextRefs: ["selection", "widget"] }],
+        },
+      };
+      const tool = createPlaceWidgetTool({ services: deps.services, conversationId: input.conversationId, messageId: () => input.messageId });
+      const answer = await tool.execute({ action: "place", widgetId, ...(scripted[widgetId] ?? {}) });
+      const block = (answer as { hostBlocks?: Record<string, unknown>[] }).hostBlocks?.[0];
+      const text = `Fixture: tui gọi place_widget (không phải model thật). ${answer.text}`;
+      // SAFETY: the surface block `placeWidget` built from the snapshot it captured; the node validates it before storing.
+      if (block !== undefined) return { text, block: block as unknown as MessageBlock };
+      return { text, block: { type: "text", format: "plain", content: text, streaming: false } };
+    }
+
+    /*
+     * Clark performing an action a widget in this conversation offers, through the `perform_widget_action` tool: the
+     * spreadsheet's format on the range the person selected, and the text editor's replace on the text they selected.
+     * The binding is found the way the model finds it (the tool's list), and the editor's replacement is computed from
+     * the selection the host read from the widget's semantic document — what the model would see — never from the page.
+     */
+    const formatting = /^(?:format this as a percentage|định dạng phần trăm cho vùng này)$/iu.test(input.text.trim());
+    const upper = /^(?:uppercase the selection|viết hoa đoạn đang chọn)$/iu.test(input.text.trim());
+    if (formatting || upper) {
+      const services = deps.services();
+      const wanted = formatting ? "format" : "replaceSelection";
+      const target = conversationOfferedActions(services, input.conversationId).find((entry) => entry.action === wanted);
+      let performInput: Record<string, unknown> | undefined;
+      if (target !== undefined && formatting) performInput = { format: "percent" };
+      if (target !== undefined && upper) {
+        const doc = conversationUiContext(services.conductor, input.conversationId).find((entry) => entry.doc.instanceId === target.instanceId)?.doc;
+        const selected = doc?.values.selectedText;
+        if (typeof selected === "string" && selected !== "") performInput = { text: selected.toLocaleUpperCase("vi"), expected: selected };
+      }
+      const tool = createPerformWidgetActionTool({
+        services: deps.services,
+        conversationId: input.conversationId,
+        onEvent: () => input.emit,
+        channel: () => input.channel ?? "chat",
+        origin: () => input.origin,
+      });
+      const answer =
+        target === undefined
+          ? { text: "Fixture: no widget in this conversation offers that action." }
+          : performInput === undefined
+            ? { text: "Fixture: the host read no selected text from the widget, so there is nothing to replace." }
+            : await tool.execute({ action: "perform", actionBindingId: target.actionBindingId, input: performInput });
+      const text = `Fixture: tui gọi perform_widget_action (không phải model thật). ${answer.text}`;
+      // The host card the policy asked for, placed in the answer the way the model turn places a tool's `hostCard`.
+      const hostCard = (answer as { hostCard?: Record<string, unknown> }).hostCard;
+      // SAFETY: the approval card `invokePerformAction` built and checked against the approval card block schema.
+      if (hostCard !== undefined) return { text, block: hostCard as unknown as MessageBlock };
+      return { text, block: { type: "text", format: "plain", content: text, streaming: false } };
+    }
+
     /*
      * The reference text editor, placed with its own "rewrite the selection" button.
      *

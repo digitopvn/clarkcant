@@ -218,7 +218,17 @@ export class RealPiAdapter implements PiAdapter {
       unsubscribe: () => void;
       listeners: Set<(event: WorkerEvent) => void>;
       loader: SdkModule["DefaultResourceLoader"] extends new (options: infer _O) => infer R ? R : never;
-      registeredTools: Set<string>;
+      /** Tools added by `registerTool` after creation, by name, kept so narrowing the session never drops them. */
+      registeredTools: Map<string, SdkTool>;
+      /**
+       * The tool names the session was created with, captured once and never changed.
+       *
+       * `setActiveTools` chooses from this list rather than from the current one. Filtering the current list made
+       * narrowing one-way: a tool left out of one turn could never come back on the next, and a per-turn tool set
+       * needs to widen as often as it narrows. Choosing only from this list is also what keeps it from widening past
+       * what the session was created with.
+       */
+      baseline: readonly SdkTool[];
       brief: WorkerBrief;
       /**
        * Whether this session's filesystem reach is the approved project roots and nothing else.
@@ -647,7 +657,8 @@ export class RealPiAdapter implements PiAdapter {
       unsubscribe,
       listeners,
       loader,
-      registeredTools: new Set(),
+      registeredTools: new Map(),
+      baseline: Object.freeze([...session.agent.state.tools]),
       brief,
       confined,
       turns: 0,
@@ -667,14 +678,24 @@ export class RealPiAdapter implements PiAdapter {
   async setActiveTools(sessionId: string, toolNames: readonly string[]): Promise<void> {
     const entry = this.#require(sessionId);
     const allowed = new Set(toolNames);
-    const all = entry.session.agent.state.tools;
-    // Assignment, not a reload. The SDK copies the top-level array.
-    //
-    // Filtering can only narrow: a name that is neither asked for nor registered is dropped, so a confined
-    // session cannot be widened from here — its registered set stays empty for the reason `registerTool` gives.
-    entry.session.agent.state.tools = all.filter(
-      (tool) => allowed.has(tool.name) || entry.registeredTools.has(tool.name),
-    );
+    // Chosen from the creation-time baseline, in its order: a name the session was not created with is never
+    // activated from here, so a confined session cannot be widened, and a tool narrowed away on one turn can be
+    // brought back on the next.
+    const wanted = entry.baseline.filter((tool) => allowed.has(tool.name));
+    const session = entry.session as SdkSession & { setActiveToolsByName?: (names: string[]) => void };
+    if (typeof session.setActiveToolsByName !== "function") {
+      // The pinned SDK has it; one without it would leave the system prompt describing tools the model cannot call.
+      throw new Error(`the agent SDK in use cannot change ${sessionId}'s active tools`);
+    }
+    // Only the SDK's own path (#402): it activates from its registry and rebuilds the system prompt, so the "Available
+    // tools" list the model reads matches the tools it can call.
+    session.setActiveToolsByName(wanted.map((tool) => tool.name));
+    // Registered tools are kept whatever was asked, as before. The SDK has no public way to add a tool after creation,
+    // so `registerTool` appends to the live list and the registry this activates from never holds it; re-adding here is
+    // the one write outside the SDK's path, and goes away with that registration path (#402).
+    const active = new Set(session.agent.state.tools.map((tool) => tool.name));
+    const registered = [...entry.registeredTools.values()].filter((tool) => !active.has(tool.name));
+    if (registered.length > 0) session.agent.state.tools = [...session.agent.state.tools, ...registered];
   }
 
   async registerTool(sessionId: string, tool: ToolDefinition): Promise<void> {
@@ -690,8 +711,9 @@ export class RealPiAdapter implements PiAdapter {
       );
     }
     const sdk = await this.#load();
-    entry.session.agent.state.tools = [...entry.session.agent.state.tools, toSdkTool(sdk, tool)];
-    entry.registeredTools.add(tool.name);
+    const sdkTool = toSdkTool(sdk, tool);
+    entry.session.agent.state.tools = [...entry.session.agent.state.tools, sdkTool];
+    entry.registeredTools.set(tool.name, sdkTool);
   }
 
   async refreshResources(

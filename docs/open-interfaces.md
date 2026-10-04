@@ -41,7 +41,7 @@ The stable surface is the one `/openapi.json` describes:
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/delete` | `{ deletionPermit? }` — person-owned deletion; policy may ask or refuse |
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — waits for the answer |
-| POST | `/conversations/{id}/messages/stream` | same, answered as SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `error`, `done` |
+| POST | `/conversations/{id}/messages/stream` | same, answered as SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `widget-perform`, `error`, `done` |
 | POST | `/conversations/{id}/stop` | `{ source? }` — stops the reply being written; keeps what was written, labelled as stopped; answers `{ stopped }` |
 | GET | `/conversations/{id}/timeline?after=N` | – |
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
@@ -68,6 +68,37 @@ a few seconds it is told the action is unconfirmed. Each `controlId` is answered
 `404 HOST_CONTROL_NOT_EXPECTED`), and the plain `/messages` route never waits for one. The audit record of an action
 the agent asked for while answering a spoken sentence has `source: "voice-agent"`, distinct from a person's own spoken
 command (`source: "voice"`).
+
+A `widget-perform` event is Clark asking a widget the page shows to perform one of the actions its package offers
+(`offeredActions`, [widget-development.md §10.3](widget-development.md#103-actions-clark-performs-actionsperform1)).
+The node has already checked it: the binding, the input against the declared schema, and the person's execution
+policy. The node sends one only on a stream request that carries `x-clarkcant-widget-perform: 1`, the version the page
+runs. Any other caller is sent none, and the perform is refused at once with `FRAME_NOT_MOUNTED`. That includes the
+plain `/messages` route, MCP, the relay and `clarkcant api`.
+
+The event's `request` is `{ v: 1, performId, instanceId, actionBindingId, action, input }`. The page hands it to the
+mounted frame and answers `POST /app-intents/widget-perform/{performId}` with one of:
+
+- `{ status: "done", output? }`;
+- `{ status: "refused", by: "page" | "widget", code, message }`;
+- `{ status: "no-answer", message }`.
+
+`by: "page"` is taken only with the page's own codes, such as `FRAME_NOT_MOUNTED`, `SURFACE_GONE`,
+`PERFORM_UNREADABLE` and `PERFORM_VERSION_UNSUPPORTED`. A page that cannot read a request, or gets another version,
+still answers under its `performId`. A widget's refusal reaches Clark as `WIDGET_REFUSED`, with the widget's code in
+`widgetCode`.
+
+Each `performId` is answered once; a second answer gets `404 WIDGET_PERFORM_NOT_EXPECTED`. Nothing is queued for
+later. With no answer within 8 seconds, or a `no-answer` report, the perform is recorded as uncertain and is not
+retried. The report route is person-only, like the host-control report.
+
+When the execution policy asks first, the answer is a host approval card instead. Deciding it at
+`POST /conversations/{id}/approvals/{approvalId}/decide` with the same header can hand the approved perform to this
+page. Then the decision's answer carries `perform` (the request), and the page reports it the same way. A decide
+request without the header approves without sending anything, and the receipt says so. The same perform asked again
+while its card waits is answered `202` with that card's `approvalRequired.approvalId` and `alreadyWaiting: true`, and
+no second card. A conversation holds at most 8 waiting perform cards (`429 PERFORM_CARDS_WAITING`), and an input
+longer than 1,200 characters as JSON is refused (`413 PERFORM_INPUT_TOO_LONG`) because the card shows the whole input.
 
 The node's own page sends `x-clarkcant-surface: composer` with the messages a person types into it, and the node
 stores that as the message's `surface`; a spoken message is stored with `surface: "voice"` by the node itself. A
@@ -634,7 +665,7 @@ tool for it would let an AI client approve its own guarded action. Approvals sta
 the generic relays (a WebSocket `request` frame, `clarkcant api`) and MCP refuse every route that records a person's
 decision with `403 PERSON_ONLY` for the same reason: approving a guarded action (on a card, or one a running task
 raised), deciding a package capability, installing a package (`POST /packages/install`) or deciding an install the
-person's execution mode asked about, confirming an app intent, reporting what the page did with an action the agent asked for, trusting a paired peer,
+person's execution mode asked about, confirming an app intent, reporting what the page did with an action the agent asked for, reporting what a widget's frame did with an action Clark asked it to perform (`POST /app-intents/widget-perform/{performId}`), trusting a paired peer,
 issuing a grant, asking for a browser token for a frame
 (`POST /conversations/{id}/widgets/{instanceId}/browser-tokens`; only the host chrome that mounted the frame asks, and a
 machine client would be asking for a credential to keep), and recording whether an action whose outcome nobody saw took effect

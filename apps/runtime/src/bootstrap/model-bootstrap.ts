@@ -1,9 +1,10 @@
 import { join } from "node:path";
 
-import { instantSchema, type MessageRecord, type TurnOrigin } from "@clarkcant/contracts";
+import { instantSchema, type TurnOrigin } from "@clarkcant/contracts";
+
 import { directoryIndexPath, readPersonalInstructions } from "@clarkcant/core";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
-import { credentialNames, getNotification, latestMessages, messagesSince, readPreference } from "@clarkcant/storage";
+import { credentialNames, getNotification, latestMessages, readPreference } from "@clarkcant/storage";
 
 import { preferredAppIntentLocale } from "../app-intents.ts";
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
@@ -15,7 +16,6 @@ import { type BrowserTaskToolDeps, personTextOf } from "../browser-task-tool.ts"
 import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { decideModelRoute } from "../jev-decider.ts";
-import { memoryBrief } from "../memory.ts";
 import { readCurrentAlias, readModelPool } from "../model-registry.ts";
 import { filterBackgroundCandidates, routeBackgroundModel, toolCallsIn } from "../model-router.ts";
 import { type ModelTurn, type ViewDescriptor, createModelTurn } from "../model-turn.ts";
@@ -25,11 +25,11 @@ import { askPeerCapabilities } from "../peer-capabilities.ts";
 import { type ProjectFinderDeps, resolveProject } from "../project-finder.ts";
 import { ownedResources } from "../preflight.ts";
 import type { RequestSecretDeps } from "../request-secret.ts";
-import { textOfMessage } from "../session-search.ts";
 import { registerSessionFile } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import { registerNodeTools } from "../tool-catalogue.ts";
 import { conversationUiContext } from "../widget-semantic.ts";
+import { contextWiring } from "./context-wiring.ts";
 
 /**
  * The model turn, and everything it reads from the node.
@@ -186,6 +186,15 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
       : { provider, id };
   };
 
+  const context = contextWiring({
+    env: deps.env,
+    db: () => deps.services().runtime.db,
+    ownerPrincipalId: () => deps.services().runtime.identity.ownerPrincipalId,
+    historyPrincipalId: () => deps.wiring.search()?.principalId,
+    decider: () => deps.services().projects.decider,
+    newId: (prefix) => deps.services().conductor.newId(prefix),
+  });
+
   const modelTurn = await createModelTurn({
     env: deps.env,
     cwd: process.cwd(),
@@ -222,17 +231,8 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
       }
     },
     views: () => deps.viewCatalog(),
-    // The conversation so far, for a session that has just been created.
-    //
-    // A session is dropped when a turn fails, because a session that failed a turn is the thing that is broken;
-    // the thread is not, so the next message is answered by an agent that has been told what it is joining
-    // rather than by one that has never heard of it.
-    history: async (conversationId) => {
-      const records = messagesSince(deps.services().runtime.db, conversationId, 0, 40);
-      return records
-        .filter((record): record is MessageRecord & { role: "user" | "assistant" } => record.role === "user" || record.role === "assistant")
-        .map((record) => ({ role: record.role, text: textOfMessage(record) }));
-    },
+    // The recap, its focus, the memory brief, background retrieval and tool disclosure (#433); see `contextWiring`.
+    ...context,
     // The files the current message carries, read back from the row that message was stored as. The
     // timeline and this prompt are then the same reading, so a conversation reopened tomorrow attaches
     // the same files to the same turn. `attachmentBrief` inlines a text file's content and names anything
@@ -259,17 +259,6 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
-    /*
-     * What was remembered, for the turn about to run.
-     *
-     * Read per turn rather than captured once, so a record somebody deletes in the Memory tab stops being
-     * sent on the very next turn. That is what makes that screen's promise true rather than decorative.
-     */
-    memoryBrief: (conversationId) =>
-      memoryBrief(
-        { db: deps.services().runtime.db, now: () => new Date().toISOString(), newId: deps.services().conductor.newId },
-        { principalId: deps.services().runtime.identity.ownerPrincipalId, conversationId },
-      ),
     /*
      * What the widgets the person changed now mean, read when a turn starts (#195).
      *
@@ -404,6 +393,18 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           origin: turn.origin,
           // A long-running capability starts through this conversation's widget binding to it, which follows the job.
           widgets: () => deps.services(),
+        },
+        // "Put a spreadsheet here", then "format this as a percentage": the widget placed with its offered actions
+        // bound, and each perform through the same widget-action path a press takes, asked of the page showing it.
+        widgets: {
+          place: { services: deps.services, conversationId: turn.conversationId, messageId: () => turn.messageId?.() },
+          perform: {
+            services: deps.services,
+            conversationId: turn.conversationId,
+            onEvent: turn.onEvent,
+            channel: turn.channel,
+            origin: turn.origin,
+          },
         },
         // "Show map tiles from X" or "turn map tiles off": the same write Settings makes, as the execution policy decides.
         mapTiles: {
