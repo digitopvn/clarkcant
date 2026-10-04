@@ -380,6 +380,8 @@ body {
   margin: 0; font-size: var(--cc-text-label); line-height: var(--cc-leading-label); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.06em; color: var(--cc-text-muted);
 }
+/* The read time belongs to the panel, not to the first list: the first heading stands off it as a group would. */
+.cc-inbox > .cc-inbox-section:first-of-type { margin-top: var(--cc-space-sm); }
 .cc-inbox-section + .cc-inbox-section { margin-top: var(--cc-space-sm); padding-top: var(--cc-space-md); border-top: var(--cc-line, 1px solid) var(--cc-border); }
 .cc-inbox-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-inbox-command {
